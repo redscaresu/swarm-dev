@@ -684,13 +684,28 @@ or `resume`) is required and goes in the audit log. `tell` sends only to an idle
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
 session is gone or unknown. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
-`.swarm/inbox/conduct-<epic>.md`, without sending a prompt or reading the conductor's state, and
-only for a live conductor of this project. After each `wait` or `watch` returns, the conductor moves the
-inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added meanwhile starts a new
-file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
+`.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
+whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a
+short prompt telling it to process its inbox now, by the steps below, run `swarm.sh unblock
+--startable <epic>` (or `--backlog`) and start what it prints, then end its turn, leaving any wait or
+watch it has running alone (it starts one only if none runs). A wait can run a long time before it
+returns. `tell` sends the prompt once and returns without waiting for it to be taken up. One
+conductor gets at most one such prompt a minute: `.swarm/inbox/conduct-<epic>.woke` holds the last
+one's time, set under `conduct-<epic>.lock` so of two notes at once one sends it (a lock left over a
+minute is cleared; one held past 5 s is warned of). A note also leaves one check pending in the
+background (`conduct-<epic>.later`): once the minute since the last prompt is up, it prompts the
+conductor that holds the name then, if the inbox is still there and no prompt went out meanwhile. A
+prompt sent while the check waits moves the check once, to the end of that prompt's minute. So a
+burst of notes sends one prompt now and one a minute later, and a prompt that was dropped, or
+answered without reading the inbox, is sent once more. A prompt that fails is warned of and its time
+taken back, so the next note tries again. No prompt goes to a conductor mid-turn, one that has
+written its report, or one that `upgrade` asked for a handover and has not yet told to carry on
+(`conduct-<epic>.upgrade`, ignored once an hour old). After each `wait` or `watch` returns, the
+conductor moves the inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added
+meanwhile starts a new file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
 so the conductor reads and deletes it first. It does all of this once more just before it writes its
 report, so a note left after its last wait is still read. Once a new conductor has started,
-`conduct` clears both files, so it never acts on notes left for the one before. A `conduct` refused
+`conduct` clears both files, and the `.woke`, `.later` and `.upgrade` beside them, so it never acts on notes left for the one before. A `conduct` refused
 because the epic's conductor is still running leaves them alone. The conductor closes a builder only after both
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
