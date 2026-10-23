@@ -37,7 +37,7 @@
 # pane wait-output fails while ${H}/envfail exists, and an agent prompt asking for a handover writes
 # its file (not while ${H}/nohandover exists) and runs ${H}/onhandover if there is one; agent start
 # hangs while ${H}/slowstart exists; agent list fails three times once ${H}/listfail exists, and
-# always while ${H}/listdown does; agent list runs ${H}/onlist once, after printing, once the claude
+# always while ${H}/listdown does, and once while ${H}/listfail1 does; agent list runs ${H}/onlist once, after printing, once the claude
 # stub's call numbered in ${H}/arm has made ${H}/armed (each claude call logs "claude <n>"); a prompt
 # telling an agent it was restarted fails while ${H}/promptfail exists, and one telling it upgrade could not
 # restart it while ${H}/sayfail does. Every call is logged.
@@ -94,6 +94,7 @@ cat >> "${H}/bin/herdr" <<'STUB'
 { for a in "$@"; do printf '%s ' "$a"; done; echo; } >> "$H/herdr.log"
 case "$1 $2" in
   "agent list") [ ! -e "$H/listdown" ] || exit 1
+                [ ! -e "$H/listfail1" ] || { rm -f "$H/listfail1"; exit 1; }
                 if [ -e "$H/listfail" ]; then   # fails three times, then is gone
                   n=$(($(cat "$H/listfail.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/listfail.count"
                   [ "$n" -lt 3 ] || rm -f "$H/listfail" "$H/listfail.count"; exit 1; fi
@@ -424,10 +425,11 @@ claude_list idle idle idle; : > "${LOG}"; rm -f "${ULOG}"; touch "${H}/slowstart
 (cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_WAIT_MS=120000 bash "${SWARM}" upgrade e) > "${H}/out" 2>&1
 UPID="$(sed -n 's/.*: pid \([0-9]*\), log .*/\1/p' "${H}/out")"
 for _ in $(seq 150); do grep -q '^agent start b1 ' "${LOG}" && break; sleep 0.2; done
+sed -i.bak '/^b1 /d' "${H}/agents"   # herdr no longer lists b1: its hint file still names it
 kill -TERM "${UPID:-0}" 2>/dev/null || true
 for _ in $(seq 150); do kill -0 "${UPID:-0}" 2>/dev/null || break; sleep 0.2; done
 kill -0 "${UPID:-0}" 2>/dev/null && { echo "the stopped upgrade never ended" >&2; kill -9 "${UPID}" 2>/dev/null || true; }
-rm -f "${H}/slowstart" "${H}/exited-w:b1"
+rm -f "${H}/slowstart" "${H}/exited-w:b1"; echo "b1 w:b1 s1" >> "${H}/agents"
 check "the builder cut off mid-restart is left with its resume hint, the tally counts it" "1|upgrade stopped: 0 moved, 3 left (exit 143)" \
   "$(grep -cx "b1: left on 0.21.0: the upgrade was stopped; not started again; if pane w:b1 shows a shell, claude --resume s1, run in ${H}/wt w:b1, brings the session back" "${ULOG}")|$(tail -1 "${ULOG}")"
 
@@ -468,6 +470,49 @@ WAIT_MS=2000 upgrade e
 rm -f "${H}/onstart-b2" "${H}/listdown"
 check "a list still down at the end fails the run, names b1 and the conductor, and lets the conductor go" "1|yes|yes|no" \
   "${rc}|$(has 'b1: left on 0.21.0' "$(cat "${H}/out")")|$(has 'conduct-e: left on 0.21.0' "$(cat "${H}/out")")|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)"
+
+# --- A builder that leaves herdr's list between rounds is named as left, never forgotten.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle busy idle
+printf '#!/bin/sh\nsed -i.bak "/^b1 /d" "%s/agents"\n' "${H}" > "${H}/onstart-b2"; chmod +x "${H}/onstart-b2"
+WAIT_MS=3000 upgrade e
+rm -f "${H}/onstart-b2"; echo "b1 w:b1 s1" >> "${H}/agents"
+check "b1, gone from herdr's list, is left and counted" "1|1|upgrade done: 2 moved, 1 left (exit 1)" \
+  "${rc}|$(grep -cx "b1: left on 0.21.0: it left herdr's agent list before it was moved" "${H}/out")|$(tail -1 "${H}/out")"
+
+# --- A paused conductor that leaves herdr's list before it writes its handover holds no builder:
+# b1 and b2 are restarted.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle idle idle; touch "${H}/nohandover"
+printf '#!/bin/sh\nsed -i.bak "/^conduct-e /d" "%s/agents"\n' "${H}" > "${H}/onhandover"; chmod +x "${H}/onhandover"
+upgrade e
+rm -f "${H}/onhandover" "${H}/nohandover"; echo "conduct-e w:c sc" >> "${H}/agents"
+check "the conductor is left for it, its marker gone, and its builders are moved" "1|yes|no|yes|yes" \
+  "${rc}|$(has "conduct-e: left on 0.21.0: it left herdr's agent list while paused for its handover" "$(cat "${H}/out")")|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")|$(has "b2: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
+
+# --- An unknown read of Claude Code's list (a bad read) waits for the next round; nothing is left for it.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle idle idle; echo '1 s/^\[/X[/' > "${H}/flip"; echo '5 s/^X\[/[/' > "${H}/flip2"
+upgrade e
+check "the run, through four bad reads, moves every agent" "0|b1: 0.21.0 -> ${NEW}|b2: 0.21.0 -> ${NEW}|conduct-e: 0.21.0 -> ${NEW}" \
+  "${rc}|$(grep -- ' -> ' "${H}/out" | paste -sd'|' -)"
+
+# --- A run whose herdr list never reads fails, saying no agent was moved.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle idle idle; touch "${H}/listdown"
+WAIT_MS=500 upgrade e
+rm -f "${H}/listdown"
+check "it exits 1 and says so" "1|1|upgrade done: 0 moved, 0 left (exit 1)" \
+  "${rc}|$(grep -cx "herdr's agent list could not be read during the run, so no agent was moved" "${H}/out")|$(tail -1 "${H}/out")"
+
+# --- A conductor on its old version first seen at the end of the wait (the one round's read failed)
+# is named as left, and the run fails.
+echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; for n in b1 b2; do echo "${NEW}" > "${P}/.swarm/versions/${n}"; done
+claude_list idle idle idle; touch "${H}/listfail1"
+WAIT_MS=1 upgrade e
+rm -f "${H}/listfail1"
+check "it is left, never asked, and the run exits 1" "1|1|0" \
+  "${rc}|$(grep -cx "conduct-e: left on 0.21.0: not reached before the end of the wait, never asked for a handover" "${H}/out")|$(calls 'agent prompt' | grep -c .)"
 
 # --- A conductor already on this version that writes no handover is told to carry on, and kept, never
 # left: only its held builder fails the run.

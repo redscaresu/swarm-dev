@@ -1615,11 +1615,16 @@ that ends without that line was cut off. Only an agent whose version changed cou
 run is logged as one event, the detached worker's, with its epic as the target. `swarm.sh version` in a pane confirms the version. If a restart
 fails from the first ctrl+c on, upgrade leaves the pane open, and the agent's line names the
 `claude --resume <session>` that brings it back and the folder to run it in. A conductor that
-could not be told to carry on gets a line saying to tell it by hand. A TERM or HUP to the run names
+could not be told to carry on gets a line saying to tell it by hand. A TERM to the run (a HUP does
+not reach it: the worker runs under `nohup`) names
 each agent it had not moved as left (one cut off mid-restart with its `claude --resume` line), tells
 each conductor it paused which of its builders were restarted and to carry on as before, and ends
-the log on `upgrade stopped: <n> moved, <m> left (exit 143)` (129 for a HUP). A KILL or a reboot
-cannot, and leaves that conductor waiting for a prompt. upgrade stops when every agent is moved or left,
+the log on `upgrade stopped: <n> moved, <m> left (exit 143)`. A KILL or a reboot
+cannot, and leaves that conductor waiting for a prompt. An agent that leaves herdr's agent list
+before it is moved is named as left, never forgotten; when it is a paused conductor, its builders no
+longer wait on it. A session Claude Code reports as unknown (a bad read of its list) waits for the
+next round, as a busy one does; only a gone one is left. A run that never reads herdr's list exits
+1 and says no agent was moved. upgrade stops when every agent is moved or left,
 or after `SWARM_UPGRADE_WAIT_MS` (2 hours, for the whole run). An agent still busy then is left on
 its old version. A conductor with no handover by then, or still busy after writing one, is told to
 carry on as before: by prompt once it is idle (upgrade waits up to `SWARM_UPGRADE_GRACE_MS`, 5
