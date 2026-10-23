@@ -16,12 +16,12 @@ git -C "${P}" init -q
 git -C "${P}" remote add origin https://github.com/o/r.git
 fails=0
 
-# gh: repo view names o/r; pr view <n> answers ${FX}/pr.<n>; api <path> answers ${FX}/<path with / and
-# ? as _>, else a 404.
+# gh: repo view names o/r (fails with ${FX}/repo-view.fail); pr view <n> answers ${FX}/pr.<n>; api
+# <path> answers ${FX}/<path with / and ? as _>, else a 404.
 printf '#!/usr/bin/env bash\nFX="%s"\n' "${FX}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 case "$1 $2" in
-  "repo view") echo '{"nameWithOwner":"O/R"}' ;;
+  "repo view") [ ! -e "${FX}/repo-view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"nameWithOwner":"O/R"}' ;;
   "pr view") cat "${FX}/pr.$3" ;;
   *) for a in "$@"; do p="${a}"; done; p="${p//\//_}"; p="${p//\?/_}"
      if [ -e "${FX}/${p}" ]; then cat "${FX}/${p}"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
@@ -36,6 +36,9 @@ item "${B}/hld/2026-01-01-b.md" "title: B" "status: agreed" "grants: [release]"
 item "${B}/hld/draft.md" "status: draft" "grants: [merge]"
 item "${B}/hld/old.md" "status: superseded" "grants: [merge]"
 item "${B}/hld/bad.md" "title: Bad" "status: agreed" "grants: [merge, deploy]"
+item "${B}/hld/blk.md" "title: Block" "status: agreed" "grants:" "  - merge"
+item "${B}/hld/blk2.md" "title: Block" "status: agreed" "grants:" "" "# the grants" "  - merge"
+item "${B}/hld/open.md" "title: Open" "status: agreed" "grants: [merge," "  deploy]"
 item "${B}/epics/top.md" "status: split" "hld: 2026-01-01-a"
 item "${B}/epics/child.md" "status: active" "parent: top"
 item "${B}/epics/top-b.md" "status: active" "hld: 2026-01-01-b"
@@ -43,6 +46,9 @@ item "${B}/epics/e-draft.md" "status: active" "hld: draft"
 item "${B}/epics/e-old.md" "status: active" "hld: old"
 item "${B}/epics/e-gone.md" "status: active" "hld: no-such-hld"
 item "${B}/epics/e-bad.md" "status: active" "hld: bad"
+item "${B}/epics/e-blk.md" "status: active" "hld: blk"
+item "${B}/epics/e-blk2.md" "status: active" "hld: blk2"
+item "${B}/epics/e-open.md" "status: active" "hld: open"
 item "${B}/epics/cyc-a.md" "status: active" "parent: cyc-b"
 item "${B}/epics/cyc-b.md" "status: active" "parent: cyc-a"
 item "${B}/stories/s-child.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/3"
@@ -54,6 +60,10 @@ item "${B}/stories/s-gone.md" "status: ready" "epic: e-gone"
 item "${B}/stories/s-orphan.md" "status: ready" "epic: no-such-epic"
 item "${B}/stories/s-cyc.md" "status: ready" "epic: cyc-a"
 item "${B}/stories/s-bad.md" "status: ready" "epic: e-bad"
+item "${B}/stories/s-blk.md" "status: ready" "epic: e-blk"
+item "${B}/stories/s-blk2.md" "status: ready" "epic: e-blk2"
+item "${B}/stories/s-open.md" "status: ready" "epic: e-open"
+item "${B}/stories/s-cfg.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/15"
 # No epic: in the front matter; a body line naming one is not read.
 item "${B}/stories/s-none.md" "status: ready"
 echo "epic: child" >> "${B}/stories/s-none.md"
@@ -97,6 +107,16 @@ if [[ ${rc} -ne 0 ]] && grep -qF "${B}/hld/bad.md:4: grants must be epics, stori
   echo "ok   bad-grant-dies-with-file-and-line"
 else echo "FAIL bad-grant-dies-with-file-and-line (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
 
+# dies <name> <slug> <hld> — swarm.sh grants <slug> fails, naming line 4 of <hld> as no one-line list.
+dies() {
+  grants "$2"
+  if [[ ${rc} -ne 0 ]] && grep -qF "${B}/hld/$3:4: grants must be a one-line [..] list" "${ROOT}/out"; then echo "ok   $1"
+  else echo "FAIL $1 (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
+}
+dies block-list-grants-dies-with-file-and-line s-blk blk.md
+dies block-list-after-blank-and-comment-dies s-blk2 blk2.md
+dies open-bracket-grants-dies s-open open.md
+
 # board PR #7 touches epics under two HLDs: none.
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.7"
 echo '[{"filename":"docs/epics/child.md"},{"filename":"docs/epics/top-b.md"}]' > "${FX}/repos_o_r_pulls_7_files_per_page=100"
@@ -105,8 +125,8 @@ cp "${B}/epics/top-b.md" "${FX}/repos_o_r_contents_docs_epics_top-b.md_ref=${HEA
 expect board-pr-two-hlds-none https://github.com/o/r/pull/7 none
 
 # board PR #8 adds a story under a new child epic and deletes s-child (read at the base): all under A.
-echo '[{"filename":"docs/epics/grandchild.md"},{"filename":"docs/stories/new.md"},{"filename":"docs/stories/s-child.md"},{"filename":"docs/README.md"}]' > "${FX}/repos_o_r_pulls_8_files_per_page=100"
-echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":4}" > "${FX}/pr.8"
+echo '[{"filename":"docs/epics/grandchild.md"},{"filename":"docs/stories/new.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_8_files_per_page=100"
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":3}" > "${FX}/pr.8"
 item "${FX}/repos_o_r_contents_docs_epics_grandchild.md_ref=${HEAD}" "status: active" "parent: child"
 item "${FX}/repos_o_r_contents_docs_stories_new.md_ref=${HEAD}" "status: ready" "epic: grandchild"
 expect board-pr-one-hld https://github.com/o/r/pull/8 "$(printf '%s\nmerge\nstories' "${A}")"
@@ -132,6 +152,40 @@ echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.12"
 echo '[{"filename":"bin/x.sh"},{"filename":"docs/epics/top-b.md"}]' > "${FX}/repos_o_r_pulls_12_files_per_page=100"
 expect story-pr-touching-other-hld-none https://github.com/o/r/pull/12 none
 
+# With no origin, or no nameWithOwner for it, story PR #3's files cannot be checked: none.
+git -C "${P}" remote remove origin
+expect no-origin-none https://github.com/o/r/pull/3 none
+git -C "${P}" remote add origin https://github.com/o/r.git
+: > "${FX}/repo-view.fail"
+expect no-repo-name-none https://github.com/o/r/pull/3 none
+rm "${FX}/repo-view.fail"
+
+# board PR #13 adds we#ird.md under child and deletes s-child: the # is read as itself, so both are A.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.13"
+echo '[{"filename":"docs/stories/we#ird.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_13_files_per_page=100"
+item "${FX}/repos_o_r_contents_docs_stories_we%23ird.md_ref=${HEAD}" "status: ready" "epic: child"
+expect board-pr-odd-name https://github.com/o/r/pull/13 "$(printf '%s\nmerge\nstories' "${A}")"
+
+# board PR #14 touches ghost.md, on neither the board nor the head, beside s-child (A): none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.14"
+echo '[{"filename":"docs/stories/ghost.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_14_files_per_page=100"
+expect board-pr-no-version-none https://github.com/o/r/pull/14 none
+
+# story PR #15 (s-cfg, under A) also changes .claude/swarm/config: none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.15"
+echo '[{"filename":"bin/x.sh"},{"filename":".claude/swarm/config"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect story-pr-touching-config-none https://github.com/o/r/pull/15 none
+
+# board PR #16 deletes s-child (A) and changes docs/README.md, a board file that is no epic or story: none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.16"
+echo '[{"filename":"docs/stories/s-child.md"},{"filename":"docs/README.md"}]' > "${FX}/repos_o_r_pulls_16_files_per_page=100"
+expect board-pr-other-board-file-none https://github.com/o/r/pull/16 none
+
+# board PR #17 changes bin/x.sh beside s-child (A): no story lists it, so none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.17"
+echo '[{"filename":"bin/x.sh"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_17_files_per_page=100"
+expect board-pr-code-file-none https://github.com/o/r/pull/17 none
+
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none
 
@@ -148,5 +202,19 @@ echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.22"
 echo '[{"filename":"stories/r-new.md"}]' > "${FX}/repos_o_r_pulls_22_files_per_page=100"
 item "${FX}/repos_o_r_contents_stories_r-new.md_ref=${HEAD}" "status: ready" "epic: child"
 PROJ="${R}" expect root-board-board-pr https://github.com/o/r/pull/22 "$(printf '%s\nmerge\nstories' "${R}/hld/2026-01-01-a.md")"
+
+# A board outside the repo: story PR #18 changes .claude/swarm/brief.md, so none; #19 changes code only.
+O="${ROOT}/outproj"; OB="${ROOT}/outboard"; mkdir -p "${O}/.claude/swarm" "${OB}/hld" "${OB}/epics" "${OB}/stories"
+git -C "${O}" init -q; git -C "${O}" remote add origin https://github.com/o/r.git
+echo "board_dir = ${OB}" > "${O}/.claude/swarm/config"
+cp "${A}" "${OB}/hld/"; cp "${B}/epics/top.md" "${B}/epics/child.md" "${OB}/epics/"
+item "${OB}/stories/o-brief.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/18"
+item "${OB}/stories/o-code.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/19"
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.18"
+echo '[{"filename":"bin/x.sh"},{"filename":".claude/swarm/brief.md"}]' > "${FX}/repos_o_r_pulls_18_files_per_page=100"
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.19"
+echo '[{"filename":"bin/x.sh"}]' > "${FX}/repos_o_r_pulls_19_files_per_page=100"
+PROJ="${O}" expect outside-board-story-pr-touching-swarm-dir-none https://github.com/o/r/pull/18 none
+PROJ="${O}" expect outside-board-story-pr https://github.com/o/r/pull/19 "$(printf '%s\nmerge\nstories' "${OB}/hld/2026-01-01-a.md")"
 
 [[ ${fails} -eq 0 ]]
