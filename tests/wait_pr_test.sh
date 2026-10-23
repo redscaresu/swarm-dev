@@ -246,19 +246,21 @@ is "stays pending past the default deadline: exits 2" 2 "${rc}"
 check "stays pending past the default deadline: names what is pending" said "still pending: test (queued)"
 is "stays pending past the default deadline: one read" 1 "$(reads)"
 at_deadline "stays pending past the default deadline"
-# A zero deadline ends it too, as timed out. How many reads it made is not checked: wait-pr does
-# not promise one at 0 (wait_pr), since its reads run within the 1s floor, which a loaded runner
-# can miss before python3 or gh starts.
+# A zero deadline ends it at once, timed out, with no read: no read starts at the deadline, so a
+# check that would be green or red (a fast gh) cannot end it 0 or 1.
 for v in --timeout SWARM_MERGE_CI_SECONDS; do
-  fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"
-  if [[ "${v}" == --timeout ]]; then wait_pr --timeout 0; else wait_pr SWARM_MERGE_CI_SECONDS=0; fi
-  is "stays pending past a zero ${v}: exits 2" 2 "${rc}"
-  check "stays pending past a zero ${v}: says timed out" said "swarm: wait-pr: timed out after "
+  for c in "pending:$(run test queued)" "green:$(run test completed success)" "red:$(run test completed failure)"; do
+    fresh; checks "${FX}/checks" "${c#*:}"
+    if [[ "${v}" == --timeout ]]; then wait_pr --timeout 0; else wait_pr SWARM_MERGE_CI_SECONDS=0; fi
+    is "${c%%:*} at a zero ${v}: exits 2" 2 "${rc}"
+    check "${c%%:*} at a zero ${v}: says timed out" said "swarm: wait-pr: timed out after "
+    is "${c%%:*} at a zero ${v}: no read" 0 "$(grep -c . "${ROOT}/gh.log" || true)"
+  done
 done
 # Past the deadline, a read's time left is below 0: within gives it the 1s floor, as perl would
 # otherwise take -1 for a switch and exit 25, which wait-pr reported as "ci_gate failed (exit 25)".
 # shellcheck source=/dev/null
-# shellcheck disable=SC2034 # merge.sh reads PROJECT_DIR as it loads
+# shellcheck disable=SC2034 # merge.sh reads PROJECT_DIR as it loads (RED_HEADS), under set -u
 within_rc() { (PROJECT_DIR="${P}"; . "$(dirname "${SWARM}")/lib/merge.sh"; within "$@") > /dev/null 2>&1 && echo 0 || echo $?; }
 is "within -1 runs the command: exits 0" 0 "$(within_rc -1 true)"
 is "within -1 a command that hangs: the 1s floor kills it" 142 "$(within_rc -1 sleep "${HANG}")"

@@ -795,8 +795,7 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
-# A read gets at least 1s (within), so --timeout 0 may end on its first read, before any check read:
-# it promises no read, only a timed-out exit 2, since any floor a read is promised is a clock to miss.
+# No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
 # A rate limit with its budget spent (rate_reset: GraphQL's or REST's, whichever the error came from) is
 # waited out once, to its reset, printed, the transient-error count starting over, and the default
 # deadline and the no-check grace move by that wait; past a --timeout deadline it ends at once, naming
@@ -824,6 +823,9 @@ wait_pr() {
   WAIT_PR_TMP="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
   while :; do
     rc=0; left=$((limit - (SECONDS - start)))
+    # No read starts at or past the deadline: here, and before the check read below, which follows a head
+    # read in the same pass (UNKNOWN) or one pass later.
+    (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
     if [[ -z "${head}" || -n "${unknown}" ]]; then
       # The head read is retried like a check read: a transient error is as likely here. Its stderr
       # is only the error: a notice beside a good answer (a gh update) is not one.
@@ -843,7 +845,9 @@ wait_pr() {
       fi
     fi
     if [[ ${rc} -eq 0 ]]; then
-      why="$(within "$((limit - (SECONDS - start)))" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
+      left=$((limit - (SECONDS - start)))
+      (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
+      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
     fi
     case ${rc} in
