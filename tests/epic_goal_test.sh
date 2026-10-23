@@ -105,8 +105,20 @@ else:
         print(json.dumps({"type": "system", "subtype": "local_command", "timestamp": now, "content": c}))
 PY
                         ;;
-                        # Any other prompt starts a turn: the goal tests list its session as busy.
-                        *) [ -e "$H/session" ] && echo "[{\"sessionId\":\"$(basename "$(cat "$H/session")" .jsonl)\",\"status\":\"busy\"}]" > "$H/started.json" ;;
+                        # Any other prompt starts a turn: the goal tests list its session as busy. With
+                        # HERDR_STUB_TURN quick the turn has already ended (idle) with an assistant entry
+                        # in the log; quick-old, idle with one dated an hour before the brief; quick-bare,
+                        # idle with none.
+                        *) [ ! -e "$H/session" ] || { st=busy
+                           case "${HERDR_STUB_TURN:-}" in quick|quick-old|quick-bare) st=idle ;; esac
+                           case "${HERDR_STUB_TURN:-}" in quick|quick-old) python3 - "$HERDR_STUB_TURN" >> "$(cat "$H/session")" <<'PY' ;;
+import datetime, json, sys
+t = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1 if sys.argv[1] == "quick-old" else 0)
+now = t.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+print(json.dumps({"type": "assistant", "timestamp": now, "message": {"model": "m", "content": [{"type": "text", "text": "done"}]}}))
+PY
+                           esac
+                           echo "[{\"sessionId\":\"$(basename "$(cat "$H/session")" .jsonl)\",\"status\":\"$st\"}]" > "$H/started.json"; } ;;
                       esac
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
@@ -203,6 +215,24 @@ goal_story "${b}" gl7 "status: ready" "kind: code" "repo: svc"
 rc=0; out="$(HERDR_STUB_GOAL=pasted run story gl7)" || rc=$?
 check "a /goal the session log shows queued as a pasted prompt fails story saying it was pasted as text; one /goal" "fail|yes|1" \
   "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl7: the brief was delivered, but its /goal was pasted as text, not run" "${out}")|$(goals)"
+# A short first turn that ended before send_goal reads the session: idle, with an assistant entry
+# after the brief, the brief was taken and the /goal goes; idle with none, it was never started.
+goal_story "${b}" gl9 "status: ready" "kind: code" "repo: svc"
+: > "${ROOT}/herdr.log"
+rc=0; out="$(HERDR_STUB_TURN=quick run story gl9)" || rc=$?
+check "a session idle again before send_goal reads it, with an assistant entry after the brief, gets the /goal; story exits 0" \
+  "0|1" "${rc}|$(goals)"
+[[ ${rc} -eq 0 ]] || echo "story gl9: ${out}"
+goal_story "${b}" gl10 "status: ready" "kind: code" "repo: svc"
+: > "${ROOT}/herdr.log"
+rc=0; out="$(HERDR_STUB_TURN=quick-bare run story gl10)" || rc=$?
+check "a session idle after the brief with no assistant entry since still fails story, with no /goal sent" "fail|yes|0" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl10: the brief was delivered, but its session did not read busy, or idle with work since the brief, within 3s (idle), so no /goal was sent" "${out}")|$(goals)"
+goal_story "${b}" gl11 "status: ready" "kind: code" "repo: svc"
+: > "${ROOT}/herdr.log"
+rc=0; out="$(HERDR_STUB_TURN=quick-old run story gl11)" || rc=$?
+check "a session idle after the brief whose only assistant entry is older than the brief still fails story, with no /goal sent" "fail|yes|0" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl11: the brief was delivered, but its session did not read busy, or idle with work since the brief" "${out}")|$(goals)"
 # A Done when over 2,500 characters stays in the story: the /goal names its path and fits GOAL_SEND_MAX.
 goal_story "${b}" gl8 "status: ready" "kind: code" "repo: svc"
 python3 - "${b}/stories/gl8.md" <<'PY2'
@@ -232,7 +262,7 @@ item "${b}" stories/gl3.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "" "**Done when:**" "" "**Out of scope:** OUT-ONE" >> "${b}/stories/gl3.md"
 check "a Done when with no item under it fails like a missing one, before any worktree" "yes|no" \
   "$(if out="$(run story gl3)"; then echo "it succeeded"; else has "gl3 has no **Done when**" "${out}"; fi)|$([[ -e "${ROOT}/svc-wt/gl3" ]] && echo yes || echo no)"
-: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-8].md; unset CLAUDE_STUB_AGENTS
+: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-9].md "${b}"/stories/gl1[01].md; unset CLAUDE_STUB_AGENTS
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

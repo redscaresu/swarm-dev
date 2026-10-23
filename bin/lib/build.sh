@@ -343,26 +343,30 @@ goal_entry() {
 # once mode) and confirm it set from its session log (goal_entry, for this condition), polling up to
 # PROMPT_TIMEOUT_MS. The condition goes on one line: the spike only saw a one-line /goal set, and a
 # multi-line paste could be split or become a "[Pasted text]" placeholder; goal_entry compares it
-# whitespace aside. Any goal_status newer than the send means it set: the judge may already have
+# whitespace aside. Any goal_status newer than <since> means it set: the judge may already have
 # written its own after the sentinel. A refusal, or no entry, fails naming the story and why (a /goal
 # Claude Code queued as pasted text, when goal_entry finds one), and leaves the builder open for the
 # lead to read. <since> defaults to now. The /goal goes only into a
 # turn that has started: herdr can say working while the session is still idle, and deliver_prompt
 # takes blocked as taken up, so it waits up to PROMPT_TIMEOUT_MS for the session (session_state) to
-# read busy, and fails with nothing sent if it reads waiting (a dialog, where Enter could approve
-# what auto mode flagged) or never reads busy. Each failure says the brief or the findings were
+# read busy, or, for the brief, idle with own work (session_mtime) at or after <since>: a short first
+# turn that ended before this read took the brief. Findings get no such shortcut: their /goal must go
+# mid-turn (findings_goal). It fails with nothing sent if it reads waiting (a dialog, where Enter could
+# approve what auto mode flagged) or neither. Each failure says the brief or the findings were
 # delivered, so they are not sent again.
 send_goal() {
-  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline state pre post
+  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline state pre post t want="read busy, or idle with work since the brief,"
   name="$(agent_name "${slug}")"
   pre="${slug}: the brief was delivered, but"; post="; do not send it again"
-  [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; }
+  [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; want="read busy"; }
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
-  while state="$(session_state "${name}")"; [[ "${state}" != busy && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
+  while state="$(session_state "${name}")"
+    if [[ "${state}" == idle && "$3" == brief ]]; then t="$(session_mtime "${name}")"; [[ -n "${t}" && "${t}" -ge "${since}" ]] && state=ran; fi
+    [[ "${state}" != busy && "${state}" != ran && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
   case "${state}" in
-    busy) ;;
+    busy|ran) ;;
     waiting*) die "${pre} its builder is waiting on $(waiting_for "${state}"), so no /goal was sent; answer it (herdr agent read ${name})${post}" ;;
-    *) die "${pre} its session did not read busy within $((PROMPT_TIMEOUT_MS / 1000))s (${state}), so no /goal was sent${post}" ;;
+    *) die "${pre} its session did not ${want} within $((PROMPT_TIMEOUT_MS / 1000))s (${state}), so no /goal was sent${post}" ;;
   esac
   deliver_prompt "${name}" <(goal_message "$(cat "${goal}")") "" once   # read once, so a pipe will do
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
@@ -483,7 +487,7 @@ goal_preflight() {
 }
 
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names since
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -519,11 +523,13 @@ build_story() {
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   epic="$(fm "${story}" epic)"
+  since="$(date +%s)"   # before the brief: send_goal counts a turn that ran since as having taken it
   start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
-  # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
-  [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief
+  # Once the brief is taken up: mid-turn the goal sets at once and costs one extra short turn; after a
+  # short first turn that already ended, it starts a turn of its own.
+  [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief "${since}"
 }
 
 # review_agent <slug> <PR URL> — start review-<slug> on a story's PR in the story's worktree and tab,
