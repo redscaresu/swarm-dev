@@ -368,11 +368,19 @@ L=https://github.com/o/r/actions/runs
 got="$(flaky --since 2026-10-01 --until 2026-10-03)"
 check "ci_health: a failed log with a byte that is not UTF-8 is still read: a_test.sh is flaky, and no line says not JSON" \
   "$(grep -E 'a_test|not JSON' <<< "${got}")" $'tests/a_test.sh\t1\t2026-10-01\t'"${L}"'/10/attempts/1'
-# Under an ASCII locale (UTF-8 mode off) gh() still reads gh's output as UTF-8: é kept, 0xff as U+FFFD.
-mkdir -p "${dir}/ugh"; printf '#!/bin/sh\nprintf '"'"'caf\\303\\251 \\377'"'"'\n' > "${dir}/ugh/gh"; chmod +x "${dir}/ugh/gh"
-check "report.gh reads gh's output as UTF-8 under a locale that is not, a byte that is not UTF-8 as U+FFFD" \
-  "$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 PATH="${dir}/ugh:${PATH}" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import report; print(ascii(report.gh("x", parse=str)))' "$(dirname "${SWARM}")/lib")" \
-  "'caf\\xe9 \\ufffd'"
+# Under an ASCII locale (UTF-8 mode off) gh() still reads gh's output as UTF-8: é kept, a log's 0xff as
+# U+FFFD. A JSON answer's 0xff still fails, so gh_cache caches nothing.
+mkdir -p "${dir}/ugh"; cat > "${dir}/ugh/gh" <<'EOF'
+#!/bin/sh
+[ "$1" = json ] && printf '{"t": "\377"}' || printf 'caf\303\251 \377'
+EOF
+chmod +x "${dir}/ugh/gh"
+check "report.gh reads gh's output as UTF-8 under a locale that is not, a log's byte that is not UTF-8 as U+FFFD, a JSON answer's as not JSON, uncached" \
+  "$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 SWARM_GH_CACHE="${dir}/ucache" PATH="${dir}/ugh:${PATH}" python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1]); import gh_cache, report
+print(ascii(report.gh("log", parse=str)))
+print(ascii(gh_cache.cached("o/r", "j", lambda: report.gh("json"), lambda v: True)), report.ERROR[0], os.path.exists(gh_cache.path("o/r", "j")))' "$(dirname "${SWARM}")/lib")" \
+  "'caf\\xe9 \\ufffd'
+None gh json: an answer that is not JSON False"
 check "ci_health: the test files a head's red attempts failed before a green one, as the row counts flakes, a run once per file, worst first; what gh did not list or could not read is named, and logs with no test file line counted" \
   "${got}" "${FH}"$'
 tests/c_test.sh\t3\t2026-10-02\t'"${L}"$'/30/attempts/1
