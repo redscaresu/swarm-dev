@@ -17,6 +17,7 @@ set -euo pipefail
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+export SWARM_GH_CACHE=""   # each run reads gh afresh, as its stub answers change between runs (gh_cache_test.sh tests the cache)
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT

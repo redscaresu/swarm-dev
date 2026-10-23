@@ -13,6 +13,7 @@ set -euo pipefail
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+export SWARM_GH_CACHE=""   # each run reads gh afresh, as its stub answers change between runs (gh_cache_test.sh tests the cache)
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
@@ -103,7 +104,7 @@ check "ready_wait: a stepped-up story counts once, by its first build, not again
 printf '%s\n' "${agents_before}" > "${P}/.swarm/agents.tsv"; rm "${dir}/projects/p/sa2.jsonl"
 printf '%s\n' "${before}" > "${P}/.swarm/events.tsv"
 check "a bad flag prints the usage" "$(run flow --until yesterday 2>&1 || true)" \
-  "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
+  "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 # A second project, in UTC-7: epic `all` (j) is an epic beside the project row; j's agents.tsv day is
 # --until's (local), but its session starts at 03:00Z the next UTC day, still inside the local cutoff;
 # k's agents.tsv date does not parse and it has no session log, so it is left out.
@@ -142,7 +143,7 @@ e8\t3\t1.00\t1\t1\t1\t1.0\t\t\t0
 all\t8\t1.56\t3\t4\t1\t4.0\t\t\t0'
 for d in --since=9999-12-31 --until=2026-02-30; do
   check "flow ${d%%=*} ${d#*=}, not a real date with a day after it, prints the usage" \
-    "$(run flow "${d%%=*}" "${d#*=}" 2>&1 || true)" "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
+    "$(run flow "${d%%=*}" "${d#*=}" 2>&1 || true)" "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 done
 for gone in decisions export; do
   out="$(run "${gone}" 2>&1)" && code=0 || code=$?

@@ -954,13 +954,42 @@ no sign that an agent is alive.
 
 ## Flow and features
 
-`swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
+`swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
 `ci_health`, `cost`, `epic_totals`, `features`, `gh_calls`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
-the others. `flow` writes nothing but its own gh calls' lines in `.swarm/gh-calls.tsv`, except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
+the others. `flow` writes nothing but its own gh calls' lines in `.swarm/gh-calls.tsv` and its cache (below), except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
 commands still run, and each prints which section now holds its numbers.
+
+GitHub history that is finished never changes, so `flow` (and dash's ci refresh, which runs it)
+reads it from `gh` once and keeps it in `.swarm/gh-cache/<owner>--<repo>/` (`bin/lib/gh_cache.py`),
+one JSON file per record: a merged PR; a closed PR's commits and runs, once `gh` lists some runs and
+none of them is still running; a completed run's jobs and earlier attempts; the `FAIL` and `TIMEOUT`
+lines of a red attempt's log (never the whole log, and never an empty answer, which comes back while
+GitHub is still archiving a log); a PR's `createdAt` and branch; the merged PRs `rework` searches,
+for the last 120 days; and the repo's completed runs that the flaky tests read, for the last 90 days
+(each kept for the window, if longer). An open PR and a run still in progress are read fresh every time. A closed PR that was not
+merged can be reopened, so it is read again every time, and its commits and runs are read again
+once its `updated_at` moves; records kept under an earlier `updated_at` are deleted then.
+
+The two listings ask `gh` for the window while nothing is cached, then only for what is new, and the
+window is served from the cache. Merged PRs are searched from a day before the newest cached one's
+day, because GitHub's search can list a merge late. Runs are listed from three days before the
+newest cached one's day, or from the oldest day with a run still running (a run queued for over a
+day holds nothing), or from the window's start when that is later. A run listed again while a rerun
+of it is running is dropped until the rerun ends. A rerun keeps its run's creation time, so a rerun
+of a run created more than three days before the newest cached day is not seen. A runs listing
+that GitHub cuts at 1000 (the newest) is listed again up to the oldest day it reached, until it is
+whole; only a single day of more than 1000 runs is left out. What a cut listing leaves out (the
+merged PRs before a cut list's oldest, or such a day of runs) is kept as the cache's hole, listed
+again first on every run whose window reaches it, and every such run that finds it still cut says
+so: a `flaky tests:` line, or `rework` unknown for the PRs merged before the cutoff. A file is written to a
+temp file and renamed, so a parallel `flow` never reads half of one; one that cannot be read or
+parsed is read from `gh` again and rewritten, and one that would not change is not written.
+`--no-cache` reads nothing from the cache, `.swarm/outcomes-prs.tsv` included, and writes what `gh`
+answers over it, so it also shows a rerun the cache missed. Setting `SWARM_GH_CACHE` empty turns the
+cache off (the tests whose `gh` stub changes between runs do).
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
 the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR
@@ -1609,7 +1638,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
 
 ## Cleanup, escalation and session logs
 

@@ -8,6 +8,7 @@ set -euo pipefail
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+export SWARM_GH_CACHE=""   # each run reads gh afresh, as its stub answers change between runs (gh_cache_test.sh tests the cache)
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
@@ -128,7 +129,7 @@ check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   $'unknown\tall\t1\t0\t1\t100%\t0' $'unknown\tscope\t1\t0\t1\t100%\t0' \
   $'all\tvacuous\t3\t1\t2\t67%\t0' $'all\tnit\t2\t1\t1\t50%\t0' $'all\tscope\t1\t0\t1\t100%\t0' $'all\tmissing-check\t1\t1\t0\t0%\t0' \
   $'all\tall\t7\t3\t4\t57%\t0' "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
-USAGE="swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
+USAGE="swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 for args in "--since 2026-1-5" "--since" "--bogus"; do
   # shellcheck disable=SC2086 # split on purpose: each case is its own arguments
   check "${args} exits non-zero with the usage line" "$(yield_of "${P}" ${args})" "$(printf '%s\n' "${USAGE}" "exit 1")"

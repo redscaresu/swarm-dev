@@ -98,7 +98,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build), how each model did, and which agents spend GitHub's API budget. |
+| `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build), how each model did, and which agents spend GitHub's API budget. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
 lists them all.
