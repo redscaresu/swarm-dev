@@ -1,6 +1,6 @@
 ---
 kind: docs
-status: blocked
+status: ready
 epic: safer-faster-swarm
 depends_on: [board-prep, env-allowlist-spike, board-state-out-of-git, escalated-block-out-of-git, reconcile-drops-backup, pr-removes-story, board-state-dash-readers, after-key, sonnet-easy-only, plan-epic-size-cap, epic-command, plan-epic-child-epics, remove-plan-hld, fold-reports, flow-epic-totals, subagent-cost, model-fit-table, time-in-state, ci-health, incidents, lead-queue-wait, rework, dataset, recurring-kinds, remove-lessons, merge-guard-hook, wait-pr, fallback-reviewer, escalate-ladder-step-up, escalate-ladder-triggers, init-like-infrafactory, ci-board-fast-path, tests-fast, split-slow-tests, dash-project-anywhere, dash-three-defects, dash-golden-frames, dash-merge-gauges, dash-check, agent-entry-points, doc-check, env-allowlist]
 touches: [README.md, llms.txt, tests/doc_check_known.txt:README.md and llms.txt entries]
@@ -18,3 +18,4 @@ Needs every other pre-release story of the epic merged. Review README.md and llm
 - grep finds no /hld, /plan-hld or HLD step in README.md.
 - after-release-checks (2026-10-22) found `/swarm-dev:swarm` first in prose at line 47 and `swarm.sh init` at line 70. A three-line quick start (install, `swarm.sh init`, `/swarm-dev:swarm`) sits under the intro, above the image, so both appear as text in the first 20 lines.
 - Obsidian is optional, and README says so (user, 2026-10-22): nothing runs it, but `init` writes `Board.base` and the `.obsidian/` lines. README names it under Requirements as optional, or under Watching it, with what it shows (open the board folder as a vault; `Board.base` groups stories by status and epic).
+- Started on 2026-10-23 while upgrade-until-done (#391) and release-upgrades-agents were still open. Before the PR opens, merge origin/main and recheck the upgrade and release sections against whatever of those two has merged by then. Say in the PR which of them it covers.
