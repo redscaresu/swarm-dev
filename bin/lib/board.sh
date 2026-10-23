@@ -627,14 +627,14 @@ pr_hld() (
         || die "grants: gh cannot read ${url}"
       head="${info% *}"
       info="$(ci_gate files "${repo}" "${n}" "${info#* }")" || die "grants: cannot list every file ${url} changes: ${info}"
-      [[ $'\n'"${info}" != *$'\n'"${pre}hld/"* ]] || return 0
+      [[ $'\n'"${info}" != *$'\n'"${pre}hld/"* ]] || return 0   # loose-match: ok a whole line's prefix, the board's hld/
     fi
   fi
   view="$(mktemp -d)"; mkdir "${view}/epics" "${view}/stories"
   cp "${BOARD}/epics/"*.md "${view}/epics/" 2>/dev/null || true
   err="${view}/err"
   while [[ -n "${head}" ]] && IFS= read -r p; do
-    [[ "${p}" == "${pre}"* ]] || continue
+    [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
     p="${p#"${pre}"}"
     [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
     if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${pre}${p}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
@@ -644,7 +644,7 @@ pr_hld() (
   {
     for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
     while [[ -n "${head}" ]] && IFS= read -r p; do
-      [[ "${p}" == "${pre}"* ]] || continue
+      [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
       p="${p#"${pre}"}"
       [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
       [[ ! -f "${BOARD}/${p}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${p}")"
