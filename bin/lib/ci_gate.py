@@ -563,7 +563,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             bad = [r for r in mine if r.get("status") == "completed" and r.get("conclusion") not in OK]   # red's, in order
             ids = [int(m.group(1)) if m else None for m in (RUN_ID.search(r.get("html_url") or "") for r in bad)]
             held = []
-            if red and all(i is not None and i not in again for i in ids):   # each run gets one rerun
+            if red and ids and all(i is not None and i not in again for i in ids):   # each run gets one rerun
                 if any(r.get("id") in ids and r.get("status") != "completed" for r in runs):
                     held, rwait = red, rwait + ["%s, finishing before its rerun" % x for x in red]
                 else:
