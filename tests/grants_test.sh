@@ -47,6 +47,7 @@ item "${B}/epics/cyc-a.md" "status: active" "parent: cyc-b"
 item "${B}/epics/cyc-b.md" "status: active" "parent: cyc-a"
 item "${B}/stories/s-child.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/3"
 item "${B}/stories/s-hld.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/4"
+item "${B}/stories/s-cross.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/12"
 item "${B}/stories/s-draft.md" "status: ready" "epic: e-draft"
 item "${B}/stories/s-old.md" "status: ready" "epic: e-old"
 item "${B}/stories/s-gone.md" "status: ready" "epic: e-gone"
@@ -125,6 +126,11 @@ expect board-pr-touching-hld-none https://github.com/o/r/pull/10 none
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.11"
 echo '[{"filename":"epics/child.md"}]' > "${FX}/repos_o_r_pulls_11_files_per_page=100"
 expect board-pr-outside-board-none https://github.com/o/r/pull/11 none
+
+# story PR #12 (s-cross, under A) also changes top-b, an epic under B: none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.12"
+echo '[{"filename":"bin/x.sh"},{"filename":"docs/epics/top-b.md"}]' > "${FX}/repos_o_r_pulls_12_files_per_page=100"
+expect story-pr-touching-other-hld-none https://github.com/o/r/pull/12 none
 
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none

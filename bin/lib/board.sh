@@ -605,11 +605,11 @@ item_hld() {
 # none), or nothing when there is none, an empty line, or two.
 one_hld() { local u; u="$(sort -u)"; [[ -z "${u}" || "${u}" == *$'\n'* ]] || echo "${u}"; }
 
-# pr_hld <pr-url> — the one agreed HLD over a PR (one_hld), or nothing. A PR in the project's repo
-# that touches the board's hld/ is under none: only the user changes an HLD. A story PR (pr_stories) is
-# its stories'. A board PR in the project's repo is its epics/*.md and stories/*.md: each as the board
-# has it (a file the PR deletes too) and as the PR's head has it, read in a copy of the board's epics
-# with the head's over them; the HLDs always the board's.
+# pr_hld <pr-url> — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
+# lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
+# touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
+# copy of the board's epics with the head's over them; the HLDs always the board's. A PR in the
+# project's repo that touches the board's hld/ is under none: only the user changes an HLD.
 pr_hld() (
   local s url repo n info="" head="" rel p view="" err
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
@@ -629,29 +629,27 @@ pr_hld() (
       [[ $'\n'"${info}" != *$'\n'"${rel}/hld/"* ]] || return 0
     fi
   fi
-  if [[ -n "${s}" ]]; then
-    for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done | one_hld
-    return 0
-  fi
-  [[ -n "${head}" ]] || return 0
   view="$(mktemp -d)"; mkdir "${view}/epics" "${view}/stories"
   cp "${BOARD}/epics/"*.md "${view}/epics/" 2>/dev/null || true
   err="${view}/err"
-  while IFS= read -r p; do
+  while [[ -n "${head}" ]] && IFS= read -r p; do
     [[ "${p}" == "${rel}/"* ]] || continue
-    s="${p#"${rel}/"}"
-    [[ "${s}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
-    if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${p}?ref=${head}" > "${view}/${s}" 2> "${err}"; then continue; fi
-    grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${p} at ${url}'s head: $(tail -1 "${err}")"
-    rm -f "${view}/${s}"
+    p="${p#"${rel}/"}"
+    [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
+    if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${rel}/${p}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
+    grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${rel}/${p} at ${url}'s head: $(tail -1 "${err}")"
+    rm -f "${view}/${p}"
   done <<< "${info}"
-  while IFS= read -r p; do
-    [[ "${p}" == "${rel}/"* ]] || continue
-    s="${p#"${rel}/"}"
-    [[ "${s}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
-    [[ ! -f "${BOARD}/${s}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${s}")"
-    [[ ! -f "${view}/${s}" ]] || printf '%s\n' "$(item_hld "${view}/${s}" "${view}/epics")"
-  done <<< "${info}" | one_hld
+  {
+    for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
+    while [[ -n "${head}" ]] && IFS= read -r p; do
+      [[ "${p}" == "${rel}/"* ]] || continue
+      p="${p#"${rel}/"}"
+      [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
+      [[ ! -f "${BOARD}/${p}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${p}")"
+      [[ ! -f "${view}/${p}" ]] || printf '%s\n' "$(item_hld "${view}/${p}" "${view}/epics")"
+    done <<< "${info}"
+  } | one_hld
 )
 
 # grants <story | epic | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
