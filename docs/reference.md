@@ -1175,25 +1175,28 @@ not. They are empty when there is none, and an epic with only such builds still 
 
 The `idle_slots` section asks whether the swarm sat idle while work was ready. It prints TSV `epic
 idle_min no_conductor_min most_ready`, one row per epic and a last `all` row, or the `--epic` row
-alone. When no story (or none of that epic) was ready in the window, a line says so in place of a
-row of zeros. `idle_min` is the minutes in the window when at least one of the epic's stories was
-ready with no build while its conductor ran. A story goes ready at an `unblock`, `reconcile ... ok
-(reopened)`, `reset` or `reset:held` event, or at a close that sent it back to ready. That is any
-close except the first one after a `review` or `kept` event for the build, which leaves the story in
-review (a later close, the drop, sends it back). Every wait counts: the first runs from the first
-build's start less its `ready_wait_min`, and each later one from the story going ready again to its
-next build. A story is not waiting while its own build runs. A story on the board now that `next`
-would build (`status: ready` with `.swarm/board-state` laid over its file, a kind an agent builds,
-no epic or an `active` one, and not held) with no build since it went ready waits until the end of
-the window. For that wait, the board's last commit to its status line on the default branch, dated
-by the merge, also readies it. A ready story that clashes with a running build (their `touches` in
-the same repo, as the clash rule reads them, with the project's `repos_dir`, unless one depends on
-the other) could not start, so those minutes are not idle. A build from before `--since` still
-clashes: its story is read from the board or, once merged, from git. When a git call fails, the
-section warns once on stderr, as what it reads is then left out. The same minutes with no conductor
-of the epic running go under `no_conductor_min`. `most_ready` is the most of its stories ready with
-no build at once, clashing or not. The `all` row counts a minute once however many epics were idle
-in it, and it includes the stories with no epic, under the backlog conductor. Builds keep
+alone. When no story (or none of that epic) waited in the window, the line `no story was ready in
+the window` (or `no story of epic <slug> ...`) replaces a row of zeros; a story covered by its own
+running build did not wait. `idle_min` is the minutes in the window when at least one of the epic's
+stories was ready with no build while its conductor ran. A story goes ready at an `unblock`,
+`reconcile ... ok (reopened)`, `reset` or `reset:held` event, or at a close that sent it back to
+ready. That is any close except the first one after a `review` or `kept` event for the build, which
+leaves the story in review (a later close, the drop, sends it back). Every wait counts: the first
+runs from the first build's start less its `ready_wait_min` (or from a later event that readied the
+story, such as a reset), and each later one from the story going ready again to its next build. A
+story is not waiting while its own build runs. A story on the board now that `next` would build
+(`status: ready` with `.swarm/board-state` laid over its file, a kind an agent builds, no epic or an
+`active` one, and not held) with no build since it went ready waits until the end of the window. A
+build since is one that ran past that time and started at it or later; a build the readying close
+ended, however short, is not. For that wait, the board's last commit to its status line on the
+default branch, dated by the merge, also readies it. A ready story that clashes with a running build
+(their `touches` in the same repo, as the clash rule reads them, with the project's `repos_dir`,
+unless one depends on the other) could not start, so those minutes are not idle. A build from before
+`--since` still clashes: its story is read from the board or, once merged, from git. When a git call
+fails, the section warns once on stderr, as what it reads is then left out. The same minutes with no
+conductor of the epic running go under `no_conductor_min`. `most_ready` is the most of its stories
+ready with no build at once, clashing or not. The `all` row counts a minute once however many epics
+were idle in it, and it includes the stories with no epic, under the backlog conductor. Builds keep
 `agents.tsv`'s order. Each runs from its start to its slug's next ok close or `reconcile ... ok
 (finished...)` (reconcile closes a merged story's builder itself), else to its next build, else to
 the end of the window. A build with no session log yet starts at 00:00 on its `agents.tsv` day, and

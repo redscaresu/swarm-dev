@@ -7,11 +7,13 @@
 # reset or reset:held event, or a close that sent it back: any close but the one that ended a build
 # after its review or kept event (the builder's close leaves the story in review; a later close, the
 # drop, sends it back). Its first wait runs from its first build's start less its ready_wait_min
-# (outcomes' column) to that start; each later wait from the last such event since the build before
-# to the next build's start; a story whose own build runs is not waiting. One on the board now that
+# (outcomes' column), or from the last event before it that readied it if later (a reset), to that
+# start; each later wait from the last such event since the build before to the next build's start;
+# a story whose own build runs is not waiting. One on the board now that
 # next would build (buildable_story: `status: ready`, a kind in SWARM_AGENT_KINDS or none, no epic or an
 # active one; and not held), under what swarm.sh wrote to .swarm/board-state as touches_rows.front
-# reads it, with no build since it went ready waits from then to the window's end; there the board's
+# reads it, with no build since it went ready (one past that time that started at it or later)
+# waits from then to the window's end; there the board's
 # last commit to its status line on its default branch also readies it, dated by the merge as
 # outcomes' board_log reads it, and a build with no start (no session log yet) on that day or later
 # counts as built since, unless a close readied it. Builds keep agents.tsv's order: each runs from
@@ -126,10 +128,13 @@ def conductor_runs(key):
     starts = sorted(conducts[key])
     return [(s, min([t for t in ends + starts[i + 1:] if t > s] + [hi])) for i, s in enumerate(starts)]
 
-by_slug = collections.defaultdict(list)   # slug -> its rows, in agents.tsv order
+# Stories are keyed by agent_name: a build with no session log has only agents.tsv's name, which
+# agent_name cuts to 32 characters. full_of gives a key's slug, for its story file.
+by_slug, full_of = collections.defaultdict(list), {}   # key -> its rows, in agents.tsv order
 for r in rows:
-    by_slug[r["slug"]].append(r)
-builds, starts, loose = [], collections.defaultdict(list), collections.defaultdict(list)   # (slug, start, end); slug -> starts; days of builds with none
+    by_slug[agent_name(r["slug"])].append(r)
+    full_of[agent_name(r["slug"])] = max(full_of.get(agent_name(r["slug"]), ""), r["slug"], key=len)   # a logged build's full slug
+builds, starts, own = [], collections.defaultdict(list), collections.defaultdict(list)   # (key, start, end); key -> starts; key -> (start, end, its day when it has no start)
 for slug, rs in by_slug.items():
     known, taken, ended = [secs(r["started"]) for r in rs], set(), None
     for i, r in enumerate(rs):
@@ -138,7 +143,6 @@ for slug, rs in by_slug.items():
             continue
         if known[i] is None:
             b0 = max(b0, ended) if ended is not None else b0
-            loose[slug].append(r["date"])
         upto = next((k for k in known[i + 1:] if k is not None), hi)
         c = min(((t, k) for k, t in enumerate(stops[agent_name(slug)]) if b0 <= t <= upto and k not in taken), default=None)
         taken.add(c[1] if c else None)   # by index, as throughput's: two in one second are two
@@ -146,6 +150,7 @@ for slug, rs in by_slug.items():
         ended = c[0] if c else upto
         builds.append((slug, b0, ended))
         starts[slug].append(b0)
+        own[slug].append((b0, ended, r["date"] if known[i] is None else None))
 
 def sent_back(slug, c):
     # Whether the close at c sent the story back to ready: not the first close after a review or kept
@@ -158,13 +163,23 @@ def readied(slug):
     n = agent_name(slug)
     return readies[n] + [c for c in closes[n] if sent_back(slug, c)]
 
-epic_of, earliest = {}, {}   # slug -> its epic; slug -> (its first build's start, that build's ready_wait_min)
+def built_since(slug, t, day):
+    # A build that ran past t and started at t or later (one with no start: on day or later). A build
+    # the readying close ended (it ends at t) is before it, however short.
+    return any(b1 > t and (b0 >= t or d and d >= day) for b0, b1, d in own[slug])
+
+epic_of, earliest = {}, {}   # key -> its epic; key -> (its first build's start, that build's ready_wait_min)
 for r in rows:
-    t = secs(r["started"])
-    epic_of[r["slug"]] = r["epic"]
-    if t is not None and (r["slug"] not in earliest or t < earliest[r["slug"]][0]):
-        earliest[r["slug"]] = (t, r["ready_wait_min"])
-ready = [(slug, t - 60 * int(w), t) for slug, (t, w) in earliest.items() if w]
+    t, k = secs(r["started"]), agent_name(r["slug"])
+    epic_of[k] = r["epic"] or epic_of.get(k, "")   # a log-less build of a long slug: outcomes found no story, so no epic
+    if t is not None and (k not in earliest or t < earliest[k][0]):
+        earliest[k] = (t, r["ready_wait_min"])
+ready = []
+for slug, (t, w) in earliest.items():
+    # The later of ready_wait's start and the last event before it that readied the story (a reset).
+    t0 = max([x for x in readied(slug) if x < t] + ([t - 60 * int(w)] if w else []), default=None)
+    if t0 is not None:
+        ready.append((slug, t0, t))
 for slug, bs in starts.items():
     bs = sorted(bs)
     for prev, b0 in zip(bs, bs[1:]):
@@ -172,24 +187,26 @@ for slug, bs in starts.items():
         if t is not None:
             ready.append((slug, t, b0))
 for f in sorted(glob.glob(os.path.join(glob.escape(board), "stories", "*.md"))) if board else ():
-    slug = os.path.basename(f)[:-3]
-    fm = {} if slug == "README" else front(f)
+    name = os.path.basename(f)[:-3]
+    fm = {} if name == "README" else front(f)
     if not buildable(fm) or fm.get("held_by"):
         continue
-    commit = board_log("-1", "-s", "--format=%ct", "-G^status:", "--", f"stories/{slug}.md").strip()
+    slug = agent_name(name)
+    full_of[slug] = name
+    commit = board_log("-1", "-s", "--format=%ct", "-G^status:", "--", f"stories/{name}.md").strip()
     t = max(readied(slug) + ([float(commit)] if commit else []), default=None)
-    # A close that sent it back ended every build before it, and a build after it starts no earlier;
-    # else a build with no start on its day or later is since.
+    # After a close that sent it back, only a build past it is since (a build with no start after it
+    # starts no earlier); else one with no start on its day or later is too.
     day = "~" if t is None or t in closes[agent_name(slug)] else datetime.date.fromtimestamp(t).isoformat()
-    if t is not None and not any(b >= t for b in starts[slug]) and not any(d >= day for d in loose[slug]):
-        epic_of.setdefault(slug, fm.get("epic", ""))
+    if t is not None and not built_since(slug, t, day):
+        epic_of[slug] = fm.get("epic", "") or epic_of.get(slug, "")   # the board's own word on its epic
         ready.append((slug, t, hi))
 files, needs = {}, {}   # slug -> its touches' entries; slug -> its depends_on
 
 def known(s):
     if s not in files:
-        fm = story(s)
-        files[s], needs[s] = entries(fm, project_dir, repos_dir), front_deps(fm)
+        fm = story(full_of.get(s, s))
+        files[s], needs[s] = entries(fm, project_dir, repos_dir), {agent_name(d) for d in front_deps(fm) if d}
     return files[s]
 
 @functools.lru_cache(maxsize=None)
@@ -199,11 +216,12 @@ def clashes(a, b):
 runs = {k: conductor_runs(k) for k in {epic_of[s] or "--backlog" for s, _, _ in ready}}
 points = sorted({min(max(t, lo), hi) for _, s, e in ready + builds for t in (s, e)}
                 | {min(max(t, lo), hi) for rs in runs.values() for s, e in rs for t in (s, e)})
-idle, none, most = collections.Counter(), collections.Counter(), collections.Counter()
+idle, none, most, measured = collections.Counter(), collections.Counter(), collections.Counter(), set()
 for a, b in zip(points, points[1:]):
     mid = (a + b) / 2
     running = [s for s, b0, b1 in builds if b0 <= mid < b1]
-    waiting = [s for s, r0, r1 in ready if r0 <= mid < r1 and s not in running]   # reopened while its build runs
+    # Each story once (two spans can cover one wait); not while its own build runs (reopened during it).
+    waiting = {s for s, r0, r1 in ready if r0 <= mid < r1 and s not in running}
     # epic ("" for none) -> "idle" or "none": its stories share one conductor
     hit = {epic_of[s]: "idle" if any(r0 <= mid < r1 for r0, r1 in runs[epic_of[s] or "--backlog"]) else "none"
            for s in waiting if not any(clashes(s, o) for o in running)}
@@ -212,12 +230,12 @@ for a, b in zip(points, points[1:]):
     # The project row apart, so an epic named all is still an epic.
     idle[None] += (b - a) * ("idle" in hit.values())
     none[None] += (b - a) * ("none" in hit.values())
+    measured |= {epic_of[s] for s in waiting}   # epics a story waited in, for some minutes
     for g, n in collections.Counter(epic_of[s] for s in waiting).items():
         most[g] = max(most[g], n)
     most[None] = max(most[None], len(waiting))
 
-# A zero row only for what had a ready story in the window: with none, a line says so.
-measured = {epic_of[s] for s, r0, r1 in ready if r0 < hi and r1 > lo}
+# A zero row only for what had a story waiting in the window: with none, a line says so.
 if epic and epic not in measured or not measured:
     print(f"no story{f' of epic {epic}' if epic else ''} was ready in the window")
     sys.exit()   # ends this section alone (flow_report.py)

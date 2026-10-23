@@ -445,7 +445,7 @@ I="${dir}/idle"; mkdir -p "${I}/.swarm" "${I}/docs/stories"; git -C "${I}" init 
 ist() { printf -- '---\nkind: code\nstatus: ready\nepic: %s\ntouches: [%s]\n---\n' "$2" "$3" > "${I}/docs/stories/$1.md"; }
 ist ia e9 src/a.sh; ist ib e9 src/b.sh; ist ic e10 src/c.sh
 mkdir -p "${I}/docs/epics"   # every epic here is active but e14 (later) and e26 (split)
-for e in e9 e10 e11 e12 e13 e15 e16 e17 e18 e19 e20 e21 e22 e23 e24 e25 e28 e29 e30 e31; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
+for e in e9 e10 e11 e12 e13 e15 e16 e17 e18 e19 e20 e21 e22 e23 e24 e25 e28 e29 e30 e31 e32 e33 e34 e35 e36 e37; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
 mkdir -p "${I}/.swarm/board-state/stories"; echo 'status: review' > "${I}/.swarm/board-state/stories/ib"   # closed: in review
 for x in ia:10:10 ib:09:30 ic:12:20; do
   printf '{"cwd":"%s/idle-wt/%s","timestamp":"2026-10-01T%s:00Z"}\n{"timestamp":"2026-10-01T%s:00Z"}\n' "${dir}" "${x%%:*}" "${x#*:}" "${x#*:}" \
@@ -555,7 +555,7 @@ check "idle_slots: touches resolve a bare file under the repos dir, as the clash
 # ka (e24) builds from 10:00 with no close; its PR closed unmerged and reconcile reopened it at 11:00
 # while that build still runs: not waiting.
 ist ka e24 src/ka.sh; sl ka ka 10:00; ag ka ska; ev 11:00 reconcile ka 'ok (reopened)'
-check "idle_slots: a story whose own build still runs is not waiting" "$(idle --until 2026-10-01 --epic e24)" "${IH}"$'\ne24\t0\t0\t0'
+check "idle_slots: a story whose own build still runs is not waiting" "$(idle --until 2026-10-01 --epic e24)" "no story of epic e24 was ready in the window"
 # kb (e25) is of a kind no agent builds, kc's epic e26 is split, kd's epic e27 has no file: next builds none of them.
 printf -- '---\nkind: research\nstatus: ready\nepic: e25\ntouches: [src/kb.sh]\n---\n' > "${I}/docs/stories/kb.md"
 ist kc e26 src/kc.sh; printf -- '---\nstatus: split\n---\n' > "${I}/docs/epics/e26.md"; ist kd e27 src/kd.sh
@@ -572,15 +572,43 @@ ist mc e29 src/mc.sh; sl mc mc 10:00; ag mc smc; ev 09:00 unblock mc; ev 11:00 k
 check "idle_slots: a kept event and its close in one second, then the drop, send the story back" \
   "$(idle --until 2026-10-01 --epic e29)" "${IH}"$'\ne29\t0\t720\t1'
 # md (e30) builds at 10:00; two closes in one second (11:00) end it and its log-less retry, so me,
-# clashing with md and waiting 12:00-12:20, is not blocked.
+# clashing with md and waiting 12:00-12:20, is not blocked. md waits again from 11:00 (the retry
+# that close ended is no build since), until me's build, clashing with it, starts at 12:20.
 ist md e30 src/md.sh; ist me e30 src/md.sh; sl md md 10:00; sl me me 12:20; ag md smd; ag md -; ag me sme
 ev 11:00 close md; ev 11:00 close md; ev 12:00 unblock me
-check "idle_slots: two closes in one second end two builds" "$(idle --until 2026-10-01 --epic e30)" "${IH}"$'\ne30\t0\t20\t1'
+check "idle_slots: two closes in one second end two builds" "$(idle --until 2026-10-01 --epic e30)" "${IH}"$'\ne30\t0\t80\t2'
 # mf (e31) builds 10:00, closes at 11:00 and retries in that same second, closing at 12:00, then goes
 # to review. mg, clashing with mf and waiting 11:10-11:20, is blocked by the retry.
 ist mf e31 src/mf.sh; ist mg e31 src/mf.sh; sl mf1 mf 10:00; sl mf2 mf 11:00; sl mg mg 11:20; ag mf smf1; ag mf smf2; ag mg smg
 echo 'status: review' > "${I}/.swarm/board-state/stories/mf"; ev 11:00 close mf; ev 12:00 close mf; ev 11:10 unblock mg
 check "idle_slots: a close at its retry's first second ends the build before it" "$(idle --until 2026-10-01 --epic e31)" "${IH}"$'\ne31\t0\t0\t1'
+# mh (e32) is ready from 09:50; a build starts and closes at 10:00, sending it back: it waits again from then.
+ist mh e32 src/mh.sh; sl mh mh 10:00; ag mh smh; ev 09:50 unblock mh; ev 10:00 close mh
+check "idle_slots: a build the readying close ended, however short, is no build since" "$(idle --until 2026-10-01 --epic e32)" "${IH}"$'\ne32\t0\t850\t1'
+# A story whose slug runs past 32 characters (e33), unblocked at 10:00, builds with no session log:
+# agents.tsv keeps agent_name's cut of it. It is built, not waiting.
+long="a-story-whose-slug-runs-past-thirty-two"; ist "${long}" e33 src/long.sh; ag "${long:0:32}" -; ev 10:00 unblock "${long}"
+check "idle_slots: a long slug's log-less build is its own build" "$(idle --until 2026-10-01 --epic e33)" "no story of epic e33 was ready in the window"
+# mi (e34) is reset at 10:00, with no unblock, and first built at 10:10: it waited those 10 minutes.
+ist mi e34 src/mi.sh; sl mi mi 10:10; ag mi smi; ev 10:00 reset mi 'ok (retry)'
+check "idle_slots: a reset before a story's first build starts that wait" "$(idle --until 2026-10-01 --epic e34)" "${IH}"$'\ne34\t0\t10\t1'
+# A merged story whose slug runs past 32 characters (e35) built first with no session log (agents.tsv's
+# cut name, closed 10:00), then from 10:00 with one. mj, clashing with it, waits 11:00-11:30: blocked.
+long2="another-story-whose-slug-is-over-32"; ist "${long2}" e35 src/long2.sh; ist mj e35 src/long2.sh
+git -C "${I}" add "docs/stories/${long2}.md"; git -C "${I}" -c user.name=t -c user.email=t@t commit -qm "${long2}"
+git -C "${I}" rm -q "docs/stories/${long2}.md"; git -C "${I}" -c user.name=t -c user.email=t@t commit -qm "${long2} merged"
+sl long2 "${long2}" 10:00; sl mj mj 11:30; ag "${long2:0:32}" -; ag "${long2:0:32}" slong2; ag mj smj
+ev 10:00 close "${long2:0:32}"; ev 11:00 unblock mj
+check "idle_slots: a merged long slug's touches are read by its full slug, whichever build named it first" \
+  "$(idle --until 2026-10-01 --epic e35)" "${IH}"$'\ne35\t0\t0\t1'
+# mk (e36) builds first with no session log, closed at 11:00, and again from 13:00 with one: one
+# story waiting 11:00-13:00, counted once.
+ist mk e36 src/mk.sh; sl mk mk 13:00; ag mk -; ag mk smk; ev 11:00 close mk
+check "idle_slots: a wait two spans cover counts its story once" "$(idle --until 2026-10-01 --epic e36)" "${IH}"$'\ne36\t0\t120\t1'
+# A story whose slug runs past 32 characters (e37) builds with no session log (no epic in outcomes'
+# row) and closes at 11:00, back to ready: it waits from then, under its board epic.
+long3="a-third-story-whose-slug-is-over-32"; ist "${long3}" e37 src/long3.sh; ag "${long3:0:32}" -; ev 11:00 close "${long3:0:32}"
+check "idle_slots: a long slug with a log-less build keeps its board epic" "$(idle --until 2026-10-01 --epic e37)" "${IH}"$'\ne37\t0\t780\t1'
 # On the 2nd, with the board's ready stories gone: the backlog's ik (no epic) is ready from 10:00 under
 # the backlog conductor (09:00 on); epic backlog-cleanup's conductor closing at 12:00 does not end it.
 # im, built 11:00-11:30 and touching ik's file, is a merged story whose text has a byte that is not UTF-8.
