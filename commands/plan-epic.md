@@ -96,7 +96,10 @@ tell you which of the two broke something, and cannot be rolled back one half at
 the plan does not answer; the surviving stories with `kind`, `estimate_lines`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain (the lead checks chain depth over the whole graph, since skeptics are capped); then **What you will do**: every `lead`
 story, what each needs from the user (its **You:** steps), and, with `merge = human`, that the user
 merges the resulting PRs. Ask before
-writing anything. (The small path has already written and committed the stories and run codex: it asks before
+writing anything. Before each approval point (this one, and the small path's and the split's question
+before `board-pr open`), run `swarm.sh grants $1`: when it lists `stories`, the epic's HLD lets you
+write the stories and open the board PR without asking, and the report says the HLD's `stories` grant
+did that. Without it, ask. (The small path has already written and committed the stories and run codex: it asks before
 `swarm.sh board-pr open scope-$1 "<title>" <body-file>`, and runs `swarm.sh board-pr done scope-$1` once the PR
 has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no file in `touches`, `touches`, `estimate_lines`, `easy`, `risk` when
