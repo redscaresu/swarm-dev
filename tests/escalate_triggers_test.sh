@@ -21,7 +21,9 @@ check() { # <name> <want> <got>
 }
 
 # herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until the
-# tab closes; agent wait returns at once.
+# tab closes; agent wait returns at once. With quick, a started session's first turn has ended by the
+# time anyone reads it: the brief writes an assistant entry in its log, a second passes, and Claude
+# Code lists it idle; a /goal writes its goal_status set entry.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -33,8 +35,20 @@ case "$1 $2" in
   "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"}]}}' ;;
   "tab close")    : > "$H/agents" ;;
   "agent start")  [ -e "$H/startfail" ] && { echo "start refused" >&2; exit 1; }
+                  echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p' > "$H/sid"
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
-  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent prompt") if [ -e "$H/quick" ] && [ -s "$H/sid" ]; then
+                    sid=$(cat "$H/sid"); mkdir -p "$CLAUDE_PROJECTS_DIR/p"
+                    python3 -c 'import datetime, json, sys
+now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+t = sys.argv[1]
+if t.startswith("/goal "):
+    print(json.dumps({"type": "attachment", "timestamp": now, "attachment": {"type": "goal_status", "met": False, "sentinel": True, "condition": t[6:]}}))
+else:
+    print(json.dumps({"type": "assistant", "timestamp": now, "message": {"model": "m", "content": []}}))' "$4" >> "$CLAUDE_PROJECTS_DIR/p/$sid.jsonl"
+                    case "$4" in "/goal "*) ;; *) sleep 1; echo "[{\"sessionId\":\"$sid\",\"status\":\"idle\"}]" > "$CLAUDE_STUB_AGENTS" ;; esac
+                  fi
+                  echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
@@ -65,7 +79,7 @@ P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
 # (one commit, 2 hours old) on [model] (sonnet), its builder open in pane w:1, and escalate_ladder = <ladder>.
 fresh() {
-  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail"; : > "${ROOT}/run.log"
+  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid"; : > "${ROOT}/run.log"
   "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
   "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
   mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/state"
@@ -223,6 +237,13 @@ for ladder in sonnet,opus,fable ""; do
     out="$(SWARM_PROMPT_TIMEOUT_MS=2000 run close s1 met)" && rc=0 || rc=$?
     check "a step-up whose /goal does not set still stands, and says so" "0|ok (no-pr: sonnet -> opus)|yes|no||yes" \
       "${rc}|$(stepped)|$(grep -q '/goal did not set' <<< "${out}" && echo yes)|$(grep -q 'step-up failed' <<< "${out}" && echo yes || echo no)|$(attempts)|$([[ -d "${WT}" ]] && echo yes)"
+    # A rung whose first turn ended before send_goal read it (idle, with work since its brief) still
+    # gets its /goal: start_rung takes <since> before start_agent sends the brief.
+    fresh "${ladder}" idle; echo "goal = 30" >> "${P}/.claude/swarm/config"; touch "${ROOT}/quick"
+    out="$(SWARM_PROMPT_TIMEOUT_MS=3000 run close s1 met)" && rc=0 || rc=$?
+    check "a stepped-up builder idle after a short first turn gets its /goal set" "0|ok (no-pr: sonnet -> opus)|no" \
+      "${rc}|$(stepped)|$(grep -q '/goal did not set' <<< "${out}" && echo yes || echo no)"
+    rm -f "${ROOT}/quick"
     # A tell whose step-up fails after closing the builder is not sent, and says why.
     fresh "${ladder}" idle; touch "${ROOT}/startfail"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
     check "a tell whose step-up fails partway is not sent, and says so" "1|yes|no" \

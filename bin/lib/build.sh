@@ -343,7 +343,7 @@ goal_entry() {
 # once mode) and confirm it set from its session log (goal_entry, for this condition), polling up to
 # PROMPT_TIMEOUT_MS. The condition goes on one line: the spike only saw a one-line /goal set, and a
 # multi-line paste could be split or become a "[Pasted text]" placeholder; goal_entry compares it
-# whitespace aside. Any goal_status newer than the send means it set: the judge may already have
+# whitespace aside. Any goal_status newer than <since> means it set: the judge may already have
 # written its own after the sentinel. A refusal, or no entry, fails naming the story and why (a /goal
 # Claude Code queued as pasted text, when goal_entry finds one), and leaves the builder open for the
 # lead to read. <since> defaults to now. The /goal goes only into a
@@ -361,7 +361,7 @@ send_goal() {
   [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; want="read busy"; }
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
   while state="$(session_state "${name}")"
-    if [[ "${state}" == idle && "$3" == brief ]]; then t="$(session_mtime "${name}")"; [[ -z "${t}" || "${t}" -lt "${since}" ]] || state=ran; fi
+    if [[ "${state}" == idle && "$3" == brief ]]; then t="$(session_mtime "${name}")"; [[ -n "${t}" && "${t}" -ge "${since}" ]] && state=ran; fi
     [[ "${state}" != busy && "${state}" != ran && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
   case "${state}" in
     busy|ran) ;;
