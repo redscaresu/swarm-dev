@@ -646,7 +646,7 @@ codex_review() {
     # shellcheck disable=SC2064
     trap "codex_cleanup - ${files}" EXIT
     trap "exit 143" TERM HUP
-    if [[ ${rc} -ne 0 ]] && tail -n 5 "${log}" | grep -Eq "${CODEX_LIMIT_RE}"; then
+    if [[ ${rc} -ne 0 ]] && tail -n 5 "${log}" | grep -Eq "${CODEX_LIMIT_RE}"; then   # loose-match: ok CODEX_LIMIT_RE is a regex
       # Not the slug alone, which is also its builder's agent name: login_incident would take this
       # line for the end of that builder's login episode.
       record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: usage limit"

@@ -420,7 +420,7 @@ conduct_stop() {
   [[ "$1" == - ]] || return 1
   shift
   for s in "$@"; do
-    if one_off_started "${s}" && grep -qE "not started: ${s}([ (]|\$)" "${report}"; then
+    if one_off_started "${s}" && grep -qE "not started: ${s}([ (]|\$)" "${report}"; then   # loose-match: ok slugs are [a-z0-9-], ended by a space, ( or the line end
       echo "no backlog conductor started: ${report} lists ${s} under not started: and its worktree is still there, so its build died; clear it first"; return 0
     fi
   done
@@ -592,7 +592,7 @@ fix_main() {
   [[ -z "${5:-}" ]] || fails="note: $(ci_data <<< "$5")${nl}${fails}"
   runs="${runs:-none, as no red check is a GitHub Actions run}"
   # A fence longer than any run of backticks in what it holds, so no log line can close it.
-  fence='```'; while [[ "${checks}${nl}${fails}" == *"${fence}"* ]]; do fence+='`'; done
+  fence='```'; while [[ "${checks}${nl}${fails}" == *"${fence}"* ]]; do fence+='`'; done   # loose-match: ok any run of backticks in the text
   [[ ! -f "${item}" ]] || rname="$(fm "${item}" repo)"
   ignore_fixes || echo "warning: cannot git-ignore fix-main stories in ${PROJECT_DIR}, so the story shows in git status there"
   # One fix_main at a time per repo and base (a merge queue's batch can land two red merges at once):
@@ -1082,7 +1082,7 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     if [[ "${kind}" == project ]]; then d="${dir}"; else
       d="$([[ -d "${dir}" ]] && cd "${dir}" && SWARM_PROJECT="" find_project 2>/dev/null)" || continue
     fi
-    [[ -f "${d}/.claude/swarm/config" && $'\n'"${out}" != *$'\n'"${d}"$'\n'* ]] || continue
+    [[ -f "${d}/.claude/swarm/config" && $'\n'"${out}" != *$'\n'"${d}"$'\n'* ]] || continue   # loose-match: ok newline-padded, so a whole line
     out+="${d}"$'\n'
   done <<< "${rows}"
   [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} is upgraded" >&2

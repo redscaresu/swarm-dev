@@ -297,7 +297,7 @@ launch_file() {
   mkdir -p "${1%/*}"; rm -f "$1"
   (umask 077; {
     printf '/bin/rm -f -- %q\n' "$1"
-    for n in ${AGENT_ENV} $(compgen -e | grep -E "^(${AGENT_PREFIXES// /|})" || true) $2; do
+    for n in ${AGENT_ENV} $(compgen -e | grep -E "^(${AGENT_PREFIXES// /|})" || true) $2; do   # loose-match: ok AGENT_PREFIXES are env name prefixes, a regex alternation
       [[ "${exported}" == *" ${n} "* ]] || continue
       v="${!n}"; [[ "${n}" != SWARM_PROJECT ]] || v="${PROJECT_DIR}"   # resolved, so a relative one holds from any cwd
       printf 'export %s=%q\n' "${n}" "${v}"

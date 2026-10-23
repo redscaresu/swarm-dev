@@ -832,7 +832,7 @@ handover_brief() {
                git -C "${wt}" diff --no-index -- /dev/null "${p}" || (( $? < 128 )) || break
              done
            } 2>/dev/null | head -n "${HANDOVER_DIFF_LINES}" || true)"
-  while [[ "${diff}" == *"${fence}"* ]]; do fence+='`'; done
+  while [[ "${diff}" == *"${fence}"* ]]; do fence+='`'; done   # loose-match: ok any run of backticks in the diff
   head="$(git -C "${wt}" rev-parse HEAD)"
   reviewed="$(sed -n 's/^head: *//p' "${findings}" 2>/dev/null | head -n 1 || true)"   # no findings file: none
   if [[ ! -f "${findings}" ]]; then found="No review findings on file."
@@ -2030,7 +2030,7 @@ upgrade_reread() {
   upgrade_list "$1" "$2" > "${d}/list"
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && ( "${cur}" == old || -e "${d}/hand-${name}" ) ]] || continue
-    ! grep -q "^${name}"$'\t' "${d}/list" || continue
+    ! grep -q "^${name}"$'\t' "${d}/list" || continue   # loose-match: ok agent names are [a-z0-9_-], anchored by ^ and a tab
     if [[ -e "${d}/hand-${name}" ]]; then
       rm -f "$(upgrade_paused "${name}")"; : > "${d}/gone-${name}"
       upgrade_left "${name}" "it left herdr's agent list while paused for its handover"
@@ -2152,7 +2152,7 @@ upgrade_hold() {
   c="$(conductor_name "$1")"
   [[ ! -e "${UPGRADE_DIR}/ready-${c}" && ! -e "${UPGRADE_DIR}/gone-${c}" ]] || return 0
   if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left
-  elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi
+  elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi   # loose-match: ok conductor names are [a-z0-9_-], anchored by ^ and a tab
 }
 
 # upgrade_ask <conductor> <pane> <epic> <version> — where the conductor is with its handover. The
