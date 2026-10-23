@@ -350,8 +350,8 @@ for l in lines("DASH_WAITING"):
     if l.startswith("later "):
         later += 1
         continue
-    if l.startswith("draft epic: "):
-        continue  # the board's draft epics have their own needs-you row below
+    if l.startswith(("draft epic: ", "draft hld: ")):
+        continue  # the board's draft epics and HLDs have their own needs-you row below
     m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
     if m:
         # With merge = agent, swarm.sh merge holds a costs: money story for the user, so no lead
@@ -418,6 +418,8 @@ lq += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, 
 for b in board:
     if b[0] == "epics" and b[2] == "draft":
         add(need, bang + [(f"agree draft epic {b[1]}: ", ""), (f"/epic {b[1]}", "dim")], ("epics", b[1]))
+    if b[0] == "hld" and b[2] == "draft":
+        add(need, bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")], ("hld", b[1]))
 
 # Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
 # its live agents and open PRs beneath it.

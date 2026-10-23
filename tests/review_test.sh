@@ -350,7 +350,8 @@ CHECKLIST=(
   "- A new code path must enforce every rule the existing paths enforce."
   "- A zero or empty value shown to a person must say what it means."
   "- A repair path that changes something must say what it did."
-  "- For each function, flag or message the diff changes, re-read its header comment, error text and the README/docs/reference.md lines naming it; a sentence the code no longer matches is a finding."
+  "- For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it."
+  "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
   "- For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
 )
@@ -387,7 +388,7 @@ utf8() { python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8"); print(
 check "a 2000-byte marked line of two-byte characters is cut at 1500 bytes on a character boundary, with an ellipsis: both briefs stay valid UTF-8" "yes|yes|yes|1|0" \
   "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(has "$(marked_at "${b}/stories/rv1.md" Accents | cut -c1-200)" "${brief}")|$(
   grep -c 'Accents (user, 2026-10-17): x.*…$' <<< "${brief}" || true)|$(grep -c "$(printf 'é%.0s' $(seq 1000))" <<< "${brief}" || true)"
-for l in "${CHECKLIST[@]:0:5}"; do
+for l in "${CHECKLIST[@]:0:${#CHECKLIST[@]}-1}"; do
   check "a fallback brief with no story still carries: ${l:2:40}..." "yes" "$(has "${l}" "${fbare}")"
 done
 check "a fallback brief with no story has neither the decision check nor any decision" "0|0" \

@@ -277,7 +277,7 @@ story_env() {
 reserved_env() {
   local p
   [[ " ${AGENT_ENV} ${AGENT_SET} " != *" $1 "* ]] || return 0
-  for p in ${AGENT_PREFIXES}; do [[ "$1" != "${p}"* ]] || return 0; done
+  for p in ${AGENT_PREFIXES}; do [[ "$1" != "${p}"* ]] || return 0; done   # loose-match: ok AGENT_PREFIXES are prefixes by design
   case "$1" in HERDR_*|CLAUDECODE|CLAUDE_CODE_*|CLAUDE_PID|BASH_ENV|ENV|DYLD_*|LD_*) return 0 ;; esac
   return 1
 }
@@ -297,7 +297,7 @@ launch_file() {
   mkdir -p "${1%/*}"; rm -f "$1"
   (umask 077; {
     printf '/bin/rm -f -- %q\n' "$1"
-    for n in ${AGENT_ENV} $(compgen -e | grep -E "^(${AGENT_PREFIXES// /|})" || true) $2; do
+    for n in ${AGENT_ENV} $(compgen -e | grep -E "^(${AGENT_PREFIXES// /|})" || true) $2; do   # loose-match: ok AGENT_PREFIXES are env name prefixes, a regex alternation
       [[ "${exported}" == *" ${n} "* ]] || continue
       v="${!n}"; [[ "${n}" != SWARM_PROJECT ]] || v="${PROJECT_DIR}"   # resolved, so a relative one holds from any cwd
       printf 'export %s=%q\n' "${n}" "${v}"
