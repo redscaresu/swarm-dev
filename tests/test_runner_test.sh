@@ -10,6 +10,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 M="${ROOT}/marker${RANDOM}"   # in every path the stub's dash and a refresh it starts name
 # left — the PID of each dash_slow.py naming M.
 left() { pgrep -f "dash_slow\.py.*${M}" || true; }
@@ -17,6 +18,9 @@ left() { pgrep -f "dash_slow\.py.*${M}" || true; }
 tree() { local c; for c in $(pgrep -P "$1" || true); do tree "${c}"; done; kill -KILL "$1" 2>/dev/null || true; }
 reap() { local p; for p in $(left); do tree "${p}"; done; }
 trap 'reap; rm -rf "${ROOT}"' EXIT
+# A pgrep that cannot list processes (a sandbox) would see no refresh, and leave the one the last
+# check starts: stop before starting any.
+pgrep -f . > /dev/null || { echo "FAIL pgrep cannot list processes here"; exit 1; }
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
@@ -36,7 +40,7 @@ done
 cat > "${M}/dash_stub_test.sh" <<EOF
 #!/usr/bin/env bash
 cd "${M}/fixture" && env -u HERDR_ENV PATH="${M}/bin:\${PATH}" CLAUDE_PROJECTS_DIR="${M}/projects" \\
-  CLAUDE_CONFIG_DIR="${M}/claude-config" bash "${REPO}/bin/swarm.sh" dash > /dev/null 2>&1 || true
+  bash "${REPO}/bin/swarm.sh" dash > /dev/null 2>&1 || true
 EOF
 
 mkdir "${M}/tmp1"
