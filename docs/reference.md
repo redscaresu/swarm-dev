@@ -1181,22 +1181,24 @@ with no build while its conductor ran. A story goes ready at an `unblock`, `reco
 close except the first one after a `review` or `kept` event for the build, which leaves the story in
 review (a later close, the drop, sends it back). Every wait counts: the first runs from the first
 build's start less its `ready_wait_min`, and each later one from the story going ready again to its
-next build. A story on the board now as `status: ready` (with `.swarm/board-state` laid over its
-file; not a lead story, not held, and not in a `later` or `draft` epic) with no build since it went
-ready waits until the end of the window. For that wait, the board's last commit to its status line
-on the default branch, dated by the merge, also readies it. A ready story that clashes with a
-running build (their `touches` in the same repo, as the clash rule reads them, with the project's
-`repos_dir`, unless one depends on the other) could not start, so those minutes are not idle. A
-build from before `--since` still clashes: its story is read from the board or, once merged, from
-git. The same minutes with no conductor of the epic running go under `no_conductor_min`.
-`most_ready` is the most of its stories ready with no build at once, clashing or not. The `all` row
-counts a minute once however many epics were idle in it, and it includes the stories with no epic,
-under the backlog conductor. Builds keep `agents.tsv`'s order. Each runs from its start to its
-slug's next ok close, else to its next build, else to the end of the window. A build with no session
-log yet starts at 00:00 on its `agents.tsv` day, and no earlier than the build before it ended. Such
-a build counts as built since its story went ready, unless a close readied the story. A conductor
-runs as `held_min` reads it: from an ok `conduct` event until the next one, a close of its agent or
-its report. The backlog's agent is its own conductor name alone.
+next build. A story is not waiting while its own build runs. A story on the board now that `next`
+would build (`status: ready` with `.swarm/board-state` laid over its file, a kind an agent builds,
+no epic or an `active` one, and not held) with no build since it went ready waits until the end of
+the window. For that wait, the board's last commit to its status line on the default branch, dated
+by the merge, also readies it. A ready story that clashes with a running build (their `touches` in
+the same repo, as the clash rule reads them, with the project's `repos_dir`, unless one depends on
+the other) could not start, so those minutes are not idle. A build from before `--since` still
+clashes: its story is read from the board or, once merged, from git. When a git call fails, the
+section warns once on stderr, as what it reads is then left out. The same minutes with no conductor
+of the epic running go under `no_conductor_min`. `most_ready` is the most of its stories ready with
+no build at once, clashing or not. The `all` row counts a minute once however many epics were idle
+in it, and it includes the stories with no epic, under the backlog conductor. Builds keep
+`agents.tsv`'s order. Each runs from its start to its slug's next ok close, else to its next build,
+else to the end of the window. A build with no session log yet starts at 00:00 on its `agents.tsv`
+day, and no earlier than the build before it ended. Such a build counts as built since its story
+went ready, unless a close readied the story. A conductor runs as `held_min` reads it: from an ok
+`conduct` event until the next one, a close of its agent or its report. A backlog run ends on a
+close of `conduct-backlog` or of the project's own backlog conductor name.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying

@@ -444,6 +444,8 @@ check "ci_health: a rate limit health spent leaves the listings unread, and no n
 I="${dir}/idle"; mkdir -p "${I}/.swarm" "${I}/docs/stories"; git -C "${I}" init -q
 ist() { printf -- '---\nkind: code\nstatus: ready\nepic: %s\ntouches: [%s]\n---\n' "$2" "$3" > "${I}/docs/stories/$1.md"; }
 ist ia e9 src/a.sh; ist ib e9 src/b.sh; ist ic e10 src/c.sh
+mkdir -p "${I}/docs/epics"   # every epic here is active but e14 (later) and e26 (split)
+for e in e9 e10 e11 e12 e13 e15 e16 e17 e18 e19 e20 e21 e22 e23 e24 e25; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
 mkdir -p "${I}/.swarm/board-state/stories"; echo 'status: review' > "${I}/.swarm/board-state/stories/ib"   # closed: in review
 for x in ia:10:10 ib:09:30 ic:12:20; do
   printf '{"cwd":"%s/idle-wt/%s","timestamp":"2026-10-01T%s:00Z"}\n{"timestamp":"2026-10-01T%s:00Z"}\n' "${dir}" "${x%%:*}" "${x#*:}" "${x#*:}" \
@@ -497,7 +499,7 @@ printf '%s\n' $'2026-10-01T13:50:00Z\tunblock\til\tw:1\tok' $'2026-10-01T15:00:0
 check "idle_slots: a story a close sent back to ready waits again from that close" \
   "$(idle --until 2026-10-01 --epic e13)" "${IH}"$'\ne13\t0\t550\t1'
 # in is ready from 23:00, but its epic e14 is later: no conductor will run it.
-ist in e14 src/n.sh; mkdir -p "${I}/docs/epics"; printf -- '---\nstatus: later\n---\n' > "${I}/docs/epics/e14.md"
+ist in e14 src/n.sh; printf -- '---\nstatus: later\n---\n' > "${I}/docs/epics/e14.md"
 printf '%s\n' $'2026-10-01T23:00:00Z\tunblock\tin\tw:1\tok' >> "${I}/.swarm/events.tsv"
 check "idle_slots: a ready story in a later epic is not waiting" "$(idle --until 2026-10-01 --epic e14)" "${IH}"$'\ne14\t0\t0\t0'
 # io (e15) is unblocked at 10:00 and its build has no session log yet: built, not waiting.
@@ -550,6 +552,16 @@ done
 sl jq jq 10:30; sl jr jr 09:00; ag jq sjq; ag jr sjr; ev 10:00 unblock jq; ev 12:00 close jr
 check "idle_slots: touches resolve a bare file under the repos dir, as the clash rule does" \
   "$(idle --until 2026-10-01 --epic e23)" "${IH}"$'\ne23\t0\t0\t1'
+# ka (e24) builds from 10:00 with no close; its PR closed unmerged and reconcile reopened it at 11:00
+# while that build still runs: not waiting.
+ist ka e24 src/ka.sh; sl ka ka 10:00; ag ka ska; ev 11:00 reconcile ka 'ok (reopened)'
+check "idle_slots: a story whose own build still runs is not waiting" "$(idle --until 2026-10-01 --epic e24)" "${IH}"$'\ne24\t0\t0\t0'
+# kb (e25) is of a kind no agent builds, kc's epic e26 is split, kd's epic e27 has no file: next builds none of them.
+printf -- '---\nkind: research\nstatus: ready\nepic: e25\ntouches: [src/kb.sh]\n---\n' > "${I}/docs/stories/kb.md"
+ist kc e26 src/kc.sh; printf -- '---\nstatus: split\n---\n' > "${I}/docs/epics/e26.md"; ist kd e27 src/kd.sh
+ev 23:00 unblock kb; ev 23:00 unblock kc; ev 23:00 unblock kd
+check "idle_slots: a ready story next would not build (another kind, an epic not active or missing) is not waiting" \
+  "$(for e in e25 e26 e27; do idle --until 2026-10-01 --epic "${e}" | tail -1; done)" $'e25\t0\t0\t0\ne26\t0\t0\t0\ne27\t0\t0\t0'
 # On the 2nd, with the board's ready stories gone: the backlog's ik (no epic) is ready from 10:00 under
 # the backlog conductor (09:00 on); epic backlog-cleanup's conductor closing at 12:00 does not end it.
 # im, built 11:00-11:30 and touching ik's file, is a merged story whose text has a byte that is not UTF-8.
@@ -566,6 +578,16 @@ printf '%s\n' $'2026-10-02T09:00:00Z\tconduct\t--backlog\tw:1\tok' $'2026-10-02T
   $'2026-10-02T11:30:00Z\tclose\tim\tw:1\tok' $'2026-10-02T12:00:00Z\tclose\tconduct-backlog-cleanup\tw:1\tok' >> "${I}/.swarm/events.tsv"
 check "idle_slots: only the backlog's own conductor ends its run, and a merged story's bytes that are not UTF-8 still read" \
   "$(idle --since 2026-10-02 --until 2026-10-02)" "${IH}"$'\nall\t810\t0\t1'
+
+# A git that refuses show: im's text is lost, so it clashes with nothing (14 hours idle), and idle_slots says so once.
+mkdir -p "${dir}/gitfail"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\nfor a; do [ "$a" = show ] && { echo "fatal: show refused" >&2; exit 128; }; done\nexec "%s" "$@"\n' "$(command -v git)" > "${dir}/gitfail/git"
+chmod +x "${dir}/gitfail/git"
+out="$(cd "${I}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=idle_slots CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/gitfail:${dir}/bin:${PATH}" \
+  bash "${SWARM}" flow --since 2026-10-02 --until 2026-10-02 2>&1)"
+check "idle_slots: a git call that fails warns once on stderr" \
+  "$(grep -c '^warning: idle_slots: git show in .* failed (fatal: show refused): what it reads is left out$' <<< "${out}"; grep '^all' <<< "${out}")" $'1\nall\t840\t0\t1'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

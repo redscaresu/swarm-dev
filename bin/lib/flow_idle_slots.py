@@ -8,8 +8,9 @@
 # after its review or kept event (the builder's close leaves the story in review; a later close, the
 # drop, sends it back). Its first wait runs from its first build's start less its ready_wait_min
 # (outcomes' column) to that start; each later wait from the last such event since the build before
-# to the next build's start. One on the board now as `status: ready` (not a lead story, not held, not
-# in a later or draft epic), under what swarm.sh wrote to .swarm/board-state as touches_rows.front
+# to the next build's start; a story whose own build runs is not waiting. One on the board now that
+# next would build (buildable_story: `status: ready`, a kind in SWARM_AGENT_KINDS or none, no epic or an
+# active one; and not held), under what swarm.sh wrote to .swarm/board-state as touches_rows.front
 # reads it, with no build since it went ready waits from then to the window's end; there the board's
 # last commit to its status line on its default branch also readies it, dated by the merge as
 # outcomes' board_log reads it, and a build with no start (no session log yet) on that day or later
@@ -26,7 +27,7 @@
 # or SWARM_BACKLOG_CONDUCTOR (conductor_name backlog).
 # ponytail: a build with no close runs to the window's end; read its session log's last entry, as throughput does, if that misleads.
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
-import collections, datetime, functools, glob, os, subprocess, time
+import collections, datetime, functools, glob, os, subprocess, sys, time
 import touches_rows
 from report import agent_name
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
@@ -35,24 +36,40 @@ board, repos_dir = os.environ.get("SWARM_BOARD", ""), os.environ.get("SWARM_REPO
 board_state = os.path.join(os.path.dirname(events), "board-state")
 touches_rows.state = os.path.join(board_state, "stories")   # front's overlay for a story
 
-def git(*args):
+warned = []
+
+def git(*args, quiet=False):
+    # Its output, or "" when it fails; the first failure that is not quiet warns on stderr, as what it
+    # read (a merged story's touches, a ready time) is then left out.
     got = subprocess.run(["git", "-C", board, *args], capture_output=True, encoding="utf-8", errors="replace")
+    if got.returncode and not quiet and not warned:
+        warned.append(args)
+        why = (got.stderr.strip().splitlines() or [f"exit {got.returncode}"])[0]
+        print(f"warning: idle_slots: git {args[0]} in {board} failed ({why}): what it reads is left out", file=sys.stderr)
     return got.stdout if got.returncode == 0 else ""
 
-def board_log(*args):
-    # outcomes_join's board_log: git log on the board's default branch (origin/HEAD, else HEAD), a
-    # commit dated by the merge that brought it.
-    ref = "origin/HEAD" if git("rev-parse", "-q", "--verify", "origin/HEAD") else "HEAD"
-    return git("log", ref, "--first-parent", "--diff-merges=first-parent", "--no-renames", *args)
+@functools.lru_cache(maxsize=None)
+def board_ref():
+    # The board's default branch (origin/HEAD, else HEAD); None with no commit yet.
+    git("rev-parse", "--git-dir")   # warns when the board is no git repo
+    return next((r for r in ("origin/HEAD", "HEAD") if git("rev-parse", "-q", "--verify", r, quiet=True)), None)
 
-def epic_held(e):
-    # True when the epic is later or draft (board.sh's epic_held): no conductor runs it.
-    f = os.path.join(board, "epics", e + ".md")
-    if not e or not os.path.isfile(f):
+def board_log(*args):
+    # outcomes_join's board_log: git log on the board's default branch, a commit dated by the merge
+    # that brought it.
+    ref = board_ref()
+    return git("log", ref, "--first-parent", "--diff-merges=first-parent", "--no-renames", *args) if ref else ""
+
+def buildable(fm):
+    # board.sh's buildable_story: ready, an agent's kind (or none), no epic or an active one.
+    if fm.get("status") != "ready" or fm.get("kind", "") not in [""] + os.environ.get("SWARM_AGENT_KINDS", "").split():
         return False
+    f = os.path.join(board, "epics", fm.get("epic", "") + ".md")
+    if not fm.get("epic"):
+        return True
     touches_rows.state = os.path.join(board_state, "epics")
     try:
-        return front(f).get("status") in ("later", "draft")
+        return os.path.isfile(f) and front(f).get("status") == "active"
     finally:
         touches_rows.state = os.path.join(board_state, "stories")
 
@@ -150,7 +167,7 @@ for slug, bs in starts.items():
 for f in sorted(glob.glob(os.path.join(glob.escape(board), "stories", "*.md"))) if board else ():
     slug = os.path.basename(f)[:-3]
     fm = {} if slug == "README" else front(f)
-    if fm.get("status") != "ready" or fm.get("kind") == "lead" or fm.get("held_by") or epic_held(fm.get("epic", "")):
+    if not buildable(fm) or fm.get("held_by"):
         continue
     commit = board_log("-1", "-s", "--format=%ct", "-G^status:", "--", f"stories/{slug}.md").strip()
     t = max(readied(slug) + ([float(commit)] if commit else []), default=None)
@@ -178,8 +195,8 @@ points = sorted({min(max(t, lo), hi) for _, s, e in ready + builds for t in (s, 
 idle, none, most = collections.Counter(), collections.Counter(), collections.Counter()
 for a, b in zip(points, points[1:]):
     mid = (a + b) / 2
-    waiting = [s for s, r0, r1 in ready if r0 <= mid < r1]
     running = [s for s, b0, b1 in builds if b0 <= mid < b1]
+    waiting = [s for s, r0, r1 in ready if r0 <= mid < r1 and s not in running]   # reopened while its build runs
     # epic ("" for none) -> "idle" or "none": its stories share one conductor
     hit = {epic_of[s]: "idle" if any(r0 <= mid < r1 for r0, r1 in runs[epic_of[s] or "--backlog"]) else "none"
            for s in waiting if not any(clashes(s, o) for o in running)}
