@@ -533,10 +533,11 @@ build_story() {
 # names that commit. Refused, starting nothing and touching no file, when
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
-# started (kept aside until then), so the conductor reads only this head's. Once started, the head
-# goes in .swarm/reviews/<slug>.head, which review_on_head reads.
+# started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
+# the conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
+# which review_on_head reads.
 review_agent() {
-  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
+  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at moved errf err
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -568,14 +569,60 @@ review_agent() {
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
   # The last review's file is moved aside before the brief goes (a quick agent's new file must not be
-  # the one removed), put back when the start fails, and dropped once it has started.
-  [[ ! -f "${out}" ]] || mv "${out}" "${out}.prev"
-  if ! (start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"); then
-    [[ ! -f "${out}.prev" ]] || mv "${out}.prev" "${out}"
-    die "review-agent: review-${slug} did not start; ${out} is as it was"
+  # the one removed), and dropped once the agent has started. A .prev an earlier unclear start left,
+  # with no findings file since, stays: it is the last real review. The head on record is written
+  # again only for an agent this start leaves running. start_agent's stderr goes out as it comes; a
+  # copy tells an unclear start from a no-send. A failing tee drains the rest, so the start's own
+  # status decides.
+  errf="$(mktemp)" || die "review-agent: mktemp failed; nothing was started"
+  rm -f "${out%.md}.head"; moved=""
+  if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
+  if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
+      | { tee "${errf}" >&2 || cat >/dev/null; }; } 3>&1; then
+    rm -f "${out}.prev" "${errf}"
+  else
+    err="$(cat "${errf}")"; rm -f "${errf}"
+    review_start_failed "${slug}" "${moved}" "${err}"
   fi
-  rm -f "${out}.prev"
   echo "${head}" > "${out%.md}.head"
+}
+
+# review_start_failed <slug> <moved> <err> — after review_agent's start of review-<slug> failed with
+# <err> (its stderr), the last findings file moved aside to <slug>.md.prev when <moved> is non-empty.
+# Returns, so review_agent records the head, only when the start was unclear and the agent runs: <err>
+# says the brief may have gone out (deliver_prompt's sent or unread tries) and read_state calls it busy
+# or waiting (herdr's working or blocked for codex). The file stays aside. Dies otherwise. When the
+# brief may have reached an agent that is not running, or herdr cannot list its agents, the file stays
+# aside and the message says what to do. In any other case (herdr surely sent nothing, no pane, a
+# session that is gone or that herdr has no status for), it closes the pane and puts back the file
+# this start moved, unless a findings file is there again (a quick agent's, which stays).
+review_start_failed() {
+  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" state=none pane unclear="" kept="" note="" back=""
+  name="$(agent_name "review-$1")"; pane="$(agent_field "${name}" pane_id)"
+  # agent_field is empty too when herdr's list fails: that is no answer, not no pane.
+  if [[ -n "${pane}" ]]; then state="$(read_state "${name}")"
+  elif ! herdr agent list >/dev/null 2>&1; then state=unlisted; fi
+  [[ ! -f "${f}.prev" ]] || kept="; the last review is kept aside in ${f}.prev"
+  case "$3" in
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) unclear=yes ;;
+  esac
+  case "${unclear}:${state}" in
+    yes:unlisted)
+      die "review-agent: review-$1's start was unclear and herdr could not list its agents, so its state is unknown${kept}; no head is on record. Once herdr answers, look at it (herdr agent read ${name}); to review again, close it and run swarm.sh review-agent $1 <PR URL>" ;;
+    yes:none|yes:gone|yes:herdr:) ;;   # nothing runs to have the brief
+    yes:busy|yes:waiting*|yes:herdr:working|yes:herdr:blocked)
+      echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: wait for it with swarm.sh wait review-$1"
+      return 0 ;;
+    yes:*)
+      die "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}; no head is on record. Look at it (herdr agent read ${name}); to review again, close it (herdr pane close ${pane}) and run swarm.sh review-agent $1 <PR URL>" ;;
+  esac
+  if [[ -n "${pane}" ]]; then
+    note=" (its pane ${pane} is closed)"
+    herdr pane close "${pane}" >/dev/null 2>&1 || note=" (its pane ${pane} could not be closed: close it by hand)"
+  fi
+  if [[ -n "$2" && ! -f "${f}" ]]; then mv "${f}.prev" "${f}"; back="; ${f} is put back"; fi
+  [[ ! -f "${f}.prev" ]] || back+="; the last review is kept aside in ${f}.prev"
+  die "review-agent: review-$1 did not start${note}${back}"
 }
 
 # review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is

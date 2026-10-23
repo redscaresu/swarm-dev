@@ -40,7 +40,19 @@ case "$1 $2" in
   "agent start")  [ -e "$H/startfail" ] && { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
                   "$H/sessions" ;;
-  "agent prompt") # With quick, the agent writes its findings file while its brief is still being delivered.
+  "agent prompt") # prompt holds how the brief goes: fail or blocked (herdr surely sent nothing), unread
+                  # (no reply read), unreadgone (unread, and the agent's pane gone), unreadunlisted
+                  # (unread, and herdr's agent list failing from then on), or sent (sent, never taken up).
+                  case "$(cat "$H/prompt" 2>/dev/null)" in
+                    fail) echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1 ;;
+                    blocked) echo '{"error":{"code":"agent_blocked"}}' >&2; exit 1 ;;
+                    unread) exit 1 ;;
+                    unreadgone) [ -e "$H/quick" ] && echo "head: NEW-REVIEW" > "$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/[a-z0-9-]*\.md' | head -1)"
+                                awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.new" && mv "$H/agents.new" "$H/agents"; exit 1 ;;
+                    unreadunlisted) touch "$H/listfail"; exit 1 ;;
+                    sent) exit 0 ;;
+                  esac
+                  # With quick, the agent writes its findings file while its brief is still being delivered.
                   [ -e "$H/quick" ] && echo "head: NEW-REVIEW" > "$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/[a-z0-9-]*\.md' | head -1)"
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait")   name=$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")
@@ -50,22 +62,28 @@ case "$1 $2" in
                     ticks=$((ticks - 1)); sleep 0.1
                   done
                   echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-  "agent list")   awk -v d="$H/done" 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent get")    [ -e "$H/getidle" ] && echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "pane close")   awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.new" && mv "$H/agents.new" "$H/agents" ;;
+  "agent list")   [ -e "$H/listfail" ] && { echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1; }
+                  awk -v d="$H/done" 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { s = system("test -e " d "/" $1) == 0 ? "idle" : "working"
                       printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, s, $2 }
                     END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
 esac
 EOF
-# sessions: Claude Code's list, one entry per agent started, busy until done/<name> exists.
+# sessions: Claude Code's list, one entry per agent started, busy until done/<name> exists, waiting
+# while waiting/<name> does, and left out (gone) while gone/<name> does.
 cat > "${ROOT}/sessions" <<EOF
 #!/bin/sh
-awk -v d="${ROOT}/done" 'BEGIN { printf "[" }
-  { s = system("test -e " d "/" \$1) == 0 ? "idle" : "busy"
-    printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (NR > 1 ? "," : ""), \$3, s }
+awk -v d="${ROOT}" 'BEGIN { printf "[" }
+  system("test -e " d "/gone/" \$1) == 0 { next }
+  { s = system("test -e " d "/done/" \$1) == 0 ? "idle" : "busy"
+    if (system("test -e " d "/waiting/" \$1) == 0) s = "waiting"
+    printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (k++ ? "," : ""), \$3, s }
   END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json"
 EOF
 printf '#!/bin/sh\ncat "%s/head"\n' "${ROOT}" > "${STUB_BIN}/gh"
-chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh" "${ROOT}/sessions"; mkdir -p "${ROOT}/done"; echo '[]' > "${ROOT}/claude.json"
+chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh" "${ROOT}/sessions"; mkdir -p "${ROOT}/done" "${ROOT}/waiting" "${ROOT}/gone"; echo '[]' > "${ROOT}/claude.json"
 done_agent() { touch "${ROOT}/done/$1"; echo "done $1" >> "${ROOT}/herdr.log"; "${ROOT}/sessions"; }
 
 # A repo svc, built stories s1..s4 of epic e (each with a worktree at the PR's head), and a project
@@ -212,6 +230,74 @@ echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s6.md"; touch "${ROOT}/startfail"
 check "when herdr cannot start review-s6, review-agent fails and s6's last findings file is put back" "1|head: OLD-REVIEW|no" \
   "$(set +e; run review-agent s6 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s6.md")|$([[ -e "${p}/.swarm/reviews/s6.md.prev" ]] && echo yes || echo no)"
 rm "${ROOT}/startfail"
+# --- A start that fails once review-<slug>'s pane exists. herdr surely sent nothing: the pane is
+# closed, the last review put back, and a new start is not refused as still reviewing.
+for s in s8 s10 s11; do
+  sed "s/s4/${s}/g" "${b}/stories/s4.md" > "${b}/stories/${s}.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${s}" "${ROOT}/svc-wt/${s}" origin/main
+  echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/${s}.md"
+done
+echo fail > "${ROOT}/prompt"; touch "${ROOT}/done/review-s8"   # a new agent with no brief is idle
+check "when herdr sends review-s8 no brief, review-agent closes its pane, fails and puts s8's last findings back" "1|yes|head: OLD-REVIEW|no|no|" \
+  "$(set +e; o="$(run review-agent s8 "${PR}")"; echo "$?|$(has "is closed)" "${o}")")|$(cat "${p}/.swarm/reviews/s8.md")|$([[ -e "${p}/.swarm/reviews/s8.md.prev" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/reviews/s8.head" ]] && echo yes || echo no)|$(working | tr '|' '\n' | grep review-s8 || true)"
+rm "${ROOT}/prompt"
+check "and review-agent s8 again starts it" "back:0|${HEAD_SHA}" "$(start s8)|$(cat "${p}/.swarm/reviews/s8.head" 2>/dev/null)"
+# The brief may have gone out: herdr's reply could not be read, and the agent reads working. It runs,
+# so the last review stays aside, its head goes on record, and its wait holds for a new file.
+echo unread > "${ROOT}/prompt"
+check "when review-s10's brief may or may not have gone out and it works, review-agent exits 0, says it runs, and the old findings stay aside" "0|yes|no|head: OLD-REVIEW|${HEAD_SHA}" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s10 "${PR}")"; echo "$?|$(has "the agent is running" "${o}")")|$([[ -e "${p}/.swarm/reviews/s10.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s10.md.prev")|$(cat "${p}/.swarm/reviews/s10.head" 2>/dev/null)"
+# Sent twice and not taken up, the agent idle: it may have the brief, so the old findings stay aside,
+# but review-agent fails, with no head on record, and says how to clear the pane.
+echo sent > "${ROOT}/prompt"; touch "${ROOT}/getidle" "${ROOT}/done/review-s11"
+check "when review-s11's brief was not taken up after 2 tries, review-agent fails, says to close the pane, keeps the old findings aside and records no head" "1|yes|yes|no|head: OLD-REVIEW|no" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s11 "${PR}")"; echo "$?|$(has "may have its brief" "${o}")|$(has "herdr pane close" "${o}")")|$([[ -e "${p}/.swarm/reviews/s11.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s11.md.prev")|$([[ -e "${p}/.swarm/reviews/s11.head" ]] && echo yes || echo no)"
+# A .prev an earlier unclear start left, with no findings file now, is the last real review: a failed
+# start neither puts it back nor removes it.
+sed "s/s4/s12/g" "${b}/stories/s4.md" > "${b}/stories/s12.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/s12 "${ROOT}/svc-wt/s12" origin/main
+echo "head: OLDER-REVIEW" > "${p}/.swarm/reviews/s12.md.prev"; echo fail > "${ROOT}/prompt"; touch "${ROOT}/done/review-s12"
+check "a failed start of review-s12 leaves an earlier start's findings aside, neither put back nor removed, and says so" "1|yes|no|head: OLDER-REVIEW" \
+  "$(set +e; o="$(run review-agent s12 "${PR}")"; echo "$?|$(has "the last review is kept aside in ${p}/.swarm/reviews/s12.md.prev" "${o}")")|$([[ -e "${p}/.swarm/reviews/s12.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s12.md.prev" 2>/dev/null)"
+rm "${ROOT}/prompt" "${ROOT}/getidle"
+# With no pane left, an error that says the brief may have gone out still fails and puts the file back.
+sed "s/s4/s13/g" "${b}/stories/s4.md" > "${b}/stories/s13.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/s13 "${ROOT}/svc-wt/s13" origin/main
+echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s13.md"; echo unreadgone > "${ROOT}/prompt"
+check "when review-s13's brief may have gone out but its pane is gone, review-agent fails and puts the findings back" "1|head: OLD-REVIEW|no" \
+  "$(set +e; SWARM_SLEEP_SCALE=0.02 run review-agent s13 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s13.md")|$([[ -e "${p}/.swarm/reviews/s13.md.prev" ]] && echo yes || echo no)"
+rm "${ROOT}/prompt"
+# A definite no-send to an agent waiting on a startup question is no review: its pane is closed, and
+# the findings go back. So is an unclear start whose session is gone.
+for s in s14 s15; do
+  sed "s/s4/${s}/g" "${b}/stories/s4.md" > "${b}/stories/${s}.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${s}" "${ROOT}/svc-wt/${s}" origin/main
+  echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/${s}.md"
+done
+echo blocked > "${ROOT}/prompt"; touch "${ROOT}/waiting/review-s14"
+check "when herdr sends review-s14 no brief while it waits on a question, review-agent closes it, fails, puts the findings back and records no head" "1|yes|head: OLD-REVIEW|no|no" \
+  "$(set +e; o="$(run review-agent s14 "${PR}")"; echo "$?|$(has "is closed)" "${o}")")|$(cat "${p}/.swarm/reviews/s14.md")|$([[ -e "${p}/.swarm/reviews/s14.md.prev" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/reviews/s14.head" ]] && echo yes || echo no)"
+echo unread > "${ROOT}/prompt"; touch "${ROOT}/gone/review-s15"
+check "when review-s15's start is unclear but its session is gone, review-agent closes it, fails and puts the findings back" "1|yes|head: OLD-REVIEW|no" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s15 "${PR}")"; echo "$?|$(has "is closed)" "${o}")")|$(cat "${p}/.swarm/reviews/s15.md")|$([[ -e "${p}/.swarm/reviews/s15.head" ]] && echo yes || echo no)"
+rm "${ROOT}/prompt"
+# An unclear start whose pane is gone, after its agent wrote a review of the new head: that review
+# stays, and the old one stays aside.
+for s in s16 s17; do
+  sed "s/s4/${s}/g" "${b}/stories/s4.md" > "${b}/stories/${s}.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${s}" "${ROOT}/svc-wt/${s}" origin/main
+  echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/${s}.md"
+done
+echo unreadgone > "${ROOT}/prompt"; touch "${ROOT}/quick"
+check "when review-s16's pane is gone after it wrote a new review, review-agent fails, keeps the new review, and the old one stays aside" "1|head: NEW-REVIEW|head: OLD-REVIEW" \
+  "$(set +e; SWARM_SLEEP_SCALE=0.02 run review-agent s16 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s16.md")|$(cat "${p}/.swarm/reviews/s16.md.prev" 2>/dev/null)"
+rm "${ROOT}/quick"
+# An unclear start while herdr cannot list its agents: no answer is not no pane, so the old review
+# stays aside and the state is said to be unknown.
+echo unreadunlisted > "${ROOT}/prompt"
+check "when herdr cannot list agents after review-s17's unclear start, review-agent fails, says its state is unknown, and keeps the old review aside" "1|yes|no|head: OLD-REVIEW" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s17 "${PR}")"; echo "$?|$(has "its state is unknown" "${o}")")|$([[ -e "${p}/.swarm/reviews/s17.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s17.md.prev" 2>/dev/null)"
+rm -f "${ROOT}/prompt" "${ROOT}/listfail"
 
 # --- An agent that writes its findings before review-agent returns keeps them: only the last
 # review's file is removed.
