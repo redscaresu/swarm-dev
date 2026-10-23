@@ -663,9 +663,10 @@ have sent the brief (its reply could not be read, or the brief was sent and not 
 agent is running, records the head, keeps the file aside as `<slug>.md.prev` and exits 0; `wait
 review-<slug>` then waits for a new file. If herdr may have sent the brief to an agent that is not
 running, it keeps the file aside, records no head and fails, saying how to close the pane and start the
-review again. In every other case (herdr surely sent nothing, no pane, or a session that is gone),
-it closes the pane, puts back the file it moved and fails. A `.prev` an earlier start left, with no
-findings file since, stays where it is. For a story stacked on
+review again; so does a start whose agent herdr cannot list, since its state is unknown. In every
+other case (herdr surely sent nothing, no pane, a session that is gone, or one herdr has no status
+for), it closes the pane, puts back the file it moved unless a new findings file is already there,
+and fails. A `.prev` an earlier start left, with no findings file since, stays where it is. For a story stacked on
 parents, the brief names their branches: their code is in the diff against the base, but the agent
 lists it neither as a finding nor as out of scope. The conductor waits on each review in the background
 with `swarm.sh wait review-<slug>`. A review agent goes idle while its codex runs in the
