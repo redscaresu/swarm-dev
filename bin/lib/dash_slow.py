@@ -131,7 +131,7 @@ def start_refresh(project, repo, cache):
         os.close(fd)
 
 # The project's ci line from its cache (SWARM_CI_CACHE), refreshed by a detached ci_refresh once it is
-# over CI_SECONDS old (never with SWARM_NO_CI_REFRESH set, as in tests); past that age the line says
+# over CI_SECONDS old (never with SWARM_NO_CI_REFRESH set, as dash sets it in tests); past that age the line says
 # how old it is. Anything that goes wrong here leaves the ci line out, never the rest of the cache.
 try:
     cache, project = os.environ.get("SWARM_CI_CACHE"), os.environ.get("SWARM_CI_PROJECT", ".")

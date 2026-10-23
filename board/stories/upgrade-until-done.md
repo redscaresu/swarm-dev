@@ -1,6 +1,6 @@
 ---
 kind: code
-status: blocked
+status: ready
 epic: safer-faster-swarm
 depends_on: [upgrade-ended-turn-is-idle, brief-not-sent-twice]
 touches: [bin/lib/lifecycle.sh:upgrade_agents, tests/upgrade_test.sh, docs/reference.md:upgrade]

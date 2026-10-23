@@ -171,8 +171,10 @@ dash_slow() {
       printf 'cost\t%s\n' "$( (cost_report "${day}") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
+      # Test mode (SWARM_SLEEP_SCALE set) starts no ci refresh unless SWARM_NO_CI_REFRESH is set, if
+      # only to empty: a detached refresh outlives the test and runs flow, and gh, on its project.
       if gh_installed; then
-        SWARM_CI_CACHE="${TMPDIR:-/tmp}/swarm-dash-ci-$(id -u)/${key}" SWARM_CI_PROJECT="${PROJECT_DIR}" SWARM_PAIRS="${pairs}" python3 "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}
+        SWARM_NO_CI_REFRESH="${SWARM_NO_CI_REFRESH-${SWARM_SLEEP_SCALE:+1}}" SWARM_CI_CACHE="${TMPDIR:-/tmp}/swarm-dash-ci-$(id -u)/${key}" SWARM_CI_PROJECT="${PROJECT_DIR}" SWARM_PAIRS="${pairs}" python3 "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
   fi

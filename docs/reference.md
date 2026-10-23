@@ -225,7 +225,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `lead` (default `off`): `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step and an expired login. Every merge row (with `merge = agent`, a `costs: money` merge row stays under needs you), an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged
 - `merge_admin` (default `off`): `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, so it merges in a repo whose ruleset requires an approving review, which no agent can give. It does so only after the checks it always makes: the head is green, no `costs: money` hold applies, the `--board` or `--release` scope holds, and the head is the one `--head` names. `--admin` skips every rule on the base, not only the review, so `swarm.sh merge` first reads the base's rulesets and branch protection itself. It refuses while a status check they require is absent from the head, while they require the branch up to date (strict) and the head is behind the base, and whenever they hold a rule besides the review, the status checks and rules about pushes (deletion, force pushes, creation): a merge queue, required workflows, signatures, linear history, conversation resolution, deployments, code scanning or push restrictions. That includes the review rule's own thread resolution, and merge methods that leave out the one `swarm.sh merge` picks from the repo's settings. A classic protection field outside the few known to be safe is refused whatever its name, and a 404 from branch protection counts as unprotected only when GitHub says `Branch not protected`, since a token that cannot read protection gets a 404 too. The refusal names the rule. A red head, a held PR or a moved head is still refused before `gh pr merge` runs. Off, `swarm.sh merge` never passes `--admin` and reads none of these
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
-- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines. A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile
+- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines. A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set
 
 ## Scoping an epic
 
@@ -529,7 +529,7 @@ So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at t
 herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, when it is queued (green and mergeable for `queue_minutes` with no review agent on
-its head, reported once per head), or when an agent's session is waiting, and it names what the agent waits for. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A codex
+its head, reported once per head), or when an agent's session is waiting, and it names what the agent waits for. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. A codex
 agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's
 wait is reported once, and again only after a poll finds that agent no longer waiting; a poll that
 cannot read the agents changes nothing. herdr lists every project's agents, so
@@ -684,13 +684,28 @@ or `resume`) is required and goes in the audit log. `tell` sends only to an idle
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
 session is gone or unknown. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
-`.swarm/inbox/conduct-<epic>.md`, without sending a prompt or reading the conductor's state, and
-only for a live conductor of this project. After each `wait` or `watch` returns, the conductor moves the
-inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added meanwhile starts a new
-file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
+`.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
+whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a
+short prompt telling it to process its inbox now, by the steps below, run `swarm.sh unblock
+--startable <epic>` (or `--backlog`) and start what it prints, then end its turn, leaving any wait or
+watch it has running alone (it starts one only if none runs). A wait can run a long time before it
+returns. `tell` sends the prompt once and returns without waiting for it to be taken up. One
+conductor gets at most one such prompt a minute: `.swarm/inbox/conduct-<epic>.woke` holds the last
+one's time, set under `conduct-<epic>.lock` so of two notes at once one sends it (a lock left over a
+minute is cleared; one held past 5 s is warned of). A note also leaves one check pending in the
+background (`conduct-<epic>.later`): once the minute since the last prompt is up, it prompts the
+conductor that holds the name then, if the inbox is still there and no prompt went out meanwhile. A
+prompt sent while the check waits moves the check once, to the end of that prompt's minute. So a
+burst of notes sends one prompt now and one a minute later, and a prompt that was dropped, or
+answered without reading the inbox, is sent once more. A prompt that fails is warned of and its time
+taken back, so the next note tries again. No prompt goes to a conductor mid-turn, one that has
+written its report, or one that `upgrade` asked for a handover and has not yet told to carry on
+(`conduct-<epic>.upgrade`, ignored once an hour old). After each `wait` or `watch` returns, the
+conductor moves the inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added
+meanwhile starts a new file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
 so the conductor reads and deletes it first. It does all of this once more just before it writes its
 report, so a note left after its last wait is still read. Once a new conductor has started,
-`conduct` clears both files, so it never acts on notes left for the one before. A `conduct` refused
+`conduct` clears both files, and the `.woke`, `.later` and `.upgrade` beside them, so it never acts on notes left for the one before. A `conduct` refused
 because the epic's conductor is still running leaves them alone. The conductor closes a builder only after both
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
