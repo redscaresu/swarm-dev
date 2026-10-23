@@ -4,7 +4,7 @@
 # logging one lead-woken line each; at its timeout it fails with nothing printed. What it last saw is kept
 # across runs, and a new run takes over from an earlier one. gh is a stub on PATH answering the PR's
 # head and its check runs from ${FX}; herdr is a stub listing a running conductor. Both log each call.
-# ln is a stub that fails while ${FX}/ln.fail exists.
+# ln is a stub that fails while ${FX}/ln.fail exists and waits as many seconds as ${FX}/ln.slow holds.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -48,7 +48,12 @@ case "$1 $2" in
   *) echo '{"result":{}}' ;;
 esac
 STUB
-printf '#!/bin/sh\n[ ! -e "%s/ln.fail" ] || exit 1\nexec %s "$@"\n' "${FX}" "$(command -v ln)" > "${ROOT}/bin/ln"
+printf '#!/bin/sh\nFX="%s"\n' "${FX}" > "${ROOT}/bin/ln"
+cat >> "${ROOT}/bin/ln" <<'STUB'
+[ ! -e "${FX}/ln.fail" ] || exit 1
+sleep "$(cat "${FX}/ln.slow" 2>/dev/null || echo 0)"
+STUB
+printf 'exec %s "$@"\n' "$(command -v ln)" >> "${ROOT}/bin/ln"
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ln"
 printf 'w:c conduct-e\n' > "${P}/.swarm/state/e"
 
@@ -66,7 +71,7 @@ escalated() { item "$1" "kind: lead" "status: ready" "escalated_from: code"; }
 # fresh [config line]... — a board with one held story, h, and nothing else; no events, no earlier run.
 fresh() {
   stop
-  rm -f "${B}"/*.md "${P}/.swarm/events.tsv" "${FX}/view.fail" "${FX}/view.slow" "${FX}/ln.fail" "${FX}"/head.* "${FX}"/*.checks; rm -rf "${P}/.swarm/lead" "${ROOT}"/*.log
+  rm -f "${B}"/*.md "${P}/.swarm/events.tsv" "${FX}/view.fail" "${FX}/view.slow" "${FX}/ln.slow" "${FX}/ln.fail" "${FX}"/head.* "${FX}"/*.checks; rm -rf "${P}/.swarm/lead" "${ROOT}"/*.log
   again
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   echo "${H}" > "${FX}/head"; checks success
@@ -82,30 +87,39 @@ lead() {
   (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 \
     ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$1" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
 }
-# start [VAR=value]... <timeout-ms> — lead in the background; then give it time to read the board once.
-start() {
-  lead "$@" &
-  lpid=$!
-  sleep 2
-}
-# The waits below end early, quietly, when the run has exited (its rc file): a case that expects it to
-# sleep says so in its check, not by a test that stops here.
-# first_read — wait until the run has read the board once: its seen file exists, written when the read
-# ends. A fixed sleep after start is not that: a slow gh or a loaded runner reads later, and a read that
-# lands after the test changed the head or the checks sees the changed ones, not the ones the case
-# starts from.
+# must <what> <command>... — count a FAIL when the command is false, and say nothing when it is true.
+must() { local what="$1"; shift; "$@" || { echo "FAIL ${what}"; fails=$((fails + 1)); }; }
+# seen_id — the inode of the run's seen file, which every read replaces (mv), or nothing before the first.
+# shellcheck disable=SC2012 # one fixed path; stat -c and stat -f differ between Linux and macOS
+seen_id() { { ls -i "${P}/.swarm/lead/seen" 2>/dev/null || true; } | awk '{ print $1 }'; }
+# first_read [seen id] — wait until the run has read the board once more than the id says: its seen file
+# is a new one, written when a read ends. A fixed sleep is not that: a slow gh or a loaded runner reads
+# later, and a read that lands after the case changed the board, the head or the checks sees the changed
+# ones, not the ones the case starts from. It ends at once when the run has exited (its rc file): a case
+# that expects it to sleep says so in its check. False when 60 s pass with neither.
 first_read() {
   local i
-  for ((i = 0; i < 600; i++)); do [[ -e "${P}/.swarm/lead/seen" || -e "${ROOT}/rc" ]] && return 0; sleep 0.1; done
+  for ((i = 0; i < 600; i++)); do [[ "$(seen_id)" != "$1" || -e "${ROOT}/rc" ]] && return 0; sleep 0.1; done
+  return 1
+}
+# start [VAR=value]... <timeout-ms> — lead in the background, once it has read the board.
+start() {
+  local before
+  before="$(seen_id)"
+  lead "$@" &
+  lpid=$!
+  must "the run read the board once" first_read "${before}"
 }
 # reads — how many times the run has read PR 7's head.
 reads() { grep -c '^pr view 7 ' "${ROOT}/gh.log" 2>/dev/null || true; }
 # polls <n> — wait until the run has begun <n> more reads of PR 7's head; after a change, polls 2 waits
-# for a read that began after it to end, and polls n for n - 1 of them.
+# for a read that began after it to end, and polls n for n - 1 of them. False when 60 s pass first; true
+# at once when the run has exited.
 polls() {
   local want i
   want=$(( $(reads) + $1 ))
   for ((i = 0; i < 600; i++)); do [[ $(reads) -ge ${want} || -e "${ROOT}/rc" ]] && return 0; sleep 0.1; done
+  return 1
 }
 # logged <text> <n> — true once gh's log holds <n> lines with <text>, false if the run exits first.
 logged() {
@@ -139,7 +153,8 @@ check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "
 nothing_yet() { [[ ! -e "${ROOT}/rc" && -z "$(out)" && -z "$(events)" ]]; }
 
 # --- held and escalated stories.
-fresh; escalated x
+# The run takes its lock 2.5 s late, so its first read is later than a fixed wait after start would be.
+fresh; escalated x; echo 2.5 > "${FX}/ln.slow"
 start 20000
 check "a story held before it started does not wake it" nothing_yet
 held x paused
@@ -157,7 +172,7 @@ check "the second run prints only that item" test "$(out)|$(rc)" == "held: y (pa
 fresh
 (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_LEAD_POLL=1 bash "${SWARM}" wait --lead 20000 \
   > "${ROOT}/out.a" 2>&1 && echo 0 > "${ROOT}/rc.a" || echo $? > "${ROOT}/rc.a") 2>/dev/null &
-apid=$!; sleep 2
+apid=$!; must "the earlier run read the board once" first_read ""
 start 20000
 for ((i = 0; i < 30; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
 check "a new wait --lead stops the earlier one" test -e "${ROOT}/rc.a"
@@ -202,15 +217,15 @@ check "once its head is green, it wakes" returned 25
 check "it prints merge: <slug> <PR URL>" test "$(out)|$(rc)" == "merge: r ${URL}|0"
 check "it logs lead-woken for the review story" test "$(events)" == "lead-woken r"
 
-# Each gh pr view takes 1.7 s, longer than the 1 s between polls and than a fixed sleep a case would
-# trust: the cases below wait for reads (first_read, polls), not for time.
-fresh "merge = human"; echo 1.7 > "${FX}/view.slow"; item r "kind: code" "status: review" "prs: ${URL}"
+# Each gh pr view takes 1.3 s, longer than the 1 s between polls: the cases below wait for reads (start,
+# polls), not for time.
+fresh "merge = human"; echo 1.3 > "${FX}/view.slow"; item r "kind: code" "status: review" "prs: ${URL}"
 start 120000
-first_read; polls 3
+must "it polled" polls 3
 check "ci_gate reads a green head once, however many polls" test "$(grep -c "${H}/check-runs" "${ROOT}/gh.log")" == 1
-echo "${H2}" > "${FX}/head"; polls 2
+echo "${H2}" > "${FX}/head"; must "it polled" polls 2
 check "a new head is read again" test "$(grep -c "${H2}/check-runs" "${ROOT}/gh.log")" == 1
-touch "${FX}/view.fail"; polls 2; rm -f "${FX}/view.fail"; polls 2
+touch "${FX}/view.fail"; must "it polled" polls 2; rm -f "${FX}/view.fail"; must "it polled" polls 2
 check "a green review item whose head cannot be read for a poll does not wake it after" nothing_yet
 check "a cached green head outlives a poll that could not read it" test "$(grep -c "${H2}/check-runs" "${ROOT}/gh.log")" == 1
 stop
@@ -226,13 +241,13 @@ check "a kept green PR wakes it as kept: <slug> <url> (not reviewed), never as m
 again; lead 5000
 check "once review k clears kept:, it is offered to merge" test "$(out)|$(rc)" == "merge: k ${URL}|0"
 
-fresh "merge = human"; echo 1 > "${FX}/view.slow"; echo "${H2}" > "${FX}/head.8"; checks pending "${H2}"
+fresh "merge = human"; echo 1.3 > "${FX}/view.slow"; echo "${H2}" > "${FX}/head.8"; checks pending "${H2}"
 item r "kind: code" "status: review" "prs: ${URL} ${URL%/*}/8"
 start 120000
-first_read   # it cached the first PR's green head, and the other is pending
+# start returned after the first read: it cached the first PR's green head, and the other is pending
 checks failure "${H}"; checks success "${H2}"
 check "it read the cached head again before it would wake" logged "${H}/check-runs" 2
-polls 1   # the read that did it has decided
+must "it polled" polls 1   # the read that did it has decided
 check "a cached green head that a re-run turned red does not wake it when the item's other PR goes green" nothing_yet
 stop
 
@@ -253,7 +268,7 @@ stop
 fresh "merge = agent"
 start 4000
 item r "kind: code" "status: review" "prs: ${URL}"
-check "with merge = agent, a green review story does not wake it, and it times out" returned 40
+check "with merge = agent, a green review story does not wake it, and it times out" returned 60
 check "with merge = agent it times out non-zero with nothing printed" test "$(out)|$(rc)" == "|1"
 check "with merge = agent nothing is logged" test -z "$(events)"
 
@@ -284,7 +299,7 @@ stop; rm -rf "${P}/docs/epics"
 # --- no change: a short timeout.
 fresh
 start 3000
-check "with no change it returns at its timeout" returned 30
+check "with no change it returns at its timeout" returned 50
 check "at its timeout it exits non-zero and prints nothing" test "$(out)|$(rc)" == "|1"
 check "events.tsv gains no line while it waits" test -z "$(events)"
 
