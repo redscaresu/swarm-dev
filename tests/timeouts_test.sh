@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # timeouts_test.sh — in the shell files of bin/ and hooks/, a call that can wait forever names its
 # bound in the same command. The calls are `curl`, `gh run download`, `gh run view ... --log` and
-# herdr's blocking ones (`herdr ... --wait`, `herdr agent wait`, `herdr pane wait-output`). Each needs
-# `--max-time` or `--timeout` among its own arguments, or `within <seconds>` / `timeout <seconds>` as
-# the command's own prefix, or the line ends with a comment `# no-timeout: <reason>`.
-# Use `within` (merge.sh: a perl alarm): stock macOS has no `timeout`, so a call written with it exits
-# 127 there. A command is what is left after splitting on ; & | ( ) and $( ) and backticks, so a bound
-# on another command, or inside a quoted argument or a comment, does not count. A comment (a whole line or the end of
-# one) is never a call, and a line ending in \ joins the next unless a comment ends it. A backtick
-# escaped as \` (the prose of a heredoc) is text, not a command substitution. Heredoc bodies are
-# scanned line by line like code: a prose line that starts with a call fails, which is the safe way
-# round. Python files are not scanned.
+# herdr's blocking ones (`herdr ... --wait`, `herdr agent wait`, `herdr pane wait-output`), also
+# behind if/elif/while/then/do, exec, command, time, nohup, env and a path. A bound is
+#   - `within <seconds>` as the command's prefix, in a file that defines `within` (merge.sh,
+#     hooks/lead-stop.sh) or sources one that does: a perl alarm, so it also runs on stock macOS;
+#   - `timeout <seconds>` as the prefix (coreutils; stock macOS has none, so prefer `within`);
+#   - `--max-time`, `-m` or `--timeout` as an option of its own, for curl and herdr. gh has no such
+#     flag, so a gh call takes a prefix bound only;
+#   - or a trailing comment `# no-timeout: <reason>`, which covers the last command on its line.
+# The file is read as shell: quotes (across lines), \ continuations, comments, and the commands left
+# after splitting on ; | & ( ) and newlines. A $( ) or backtick substitution is a command of its own
+# and a bare $() in the one around it. A bound on another command, in a string or comment, or as an
+# option's value does not count. An escaped backtick (\`) is text. A heredoc body is scanned line by
+# line like code, so a prose line that starts with a call fails, the safe way round. Python files
+# are not scanned.
 # shellcheck disable=SC2016,SC1003 # the fixtures are shell text, not expansions
 set -euo pipefail
 
@@ -19,97 +23,200 @@ dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
 export HOME="${dir}/home"   # under its own root, so parallel runs share no ~
 
-# untimed <file>... — one `file:line: text` per logical line with a call that names no bound.
+# untimed <file>... — one `file:line: command` per call that names no bound; a file the reader ends
+# inside a quote or $( ) in is one line too, as the reader has then misread it.
 untimed() {
   python3 -I - "$@" <<'EOF'
 import re, shlex, sys
 
-PREFIX = re.compile(r'(?:(?:!|then|do|else|if|while|until|\{)\s+|[A-Za-z_]\w*=(?:"[^"]*"|\'[^\']*\'|[^\s"\']*)\s+)')
-BOUND = re.compile(r'--(max-time|timeout)(=.*)?')
+KEYWORD = r'(?:!|then|do|else|elif|if|while|until|\{|exec|command|time|nohup)\s+'
+ENV = r'env\s+(?:(?:-i|-u\s+\S+|-\S+)\s+)*'
+ASSIGN = r'[A-Za-z_]\w*=(?:"[^"]*"|\'[^\']*\'|[^\s"\']*)\s+'
+PREFIX = re.compile('(?:' + KEYWORD + '|' + ENV + '|' + ASSIGN + ')')
+SECS_ANY = r'(?:\d+(?:\.\d*)?[smhd]?|"?\$\{?\w\S*)'
+SECS = r'(?:(?!0+(?:\.0*)?[smhd]?\s)' + SECS_ANY + ')'   # a zero is no bound: it turns the timeout off
 CALLS = [r'curl(\s|$)', r'gh\s+run\s+download\b', r'gh\s+run\s+view\b.*\s--log',
-         r'herdr\s+(agent\s+wait|pane\s+wait-output)\b', r'herdr\b.*\s--wait\b']
-HINT = ("bound it with `within <seconds>` (stock macOS has no timeout), --max-time or --timeout, "
-        "or end the line with `# no-timeout: <reason>`")
+         r'herdr\s+(agent\s+wait|pane\s+wait-output)\b', r'herdr\b.*\s--wait(\s|=|$)']
+BOUND = re.compile(r'--(?:max-time|timeout)(=.*)?')
+# Options that take a value, so that the word after one is not an option. A value-taking option
+# missing here can hide a bound; add it.
+VALUE_OPTS = set('''-H --header -d --data --data-raw --data-binary --data-urlencode -o --output -w
+    --write-out -X --request -u --user -A --user-agent -e --referer -b --cookie -c --cookie-jar -F --form
+    -T --upload-file -x --proxy -n --name -D --dir -p --pattern -R --repo -j --job -a --attempt -q --jq
+    --json -t --template --until --match --source --lines --workspace --tab --pane'''.split())
+HINT = ("bound it with `within <seconds>` (in a file that defines or sources bin/lib/merge.sh's or "
+        "hooks/lead-stop.sh's; stock macOS has no timeout), or --max-time/-m/--timeout as an option "
+        "(curl and herdr; gh has no timeout flag, so a gh call takes only the prefix), or end the "
+        "line with `# no-timeout: <reason>`")
 
 
-def parse(t):
-    """(commands, comment, continued) of one logical line: commands are split on ; & | ( ) outside
-    quotes; a $( ) or backtick substitution is a command of its own and a bare $() in the one around it."""
-    out, bufs, kinds, qs, q, i = [], [""], [], [], None, 0
-    comment, cont = "", False
-    while i < len(t):
-        c = t[i]
-        if q == "'":
-            bufs[-1] += c
-            q = None if c == "'" else q
-        elif c == "\\":
-            if i + 1 == len(t):
-                cont = True
-            else:
-                bufs[-1] += t[i:i + 2]
-            i += 1
-        elif c == "#" and q is None and (i == 0 or t[i - 1] in " \t;|&()"):
-            comment = t[i:]
-            break
-        elif c == "'" and q is None:
-            bufs[-1] += c
-            q = "'"
-        elif c == '"':
-            bufs[-1] += c
-            q = None if q == '"' else '"'
-        elif t.startswith("$(", i) or (c == "`" and (not kinds or kinds[-1] != "`")):
-            bufs.append("")
-            kinds.append(c)
-            qs.append(q)
-            q = None
-            i += 1 if c == "$" else 0
-        elif c == "`" or (c == ")" and q is None and kinds):
-            out.append(bufs.pop())
-            kinds.pop()
-            q = qs.pop()
-            bufs[-1] += "$()"
-        elif q is None and c in ";|&()":
-            out.append(bufs[-1])
-            bufs[-1] = ""
-        else:
-            bufs[-1] += c
-        i += 1
-    return out + bufs, comment, cont
-
-
-def unbounded(cmd):
+def unbounded(cmd, has_within):
     s = cmd.strip()
     m = PREFIX.match(s)
     while m:
         s = s[m.end():]
         m = PREFIX.match(s)
-    if re.match(r'(timeout|within)\s', s) or not any(re.match(c, s) for c in CALLS):
+    m = re.match(r'(within|timeout)\s+' + SECS + r'\s+(?=\S)', s)
+    if m and (m.group(1) == "timeout" or has_within):
         return False
+    s = re.sub(r'^\S*/(?=\S)', '', re.sub(r'^(?:within|timeout)\s+(?:' + SECS_ANY + r'\s+)?', '', s))
+    if not any(re.match(c, s) for c in CALLS):
+        return False
+    if s.startswith("gh"):
+        return True
     try:
         words = shlex.split(s)
     except ValueError:
         words = s.split()
-    return not any(BOUND.fullmatch(w) for w in words)
+    value = None   # the last bound option wins, as in curl
+    for k, w in enumerate(words):
+        m = BOUND.fullmatch(w) or (re.fullmatch(r'-m(\d*)', w) if words[0] == "curl" else None)
+        if not m or words[k - 1] in VALUE_OPTS:
+            continue
+        value = (m.group(1) or "").lstrip("=") or (words[k + 1] if k + 1 < len(words) else "")
+    return value is None or re.fullmatch(r'0+(?:\.0*)?[smhd]?', value) is not None
 
 
-def check(path, text, start):
-    cmds, comment, _ = parse(text)
-    if any(unbounded(c) for c in cmds) and not re.match(r'#\s*no-timeout:\s*\S', comment):
-        print(f"{path}:{start}: {text.strip()}  <- {HINT}")
+class Scan:
+    """One pass over a file's text; quote and $( ) state carry across lines. A finding is an
+    unbounded call not covered by an opt-out comment on its line."""
+
+    def __init__(self, text, has_within, ln=1):
+        self.t, self.has_within, self.ln, self.i = text, has_within, ln, 0
+        self.bufs, self.starts, self.segs = [""], [ln], [0]
+        self.kinds, self.qs, self.q, self.seg = [], [], None, 0
+        self.line, self.comment, self.found, self.heredocs = [], "", [], []
+
+    def add(self, s):
+        if not self.bufs[-1].strip() and s.strip():
+            self.starts[-1] = self.ln
+        self.bufs[-1] += s
+
+    def emit(self):
+        if self.bufs[-1].strip() and unbounded(self.bufs[-1], self.has_within):
+            self.line.append((self.segs[-1], self.starts[-1], " ".join(self.bufs[-1].split())))
+        self.bufs[-1] = ""
+
+    def settle(self):
+        """End of a physical line: an opt-out comment covers the calls of the line's last command."""
+        covered = re.match(r'#\s*no-timeout:\s*\S', self.comment)
+        self.found += [(ln, c) for seg, ln, c in self.line if not (covered and seg == self.seg)]
+        self.line, self.comment = [], ""
+
+    def push(self, kind):
+        self.bufs.append("")
+        self.starts.append(self.ln)
+        self.segs.append(self.seg)
+        self.kinds.append(kind)
+        self.qs.append(self.q)
+        self.q = None
+
+    def pop(self):
+        self.emit()
+        self.bufs.pop(), self.starts.pop(), self.segs.pop(), self.kinds.pop()
+        self.q = self.qs.pop()
+        self.add("$()")
+
+    def split(self):
+        self.emit()
+        if not self.kinds:
+            self.seg += 1
+            self.segs[0] = self.seg
+
+    def newline(self):
+        if self.q is not None:
+            self.add("\n")
+            return
+        self.emit()
+        self.settle()
+        if not self.kinds:
+            self.seg += 1
+            self.segs[0] = self.seg
+        if self.heredocs:
+            self.body()
+
+    def body(self):
+        """Read the heredoc bodies that start after this line, each line on its own."""
+        for delim in self.heredocs:
+            while self.i < len(self.t):
+                j = self.t.find("\n", self.i)
+                j = len(self.t) if j < 0 else j
+                row, self.i = self.t[self.i:j], j + 1
+                if row.strip() != delim:
+                    sub = Scan(row + "\n", self.has_within, self.ln)
+                    sub.run()
+                    self.found += sub.found
+                self.ln += 1
+                if row.strip() == delim:
+                    break
+        self.heredocs = []
+
+    def run(self):
+        t, n = self.t, len(self.t)
+        while self.i < n:
+            i, c = self.i, t[self.i]
+            self.i += 1
+            if c == "\n":
+                self.ln += 1
+                self.newline()
+            elif self.q == "'":
+                self.add(c)
+                self.q = None if c == "'" else "'"
+            elif c == "\\":
+                if self.i < n and t[self.i] == "\n":
+                    self.i += 1
+                    self.ln += 1
+                else:
+                    self.add(t[i:i + 2])
+                    self.i += 1
+            elif c == "#" and self.q is None and (i == 0 or t[i - 1] in " \t\n;|&()"):
+                j = t.find("\n", i)
+                j = n if j < 0 else j
+                self.comment, self.i = t[i:j], j
+            elif c == "'" and self.q is None:
+                self.add(c)
+                self.q = "'"
+            elif c == '"':
+                self.add(c)
+                self.q = None if self.q == '"' else '"'
+            elif t.startswith("$(", i):
+                self.push("$(")
+                self.i += 1
+            elif c == "`":
+                if self.kinds and self.kinds[-1] == "`":
+                    self.pop()
+                else:
+                    self.push("`")
+            elif self.q is not None:
+                self.add(c)
+            elif c == ")" and self.kinds and self.kinds[-1] == "$(":
+                self.pop()
+            elif c == "<" and t.startswith("<<", i) and not t.startswith("<<<", i) and (
+                    m := re.match(r'<<-?\s*(["\']?)\\?([A-Za-z_]\w*)\1', t[i:i + 80])):
+                self.heredocs.append(m.group(2))
+                self.i += m.end() - 1
+            elif c in ";|()" or (c == "&" and t[i - 1:i] != ">" and t[i + 1:i + 2] != ">"):
+                self.split()
+            else:
+                self.add(c)
+        open_at_end = self.q is not None or bool(self.kinds)
+        while self.kinds:
+            self.pop()
+        self.emit()
+        self.settle()
+        return open_at_end
 
 
 for path in sys.argv[1:]:
-    buf, start = "", 0
-    for n, line in enumerate(open(path, errors="replace").read().splitlines(), 1):
-        start = start if buf else n
-        text = buf + line
-        if parse(text)[2]:
-            buf = text[:-1]
-            continue
-        check(path, text, start)
-        buf = ""
-    if buf:
-        check(path, buf, start)
+    text = open(path, errors="replace").read()
+    has_within = bool(re.search(r'^\s*within\(\)', text, re.M)
+                      or re.search(r'^\s*(?:source|\.)\s+\S*(?:merge|lead-stop)\.sh', text, re.M))
+    scan = Scan(text, has_within)
+    open_at_end = scan.run()
+    for ln, cmd in scan.found:
+        print(f"{path}:{ln}: {cmd}  <- {HINT}")
+    if open_at_end:
+        print(f"{path}: the reader ends inside a quote or $( ), so it has misread this file")
 EOF
 }
 
@@ -117,7 +224,7 @@ fails=0
 check() { # <name> <want> <got>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
-flagged() { # <line>... — how many logical lines untimed flags
+flagged() { # <line>... — how many findings untimed prints
   printf '%s\n' "$@" > "${dir}/f.sh"; untimed "${dir}/f.sh" | wc -l | tr -d ' '
 }
 
@@ -128,23 +235,48 @@ check "a bare herdr --wait is flagged" 1 "$(flagged 'herdr agent prompt a hi --w
 check "a bare herdr agent wait is flagged" 1 "$(flagged 'herdr agent wait "$t" --until idle')"
 check "a bare herdr pane wait-output is flagged" 1 "$(flagged 'herdr pane wait-output "$p" --match ready')"
 check "a bare call in backticks is flagged" 1 "$(flagged 'x=`curl "$U"`')"
+check "a bare call after elif is flagged" 1 "$(flagged 'elif curl "$URL"; then')"
+check "a bare call behind exec, command, env, nohup, time or a path is flagged" 8 "$(flagged \
+  'exec curl "$U"' 'command curl "$U"' 'env FOO=1 curl "$U"' 'env -u X FOO=1 curl "$U"' \
+  'nohup gh run download 1' 'time curl "$U"' 'exec env FOO=1 curl "$U"' '/usr/bin/curl "$U"')"
 check "a bare call is flagged once, not once per line, when it continues" 1 "$(flagged 'gh run download "$id" \' '  --dir out')"
-check "a bare call on a file's last line ending in a backslash is flagged" 1 "$(flagged 'curl "$U" \')"
+check "a bare call on a file's last line ending in a backslash is flagged" 1 "$(printf 'curl "$U" \\' > "${dir}/f.sh"; untimed "${dir}/f.sh" | wc -l | tr -d ' ')"
 check "a call after a comment ending in a backslash is flagged" 1 "$(flagged '# note \' 'curl "$U"')"
+check "a call after a double-quoted string that spans lines is flagged" 1 "$(flagged 'x="a' 'b"; curl "$U"')"
+check "a call inside a multi-line substitution is flagged" 1 "$(flagged 'x="$(' '  curl "$U"' ')"')"
+check "a call before a lone & is flagged" 1 "$(flagged 'curl "$U" & curl --max-time 5 "$V"')"
 check "--max-time passes" 0 "$(flagged 'curl -fsSL --max-time 5 "$URL"')"
+check "-m passes curl" 0 "$(flagged 'curl -m 5 "$URL"' 'curl -m5 "$URL"')"
 check "timeout as the prefix passes" 0 "$(flagged 'timeout 30 gh run download "$id"')"
-check "within as the prefix passes" 0 "$(flagged 'within 30 gh run view "$id" --log-failed')"
-check "within after an assignment passes" 0 "$(flagged 'x="$(FOO=1 within 30 curl "$U")"')"
+check "within, defined in the file, passes" 0 "$(flagged 'within() { :; }' 'within 30 gh run view "$id" --log-failed')"
+check "within, defined in the file, passes after an assignment and with a variable" 0 \
+  "$(flagged 'within() { :; }' 'x="$(FOO=1 within "${left}" curl "$U")"')"
+check "within, sourced from merge.sh, passes" 0 "$(flagged 'source "${LIB}/merge.sh"' 'within 30 curl "$U"')"
+check "within in a file that neither defines nor sources it is flagged" 1 "$(flagged 'within 30 curl "$U"')"
+check "within with no seconds is flagged" 1 "$(flagged 'within() { :; }' 'within curl "$U"')"
 check "--timeout on a continuation line passes" 0 "$(flagged 'herdr agent prompt a hi --wait \' '  --timeout 5000')"
 check "--timeout passes herdr agent wait and pane wait-output" 0 \
   "$(flagged 'herdr agent wait "$t" --timeout 5000' 'herdr pane wait-output "$p" --match x --timeout 5000')"
+check "--timeout does not bound a gh call" 1 "$(flagged 'gh run download "$id" --timeout 5')"
+check "--max-time does not bound a gh call" 1 "$(flagged 'gh run view "$id" --log-failed --max-time 5')"
+check "a zero turns the timeout off, so it is no bound" 4 "$(flagged 'curl --max-time 0 "$U"' 'curl -m 0 "$U"' 'timeout 0 gh run download "$id"' 'herdr agent wait "$t" --timeout=0')"
+check "a positive bound overridden by a zero is flagged" 1 "$(flagged 'curl --max-time 5 --max-time 0 "$U"')"
+check "a zero overridden by a positive bound passes" 0 "$(flagged 'curl --max-time 0 --max-time 5 "$U"')"
+check "within with a zero is flagged" 1 "$(flagged 'within() { :; }' 'within 0 curl "$U"')"
+check "--wait-for is not --wait" 0 "$(flagged 'herdr agent prompt a hi --wait-for x')"
+check "a redirect's & does not split the call" 0 "$(flagged 'curl "$U" >&2 --max-time 5' 'curl "$U" 2>&1 --max-time 5' 'curl "$U" &> out --max-time 5')"
 check "a timeout on another command does not bound the call" 1 "$(flagged 'timeout 5 git fetch && curl "$U"')"
 check "the word timeout in a string does not bound the call" 1 "$(flagged 'echo timeout reached && curl "$U"')"
 check "a bound on a second call does not bound the first" 1 "$(flagged 'x="$(curl "$a")"; y="$(curl --max-time 5 "$b")"')"
 check "a bound inside a nested command does not bound the outer one" 1 "$(flagged 'curl "$u" "$(foo --timeout 5)"')"
 check "a bound inside a quoted argument does not bound the call" 1 "$(flagged 'curl -H "X-Note: --max-time 5" "$URL"')"
 check "a quoted option is a bound" 0 "$(flagged 'curl "--max-time" 5 "$URL"')"
+check "an option's value is not a bound" 1 "$(flagged 'curl "$URL" --write-out "--timeout"')"
+check "an option's value is not a bound for herdr either" 1 "$(flagged 'herdr agent wait "$t" --until "--timeout"')"
 check "the opt-out with a reason passes" 0 "$(flagged 'curl "$URL"  # no-timeout: the caller bounds it')"
+check "the opt-out covers the last command on its line only" 1 "$(flagged 'curl "$U"; curl "$V"  # no-timeout: r')"
+check "the opt-out covers a call in a substitution on its line" 0 "$(flagged 'x="$(curl "$U")"  # no-timeout: r')"
+check "the opt-out covers a call on its own line in a multi-line substitution" 0 "$(flagged 'x="$(' '  curl "$U"  # no-timeout: r' ')"')"
 check "the opt-out with no reason is flagged" 1 "$(flagged 'curl "$URL"  # no-timeout:')"
 check "the opt-out inside a string is flagged" 1 "$(flagged 'curl "$URL" "# no-timeout: r"')"
 check "the opt-out not at the start of the comment is flagged" 1 "$(flagged 'curl "$URL"  # TODO no-timeout: r')"
@@ -152,7 +284,11 @@ check "a comment line is not a call" 0 "$(flagged '# curl "$URL" has no bound')"
 check "a comment naming --max-time does not bound the call" 1 "$(flagged 'curl "$URL"  # TODO: add --max-time 5')"
 check "a trailing comment naming the call is not a call" 0 "$(flagged 'x=1  # curl is not run here')"
 check "an escaped backtick in a heredoc's prose is not a command substitution" 0 "$(flagged 'run \`gh run download <id>\` to fetch it')"
-check "the finding says to use within" yes "$(printf '%s\n' 'curl "$U"' > "${dir}/f.sh"; untimed "${dir}/f.sh" | grep -q 'within <seconds>' && echo yes || echo no)"
+check "a heredoc body with an apostrophe leaves the lines after it read as code" 2 \
+  "$(flagged 'cat <<EOF' "the user's decisions" 'EOF' 'curl "$U"' 'curl "$V"')"
+check "a file that ends inside a quote is reported" 1 "$(flagged 'x="a')"
+check "the finding says where within lives and that gh has no flag" yes \
+  "$(printf '%s\n' 'curl "$U"' > "${dir}/f.sh"; untimed "${dir}/f.sh" | grep -q 'within <seconds>.*merge.sh.*gh has no timeout flag' && echo yes || echo no)"
 
 files=()
 for f in "${REPO}/bin/swarm.sh" "${REPO}"/bin/lib/*.sh "${REPO}"/bin/gh-shim/* "${REPO}"/hooks/*.sh; do
