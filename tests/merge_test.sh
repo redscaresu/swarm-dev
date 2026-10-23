@@ -141,6 +141,10 @@ case "$1 $2" in
 esac
 STUB
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
+# claude: never the real one. Logs each call; plugin update fails with ${FX}/update.fail.
+# shellcheck disable=SC2016 # expanded when the stub runs
+printf '#!/bin/sh\necho "$*" >> "%s"\n[ "$2" != update ] || [ ! -e "%s/update.fail" ]\n' "${ROOT}/claude.log" "${FX}" > "${ROOT}/bin/claude"
+chmod +x "${ROOT}/bin/claude"
 # This project's panes: the conductor of epic e and the builder of story t.
 printf 'w:c conduct-e\nw:b t\n' > "${P}/.swarm/state/e"
 printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
@@ -834,10 +838,6 @@ OWN=https://github.com/redscaresu/swarm-dev/pull/7; NEW="${CLAUDE_CONFIG_DIR}/pl
 mkdir -p "${NEW%/*}" "${ROOT}/proj2/.claude/swarm"; git -C "${ROOT}/proj2" init -q; : > "${ROOT}/proj2/.claude/swarm/config"
 # shellcheck disable=SC2016 # expanded when the stubs run
 printf '#!/bin/sh\necho "${SWARM_PROJECT} $*" >> "%s"\necho "log ${SWARM_PROJECT}/.swarm/upgrade-1.3.0.log"\n' "${ROOT}/upgrade.log" > "${NEW}"
-# claude: logs each call; plugin update fails with ${FX}/update.fail.
-# shellcheck disable=SC2016
-printf '#!/bin/sh\necho "$*" >> "%s"\n[ "$2" != update ] || [ ! -e "%s/update.fail" ]\n' "${ROOT}/claude.log" "${FX}" > "${ROOT}/bin/claude"
-chmod +x "${ROOT}/bin/claude"
 own_release() {
   release_pr; rm -f "${ROOT}/claude.log" "${ROOT}/upgrade.log"; echo '{"nameWithOwner":"redscaresu/swarm-dev"}' > "${FX}/origin"
   printf '{"object":{"sha":"%s"}}' "${M}" > "${FX}/tagref"; echo '{"draft":false}' > "${FX}/release"
