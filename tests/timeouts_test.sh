@@ -10,6 +10,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
+export HOME="${dir}/home"   # under its own root, so parallel runs share no ~
 
 # untimed <file>... — one `file:line: text` per call with no bound and no opt-out.
 untimed() {
