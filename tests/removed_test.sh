@@ -33,13 +33,13 @@ if found="$(grep -rnE "${DOCS_GONE}" "${REPO}/docs" "${REPO}/commands" "${REPO}/
   echo "FAIL docs, commands, templates or skills mention something removed:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   docs, commands, templates and skills mention nothing removed"; fi
 
-# /plan-hld, the HLD template and the hld-lead role were removed: an epic is planned straight from /epic.
+# /plan-hld and the hld-lead role were removed: an epic is planned straight from /epic.
 if found="$(grep -rnE 'plan-hld|hld-lead' "${REPO}/bin" "${REPO}/commands" "${REPO}/templates" "${REPO}/skills")"; then
   echo "FAIL plan-hld or hld-lead is back in bin, commands, templates or skills:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   no plan-hld or hld-lead in bin, commands, templates or skills"; fi
-if [[ -e "${REPO}/commands/plan-hld.md" || -e "${REPO}/templates/docs/hld" ]]; then
-  echo "FAIL commands/plan-hld.md or templates/docs/hld is back"; fails=$((fails + 1))
-else echo "ok   commands/plan-hld.md and templates/docs/hld are gone"; fi
+if [[ -e "${REPO}/commands/plan-hld.md" ]]; then
+  echo "FAIL commands/plan-hld.md is back"; fails=$((fails + 1))
+else echo "ok   commands/plan-hld.md is gone"; fi
 LESSONS_GONE='LESSON_|lessons_report|rules_check_step|rules_review_rule|Rules checked|lesson: <kind>|lesson: prune'
 if found="$(grep -rnE "${LESSONS_GONE}" "${REPO}/bin" "${REPO}/commands")"; then
   echo "FAIL bin/ or commands/ still has lessons or its rule PRs:"; echo "${found}"; fails=$((fails + 1))

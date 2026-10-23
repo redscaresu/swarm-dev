@@ -50,6 +50,9 @@ p="${ROOT}/fresh"; "${GIT[@]}" init -q "${p}"; origin "${p}"
 printf 'node_modules/' > "${p}/.gitignore"   # no trailing newline: the first added line must not join it
 out="$(run "${p}" init || true)"
 check "init copies every template file" "same" "$(same "${TEMPLATES}" "${p}/docs")"
+check "init writes the HLD template with a grants line and the ten sections" "yes|10" \
+  "$(grep -qxF 'grants: []' "${p}/docs/hld/README.md" && echo yes)|$(grep -cE '^## (Problem|Goals|Non-goals|Current state|Design|Alternatives|Risks and safety|Rollout|Open questions|Epics) ' "${p}/docs/hld/README.md")"
+check "init's Board.base has a view on the HLDs" "yes" "$(grep -qF -- '- file.inFolder("hld")' "${p}/docs/Board.base" && echo yes || echo no)"
 check "init creates .claude/swarm/" "yes" "$([[ -d "${p}/.claude/swarm" ]] && echo yes || echo no)"
 check "init adds the three .gitignore lines after the existing one" \
   $'node_modules/\n.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json' "$(cat "${p}/.gitignore")"

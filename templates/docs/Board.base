@@ -11,6 +11,8 @@ properties:
     displayName: Depends on
   note.kind:
     displayName: Kind
+  note.date:
+    displayName: Started
 views:
   - type: table
     name: Board
@@ -51,6 +53,18 @@ views:
       - depends_on
     columnSize:
       file.name: 280
+  - type: table
+    name: HLDs
+    filters:
+      and:
+        - file.inFolder("hld")
+    groupBy:
+      property: status
+      direction: ASC
+    order:
+      - file.name
+      - date
+      - status
   - type: table
     name: Waiting on you
     filters:

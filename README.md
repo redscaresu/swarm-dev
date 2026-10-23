@@ -59,7 +59,7 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 | [codex CLI](https://github.com/openai/codex) | logged in | the second reviewer, a different model family |
 | `git`, `python3`, `bash` | any recent | the `swarm.sh` scripts |
 | a GitHub repo | with `make check` | CI and the pre-commit hook run it |
-| [Obsidian](https://obsidian.md) | optional | browse the board: open the board folder as a vault, and `Board.base` shows stories by status and epic |
+| [Obsidian](https://obsidian.md) | optional | browse the board: open the board folder as a vault, and `Board.base` shows stories by status and epic, and HLDs by status |
 
 ## Getting started
 
