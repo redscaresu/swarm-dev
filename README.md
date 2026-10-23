@@ -8,21 +8,15 @@ You agree a piece of work with one agent. Others split it into stories of one pu
 try to break that plan, then build the stories in parallel, each in its own terminal pane and git
 worktree. Every PR is reviewed before it merges, and the run stops whenever a decision is yours.
 
-![swarm.sh dash --watch on a demo project: what needs you and the epics on the left, recent work on the right](docs/assets/dash.gif)
-
 ## Quick start
 
-```bash
-claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev
-```
-
-Then, in your project inside [herdr](https://herdr.dev), start `claude` and run:
-
-1. `/swarm-dev:swarm` runs `swarm.sh init` the first time, which sets up the board.
-2. `/swarm-dev:epic Add rate limiting to the API` writes the first piece of work with you.
-3. `/swarm-dev:swarm` again plans it, builds it, and stops each time it needs you.
+1. Install, then restart Claude Code: `claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev`
+2. In your project's git root, inside [herdr](https://herdr.dev), run `swarm.sh init`.
+3. Start `claude` and run `/swarm-dev:swarm`. It stops each time it needs you.
 
 [Getting started](#getting-started) has the details and what to check first.
+
+![swarm.sh dash --watch on a demo project: what needs you and the epics on the left, recent work on the right](docs/assets/dash.gif)
 
 ## How it works
 
@@ -72,12 +66,13 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 1. Install the plugin (above), then restart Claude Code.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
-3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name, since a shorter one can run a different command. The first time, it runs `swarm.sh init`, which adds the board
+3. Inside herdr, run `swarm.sh init`. Or run `claude` and `/swarm-dev:swarm`, which runs it after your
+   yes. Type the whole command name, since a shorter one can run a different command. `init` adds the board
    (`docs/epics/` and `docs/stories/`), `.claude/swarm/config`, and a CI workflow and pre-commit
    hook that run `make check`. It also asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.
-4. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm` again. Run it each
+4. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm`. Run it each
    time it stops for you.
 
 Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
