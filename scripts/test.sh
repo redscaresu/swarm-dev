@@ -27,11 +27,12 @@ stop_group() {
 # lines. SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
-# test's made-up panes. Nor the swarm names a builder's pane points at its real project (SWARM_PROJECT,
-# SWARM_AGENT, SWARM_STORY, SWARM_RESUME, gh-shim's SWARM_GH_*), and SWARM_NO_CI_REFRESH is set: a
-# dash test starts no detached ci refresh, which outlives the test and runs flow, and gh, on a project.
+# test's made-up panes. Nor any SWARM_* but SWARM_SLEEP_SCALE: a builder's pane carries every SWARM_*
+# the lead exported, SWARM_PROJECT and SWARM_AGENT among them, which name its real project. And
+# SWARM_NO_CI_REFRESH is set, so a dash test starts no detached ci refresh, which outlives the test
+# and runs flow, and gh, on a project.
+for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${v}" ;; esac; done
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
-unset SWARM_PROJECT SWARM_AGENT SWARM_STORY SWARM_RESUME SWARM_GH_LOG SWARM_GH_CALLER SWARM_GH_VIA
 limit="${TEST_FILE_TIMEOUT:-600}"
 if [[ "${1:-}" == --one ]]; then
   run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd=""

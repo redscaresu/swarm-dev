@@ -54,11 +54,14 @@ check "SWARM_SLEEP_SCALE defaults to 0.01" "$(cat "${ROOT}/scale.seen")" 0.01
 SWARM_SLEEP_SCALE=0.5 bash "${REPO}/scripts/test.sh" "${ROOT}/scale_test.sh" > /dev/null 2>&1
 check "a SWARM_SLEEP_SCALE that is set is kept" "$(cat "${ROOT}/scale.seen")" 0.5
 
-# A test never sees the swarm names that point at the caller's real project, and starts no ci refresh.
-# shellcheck disable=SC2016 # the fixture's own shell expands it
-printf '#!/usr/bin/env bash\necho "${SWARM_PROJECT-unset} ${SWARM_AGENT-unset} ${SWARM_GH_LOG-unset} ${SWARM_NO_CI_REFRESH-unset}" > "%s/env.seen"\n' "${ROOT}" > "${ROOT}/env_test.sh"
-SWARM_PROJECT=/real SWARM_AGENT=builder SWARM_GH_LOG=/real/.swarm/gh-calls.tsv bash "${REPO}/scripts/test.sh" "${ROOT}/env_test.sh" > /dev/null 2>&1
-check "SWARM_PROJECT, SWARM_AGENT and SWARM_GH_LOG are unset, SWARM_NO_CI_REFRESH set" "$(cat "${ROOT}/env.seen")" "unset unset unset 1"
+# A test sees no SWARM_* the caller set (a builder's pane names its real project in them) but
+# SWARM_SLEEP_SCALE, and SWARM_NO_CI_REFRESH=1, so it starts no ci refresh.
+printf '#!/usr/bin/env bash\nenv | grep "^SWARM_" | sort > "%s/env.seen"\n' "${ROOT}" > "${ROOT}/env_test.sh"
+SWARM_PROJECT=/real SWARM_AGENT=builder SWARM_GH_LOG=/real/.swarm/gh-calls.tsv SWARM_NO_CI_REFRESH='' SWARM_ANY_NEW=x SWARM_SLEEP_SCALE=0.01 \
+  bash "${REPO}/scripts/test.sh" "${ROOT}/env_test.sh" > /dev/null 2>&1
+check "no SWARM_* the caller set reaches a test but SWARM_SLEEP_SCALE, and SWARM_NO_CI_REFRESH is 1" "$(cat "${ROOT}/env.seen")" \
+  "SWARM_NO_CI_REFRESH=1
+SWARM_SLEEP_SCALE=0.01"
 
 check "--list runs nothing, so a bad TEST_FILE_TIMEOUT does not stop it" "$(TEST_FILE_TIMEOUT=abc bash "${REPO}/scripts/test.sh" --list "${ROOT}/quick_test.sh" 2>&1; echo "rc=$?")" "${ROOT}/quick_test.sh
 rc=0"
