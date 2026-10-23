@@ -291,7 +291,7 @@ dataset_report() {
 #     test.sh FAIL or TIMEOUT tests/<file> lines of each flaky run's red attempts (a red attempt a green one on
 #     the same head, workflow and event follows, as flakes counts them), from gh run view --log-failed,
 #     a file once per run, worst first, over the runs created in the window in the repos of the window's PRs
-#     and the project's origin (one gh api call each, or with the cache one per UTC day not cached yet; with --epic, its PRs' runs), at most 100 gh
+#     and the project's origin (one gh api call each, more when GitHub cuts a listing at its 1000; with the cache, only from 3 days before the newest cached run on, and the days a cut listing left out; with --epic, its PRs' runs), at most 100 gh
 #     invocations (not REST requests) and none past the hourly rate limit, with flaky tests: lines for what was cut, left out or unparsed,
 #     or that none was flaky. Then, per repo, a PR's CI time (its newest
 #     head's longest run, from its last attempt's start, and that run's slowest job, from that

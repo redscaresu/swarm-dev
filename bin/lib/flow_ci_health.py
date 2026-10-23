@@ -132,46 +132,63 @@ def window_runs(repo, created, lines):
     # cached (gh_cache's Listing, RUN_DAYS of them), so with nothing cached the window is listed, and
     # after that only from RELIST_DAYS before the newest cached day (a run rerun since then is read
     # again; a rerun keeps its run's created day, so one created before that is not), or from the
-    # oldest day with a run still running; the window is served from the cache. A listing cut at
-    # GitHub's 1000 (the newest) is listed again up to the oldest day it reached, until whole, or a
-    # line says what was left out. Raises Stop.
+    # oldest day with a run still running; the window is served from the cache. What a listing cut at
+    # GitHub's 1000 left out (list_range) is kept as the cache's hole, and listed again first on each
+    # run whose window reaches it, saying so again while it is cut. Raises Stop.
     start, _, end = created.removeprefix(">=").partition("..")
     have = Listing(repo, "runs", start, cached_run)
     lo = start if have.fresh else have.since(RELIST_DAYS)
-    hi, whole, held, finished, last = end, True, [], False, have.state["next"]
-    # A run still running holds its day for the next listing; one queued or waiting for over a day (a
-    # runner that never came) does not.
-    stale = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    held, whole, finished, last = [], True, False, have.state["next"]
     try:
-        while not end or lo <= end:   # none to list when the cache holds every day up to end
-            ask = created if have.fresh and hi == end else f"{lo}..{hi}" if hi else f">={lo}"
-            got = list_runs(repo, ask, lines)
-            if got is None:
+        hole = have.hole_in(end)   # first, so a hole the listing below cuts again is kept
+        ranges = ([(hole[0], hole[1], None)] if hole else []) + ([(lo, end, created if have.fresh else None)] if not end or lo <= end else [])
+        for a, z, ask in ranges:
+            left = list_range(repo, a, z, ask, have, held, lines)
+            if left is None:
                 return None, False
-            got, total = got
-            for r in got:   # a run listed again while a rerun of it runs is no longer done
-                if r.get("status") != "completed":
-                    have.items.pop(str(r.get("id")), None)
-            have.items.update({str(r["id"]): dict(databaseId=r["id"], headSha=r.get("head_sha"), workflowName=r.get("name"), event=r.get("event"),
-                                                  conclusion=r.get("conclusion"), attempt=r["run_attempt"], createdAt=r["created_at"]) for r in got
-                               if r.get("status") == "completed" and isinstance(r.get("id"), int) and isinstance(r.get("run_attempt"), int)})
-            held += [r["created_at"][:10] for r in got if r.get("status") != "completed"
-                     and not (r.get("status") in ("queued", "waiting", "requested", "pending") and r["created_at"] < stale)]
-            if len(got) >= total:
-                finished = True
-                break
-            oldest = min(r["created_at"][:10] for r in got) if got else lo
-            if oldest <= lo or (hi and oldest >= hi):   # a day of over 1000 runs, or no way on
-                lines.append(f"flaky tests: gh listed {len(got)} of the {total} runs of {repo} created {ask}, the newest; the rest are left out")
-                whole, finished = False, True
-                break
-            hi = oldest
+            if [a, z] == hole:   # listed again: what it still leaves out is the hole now
+                have.state.pop("hole")
+            if left:
+                have.left_out(*left)
+                whole = False
         finished = True
     finally:   # what was listed is kept, a Stop too; a listing left part way (a hole) moves next on by nothing
         served = [r for r in have.items.values() if start <= r["createdAt"][:10] <= (end or "9999-12-31")]
         newest = min(held) if held else max([r["createdAt"][:10] for r in have.items.values()] + [last])
         have.save(newest if finished else min(newest, last), lambda r: r["createdAt"][:10], RUN_DAYS)
     return served, whole
+
+def list_range(repo, lo, hi, ask, have, held, lines):
+    # Lists the runs created lo to hi (days; no hi: on) into have's items (ask, gh's syntax, for its
+    # first call), adding to held the days of runs still running. A listing cut at GitHub's 1000 (the
+    # newest) is listed again up to the oldest day it reached, until whole: [] then; when a day holds
+    # more than the 1000, or a call gets no further, a line says so and [lo, that day] (left out) is
+    # returned. None when gh cannot list them. Raises Stop.
+    top = hi
+    # A run queued or waiting for over a day (a runner that never came) holds nothing.
+    stale = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    while True:
+        call = ask if ask and hi == top else f"{lo}..{hi}" if hi else f">={lo}"
+        got = list_runs(repo, call, lines)
+        if got is None:
+            return None
+        got, total = got
+        for r in got:   # a run listed again while a rerun of it runs is no longer done
+            if r.get("status") != "completed":
+                have.items.pop(str(r.get("id")), None)
+        have.items.update({str(r["id"]): dict(databaseId=r["id"], headSha=r.get("head_sha"), workflowName=r.get("name"), event=r.get("event"),
+                                              conclusion=r.get("conclusion"), attempt=r["run_attempt"], createdAt=r["created_at"]) for r in got
+                           if r.get("status") == "completed" and isinstance(r.get("id"), int) and isinstance(r.get("run_attempt"), int)})
+        held += [r["created_at"][:10] for r in got if r.get("status") != "completed"
+                 and not (r.get("status") in ("queued", "waiting", "requested", "pending") and r["created_at"] < stale)]
+        if len(got) >= total:
+            return []
+        oldest = min(r["created_at"][:10] for r in got) if got else lo
+        if oldest <= lo or (hi and oldest >= hi):   # a day of over 1000 runs, or no way on
+            said = f"flaky tests: gh listed {len(got)} of the {total} runs of {repo} created {call}, the newest; the rest are left out"
+            lines.extend([said] if said not in lines else [])
+            return [lo, max(lo, oldest)]
+        hi = oldest
 
 def list_runs(repo, ask, lines):
     # One paginated listing of the runs created ask (gh's syntax): (its runs, how many GitHub has), or

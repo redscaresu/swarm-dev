@@ -6,7 +6,8 @@
 # exists. d's PR 4 was closed without a merge. e's PR 5 merged, and gh lists no runs for it yet. PR 9
 # (no story's) merged 3 days ago, b's run 21 was created a day ago, and run 51 has sat queued for 3
 # days. The stub lists runs by their created day, as GitHub does; with CUT=<n> it lists the newest n
-# (GitHub's 1000) and has run 61 too, created today, and with OLD=1 run 95, created 95 days ago.
+# (GitHub's 1000) and has run 61 too, created today, and with OLD=1 run 95, created 95 days ago; with
+# MCUT=1 the merged-PR search gives 1000 PRs merged today (its limit).
 # A second flow --since 7 days ago prints what the first printed and reads nothing of PR 1 or its
 # runs, nor PR 3's PR or commits, nor PR 4's commits or runs (only PR 4 itself, as a closed PR can be
 # reopened); it reads e's runs again, as gh listed none. It searches merged PRs from a day before PR
@@ -17,9 +18,12 @@
 # new writes no listing. With --until before the cache's newest day, runs are not listed; with
 # --since after it, they are listed from --since. A cached run created over 90 days ago is dropped,
 # unless the window reaches it. A damaged cache file is read from gh again and rewritten; --no-cache
-# reads everything again and writes it over the cache. A listing cut at the 1000 is listed again up
-# to the oldest day it reached until whole, and a day of more is left out with a line. An empty log
-# (one GitHub has not archived yet) is not cached.
+# reads everything again and writes it over the cache, deleting a merged PR's records kept under its
+# old updated_at. A cached merged PR merged over 120 days ago is dropped. A listing cut at the 1000 is
+# listed again up to the oldest day it reached until whole; what a cut listing leaves out (a day of
+# runs, merged PRs) is kept and listed again on the next run, which says so again while it is cut,
+# and not once it is whole. An empty log (one GitHub has not archived yet) is not cached, and a write
+# that fails leaves no temp file.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -84,12 +88,16 @@ for r in runs:
 runs = sorted((r for r in runs if lo <= r["created_at"][:10] <= (hi or "9999-12-31")), key=lambda r: r["created_at"], reverse=True)
 print(json.dumps([{"total_count": len(runs), "workflow_runs": runs[:int(os.environ.get("CUT") or len(runs) or 1)]}]))
 EOF
+cat > "${G}/merged.py" <<EOF
+import json
+print(json.dumps([{"url": f"${U}/{n}", "mergedAt": "$(ago 0 t)", "title": "m", "body": "", "files": []} for n in range(1000, 2000)]))
+EOF
 { echo '#!/bin/sh'; echo "G=${G} U=${U}"; cat <<'EOF'; } > "${dir}/bin/gh"
 echo "$*" >> "$G/gh.log"
 done=""; [ ! -f "$G/done" ] || done=-done
 case "$*" in
 "pr list --head story/"*) cat "$G/head-${4##*/}" ;;
-"pr list -R o/r --state merged "*) cat "$G/merged" ;;
+"pr list -R o/r --state merged "*) if [ -n "${MCUT:-}" ]; then python3 "$G/merged.py"; else cat "$G/merged"; fi ;;
 "pr view $U/"*" --json createdAt"*) cut -f4 "$G/head-a" ;;
 "api repos/o/r/pulls/"*) cat "$G/pull-${2##*/}" ;;
 "api --paginate --slurp repos/o/r/pulls/"*"/commits?per_page=100") cat "$G/commits-$(echo "$4" | cut -d/ -f5)" ;;
@@ -111,6 +119,8 @@ check() { # <name> <output> <exact expected output>
 }
 calls() { grep -cE "$1" "${G}/gh.log" || true; }   # gh calls the last flow made whose arguments match
 merged() { sed -n 's/^pr list -R o\/r --state merged .*--search merged:\([0-9-]*\)\.\..*/\1/p' "${G}/gh.log"; }
+searches() { sed -n 's/^pr list -R o\/r --state merged .*--search merged:\(.*\)$/\1/p' "${G}/gh.log" | paste -sd' ' -; }   # every merged-PR search's range
+flow_err() { : > "${G}/gh.log"; (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow --since "${since}" > /dev/null 2> "${G}/err"); cat "${G}/err"; }   # stderr alone
 listing() { sed -n 's/^api --paginate --slurp repos\/o\/r\/actions\/runs?created=%3E%3D\([0-9-]*\)&.*/\1/p' "${G}/gh.log"; }   # the day runs are listed from
 asks() { sed -n 's/^api --paginate --slurp repos\/o\/r\/actions\/runs?created=\([^&]*\)&.*/\1/p' "${G}/gh.log" | python3 -c 'import sys, urllib.parse; print(" ".join(urllib.parse.unquote(l.strip()) for l in sys.stdin))'; }
 cached_runs() { python3 -c 'import json, sys; print(" ".join(sorted(json.load(open(sys.argv[1]))["items"])))' "${C}/runs.json"; }
@@ -162,7 +172,9 @@ check "a damaged cache prints the same" "$(flow)" "${done_out}"
 check "and reads PR 1 and lists runs and merged PRs from the window's start again" "$(calls 'pulls/1$') $(merged) $(listing)" "1 $(ago 5 d) ${since}"
 check "then rewrites them whole" "$(python3 -c 'import json, sys; [json.load(open(f)) for f in sys.argv[1:]]; print("parsed")' "${C}/pulls/1.json" "${C}/runs.json" "${C}/merged.json")" parsed
 sed 's/story\/a/story\/stale/' "${C}/pulls/1.json" > "${G}/stale" && mv "${G}/stale" "${C}/pulls/1.json"
+pull 1 a closed "\"${m1}\"" "${r21}"   # its updated_at moved since (a comment, say)
 check "--no-cache prints the same" "$(flow --no-cache)" "${done_out}"
+check "and deletes merged PR 1's commits and runs kept under its old updated_at" "$(find "${C}/commits" "${C}/runs" -name '1-*' | wc -l | tr -d ' ')" 2
 check "and reads everything of PR 1 again, from the window's start" "$(calls "${PR1}") $(merged) $(listing)" "7 $(ago 5 d) ${since}"
 check "and writes what gh answered over the cache, so the next flow reads none of PR 1" "$(grep -c story/a "${C}/pulls/1.json") $(flow > /dev/null; calls "${PR1}")" "1 0"
 OLD=1 flow --since "$(ago 100)" > /dev/null
@@ -173,7 +185,21 @@ CUT=2 flow > /dev/null
 check "a listing cut at the 1000 is listed again up to the oldest day it reached, until whole" "$(asks)" ">=$(ago 4 d) $(ago 4 d)..$(ago 1 d) $(ago 4 d)..$(ago 2 d)"
 check "and keeps every run it listed (not run 95, which this window does not reach)" "$(cached_runs)" "11 21 31 61"
 check "a day of more than the 1000 is left out, and a line says so" "$(CUT=1 flow | grep -c "^flaky tests: gh listed 1 of the 4 runs of o/r created $(ago 3 d)..$(ago 0 d), the newest")" 1
+check "the next run lists that day again first, and says so again while it is cut" \
+  "$(CUT=1 flow | grep -c "^flaky tests: gh listed 1 of the 4 runs of o/r created $(ago 3 d)..$(ago 0 d), the newest") $(asks | cut -d' ' -f1)" "1 $(ago 3 d)..$(ago 0 d)"
+check "and once it is listed whole, no more" "$(flow | grep -c '^flaky tests: gh listed' || true) $(grep -c '"hole"' "${C}/runs.json" || true)" "0 0"
+check "a merged-PR search cut at the 1000 says so" "$(MCUT=1 flow_err | grep -c '^rework: gh listed 1000 merged PRs of o/r')" 1
+check "the next run searches what it left out again first, and says so again while it is cut" \
+  "$(MCUT=1 flow_err | grep -c '^rework: gh listed 1000 merged PRs of o/r') $(searches | cut -d' ' -f1)" "1 $(ago 4 d)..$(ago 0 d)"
+check "and once it is whole, no more" "$(flow_err | grep -c '^rework: gh listed' || true) $(grep -c '"hole"' "${C}/merged.json" || true)" "0 0"
+python3 -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p))
+d["items"]["o/r#8"] = [sys.argv[2], "old\n", []]; json.dump(d, open(p, "w"))' "${C}/merged.json" "$(ago 121 t)"
+flow > /dev/null
+check "a cached merged PR merged over 120 days ago is dropped" "$(grep -c 'o/r#8' "${C}/merged.json" || true)" 0
 rm "${C}/logs/11-1.json"; touch "${G}/nolog"
 flow > /dev/null
 check "an empty log (not archived yet) is not cached, and is read again next run" "$(test -f "${C}/logs/11-1.json" && echo cached; flow > /dev/null; calls 'run view 11 ')" 1
+rm "${G}/nolog"; rm "${C}/pulls/1.json"; mkdir "${C}/pulls/1.json"   # a record that cannot be written over
+flow > /dev/null
+check "a write that fails leaves no temp file" "$(find "${C}/pulls" -name '*.tmp' | wc -l | tr -d ' ')" 0
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
