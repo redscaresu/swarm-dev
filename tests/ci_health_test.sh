@@ -184,9 +184,10 @@ check "the last 7 days against the 7 before: 11.5 min, test slowest at 9.0, agai
 git -C "${P}" remote add origin https://github.com/o/r.git && touch "${P}/docs/stories/README.md"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/herdr"; chmod +x "${dir}/bin/herdr"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${dir}/bin/claude"
-dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so the next dash reads the ci cache again
+dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so the next dash reads the ci cache again.
+  # It may start a ci refresh (SWARM_NO_CI_REFRESH set empty, as make test sets it 1); NOREFRESH=1 dash never does.
   local out
-  out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
+  out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_NO_CI_REFRESH="${NOREFRESH:-}" PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
     COLUMNS=200 bash "${SWARM}" dash 2>&1)" || true
   rm -f "${dir}"/tmp/swarm-dash-3-*
   grep -oE "ci [0-9].*(vs last week|h old)" <<< "${out}" || true
@@ -246,13 +247,13 @@ ln -sf "${dir}/victim" "$(ci_cache).failed"
 FAIL=1 dash > /dev/null; refreshed
 check "a refresh never writes through a link planted at <cache>.failed" "$(cat "${dir}/victim")" keep
 rm "$(ci_cache).failed"; printf 'ci 1m\033[2J (slowest: x\n1m) vs last week' > "$(ci_cache)"
-check "a cached line is printed without its control characters" "$(SWARM_NO_CI_REFRESH=1 dash)" "ci 1m[2J (slowest: x1m) vs last week"
+check "a cached line is printed without its control characters" "$(NOREFRESH=1 dash)" "ci 1m[2J (slowest: x1m) vs last week"
 # Its files live in a directory dash made 0700; one anyone else could write to (or a link, or not
 # this user's) is not trusted: no line from it.
 mode() { python3 -c 'import glob, os, sys; print(oct(os.lstat(glob.glob(sys.argv[1])[0]).st_mode & 0o777))' "${dir}/tmp/swarm-dash-ci-*"; }
 check "dash keeps the ci cache in a directory only this user can open" "$(mode)" 0o700
 chmod 777 "${dir}"/tmp/swarm-dash-ci-*
-check "a ci cache directory others can write to is not trusted" "$(SWARM_NO_CI_REFRESH=1 dash)" ""
+check "a ci cache directory others can write to is not trusted" "$(NOREFRESH=1 dash)" ""
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
