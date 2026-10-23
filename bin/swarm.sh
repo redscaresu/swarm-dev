@@ -819,10 +819,12 @@ main_signal() {
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
 # epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held.
 main() {
-  local rc why
+  local rc why a
   [[ "${1:-}" != init ]] || init_check
   EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""
+  # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
   if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
+     || [[ "${EV_CMD}" == upgrade && "${SWARM_UPGRADE_WORKER:-}" != 1 && " $* " != *" --foreground "* ]] \
      || ! is_command "${EV_CMD}"; then
     dispatch "$@"; return
   fi
@@ -841,6 +843,7 @@ main() {
     tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
     # Likewise a close's cause, and only a real one.
     close) EV_TARGET="${2:-}"; if is_close_cause "${3:-}"; then EV_CMD="close:$3"; fi ;;
+    upgrade) EV_TARGET=""; for a in "${@:2}"; do [[ "${a}" == --* ]] || EV_TARGET="${a}"; done ;;   # its epic, not --foreground
     reset|drop) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})"
                 # Lifting a hold is not the story's one reset, so reset_at must not read it.
                 if [[ "${EV_CMD}" == reset && "${2:-}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/stories/$2.md" \

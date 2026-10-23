@@ -1564,14 +1564,16 @@ on. After `swarm.sh update` (or `claude plugin update`) and a restart of your ow
 `swarm.sh upgrade <epic>` to move that epic's agents (its conductor, builders and review agents) to
 the installed version. `swarm.sh upgrade backlog` moves the backlog conductor and the stories with
 no epic, and with no argument it moves every agent the project started. upgrade runs detached
-until it is done: it starts itself again under `nohup`, in a process group of its own, prints that
-run's pid and its log, `.swarm/upgrade-<version>.log`, and returns, so closing the session that
-started it does not stop it. `--foreground` runs it in your shell instead. One upgrade runs per
+until it is done: it starts itself again under `nohup`, in a process group of its own, and once
+that worker holds the project's upgrade it prints the worker's pid and its log,
+`.swarm/upgrade-<version>.log`, and returns, so closing the session that started it does not stop
+it. A worker that stops first, as one that finds another upgrade running does, has its lines
+printed and its exit code returned instead. `--foreground` runs it in your shell instead. One upgrade runs per
 project. A second one, while the first runs, prints the running one's pid and log and starts
 nothing. It exits 0 when the running one moves its agents too (the same epic, or every agent), and
 1 when it does not: `<epic> was not moved; run it again once the running one ends`. A pid file
 whose process is no longer a `swarm.sh upgrade` counts as none running. While it runs, `swarm.sh
-status` names it, its epic, and that epic's agents still on an old version.
+status` names it, its epic, and that epic's agents not yet on the version it moves them to.
 upgrade first checks the
 conductor's `env:` names, as `conduct` does; if one is refused, it asks the conductor for nothing.
 Otherwise the conductor writes a handover to `.swarm/handover-<epic>-<date>.md` (each open PR with
@@ -1591,7 +1593,9 @@ read from its log too: when its last assistant entry has ended its turn, with no
 for a result and no user entry after it (a prompt, a scheduled one included, or a tool result), it counts as idle and is restarted, its
 background commands, subagents and monitors stopped (it is told to start them again). A subagent's own entries in the main log are not the session's turn. A turn still in progress, one
 waiting on a tool call's result, one waiting on a prompt, and one whose log cannot be read stay
-busy, are never interrupted and wait for a later round. One whose session is gone or unknown is named at once and not restarted. A restart
+busy, are never interrupted and wait for a later round. A builder that goes busy between the round's
+read and its restart is waited for one round (60 seconds) at most, then waits for the next, so a
+round never stalls and the paused conductors' markers stay fresh. One whose session is gone or unknown is named at once and not restarted. A restart
 sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
@@ -1605,13 +1609,17 @@ restarted and which were left: restarted and told to carry on, or, if it was alr
 version or its restart failed before its claude exited, only told to carry on.
 upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. When it is done
 it prints one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or
-`<name>: already on <new>`, then `upgrade done: <n> moved, <m> left (exit <code>)`, so a log that
-ends without that line was cut off. `swarm.sh version` in a pane confirms the version. If a restart
+`<name>: already on <new>` (with a reason, when a conductor already on it wrote no handover: it is
+never left, and fails nothing), then `upgrade done: <n> moved, <m> left (exit <code>)`, so a log
+that ends without that line was cut off. Only an agent whose version changed counts as moved. The
+run is logged as one event, the detached worker's, with its epic as the target. `swarm.sh version` in a pane confirms the version. If a restart
 fails from the first ctrl+c on, upgrade leaves the pane open, and the agent's line names the
 `claude --resume <session>` that brings it back and the folder to run it in. A conductor that
-could not be told to carry on gets a line saying to tell it by hand. A TERM or HUP to the run tells
-each conductor it paused to carry on as before and ends the log on `upgrade stopped: ...`; a KILL
-or a reboot cannot, and leaves that conductor waiting for a prompt. upgrade stops when every agent is moved or left,
+could not be told to carry on gets a line saying to tell it by hand. A TERM or HUP to the run names
+each agent it had not moved as left (one cut off mid-restart with its `claude --resume` line), tells
+each conductor it paused which of its builders were restarted and to carry on as before, and ends
+the log on `upgrade stopped: <n> moved, <m> left (exit 143)` (129 for a HUP). A KILL or a reboot
+cannot, and leaves that conductor waiting for a prompt. upgrade stops when every agent is moved or left,
 or after `SWARM_UPGRADE_WAIT_MS` (2 hours, for the whole run). An agent still busy then is left on
 its old version. A conductor with no handover by then, or still busy after writing one, is told to
 carry on as before: by prompt once it is idle (upgrade waits up to `SWARM_UPGRADE_GRACE_MS`, 5

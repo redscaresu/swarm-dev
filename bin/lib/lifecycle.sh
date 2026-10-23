@@ -1688,27 +1688,41 @@ lead_holder() {
   if [[ "${pid}" =~ ^[0-9]+$ ]] && ps -p "${pid}" -o command= 2>/dev/null | grep -q -- 'swarm.sh wait --lead'; then echo "${pid}"; fi
 }
 
-# lead_lock — make this run the one wait --lead: stop any live holder of LEAD_PID (an earlier run, whose
-# output may go unread), then link a file holding $$ into place, so LEAD_PID is never seen half written.
-# The pid file goes on exit, only while it still names this run.
-lead_lock() {
-  local pid tmp i
-  mkdir -p "${LEAD_DIR}" || die "wait --lead: cannot make ${LEAD_DIR}"
-  tmp="${LEAD_PID}.$$"
-  echo "$$" > "${tmp}" || die "wait --lead: cannot write ${tmp}"
-  until ln "${tmp}" "${LEAD_PID}" 2>/dev/null; do
-    [[ -e "${LEAD_PID}" ]] || { rm -f "${tmp}"; die "wait --lead: cannot write ${LEAD_PID}"; }
-    pid="$(lead_holder)"
-    if [[ -n "${pid}" ]]; then
-      echo "swarm: wait --lead: stopping the earlier run (pid ${pid}); this one watches now" >&2
-      kill "${pid}" 2>/dev/null || true
-      for ((i = 0; i < 50; i++)); do [[ -n "$(lead_holder)" ]] || break; sleep 0.1; done
-      [[ -z "$(lead_holder)" ]] || { rm -f "${tmp}"; die "wait --lead: the earlier run (pid ${pid}) did not stop"; }
+# pid_lock <pid-file> <line> <holder> — link a file holding <line> (this run's pid first) into
+# <pid-file>, so it is never seen half written. Fails while <holder>, a function, prints a live
+# holder, whose file stays. A dead holder's file is removed under <pid-file>.reclaim, made with perl's
+# mkdir (uutils' mkdir lets two racers both through, as state_lock says) and read again there, so a
+# run never removes one another run just took.
+pid_lock() {
+  local tmp="$1.$$" n=0
+  { mkdir -p "${1%/*}" && printf '%s\n' "$2" > "${tmp}"; } || die "cannot write ${tmp}"
+  until ln "${tmp}" "$1" 2>/dev/null; do
+    [[ -e "$1" ]] || { rm -f "${tmp}"; die "cannot write $1"; }
+    [[ -z "$("$3")" ]] || { rm -f "${tmp}"; return 1; }
+    if perl -e 'mkdir shift or exit 1' "$1.reclaim"; then
+      [[ -n "$("$3")" ]] || rm -f "$1"
+      rmdir "$1.reclaim"
+    else
+      ((++n < 50)) || { rm -f "${tmp}"; die "$1.reclaim stays; remove it if nothing holds $1"; }
+      sleep 0.1
     fi
-    # Gone, or stale: free the name, unless another new run took it in the meantime.
-    [[ -n "$(lead_holder)" ]] || rm -f "${LEAD_PID}"
   done
   rm -f "${tmp}"
+}
+
+# lead_lock — make this run the one wait --lead (pid_lock): stop any live holder of LEAD_PID (an
+# earlier run, whose output may go unread) and take it. The pid file goes on exit, only while it
+# still names this run.
+lead_lock() {
+  local pid i
+  until pid_lock "${LEAD_PID}" "$$" lead_holder; do
+    pid="$(lead_holder)"
+    [[ -n "${pid}" ]] || continue
+    echo "swarm: wait --lead: stopping the earlier run (pid ${pid}); this one watches now" >&2
+    kill "${pid}" 2>/dev/null || true
+    for ((i = 0; i < 50; i++)); do [[ -n "$(lead_holder)" ]] || break; sleep 0.1; done
+    [[ -z "$(lead_holder)" ]] || die "wait --lead: the earlier run (pid ${pid}) did not stop"
+  done
   trap '[[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"' EXIT
 }
 
@@ -1740,28 +1754,36 @@ UPGRADE_WAIT_MS="${SWARM_UPGRADE_WAIT_MS:-7200000}"
 UPGRADE_GRACE_MS="${SWARM_UPGRADE_GRACE_MS:-300000}"
 # UPGRADE_PID: the running upgrade's pid, scope (its epic, - for every agent) and log, one upgrade
 # per project. UPGRADE_DIR: that run's own records, a file per agent name: epic- (upgrade_epic), hand-
-# (its handover file), asked- (prompt or note), ready- (idle with its handover in, this round), seen-
-# (ready once), done- and left-; summary, the lines it prints at the end; and why and hint, a failed restart's.
-# UPGRADE_SAID: how upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's agent list,
-# read once per round (upgrade_herdr).
+# (its handover file), asked- (prompt or note), ready- (idle with its handover in, this round), done-
+# (moved, or a conductor already on the version told to carry on), left- (left on its old version),
+# kept- (already on the version, with a problem), busy- (busy when its restart came), hint- (how to
+# resume it, while a restart is under way); summary, the lines it prints at the end; and why, a failed
+# restart's. UPGRADE_SAID: how upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's
+# agent list, read once per round (upgrade_herdr). UPGRADE_WANT and UPGRADE_NEW: the run's agents
+# (upgrade_want) and version.
 UPGRADE_PID="${PROJECT_DIR}/.swarm/upgrade.pid"
 UPGRADE_DIR=""
 UPGRADE_SAID=""
 UPGRADE_HERDR=""
+UPGRADE_WANT=""
+UPGRADE_NEW=""
 
 # upgrade_agents [<epic>|backlog] [--foreground] — after `claude plugin update`, move <epic>'s Claude
 # agents (its conductor, builders and review agents; backlog's, the stories with no epic; with
 # neither, every one this project started) to this swarm.sh's version, each restarted in its own pane
-# with --resume, so it keeps its context. Unless --foreground, it runs itself again detached
-# (upgrade_detach) and prints that run's pid and log; while an upgrade runs here, it starts nothing
+# with --resume, so it keeps its context. Unless --foreground (or as the detached worker,
+# SWARM_UPGRADE_WORKER=1), it runs itself again detached (upgrade_detach) and prints that run's pid
+# and log; while an upgrade runs here, it starts nothing
 # and names that one, failing when that one's scope does not cover this one's. It works in rounds
 # (upgrade_round) until no agent waits, or until UPGRADE_WAIT_MS has passed (upgrade_end), then prints
 # one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or already on this
 # version, and last a tally (upgrade_tally), so a log that stops before it was cut off. A TERM or HUP
-# tells each conductor it paused to carry on first (upgrade_stopped). Worktrees are never touched.
-# Fails when any agent was left on its old version.
+# names the agents it had not moved and tells each conductor it paused to carry on first
+# (upgrade_stopped). Worktrees are never touched. Fails when any agent was left on its old version.
 upgrade_agents() {
-  local epic="" fg="" a new log end want name pane role cur f rc=0
+  local epic="" fg="" a new log end name pane role cur f rc=0
+  [[ "${SWARM_UPGRADE_WORKER:-}" != 1 ]] || fg=1
+  unset SWARM_UPGRADE_WORKER
   for a in "$@"; do
     case "${a}" in
       --foreground) fg=1 ;;
@@ -1781,63 +1803,91 @@ upgrade_agents() {
   upgrade_lock "${log}" "${epic}" || { [[ $? -eq 1 ]] && return 0; return 1; }
   UPGRADE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/swarm-upgrade-run.XXXXXX")" || { upgrade_unlock; die "upgrade: cannot make a folder in ${TMPDIR:-/tmp}"; }
   trap 'rm -rf "${UPGRADE_DIR}"; upgrade_unlock' EXIT
-  trap 'upgrade_stopped; exit 143' TERM HUP
+  trap 'upgrade_stopped 143' TERM
+  trap 'upgrade_stopped 129' HUP
   echo "swarm.sh upgrade${epic:+ ${epic}} to ${new}: pid $$, started $(date '+%F %T')"
   end=$(($(now_ms) + UPGRADE_WAIT_MS))
-  want="$(upgrade_want "${epic}")"
-  until upgrade_round "${want}" "${new}" "${end}"; do
-    if (($(now_ms) >= end)); then upgrade_end "${want}" "${new}"; break; fi
+  UPGRADE_NEW="${new}"; UPGRADE_WANT="$(upgrade_want "${epic}")"
+  until upgrade_round "${UPGRADE_WANT}" "${new}" "${end}"; do
+    if (($(now_ms) >= end)); then upgrade_end "${UPGRADE_WANT}" "${new}"; break; fi
     nap 5
   done
   trap - TERM HUP
   while IFS=$'\t' read -r name pane role cur; do
-    [[ -n "${name}" && "${cur}" == new && ! -e "${UPGRADE_DIR}/done-${name}" && ! -e "${UPGRADE_DIR}/left-${name}" ]] || continue
-    echo "${name}: already on ${new}"
-  done <<< "$(upgrade_list "${want}" "${new}")"
+    [[ -n "${name}" && "${cur}" == new ]] || continue
+    [[ -e "${UPGRADE_DIR}/done-${name}" || -e "${UPGRADE_DIR}/left-${name}" || -e "${UPGRADE_DIR}/kept-${name}" ]] || echo "${name}: already on ${new}"
+  done <<< "$(upgrade_list "${UPGRADE_WANT}" "${new}")"
   cat "${UPGRADE_DIR}/summary" 2>/dev/null || true
   for f in "${UPGRADE_DIR}"/left-*; do [[ ! -e "${f}" ]] || rc=1; break; done
   upgrade_tally "done" "${rc}"
   return "${rc}"
 }
 
-# upgrade_tally <done|stopped> <exit> — the log's last line: how many agents this run moved and left.
+# upgrade_tally <done|stopped> <exit> — the log's last line: how many agents this run moved to a new
+# version (their `<old> -> <new>` lines) and how many it left on an old one.
 upgrade_tally() {
-  local f moved=0 left=0
-  for f in "${UPGRADE_DIR}"/done-*; do [[ ! -e "${f}" ]] || moved=$((moved + 1)); done
+  local f moved left=0
+  moved="$(grep -c ' -> ' "${UPGRADE_DIR}/summary" 2>/dev/null)" || moved=0
   for f in "${UPGRADE_DIR}"/left-*; do [[ ! -e "${f}" ]] || left=$((left + 1)); done
   echo "upgrade $1: ${moved} moved, ${left} left (exit $2)"
 }
 
-# upgrade_stopped — on a TERM or HUP: each conductor this run asked for a handover and has not moved
-# or left is told to carry on as before and its pause marker removed, so none stays paused with
-# nobody to wake it; then the summary and the tally. A KILL or a reboot leaves them paused: the
-# marker stops holding back tell's wake prompt once it is an hour old.
+# upgrade_stopped <exit> — on a TERM (143) or HUP (129): each agent in the run still on its old
+# version and not paused is left, with its resume hint when its restart was cut off; then each
+# conductor this run asked for a handover and has not moved is told which of its builders were
+# restarted and to carry on as before, and its pause marker removed, so none stays paused with
+# nobody to wake it. Then the summary and the tally, and it exits <exit>. A KILL or a reboot leaves
+# them paused: the marker stops holding back tell's wake prompt once it is an hour old.
 upgrade_stopped() {
-  local f n pane
+  local f n name pane role cur about
   trap - TERM HUP
   UPGRADE_HERDR=""
+  while IFS=$'\t' read -r name pane role cur; do
+    [[ -n "${name}" && "${cur}" == old && ! -e "${UPGRADE_DIR}/hand-${name}" ]] || continue
+    upgrade_epic "${name}" "${role}" >/dev/null
+    upgrade_left "${name}" "the upgrade was stopped$(upgrade_hint "${name}")"
+  done <<< "$(upgrade_list "${UPGRADE_WANT}" "${UPGRADE_NEW}" </dev/null | upgrade_open)"
   for f in "${UPGRADE_DIR}"/hand-*; do
     n="${f##*/hand-}"
-    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" ]] || continue
+    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" ]] || continue
     pane="$(agent_field "${n}" pane_id </dev/null)"
-    upgrade_say "${n}" "${pane}" "swarm.sh upgrade was stopped before it moved you: ignore its request, and carry on as before, on the version you run." </dev/null \
+    about="$(upgrade_about "$(upgrade_epic "${n}" conduct)" "${UPGRADE_NEW}")"
+    upgrade_say "${n}" "${pane}" "swarm.sh upgrade was stopped before it moved you. ${about} Ignore its request, and carry on as before, on the version you run." </dev/null \
       || echo "${n}: could not be told to carry on; tell it by hand" >> "${UPGRADE_DIR}/summary"
     rm -f "$(upgrade_paused "${n}")"
-    upgrade_left "${n}" "the upgrade was stopped, told to carry on as before"
+    upgrade_left "${n}" "the upgrade was stopped, told to carry on as before$(upgrade_hint "${n}")"
   done
   cat "${UPGRADE_DIR}/summary" 2>/dev/null || true
-  upgrade_tally stopped 143
+  upgrade_tally stopped "$1"
+  exit "$1"
 }
 
-# upgrade_detach <log> [epic] — run upgrade again with --foreground, detached: nohup, in a session and
-# so a process group of its own (setsid), its output appended to <log>; print its pid and log.
+# upgrade_hint <name> — `; <how to resume it>` while <name>'s restart is under way or failed once its
+# claude had exited (upgrade_one's hint- file), else nothing.
+upgrade_hint() { [[ ! -s "${UPGRADE_DIR}/hint-$1" ]] || printf '; %s' "$(cat "${UPGRADE_DIR}/hint-$1")"; }
+
+# upgrade_detach <log> [epic] — run upgrade again as its worker (SWARM_UPGRADE_WORKER=1, which main
+# logs as the run's one event), detached: nohup, in a session and so a process group of its own
+# (setsid), its output appended to <log>. Once the worker holds this project's upgrade (upgrade_lock),
+# print its pid and log; a worker that exits first, as one that finds another upgrade running does,
+# has its lines printed here and its exit code returned, so what is printed is the working run's.
 upgrade_detach() {
-  local pid
+  local pid from=0 rc i
   mkdir -p "${1%/*}" || die "upgrade: cannot make ${1%/*}"
-  nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
-    bash "${SWARM_HOME}/bin/swarm.sh" upgrade ${2:+"$2"} --foreground >> "$1" 2>&1 </dev/null &
+  [[ ! -f "$1" ]] || from=$(($(wc -c < "$1")))
+  SWARM_UPGRADE_WORKER=1 nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+    bash "${SWARM_HOME}/bin/swarm.sh" upgrade ${2:+"$2"} >> "$1" 2>&1 </dev/null &
   pid=$!
-  echo "swarm.sh upgrade runs detached until every agent is moved: pid ${pid}, log $1"
+  for ((i = 0; i < 300; i++)); do
+    [[ "$(upgrade_holder)" != *" pid ${pid}, "* ]] || { echo "swarm.sh upgrade runs detached until every agent is moved: pid ${pid}, log $1"; return 0; }
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      rc=0; wait "${pid}" || rc=$?
+      tail -c "+$((from + 1))" "$1"
+      return "${rc}"
+    fi
+    sleep 0.1
+  done
+  die "upgrade: its worker (pid ${pid}) has not started in 30s; see $1"
 }
 
 # upgrade_holder — the scope (- for every agent), pid and log of the upgrade running in this project
@@ -1861,26 +1911,14 @@ upgrade_busy() {
   return 2
 }
 
-# upgrade_lock <log> [epic] — take this project's upgrade: UPGRADE_PID gets this run's pid, scope and
-# <log>. While another runs it names that one (upgrade_busy) and fails: 1 when that one covers
-# [epic], 2 when not. A dead holder's file is removed under a mutex (<pid file>.reclaim), read again
-# there, so a run never removes one another run just took.
+# upgrade_lock <log> [epic] — take this project's upgrade (pid_lock): UPGRADE_PID gets this run's pid,
+# scope and <log>. While another runs it names that one (upgrade_busy) and fails: 1 when that one
+# covers [epic], 2 when not.
 upgrade_lock() {
-  local tmp="${UPGRADE_PID}.$$" mutex="${UPGRADE_PID}.reclaim" n=0 rc
-  { mkdir -p "${UPGRADE_PID%/*}" && printf '%s %s %s\n' "$$" "${2:--}" "$1" > "${tmp}"; } || die "upgrade: cannot write ${tmp}"
-  until ln "${tmp}" "${UPGRADE_PID}" 2>/dev/null; do
-    [[ -e "${UPGRADE_PID}" ]] || { rm -f "${tmp}"; die "upgrade: cannot write ${UPGRADE_PID}"; }
-    rc=0; upgrade_busy "${2:-}" || rc=$?
-    if [[ ${rc} -ne 1 ]]; then rm -f "${tmp}"; return $((rc == 0 ? 1 : 2)); fi
-    if mkdir "${mutex}" 2>/dev/null; then
-      upgrade_holder >/dev/null || rm -f "${UPGRADE_PID}"
-      rmdir "${mutex}"
-    else
-      ((++n < 50)) || { rm -f "${tmp}"; die "upgrade: ${mutex} stays; remove it if no upgrade runs"; }
-      sleep 0.1
-    fi
-  done
-  rm -f "${tmp}"
+  local rc=0
+  pid_lock "${UPGRADE_PID}" "$$ ${2:--} $1" upgrade_holder && return 0
+  upgrade_busy "${2:-}" || rc=$?
+  return $((rc == 2 ? 2 : 1))
 }
 
 # upgrade_unlock — let this project's upgrade go, if this run still holds it.
@@ -1891,26 +1929,38 @@ upgrade_unlock() {
 }
 
 # upgrade_status — status's lines while an upgrade runs here: its scope, pid and log, and the agents
-# in its scope still on an old version.
+# in its scope not yet on the version it moves them to.
 upgrade_status() {
-  local h s old
+  local h s v old
   h="$(upgrade_holder)" || return 0
   s="${h%% *}"; [[ "${s}" != - ]] || s=""
-  old="$(upgrade_list "$(upgrade_want "${s}")" "$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" | awk -F'\t' '$4 == "old" { printf " %s", $1 }')"
+  v="${h##*/upgrade-}"; v="${v%.log}"   # the running upgrade's version, from its log's name
+  old="$(upgrade_list "$(upgrade_want "${s}")" "${v}" | awk -F'\t' '$4 == "old" { printf " %s", $1 }')"
   printf '\nUpgrade%s running (%s)\n  still on an old version:%s\n' "${s:+ of ${s}}" "${h#* }" "${old:- none}"
 }
 
 # upgrade_round <want> <version> <end-ms> — one round of upgrade_agents, over the agents in <want>
 # (upgrade_want) read afresh, herdr's list once (UPGRADE_HERDR): each conductor whose agents will move
-# is asked for its handover (upgrade_ask); when one has just written it, the agents are read again, so
-# a builder it started before it paused counts. Then each idle builder whose conductor is idle with
-# its handover in (upgrade_hold) is restarted (upgrade_restart), one whose session is gone or unknown
-# is left, a busy one waits; last, each conductor whose builders are all moved or left is moved
-# (upgrade_conductor). Fails while any agent waits.
+# is asked for its handover (upgrade_ask); while one is idle with it written, the agents are read
+# again, so a builder it started before it paused, or after a watch woke it, counts. Then each idle
+# builder whose conductor is idle with its handover in (upgrade_hold) is restarted (upgrade_restart,
+# waiting one round at most, upgrade_round_end), one whose session is gone or unknown is left, a busy
+# one waits; last, each conductor whose builders are all moved or left is moved (upgrade_conductor).
+# Fails while any agent waits, and when herdr's list cannot be read, so that round counts as waiting
+# rather than as one with nothing left to move. A conductor paused here that a good list no longer
+# holds is left.
 upgrade_round() {
-  local list name pane role cur e st olds=" " held=" " waits="" fresh=""
-  UPGRADE_HERDR="$(herdr agent list 2>/dev/null)" || UPGRADE_HERDR=""
-  list="$(upgrade_list "$1" "$2" | upgrade_open)"
+  local list name pane role cur e st rc f olds=" " held=" " waits="" fresh=""
+  upgrade_read_herdr || return 1
+  upgrade_list "$1" "$2" > "${UPGRADE_DIR}/list"
+  list="$(upgrade_open < "${UPGRADE_DIR}/list")"
+  for f in "${UPGRADE_DIR}"/hand-*; do
+    name="${f##*/hand-}"
+    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${name}" && ! -e "${UPGRADE_DIR}/left-${name}" && ! -e "${UPGRADE_DIR}/kept-${name}" ]] || continue
+    grep -q "^${name}"$'\t' <<< "${list}" && continue
+    rm -f "$(upgrade_paused "${name}")"
+    upgrade_left "${name}" "it left herdr's agent list while paused for its handover"
+  done
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     olds+="$(upgrade_epic "${name}" "${role}") "
@@ -1922,11 +1972,12 @@ upgrade_round() {
     e="$(upgrade_epic "${name}" conduct)"
     [[ "${cur}" == old || "${olds}" == *" ${e} "* || -e "${UPGRADE_DIR}/hand-${name}" ]] || continue
     upgrade_ask "${name}" "${pane}" "${e}" "$2" </dev/null || waits=1
-    [[ ! -e "${UPGRADE_DIR}/ready-${name}" || -e "${UPGRADE_DIR}/seen-${name}" ]] || { fresh=1; : > "${UPGRADE_DIR}/seen-${name}"; }
+    [[ ! -e "${UPGRADE_DIR}/ready-${name}" ]] || fresh=1
   done <<< "${list}"
   if [[ -n "${fresh}" ]]; then
-    UPGRADE_HERDR="$(herdr agent list 2>/dev/null)" || UPGRADE_HERDR=""
-    list="$(upgrade_list "$1" "$2" | upgrade_open)"
+    upgrade_read_herdr || return 1
+    upgrade_list "$1" "$2" > "${UPGRADE_DIR}/list"
+    list="$(upgrade_open < "${UPGRADE_DIR}/list")"
   fi
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
@@ -1937,7 +1988,8 @@ upgrade_round() {
     esac
     st="$(upgrade_state "${name}" "${pane}")"
     case "${st}" in
-      idle) upgrade_restart "${name}" "${pane}" "${role}" "$2" "$3" || true ;;
+      idle) rc=0; upgrade_restart "${name}" "${pane}" "${role}" "$2" "$(upgrade_round_end "$3")" || rc=$?
+            [[ ${rc} -ne 2 ]] || held+="${e} " ;;
       busy) held+="${e} " ;;
       *) upgrade_left "${name}" "its Claude session is ${st}, so it is not restarted" ;;
     esac
@@ -1945,10 +1997,26 @@ upgrade_round() {
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/ready-${name}" && ! -e "${UPGRADE_DIR}/left-${name}" ]] || continue
     if [[ "${held}" == *" $(upgrade_epic "${name}" conduct) "* ]]; then waits=1; continue; fi
-    upgrade_conductor "${name}" "${pane}" "${cur}" "$2" "$3"
+    upgrade_conductor "${name}" "${pane}" "${cur}" "$2" "$(upgrade_round_end "$3")" || waits=1
   done <<< "${list}"
   UPGRADE_HERDR=""
   [[ -z "${waits}" && "${held}" == " " ]]
+}
+
+# upgrade_round_end <end-ms> — how long one restart may wait for its agent to go idle: a round (60
+# seconds, scaled as nap is), never past <end-ms>; one still busy then waits for the next round.
+upgrade_round_end() {
+  local r
+  r=$(($(now_ms) + $(awk -v s="$(scaled 60)" 'BEGIN { printf "%d", s * 1000 }')))
+  echo $((r < $1 ? r : $1))
+}
+
+# upgrade_read_herdr — read herdr's agent list for the round (UPGRADE_HERDR); fails, keeping none,
+# when herdr gives no list it can parse.
+upgrade_read_herdr() {
+  if UPGRADE_HERDR="$(herdr agent list 2>/dev/null)" && json 'len(d["result"]["agents"])' <<< "${UPGRADE_HERDR}" >/dev/null 2>&1; then return 0; fi
+  UPGRADE_HERDR=""
+  return 1
 }
 
 # upgrade_herdr — herdr's agent list: the round's copy (UPGRADE_HERDR) while a round runs, else read now.
@@ -1966,11 +2034,13 @@ upgrade_held_why() {
 # may have gone busy since), each builder still waiting is left, then each conductor idle with its
 # handover in is moved (upgrade_conductor); one whose handover is not, or that
 # stayed busy after it, is told to carry on as before, by prompt once it is idle (UPGRADE_GRACE_MS
-# more), since one that ended its turn reads no inbox, else by a note, and left.
+# more), since one that ended its turn reads no inbox, else by a note, and left. When herdr's list
+# cannot be read then, the last round's (list) stands in, so no agent still waiting is missed.
 upgrade_end() {
-  local list name pane role cur
-  local e
-  list="$(upgrade_list "$1" "$2" | upgrade_open)"
+  local list name pane role cur e
+  if upgrade_read_herdr; then upgrade_list "$1" "$2" > "${UPGRADE_DIR}/list"
+  else echo "herdr's agent list could not be read at the end; the last round's names the agents" >> "${UPGRADE_DIR}/summary"; fi
+  list="$(upgrade_open < "${UPGRADE_DIR}/list" 2>/dev/null)" || list=""
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/ready-${name}" ]] || continue
     [[ "$(upgrade_state "${name}" "${pane}" </dev/null)" == idle ]] || rm -f "${UPGRADE_DIR}/ready-${name}"
@@ -1983,7 +2053,7 @@ upgrade_end() {
   done <<< "${list}"
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/hand-${name}" ]] || continue
-    if [[ -e "${UPGRADE_DIR}/ready-${name}" ]]; then upgrade_conductor "${name}" "${pane}" "${cur}" "$2" 0; continue; fi
+    if [[ -e "${UPGRADE_DIR}/ready-${name}" ]]; then upgrade_conductor "${name}" "${pane}" "${cur}" "$2" 0 && continue; fi
     upgrade_idle "${name}" "${pane}" $(($(now_ms) + UPGRADE_GRACE_MS)) </dev/null || true
     upgrade_say "${name}" "${pane}" "swarm.sh upgrade gave up waiting for your handover: ignore its request, and carry on as before, on the version you run." </dev/null || true
     rm -f "$(upgrade_paused "${name}")"
@@ -1996,15 +2066,22 @@ upgrade_end() {
 upgrade_open() {
   local l
   while IFS= read -r l; do
-    [[ -n "${l}" && ! -e "${UPGRADE_DIR}/done-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/left-${l%%$'\t'*}" ]] || continue
+    [[ -n "${l}" && ! -e "${UPGRADE_DIR}/done-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/left-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/kept-${l%%$'\t'*}" ]] || continue
     printf '%s\n' "${l}"
   done
 }
 
 # upgrade_moved <name> <line> / upgrade_left <name> <why> — this run is done with <name>: moved, or
-# left on its old version for <why>; its line goes in the summary upgrade prints at the end.
+# left on its old version for <why>; its line goes in the summary upgrade prints at the end. One
+# already on this version (a conductor paused for its builders) is never left: it is kept, named
+# with <why>, and fails nothing.
 upgrade_moved() { : > "${UPGRADE_DIR}/done-$1"; echo "$2" >> "${UPGRADE_DIR}/summary"; }
-upgrade_left() { : > "${UPGRADE_DIR}/left-$1"; echo "$1: left on $(agent_version "$1"): $2" >> "${UPGRADE_DIR}/summary"; }
+upgrade_left() {
+  if [[ "$(agent_version "$1")" == "${UPGRADE_NEW}" ]]; then
+    : > "${UPGRADE_DIR}/kept-$1"; echo "$1: already on ${UPGRADE_NEW}: $2" >> "${UPGRADE_DIR}/summary"; return 0
+  fi
+  : > "${UPGRADE_DIR}/left-$1"; echo "$1: left on $(agent_version "$1"): $2" >> "${UPGRADE_DIR}/summary"
+}
 
 # upgrade_epic <name> <role> — the epic whose conductor <name> answers to, kept for the run: a
 # conductor's own (conduct_epic), a builder's or review agent's story's (backlog: none), - for one
@@ -2024,14 +2101,14 @@ upgrade_epic() {
 }
 
 # upgrade_hold <epic> <list> — whether <epic>'s builders wait on its conductor: left when it was left
-# with no handover, wait while it is in <list> (upgrade_list, not yet moved) and not idle with its
+# (or kept) with no handover, wait while it is in <list> (upgrade_list, not yet moved) and not idle with its
 # handover in this round (ready-); else nothing.
 upgrade_hold() {
   local c
   [[ "$1" != - ]] || return 0
   c="$(conductor_name "$1")"
   [[ ! -e "${UPGRADE_DIR}/ready-${c}" ]] || return 0
-  if [[ -e "${UPGRADE_DIR}/left-${c}" ]]; then echo left
+  if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left
   elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi
 }
 
@@ -2075,19 +2152,19 @@ upgrade_request() {
 # upgrade_restart <name> <pane> <role> <version> <end-ms> [then] — restart <name> (upgrade_one) and
 # tell it (upgrade_told) in a subshell, so a die stops that agent alone; its env: names first, before
 # anything is sent. A die's message is why it is left, with upgrade_one's resume hint once its claude
-# has exited.
+# has exited (upgrade_hint). Exits 2, leaving nothing, when the agent was busy by <end-ms>.
 upgrade_restart() {
-  local why="${UPGRADE_DIR}/why" w h
-  rm -f "${why}" "${UPGRADE_DIR}/hint"
+  local why="${UPGRADE_DIR}/why" w
+  rm -f "${why}" "${UPGRADE_DIR}/hint-$1" "${UPGRADE_DIR}/busy-$1"
   # shellcheck disable=SC2034 # DIE_FILE and DIE_LEVEL are die's, this subshell's own
   if ( DIE_FILE="${why}"; DIE_LEVEL="${BASH_SUBSHELL}"
        names="$(upgrade_env "$1" "$3" "$(upgrade_epic "$1" "$3")")" || die "$1: ${names}, left on $(agent_version "$1")"
        upgrade_one "$1" "$2" "${names}" "$4" "$5"
        upgrade_told "$1" "$2" "$4" "${6:-}" ) </dev/null; then return 0; fi
+  if [[ -e "${UPGRADE_DIR}/busy-$1" ]]; then rm -f "${UPGRADE_DIR}/busy-$1"; return 2; fi
   w="$(cat "${why}" 2>/dev/null)" || w=""
   w="${w#"$1: "}"
-  h="$(cat "${UPGRADE_DIR}/hint" 2>/dev/null)" || h=""
-  upgrade_left "$1" "$(sed -E 's/[,;] (left )?on [^ ]+$//' <<< "${w:-its restart failed}")${h:+; ${h}}"
+  upgrade_left "$1" "$(sed -E 's/[,;] (left )?on [^ ]+$//' <<< "${w:-its restart failed}")$(upgrade_hint "$1")"
   return 1
 }
 
@@ -2095,17 +2172,21 @@ upgrade_restart() {
 # is in, told its handover and which of its builders were restarted and which left: restarted
 # (upgrade_restart), or, already on <version>, only told to carry on. One whose restart failed while
 # its claude still runs (it ended its turn for upgrade) is told to carry on where it is; one whose
-# claude exited got its resume hint from upgrade_one.
+# claude exited got its resume hint from upgrade_one. Exits 2, still paused, when it was busy by
+# <end-ms>.
 upgrade_conductor() {
-  local hand about
+  local hand about rc=0
   hand="$(cat "${UPGRADE_DIR}/hand-$1")"
   about="$(upgrade_about "$(upgrade_epic "$1" conduct)" "$4")"
   if [[ "$3" == new ]]; then
     if upgrade_say "$1" "$2" "swarm.sh upgrade is done with your builders. ${about} Your handover is ${hand}. Carry on where you stopped." </dev/null; then
       upgrade_moved "$1" "$1: already on $4, told to carry on"
     else upgrade_left "$1" "could not be told to carry on; tell it by hand"; fi
-  elif ! upgrade_restart "$1" "$2" conduct "$4" "$5" "Your handover is ${hand}. ${about} Carry on where you stopped." \
-       && upgrade_flags "$2" >/dev/null </dev/null; then
+  else
+    rc=0; upgrade_restart "$1" "$2" conduct "$4" "$5" "Your handover is ${hand}. ${about} Carry on where you stopped." || rc=$?
+    [[ ${rc} -ne 2 ]] || return 2
+  fi
+  if [[ ${rc} -eq 1 ]] && upgrade_flags "$2" >/dev/null </dev/null; then
     upgrade_say "$1" "$2" "swarm.sh upgrade could not restart you, so you stay on the version you run. ${about} Your handover is ${hand}. Carry on where you stopped." </dev/null \
       || echo "$1: could not be told to carry on; tell it by hand" >> "${UPGRADE_DIR}/summary"
   fi
@@ -2228,7 +2309,10 @@ upgrade_one() {
   old="$(agent_version "${name}")"
   upgrade_idle "${name}" "${pane}" "$5" && rc=0 || rc=$?
   [[ ${rc} -ne 2 ]] || die "${name}: its Claude session is gone or unknown, so it is not restarted; left on ${old}"
-  [[ ${rc} -eq 0 ]] || die "${name}: still busy at the end of the wait, left on ${old}"
+  if [[ ${rc} -ne 0 ]]; then
+    [[ -z "${UPGRADE_DIR}" ]] || : > "${UPGRADE_DIR}/busy-${name}"
+    die "${name}: still busy at the end of the wait, left on ${old}"
+  fi
   session="$(session_for_pane "${pane}")"
   [[ -n "${session}" ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
   out="$(upgrade_flags "${pane}")" && rc=0 || rc=$?
@@ -2243,7 +2327,9 @@ upgrade_one() {
   a="$(upgrade_path)"
   # Before the first ctrl+c, so a claude that exits late, or a read that fails, still says how to resume it.
   UPGRADE_HINT="${name}: not started again; if pane ${pane} shows a shell, claude --resume ${session}, run in ${cwd}, brings the session back"
-  trap 'echo "swarm: ${UPGRADE_HINT}" >&2; [[ -z "${UPGRADE_DIR}" ]] || echo "${UPGRADE_HINT#*: }" > "${UPGRADE_DIR}/hint"' EXIT
+  # In a file too, there until the restart succeeds: a TERM to upgrade runs no EXIT trap here.
+  [[ -z "${UPGRADE_DIR}" ]] || echo "${UPGRADE_HINT#*: }" > "${UPGRADE_DIR}/hint-${name}"
+  trap 'echo "swarm: ${UPGRADE_HINT}" >&2' EXIT
   for try in 1 2 3; do
     herdr pane send-keys "${pane}" ctrl+c ctrl+c >/dev/null 2>&1 || true
     nap 1
@@ -2257,6 +2343,7 @@ upgrade_one() {
   out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${session}" ${flags[@]+"${flags[@]}"} 2>&1)" \
     || die "${name}: herdr could not start it again (${out})"
   trap - EXIT
+  [[ -z "${UPGRADE_DIR}" ]] || rm -f "${UPGRADE_DIR}/hint-${name}"
   # As start_agent does, so a herdr restart before the agent's first hook report resumes it with its
   # flags; the hooks report the same command on every prompt, so a refusal here only warns.
   rc="$(python3 -I -c 'import time; print(time.time_ns())')" || rc=""

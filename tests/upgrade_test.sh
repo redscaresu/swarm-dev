@@ -35,7 +35,10 @@
 # ${H}/onstart-<name> if there is one (an agent whose session is - has none; process-info fails
 # while ${H}/pifail exists, and claude ignores ctrl+c while ${H}/noexit does), pane run keeps the launch file it runs as ${H}/launch-<pane>,
 # pane wait-output fails while ${H}/envfail exists, and an agent prompt asking for a handover writes
-# its file (not while ${H}/nohandover exists) and runs ${H}/onhandover if there is one; a prompt
+# its file (not while ${H}/nohandover exists) and runs ${H}/onhandover if there is one; agent start
+# hangs while ${H}/slowstart exists; agent list fails three times once ${H}/listfail exists, and
+# always while ${H}/listdown does; agent list runs ${H}/onlist once, after printing, once the claude
+# stub's call numbered in ${H}/arm has made ${H}/armed (each claude call logs "claude <n>"); a prompt
 # telling an agent it was restarted fails while ${H}/promptfail exists, and one telling it upgrade could not
 # restart it while ${H}/sayfail does. Every call is logged.
 set -euo pipefail
@@ -90,9 +93,14 @@ cat >> "${H}/bin/herdr" <<'STUB'
 [ "$1" = --version ] && { echo "herdr 0.9.5"; exit 0; }
 { for a in "$@"; do printf '%s ' "$a"; done; echo; } >> "$H/herdr.log"
 case "$1 $2" in
-  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent list") [ ! -e "$H/listdown" ] || exit 1
+                if [ -e "$H/listfail" ]; then   # fails three times, then is gone
+                  n=$(($(cat "$H/listfail.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/listfail.count"
+                  [ "$n" -lt 3 ] || rm -f "$H/listfail" "$H/listfail.count"; exit 1; fi
+                awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"idle\"%s}", (NR > 1 ? "," : ""), $1, $2, ($3 == "-" ? "" : ",\"agent_session\":{\"value\":\"" $3 "\"}") }
-                     END { print "]}}" }' "$H/agents" ;;
+                     END { print "]}}" }' "$H/agents"
+                [ ! -e "$H/armed" ] || [ ! -x "$H/onlist" ] || { rm -f "$H/armed"; "$H/onlist"; } ;;   # after the list it printed
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "pane process-info") p="$4"; [ -e "$H/pifail" ] && exit 1
                 if [ -e "$H/exited-$p" ]; then echo '{"result":{"process_info":{"foreground_processes":[{"argv":["zsh"]}]}}}'
@@ -102,6 +110,7 @@ case "$1 $2" in
   "pane wait-output") [ -e "$H/envfail" ] && exit 1 ;;
   "pane run") p="$3"; eval "set -- $4"; for f; do :; done; cp "$f" "$H/launch-$p" ;;   # the launch file, its last word
   "agent start") read -r -t 1 _ 2>/dev/null || true   # takes a line of its stdin, as a real command may
+                 i=0; while [ -e "$H/slowstart" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
                  n="$3"; shift 2; while [ "$1" != --pane ]; do shift; done; rm -f "$H/exited-$2"
                  [ ! -x "$H/onstart-$n" ] || "$H/onstart-$n" ;;
   "agent prompt") case "$4" in *"restarted you on"*) [ -e "$H/promptfail" ] && exit 1 ;; *"could not restart you"*) [ -e "$H/sayfail" ] && exit 1 ;; esac
@@ -117,6 +126,8 @@ printf '#!/bin/sh\nH="%s"\n' "${H}" > "${H}/bin/claude"
 cat >> "${H}/bin/claude" <<'STUB'
 [ "$*" = "agents --json" ] || { echo "claude stub: unexpected call: $*" >&2; exit 1; }
 n=$(($(cat "$H/claude.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/claude.count"
+echo "claude $n" >> "$H/herdr.log"
+[ "$n" != "$(cat "$H/arm" 2>/dev/null)" ] || touch "$H/armed"
 j="$(cat "$H/claude.json")"
 [ ! -e "$H/flip" ] || [ "$n" -le "$(cut -d' ' -f1 "$H/flip")" ] || j="$(printf '%s' "$j" | sed "$(cut -d' ' -f2- "$H/flip")")"
 [ ! -e "$H/flip2" ] || [ "$n" -le "$(cut -d' ' -f1 "$H/flip2")" ] || j="$(printf '%s' "$j" | sed "$(cut -d' ' -f2- "$H/flip2")")"
@@ -183,6 +194,7 @@ check "it is named as left on its old version" "yes" "$(has 'b1: left on 0.21.0:
 check "the conductor already on this version is paused for the restarts, then told to carry on, never restarted" "1|1|yes|" \
   "$(calls 'agent prompt w:c' | grep -c 'Write a handover')|$(calls 'agent prompt w:c' | grep -c "Builders restarted on swarm-dev ${NEW}: b2. Left on their old version: b1.")|$(has "conduct-e: already on ${NEW}, told to carry on" "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')"
 check "b1's version is still the old one" "0.21.0" "$(cat "${P}/.swarm/versions/b1")"
+check "the tally counts b2 as moved, not the conductor only told to carry on" "upgrade done: 1 moved, 1 left (exit 1)" "$(tail -1 "${H}/out")"
 
 # --- b1 reads busy (background shells), but its log says its turn is over: restarted, and told to
 # start its background commands again. A log ending in a tool call with no result, and a session
@@ -355,6 +367,7 @@ check "it prints one line per agent" "b1: 0.21.0 -> ${NEW}|b2: 0.21.0 -> ${NEW}|
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 claude_list idle busy idle; : > "${LOG}"; rm -f "${H}/claude.count"
 ULOG="${P}/.swarm/upgrade-${NEW}.log"; rm -f "${ULOG}"
+EV="${P}/.swarm/events.tsv"; ev0="$(awk -F'\t' '$2 == "upgrade"' "${EV}" 2>/dev/null | wc -l | tr -d ' ')"
 # The starting shell is a session of its own, so the test can kill its whole process group.
 # shellcheck disable=SC2016 # $@ and $0 are the inner shell's
 (cd "${P}" && exec python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
@@ -385,18 +398,38 @@ check "the detached run moved every agent, b1 in a later round, and let the proj
   "b2: 0.21.0 -> ${NEW}|b1: 0.21.0 -> ${NEW}|conduct-e: 0.21.0 -> ${NEW}|no|no" \
   "$(grep -- ' -> ' "${ULOG}" | paste -sd'|' -)|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)"
 check "the log ends on its tally" "upgrade done: 3 moved, 0 left (exit 0)" "$(tail -1 "${ULOG}")"
+check "the run is one event, the worker's, its target the epic" "$((ev0 + 1))|e	ok" \
+  "$(awk -F'\t' '$2 == "upgrade"' "${EV}" | wc -l | tr -d ' ')|$(awk -F'\t' '$2 == "upgrade" { l = $3 "\t" $5 } END { print l }' "${EV}")"
 
-# --- A TERM mid-run tells the conductor it paused to carry on and lets it go, and the log says it stopped.
+# --- Two upgrades started together run one, and both print its pid. A TERM mid-run names b1, still
+# waiting, as left, tells the conductor it paused which builders moved and to carry on, lets it go,
+# and logs its stop.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 claude_list idle busy idle; : > "${LOG}"; rm -f "${ULOG}"
-(cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_WAIT_MS=120000 bash "${SWARM}" upgrade e) > "${H}/out" 2>&1
-UPID="$(sed -n 's/.*: pid \([0-9]*\), log .*/\1/p' "${H}/out")"
+for i in 1 2; do (cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_WAIT_MS=120000 bash "${SWARM}" upgrade e > "${H}/start${i}.out" 2>&1) & done; wait
+UPID="$(cat "${H}/start1.out" "${H}/start2.out" | sed -n 's/^swarm.sh upgrade runs detached until every agent is moved: pid \([0-9]*\), log .*/\1/p')"
+check "two upgrades started together: one runs, the other names it, both with the pid that holds the upgrade" "1|1|${UPID}" \
+  "$(cat "${H}/start1.out" "${H}/start2.out" | grep -c '^swarm.sh upgrade runs detached')|$(cat "${H}/start1.out" "${H}/start2.out" | grep -c "already runs here (pid ${UPID:-none}, ")|$(cut -d' ' -f1 "${P}/.swarm/upgrade.pid" 2>/dev/null)"
 for _ in $(seq 150); do [[ "$(cat "${P}/.swarm/versions/b2")" == "${NEW}" && -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && break; sleep 0.2; done
 kill -TERM "${UPID:-0}" 2>/dev/null || true
 for _ in $(seq 150); do kill -0 "${UPID:-0}" 2>/dev/null || break; sleep 0.2; done
 kill -0 "${UPID:-0}" 2>/dev/null && { echo "the stopped upgrade never ended" >&2; kill -9 "${UPID}" 2>/dev/null || true; }
-check "the stopped run told the conductor to carry on, let it go, and logged its stop" "1|no|upgrade stopped: 1 moved, 1 left (exit 143)|no" \
-  "$(calls 'agent prompt w:c' | grep -c 'was stopped before it moved you')|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)|$(tail -1 "${ULOG}")|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)"
+check "the stopped run named b1, told the conductor which builders moved, let it go, and logged its stop" \
+  "yes|1|no|upgrade stopped: 1 moved, 2 left (exit 143)|no" \
+  "$(has 'b1: left on 0.21.0: the upgrade was stopped' "$(cat "${ULOG}")")|$(calls 'agent prompt w:c' | grep -c "was stopped before it moved you. Builders restarted on swarm-dev ${NEW}: b2. Left on their old version: b1.")|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)|$(tail -1 "${ULOG}")|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)"
+
+# --- A TERM while a restart is under way names that builder as left, with how to resume it.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle idle idle; : > "${LOG}"; rm -f "${ULOG}"; touch "${H}/slowstart"
+(cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_WAIT_MS=120000 bash "${SWARM}" upgrade e) > "${H}/out" 2>&1
+UPID="$(sed -n 's/.*: pid \([0-9]*\), log .*/\1/p' "${H}/out")"
+for _ in $(seq 150); do grep -q '^agent start b1 ' "${LOG}" && break; sleep 0.2; done
+kill -TERM "${UPID:-0}" 2>/dev/null || true
+for _ in $(seq 150); do kill -0 "${UPID:-0}" 2>/dev/null || break; sleep 0.2; done
+kill -0 "${UPID:-0}" 2>/dev/null && { echo "the stopped upgrade never ended" >&2; kill -9 "${UPID}" 2>/dev/null || true; }
+rm -f "${H}/slowstart" "${H}/exited-w:b1"
+check "the builder cut off mid-restart is left with its resume hint, the tally counts it" "1|upgrade stopped: 0 moved, 3 left (exit 143)" \
+  "$(grep -cx "b1: left on 0.21.0: the upgrade was stopped; not started again; if pane w:b1 shows a shell, claude --resume s1, run in ${H}/wt w:b1, brings the session back" "${ULOG}")|$(tail -1 "${ULOG}")"
 
 # --- A conductor idle with its handover in that turns busy again (a watch woke it) holds its
 # builders: b1, idle only once the conductor is busy, is not restarted, and is named for it.
@@ -411,6 +444,79 @@ WAIT_MS=4000 upgrade e
 check "b1 waits on its busy conductor and is named for it" "1||yes" \
   "${rc}|$(calls 'agent start b1')|$(has 'b1: left on 0.21.0: its conductor wrote its handover but stayed busy' "$(cat "${H}/out")")"
 rm -f "${H}/onstart-b2"
+
+# --- herdr's list failing mid-run is a round that waits, not one with nothing left: b1, held then,
+# and its conductor are still moved once the list comes back.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle busy idle
+cat > "${H}/onstart-b2" <<EOF
+#!/bin/sh
+touch "${H}/listfail"; sed -i.bak 's/"s1","status":"busy"/"s1","status":"idle"/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-b2"
+upgrade e
+rm -f "${H}/onstart-b2" "${H}/listfail" "${H}/listfail.count"
+check "a failed list read does not end the run: b1 and the conductor are moved" "0|yes|yes" \
+  "${rc}|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")|$(has "conduct-e: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
+
+# --- herdr's list still failing at the end of the wait: the last round's list names b1 and the paused
+# conductor as left, the conductor is told to carry on and let go, and the run fails.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle busy idle
+printf '#!/bin/sh\ntouch "%s/listdown"\n' "${H}" > "${H}/onstart-b2"; chmod +x "${H}/onstart-b2"
+WAIT_MS=2000 upgrade e
+rm -f "${H}/onstart-b2" "${H}/listdown"
+check "a list still down at the end fails the run, names b1 and the conductor, and lets the conductor go" "1|yes|yes|no" \
+  "${rc}|$(has 'b1: left on 0.21.0' "$(cat "${H}/out")")|$(has 'conduct-e: left on 0.21.0' "$(cat "${H}/out")")|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)"
+
+# --- A conductor already on this version that writes no handover is told to carry on, and kept, never
+# left: only its held builder fails the run.
+echo "${NEW}" > "${P}/.swarm/versions/conduct-e"; echo "${NEW}" > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"
+claude_list idle idle idle; touch "${H}/nohandover"
+WAIT_MS=300 upgrade e
+check "it is kept on its version, its builder left, and nothing counts it as moved" "1|1|0|upgrade done: 0 moved, 1 left (exit 1)" \
+  "${rc}|$(grep -cx "conduct-e: already on ${NEW}: no handover by the end of the wait, told to carry on as before" "${H}/out")|$(grep -c '^conduct-e: left on' "${H}/out")|$(tail -1 "${H}/out")"
+rm -f "${H}/nohandover"
+
+# --- status judges "old" by the running upgrade's version (its log's name), not its own.
+echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; for n in b1 b2 b4; do echo "${NEW}" > "${P}/.swarm/versions/${n}"; done
+bash -c 'exec -a "swarm.sh upgrade" sleep 60' & fake=$!
+echo "${fake} e ${P}/.swarm/upgrade-0.21.0.log" > "${P}/.swarm/upgrade.pid"
+(cd "${P}" && env "${ENVV[@]}" bash "${SWARM}" status) > "${H}/out" 2>&1 || true
+kill "${fake}" 2>/dev/null || true; rm -f "${P}/.swarm/upgrade.pid"
+check "status lists the agents not on the running upgrade's version" "1" "$(grep -cx '  still on an old version: b1 b2 b4' "${H}/out")"
+
+# --- A builder idle at the round's read but busy by its restart waits one round, not the whole run:
+# z2, after it in the list, is restarted first.
+for z in z1 z2; do
+  printf -- '---\nkind: code\nstatus: ready\n---\n\n# %s\n' "${z}" > "${P}/docs/stories/${z}.md"
+  echo "${z} w:${z} s${z}" >> "${H}/agents"; echo "w:${z} ${z}" >> "${P}/.swarm/state/zz"; echo 0.21.0 > "${P}/.swarm/versions/${z}"
+  printf '2026-10-22\tcode\t%s\tclaude\tsonnet\thigh\ts%s\n' "${z}" "${z}" >> "${P}/.swarm/agents.tsv"
+  CMD=(claude); argv "${z}" sonnet --session-id "s${z}" > "${H}/argv-w:${z}"
+done
+echo '[{"sessionId":"sz1","status":"idle"},{"sessionId":"sz2","status":"idle"}]' > "${H}/claude.json"
+echo "${Z1_BUSY_AT:-1} s/\"sz1\",\"status\":\"idle\"/\"sz1\",\"status\":\"busy\"/" > "${H}/flip"
+echo "${Z1_IDLE_AT:-12} s/\"sz1\",\"status\":\"busy\"/\"sz1\",\"status\":\"idle\"/" > "${H}/flip2"
+upgrade backlog
+check "z1 waits for the next round, and z2 is restarted before it" "0|start z2|start z1" "${rc}|$(order | tr '|' '\n' | grep '^start' | paste -sd'|' -)"
+
+# --- A conductor already ready, woken by a watch, starts b5 and ends its turn again before a round
+# reads it: the agents are read again that round, so b5 is restarted before the conductor, which hears of it.
+echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; echo 0.21.0 > "${P}/.swarm/versions/b1"; echo "${NEW}" > "${P}/.swarm/versions/b2"
+printf -- '---\nkind: code\nstatus: ready\nepic: e\n---\n\n# b5\n' > "${P}/docs/stories/b5.md"
+CMD=(claude); argv b5 sonnet --session-id s5 > "${H}/argv-w:b5"
+cat > "${H}/onlist" <<EOF
+#!/bin/sh
+echo "b5 w:b5 s5" >> "${H}/agents"; echo "w:b5 b5" >> "${P}/.swarm/state/e"; echo 0.21.0 > "${P}/.swarm/versions/b5"
+printf '2026-10-22\tcode\tb5\tclaude\tsonnet\thigh\ts5\n' >> "${P}/.swarm/agents.tsv"
+sed -i.bak 's/]\$/,{"sessionId":"s5","status":"idle"}]/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onlist"
+claude_list idle busy idle; echo "${B1_IDLE_AT:-4} s/\"s1\",\"status\":\"busy\"/\"s1\",\"status\":\"idle\"/" > "${H}/flip"; echo "${ARM_AT:-3}" > "${H}/arm"
+upgrade e
+rm -f "${H}/onlist" "${H}/arm" "${H}/armed"
+check "b5 is restarted before its conductor, which is told of it" "0|start b5|start conduct-e|1" \
+  "${rc}|$(order | tr '|' '\n' | grep -E '^start (b5|conduct-e)$' | paste -sd'|' -)|$(calls 'agent prompt w:c' | grep -c "Builders restarted on swarm-dev ${NEW}: b1 b5.")"
 
 # --- upgrade backlog moves the backlog conductor and the stories with no epic, and no epic's agents.
 CB="$(cd "${P}" && SWARM_PROJECT="${P}" bash "${SWARM}" _conductor backlog)"
