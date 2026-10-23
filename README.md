@@ -45,8 +45,10 @@ Then, in your project inside [herdr](https://herdr.dev), start `claude` and run:
    then handed to the lead.
 4. **Merge.** By default a green, reviewed PR waits for you, or for you to ask the lead to merge it.
    With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
-   waits for you. If main goes red after a merge, the swarm writes a story to fix it and builds that
-   first.
+   waits for you. After a merge, main is judged by the checks it requires, and any other red check
+   prints a `warning:` line. A required check that fails in GitHub Actions is rerun once; if it
+   passes then, merge prints a `flaky:` line. If main is still red, the swarm writes a story to fix
+   it and builds that first.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and does the
 stories no agent may: real cloud, credentials and anything hard to undo. Your steps in those are

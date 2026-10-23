@@ -1,6 +1,10 @@
 import calendar, json, re, signal, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
+CI_OK, CI_RED, CI_TIMEOUT, CI_ERROR = 0, 1, 2, 3   # ci_gate main's exit codes (merge.sh's MAIN_CI_*)
+# A gh error worth retrying, as merge.sh's WAIT_PR_TRANSIENT: matched against gh's own words only.
+TRANSIENT = re.compile(r"\b(rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|no such host|network is unreachable|stream error|HTTP (408|429|50[0234]))\b")
+RUN_ID = re.compile(r"https://github\.com/[^ ;]+/actions/runs/([0-9]+)")   # an Actions run's id in a check's URL
 FIXED_WALK = 20  # board-only commits fixed steps back over to the commit it judges
 
 class Err(Exception):
@@ -476,19 +480,66 @@ def expected(repo, sha, base, n, changed):
             raise Unread("%s: %s" % (path, e))
     return want
 
+def required(repo, base):
+    """The status checks base requires, as base_rules reads them (context, the app that must report
+    it or None), and why they could not be read ("" when they were). Any part not read leaves none,
+    so every check counts."""
+    try:
+        return base_rules(repo, base, "squash")[0], ""
+    except (Err, ValueError, KeyError, TypeError, AttributeError) as e:
+        return [], "%s" % (e or type(e).__name__)
+
+def is_req(r, req):
+    """Whether check r is one req names, from the app req binds it to, if any (a status has none)."""
+    app = (r.get("app") or {}).get("id")
+    return any(r.get("name") == c and (a in (None, -1) or a == app) for c, a in req)
+
+def ci_items(repo, sha):
+    """sha's workflow runs, and its check runs and commit statuses, each status as a check run (its
+    target_url the html_url, its updated_at the completed_at)."""
+    runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
+            if r.get("head_sha") == sha]
+    items = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
+    items += [{"name": s.get("context"), "status": "pending" if s.get("state") == "pending" else "completed",
+               "conclusion": s.get("state"), "html_url": s.get("target_url"), "completed_at": s.get("updated_at")}
+              for s in pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")]
+    return runs, items
+
+def by_rule(req, runs, items):
+    """The checks that decide (the required ones, or every one and every workflow run when none is
+    required), the rest, and the names of the required checks with no run among items."""
+    if not req:
+        return items + runs, [], []
+    return ([r for r in items if is_req(r, req)], [r for r in items if not is_req(r, req)] + runs,
+            [c for c, a in req if not any(is_req(r, [(c, a)]) for r in items)])
+
 def main_ci(repo, sha, base, n, changed, secs, poll, grace):
     """The merge commit needs no check run of its own: the expected workflows are what must run.
     With none expected, ok waits out grace seconds, so an app's checks or a status that appear just
-    after the push are seen and judged. A gh error is a missed read, READ_TRIES in a row an error."""
-    want, start, missed = None, time.time(), 0
+    after the push are seen and judged. A gh error is a missed read, READ_TRIES in a row an error.
+    When base requires checks (read once; when any part cannot be read, a warning on stderr, and every
+    check counts), only they are red. Any other red check or workflow run waits until each required
+    check has a run (a timeout names those with none), then is a warning line after ok, and once every
+    required check has finished green nothing else is waited on. Once every expected workflow has
+    finished, a required check still with no run never gets one, so every check counts. A red whose
+    every check is an Actions run's has those runs' failed jobs rerun, once a run, when the runs have
+    finished (a red whose run, or rerun, outlasts the wait is red), with a fresh wait of secs; a transient gh error on the rerun
+    is a missed poll, READ_TRIES in a row an error. ok then has a flaky line (flaky <run id> <attempt
+    that failed> <its red checks>) per run whose rerun went green. A red line may have a second,
+    note: <why>, for a rerun that failed too, was refused or is under way."""
+    want, start, missed, rerun_missed = None, time.time(), 0, 0
     end, settled = start + secs, start + min(grace, secs)
+    req, why = required(repo, base)
+    if why:
+        print("warning: could not read %s's required checks (%s), so every check counts" % (base, why), file=sys.stderr)
+    # again: run id -> (attempt rerun, its red checks' names, their red lines); held: red, its run finishing
+    # or its rerun not started; known: (run id, red line) of a rerun not finished; going: runs not finished
+    again, stale, held, going, absent, known = {}, set(), [], set(), [], []
     while True:
         try:
             if want is None:
                 want = expected(repo, sha, base, n, changed)
-            runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
-                    if r.get("head_sha") == sha]
-            red, wait, _ = checks(repo, sha, need_run=False)
+            runs, items = ci_items(repo, sha)
         except Err as e:
             missed += 1
             if missed == READ_TRIES:
@@ -496,16 +547,75 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             wait = ["a read failed: %s" % e]
         else:
             missed = 0
-            judge(runs, red, wait, [])
+            # A rerun run reads pending until its new attempt shows, and its old red checks until they change.
+            runs = [dict(r, status="rerun requested") if r.get("id") in again and (r.get("run_attempt") or 0) <= again[r["id"]][0] else r
+                    for r in runs]
+            items = [dict(r, status="rerun requested") if (r.get("html_url"), r.get("completed_at")) in stale else r for r in items]
+            going = {r.get("id") for r in runs if r.get("status") != "completed"}
+            mine, rest, absent = by_rule(req, runs, items)
+            # Once every expected push workflow has finished (with none expected, once grace is over), a
+            # required check with no run will not get one: every check counts then, as with none required.
+            if absent and (want or time.time() >= settled) and all(
+                    any((r.get("path") or "").split("@")[0] == p and r.get("status") == "completed" for r in runs) for p in want):
+                mine, rest = items + runs, []
+            red, rwait, wait, warn = [], [], [], []
+            judge(mine, red, rwait, [])
+            judge(rest, warn, wait, [])
+            if absent:
+                wait, warn = wait + ["%s, held until every required check has a run" % w for w in warn], []
             have = {(r.get("path") or "").split("@")[0] for r in runs}
             wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
+            bad = [r for r in mine if r.get("status") == "completed" and r.get("conclusion") not in OK]   # red's, in order
+            ids = [int(m.group(1)) if m else None for m in (RUN_ID.search(r.get("html_url") or "") for r in bad)]
+            held = []
+            if red and ids and all(i is not None and i not in again for i in ids):   # each run gets one rerun
+                if any(i in going for i in ids):
+                    held, rwait = red, rwait + ["%s, finishing before its rerun" % x for x in red]
+                else:
+                    tried, started = {r.get("id"): r.get("run_attempt") or 1 for r in runs}, []
+                    for i in sorted(set(ids)):
+                        try:
+                            gh("run", "rerun", str(i), "--failed", "--repo", repo)
+                        except Err as e:
+                            if not TRANSIENT.search(str(e).split(": ", 1)[-1]):
+                                return CI_RED, red_line(red, [], sorted(j for j in again if j in started or j in going),
+                                                        "A rerun of run %d's failed jobs was refused: %s" % (i, e))
+                            rerun_missed += 1
+                            if rerun_missed == READ_TRIES:
+                                raise Err("%s (%d reruns in a row failed)" % (e, rerun_missed))
+                            held, rwait = red, rwait + ["a rerun failed: %s" % e]   # red, if the wait runs out first
+                            break
+                        rerun_missed, mine_i = 0, [r for j, r in zip(ids, bad) if j == i]
+                        again[i] = (tried.get(i) or 1, [str(r.get("name")) for r in mine_i], [x for j, x in zip(ids, red) if j == i])
+                        end = time.time() + secs
+                        stale |= {(r.get("html_url"), r.get("completed_at")) for r in mine_i}
+                        started.append(i)
+                    rwait += ["%s, rerun" % x for x in red]
+                red = []
             if red:
-                return 1, "red " + "; ".join(red)
-            if not wait and (want or time.time() >= settled):
-                return 0, "ok"
+                return CI_RED, red_line(red, sorted(i for i in again if i in ids), sorted(i for i in again if i not in ids and i in going))
+            green = {r.get("name") for r in items + runs if r.get("status") == "completed" and r.get("conclusion") in OK}
+            # The reds whose rerun has not finished: red, if the wait runs out first.
+            rerunning = {int(m.group(1)) for r in items if r.get("status") == "rerun requested"
+                         for m in [RUN_ID.search(r.get("html_url") or "")] if m} | (going & set(again))
+            known = [(i, x) for i in sorted(rerunning & set(again)) for n, x in zip(again[i][1], again[i][2]) if n not in green]
+            if not rwait and ((req and not absent) or (not wait and (want or time.time() >= settled))):
+                return CI_OK, "\n".join(["ok"] + ["warning: %s is red on %s, which does not require it" % (w, base) for w in warn]
+                                       + ["flaky %d %d %s" % (i, a, "; ".join(x)) for i, (a, x, _) in sorted(again.items()) if set(x) <= green])
+            wait = rwait + wait
         if time.time() >= end:
-            return 2, "timeout (%s)" % "; ".join(wait)
+            if held or known:
+                return CI_RED, red_line(held + [x for _, x in known], [], sorted({i for i, _ in known} | (going & set(again))))
+            return CI_TIMEOUT, "timeout (%s)" % "; ".join(wait + ["%s (required, no run on %s)" % (c, sha[:7]) for c in absent])
         time.sleep(poll)
+
+def red_line(red, failed, under, refused=""):
+    """main_ci's red: red <checks>, then note: <why> when the runs failed were rerun and failed too, a
+    rerun was refused, or the runs under are being rerun."""
+    why = ["Run %d's failed jobs were rerun once, and the rerun failed too" % i for i in failed]
+    why += [refused] if refused else []
+    why += ["A rerun of run %d's failed jobs is under way" % i for i in under]
+    return "red " + "; ".join(red) + ("\nnote: " + "; ".join(why) if why else "")
 
 def fixed(repo, sha, base, red_sha, board, names):
     """Why sha does not show a red main fixed, or None. A board-only commit's CI may skip its tests,
@@ -513,7 +623,8 @@ def fixed(repo, sha, base, red_sha, board, names):
     a finish or a merge --board). There everything must be green, as main_ci judges a merge commit (no
     check run needed of its own), and either each check that went red passed there, or base requires
     checks and each of those passed: a fix may rename or drop the job that failed, but a check a path
-    filter skipped has no run that passed. It must hold red_sha in its history: a merge that landed
+    filter skipped has no run that passed. Once each required check has a run, only those must be
+    green, as main_ci judges them. It must hold red_sha in its history: a merge that landed
     before the red one and whose wait ended after it fixes nothing."""
     for _ in range(FIXED_WALK):
         files, parents = [], []
@@ -531,16 +642,17 @@ def fixed(repo, sha, base, red_sha, board, names):
         return "no commit that is not board-only within %d of the head" % FIXED_WALK
     if sha != red_sha and json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, red_sha, sha))).get("behind_by") != 0:
         return "%s does not have the red %s in its history" % (sha[:7], red_sha[:7])
-    try:
-        req = base_rules(repo, base, "squash")[0]
-    except Err:
-        req = []   # rules gh cannot read (no admin read on protection): each check that went red decides
-    red, wait, ok = checks(repo, sha, required=req, need_run=False)
-    judge([r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
-           if r.get("head_sha") == sha], red, wait, ok)
+    req = required(repo, base)[0]   # none read: each check that went red decides
+    runs, items = ci_items(repo, sha)
+    mine, rest, absent = by_rule(req, runs, items)
+    red, wait = [], []
+    judge(mine, red, wait, [])
+    if absent:   # until each required check has a run, every check counts, as in main_ci
+        judge(rest, red, wait, [])
+        wait += ["%s (required, absent)" % c for c in absent]
     if red or wait:
         return "; ".join(red + wait)
-    passed = {s[:-len(" (success)")] for s in ok if s.endswith(" (success)")}
+    passed = {r.get("name") for r in mine if r.get("status") == "completed" and r.get("conclusion") == "success"}
     missing = [n for n in names if n not in passed]
     if missing and not req:
         return "; ".join("%s (no run that passed)" % n for n in missing)
@@ -596,4 +708,4 @@ try:
         sys.exit(rc)
 except Exception as e:
     print("error %s" % (e or type(e).__name__))
-    sys.exit(3)
+    sys.exit(CI_ERROR)
