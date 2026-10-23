@@ -1173,22 +1173,26 @@ says the epic's stories spent most of their time waiting to start. The last two 
 `ready_wait_min` in minutes, over the stories whose first build is dated in the window, merged or
 not. They are empty when there is none, and an epic with only such builds still gets a row.
 
-The `idle_slots` section asks whether the swarm sat idle while work was ready. It prints TSV
-`epic idle_min no_conductor_min most_ready`, one row per epic and a last `all` row, or the `--epic`
-row alone. `idle_min` is the minutes in the window when at least one of the epic's stories was
-ready with no build while its conductor ran. A story is ready from its first build's start less its
-`ready_wait_min` up to that start. A story on the board now as `status: ready` (not a lead story and
-not held, with `.swarm/board-state` laid over its file) with no build since it went ready counts from
-the later of its last `unblock` event and the board's last commit to its status line, to the end of
-the window. A ready story that clashes with a running
-build (their `touches` in the same repo, as the clash rule reads them, unless one depends on the other) could not
-start, so those minutes are not idle. A build from before `--since` still clashes: its story is read
-from the board or, once merged, from git. The same minutes with no conductor of the
-epic running go under `no_conductor_min`. `most_ready` is the most of its stories ready with no build
-at once, clashing or not. The `all` row counts a minute once however many epics were idle in it, and
-it includes the stories with no epic, under the backlog conductor. A build runs from its start to its
-slug's next ok close, else to its next build, else to the end of the window. A conductor runs as
-`held_min` reads it: from an ok `conduct` event until the next one, a close of its agent or its report.
+The `idle_slots` section asks whether the swarm sat idle while work was ready. It prints TSV `epic
+idle_min no_conductor_min most_ready`, one row per epic and a last `all` row, or the `--epic` row
+alone. `idle_min` is the minutes in the window when at least one of the epic's stories was ready
+with no build while its conductor ran. A story is ready from its first build's start less its
+`ready_wait_min` up to that start. A story on the board now as `status: ready` (with
+`.swarm/board-state` laid over its file; not a lead story, not held, and not in a `later` or `draft`
+epic) with no build since it went ready counts until the end of the window. It went ready at the
+latest of its last `unblock` event, its last close (`close --drop` sends a story back to ready with
+no other trace) and the board's last commit to its status line on the default branch, dated by the
+merge. A ready story that clashes with a running build (their `touches` in the same repo, as the
+clash rule reads them, unless one depends on the other) could not start, so those minutes are not
+idle. A build from before `--since` still clashes: its story is read from the board or, once merged,
+from git. The same minutes with no conductor of the epic running go under `no_conductor_min`.
+`most_ready` is the most of its stories ready with no build at once, clashing or not. The `all` row
+counts a minute once however many epics were idle in it, and it includes the stories with no epic,
+under the backlog conductor. A build runs from its start (00:00 on its `agents.tsv` day when it has
+no session log yet, which still counts as built since the story went ready unless a close came
+after) to its slug's next ok close, else to its next build, else to the end of the window. A
+conductor runs as `held_min` reads it: from an ok `conduct` event until the next one, a close of its
+agent or its report. The backlog's agent is its own conductor name alone.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying

@@ -444,6 +444,7 @@ check "ci_health: a rate limit health spent leaves the listings unread, and no n
 I="${dir}/idle"; mkdir -p "${I}/.swarm" "${I}/docs/stories"; git -C "${I}" init -q
 ist() { printf -- '---\nkind: code\nstatus: ready\nepic: %s\ntouches: [%s]\n---\n' "$2" "$3" > "${I}/docs/stories/$1.md"; }
 ist ia e9 src/a.sh; ist ib e9 src/b.sh; ist ic e10 src/c.sh
+mkdir -p "${I}/.swarm/board-state/stories"; echo 'status: review' > "${I}/.swarm/board-state/stories/ib"   # closed: in review
 for x in ia:10:10 ib:09:30 ic:12:20; do
   printf '{"cwd":"%s/idle-wt/%s","timestamp":"2026-10-01T%s:00Z"}\n{"timestamp":"2026-10-01T%s:00Z"}\n' "${dir}" "${x%%:*}" "${x#*:}" "${x#*:}" \
     > "${dir}/projects/p/s${x%%:*}.jsonl"
@@ -452,7 +453,7 @@ printf '%s\n' "2026-10-01${B}ia${O}sia" "2026-09-30${B}ib${O}sib" "2026-10-01${B
 printf '%s\n' $'2026-10-01T09:00:00Z\tconduct\te9\tw:1\tok' $'2026-10-01T10:00:00Z\tunblock\tia\tw:1\tok' \
   $'2026-10-01T11:00:00Z\tclose\tib\tw:1\tok' $'2026-10-01T12:00:00Z\tunblock\tic\tw:1\tok' > "${I}/.swarm/events.tsv"
 idle() { (cd "${I}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=idle_slots CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
-  bash "${SWARM}" flow "$@" 2>&1 | sed 1d); }
+  bash "${SWARM}" flow "$@" 2>&1 | grep -v -e '^## idle_slots$' -e '^sed: '); }   # sed warns on a byte that is not UTF-8
 IH=$'epic\tidle_min\tno_conductor_min\tmost_ready'
 check "idle_slots: a ready story with no build under its conductor is idle; one with no conductor counts under no conductor" \
   "$(idle)" "${IH}"$'\ne10\t0\t20\t1\ne9\t10\t0\t1\nall\t10\t20\t1'
@@ -466,7 +467,7 @@ check "idle_slots: a story ready on the board with no build yet is idle to the w
 # ie's file says blocked, but its board-state says ready, so it waits beside id. ig builds from 13:00
 # on, never closed, touching src/d.sh in repo other: no clash with id's and ie's src/d.sh here.
 printf -- '---\nkind: code\nstatus: blocked\nepic: e9\ntouches: [src/d.sh]\n---\n' > "${I}/docs/stories/ie.md"
-mkdir -p "${I}/.swarm/board-state/stories"; echo 'status: ready' > "${I}/.swarm/board-state/stories/ie"
+echo 'status: ready' > "${I}/.swarm/board-state/stories/ie"
 printf '%s\n' $'2026-10-01T13:00:00Z\tunblock\tie\tw:1\tok' >> "${I}/.swarm/events.tsv"
 printf -- '---\nkind: code\nstatus: ready\nepic: e9\nrepo: other\ntouches: [src/d.sh]\n---\n' > "${I}/docs/stories/ig.md"
 printf '{"cwd":"%s/idle-wt/ig","timestamp":"2026-10-01T13:00:00Z"}\n' "${dir}" > "${dir}/projects/p/sig.jsonl"
@@ -479,6 +480,51 @@ git -C "${I}" add docs/stories/ih.md
 GIT_COMMITTER_DATE=2026-10-01T20:00:00Z git -C "${I}" -c user.name=t -c user.email=t@t commit -qm ih --date 2026-10-01T20:00:00Z
 check "idle_slots: a story is ready from the later of its unblock and the board's commit to its status" \
   "$(idle --until 2026-10-01 --epic e11)" "${IH}"$'\ne11\t0\t240\t1'
+# ij (e12, no conductor) is committed ready on a side branch at 18:00 and merged at 22:00: it waits 2 hours, not 6.
+ist ij e12 src/j.sh; git -C "${I}" add docs/stories/ij.md
+tree="$(git -C "${I}" write-tree)"; head="$(git -C "${I}" rev-parse HEAD)"
+commit_at() { GIT_AUTHOR_DATE="$1" GIT_COMMITTER_DATE="$1" git -C "${I}" -c user.name=t -c user.email=t@t commit-tree "${tree}" "${@:2}"; }
+side="$(commit_at 2026-10-01T18:00:00Z -p "${head}" -m ij)"
+git -C "${I}" update-ref HEAD "$(commit_at 2026-10-01T22:00:00Z -p "${head}" -p "${side}" -m merge)"
+check "idle_slots: a story readied on a board branch is ready from the merge, not the branch commit" \
+  "$(idle --until 2026-10-01 --epic e12)" "${IH}"$'\ne12\t0\t120\t1'
+# il (e13, no conductor), unblocked 13:50 and built 14:00, is sent back to ready by its close at 15:00
+# (close --drop leaves no unblock or board commit): 10 minutes, then 15:00 to midnight.
+ist il e13 src/l.sh
+printf '{"cwd":"%s/idle-wt/il","timestamp":"2026-10-01T14:00:00Z"}\n' "${dir}" > "${dir}/projects/p/sil.jsonl"
+printf '%s\n' "2026-10-01${B}il${O}sil" >> "${I}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T13:50:00Z\tunblock\til\tw:1\tok' $'2026-10-01T15:00:00Z\tclose\til\tw:1\tok' >> "${I}/.swarm/events.tsv"
+check "idle_slots: a story a close sent back to ready waits again from that close" \
+  "$(idle --until 2026-10-01 --epic e13)" "${IH}"$'\ne13\t0\t550\t1'
+# in is ready from 23:00, but its epic e14 is later: no conductor will run it.
+ist in e14 src/n.sh; mkdir -p "${I}/docs/epics"; printf -- '---\nstatus: later\n---\n' > "${I}/docs/epics/e14.md"
+printf '%s\n' $'2026-10-01T23:00:00Z\tunblock\tin\tw:1\tok' >> "${I}/.swarm/events.tsv"
+check "idle_slots: a ready story in a later epic is not waiting" "$(idle --until 2026-10-01 --epic e14)" "${IH}"$'\ne14\t0\t0\t0'
+# io (e15) is unblocked at 10:00 and its build has no session log yet: built, not waiting.
+ist io e15 src/o.sh; printf '%s\n' "2026-10-01${B}io${O}-" >> "${I}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T10:00:00Z\tunblock\tio\tw:1\tok' >> "${I}/.swarm/events.tsv"
+check "idle_slots: a build with no session log still counts as a build" "$(idle --until 2026-10-01 --epic e15)" "${IH}"$'\ne15\t0\t0\t0'
+# ip (e16)'s log-less build is closed at 15:00, sending it back to ready: it waits from then to midnight.
+ist ip e16 src/p.sh; printf '%s\n' "2026-10-01${B}ip${O}-" >> "${I}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T10:00:00Z\tunblock\tip\tw:1\tok' $'2026-10-01T15:00:00Z\tclose\tip\tw:1\tok' >> "${I}/.swarm/events.tsv"
+check "idle_slots: a close after a build with no session log sends its story back to ready" \
+  "$(idle --until 2026-10-01 --epic e16)" "${IH}"$'\ne16\t0\t540\t1'
+# On the 2nd, with the board's ready stories gone: the backlog's ik (no epic) is ready from 10:00 under
+# the backlog conductor (09:00 on); epic backlog-cleanup's conductor closing at 12:00 does not end it.
+# im, built 11:00-11:30 and touching ik's file, is a merged story whose text has a byte that is not UTF-8.
+# It has no status line, so outcomes' board log, which reads -G^status: patches and would fail on
+# that byte, never prints its commits.
+rm "${I}"/docs/stories/*.md
+printf -- '---\nkind: code\nstatus: ready\ntouches: [src/k.sh]\n---\n' > "${I}/docs/stories/ik.md"
+printf -- '---\nkind: code\ntouches: [src/k.sh]\n---\n\xff\n' > "${I}/docs/stories/im.md"
+git -C "${I}" add docs/stories/im.md; git -C "${I}" -c user.name=t -c user.email=t@t commit -qm im
+git -C "${I}" rm -q docs/stories/im.md; git -C "${I}" -c user.name=t -c user.email=t@t commit -qm 'im merged'
+printf '{"cwd":"%s/idle-wt/im","timestamp":"2026-10-02T11:00:00Z"}\n' "${dir}" > "${dir}/projects/p/sim.jsonl"
+printf '%s\n' "2026-10-01${B}im${O}sim" >> "${I}/.swarm/agents.tsv"   # dated the 1st: flow's own sed never reads its text
+printf '%s\n' $'2026-10-02T09:00:00Z\tconduct\t--backlog\tw:1\tok' $'2026-10-02T10:00:00Z\tunblock\tik\tw:1\tok' \
+  $'2026-10-02T11:30:00Z\tclose\tim\tw:1\tok' $'2026-10-02T12:00:00Z\tclose\tconduct-backlog-cleanup\tw:1\tok' >> "${I}/.swarm/events.tsv"
+check "idle_slots: only the backlog's own conductor ends its run, and a merged story's bytes that are not UTF-8 still read" \
+  "$(idle --since 2026-10-02 --until 2026-10-02)" "${IH}"$'\nall\t810\t0\t1'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

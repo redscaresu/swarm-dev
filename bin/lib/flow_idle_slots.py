@@ -5,29 +5,51 @@
 # build at once, clashing or not. `all` takes the union of the epics' minutes, and the stories with no
 # epic (the backlog conductor's). A story is ready from its first build's start less its
 # ready_wait_min (outcomes' column) to that start. One on the board now as `status: ready` (not a lead
-# story, not held), under what swarm.sh wrote to .swarm/board-state as touches_rows.front reads it,
-# with no build since it went ready is ready from then (the later of its last ok unblock event and the
-# board's last commit to its status line) to the window's end. A build runs
-# from its started to its slug's first ok close after it, before the slug's next build, else to that
+# story, not held, not in a later or draft epic), under what swarm.sh wrote to .swarm/board-state as
+# touches_rows.front reads it, with no build since it went ready is ready from then to the window's
+# end: the latest of its last ok unblock event, its last ok close (close --drop, or a close that kept
+# the pane, sends it back to ready with no other trace) and the board's last commit to its status
+# line on its default branch, dated by the merge as outcomes' board_log reads it; a build with no
+# start (no session log yet) on its agents.tsv day or later counts as built since, unless that time
+# is a close. A build runs
+# from its started (with none, 00:00 local on its agents.tsv day, as throughput's) to its slug's first ok close after it, before the slug's next build, else to that
 # next build, else to the window's end. Two stories clash as touches_rows.py reads touches (the same
 # file:symbol in the same repo, or either naming the bare file), unless one depends on the other (a
 # stacked start), each story read as story_text reads it, so a build before --since counts too. A
 # conductor runs from an ok `conduct` event to its next one, an ok close of its agent, a report event
-# for it or its report file's time, as outcomes' held reads it; the backlog's agent is any
-# conduct-backlog* name, as the events log is the project's own.
+# for it or its report file's time, as outcomes' held reads it; the backlog's agent is conduct-backlog
+# or SWARM_BACKLOG_CONDUCTOR (conductor_name backlog).
 # ponytail: a build with no close runs to the window's end; read its session log's last entry, as throughput does, if that misleads.
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
-import collections, datetime, glob, os, subprocess, time
+import collections, datetime, functools, glob, os, subprocess, time
 import touches_rows
 from report import agent_name
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
 project_dir = os.path.dirname(os.path.dirname(findings))
 board = os.environ.get("SWARM_BOARD", "")
-touches_rows.state = os.path.join(os.path.dirname(events), "board-state", "stories")   # front's overlay
+board_state = os.path.join(os.path.dirname(events), "board-state")
+touches_rows.state = os.path.join(board_state, "stories")   # front's overlay for a story
 
 def git(*args):
-    got = subprocess.run(["git", "-C", board, *args], capture_output=True, text=True)
+    got = subprocess.run(["git", "-C", board, *args], capture_output=True, encoding="utf-8", errors="replace")
     return got.stdout if got.returncode == 0 else ""
+
+def board_log(*args):
+    # outcomes_join's board_log: git log on the board's default branch (origin/HEAD, else HEAD), a
+    # commit dated by the merge that brought it.
+    ref = "origin/HEAD" if git("rev-parse", "-q", "--verify", "origin/HEAD") else "HEAD"
+    return git("log", ref, "--first-parent", "--diff-merges=first-parent", "--no-renames", *args)
+
+def epic_held(e):
+    # True when the epic is later or draft (board.sh's epic_held): no conductor runs it.
+    f = os.path.join(board, "epics", e + ".md")
+    if not e or not os.path.isfile(f):
+        return False
+    touches_rows.state = os.path.join(board_state, "epics")
+    try:
+        return front(f).get("status") in ("later", "draft")
+    finally:
+        touches_rows.state = os.path.join(board_state, "stories")
 
 def story(slug):
     # Its front matter, as story_text finds it: on the board, else as the commit that deleted it left it.
@@ -66,7 +88,7 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
 def conductor_runs(key):
     # The (start, end) of each run of the epic's conductor (key --backlog for the backlog's).
     if key == "--backlog":
-        ends = [t for n, ts in closes.items() if n.startswith("conduct-backlog") for t in ts]
+        ends = [t for n in {"conduct-backlog", os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")} - {""} for t in closes[n]]
     else:
         ends = list(closes[agent_name("conduct-" + key)])
     report = os.path.join(os.path.dirname(events), f"conduct-{'backlog' if key == '--backlog' else key}.report.md")
@@ -74,11 +96,13 @@ def conductor_runs(key):
     starts = sorted(conducts[key])
     return [(s, min([t for t in ends + starts[i + 1:] if t > s] + [hi])) for i, s in enumerate(starts)]
 
-starts = collections.defaultdict(list)
+starts, loose = collections.defaultdict(list), collections.defaultdict(list)   # slug -> build starts; days of those with none
 for r in rows:
-    t = secs(r["started"])
+    t = secs(r["started"]) or secs(r["date"] + "T00:00:00")
     if t is not None:
         starts[r["slug"]].append(t)
+    if not r["started"]:
+        loose[r["slug"]].append(r["date"])
 builds = []   # (slug, start, end)
 for slug, ts in starts.items():
     ts = sorted(set(ts))
@@ -95,11 +119,13 @@ ready = [(slug, t - 60 * int(w), t) for slug, (t, w) in earliest.items() if w]
 for f in sorted(glob.glob(os.path.join(glob.escape(board), "stories", "*.md"))) if board else ():
     slug = os.path.basename(f)[:-3]
     fm = {} if slug == "README" else front(f)
-    if fm.get("status") != "ready" or fm.get("kind") == "lead" or fm.get("held_by"):
+    if fm.get("status") != "ready" or fm.get("kind") == "lead" or fm.get("held_by") or epic_held(fm.get("epic", "")):
         continue
-    commit = git("log", "-1", "--format=%ct", "-G^status:", "--", f"stories/{slug}.md").strip()
-    t = max(unblocks[slug] + ([float(commit)] if commit else []), default=None)
-    if t is not None and not any(b >= t for b in starts[slug]):
+    commit = board_log("-1", "-s", "--format=%ct", "-G^status:", "--", f"stories/{slug}.md").strip()
+    t = max(unblocks[slug] + closes[agent_name(slug)] + ([float(commit)] if commit else []), default=None)
+    # A close that sent it back ended every build before it; else one with no start that day is since.
+    day = "~" if t is None or t in closes[agent_name(slug)] else datetime.date.fromtimestamp(t).isoformat()
+    if t is not None and not any(b >= t for b in starts[slug]) and not any(d >= day for d in loose[slug]):
         epic_of.setdefault(slug, fm.get("epic", ""))
         ready.append((slug, t, hi))
 files, needs = {}, {}   # slug -> its touches' entries; slug -> its depends_on
@@ -110,6 +136,7 @@ def known(s):
         files[s], needs[s] = entries(fm, project_dir, ""), front_deps(fm)
     return files[s]
 
+@functools.lru_cache(maxsize=None)
 def clashes(a, b):
     return a != b and any(overlap(x, y) for x in known(a) for y in known(b)) and a not in needs[b] and b not in needs[a]
 
