@@ -537,7 +537,7 @@ build_story() {
 # the conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
 # which review_on_head reads.
 review_agent() {
-  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at err
+  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at moved errf err
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -569,47 +569,52 @@ review_agent() {
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
   # The last review's file is moved aside before the brief goes (a quick agent's new file must not be
-  # the one removed), and dropped once the agent has started. A .prev left from an earlier run is an
-  # older head's, never to be put back, and the head on record is written again only for this start.
-  rm -f "${out}.prev" "${out%.md}.head"
-  [[ ! -f "${out}" ]] || mv "${out}" "${out}.prev"
-  # start_agent's stderr is kept to tell an unclear start from one that surely sent nothing.
-  if { err="$( (start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}") 2>&1 1>&3 )"; } 3>&1; then
-    rm -f "${out}.prev"
+  # the one removed), and dropped once the agent has started. A .prev an earlier unclear start left,
+  # with no findings file since, stays: it is the last real review. The head on record is written
+  # again only for an agent this start leaves running.
+  rm -f "${out%.md}.head"; moved=""
+  if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
+  # start_agent's stderr goes out as it comes; a copy tells an unclear start from a no-send.
+  errf="$(mktemp)" || die "review-agent: mktemp failed"
+  if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 | tee "${errf}" >&2; } 3>&1; then
+    rm -f "${out}.prev" "${errf}"
   else
-    [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2
-    # Open but not working: no head on record, so watch and next still call the PR unreviewed.
-    review_start_failed "${slug}" "${err}" || return 0
+    err="$(cat "${errf}")"; rm -f "${errf}"
+    review_start_failed "${slug}" "${moved}" "${err}"
   fi
   echo "${head}" > "${out%.md}.head"
 }
 
-# review_start_failed <slug> <err> — after review_agent's start of review-<slug> failed with <err>,
-# its last findings file (if any) moved aside to <slug>.md.prev by that start. With its pane open and
-# busy or waiting (read_state: its session's word, herdr's working or blocked for codex), the start
-# was unclear but the agent runs: say so and succeed. In any other state, with <err> saying the brief
-# may have gone out (deliver_prompt's sent or unread tries), say it may have its brief and fail. Otherwise (no pane, or herdr surely sent nothing) close
-# its pane, put that file back and die. In both first cases the file stays aside.
+# review_start_failed <slug> <moved> <err> — after review_agent's start of review-<slug> failed with
+# <err> (its stderr), the last findings file moved aside to <slug>.md.prev when <moved> is non-empty.
+# Returns, so review_agent records the head, only when the start was unclear and the agent runs: <err>
+# says the brief may have gone out (deliver_prompt's sent or unread tries) and read_state calls it busy
+# or waiting (herdr's working or blocked for codex). The file stays aside. Dies otherwise. When the
+# brief may have reached an agent that is not running, the file stays aside and the message says how
+# to clear the pane. In any other case (herdr surely sent nothing, no pane, a session that is gone or
+# that herdr has no status for), it closes the pane and puts back the file this start moved.
 review_start_failed() {
-  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" state=none pane kept="" note=""
+  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" state=none pane unclear="" kept="" note="" back=""
   name="$(agent_name "review-$1")"; pane="$(agent_field "${name}" pane_id)"
   [[ -z "${pane}" ]] || state="$(read_state "${name}")"
   [[ ! -f "${f}.prev" ]] || kept="; the last review is kept aside in ${f}.prev"
-  case "${state}:$2" in
-    none:*) ;;   # no pane: nothing runs, whatever <err> says
-    busy:*|waiting*|herdr:working:*|herdr:blocked:*)
+  case "$3" in
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) unclear=yes ;;
+  esac
+  case "${unclear}:${state}" in
+    yes:none|yes:gone|yes:herdr:) ;;   # nothing runs to have the brief
+    yes:busy|yes:waiting*|yes:herdr:working|yes:herdr:blocked)
       echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: wait for it with swarm.sh wait review-$1"
       return 0 ;;
-    *:*"may or may not have the brief"*|*:*"herdr sent it the brief"*|*:*"could not be read"*)
-      echo "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}: see herdr agent read ${name}, then wait for it with swarm.sh wait review-$1, or close it and start the review again"
-      return 1 ;;
+    yes:*)
+      die "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}; no head is on record. Look at it (herdr agent read ${name}); to review again, close it (herdr pane close ${pane}) and run swarm.sh review-agent $1 <PR URL>" ;;
   esac
   if [[ -n "${pane}" ]]; then
     note=" (its pane ${pane} is closed)"
     herdr pane close "${pane}" >/dev/null 2>&1 || note=" (its pane ${pane} could not be closed: close it by hand)"
   fi
-  [[ ! -f "${f}.prev" ]] || mv "${f}.prev" "${f}"
-  die "review-agent: review-$1 did not start${note}; ${f} is as it was"
+  if [[ -n "$2" ]]; then mv "${f}.prev" "${f}"; back="; ${f} is put back"; fi
+  die "review-agent: review-$1 did not start${note}${back}"
 }
 
 # review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is
