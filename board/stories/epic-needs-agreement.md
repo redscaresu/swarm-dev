@@ -1,7 +1,7 @@
 ---
 kind: code
-status: ready
-epic: safer-faster-swarm
+status: later
+epic: retro-and-shared-rules
 depends_on: []
 touches: [bin/lib/merge.sh:merge --board checks, commands/epic.md:step 5, commands/swarm.md, skills/swarm-dev/SKILL.md, tests/merge_test.sh, docs/reference.md:Merging]
 easy: false
