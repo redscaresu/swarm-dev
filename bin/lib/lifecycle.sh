@@ -1592,11 +1592,10 @@ LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one
 # not or a URL is not a PR, 2 when none is red but gh or ci_gate could not read one. ci_gate head is
 # skipped for a head LEAD_GREEN holds, setting LEAD_CACHED, unless LEAD_FRESH is set; each green head
 # goes to LEAD_GREEN.new. A red or pending head is read again each time: a re-run can turn it green
-# with no new SHA. One a re-run turned red leaves LEAD_GREEN and LEAD_GREEN.new, so no later poll
-# takes it for cached and reads it fresh again.
+# with no new SHA. LEAD_RED is "<url> <head>" for the red or pending head it stopped at, else empty.
 heads_green() {
-  local url repo head rc=0 g f
-  LEAD_CACHED=""
+  local url repo head rc=0 g
+  LEAD_CACHED=""; LEAD_RED=""
   [[ $# -gt 0 ]] || return 1
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 1
@@ -1607,13 +1606,7 @@ heads_green() {
       LEAD_CACHED=1
     else
       g=0; ci_gate head "${repo}" "${head}" >/dev/null 2>&1 || g=$?
-      [[ ${g} -ne 3 ]] || { rc=2; continue; }
-      if [[ ${g} -ne 0 ]]; then
-        for f in "${LEAD_GREEN}" "${LEAD_GREEN}.new"; do
-          grep -vxF "${url} ${head}" "${f}" > "${f}.tmp" 2>/dev/null || true; mv "${f}.tmp" "${f}"
-        done
-        return 1
-      fi
+      [[ ${g} -eq 0 ]] || { [[ ${g} -eq 3 ]] || { LEAD_RED="${url} ${head}"; return 1; }; rc=2; continue; }
     fi
     echo "${url} ${head}" >> "${LEAD_GREEN}.new"
   done
@@ -1626,7 +1619,7 @@ heads_green() {
 # review (waiting_on_user) whose every PR head is green.
 # A review item whose heads could not be read stays as LEAD_SEEN has it, so a gh error wakes no one.
 lead_queue() {
-  local f held line slug prs rc urls="" tag u new seen=" "
+  local f held line slug prs rc urls="" tag u new seen=" " red="|"
   while IFS= read -r f; do
     held="$(get_fm "${f}" held_for)"
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
@@ -1656,6 +1649,8 @@ lead_queue() {
       # About to wake the lead: a cached head can have gone red on a re-run since, so read each one again.
       # shellcheck disable=SC2086 # as above
       LEAD_FRESH=1 heads_green ${prs} || rc=$?
+      # A cached head the re-read found red or pending leaves the cache, or every poll reads it fresh again.
+      [[ -z "${LEAD_RED}" ]] || red+="${LEAD_RED}|"
     fi
     if [[ ${rc} -eq 0 ]] || { [[ ${rc} -eq 2 ]] && grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; }; then
       # Seen once reported: a later item listing the PR still wakes the lead when this one was not green.
@@ -1663,9 +1658,10 @@ lead_queue() {
     fi
   done < <(waiting_on_user)
   # A green head this read did not reach (gh failed, or an earlier PR of its item was red) stays cached
-  # while its PR is still in review.
+  # while its PR is still in review. A head this read's fresh re-read found red or pending (red) goes.
   touch "${LEAD_GREEN}"
-  awk -v keep="${urls} " 'FILENAME == ARGV[1] { if (!($1 in got)) print; got[$1] = 1; next }
+  awk -v keep="${urls} " -v red="${red}" 'index(red, "|" $0 "|") { next }
+    FILENAME == ARGV[1] { if (!($1 in got)) print; got[$1] = 1; next }
     !($1 in got) && index(keep, " " $1 " ") { print }' "${LEAD_GREEN}.new" "${LEAD_GREEN}" > "${LEAD_GREEN}.tmp"
   mv "${LEAD_GREEN}.tmp" "${LEAD_GREEN}"; rm -f "${LEAD_GREEN}.new"
 }
