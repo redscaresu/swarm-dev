@@ -1094,8 +1094,8 @@ watch_prs() {
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   # warned: a mergeable read failed this poll, said once. Each PR's state is read only where a branch
   # below uses it, so a watch that returns at one PR reads none past it. unlisted: the repos whose list
-  # failed, said once until it next succeeds.
-  local warned unlisted=" " rows
+  # failed, said once until it next succeeds. unread: the PRs whose check-runs read failed, likewise.
+  local warned unlisted=" " rows runs why unread=" "
   while :; do
     warned=""
     for repo in "${repos[@]}"; do
@@ -1129,12 +1129,23 @@ watch_prs() {
           fi
           continue
         fi
-        read -r total pending < <(gh api "repos/${repo}/commits/${sha}/check-runs" \
-          -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"')
-        if [[ "${total:-0}" -gt 0 && "${pending}" == 0 ]]; then
+        # A failed read (a spent rate limit prints an error body and exits 1) counts as unknown for this
+        # poll, said once per PR, with gh's reason, until a read of that PR next succeeds.
+        if ! runs="$(gh api "repos/${repo}/commits/${sha}/check-runs?per_page=100" \
+          -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"' 2>&1)" \
+          || ! [[ "${runs}" =~ ^[0-9]+\ [0-9]+$ ]]; then
+          if [[ "${unread}" != *" ${repo}#${n} "* ]]; then
+            why="$(sed -n 's/.*"message": *"\([^"]*\)".*/\1/p' <<< "${runs}" | head -n 1)"
+            echo "swarm: watch: gh cannot read ${repo} #${n}'s check runs (${why:-${runs##*$'\n'}}); counting them as unknown until a read succeeds" >&2
+            unread+="${repo}#${n} "
+          fi
+          continue
+        fi
+        unread="${unread// ${repo}#${n} / }"; read -r total pending <<< "${runs}"
+        if [[ "${total}" -gt 0 && "${pending}" == 0 ]]; then
           echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"; return 0
         fi
-        if [[ "${total:-0}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
+        if [[ "${total}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
       done <<< "${rows}"
