@@ -40,13 +40,17 @@ run `start` again for the next edit. `done` also clears a start you abandoned wi
 First run `swarm.sh version`. If it prints a WARNING, show it to the user word for word, then carry on:
 an old version still runs.
 
-When the user has updated the plugin while an epic's conductor runs, run `swarm.sh upgrade <epic>`
-in the background for each such epic and wait for it. It moves the epic's agents to the new version
-with `--resume`, so each keeps its context, and prints each one's old and new version. If it exits 1,
-show the user the agents it names as left on their old version, and run it again once they are idle.
-While it runs, upgrade stops the conductor, so your background `swarm.sh wait --until-report` on that
-conductor may return. Ignore that return until upgrade exits: do not restart or nudge the conductor,
-and do not start a second `conduct`. Then wait on the conductor again.
+When the user has updated the plugin while a conductor runs, run `swarm.sh upgrade` (with no
+epic, it moves every agent the project started). It moves them to the new version with `--resume`,
+so each keeps its context. It runs detached, prints its pid and its log
+(`.swarm/upgrade-<version>.log`), and works in rounds until every agent is moved or 2 hours pass.
+Only one runs per project: a second prints the running one and starts nothing. While it runs,
+`swarm.sh status` names it and the agents still on an old version. Once status no longer names it,
+read the end of its log, one line per agent, and show the user each agent left on its old version
+with its reason.
+While it runs, upgrade stops each conductor, so your background `swarm.sh wait --until-report` on a
+conductor may return. Ignore that return until upgrade is done: do not restart or nudge the
+conductor, and do not start a second `conduct`. Then wait on the conductor again.
 
 Repeat until a step below says stop:
 
