@@ -271,7 +271,9 @@ Repeat until a step below says stop:
      `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it.
      For swarm-dev's own repo, merge has confirmed the tag and the GitHub release, updated the
      plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
-     `claude --continue`) and any warning it printed. For any other repo, check that the tag
+     `claude --continue`) and any warning it printed. If CI on the base was not green, merge
+     updated nothing and printed a warning naming what to run once the release is published:
+     tell the user that warning. For any other repo, check that the tag
      `v<new>` exists and that `gh release view v<new>` shows the release. Run
      `swarm.sh dash --check`, which compares every figure dash shows with the command that
      owns it and exits 1 naming each one that differs. If it fails, run it once more, since a

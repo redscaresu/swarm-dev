@@ -1665,21 +1665,25 @@ lead merges it with `swarm.sh merge --release` and checks that the tag and the G
 exist. With `merge = human` it waits on your merge.
 
 When the release is swarm-dev's own (its repo is the GitHub repo named by `repository` in the
-plugin's `plugin.json`; otherwise merge prints a line saying it skipped this step), `merge --release`
-also updates the plugin and moves the agents onto it. It waits up to 10 minutes
-(`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a later commit of the base,
-and a published GitHub release. Then it runs `claude plugin marketplace update swarm-dev` and
-`claude plugin update swarm-dev@swarm-dev`, 5 minutes at most each. Once the new version's
-`swarm.sh` is in the plugin cache, it runs that version's `swarm.sh upgrade` (detached) in every
-swarm project where herdr runs an agent, and prints each upgrade's log path. An agent's project is
-the `SWARM_PROJECT` its restore wrapper sets, so a builder of an external board counts; with no
-wrapper, it is the project its folder is in, and with no agent in herdr's list, this project. Last,
-it asks you to restart the lead session in this project and in each one it upgraded (`/exit`, then
-`claude --continue`), since Claude Code loads a plugin's hooks only at startup, and until then the
-`swarm.sh` on a lead's PATH is the old one. When the release can't be confirmed or the update fails,
-it prints a warning naming the new version's `swarm.sh upgrade` to run once the plugin is updated,
-and upgrades nothing. A failed upgrade gets the same kind of warning, and merge moves on to the
-next project. The release still counts as done, and merge exits 0.
+plugin's `plugin.json`; otherwise merge prints a line saying it skipped this step), `merge
+--release` also updates the plugin and moves the agents onto it, once CI on the base is green. It
+waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a
+later commit of the base, and a published GitHub release. Then it runs `claude plugin marketplace
+update swarm-dev` and `claude plugin update swarm-dev@swarm-dev`, 5 minutes at most each. Once the
+new version's `swarm.sh` is in the plugin cache, it runs that version's `swarm.sh upgrade`
+(detached) in every swarm project where herdr runs an agent, and prints each upgrade's log path. The
+old version's `bin/` is taken off that upgrade's PATH, so each agent it restarts finds the new
+`swarm.sh`. An agent's project is the `SWARM_PROJECT` its restore wrapper sets, so a builder of an
+external board counts; with no wrapper, it is the project its folder is in, and with no agent in
+herdr's list, this project. Last, it asks you to restart the lead session in this project and in
+each one it upgraded (`/exit`, then `claude --continue`), since Claude Code loads a plugin's hooks
+only at startup, and until then the `swarm.sh` on a lead's PATH is the old one. When CI on the base
+is not green, the release can't be confirmed or the update fails, it prints a warning naming the new
+version's `swarm.sh upgrade` to run once the plugin is updated, and upgrades nothing. An upgrade
+that fails, or that finds another upgrade already running in its project and starts nothing, gets
+the same kind of warning, and merge moves on to the next project; that project is not named in the
+restart line. The release still counts as done, and none of these warnings changes merge's exit
+code.
 
 ## Commands
 

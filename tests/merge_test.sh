@@ -836,16 +836,21 @@ git -C "${P}" config --unset remote.origin.tagOpt
 # version's upgrade starts once in each swarm project herdr runs an agent in, found by the agent's
 # restore wrapper's SWARM_PROJECT (an external board's builder runs in a story repo with no config)
 # or else its cwd, and the user is asked to restart the lead in each.
-OWN=https://github.com/redscaresu/swarm-dev/pull/7; NEW="${CLAUDE_CONFIG_DIR}/plugins/cache/swarm-dev/swarm-dev/1.3.0/bin/swarm.sh"
+OWN_REPO="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["repository"].lower().rstrip("/").split("github.com/")[-1])' < "${REPO}/.claude-plugin/plugin.json")"
+OWN="https://github.com/${OWN_REPO}/pull/7"; NEW="${CLAUDE_CONFIG_DIR}/plugins/cache/swarm-dev/swarm-dev/1.3.0/bin/swarm.sh"
 mkdir -p "${NEW%/*}" "${ROOT}/proj2/.claude/swarm" "${ROOT}/proj3/.claude/swarm" "${ROOT}/story" "${CLAUDE_CONFIG_DIR}/swarm-dev/resume"
 git -C "${ROOT}/proj2" init -q; : > "${ROOT}/proj2/.claude/swarm/config"; : > "${ROOT}/proj3/.claude/swarm/config"; git -C "${ROOT}/story" init -q
 printf "env.update(SWARM_PROJECT='%s', SWARM_RESUME='x')\n" "${ROOT}/proj3" > "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/sess-3.py"
-# The new version's swarm.sh: logs each call; fails in a project holding upgrade.fail.
+# The new version's swarm.sh: logs each call, and "old PATH" when the old version's bin/ or gh-shim is
+# on its PATH; fails in a project holding upgrade.fail; starts nothing in one holding upgrade.busy.
 # shellcheck disable=SC2016 # expanded when the stubs run
-printf '#!/bin/sh\necho "${SWARM_PROJECT} $*" >> "%s"\n[ ! -e "${SWARM_PROJECT}/upgrade.fail" ] || exit 1\necho "log ${SWARM_PROJECT}/.swarm/upgrade-1.3.0.log"\n' "${ROOT}/upgrade.log" > "${NEW}"
+printf '#!/bin/sh\necho "${SWARM_PROJECT} $*" >> "%s"\ncase ":${PATH}:" in *":%s/bin:"*|*":%s/bin/gh-shim:"*) echo "old PATH" >> "%s" ;; esac
+[ ! -e "${SWARM_PROJECT}/upgrade.fail" ] || exit 1
+[ ! -e "${SWARM_PROJECT}/upgrade.busy" ] || { echo "swarm.sh upgrade already runs here (pid 9, log x); this one started nothing"; exit 0; }
+echo "log ${SWARM_PROJECT}/.swarm/upgrade-1.3.0.log"\n' "${ROOT}/upgrade.log" "$(cd "${REPO}" && pwd)" "$(cd "${REPO}" && pwd)" "${ROOT}/upgrade.log" > "${NEW}"
 own_release() {
-  release_pr; rm -f "${ROOT}/claude.log" "${ROOT}/upgrade.log"; echo '{"nameWithOwner":"redscaresu/swarm-dev"}' > "${FX}/origin"
-  printf '{"object":{"sha":"%s"}}' "${M}" > "${FX}/tagref"; echo '{"draft":false}' > "${FX}/release"
+  release_pr; rm -f "${ROOT}/claude.log" "${ROOT}/upgrade.log"; echo "{\"nameWithOwner\":\"${OWN_REPO}\"}" > "${FX}/origin"
+  printf '{"object":{"sha":"%s"}}' "${M}" > "${FX}/tagref"; echo '{"draft":false}' > "${FX}/release"; echo '{"status":"behind"}' > "${FX}/compare.main"
 }
 upgraded() { paste -sd'|' - < "${ROOT}/upgrade.log" 2>/dev/null; }
 cp "${ROOT}/agents" "${ROOT}/agents.keep"
@@ -856,6 +861,10 @@ is "--release of the plugin's repo: updates the marketplace, then the plugin" "p
 is "--release of the plugin's repo: the new version's upgrade, once in each project with agents, an external board's too" "${P} upgrade|${ROOT}/proj2 upgrade|${ROOT}/proj3 upgrade" "$(upgraded)"
 check "--release of the plugin's repo: prints the upgrade's log" said "log ${P}/.swarm/upgrade-1.3.0.log"
 check "--release of the plugin's repo: asks for the lead's restart in each project" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 (/exit, then claude --continue)"
+check "--release of the plugin's repo: the upgrade runs without the old version's bin/ or gh-shim on PATH" bash -c "! grep -q 'old PATH' '${ROOT}/upgrade.log'"
+own_release; touch "${ROOT}/proj2/upgrade.busy"; merge --release "${OWN}"; rm "${ROOT}/proj2/upgrade.busy"
+check "--release where another upgrade runs: warns, naming the new version's upgrade" said "warning: another swarm.sh upgrade runs in ${ROOT}/proj2, so 1.3.0's started nothing: once it ends, run SWARM_PROJECT=${ROOT}/proj2 ${NEW} upgrade"
+check "--release where another upgrade runs: that project is not named as upgraded" said "Restart the lead session in ${P}, ${ROOT}/proj3 ("
 own_release; touch "${P}/upgrade.fail"; merge --release "${OWN}"; rm "${P}/upgrade.fail"
 is "--release with a failed upgrade in one project: exits 0" 0 "${rc}"
 check "--release with a failed upgrade in one project: warns, naming the new version's upgrade" said "warning: swarm.sh upgrade in ${P} failed (exit 1): run SWARM_PROJECT=${P} ${NEW} upgrade"
@@ -875,15 +884,20 @@ check "--release whose update left no new swarm.sh: warns" said "warning: the pl
 check "--release whose update left no new swarm.sh: no restart line" bash -c "! grep -q Restart '${ROOT}/out'"
 own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; merge --release "${OWN}"
 check "--release whose tag is on a later commit: updates the plugin" grep -q "plugin update" "${ROOT}/claude.log"
+own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; echo '{"status":"ahead"}' > "${FX}/compare.main"; merge --release "${OWN}"
+check "--release whose tag is on a branch cut after the merge: warns, and no plugin update" bash -c "grep -q 'no tag v1.3.0 on the base at or after aaaaaaa' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
+own_release; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge --release "${OWN}"
+check "--release whose base CI is not green: warns that the plugin was not updated, naming the new version's upgrade" said "warning: CI on the base is not green, so the plugin was not updated: once v1.3.0 is published, run swarm.sh update, then ${NEW} upgrade"
+check "--release whose base CI is not green: no plugin update" test ! -e "${ROOT}/claude.log"
 own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; echo '{"status":"diverged"}' > "${FX}/compare.${M}"; merge --release "${OWN}"
 is "--release whose tag is on another branch's commit: exits 0" 0 "${rc}"
-check "--release whose tag is on another branch's commit: warns, and no plugin update" bash -c "grep -q 'no tag v1.3.0 at or after aaaaaaa' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
+check "--release whose tag is on another branch's commit: warns, and no plugin update" bash -c "grep -q 'no tag v1.3.0 on the base at or after aaaaaaa' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
 own_release; echo '{"draft":true}' > "${FX}/release"; merge --release "${OWN}"
 check "--release whose GitHub release is a draft: no plugin update" test ! -e "${ROOT}/claude.log"
 own_release; echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; merge --release "${URL}"
 is "--release of another repo: exits 0" 0 "${rc}"
 check "--release of another repo: no plugin update, no upgrade" bash -c "[ ! -e '${ROOT}/claude.log' ] && [ ! -e '${ROOT}/upgrade.log' ]"
-check "--release of another repo: says why" said "o/r is not this plugin's repo (redscaresu/swarm-dev), so the plugin is not updated"
+check "--release of another repo: says why" said "o/r is not this plugin's repo (${OWN_REPO}), so the plugin is not updated"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
 check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r --merge --match-head-commit ${H1}" "${ROOT}/gh.log"
 
