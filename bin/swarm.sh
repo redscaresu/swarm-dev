@@ -22,7 +22,7 @@
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
-#   swarm.sh upgrade [<epic>|backlog]                       after claude plugin update: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's); one still busy after SWARM_UPGRADE_WAIT_MS (30 minutes) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version
+#   swarm.sh upgrade [<epic>|backlog] [--foreground]        after claude plugin update: runs detached (log .swarm/upgrade-<version>.log; one per project, a second names it), in rounds: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's); one still busy after SWARM_UPGRADE_WAIT_MS (2 hours) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version, exits 1 if any is left
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock [--startable <epic>|--backlog]         mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again; --startable: then print startable: <slug> for each ready story of that epic (--backlog: with no epic) whose build has not started, readied now or before, as reconcile last left the board (it never pulls), with (stacked on <parents>) or (its PR <url> was closed unmerged) when that applies; nothing once the epic's file is gone
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
@@ -448,7 +448,7 @@ dispatch() {
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
-    upgrade) require_herdr; upgrade_agents "${1:-}" ;;
+    upgrade) require_herdr; upgrade_agents "$@" ;;
     cost)   moved cost "flow's cost section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     outcomes) outcomes_report "$@" ;;
     flow)   flow_report "$@" ;;
@@ -799,8 +799,9 @@ main_signal() {
     kill -TERM "${EV_CHILD}" 2>/dev/null || true; wait "${EV_CHILD}" || true
   elif [[ -n "${EV_CHILD:-}" ]]; then
     kill_tree "${EV_CHILD}"
-    # A merge waiting on a merge queue stops the PR first (queue_merge), so it is waited for.
-    [[ "${EV_CMD}" != merge ]] || wait "${EV_CHILD}" || true
+    # A merge waiting on a merge queue stops the PR first (queue_merge), and an upgrade tells each
+    # conductor it paused to carry on (upgrade_stopped), so both are waited for.
+    [[ "${EV_CMD}" != merge && "${EV_CMD}" != upgrade ]] || wait "${EV_CHILD}" || true
   fi
   record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
@@ -818,10 +819,12 @@ main_signal() {
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
 # epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held.
 main() {
-  local rc why
+  local rc why a
   [[ "${1:-}" != init ]] || init_check
   EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""
+  # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
   if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
+     || [[ "${EV_CMD}" == upgrade && "${SWARM_UPGRADE_WORKER:-}" != 1 && " $* " != *" --foreground "* ]] \
      || ! is_command "${EV_CMD}"; then
     dispatch "$@"; return
   fi
@@ -840,6 +843,7 @@ main() {
     tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
     # Likewise a close's cause, and only a real one.
     close) EV_TARGET="${2:-}"; if is_close_cause "${3:-}"; then EV_CMD="close:$3"; fi ;;
+    upgrade) EV_TARGET=""; for a in "${@:2}"; do [[ "${a}" == --* ]] || EV_TARGET="${a}"; done ;;   # its epic, not --foreground
     reset|drop) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})"
                 # Lifting a hold is not the story's one reset, so reset_at must not read it.
                 if [[ "${EV_CMD}" == reset && "${2:-}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/stories/$2.md" \

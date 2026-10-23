@@ -129,7 +129,8 @@ claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swa
 ```
 
 Restart Claude Code afterwards. Agents already running stay on the old version until
-`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session.
+`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. upgrade runs
+detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
 
 ## More
 

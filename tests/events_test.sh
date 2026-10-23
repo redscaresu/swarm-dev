@@ -164,6 +164,7 @@ done
 for arm in ${arms}; do
   [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init ]] && continue
   args=(); [[ "${arm}" == tidy ]] && args=(--yes); [[ "${arm}" == intervene ]] && args=(lead-hand x)
+  [[ "${arm}" == upgrade ]] && args=(--foreground)   # its starter only detaches the worker, which logs the run
   n=0; [[ "${ro}" == *" ${arm} "* ]] || n=1
   before="$(LOG="${Q}/.swarm/events.tsv" lines)"
   (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "${arm}" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1) || true
