@@ -261,6 +261,15 @@ checks failure "${H}"; checks success "${H2}"
 check "it read the cached head again before it would wake" logged "${H}/check-runs" 2
 must "it polled" polls 1   # the read that did it has decided
 check "a cached green head that a re-run turned red does not wake it when the item's other PR goes green" nothing_yet
+check "a head the fresh re-read finds red is gone from LEAD_GREEN after that poll" \
+  test "$(grep -c "^${URL} ${H}$" "${P}/.swarm/lead/green")" == 0
+# Over one whole poll after that (from one end of a read to the next), PR 7's head is read once, beside
+# its one ci_gate: a second pr view 7 in a poll is a fresh re-read.
+must "a poll ended" first_read "$(seen_id)"
+v0=$(reads); c0=$(grep -c "${H}/check-runs" "${ROOT}/gh.log")
+must "a poll ended" first_read "$(seen_id)"
+check "the next poll makes no fresh re-read for it" \
+  test "$(( $(reads) - v0 ))" == "$(( $(grep -c "${H}/check-runs" "${ROOT}/gh.log") - c0 ))"
 stop
 
 fresh "merge = human"

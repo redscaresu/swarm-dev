@@ -1592,9 +1592,10 @@ LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one
 # not or a URL is not a PR, 2 when none is red but gh or ci_gate could not read one. ci_gate head is
 # skipped for a head LEAD_GREEN holds, setting LEAD_CACHED, unless LEAD_FRESH is set; each green head
 # goes to LEAD_GREEN.new. A red or pending head is read again each time: a re-run can turn it green
-# with no new SHA.
+# with no new SHA. One a re-run turned red leaves LEAD_GREEN and LEAD_GREEN.new, so no later poll
+# takes it for cached and reads it fresh again.
 heads_green() {
-  local url repo head rc=0 g
+  local url repo head rc=0 g f
   LEAD_CACHED=""
   [[ $# -gt 0 ]] || return 1
   for url in "$@"; do
@@ -1606,7 +1607,13 @@ heads_green() {
       LEAD_CACHED=1
     else
       g=0; ci_gate head "${repo}" "${head}" >/dev/null 2>&1 || g=$?
-      [[ ${g} -eq 0 ]] || { [[ ${g} -eq 3 ]] || return 1; rc=2; continue; }
+      [[ ${g} -ne 3 ]] || { rc=2; continue; }
+      if [[ ${g} -ne 0 ]]; then
+        for f in "${LEAD_GREEN}" "${LEAD_GREEN}.new"; do
+          grep -vxF "${url} ${head}" "${f}" > "${f}.tmp" 2>/dev/null || true; mv "${f}.tmp" "${f}"
+        done
+        return 1
+      fi
     fi
     echo "${url} ${head}" >> "${LEAD_GREEN}.new"
   done
