@@ -17,6 +17,11 @@ FIX_MAIN_LINE_CHARS=300 # the most of each of those lines, and of its red checks
 CI_CONCLUSIONS='failure|cancelled|timed_out|action_required|startup_failure|stale|error|skipped|neutral|success'
 FIX_MAIN_LOG_SECONDS=600  # how long fix_main waits for the failed runs to finish and give their logs (SWARM_FIX_MAIN_LOG_SECONDS)
 BASE_HEAD_WAIT=30       # how long reconcile's read of a red base's head commit may take (green_mains)
+RELEASE_WAIT=600        # how long merge --release waits for the release's tag and GitHub release (SWARM_RELEASE_WAIT)
+PLUGIN_UPDATE_WAIT=300  # how long each claude plugin update a release runs may take (within)
+HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may take
+UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
+RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -290,6 +295,8 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
+  # A release of this plugin moves the installed plugin and the running agents onto it; it never fails the merge.
+  [[ "${only}" != --release || -z "${oid}" ]] || release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}"
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -945,6 +952,144 @@ wait_pr() {
   done
 }
 
+# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> — after merge --release of
+# this plugin's own repo (plugin_repo), with CI on the base green: once release_confirmed, update the
+# marketplace and the plugin, then start the new version's swarm.sh upgrade (detached; bounded by
+# UPGRADE_START_WAIT; with release_path's PATH, so the agents it restarts find the new swarm.sh) in
+# each of agent_projects, and ask the user to restart the lead session in this project and each of
+# those: the update is global, and Claude Code loads a plugin's hooks only at startup. A step that
+# fails warns, naming what to run by hand; an upgrade that fails, times out or finds another upgrade
+# running there (it starts nothing then and still exits 0) warns and moves on to the next project.
+# The release is done either way. Each claude, gh and herdr call is bounded (within).
+release_upgrade() {
+  local own new d hint out restart="${PROJECT_DIR}" rc path
+  own="$(plugin_repo)" || { echo "the plugin's plugin.json names no GitHub repository, so it is not updated"; return 0; }
+  [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]] || { echo "$1 is not this plugin's repo (${own}), so the plugin is not updated"; return 0; }
+  new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
+  hint="run swarm.sh update, then ${new} upgrade in each project with agents"
+  [[ $4 -eq ${MAIN_CI_OK} ]] || { echo "warning: CI on the base is not green, so the plugin was not updated: once v$3 is published, ${hint}"; return 0; }
+  release_confirmed "$1" "$2" "$3" "$5" \
+    || { echo "warning: no tag v$3 on the base at or after ${2:0:7} with a published GitHub release, so the plugin was not updated: once there is, ${hint}"; return 0; }
+  if ! { within "${PLUGIN_UPDATE_WAIT}" claude plugin marketplace update "${MARKETPLACE}" \
+      && within "${PLUGIN_UPDATE_WAIT}" claude plugin update "${PLUGIN}"; } </dev/null; then
+    echo "warning: updating the plugin to $3 failed, so no agent was moved: ${hint}"; return 0
+  fi
+  [[ -f "${new}" ]] || { echo "warning: the plugin update left no ${new}, so no agent was moved: ${hint}"; return 0; }
+  path="$(release_path "${new%/swarm.sh}")"
+  while IFS= read -r d; do
+    [[ "${d}" == "${PROJECT_DIR}" ]] || restart+=", ${d}"
+    rc=0; out="$(within "${SWARM_UPGRADE_START_WAIT:-${UPGRADE_START_WAIT}}" env SWARM_PROJECT="${d}" PATH="${path}" bash "${new}" upgrade </dev/null 2>&1)" || rc=$?
+    [[ -z "${out}" ]] || printf '%s\n' "${out}"
+    if [[ ${rc} -eq 142 ]]; then
+      echo "warning: swarm.sh upgrade in ${d} did not start within ${SWARM_UPGRADE_START_WAIT:-${UPGRADE_START_WAIT}}s: run SWARM_PROJECT=${d} ${new} upgrade"
+    elif [[ ${rc} -ne 0 ]]; then
+      echo "warning: swarm.sh upgrade in ${d} failed (exit ${rc}): run SWARM_PROJECT=${d} ${new} upgrade"
+    elif [[ "${out}" == *"already runs here"* ]]; then
+      echo "warning: another swarm.sh upgrade runs in ${d}, so $3's started nothing: once it ends, run SWARM_PROJECT=${d} ${new} upgrade"
+    fi
+  done <<< "$(agent_projects)"
+  echo "Restart the lead session in ${restart} (/exit, then claude --continue): Claude Code loads $3's hooks only at startup"
+}
+
+# release_path <new bin> — PATH for the new version's upgrade: upgrade_path's, with <new bin> first
+# and every plugin root's bin/ gone however it is spelled, and every plugin's gh-shim gone too.
+release_path() {
+  local d dirs out=""
+  IFS=: read -r -a dirs <<< "$(SWARM_HOME="${1%/bin}" upgrade_path)"
+  for d in ${dirs[@]+"${dirs[@]}"}; do
+    [[ -x "${d}/gh" && -f "${d}/../../.claude-plugin/plugin.json" ]] || out+="${out:+:}${d}"
+  done
+  echo "${out}"
+}
+
+# plugin_repo — this plugin's GitHub repo, owner/name in lower case, from plugin.json's repository: a
+# string or an object with a url, as https, git+https, ssh or git@ URL, with or without .git.
+plugin_repo() {
+  python3 -c 'import json, re, sys
+r = json.load(sys.stdin).get("repository")
+u = r.get("url") if isinstance(r, dict) else r
+m = re.search(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/*$", u if isinstance(u, str) else "")
+sys.exit(m is None or print(m.group(1).lower()))' < "${SWARM_HOME}/.claude-plugin/plugin.json" 2>/dev/null
+}
+
+# release_confirmed <owner/repo> <merge commit> <version> <base> — the tag v<version> is on <merge
+# commit>, or on a later commit of <base> (a later push's release run can tag first: release.yml runs
+# one at a time), and its GitHub release is published, waiting up to RELEASE_WAIT seconds for the
+# release workflow, which a green main need not have waited for. Each read gets the time left, at
+# least RELEASE_READ_FLOOR; a tag's commit is judged once (release_on_base), until the tag moves.
+release_confirmed() {
+  local end=$((SECONDS + ${SWARM_RELEASE_WAIT:-${RELEASE_WAIT}})) tag seen="" good="" v
+  while :; do
+    tag="$(within "$(release_left "${end}")" gh api "repos/$1/git/ref/tags/v$3" 2>/dev/null | json "d['object']['sha']" 2>/dev/null)" || tag=""
+    if [[ "${tag}" =~ ^[0-9a-f]{40}$ && "${tag}" != "${seen}" ]]; then
+      v="$(release_on_base "$1" "$2" "${tag}" "$4" "${end}")"
+      [[ -z "${v}" ]] || { seen="${tag}"; good="${v}"; }
+    fi
+    if [[ -n "${tag}" && "${tag}" == "${seen}" && "${good}" == yes \
+      && "$(within "$(release_left "${end}")" gh api "repos/$1/releases/tags/v$3" 2>/dev/null | json "d['draft']" 2>/dev/null)" == False ]]; then
+      return 0
+    fi
+    ((SECONDS < end)) || return 1
+    sleep "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}"
+  done
+}
+
+# release_left <end> — the seconds a release read may take: those left before <end>, at least RELEASE_READ_FLOOR.
+release_left() { local l=$(($1 - SECONDS)); echo $((l < RELEASE_READ_FLOOR ? RELEASE_READ_FLOOR : l)); }
+
+# release_on_base <owner/repo> <merge commit> <tag commit> <base> <end> — yes when <tag commit> is <merge
+# commit>, or comes after it (compare: ahead) and is on <base> (compare: behind or identical); no when
+# not; nothing when gh cannot tell.
+release_on_base() {
+  local a
+  [[ "$3" != "$2" ]] || { echo yes; return 0; }
+  a="$(release_compare "$1" "$2" "$3" "$5")"
+  [[ -n "${a}" ]] || return 0
+  [[ "${a}" == ahead ]] || { echo no; return 0; }
+  a="$(release_compare "$1" "$4" "$3" "$5")"
+  [[ -n "${a}" ]] || return 0
+  if [[ "${a}" == behind || "${a}" == identical ]]; then echo yes; else echo no; fi
+}
+
+# release_compare <owner/repo> <from> <to> <end> — GitHub's compare status of <to> against <from>
+# (ahead, behind, identical or diverged), read within release_left; nothing on an error.
+release_compare() {
+  within "$(release_left "$4")" gh api "repos/$1/compare/$2...$3" 2>/dev/null | json "d['status']" 2>/dev/null || true
+}
+
+# agent_projects — each swarm project (one with a .claude/swarm/config) where herdr runs an agent,
+# once, found as the agent's own swarm.sh finds it: the SWARM_PROJECT its restore wrapper
+# (resume_file) sets, else find_project from its cwd. This project when herdr's list cannot be read
+# or names none, saying why on stderr.
+agent_projects() {
+  local kind dir d out="" list="" rows="" why=""
+  if ! list="$(within "${HERDR_LIST_WAIT}" herdr agent list 2>/dev/null)"; then
+    why="herdr agent list failed or took over ${HERDR_LIST_WAIT}s"
+  elif ! rows="$(printf '%s' "${list}" | python3 -c 'import ast, json, os, re, sys
+for a in json.load(sys.stdin)["result"]["agents"]:
+    s = str((a.get("agent_session") or {}).get("value") or "")
+    try:
+        m = re.search(r"SWARM_PROJECT=(\x27(?:[^\x27\\]|\\.)*\x27|\"(?:[^\"\\]|\\.)*\")", open(os.path.join(sys.argv[1], s + ".py")).read()) if re.fullmatch(r"[\w-]+", s) else None
+    except OSError:
+        m = None
+    if m:
+        print("project\t" + ast.literal_eval(m.group(1)))
+    elif a.get("cwd"):
+        print("cwd\t" + a["cwd"])' "${RESUME_DIR}" 2>/dev/null)"; then
+    why="herdr's agent list could not be read"
+  fi
+  while IFS=$'\t' read -r kind dir; do
+    if [[ "${kind}" == project ]]; then d="${dir}"; else
+      d="$([[ -d "${dir}" ]] && cd "${dir}" && SWARM_PROJECT="" find_project 2>/dev/null)" || continue
+    fi
+    [[ -f "${d}/.claude/swarm/config" && $'\n'"${out}" != *$'\n'"${d}"$'\n'* ]] || continue
+    out+="${d}"$'\n'
+  done <<< "${rows}"
+  [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} is upgraded" >&2
+  [[ -n "${out}" ]] || out="${PROJECT_DIR}"$'\n'
+  printf '%s' "${out}"
+}
+
 # release_check <owner/repo> <base> <head> <pr> — merge --release's checks past the file list: the PR goes
 # into the project's base, its plugin.json differs from the base's only in "version" (compared as
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
@@ -970,6 +1115,7 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
     print("it changes more of .claude-plugin/plugin.json than its version; if %s changed plugin.json after the release branch was cut, merge origin/%s into it and retry" % (e["BASE"], e["BASE"]))' 2>/dev/null)" \
     || why="cannot read .claude-plugin/plugin.json as JSON"
   [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET}: ${why}"
+  RELEASE_VERSION="$(plugin_version <<< "${new}")"
   body="$(gh pr view "$4" --repo "$1" --json body | json "d.get('body') or ''")" \
     || merge_fail "--release: gh cannot read the body of ${MERGE_TARGET}"
   release_docs "${body}" "$2" "$(plugin_version <<< "${old}")"
