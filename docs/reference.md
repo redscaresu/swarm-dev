@@ -1664,6 +1664,18 @@ stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
+When the release is swarm-dev's own (its repo is the one in the plugin's `plugin.json`
+`repository`), `merge --release` also updates the plugin and moves the agents onto it. It waits up
+to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit and a published
+GitHub release, then runs `claude plugin marketplace update swarm-dev` and
+`claude plugin update swarm-dev@swarm-dev`. Once the new version's folder is in the plugin cache,
+it starts that version's `swarm.sh upgrade` (detached) in every swarm project where herdr runs an
+agent, or in this project when herdr's list names none, and prints each upgrade's log path. Last,
+it asks you to restart the lead session (`/exit`, then `claude --continue`), since Claude Code loads
+a plugin's hooks only at startup. When the release can't be confirmed, or the update or an upgrade
+fails, it prints a warning. The release still counts as done, and merge
+exits 0.
+
 ## Commands
 
 | Command | What it does |

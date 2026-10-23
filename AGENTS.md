@@ -147,4 +147,7 @@ bump to `main` publishes the release and its `v<version>` tag (`.github/workflow
 without one publishes nothing. Before a release, bring AGENTS.md, README.md, docs/ and commands/ in
 line with everything merged since the last tag. `merge --release` refuses the bump while `bin/`,
 `commands/` or `hooks/` changed since that tag and README.md, AGENTS.md and `docs/` did not, unless
-the release PR body has a `Docs: none — <reason>` line.
+the release PR body has a `Docs: none — <reason>` line. Once the tag and the GitHub release are out,
+`merge --release` updates the installed plugin and starts the new version's `swarm.sh upgrade` in
+every project with running agents. It then prints a line asking the user to restart the lead
+session (`/exit`, then `claude --continue`); the user does that, never the lead.

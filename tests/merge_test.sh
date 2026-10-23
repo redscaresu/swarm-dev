@@ -99,6 +99,8 @@ case "$1 $2" in
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
       */pulls/*/files*) serve files ;;
       */rules/branches/*) serve rules ;;
+      */git/ref/tags/*) serve tagref ;;     # the release's tag
+      */releases/tags/*) serve release ;;   # its GitHub release
       */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
       # compare/<base>...<head>: compare.<base>, else compare, else for a commit base the head holds
@@ -133,7 +135,7 @@ case "$1 $2" in
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\",\"cwd\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
                      END { print "]}}" }' "$A" ;;
   "agent read") cat "$A.screen.$3" 2>/dev/null ;;   # a pane's text, when a case writes one
 esac
@@ -189,7 +191,7 @@ merge() {
   while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   rc=0
   (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
-    SWARM_MERGE_CI_SECONDS=5 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
+    SWARM_MERGE_CI_SECONDS=5 SWARM_RELEASE_WAIT=0 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
 events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 merge_lines() { events | grep -c '^merge ' || true; }
@@ -825,6 +827,42 @@ commit bin/y.sh README.md
 release_pr; merge --release "${URL}"
 is "--release against an annotated tag it has not fetched: exits 0" 0 "${rc}"
 git -C "${P}" config --unset remote.origin.tagOpt
+# A release of the plugin's own repo (plugin.json's repository), once its tag and published release
+# are on the merge commit: the marketplace and the plugin are updated, then the new version's upgrade
+# starts once in each swarm project herdr runs an agent in, and the user is asked to restart the lead.
+OWN=https://github.com/redscaresu/swarm-dev/pull/7; NEW="${CLAUDE_CONFIG_DIR}/plugins/cache/swarm-dev/swarm-dev/1.3.0/bin/swarm.sh"
+mkdir -p "${NEW%/*}" "${ROOT}/proj2/.claude/swarm"; git -C "${ROOT}/proj2" init -q; : > "${ROOT}/proj2/.claude/swarm/config"
+# shellcheck disable=SC2016 # expanded when the stubs run
+printf '#!/bin/sh\necho "${SWARM_PROJECT} $*" >> "%s"\necho "log ${SWARM_PROJECT}/.swarm/upgrade-1.3.0.log"\n' "${ROOT}/upgrade.log" > "${NEW}"
+# claude: logs each call; plugin update fails with ${FX}/update.fail.
+# shellcheck disable=SC2016
+printf '#!/bin/sh\necho "$*" >> "%s"\n[ "$2" != update ] || [ ! -e "%s/update.fail" ]\n' "${ROOT}/claude.log" "${FX}" > "${ROOT}/bin/claude"
+chmod +x "${ROOT}/bin/claude"
+own_release() {
+  release_pr; rm -f "${ROOT}/claude.log" "${ROOT}/upgrade.log"; echo '{"nameWithOwner":"redscaresu/swarm-dev"}' > "${FX}/origin"
+  printf '{"object":{"sha":"%s"}}' "${M}" > "${FX}/tagref"; echo '{"draft":false}' > "${FX}/release"
+}
+cp "${ROOT}/agents" "${ROOT}/agents.keep"
+printf 'conduct-e w:c %s\nt w:b %s/docs\nu w:u %s\nv w:v %s\n' "${P}" "${P}" "${ROOT}/proj2" "${ROOT}" > "${ROOT}/agents"
+own_release; merge --release "${OWN}"
+is "--release of the plugin's repo: exits 0" 0 "${rc}"
+is "--release of the plugin's repo: updates the marketplace, then the plugin" "plugin marketplace update swarm-dev|plugin update swarm-dev@swarm-dev" "$(paste -sd'|' - < "${ROOT}/claude.log")"
+is "--release of the plugin's repo: the new version's upgrade, once in each project with agents" "${P} upgrade|${ROOT}/proj2 upgrade" "$(paste -sd'|' - < "${ROOT}/upgrade.log")"
+check "--release of the plugin's repo: prints the upgrade's log" said "log ${P}/.swarm/upgrade-1.3.0.log"
+check "--release of the plugin's repo: asks for the lead's restart" said "Restart this lead session to load 1.3.0's hooks: /exit, then claude --continue"
+cp "${ROOT}/agents.keep" "${ROOT}/agents"
+own_release; merge --release "${OWN}"
+is "--release of the plugin's repo, no agent's cwd known: upgrades this project" "${P} upgrade" "$(paste -sd'|' - < "${ROOT}/upgrade.log" 2>/dev/null)"
+own_release; touch "${FX}/update.fail"; merge --release "${OWN}"
+is "--release with a failed plugin update: exits 0" 0 "${rc}"
+check "--release with a failed plugin update: warns" said "warning: updating the plugin to 1.3.0 failed, so no agent was moved"
+check "--release with a failed plugin update: no upgrade, no restart line" bash -c "[ ! -e '${ROOT}/upgrade.log' ] && ! grep -q Restart '${ROOT}/out'"
+own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; merge --release "${OWN}"
+is "--release whose tag is on another commit: exits 0" 0 "${rc}"
+check "--release whose tag is on another commit: warns, and no plugin update" bash -c "grep -q 'v1.3.0 has no tag on aaaaaaa' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
+own_release; echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; merge --release "${URL}"
+is "--release of another repo: exits 0" 0 "${rc}"
+check "--release of another repo: no plugin update, no upgrade" bash -c "[ ! -e '${ROOT}/claude.log' ] && [ ! -e '${ROOT}/upgrade.log' ]"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
 check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r --merge --match-head-commit ${H1}" "${ROOT}/gh.log"
 
