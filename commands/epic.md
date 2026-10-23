@@ -1,5 +1,5 @@
 ---
-description: Use when asked to write, start or resume an epic: starts or resumes a draft epic (docs/epics/) co-written with the user on the most capable model, in its own herdr pane
+description: Use when asked to write, start or resume an epic. Starts or resumes a draft epic (docs/epics/) co-written with the user on the most capable model, in its own herdr pane
 argument-hint: "[title]  e.g. Firewalled by default; none resumes the draft in progress"
 ---
 

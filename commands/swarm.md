@@ -1,5 +1,5 @@
 ---
-description: Use when asked to build, continue or run the epic, the swarm or the next step: runs the whole chain from wherever it stands (epics, stories, builds), stopping only where the user must decide
+description: Use when asked to build, continue or run the epic, the swarm or the next step. Runs the whole chain from wherever it stands (epics, stories, builds), stopping only where the user must decide
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
