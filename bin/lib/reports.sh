@@ -216,7 +216,7 @@ outcomes_report() {
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   # SWARM_REWORK_SINCE: flow's --since, which bounds rework's gh search (outcomes' own --since otherwise).
   SWARM_REWORK_SINCE="${SWARM_REWORK_SINCE:-${since}}" \
-    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
+    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" SWARM_REPOS_DIR="${REPOS_DIR}" \
     SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
@@ -424,7 +424,7 @@ flow_sections() {
     dir="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" || dir="!${dir}"
     repos+="${slug}"$'\t'"${dir//[$'\t\n']/ }"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_BOARD="${BOARD}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_BOARD="${BOARD}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }

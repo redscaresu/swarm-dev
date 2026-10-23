@@ -509,6 +509,47 @@ ist ip e16 src/p.sh; printf '%s\n' "2026-10-01${B}ip${O}-" >> "${I}/.swarm/agent
 printf '%s\n' $'2026-10-01T10:00:00Z\tunblock\tip\tw:1\tok' $'2026-10-01T15:00:00Z\tclose\tip\tw:1\tok' >> "${I}/.swarm/events.tsv"
 check "idle_slots: a close after a build with no session log sends its story back to ready" \
   "$(idle --until 2026-10-01 --epic e16)" "${IH}"$'\ne16\t0\t540\t1'
+sl() { printf '{"cwd":"%s/idle-wt/%s","timestamp":"2026-10-01T%s:00Z"}\n' "${dir}" "$2" "$3" > "${dir}/projects/p/s$1.jsonl"; } # <session> <slug> <HH:MM>
+ag() { printf '%s\n' "2026-10-01${B}$1${O}$2" >> "${I}/.swarm/agents.tsv"; }                                        # <slug> <session or ->
+ev() { printf '2026-10-01T%s:00Z\t%s\t%s\tw:1\t%s\n' "$1" "$2" "$3" "${4:-ok}" >> "${I}/.swarm/events.tsv"; }        # <HH:MM> <command> <slug> [outcome]
+# it (e17) builds 10:00-11:00, then again with no session log: that retry starts when the build before
+# ended, not at 00:00, so iu, clashing with it and waiting 12:00-12:10, is not idle.
+ist it e17 src/t.sh; ist iu e17 src/t.sh; sl it it 10:00; sl iu iu 12:10; ag it sit; ag it -; ag iu siu
+ev 11:00 close it; ev 12:00 unblock iu
+check "idle_slots: a same-day retry with no session log keeps its order after the build it followed" \
+  "$(idle --until 2026-10-01 --epic e17)" "${IH}"$'\ne17\t0\t0\t1'
+# iy (e21) builds at 10:00, fails at 15:00, and retries with no session log: built, not waiting.
+ist iy e21 src/y.sh; sl iy iy 10:00; ag iy siy; ag iy -; ev 09:00 unblock iy; ev 15:00 close iy
+check "idle_slots: a retry with no session log after a close that sent its story back is a build" \
+  "$(idle --until 2026-10-01 --epic e21)" "${IH}"$'\ne21\t0\t60\t1'
+# iz (e22) waits 09:00-10:00, builds, fails at 11:00 and waits again until its retry at 13:00.
+ist iz e22 src/z.sh; sl iz1 iz 10:00; sl iz2 iz 13:00; ag iz siz1; ag iz siz2; ev 09:00 unblock iz; ev 11:00 close iz
+check "idle_slots: each wait counts, the one between a failed build and its retry too" \
+  "$(idle --until 2026-10-01 --epic e22)" "${IH}"$'\ne22\t0\t180\t1'
+# iv (e18) waits 09:00-10:00, builds, is reviewed at 11:00 and its builder closed at 12:00: in review,
+# not ready. Its story says ready with no event to date it, so only that first wait counts; a
+# reconcile that reopens it at 20:00 readies it from then.
+ist iv e18 src/v.sh; sl iv iv 10:00; ag iv siv; ev 09:00 unblock iv; ev 11:00 review iv "ok (https://github.com/o/r/pull/9)"; ev 12:00 close iv
+check "idle_slots: the close after a review leaves the story in review, not ready" "$(idle --until 2026-10-01 --epic e18)" "${IH}"$'\ne18\t0\t60\t1'
+ev 20:00 reconcile iv 'ok (reopened)'
+check "idle_slots: a reconcile that reopens a story readies it" "$(idle --until 2026-10-01 --epic e18)" "${IH}"$'\ne18\t0\t300\t1'
+# iw (e19) the same, reset at 22:00; ix (e20) the same, dropped by a second close at 13:00.
+ist iw e19 src/w.sh; sl iw iw 10:00; ag iw siw; ev 09:00 unblock iw; ev 11:00 kept iw "ok (https://github.com/o/r/pull/9)"; ev 12:00 close iw
+check "idle_slots: the close after a kept event leaves the story in review" "$(idle --until 2026-10-01 --epic e19)" "${IH}"$'\ne19\t0\t60\t1'
+ev 22:00 reset:held iw 'ok (lifted)'
+check "idle_slots: a reset readies a story" "$(idle --until 2026-10-01 --epic e19)" "${IH}"$'\ne19\t0\t180\t1'
+ist ix e20 src/x.sh; sl ix ix 10:00; ag ix six; ev 09:00 unblock ix; ev 11:00 review ix "ok (https://github.com/o/r/pull/9)"; ev 12:00 close ix; ev 13:00 close ix
+check "idle_slots: a second close after a review (the drop) sends the story back to ready" \
+  "$(idle --until 2026-10-01 --epic e20)" "${IH}"$'\ne20\t0\t720\t1'
+# jq (e23, repo other) waits 10:00-10:30 touching src/q.sh and Makefile, a file in repo other under the
+# repos dir, while jr (repo other) builds 09:00-12:00 touching Makefile: a clash.
+mkdir -p "${dir}/other"; : > "${dir}/other/Makefile"
+for x in jq:'src/q.sh, Makefile' jr:Makefile; do
+  printf -- '---\nkind: code\nstatus: ready\nepic: e23\nrepo: other\ntouches: [%s]\n---\n' "${x#*:}" > "${I}/docs/stories/${x%%:*}.md"
+done
+sl jq jq 10:30; sl jr jr 09:00; ag jq sjq; ag jr sjr; ev 10:00 unblock jq; ev 12:00 close jr
+check "idle_slots: touches resolve a bare file under the repos dir, as the clash rule does" \
+  "$(idle --until 2026-10-01 --epic e23)" "${IH}"$'\ne23\t0\t0\t1'
 # On the 2nd, with the board's ready stories gone: the backlog's ik (no epic) is ready from 10:00 under
 # the backlog conductor (09:00 on); epic backlog-cleanup's conductor closing at 12:00 does not end it.
 # im, built 11:00-11:30 and touching ik's file, is a merged story whose text has a byte that is not UTF-8.

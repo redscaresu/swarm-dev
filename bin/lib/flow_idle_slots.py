@@ -3,19 +3,24 @@
 # was ready with no build, clashed with no running build, and its conductor ran; no_conductor_min: the
 # same minutes while no conductor of its epic ran; most_ready: the most of its stories ready with no
 # build at once, clashing or not. `all` takes the union of the epics' minutes, and the stories with no
-# epic (the backlog conductor's). A story is ready from its first build's start less its
-# ready_wait_min (outcomes' column) to that start. One on the board now as `status: ready` (not a lead
-# story, not held, not in a later or draft epic), under what swarm.sh wrote to .swarm/board-state as
-# touches_rows.front reads it, with no build since it went ready is ready from then to the window's
-# end: the latest of its last ok unblock event, its last ok close (close --drop, or a close that kept
-# the pane, sends it back to ready with no other trace) and the board's last commit to its status
-# line on its default branch, dated by the merge as outcomes' board_log reads it; a build with no
-# start (no session log yet) on its agents.tsv day or later counts as built since, unless that time
-# is a close. A build runs
-# from its started (with none, 00:00 local on its agents.tsv day, as throughput's) to its slug's first ok close after it, before the slug's next build, else to that
-# next build, else to the window's end. Two stories clash as touches_rows.py reads touches (the same
-# file:symbol in the same repo, or either naming the bare file), unless one depends on the other (a
-# stacked start), each story read as story_text reads it, so a build before --since counts too. A
+# epic (the backlog conductor's). A story goes ready at an ok unblock, `reconcile ... ok (reopened)`,
+# reset or reset:held event, or a close that sent it back: any close but the one that ended a build
+# after its review or kept event (the builder's close leaves the story in review; a later close, the
+# drop, sends it back). Its first wait runs from its first build's start less its ready_wait_min
+# (outcomes' column) to that start; each later wait from the last such event since the build before
+# to the next build's start. One on the board now as `status: ready` (not a lead story, not held, not
+# in a later or draft epic), under what swarm.sh wrote to .swarm/board-state as touches_rows.front
+# reads it, with no build since it went ready waits from then to the window's end; there the board's
+# last commit to its status line on its default branch also readies it, dated by the merge as
+# outcomes' board_log reads it, and a build with no start (no session log yet) on that day or later
+# counts as built since, unless a close readied it. Builds keep agents.tsv's order: each runs from
+# its started (with none, 00:00 local on its agents.tsv day, and no earlier than its slug's build
+# before it ended, as throughput's) to its first ok close after that which no earlier build of its
+# slug took, before the slug's next build with a known start, else to that start, else to the
+# window's end. Two stories clash as touches_rows.py reads touches (the same file:symbol in the same
+# repo, or either naming the bare file, with SWARM_REPOS_DIR as build.sh's REPOS_DIR), unless one
+# depends on the other (a stacked start), each story read as story_text reads it, so a build before
+# --since counts too. A
 # conductor runs from an ok `conduct` event to its next one, an ok close of its agent, a report event
 # for it or its report file's time, as outcomes' held reads it; the backlog's agent is conduct-backlog
 # or SWARM_BACKLOG_CONDUCTOR (conductor_name backlog).
@@ -26,7 +31,7 @@ import touches_rows
 from report import agent_name
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
 project_dir = os.path.dirname(os.path.dirname(findings))
-board = os.environ.get("SWARM_BOARD", "")
+board, repos_dir = os.environ.get("SWARM_BOARD", ""), os.environ.get("SWARM_REPOS_DIR", "")
 board_state = os.path.join(os.path.dirname(events), "board-state")
 touches_rows.state = os.path.join(board_state, "stories")   # front's overlay for a story
 
@@ -70,14 +75,16 @@ lo = secs(since) or float("-inf")   # since's 0000-00-00 placeholder does not pa
 hi = min((datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).timestamp(), time.time())
 
 conducts, closes, reports = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
-unblocks = collections.defaultdict(list)
+readies, reviews = collections.defaultdict(list), collections.defaultdict(list)   # by agent_name: ready events; review or kept
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     e = line.rstrip("\n").split("\t")
     t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
     if t is None:
         continue
-    if e[1] == "unblock":
-        unblocks[e[2]].append(t)
+    if e[1] in ("unblock", "reset", "reset:held") or e[1] == "reconcile" and e[4] == "ok (reopened)":
+        readies[agent_name(e[2])].append(t)
+    elif e[1] in ("review", "kept"):
+        reviews[agent_name(e[2])].append(t)
     elif e[1] == "conduct":
         conducts[e[2]].append(t)
     elif e[1].split(":")[0] == "close":
@@ -96,19 +103,37 @@ def conductor_runs(key):
     starts = sorted(conducts[key])
     return [(s, min([t for t in ends + starts[i + 1:] if t > s] + [hi])) for i, s in enumerate(starts)]
 
-starts, loose = collections.defaultdict(list), collections.defaultdict(list)   # slug -> build starts; days of those with none
+by_slug = collections.defaultdict(list)   # slug -> its rows, in agents.tsv order
 for r in rows:
-    t = secs(r["started"]) or secs(r["date"] + "T00:00:00")
-    if t is not None:
-        starts[r["slug"]].append(t)
-    if not r["started"]:
-        loose[r["slug"]].append(r["date"])
-builds = []   # (slug, start, end)
-for slug, ts in starts.items():
-    ts = sorted(set(ts))
-    for i, s in enumerate(ts):
-        upto = ts[i + 1] if i + 1 < len(ts) else hi
-        builds.append((slug, s, min([t for t in closes[agent_name(slug)] if s <= t < upto] + [upto])))
+    by_slug[r["slug"]].append(r)
+builds, starts, loose = [], collections.defaultdict(list), collections.defaultdict(list)   # (slug, start, end); slug -> starts; days of builds with none
+for slug, rs in by_slug.items():
+    known, taken, ended = [secs(r["started"]) for r in rs], set(), None
+    for i, r in enumerate(rs):
+        b0 = known[i] if known[i] is not None else secs(r["date"] + "T00:00:00")
+        if b0 is None:
+            continue
+        if known[i] is None:
+            b0 = max(b0, ended) if ended is not None else b0
+            loose[slug].append(r["date"])
+        upto = next((k for k in known[i + 1:] if k is not None), hi)
+        c = min((t for t in closes[agent_name(slug)] if b0 <= t < upto and t not in taken), default=None)
+        taken.add(c)
+        ended = c if c is not None else upto
+        builds.append((slug, b0, ended))
+        starts[slug].append(b0)
+
+def sent_back(slug, c):
+    # Whether the close at c sent the story back to ready: not the first close after a review or kept
+    # event since the build before it started, which leaves the story in review.
+    n = agent_name(slug)
+    since = [r for r in reviews[n] if max((b for b in starts[slug] if b <= c), default=float("-inf")) <= r <= c]
+    return not since or any(max(since) < x < c for x in closes[n])
+
+def readied(slug):
+    n = agent_name(slug)
+    return readies[n] + [c for c in closes[n] if sent_back(slug, c)]
+
 epic_of, earliest = {}, {}   # slug -> its epic; slug -> (its first build's start, that build's ready_wait_min)
 for r in rows:
     t = secs(r["started"])
@@ -116,14 +141,21 @@ for r in rows:
     if t is not None and (r["slug"] not in earliest or t < earliest[r["slug"]][0]):
         earliest[r["slug"]] = (t, r["ready_wait_min"])
 ready = [(slug, t - 60 * int(w), t) for slug, (t, w) in earliest.items() if w]
+for slug, bs in starts.items():
+    bs = sorted(bs)
+    for prev, b0 in zip(bs, bs[1:]):
+        t = max((x for x in readied(slug) if prev < x <= b0), default=None)
+        if t is not None:
+            ready.append((slug, t, b0))
 for f in sorted(glob.glob(os.path.join(glob.escape(board), "stories", "*.md"))) if board else ():
     slug = os.path.basename(f)[:-3]
     fm = {} if slug == "README" else front(f)
     if fm.get("status") != "ready" or fm.get("kind") == "lead" or fm.get("held_by") or epic_held(fm.get("epic", "")):
         continue
     commit = board_log("-1", "-s", "--format=%ct", "-G^status:", "--", f"stories/{slug}.md").strip()
-    t = max(unblocks[slug] + closes[agent_name(slug)] + ([float(commit)] if commit else []), default=None)
-    # A close that sent it back ended every build before it; else one with no start that day is since.
+    t = max(readied(slug) + ([float(commit)] if commit else []), default=None)
+    # A close that sent it back ended every build before it, and a build after it starts no earlier;
+    # else a build with no start on its day or later is since.
     day = "~" if t is None or t in closes[agent_name(slug)] else datetime.date.fromtimestamp(t).isoformat()
     if t is not None and not any(b >= t for b in starts[slug]) and not any(d >= day for d in loose[slug]):
         epic_of.setdefault(slug, fm.get("epic", ""))
@@ -133,7 +165,7 @@ files, needs = {}, {}   # slug -> its touches' entries; slug -> its depends_on
 def known(s):
     if s not in files:
         fm = story(s)
-        files[s], needs[s] = entries(fm, project_dir, ""), front_deps(fm)
+        files[s], needs[s] = entries(fm, project_dir, repos_dir), front_deps(fm)
     return files[s]
 
 @functools.lru_cache(maxsize=None)
