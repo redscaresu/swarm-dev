@@ -154,10 +154,15 @@ snapshot() { (cd "${P}" && find docs .swarm -path .swarm/gh-cache -prune -o -typ
   find docs .swarm -path .swarm/gh-cache -prune -o ! -name gh-calls.tsv -print0 | sort -z | xargs -0 ls -ld) ; }
 before="$(snapshot)"
 
+# Every watch's clock is fixed (SWARM_DASH_NOW) at the test's start, so its ages (s-three's "up
+# 15h54m") cannot tick over a minute between frames and print a changed frame; the header's own
+# HH:MM:SS still moves.
+DASH_NOW="$(date +%s)"
+
 # --watch off a terminal prints a frame only when it changed, plain, until stopped.
 # The stubs go first on PATH, so no watch here reaches the real herdr or gh. It waits up to 30 s for
 # the first frame, then 2 s more, in which an unchanged frame must not print again.
-(cd "${P}" && exec env -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
+(cd "${P}" && exec env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
 pid=$!
 for _ in $(seq 150); do grep -q -- '─ needs you' "${ROOT}/watch.out" && break; sleep 0.2; done
 sleep 2; kill -TERM "${pid}" || true; wait "${pid}" || true
@@ -226,11 +231,8 @@ while select.select([fd], [], [], 0.5)[0]:   # what the watch wrote before it ex
 open(out_path, "wb").write(out)
 sys.exit(os.waitstatus_to_exitcode(status))
 PY
-# The frame's clock is fixed (SWARM_DASH_NOW) at the test's start, so its ages cannot tick over a
-# minute between frames; the header's own HH:MM:SS still moves.
-PTY_NOW="$(date +%s)"
 ptywatch() { # <out> <seconds> <resize-after> <q> [<key>@<seconds>...]; PTY_BIN puts another stub dir first on PATH
-  (cd "${P}" && env -u HERDR_ENV SWARM_DASH_NOW="${PTY_NOW}" PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
+  (cd "${P}" && env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
 }
 plain() { python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read().replace("\r", "")))' < "$1"; }
 frames() { grep -o -- '╭─ needs you' | wc -l | tr -d ' '; }
