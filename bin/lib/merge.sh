@@ -806,14 +806,15 @@ queue_stopped() {
 
 # within <seconds> <command>... — the command in its own process group, the group KILLed after
 # <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
-# its children. Else the command's own status (128+N for a signal).
+# its children. Else the command's own status (128+N for a signal). <seconds> is often a deadline's time
+# left, below 0 once a read ran past it: -- keeps perl from taking -1 for a switch of its own (exit 25).
 within() {
   perl -e 'my $t = shift; $t = 1 if $t < 1;
     defined(my $p = fork) or exit 127;
     if (!$p) { setpgrp; exec @ARGV or exit 127 }
     $SIG{ALRM} = sub { kill "KILL", -$p; exit 142 };
     alarm $t; waitpid $p, 0;
-    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
 }
 
 # rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
@@ -835,6 +836,7 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
+# No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
 # A rate limit with its budget spent (rate_reset: GraphQL's or REST's, whichever the error came from) is
 # waited out once, to its reset, printed, the transient-error count starting over, and the default
 # deadline and the no-check grace move by that wait; past a --timeout deadline it ends at once, naming
@@ -862,6 +864,9 @@ wait_pr() {
   WAIT_PR_TMP="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
   while :; do
     rc=0; left=$((limit - (SECONDS - start)))
+    # No read starts at or past the deadline: here, and before the check read below, which follows a head
+    # read in the same pass (UNKNOWN) or one pass later.
+    (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
     if [[ -z "${head}" || -n "${unknown}" ]]; then
       # The head read is retried like a check read: a transient error is as likely here. Its stderr
       # is only the error: a notice beside a good answer (a gh update) is not one.
@@ -881,7 +886,9 @@ wait_pr() {
       fi
     fi
     if [[ ${rc} -eq 0 ]]; then
-      why="$(within "$((limit - (SECONDS - start)))" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
+      left=$((limit - (SECONDS - start)))
+      (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
+      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
     fi
     case ${rc} in
