@@ -160,24 +160,22 @@ before="$(snapshot)"
 
 # --watch off a terminal prints a frame only when it changed, plain, until stopped.
 # The stubs go first on PATH, so no watch here reaches the real herdr or gh. A python3 ahead of them
-# logs each render's start (dash_render.py, the one python3 run with DASH_PROJECT set). The test waits
-# up to 30 s for the first frame, then up to 30 s more for two more renders to start: by then the
-# render after the first frame has finished, and an unchanged frame must not have printed again.
+# logs each run of dash_render.py, one per frame. Renders run one after another, so once the third
+# has started the second has been compared with the first and, had it changed, printed: the test
+# waits up to 60 s for that, and an unchanged frame must not have printed again.
 mkdir -p "${ROOT}/countpy"
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\nif [ -n "${DASH_PROJECT:-}" ]; then echo render >> "%s"; fi\nexec "%s" "$@"\n' "${ROOT}/renders.log" "$(command -v python3)" > "${ROOT}/countpy/python3"
+printf '#!/bin/sh\ncase "$1" in */dash_render.py) echo render >> "%s" ;; esac\nexec "%s" "$@"\n' "${ROOT}/renders.log" "$(command -v python3)" > "${ROOT}/countpy/python3"
 chmod +x "${ROOT}/countpy/python3"
 renders() { if [ -f "${ROOT}/renders.log" ]; then wc -l < "${ROOT}/renders.log" | tr -d ' '; else echo 0; fi; }
 (cd "${P}" && exec env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${ROOT}/countpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
 pid=$!
-for _ in $(seq 150); do grep -q -- '─ needs you' "${ROOT}/watch.out" && break; sleep 0.2; done
-want=$(($(renders) + 2))
-for _ in $(seq 150); do [ "$(renders)" -ge "${want}" ] && break; sleep 0.2; done
+for _ in $(seq 300); do [ "$(renders)" -ge 3 ] && break; sleep 0.2; done
 got="$(renders)"
 kill -TERM "${pid}" || true; wait "${pid}" || true
 w="$(cat "${ROOT}/watch.out")"
 check "--watch off a terminal draws the frame" has "─ needs you" "${w}"
-check "--watch off a terminal renders again after its first frame" test "${got}" -ge "${want}"
+check "--watch off a terminal renders a third frame" test "${got}" -ge 3
 check "--watch off a terminal does not repeat an unchanged frame" test "$(grep -c -- '─ needs you' <<< "${w}")" -eq 1
 check "--watch off a terminal has no ANSI escapes" lacks $'\033' "${w}"
 
