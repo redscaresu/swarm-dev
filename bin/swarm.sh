@@ -799,8 +799,9 @@ main_signal() {
     kill -TERM "${EV_CHILD}" 2>/dev/null || true; wait "${EV_CHILD}" || true
   elif [[ -n "${EV_CHILD:-}" ]]; then
     kill_tree "${EV_CHILD}"
-    # A merge waiting on a merge queue stops the PR first (queue_merge), so it is waited for.
-    [[ "${EV_CMD}" != merge ]] || wait "${EV_CHILD}" || true
+    # A merge waiting on a merge queue stops the PR first (queue_merge), and an upgrade tells each
+    # conductor it paused to carry on (upgrade_stopped), so both are waited for.
+    [[ "${EV_CMD}" != merge && "${EV_CMD}" != upgrade ]] || wait "${EV_CHILD}" || true
   fi
   record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"

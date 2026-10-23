@@ -36,7 +36,8 @@
 # while ${H}/pifail exists, and claude ignores ctrl+c while ${H}/noexit does), pane run keeps the launch file it runs as ${H}/launch-<pane>,
 # pane wait-output fails while ${H}/envfail exists, and an agent prompt asking for a handover writes
 # its file (not while ${H}/nohandover exists) and runs ${H}/onhandover if there is one; a prompt
-# telling an agent it was restarted fails while ${H}/promptfail exists. Every call is logged.
+# telling an agent it was restarted fails while ${H}/promptfail exists, and one telling it upgrade could not
+# restart it while ${H}/sayfail does. Every call is logged.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -103,7 +104,7 @@ case "$1 $2" in
   "agent start") read -r -t 1 _ 2>/dev/null || true   # takes a line of its stdin, as a real command may
                  n="$3"; shift 2; while [ "$1" != --pane ]; do shift; done; rm -f "$H/exited-$2"
                  [ ! -x "$H/onstart-$n" ] || "$H/onstart-$n" ;;
-  "agent prompt") case "$4" in *"restarted you on"*) [ -e "$H/promptfail" ] && exit 1 ;; esac
+  "agent prompt") case "$4" in *"restarted you on"*) [ -e "$H/promptfail" ] && exit 1 ;; *"could not restart you"*) [ -e "$H/sayfail" ] && exit 1 ;; esac
                   f="$(printf '%s' "$4" | grep -o '/[^:]*/\.swarm/handover-[^ :]*\.md' | head -1)"
                   case "$4" in *"Write a handover"*) [ -e "$H/nohandover" ] || [ -z "$f" ] || echo "PRs and rounds" > "$f"
                                                      [ ! -x "$H/onhandover" ] || "$H/onhandover" ;; esac
@@ -141,6 +142,8 @@ order() { awk '/^agent prompt/ { print "prompt " $3 } /^pane send-keys/ { print 
 
 upgrade e
 check "upgrade e succeeds" "0" "${rc}"
+n="$(grep -c '^agent list' "${LOG}")"   # 19 when each agent's pane was its own herdr read
+check "herdr's agent list is read once a round, not once an agent" "yes" "$( ((n <= 8)) && echo yes || echo "no, ${n} reads")"
 HANDOVER="$(ls "${P}"/.swarm/handover-e-*.md 2>/dev/null || true)"
 check "the conductor wrote its handover, as asked, to .swarm/handover-e-<date>.md" "${P}/.swarm/handover-e-$(date +%F).md|PRs and rounds" \
   "${HANDOVER}|$(cat "${HANDOVER}" 2>/dev/null)"
@@ -232,6 +235,8 @@ touch "${H}/envfail"
 upgrade e
 check "the failed restart keeps the pane and names the session and folder to resume it in" "1|yes|" \
   "${rc}|$(has "b2: not started again; if pane w:b2 shows a shell, claude --resume s2, run in ${H}/wt w:b2, brings the session back" "$(cat "${H}/out")")|$(calls 'pane close')"
+check "and its summary line carries that resume hint" "1" \
+  "$(grep -c "^b2: left on 0.21.0: .*; not started again; if pane w:b2 shows a shell, claude --resume s2, run in ${H}/wt w:b2, brings the session back$" "${H}/out")"
 rm -f "${H}/envfail" "${H}/exited-w:b2"   # b2 resumed by hand, as the hint says
 
 # --- process-info that cannot be read leaves the agent alone; a claude that ignores ctrl+c gets the resume hint.
@@ -273,6 +278,11 @@ sed -i.bak 's/^conduct-e w:c sc$/conduct-e w:c -/' "${H}/agents"
 upgrade e
 check "it is named, never sent a key, and told to carry on on the version it runs" "1|yes||1" \
   "${rc}|$(has 'conduct-e: herdr gives no session for it' "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')|$(calls 'agent prompt w:c' | grep -c 'could not restart you, so you stay on the version you run')"
+echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; touch "${H}/sayfail"
+upgrade e
+check "one that cannot even be told that is named in the summary, to be told by hand" "1|1" \
+  "${rc}|$(sed -n '/: left on /,$p' "${H}/out" | grep -cx 'conduct-e: could not be told to carry on; tell it by hand')"
+rm -f "${H}/sayfail"
 sed -i.bak 's/^conduct-e w:c -$/conduct-e w:c sc/' "${H}/agents"
 
 # --- A conductor whose session goes right after the request is named at once; its builders are held.
@@ -329,9 +339,10 @@ rm -f "${P}/docs/stories/b3.md"
 # and its builders.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 claude_list busy idle idle; echo '2 s/"sc","status":"busy"/"sc","status":"idle"/' > "${H}/flip"
-sh -c 'exit 0' & dead=$!; wait "${dead}"; echo "${dead} /gone.log" > "${P}/.swarm/upgrade.pid"   # a dead run's lock
+sleep 120 & other=$!; echo "${other} - /gone.log" > "${P}/.swarm/upgrade.pid"   # a dead run's lock, its pid now another process's
 upgrade e
-check "a dead run's lock is taken over, and let go at the end" "0|no" \
+kill "${other}" 2>/dev/null || true
+check "a dead run's lock is taken over, though its pid runs something else now, and let go at the end" "0|no" \
   "$(grep -c 'already runs here' "${H}/out")|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)"
 check "the conductor is asked in its inbox, then by prompt, and moved after its builders" \
   "0|yes|1|prompt w:c|keys w:b1|start b1|prompt w:b1|keys w:b2|start b2|prompt w:b2|keys w:c|start conduct-e|prompt w:c" \
@@ -353,14 +364,19 @@ for _ in $(seq 150); do [[ -s "${P}/.swarm/upgrade.pid" ]] && grep -q 'runs deta
 UPID="$(sed -n 's/.*: pid \([0-9]*\), log .*/\1/p' "${H}/starter.out")"
 check "it prints the detached run's pid and log" "yes" "$(has "swarm.sh upgrade runs detached until every agent is moved: pid ${UPID}, log ${ULOG}" "$(cat "${H}/starter.out")")"
 kill -HUP -- "-${spid}" 2>/dev/null || true; kill -TERM -- "-${spid}" 2>/dev/null || true; wait "${spid}" 2>/dev/null || true
+sleep 1   # time for a run that shared the starter's process group to die of it
 check "the starting shell is gone, the upgrade runs on" "gone|runs" \
   "$(kill -0 "${spid}" 2>/dev/null && echo alive || echo gone)|$(kill -0 "${UPID:-0}" 2>/dev/null && echo runs || echo stopped)"
 rc=0; (cd "${P}" && env "${ENVV[@]}" bash "${SWARM}" upgrade e) > "${H}/out" 2>&1 || rc=$?
 check "a second upgrade starts nothing and names the running one" "0|yes|${UPID}" \
   "${rc}|$(has "swarm.sh upgrade already runs here (pid ${UPID}, log ${ULOG}); this one started nothing" "$(cat "${H}/out")")|$(cut -d' ' -f1 "${P}/.swarm/upgrade.pid")"
+rc=0; (cd "${P}" && env "${ENVV[@]}" bash "${SWARM}" upgrade backlog) > "${H}/out" 2>&1 || rc=$?
+check "one for another scope fails, saying its agents were not moved" "1|yes" \
+  "${rc}|$(has "swarm.sh upgrade already runs here for e (pid ${UPID}, log ${ULOG}): backlog was not moved; run it again once the running one ends" "$(cat "${H}/out")")"
+for _ in $(seq 150); do [[ "$(cat "${P}/.swarm/versions/b2")" == "${NEW}" ]] && break; sleep 0.2; done
 (cd "${P}" && env "${ENVV[@]}" bash "${SWARM}" status) > "${H}/out" 2>&1 || true
-check "status names the upgrade and the agents still on an old version" "yes|yes" \
-  "$(has "Upgrade running (pid ${UPID}, log ${ULOG})" "$(cat "${H}/out")")|$(has 'still on an old version: conduct-e b1' "$(cat "${H}/out")")"
+check "status names the upgrade and its scope's agents still on an old version, not another epic's" "yes|1" \
+  "$(has "Upgrade of e running (pid ${UPID}, log ${ULOG})" "$(cat "${H}/out")")|$(grep -cx '  still on an old version: conduct-e b1' "${H}/out")"
 check "the paused conductor holds back tell's wake prompt while b1 is busy" "yes" "$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)"
 claude_list idle idle idle
 for _ in $(seq 300); do kill -0 "${UPID:-0}" 2>/dev/null || break; sleep 0.2; done
@@ -368,6 +384,33 @@ kill -0 "${UPID:-0}" 2>/dev/null && { echo "the detached upgrade never ended" >&
 check "the detached run moved every agent, b1 in a later round, and let the project and the conductor go" \
   "b2: 0.21.0 -> ${NEW}|b1: 0.21.0 -> ${NEW}|conduct-e: 0.21.0 -> ${NEW}|no|no" \
   "$(grep -- ' -> ' "${ULOG}" | paste -sd'|' -)|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)"
+check "the log ends on its tally" "upgrade done: 3 moved, 0 left (exit 0)" "$(tail -1 "${ULOG}")"
+
+# --- A TERM mid-run tells the conductor it paused to carry on and lets it go, and the log says it stopped.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle busy idle; : > "${LOG}"; rm -f "${ULOG}"
+(cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_WAIT_MS=120000 bash "${SWARM}" upgrade e) > "${H}/out" 2>&1
+UPID="$(sed -n 's/.*: pid \([0-9]*\), log .*/\1/p' "${H}/out")"
+for _ in $(seq 150); do [[ "$(cat "${P}/.swarm/versions/b2")" == "${NEW}" && -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && break; sleep 0.2; done
+kill -TERM "${UPID:-0}" 2>/dev/null || true
+for _ in $(seq 150); do kill -0 "${UPID:-0}" 2>/dev/null || break; sleep 0.2; done
+kill -0 "${UPID:-0}" 2>/dev/null && { echo "the stopped upgrade never ended" >&2; kill -9 "${UPID}" 2>/dev/null || true; }
+check "the stopped run told the conductor to carry on, let it go, and logged its stop" "1|no|upgrade stopped: 1 moved, 1 left (exit 143)|no" \
+  "$(calls 'agent prompt w:c' | grep -c 'was stopped before it moved you')|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)|$(tail -1 "${ULOG}")|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)"
+
+# --- A conductor idle with its handover in that turns busy again (a watch woke it) holds its
+# builders: b1, idle only once the conductor is busy, is not restarted, and is named for it.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+claude_list idle busy idle
+cat > "${H}/onstart-b2" <<EOF
+#!/bin/sh
+sed -i.bak -e 's/"sc","status":"idle"/"sc","status":"busy"/' -e 's/"s1","status":"busy"/"s1","status":"idle"/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-b2"
+WAIT_MS=4000 upgrade e
+check "b1 waits on its busy conductor and is named for it" "1||yes" \
+  "${rc}|$(calls 'agent start b1')|$(has 'b1: left on 0.21.0: its conductor wrote its handover but stayed busy' "$(cat "${H}/out")")"
+rm -f "${H}/onstart-b2"
 
 # --- upgrade backlog moves the backlog conductor and the stories with no epic, and no epic's agents.
 CB="$(cd "${P}" && SWARM_PROJECT="${P}" bash "${SWARM}" _conductor backlog)"

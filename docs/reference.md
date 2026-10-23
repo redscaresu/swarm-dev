@@ -1547,8 +1547,11 @@ no epic, and with no argument it moves every agent the project started. upgrade 
 until it is done: it starts itself again under `nohup`, in a process group of its own, prints that
 run's pid and its log, `.swarm/upgrade-<version>.log`, and returns, so closing the session that
 started it does not stop it. `--foreground` runs it in your shell instead. One upgrade runs per
-project: a second one, while the first runs, prints the running one's pid and log, starts nothing
-and exits 0. While it runs, `swarm.sh status` names it and the agents still on an old version.
+project. A second one, while the first runs, prints the running one's pid and log and starts
+nothing. It exits 0 when the running one moves its agents too (the same epic, or every agent), and
+1 when it does not: `<epic> was not moved; run it again once the running one ends`. A pid file
+whose process is no longer a `swarm.sh upgrade` counts as none running. While it runs, `swarm.sh
+status` names it, its epic, and that epic's agents still on an old version.
 upgrade first checks the
 conductor's `env:` names, as `conduct` does; if one is refused, it asks the conductor for nothing.
 Otherwise the conductor writes a handover to `.swarm/handover-<epic>-<date>.md` (each open PR with
@@ -1557,7 +1560,8 @@ conductor already on the new version does this too whenever its builders will re
 acts on one mid-restart. An idle conductor is asked by prompt; a busy one gets a note in its inbox,
 which it reads when its wait returns. upgrade works in rounds. Each round reads the agents again,
 so one started meanwhile is moved too, and picks up a handover that came late: a conductor's
-builders wait until its handover is written and it is idle. A conductor that got the request in its
+builders wait while its handover is not written or it is not idle, read again each round, since a
+conductor whose turn ended can be woken by a background watch. A conductor that got the request in its
 inbox and is idle with no handover is asked again by prompt, and one whose session is gone is named
 at once. Each round restarts every builder that Claude Code reports idle, or whose turn stopped on an API
 error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
@@ -1581,13 +1585,18 @@ restarted and which were left: restarted and told to carry on, or, if it was alr
 version or its restart failed before its claude exited, only told to carry on.
 upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. When it is done
 it prints one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or
-`<name>: already on <new>`; `swarm.sh version` in a pane confirms the version. If a restart fails
-from the first ctrl+c on, upgrade leaves the pane open and prints the `claude --resume <session>`
-that brings it back, and the folder to run it in. upgrade stops when every agent is moved or left,
+`<name>: already on <new>`, then `upgrade done: <n> moved, <m> left (exit <code>)`, so a log that
+ends without that line was cut off. `swarm.sh version` in a pane confirms the version. If a restart
+fails from the first ctrl+c on, upgrade leaves the pane open, and the agent's line names the
+`claude --resume <session>` that brings it back and the folder to run it in. A conductor that
+could not be told to carry on gets a line saying to tell it by hand. A TERM or HUP to the run tells
+each conductor it paused to carry on as before and ends the log on `upgrade stopped: ...`; a KILL
+or a reboot cannot, and leaves that conductor waiting for a prompt. upgrade stops when every agent is moved or left,
 or after `SWARM_UPGRADE_WAIT_MS` (2 hours, for the whole run). An agent still busy then is left on
 its old version. A conductor with no handover by then, or still busy after writing one, is told to
 carry on as before: by prompt once it is idle (upgrade waits up to `SWARM_UPGRADE_GRACE_MS`, 5
-minutes, more for that), else in its inbox. Its builders are left with it. upgrade exits 1 when any
+minutes, more for that), else in its inbox. Its builders are left with it, named for the reason:
+their conductor wrote no handover, or wrote one but stayed busy. upgrade exits 1 when any
 agent is left; a later run skips the agents already on the new version.
 
 **Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before
