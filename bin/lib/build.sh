@@ -709,6 +709,7 @@ Hold the PR to these as well:
 - A new code path must enforce every rule the existing paths enforce.
 - A zero or empty value shown to a person must say what it means.
 - A repair path that changes something must say what it did.
+- For each function, flag or message the diff changes, re-read its header comment, error text and the README/docs/reference.md lines naming it; a sentence the code no longer matches is a finding.
 EOF
   [[ -f "${1:-}" ]] || return 0
   # shellcheck disable=SC2016 # the backticks are for the reader
