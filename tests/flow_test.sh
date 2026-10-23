@@ -438,5 +438,47 @@ check "ci_health: a rate limit while listing a later repo keeps the earlier repo
 check "ci_health: a rate limit health spent leaves the listings unread, and no none line" "$(FP="${U}" LIMITED=pulls flaky --since 2026-10-06 --until 2026-10-06)" \
   "flaky tests: stopped at gh's rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): the runs of o/r, o/z not listed"
 
+# idle_slots: e9's conductor runs from 09:00; its story ia is ready at 10:00 (unblock) and built at 10:10,
+# while ib builds 09:30-11:00 (its close). Epic e10 has no conductor: ic is ready 12:00, built 12:20.
+# ib's agents.tsv day is the 30th, so --since 2026-10-01 leaves it out of flow's windowed stories.
+I="${dir}/idle"; mkdir -p "${I}/.swarm" "${I}/docs/stories"; git -C "${I}" init -q
+ist() { printf -- '---\nkind: code\nstatus: ready\nepic: %s\ntouches: [%s]\n---\n' "$2" "$3" > "${I}/docs/stories/$1.md"; }
+ist ia e9 src/a.sh; ist ib e9 src/b.sh; ist ic e10 src/c.sh
+for x in ia:10:10 ib:09:30 ic:12:20; do
+  printf '{"cwd":"%s/idle-wt/%s","timestamp":"2026-10-01T%s:00Z"}\n{"timestamp":"2026-10-01T%s:00Z"}\n' "${dir}" "${x%%:*}" "${x#*:}" "${x#*:}" \
+    > "${dir}/projects/p/s${x%%:*}.jsonl"
+done
+printf '%s\n' "2026-10-01${B}ia${O}sia" "2026-09-30${B}ib${O}sib" "2026-10-01${B}ic${O}sic" > "${I}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T09:00:00Z\tconduct\te9\tw:1\tok' $'2026-10-01T10:00:00Z\tunblock\tia\tw:1\tok' \
+  $'2026-10-01T11:00:00Z\tclose\tib\tw:1\tok' $'2026-10-01T12:00:00Z\tunblock\tic\tw:1\tok' > "${I}/.swarm/events.tsv"
+idle() { (cd "${I}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=idle_slots CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
+  bash "${SWARM}" flow "$@" 2>&1 | sed 1d); }
+IH=$'epic\tidle_min\tno_conductor_min\tmost_ready'
+check "idle_slots: a ready story with no build under its conductor is idle; one with no conductor counts under no conductor" \
+  "$(idle)" "${IH}"$'\ne10\t0\t20\t1\ne9\t10\t0\t1\nall\t10\t20\t1'
+check "idle_slots: --epic prints that epic's row alone" "$(idle --epic e9)" "${IH}"$'\ne9\t10\t0\t1'
+ist ia e9 src/a.sh; ist ib e9 "src/b.sh, src/a.sh:f"
+check "idle_slots: a ready story that clashes with a running build (touches) is not idle, a build from before --since too" \
+  "$(idle --since 2026-10-01 --epic e9)" "${IH}"$'\ne9\t0\t0\t1'
+# id, on the board as ready since its unblock at 13:00 and never built, waits to --until's midnight: 11 hours.
+ist id e9 src/d.sh; printf '%s\n' $'2026-10-01T13:00:00Z\tunblock\tid\tw:1\tok' >> "${I}/.swarm/events.tsv"
+check "idle_slots: a story ready on the board with no build yet is idle to the window's end" "$(idle --until 2026-10-01 --epic e9)" "${IH}"$'\ne9\t660\t0\t1'
+# ie's file says blocked, but its board-state says ready, so it waits beside id. ig builds from 13:00
+# on, never closed, touching src/d.sh in repo other: no clash with id's and ie's src/d.sh here.
+printf -- '---\nkind: code\nstatus: blocked\nepic: e9\ntouches: [src/d.sh]\n---\n' > "${I}/docs/stories/ie.md"
+mkdir -p "${I}/.swarm/board-state/stories"; echo 'status: ready' > "${I}/.swarm/board-state/stories/ie"
+printf '%s\n' $'2026-10-01T13:00:00Z\tunblock\tie\tw:1\tok' >> "${I}/.swarm/events.tsv"
+printf -- '---\nkind: code\nstatus: ready\nepic: e9\nrepo: other\ntouches: [src/d.sh]\n---\n' > "${I}/docs/stories/ig.md"
+printf '{"cwd":"%s/idle-wt/ig","timestamp":"2026-10-01T13:00:00Z"}\n' "${dir}" > "${dir}/projects/p/sig.jsonl"
+printf '%s\n' "2026-10-01${B}ig${O}sig" >> "${I}/.swarm/agents.tsv"
+check "idle_slots: a story readied in board-state counts as ready; the same file in another repo is no clash" \
+  "$(idle --until 2026-10-01 --epic e9)" "${IH}"$'\ne9\t660\t0\t2'
+# ih (e11, no conductor) was unblocked at 09:00, but the board's commit readying it at 20:00 is later: 4 hours, not 15.
+printf '%s\n' $'2026-10-01T09:00:00Z\tunblock\tih\tw:1\tok' >> "${I}/.swarm/events.tsv"; ist ih e11 src/h.sh
+git -C "${I}" add docs/stories/ih.md
+GIT_COMMITTER_DATE=2026-10-01T20:00:00Z git -C "${I}" -c user.name=t -c user.email=t@t commit -qm ih --date 2026-10-01T20:00:00Z
+check "idle_slots: a story is ready from the later of its unblock and the board's commit to its status" \
+  "$(idle --until 2026-10-01 --epic e11)" "${IH}"$'\ne11\t0\t240\t1'
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
