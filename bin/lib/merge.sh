@@ -47,10 +47,11 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # read is a missed poll; three in a row end it. When <base> requires checks (its rulesets and branch
 # protection, read once, each bound to its app; when any part cannot be read, every check counts, said
 # on stderr), only those are red: another red waits until each required check has a run on <sha> (a
-# timeout names those with none), and once each has finished green nothing else is waited on. A
-# transient gh error on a rerun is a missed poll. A red whose every check is an Actions job
+# timeout names those with none, and once every expected workflow has finished, every check counts),
+# and once each has finished green nothing else is waited on. A transient gh error on a rerun is a
+# missed poll. A red whose every check is an Actions job
 # has those runs' failed jobs rerun, once a run (gh run rerun --failed), once the runs have finished
-# (a red whose run outlasts the wait is red), and the wait starts again. Prints ok (MAIN_CI_OK), then
+# (a red whose run, or rerun, outlasts the wait is red), and the wait starts again. Prints ok (MAIN_CI_OK), then
 # a "warning: <check> is red on <base>, which does not require it" line for each such check and a
 # "flaky <run id> <attempt that failed> <its checks>" line for each run whose rerun went green;
 # red <checks> (MAIN_CI_RED), with a second line "note: <why>" when a rerun failed too, was refused
@@ -521,7 +522,7 @@ run_fail_lines() {
 
 # main_notes <owner/repo> <ci_gate main's ok> — print each warning line after the ok, and for each
 # flaky line (a run whose failed jobs went green on their rerun) flaky: <jobs> (<the FAIL lines of the
-# attempt that failed>), green on rerun, logged as a flake event with the run's URL for flow to count.
+# attempt that failed>), green on rerun, and log a flake event with the run's URL.
 # Its log reads share one FIX_MAIN_LOG_SECONDS deadline, as fix_main's do.
 main_notes() {
   local line id att jobs fails url end=$((SECONDS + ${SWARM_FIX_MAIN_LOG_SECONDS:-${FIX_MAIN_LOG_SECONDS}}))

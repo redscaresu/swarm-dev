@@ -520,9 +520,10 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
     When base requires checks (read once; when any part cannot be read, a warning on stderr, and every
     check counts), only they are red. Any other red check or workflow run waits until each required
     check has a run (a timeout names those with none), then is a warning line after ok, and once every
-    required check has finished green nothing else is waited on. A red whose every check is an
-    Actions run's has those runs' failed jobs rerun, once a run, when the runs have finished (a red
-    whose run outlasts the wait is red), with a fresh wait of secs; a transient gh error on the rerun
+    required check has finished green nothing else is waited on. Once every expected workflow has
+    finished, a required check still with no run never gets one, so every check counts. A red whose
+    every check is an Actions run's has those runs' failed jobs rerun, once a run, when the runs have
+    finished (a red whose run, or rerun, outlasts the wait is red), with a fresh wait of secs; a transient gh error on the rerun
     is a missed poll, READ_TRIES in a row an error. ok then has a flaky line (flaky <run id> <attempt
     that failed> <its red checks>) per run whose rerun went green. A red line may have a second,
     note: <why>, for a rerun that failed too, was refused or is under way."""
@@ -531,8 +532,9 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
     req, why = required(repo, base)
     if why:
         print("warning: could not read %s's required checks (%s), so every check counts" % (base, why), file=sys.stderr)
-    # again: run id -> (attempt rerun, its red checks); held: red, its run finishing; going: runs not finished
-    again, stale, held, going, absent = {}, set(), [], set(), []
+    # again: run id -> (attempt rerun, its red checks' names, their red lines); held: red, its run finishing
+    # or its rerun not started; known: (run id, red line) of a rerun not finished; going: runs not finished
+    again, stale, held, going, absent, known = {}, set(), [], set(), [], []
     while True:
         try:
             if want is None:
@@ -551,6 +553,11 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             items = [dict(r, status="rerun requested") if (r.get("html_url"), r.get("completed_at")) in stale else r for r in items]
             going = {r.get("id") for r in runs if r.get("status") != "completed"}
             mine, rest, absent = by_rule(req, runs, items)
+            # Once every expected push workflow has finished (with none expected, once grace is over), a
+            # required check with no run will not get one: every check counts then, as with none required.
+            if absent and (want or time.time() >= settled) and all(
+                    any((r.get("path") or "").split("@")[0] == p and r.get("status") == "completed" for r in runs) for p in want):
+                mine, rest = items + runs, []
             red, rwait, wait, warn = [], [], [], []
             judge(mine, red, rwait, [])
             judge(rest, warn, wait, [])
@@ -576,24 +583,29 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
                             rerun_missed += 1
                             if rerun_missed == READ_TRIES:
                                 raise Err("%s (%d reruns in a row failed)" % (e, rerun_missed))
-                            rwait.append("a rerun failed: %s" % e)
+                            held, rwait = red, rwait + ["a rerun failed: %s" % e]   # red, if the wait runs out first
                             break
                         rerun_missed, mine_i = 0, [r for j, r in zip(ids, bad) if j == i]
-                        again[i], end = (tried.get(i) or 1, [str(r.get("name")) for r in mine_i]), time.time() + secs
+                        again[i] = (tried.get(i) or 1, [str(r.get("name")) for r in mine_i], [x for j, x in zip(ids, red) if j == i])
+                        end = time.time() + secs
                         stale |= {(r.get("html_url"), r.get("completed_at")) for r in mine_i}
                         started.append(i)
                     rwait += ["%s, rerun" % x for x in red]
                 red = []
             if red:
                 return CI_RED, red_line(red, sorted(i for i in again if i in ids), sorted(i for i in again if i not in ids and i in going))
+            green = {r.get("name") for r in items + runs if r.get("status") == "completed" and r.get("conclusion") in OK}
+            # The reds whose rerun has not finished: red, if the wait runs out first.
+            rerunning = {int(m.group(1)) for r in items if r.get("status") == "rerun requested"
+                         for m in [RUN_ID.search(r.get("html_url") or "")] if m} | (going & set(again))
+            known = [(i, x) for i in sorted(rerunning & set(again)) for n, x in zip(again[i][1], again[i][2]) if n not in green]
             if not rwait and ((req and not absent) or (not wait and (want or time.time() >= settled))):
-                green = {r.get("name") for r in items + runs if r.get("status") == "completed" and r.get("conclusion") in OK}
                 return CI_OK, "\n".join(["ok"] + ["warning: %s is red on %s, which does not require it" % (w, base) for w in warn]
-                                       + ["flaky %d %d %s" % (i, a, "; ".join(x)) for i, (a, x) in sorted(again.items()) if set(x) <= green])
+                                       + ["flaky %d %d %s" % (i, a, "; ".join(x)) for i, (a, x, _) in sorted(again.items()) if set(x) <= green])
             wait = rwait + wait
         if time.time() >= end:
-            if held:
-                return CI_RED, red_line(held, [], sorted(i for i in again if i in going))
+            if held or known:
+                return CI_RED, red_line(held + [x for _, x in known], [], sorted({i for i, _ in known} | (going & set(again))))
             return CI_TIMEOUT, "timeout (%s)" % "; ".join(wait + ["%s (required, no run on %s)" % (c, sha[:7]) for c in absent])
         time.sleep(poll)
 

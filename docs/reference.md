@@ -790,7 +790,7 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its repo, base and checks;
 an ok one that clears a red main of that repo and base by `main-green`, outcome its repo, base and
 the red commit it clears, and a `fix-main` line,
-outcome `retired: <why>`, for each unstarted fix-main story that retires), then reconcile's lines. Before an ok `main-ci` comes a `flake` line for each run whose rerun went green, outcome `<jobs> <run URL>: <FAIL lines>`. Through a merge queue (§ Merging) it is the same `merge ok`,
+outcome `retired: <why>`, for each unstarted fix-main story that retires), then reconcile's lines. Before an ok `main-ci` comes a `flake` line for each run whose rerun went green, outcome `<jobs> <run URL>: <FAIL lines>`, a record that no command reads yet. Through a merge queue (§ Merging) it is the same `merge ok`,
 `main-ci` and reconcile lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
 queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `merge gh pr merge
 --auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
@@ -1370,11 +1370,13 @@ only those can make main red. When any part of the rules cannot be read, merge p
 could not read <base>'s required checks (<why>), so every check counts`, and every check does. Any
 other red check or workflow run waits until each required check has a run on the merge commit (a
 workflow that never started holds main until the wait runs out, and the timeout names the required
-checks with no run), then prints `warning: <check> is red on <base>, which does not require it` and
+checks with no run). Once every workflow expected on the push has finished, a required check still
+with no run (a `pull_request`-only one, say) will never get one, so every check counts from then
+on. Otherwise, once each required check has a run, a red that is not required prints `warning: <check> is red on <base>, which does not require it` and
 leaves main green. Once every required check has finished green, nothing else is waited on. A
 red whose every check is a GitHub Actions job gets one rerun per run: once those runs have
 finished, merge reruns their failed jobs (`gh run rerun --failed`) and waits again, for the full
-time. A red whose run is still going when the wait runs out is red. A transient gh error on the
+time. A red whose run, or rerun, is still going when the wait runs out is red. A transient gh error on the
 rerun (a 5xx, a rate limit, a dropped connection) is a missed poll, and three in a row end the wait
 as an error. If a rerun goes green, merge
 prints `flaky: <jobs> (<the FAIL lines of the attempt that failed>), green on rerun` and logs a
