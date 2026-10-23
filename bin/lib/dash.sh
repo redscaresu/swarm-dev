@@ -351,14 +351,14 @@ dash_cut() {
   local shown="$1" rest="$2" piece
   if [[ "${shown}" != *…* ]]; then printf '%s' "$1"; return; fi
   piece="${shown%%…*}"; shown="${shown#*…}"
-  if [[ "${rest}" != "${piece}"* ]]; then printf '%s' "$1"; return; fi
+  if [[ "${rest}" != "${piece}"* ]]; then printf '%s' "$1"; return; fi   # loose-match: ok the first piece of a cut line starts the full one
   rest="${rest#"${piece}"}"
   while [[ "${shown}" == *…* ]]; do
     piece="${shown%%…*}"; shown="${shown#*…}"
     if [[ "${rest}" != *"${piece}"* ]]; then printf '%s' "$1"; return; fi   # loose-match: ok a piece of a cut line may sit anywhere in the full one
     rest="${rest#*"${piece}"}"
   done
-  if [[ "${rest}" == *"${shown}" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi
+  if [[ "${rest}" == *"${shown}" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi   # loose-match: ok the last piece of a cut line ends the full one
 }
 
 # dash_names <word> <text> — true when a line of <text> has <word> as a whole word (words split at

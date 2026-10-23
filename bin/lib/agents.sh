@@ -277,7 +277,7 @@ story_env() {
 reserved_env() {
   local p
   [[ " ${AGENT_ENV} ${AGENT_SET} " != *" $1 "* ]] || return 0
-  for p in ${AGENT_PREFIXES}; do [[ "$1" != "${p}"* ]] || return 0; done
+  for p in ${AGENT_PREFIXES}; do [[ "$1" != "${p}"* ]] || return 0; done   # loose-match: ok AGENT_PREFIXES are prefixes by design
   case "$1" in HERDR_*|CLAUDECODE|CLAUDE_CODE_*|CLAUDE_PID|BASH_ENV|ENV|DYLD_*|LD_*) return 0 ;; esac
   return 1
 }
