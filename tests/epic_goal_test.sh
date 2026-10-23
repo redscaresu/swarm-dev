@@ -222,7 +222,7 @@ goal_story "${b}" gl10 "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
 rc=0; out="$(HERDR_STUB_TURN=quick-bare run story gl10)" || rc=$?
 check "a session idle after the brief with no assistant entry since still fails story, with no /goal sent" "fail|yes|0" \
-  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl10: the brief was delivered, but its session did not read busy within 3s (idle), so no /goal was sent" "${out}")|$(goals)"
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl10: the brief was delivered, but its session did not read busy, or idle with work since the brief, within 3s (idle), so no /goal was sent" "${out}")|$(goals)"
 # A Done when over 2,500 characters stays in the story: the /goal names its path and fits GOAL_SEND_MAX.
 goal_story "${b}" gl8 "status: ready" "kind: code" "repo: svc"
 python3 - "${b}/stories/gl8.md" <<'PY2'

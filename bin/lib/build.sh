@@ -349,25 +349,24 @@ goal_entry() {
 # lead to read. <since> defaults to now. The /goal goes only into a
 # turn that has started: herdr can say working while the session is still idle, and deliver_prompt
 # takes blocked as taken up, so it waits up to PROMPT_TIMEOUT_MS for the session (session_state) to
-# read busy, or idle with own work (session_mtime) at or after <since>: a short first turn that ended
-# before this read took the brief. It fails with nothing sent if it reads waiting (a dialog, where
-# Enter could approve what auto mode flagged) or neither. Each failure says the brief or the findings
-# were delivered, so they are not sent again.
+# read busy, or, for the brief, idle with own work (session_mtime) at or after <since>: a short first
+# turn that ended before this read took the brief. Findings get no such shortcut: their /goal must go
+# mid-turn (findings_goal). It fails with nothing sent if it reads waiting (a dialog, where Enter could
+# approve what auto mode flagged) or neither. Each failure says the brief or the findings were
+# delivered, so they are not sent again.
 send_goal() {
-  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline state pre post t s
+  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline state pre post t want="read busy, or idle with work since the brief,"
   name="$(agent_name "${slug}")"
   pre="${slug}: the brief was delivered, but"; post="; do not send it again"
-  [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; }
+  [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; want="read busy"; }
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
-  # session_mtime is whole seconds; tell's <since> may not be: round it up, so work before it never counts.
-  s="${since%.*}"; [[ "${s}" == "${since}" ]] || s=$((s + 1))
   while state="$(session_state "${name}")"
-    if [[ "${state}" == idle ]]; then t="$(session_mtime "${name}")"; [[ -z "${t}" || "${t}" -lt "${s}" ]] || state=ran; fi
+    if [[ "${state}" == idle && "$3" == brief ]]; then t="$(session_mtime "${name}")"; [[ -z "${t}" || "${t}" -lt "${since}" ]] || state=ran; fi
     [[ "${state}" != busy && "${state}" != ran && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
   case "${state}" in
     busy|ran) ;;
     waiting*) die "${pre} its builder is waiting on $(waiting_for "${state}"), so no /goal was sent; answer it (herdr agent read ${name})${post}" ;;
-    *) die "${pre} its session did not read busy within $((PROMPT_TIMEOUT_MS / 1000))s (${state}), so no /goal was sent${post}" ;;
+    *) die "${pre} its session did not ${want} within $((PROMPT_TIMEOUT_MS / 1000))s (${state}), so no /goal was sent${post}" ;;
   esac
   deliver_prompt "${name}" <(goal_message "$(cat "${goal}")") "" once   # read once, so a pipe will do
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
@@ -528,7 +527,8 @@ build_story() {
   start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
-  # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
+  # Once the brief is taken up: mid-turn the goal sets at once and costs one extra short turn; after a
+  # short first turn that already ended, it starts a turn of its own.
   [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief "${since}"
 }
 

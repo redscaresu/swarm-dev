@@ -970,8 +970,11 @@ goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /
   # A refusal leaves $NREC records (2: the /goal was sent) and says the findings must not be sent again.
   local name="$1" rc="$2" want="$3" out goal ev; shift 3
   : > "${dir}/projects/p/sess-s1.jsonl"; rm -f "${dir}/screen" "${dir}/.swarm/events.tsv"; tsession idle
-  # STALE: an assistant entry from before the tell, which is no sign the findings were taken up.
-  [[ -z "${STALE:-}" ]] || echo '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"model":"m","content":[]}}' > "${dir}/projects/p/sess-s1.jsonl"
+  # WORKED: an assistant entry dated after the tell. A findings /goal goes only mid-turn, so an idle
+  # session with work since is no sign it may go.
+  [[ -z "${WORKED:-}" ]] || python3 -c 'import datetime, json
+t = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
+print(json.dumps({"type": "assistant", "timestamp": t.isoformat(timespec="milliseconds").replace("+00:00", "Z"), "message": {"model": "m", "content": []}}))' > "${dir}/projects/p/sess-s1.jsonl"
   out="$(tellout idle "$@")"; ev="$(cut -f2,3,5 "${dir}/.swarm/events.tsv" | tr '\t\n' ' |')"; goal="$(sed -n '/^\/goal /,/^--$/p' "${dir}/sent" 2>/dev/null)"
   if [[ ${rc} == 0 && "${out}" == *"exit 0" && "$(records)" == 2 && "$(head -1 "${dir}/sent")" == "From the conductor:" \
         && "${goal}" == *"the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied"*"${want}"*"or stop after 4 more turns"* && "${goal}" == *"state: busy"* \
@@ -998,7 +1001,7 @@ if (( SECONDS - t0 < 5 )); then echo "ok   goal on: a waiting session fails the 
   echo "FAIL goal on: a waiting session fails the tell at once, not at the timeout: took $((SECONDS - t0))s"; fails=$((fails + 1)); fi
 TELL_GOAL=new TELL_AFTER=idle NREC=1 goalcase "goal on: a session still idle while herdr says working gets no /goal; the tell fails naming s1" \
   1 "the findings were delivered, but its session did not read busy" findings findings.md
-TELL_GOAL=new TELL_AFTER=idle NREC=1 STALE=1 goalcase "goal on: a session idle after the findings with only work from before the tell gets no /goal; the tell fails naming s1" \
+TELL_GOAL=new TELL_AFTER=idle NREC=1 WORKED=1 goalcase "goal on: a session idle after the findings, with work since the tell, gets no /goal; the tell fails naming s1" \
   1 "the findings were delivered, but its session did not read busy" findings findings.md
 for k in nudge resume; do onerecord "goal on: a ${k} tell sends no goal" "${k}" findings.md; done
 # A second findings tell right after one that set its goal: the same condition's entry from the
