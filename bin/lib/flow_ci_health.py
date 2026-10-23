@@ -6,7 +6,7 @@
 # Last, the test files that failed on a head before it went green (flaky_tests).
 import datetime, functools, os, re, statistics, subprocess, urllib.parse
 from report import *
-from gh_cache import Listing, as_of, cached, closed, commits, pull
+from gh_cache import Listing, as_of, cached, closed, commits, forget, pull
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10
 FLAKY_CALLS = 100   # flaky_tests' gh invocations at most (listings, earlier attempts, logs); not REST requests: a
@@ -49,11 +49,16 @@ def head_runs(url):
     shas = [c.get("sha") for page in pages if isinstance(page, list) for c in page if isinstance(c, dict)] if isinstance(pages, list) else []
     if not shas:
         return drop(url, None if pages is None else f"gh api repos/{repo}/pulls/{n}/commits: no commits")
-    # Its runs on its commits, cached once the PR is closed and none of them is still running.
-    # ponytail: a rerun of a closed PR's run after that is not seen; flow --no-cache reads it.
+    # Its runs on its commits, cached once the PR is closed, gh lists some and none of them is still
+    # running (none listed may be runs not registered yet, or cut by --limit).
+    # ponytail: a rerun of a closed PR's run after that is not seen, nor in window_runs a rerun of a run
+    # created over RELIST_DAYS before the newest cached day (a rerun keeps its run's created_at);
+    # flow --no-cache reads both.
     mine = lambda runs: [r for r in runs if isinstance(r, dict) and r.get("headSha") in shas]
     runs = cached(repo, f"runs/{as_of(n, pr)}", lambda: gh("run", "list", "-R", repo, "--branch", branch, "--limit", "200", "--json", RUN_FIELDS),
-                  lambda runs: closed(pr) and isinstance(runs, list) and all(r.get("status") == "completed" for r in mine(runs)), mine)
+                  lambda runs: closed(pr) and isinstance(runs, list) and mine(runs) != [] and all(r.get("status") == "completed" for r in mine(runs)),
+                  mine)
+    forget(repo, "runs", n, pr)
     if not isinstance(runs, list):
         return drop(url)
     return shas[-1], [r for r in mine(runs) if r.get("status") == "completed"]
@@ -123,36 +128,62 @@ def origin():
 def window_runs(repo, created, lines):
     # The repo's completed runs created in the window (created, gh's syntax: >=<day> or <day>..<day>),
     # by gh run list's names, with a run's last conclusion, and whether that is all of them; a line in
-    # lines when gh lists fewer than it has (GitHub's 1000), or cannot list them, which returns None.
-    # Completed runs are cached (gh_cache's Listing, RUN_DAYS of them), so with nothing cached one
-    # paginated call lists the window, and after that one lists from RELIST_DAYS before the newest
-    # cached day (a run rerun since then is read again), or from the oldest day with a run still
-    # running; the window is served from the cache. Raises Stop.
+    # lines when gh cannot list them all, or cannot list them, which returns None. Completed runs are
+    # cached (gh_cache's Listing, RUN_DAYS of them), so with nothing cached the window is listed, and
+    # after that only from RELIST_DAYS before the newest cached day (a run rerun since then is read
+    # again; a rerun keeps its run's created day, so one created before that is not), or from the
+    # oldest day with a run still running; the window is served from the cache. A listing cut at
+    # GitHub's 1000 (the newest) is listed again up to the oldest day it reached, until whole, or a
+    # line says what was left out. Raises Stop.
     start, _, end = created.removeprefix(">=").partition("..")
     have = Listing(repo, "runs", start, cached_run)
-    ask = created if have.fresh else f"{have.since(RELIST_DAYS)}..{end}" if end else f">={have.since(RELIST_DAYS)}"
+    lo = start if have.fresh else have.since(RELIST_DAYS)
+    hi, whole, held, finished, last = end, True, [], False, have.state["next"]
+    # A run still running holds its day for the next listing; one queued or waiting for over a day (a
+    # runner that never came) does not.
+    stale = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        while not end or lo <= end:   # none to list when the cache holds every day up to end
+            ask = created if have.fresh and hi == end else f"{lo}..{hi}" if hi else f">={lo}"
+            got = list_runs(repo, ask, lines)
+            if got is None:
+                return None, False
+            got, total = got
+            for r in got:   # a run listed again while a rerun of it runs is no longer done
+                if r.get("status") != "completed":
+                    have.items.pop(str(r.get("id")), None)
+            have.items.update({str(r["id"]): dict(databaseId=r["id"], headSha=r.get("head_sha"), workflowName=r.get("name"), event=r.get("event"),
+                                                  conclusion=r.get("conclusion"), attempt=r["run_attempt"], createdAt=r["created_at"]) for r in got
+                               if r.get("status") == "completed" and isinstance(r.get("id"), int) and isinstance(r.get("run_attempt"), int)})
+            held += [r["created_at"][:10] for r in got if r.get("status") != "completed"
+                     and not (r.get("status") in ("queued", "waiting", "requested", "pending") and r["created_at"] < stale)]
+            if len(got) >= total:
+                finished = True
+                break
+            oldest = min(r["created_at"][:10] for r in got) if got else lo
+            if oldest <= lo or (hi and oldest >= hi):   # a day of over 1000 runs, or no way on
+                lines.append(f"flaky tests: gh listed {len(got)} of the {total} runs of {repo} created {ask}, the newest; the rest are left out")
+                whole, finished = False, True
+                break
+            hi = oldest
+        finished = True
+    finally:   # what was listed is kept, a Stop too; a listing left part way (a hole) moves next on by nothing
+        served = [r for r in have.items.values() if start <= r["createdAt"][:10] <= (end or "9999-12-31")]
+        newest = min(held) if held else max([r["createdAt"][:10] for r in have.items.values()] + [last])
+        have.save(newest if finished else min(newest, last), lambda r: r["createdAt"][:10], RUN_DAYS)
+    return served, whole
+
+def list_runs(repo, ask, lines):
+    # One paginated listing of the runs created ask (gh's syntax): (its runs, how many GitHub has), or
+    # None and a line in lines when gh cannot list them. Raises Stop.
     pages = capped("api", "--paginate", "--slurp", f"repos/{repo}/actions/runs?created={urllib.parse.quote(ask)}&per_page=100",
                    seconds=LOG_SECONDS)
     pages = [p for p in pages if isinstance(p, dict)] if isinstance(pages, list) else None
     if pages is None:
         lines.append(f"flaky tests: left out the runs of {repo} created {ask}: {CONTROL.sub('', ERROR[0])}")
-        return None, False
+        return None
     got = [r for p in pages for r in p.get("workflow_runs") or [] if isinstance(r, dict) and isinstance(r.get("created_at"), str)]
-    total = max([p["total_count"] for p in pages if isinstance(p.get("total_count"), int)] + [len(got)])
-    lines.extend([f"flaky tests: gh listed {len(got)} of the {total} runs of {repo} created {ask}, the newest; the rest are left out"] if len(got) < total else [])
-    have.items.update({str(r["id"]): dict(databaseId=r["id"], headSha=r.get("head_sha"), workflowName=r.get("name"), event=r.get("event"),
-                                          conclusion=r.get("conclusion"), attempt=r["run_attempt"], createdAt=r["created_at"]) for r in got
-                       if r.get("status") == "completed" and isinstance(r.get("id"), int) and isinstance(r.get("run_attempt"), int)})
-    # A run still running holds its day for the next listing; one queued or waiting for over a day
-    # (a runner that never came) does not.
-    stale = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    held = [r["created_at"][:10] for r in got if r.get("status") != "completed"
-            and not (r.get("status") in ("queued", "waiting", "requested", "pending") and r["created_at"] < stale)]
-    # ponytail: a listing cut at the 1000 moves nothing on, so a window of more runs is listed whole each time.
-    if len(got) >= total:
-        have.save(min(held) if held else max([r["createdAt"][:10] for r in have.items.values()] + [have.state["next"]]),
-                  lambda r: r["createdAt"][:10], RUN_DAYS)
-    return [r for r in have.items.values() if start <= r["createdAt"][:10] <= (end or "9999-12-31")], len(got) >= total
+    return got, max([p["total_count"] for p in pages if isinstance(p.get("total_count"), int)] + [len(got)])
 
 def cached_run(r):
     # Whether a cached run has what window_runs gives each run; a cache with one that has not is rebuilt.

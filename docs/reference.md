@@ -940,23 +940,30 @@ commands still run, and each prints which section now holds its numbers.
 
 GitHub history that is finished never changes, so `flow` (and dash's ci refresh, which runs it)
 reads it from `gh` once and keeps it in `.swarm/gh-cache/<owner>--<repo>/` (`bin/lib/gh_cache.py`),
-one JSON file per record: a merged PR; a closed PR's commits and runs, once none of those runs is
-still running; a completed run's jobs and earlier attempts; the `FAIL` and `TIMEOUT` lines of a red
-attempt's log (never the whole log, and never an empty answer, which comes back while GitHub is
-still archiving a log); a PR's `createdAt` and branch; the merged PRs `rework` searches; and the
-repo's completed runs that the flaky tests read, for the last 90 days. An open PR and a run still in
-progress are read fresh every time. A closed PR that was not merged can be reopened, so it is read
-again every time, and its commits and runs are read again once its `updated_at` moves. The two
-listings ask `gh` once for the window while nothing is cached, then only for what is new, and the
-window is served from the cache: merged PRs from a day before the newest cached one's day (GitHub's
-search can list a merge late), and runs from three days before the newest cached one's day (so a
-rerun since is read), or from the oldest day with a run still running (a run queued for over a day
-holds nothing). A listing cut at GitHub's 1000 moves nothing on, so a window of more runs is listed
-whole each time. A file is written to a temp file and renamed, so a parallel `flow` never reads half
-of one; one that cannot be read or parsed is read from `gh` again and rewritten. `--no-cache` reads
-nothing from the cache, `.swarm/outcomes-prs.tsv` included, and writes what `gh` answers over it.
-Setting `SWARM_GH_CACHE` empty turns the cache off (the tests whose `gh` stub changes between runs
-do). Once a closed PR's runs are cached, a later rerun of one of them shows only with `--no-cache`.
+one JSON file per record: a merged PR; a closed PR's commits and runs, once `gh` lists some runs and
+none of them is still running; a completed run's jobs and earlier attempts; the `FAIL` and `TIMEOUT`
+lines of a red attempt's log (never the whole log, and never an empty answer, which comes back while
+GitHub is still archiving a log); a PR's `createdAt` and branch; the merged PRs `rework` searches;
+and the repo's completed runs that the flaky tests read, for the last 90 days or the window, if
+longer. An open PR and a run still in progress are read fresh every time. A closed PR that was not
+merged can be reopened, so it is read again every time, and its commits and runs are read again
+(and the old ones deleted) once its `updated_at` moves.
+
+The two listings ask `gh` for the window while nothing is cached, then only for what is new, and the
+window is served from the cache. Merged PRs are searched from a day before the newest cached one's
+day, because GitHub's search can list a merge late. Runs are listed from three days before the
+newest cached one's day, or from the oldest day with a run still running (a run queued for over a
+day holds nothing), or from the window's start when that is later. A run listed again while a rerun
+of it is running is dropped until the rerun ends. A rerun keeps its run's creation time, so a rerun
+of a run created more than three days before the newest cached day is not seen. A runs listing
+that GitHub cuts at 1000 (the newest) is listed again up to the oldest day it reached, until it is
+whole; only a single day of more than 1000 runs is left out, and a line says so. A merged-PR list cut
+at its 1000 is kept, and `rework` says on that run what it may have missed. A file is written to a
+temp file and renamed, so a parallel `flow` never reads half of one; one that cannot be read or
+parsed is read from `gh` again and rewritten, and one that would not change is not written.
+`--no-cache` reads nothing from the cache, `.swarm/outcomes-prs.tsv` included, and writes what `gh`
+answers over it, so it also shows a rerun the cache missed. Setting `SWARM_GH_CACHE` empty turns the
+cache off (the tests whose `gh` stub changes between runs do).
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
 the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR

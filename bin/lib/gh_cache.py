@@ -4,7 +4,7 @@
 # over it. A record that is not finished (an open PR, a run in progress) is never written, so it is
 # read fresh every time. A write is a temp file renamed over the old one, so a parallel flow never
 # reads half a file; one that cannot be read or parsed is fetched again.
-import datetime, json, os, re, tempfile
+import datetime, glob, json, os, re, tempfile
 
 def path(repo, name):
     return os.path.join(os.environ.get("SWARM_GH_CACHE", ""), repo.lower().replace("/", "--"), name + ".json")
@@ -62,12 +62,27 @@ def as_of(n, pr):
     # The key of PR n's records as pr (pull's) stands: a reopened PR, or a push to it, moves its updated_at.
     return f"{n}-{pr.get('updated_at') or ''}" if isinstance(pr, dict) else str(n)
 
+def forget(repo, kind, n, pr):
+    # Deletes PR n's kind records kept under an earlier updated_at, once pr (pull's) is closed and not
+    # merged: only its newest key is read again.
+    if not os.environ.get("SWARM_GH_CACHE") or not closed(pr) or merged(pr):
+        return
+    keep = path(repo, f"{kind}/{as_of(n, pr)}")
+    for p in glob.glob(os.path.join(glob.escape(os.path.dirname(keep)), f"{n}-*.json")):
+        try:
+            if p != keep:
+                os.remove(p)
+        except OSError:
+            pass
+
 def commits(repo, n, pr, gh):
     # PR n's commits, its pages slurped, cached while pr (pull's) is closed, each its sha and message alone.
-    return cached(repo, f"commits/{as_of(n, pr)}", lambda: gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{n}/commits?per_page=100"),
-                  lambda pages: closed(pr) and isinstance(pages, list),
-                  lambda pages: [[{"sha": c.get("sha"), "commit": {"message": (c.get("commit") or {}).get("message")}}
-                                  for c in page if isinstance(c, dict)] for page in pages if isinstance(page, list)])
+    got = cached(repo, f"commits/{as_of(n, pr)}", lambda: gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{n}/commits?per_page=100"),
+                 lambda pages: closed(pr) and isinstance(pages, list),
+                 lambda pages: [[{"sha": c.get("sha"), "commit": {"message": (c.get("commit") or {}).get("message")}}
+                                 for c in page if isinstance(c, dict)] for page in pages if isinstance(page, list)])
+    forget(repo, "commits", n, pr)
+    return got
 
 DAY = re.compile(r"\d{4}-\d\d-\d\d")
 
@@ -80,22 +95,29 @@ class Listing:
         self.fresh = not (isinstance(got, dict) and isinstance(got.get("items"), dict)
                           and all(isinstance(got.get(k), str) and DAY.fullmatch(got[k]) for k in ("from", "next"))
                           and got["from"] <= start and all(map(valid, got["items"].values())))
-        self.repo, self.name = repo, name
+        self.repo, self.name, self.start = repo, name, start
         self.state = {"from": start, "next": start, "items": {}} if self.fresh else got
         self.items = self.state["items"]
+        self.read = json.dumps(self.state, sort_keys=True)   # as read, so a save that changes nothing writes nothing
 
     def since(self, back):
         # The day to list from: back days before next (for records listed late, or changed since),
-        # never before from.
+        # never before from; or start, when the window starts after next, and the cache then holds
+        # from start (the days between are never listed).
+        if self.start > self.state["next"]:
+            self.state["from"] = self.start
         day = datetime.date.fromisoformat(self.state["next"]) - datetime.timedelta(days=back)
         return max(day.isoformat(), self.state["from"])
 
     def save(self, next_day, day=None, keep_days=None):
-        # Writes the items, the next listing to start from next_day; with keep_days, items whose day
-        # (day(item)) is older than that many days are dropped, and from moves up past them.
+        # Writes the items, the next listing to start from next_day, unless nothing changed; with
+        # keep_days, items whose day (day(item)) is older than that many days, and older than start,
+        # are dropped, and from moves up past them.
         if keep_days:
             cut = (datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=keep_days)).isoformat()
+            cut = min(cut, self.start)
             self.state["items"] = self.items = {k: v for k, v in self.items.items() if day(v) >= cut}
             self.state["from"] = max(self.state["from"], cut)
         self.state["next"] = max(next_day, self.state["from"])
-        put(self.repo, self.name, self.state)
+        if json.dumps(self.state, sort_keys=True) != self.read:
+            put(self.repo, self.name, self.state)
