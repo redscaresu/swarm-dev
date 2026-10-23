@@ -1,5 +1,5 @@
 ---
-description: Scope an epic (docs/epics/<slug>.md) into adversarially-checked stories with a herdr swarm — every agent in its own pane
+description: Use when asked to plan an epic or split it into stories. Scopes an epic (docs/epics/<slug>.md) into adversarially-checked stories with a herdr swarm — every agent in its own pane
 argument-hint: "<epic-slug>  e.g. firewall-end-to-end"
 ---
 

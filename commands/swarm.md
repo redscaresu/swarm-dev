@@ -1,5 +1,5 @@
 ---
-description: Start here. Runs the whole chain from wherever it stands (epics, stories, builds), stopping only where the user must decide
+description: Use when asked to build, continue or run the epic, the swarm or the next step. Runs the whole chain from wherever it stands (epics, stories, builds), stopping only where the user must decide
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
@@ -98,6 +98,20 @@ Repeat until a step below says stop:
      `wait` nudges a conductor only to resume a turn that stopped on an API error. When it returns,
      go back to 1. Never
      close a conductor that has not reported.
+
+     `next` itself starts a conductor for ready work that has none, and prints what it did after
+     the why. A `started: <conductor> (swarm.sh conduct <arg>)` line is a conductor now working:
+     `wait --until-report` it too. A line that begins `no conductor started:`, `no conductor for epic <e> started:` or
+     `no backlog conductor started:` says why none did: a conductor that has reported (collect it
+     first), a report nobody collected, an expired login or API error, another project's agent
+     holding the name, or a report newer than every story and epic file (the board must change
+     first). The backlog's can also say its report lists a story under `not started:` whose worktree
+     is still there, so that build died: clear it first, as the line says. A `warning: ... failed`
+     line means the start failed: run the `swarm.sh conduct` it names yourself once the cause is
+     fixed. `warning: herdr cannot list its agents ...` means none was started because which
+     conductors run is not known: check that herdr is running, then run `swarm.sh next` again. Delete a conductor's
+     report yourself only when its pane is gone and you have read it, as `no conductor started:
+     <conductor> is gone, and nobody collected <report>` says; `collect` closes the others.
 
      In the same response, also run `swarm.sh wait --lead` in the background. It returns when
      something new lands in your queue while the conductor works, one line per item. For a

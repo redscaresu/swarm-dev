@@ -1,5 +1,5 @@
 ---
-description: Start or resume a draft epic (docs/epics/) co-written with the user on the most capable model, in its own herdr pane
+description: Use when asked to write, start or resume an epic. Starts or resumes a draft epic (docs/epics/) co-written with the user on the most capable model, in its own herdr pane
 argument-hint: "[title]  e.g. Firewalled by default; none resumes the draft in progress"
 ---
 
@@ -69,7 +69,7 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    with no fresh agreement. Remove an old `D/review.md` when starting a new epic; on a resume, move
    it to `D/review-stale.md` and tell the co-author it is the last review, written against an
    earlier draft. Then `swarm.sh agent _epic epic-<slug> "$PWD" epic .swarm/briefs/epic-<slug>.md`
-   (the tab `_epic`: a leading underscore no epic, story or HLD slug can take, so closing it never
+   (the tab `_epic`: a leading underscore no epic or story slug can take, so closing it never
    reaches another tab), and tell the user which pane to work in: they stay there throughout.
    This session supervises; it does not co-write.
 4. In the background, without asking the user to come back, watch for `D/agreed` from step 3 on,
