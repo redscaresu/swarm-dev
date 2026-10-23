@@ -1220,7 +1220,7 @@ start_conductor() {
   HERDR_WORKSPACE_ID="${ws}" start_agent "${tab}" "${name}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
-  inbox="$(conductor_inbox "${name}")"; rm -f "${inbox}.md" "${inbox}.reading.md" "${inbox}.woke" "${inbox}.later" "${inbox}.upgrade"; rmdir "${inbox}.lock" 2>/dev/null || true
+  inbox="$(conductor_inbox "${name}")"; rm -f "${inbox}.md" "${inbox}.reading.md" "${inbox}.woke" "${inbox}.later" "${inbox}.upgrade"   # a stale .lock note_lock clears itself
   echo "workspace ${label} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.

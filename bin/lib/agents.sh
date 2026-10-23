@@ -1293,7 +1293,7 @@ note_wake() { local rc=0; note_wake_now "$@" || rc=$?; [[ ${rc} -eq 2 ]] || note
 # upgrade's handover (<base>.upgrade, under an hour old). A lock it cannot take (exit 2), or a prompt that
 # fails, is warned of, and the failed one's stamp is taken back: the note is in the inbox either way.
 note_wake_now() {
-  local t f rc=0
+  local t f rc=0 arg
   [[ -f "$2.md" && ! -f "$(conductor_report "$1")" && -z "$(find "$2.upgrade" -mmin -60 2>/dev/null)" ]] || return 0
   note_wake_due "$2" || return 0
   [[ "$(upgrade_state "$1" "$3")" == idle ]] || return 0
@@ -1302,8 +1302,9 @@ note_wake_now() {
   { note_wake_due "$2" && echo "${t}" > "$2.woke"; } 2>/dev/null || rc=1
   rmdir "$2.lock"
   [[ ${rc} -eq 0 ]] || return 0
+  arg="$(conduct_epic "$1")"; [[ "${arg}" != backlog ]] || arg=--backlog
   if f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")"; then
-    printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then end your turn, leaving any wait or watch you have running alone; start one only if none runs.\n' "$2.md" "$2.reading.md" "$2.reading.md" > "${f}"
+    printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then run swarm.sh unblock --startable %s and start each story it prints as startable:, by the rule in your brief. Then end your turn, leaving any wait or watch you have running alone; start one only if none runs.\n' "$2.md" "$2.reading.md" "$2.reading.md" "${arg}" > "${f}"
     (deliver_prompt "$1" "${f}" "$3" once) 2>/dev/null || rc=$?
     rm -f "${f}"
   else rc=1; fi
@@ -1320,27 +1321,37 @@ note_wake_due() {
   (( $(date +%s) - last >= NOTE_WAKE_SECS ))
 }
 
-# note_wake_later <name> <base> — unless one is pending already (<base>.later; one over two minutes
-# old was killed), start one check in the background, its output dropped: once NOTE_WAKE_SECS have
-# passed since the last wake (or from now, with none due), note_wake_now on the pane that holds <name>
-# then, so a conductor started meanwhile is the one woken, never the one it replaced. That wakes only
-# if the inbox is still there and no wake went out meanwhile. It never starts another, and removes
-# <base>.later only while that still holds its own token: a new conduct may have cleared it.
+# note_wake_later <name> <base> — unless one is pending already (<base>.later, which holds its start
+# time and a token; one older than twice NOTE_WAKE_SECS and a minute was killed), start one check in
+# the background, its output dropped: once NOTE_WAKE_SECS have passed since the last wake (or from
+# now, with none due), note_wake_now on the pane that holds <name> then, so a conductor started
+# meanwhile is the one woken, never the one it replaced. That wakes only if the inbox is still there
+# and no wake went out meanwhile. A wake sent meanwhile, inside the minute, moves the check once to
+# the end of that minute, so it is retried too. It never starts another, and removes <base>.later only
+# while that still holds its own token: a new conduct may have cleared it.
 note_wake_later() {
-  local rc=0 left tok
+  local rc=0 tok was later="$2.later"
   tok="$(date +%s).${RANDOM}"
   note_lock "$2" || return 0
-  find "$2.later" -mmin +2 -exec rm -f {} \; 2>/dev/null || true
-  (set -C; echo "${tok}" > "$2.later") 2>/dev/null || rc=1
+  was="$(cut -d. -f1 "${later}" 2>/dev/null)" || was=""
+  [[ ! "${was}" =~ ^[0-9]+$ ]] || (( $(date +%s) - was <= 2 * NOTE_WAKE_SECS + 60 )) || rm -f "${later}"
+  (set -C; echo "${tok}" > "${later}") 2>/dev/null || rc=1
   rmdir "$2.lock"
   [[ ${rc} -eq 0 ]] || return 0
-  left=$(( $(cat "$2.woke" 2>/dev/null || echo 0) + NOTE_WAKE_SECS - $(date +%s) ))
-  (( left > 0 && left <= NOTE_WAKE_SECS )) || left="${NOTE_WAKE_SECS}"
-  # shellcheck disable=SC2064 # expand now
-  ( trap "[[ \"\$(cat '$2.later' 2>/dev/null)\" != '${tok}' ]] || rm -f '$2.later'" EXIT
-    sleep "${left}"
+  ( trap '[[ "$(cat "${later}" 2>/dev/null)" != "${tok}" ]] || rm -f "${later}"' EXIT
+    sleep "$(note_wake_left "$2")"
+    note_wake_due "$2" || sleep "$(note_wake_left "$2")"
     pane="$(agent_field "$1" pane_id)"
     [[ -z "${pane}" ]] || note_wake_now "$1" "$2" "${pane}" ) </dev/null >/dev/null 2>&1 &
+}
+
+# note_wake_left <base> — the seconds until NOTE_WAKE_SECS have passed since the last wake
+# (<base>.woke), or NOTE_WAKE_SECS with none inside the minute.
+note_wake_left() {
+  local left
+  left=$(( $(cat "$1.woke" 2>/dev/null || echo 0) + NOTE_WAKE_SECS - $(date +%s) ))
+  (( left > 0 && left <= NOTE_WAKE_SECS )) || left="${NOTE_WAKE_SECS}"
+  echo "${left}"
 }
 
 # note_lock <base> — take <base>.lock (mkdir through perl, as state_lock), clearing one a killed tell

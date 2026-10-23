@@ -6,8 +6,9 @@
 # and no prompt. One prompt a minute at most (SWARM_NOTE_WAKE_SECS, 4 here), per conductor: a second
 # note within it, after the conductor took the inbox to read it too, or two at once (each prompt
 # takes a second with ${ROOT}/slow), send one prompt now; a deferred check sends one more once the
-# minute is up while the inbox is still there, which also retries a prompt that was dropped, and
-# sends none once the inbox was read. A lock a killed tell left is cleared; one held is warned of. A
+# minute is up while the inbox is still there, which also retries a prompt that was dropped (one
+# sent inside a pending check's minute too, at the end of its own), and sends none once the inbox
+# was read. A lock a killed tell left is cleared; one held is warned of. A
 # prompt that fails (${ROOT}/promptfail) warns, with no die line, and lets the next note prompt. No
 # prompt goes to a conductor that wrote its report, or one paused for upgrade's handover
 # (<inbox>.upgrade), though the note lands. A deferred check wakes the conductor that holds the name
@@ -20,9 +21,9 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-p="${ROOT}/proj"
-# settle — wait (15 s at most) for the deferred check a note left to finish.
-settle() { local i; for ((i = 0; i < 75; i++)); do compgen -G "${p}/.swarm/inbox/*.later" >/dev/null || return 0; sleep 0.2; done; }
+p="${ROOT}/o'proj"   # an apostrophe in the path, which the deferred check's trap must survive
+# settle — wait (20 s at most) for the deferred check a note left to finish.
+settle() { local i; for ((i = 0; i < 100; i++)); do compgen -G "${p}/.swarm/inbox/*.later" >/dev/null || return 0; sleep 0.2; done; }
 trap 'settle; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/claude-config/projects"
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json" SWARM_NOTE_WAKE_SECS=4
@@ -71,12 +72,14 @@ check "an idle conductor: tell says it noted it" "noted conduct-e" "$(note)"
 check "an idle conductor: the note is in its inbox" 1 "$(notes)"
 check "an idle conductor: it is sent one prompt" 1 "$(prompts)"
 check "the prompt points it at its brief's .reading.md steps" 1 "$(said "mv the inbox to ${BASE}.reading.md")"
+check "the prompt has it start what unblock --startable prints" 1 "$(said "Then run swarm.sh unblock --startable e and start each story it prints as startable:")"
 check "the prompt has it end its turn and leave its waits alone" 1 "$(said "Then end your turn, leaving any wait or watch you have running alone; start one only if none runs")"
 note >/dev/null
 check "a second note within a minute: both are in the inbox" 2 "$(notes)"
 check "a second note within a minute: no second prompt" 1 "$(prompts)"
 settle
 check "a second note within a minute: one deferred prompt once the minute is up" 2 "$(prompts)"
+check "the deferred check removes its .later" no "$([[ -e "${BASE}.later" ]] && echo yes || echo no)"
 
 state idle
 note >/dev/null
@@ -89,6 +92,14 @@ check "a second note within a minute, after the conductor took the inbox: one de
 state idle
 note >/dev/null; settle
 check "a dropped prompt (inbox still there): retried once the minute is up" 2 "$(prompts)"
+
+state busy
+note >/dev/null   # mid-turn: no wake, and a check due a minute from now
+sleep 2; echo "[{\"sessionId\": \"sc\", \"status\": \"idle\"}]" > "${ROOT}/claude.json"
+note >/dev/null   # its turn has ended: woken, inside the check's minute
+check "a wake inside a pending check's minute: sent" 1 "$(prompts)"
+settle
+check "a wake inside a pending check's minute: retried at the end of its own minute" 2 "$(prompts)"
 
 state idle
 note >/dev/null; rm -f "${INBOX}"; settle   # the conductor read it
