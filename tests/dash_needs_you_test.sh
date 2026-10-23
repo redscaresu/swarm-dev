@@ -183,6 +183,7 @@ litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
 litem stories/m-paid.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/5'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
 litem epics/d.md '' 'status: draft'
+litem hld/h.md '' 'status: draft'
 printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
 printf '2026-10-13\tcode\t%s\tclaude\topus\thigh\t%s\n' l-auth lauth l-wait lwait l-gone lgone l-stall lstall > "${L}/.swarm/agents.tsv"
 cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/lauth.jsonl"
@@ -224,7 +225,7 @@ for l in sys.stdin.read().splitlines():
 print("\n".join(out))' "$1" <<< "$2"
 }
 joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s ' '; }
-YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft epic d: /epic d")
+YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft epic d: /epic d" "! agree draft HLD h: /hld h")
 LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
@@ -245,6 +246,8 @@ for cols in 100 160; do
     check "lead = session at ${cols} columns: the lead's queue holds '${want}'" has "${want}" "$(joined "${queue}")"
     check "lead = session at ${cols} columns: needs you lacks '${want}'" lacks "${want}" "$(joined "${needs}")"
   done
+  check "lead = session at ${cols} columns: a draft HLD is one needs-you row, not also a waiting line" \
+    test "$(grep -c 'draft HLD h\|draft hld' <<< "${out}")" -eq 1
   check "lead = session at ${cols} columns: the legend says ! is needs you or the lead" has "! needs you or the lead (session gone or unknown)" "${out}"
   check "lead = session at ${cols} columns: needs you shows the first **You:** step's text, with +1 more" \
     has "! run lead story you-ask waits for: you: create the read-only user +1 more" "$(joined "${needs}")"

@@ -625,6 +625,9 @@ waiting_on_user() {
       review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board epics)
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" != draft ]] || waiting+="  draft hld: $(basename "${f}" .md), run /hld $(basename "${f}" .md)"$'\n'
+  done < <(board hld)
   printf '%s' "${waiting%$'\n'}"
 }
 

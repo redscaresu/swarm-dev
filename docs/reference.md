@@ -636,8 +636,10 @@ in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, is read-only and ru
 runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/code-review <PR URL>`.
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
-touches do not name it. Its brief carries the project's own rules, as a builder's does, and six checks
-the lead used to make by hand, which the fallback reviewer's brief carries too. After them come the
+touches do not name it. One exception: a comment, doc or error-text line that the changed code no
+longer matches is a finding at its `file:line`, even when its file is outside the touches. Its brief
+carries the project's own rules, as a builder's does, and the checks the lead used to make by hand,
+which the fallback reviewer's brief carries too. After them come the
 lines of the story and its epic that hold a `(user, <date>)` mark. Each is printed as it stands, with
 its `path:line`, cut at 1500 bytes on a character boundary, and the brief tells the reviewer to read
 each decision in full at that line. Together they take at most 2000 bytes; past that, the brief says
