@@ -7,6 +7,8 @@ properties:
     displayName: Status
   note.epic:
     displayName: Epic
+  note.hld:
+    displayName: HLD
   note.depends_on:
     displayName: Depends on
   note.kind:
@@ -50,6 +52,7 @@ views:
       direction: ASC
     order:
       - file.name
+      - hld
       - depends_on
     columnSize:
       file.name: 280

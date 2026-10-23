@@ -1,8 +1,7 @@
 # High-level designs
 
-The top of the planning chain: **HLD → epics → stories → built in parallel** (swarm-dev `docs/method.md`
-§ The planning chain). An HLD is written with the user, on the most capable model, before any work
-is scoped.
+The top of the planning chain: **HLD → epics → stories → built in parallel**. An HLD is written
+with the user, on the most capable model, before any work is scoped.
 
 File: `docs/hld/YYYY-MM-DD-<slug>.md` — the day it was started, then a slug. No spaces: Obsidian
 writes a space in a link as `%20`, which the link test cannot resolve. Start one with
