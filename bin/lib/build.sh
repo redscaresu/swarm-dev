@@ -711,6 +711,7 @@ Hold the PR to these as well:
 - A repair path that changes something must say what it did.
 - For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it.
 - An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches.
+- For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding.
 EOF
   [[ -f "${1:-}" ]] || return 0
   # shellcheck disable=SC2016 # the backticks are for the reader

@@ -352,6 +352,7 @@ CHECKLIST=(
   "- A repair path that changes something must say what it did."
   "- For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it."
   "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
+  "- For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
 )
 for l in "${CHECKLIST[@]}"; do
