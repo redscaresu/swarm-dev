@@ -46,6 +46,7 @@ item "${B}/epics/e-bad.md" "status: active" "hld: bad"
 item "${B}/epics/cyc-a.md" "status: active" "parent: cyc-b"
 item "${B}/epics/cyc-b.md" "status: active" "parent: cyc-a"
 item "${B}/stories/s-child.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/3"
+item "${B}/stories/s-hld.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/4"
 item "${B}/stories/s-draft.md" "status: ready" "epic: e-draft"
 item "${B}/stories/s-old.md" "status: ready" "epic: e-old"
 item "${B}/stories/s-gone.md" "status: ready" "epic: e-gone"
@@ -78,7 +79,13 @@ expect missing-hld-file-none s-gone none
 expect missing-epic-none s-orphan none
 expect no-epic-none s-none none
 expect parent-cycle-ends s-cyc none
+# story PRs: #3 changes code; #4 changes an HLD too, so it is under none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.3"
+echo '[{"filename":"bin/x.sh"}]' > "${FX}/repos_o_r_pulls_3_files_per_page=100"
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.4"
+echo '[{"filename":"bin/x.sh"},{"filename":"docs/hld/2026-01-01-a.md"}]' > "${FX}/repos_o_r_pulls_4_files_per_page=100"
 expect story-pr https://github.com/o/r/pull/03 "$(printf '%s\nmerge\nstories' "${A}")"
+expect story-pr-touching-hld-none https://github.com/o/r/pull/4 none
 
 grants s-bad
 if [[ ${rc} -ne 0 ]] && grep -qF "${B}/hld/bad.md:4: grants must be epics, stories, merge or release" "${ROOT}/out"; then
