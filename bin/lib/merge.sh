@@ -1377,6 +1377,7 @@ status_report() {
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
     SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
       python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
+    upgrade_status
   else
     echo "Agents: not inside herdr, so their states are not available"
   fi
