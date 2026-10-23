@@ -78,11 +78,9 @@ Code that adds a flag or setting ships with it off, so merging the code changes 
 it on is a separate `lead` story with its own PR. A PR that both adds code and switches it on cannot
 tell you which of the two broke something, and cannot be rolled back one half at a time.
 
-**3. Verify** — in parallel, a chain at most 3 deep (a skeptic flags a longer one):
-- one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked), given the `depends_on` graph.
-  It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR (over the cap of one new command or one changed behaviour and about 300 lines in step 2, by its `estimate_lines`), an unstated dependency,
-  a `touches` clash inside its wave, a `depends_on` story that shares no file in `touches` with it while it has no `needs:` line naming what it uses from that story (disjoint touches: drop the dependency, or add the `needs:` line), a `done_when` that passes while the work is broken, a wrong `kind` (an agent story that needs
-  real cloud, credentials or a person), or a missing or wrong `costs: money` (a story whose merge can spend money).
+**3. Verify** — in parallel, a chain at most 3 deep (the lead checks chain depth over the whole graph):
+- one `skeptic-<slug>` only per story with `risk: high`, role `skeptic`, capped at five (say which were not checked), given the `depends_on` graph. An epic with no `risk: high` story gets no skeptic.
+  It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR (over the cap of one new command or one changed behaviour and about 300 lines in step 2, by its `estimate_lines`), an unstated dependency, a `done_when` that passes while the work is broken.
   Output `{sound, problems:[{why}], fix}`; unsure means `sound: false`.
 - one `codex`, role `codex` (read-only, a different model family): missing stories, stories too
   big for one PR, `done_when` criteria that could pass on broken work, and overlaps within a wave.
@@ -90,10 +88,10 @@ tell you which of the two broke something, and cannot be rolled back one half at
   `gh auth status` first, which fails inside codex's sandbox, and codex then stops without reviewing.
 - one `critic`, role `critic`: what the plan missed — a change the epic's
 **Done when** needs that no story makes, an unrespected constraint, a test or doc nobody updates, a
-  real-cloud step hidden inside an agent story. A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words.
+  real-cloud step hidden inside an agent story. For every story, skeptic or not, it also checks: a `touches` clash inside a wave, a `depends_on` story that shares no file in `touches` with it while it has no `needs:` line naming what it uses from that story (disjoint touches: drop the dependency, or add the `needs:` line), a wrong `kind` (an agent story that needs real cloud, credentials or a person), and a missing or wrong `costs: money` (a story whose merge can spend money). A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words.
 
 **Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
-the plan does not answer; the surviving stories with `kind`, `estimate_lines`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain (the lead checks chain depth over the whole graph, since skeptics are capped); then **What you will do**: every `lead`
+the plan does not answer; the surviving stories with `kind`, `estimate_lines`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain (the lead checks chain depth over the whole graph, since skeptics run only on `risk: high` stories); then **What you will do**: every `lead`
 story, what each needs from the user (its **You:** steps), and, with `merge = human`, that the user
 merges the resulting PRs. Ask before
 writing anything. Before each approval point (this one, and the small path's and the split's question

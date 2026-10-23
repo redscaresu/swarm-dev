@@ -62,6 +62,7 @@ has survey-name 'named `survey`' "$flat"
 has small-worktree 'board-pr start scope-.*commit them there' "$flat"
 has small-open 'board-pr open scope-.*board-pr done scope-' "$flat"
 has skeptic-chain 'depends_on` chain through it more than 3 stories deep' "$flat"
+has skeptic-high 'only per story with `risk: high`' "$flat"
 has declined-reasons '`out-of-scope`, `nit` or `wrong`' "$flat"
 has folded 'folded into'
 has log-skeptic 'log-finding --reviewer skeptic[|]codex[|]critic <kind> <board PR URL>' "$flat"

@@ -100,7 +100,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **Design is Fable.** An epic is co-written at `high`, because the user waits on every turn, and
   attacked at `xhigh` before it is agreed.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
-  critic run at `high`, because a skeptic is the only gate a story passes before it is built.
+  critic run at `high`; a `risk: high` story gets a skeptic, and the critic checks the rest.
 - **Reading is Sonnet, chores are Haiku.** Surveys read and cite at `high`, since they feed the
   lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
   mechanical diff, checked by the conductor.
@@ -237,7 +237,7 @@ stories, or goals that can ship apart) is split by the lead alone into child epi
 counts as done once none of its children is left. Any other epic gets one survey agent unless its text names another repo (three
 then), one lead decomposition into one-PR stories with `kind`, `touches` and `depends_on` (a
 chain at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`),
-and a skeptic per story (capped at five, the rest logged), a codex pass and a critic, all in
+a skeptic only on each `risk: high` story (capped at five, the rest logged), a codex pass and a critic, all in
 parallel. `risk: high` goes only to real-cloud, teardown, credentials and safety paths. Agents write their answers to
 `.swarm/<epic>/`. The user sees refuted stories, contradictions, the risky stories and stories ÷
 longest chain first, and approves before the board PR opens; review fixes are folded into
