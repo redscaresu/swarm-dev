@@ -101,11 +101,15 @@ Repeat until a step below says stop:
 
      `next` itself starts a conductor for ready work that has none, and prints what it did after
      the why. A `started: <conductor> (swarm.sh conduct <arg>)` line is a conductor now working:
-     `wait --until-report` it too. A `no conductor started: ...` line says why none did: a
-     conductor that has reported (collect it first), a report nobody collected, an expired login or
-     API error, another project's agent holding the name, or a report newer than every story and
-     epic file (the board must change first). A `warning: ... failed` line means the start failed:
-     run the `swarm.sh conduct` it names yourself once the cause is fixed. Delete a conductor's
+     `wait --until-report` it too. A line that begins `no conductor started:`, `no conductor for epic <e> started:` or
+     `no backlog conductor started:` says why none did: a conductor that has reported (collect it
+     first), a report nobody collected, an expired login or API error, another project's agent
+     holding the name, or a report newer than every story and epic file (the board must change
+     first). The backlog's can also say its report lists a story under `not started:` whose worktree
+     is still there, so that build died: clear it first, as the line says. A `warning: ... failed`
+     line means the start failed: run the `swarm.sh conduct` it names yourself once the cause is
+     fixed. `warning: herdr cannot list its agents ...` means none was started because which
+     conductors run is not known: check that herdr is running, then run `swarm.sh next` again. Delete a conductor's
      report yourself only when its pane is gone and you have read it, as `no conductor started:
      <conductor> is gone, and nobody collected <report>` says; `collect` closes the others.
 
