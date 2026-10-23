@@ -473,7 +473,7 @@ ready_tell() {
   # Each board file <url> changes, and 0 when <url> made it live (live_at): not at <prev>, but at
   # <oid>, so not a later PR pulled with it.
   while IFS= read -r p; do
-    [[ "${p}" == "${d}stories/"*.md || "${p}" == "${d}epics/"*.md ]] || continue
+    [[ "${p}" == "${d}stories/"*.md || "${p}" == "${d}epics/"*.md ]] || continue   # loose-match: ok a story or epic file under the board, which has no subdirectories
     if ! live_at "$5" "${p}" && live_at "${oid}" "${p}"; then was+="${p}"$'\t'0$'\n'; else was+="${p}"$'\t'1$'\n'; fi
   done <<< "$3"
   new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | WAS="${was}" DIR="${d}stories/" EPICS="${d}epics/" awk '
