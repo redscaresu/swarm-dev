@@ -26,7 +26,7 @@ commands/swarm.md's step list gets two steps, inserted right after the `plan-epi
 - `plan-hld <hld>`: follow /plan-hld; the user approves unless `epics` is granted; the merge grant covers its board PR.
 - `hld <hld>`: run `swarm.sh finish <hld>` and hand its PR to the user (the finish PR is always the user's under merge = human); once that PR merges or is closed, run `swarm.sh board-pr done finish-<hld>`, so an abandoned worktree never hides the HLD.
 
-commands/hld.md step 5 adds that /swarm-dev:swarm plans the agreed HLD next. The HLD READMEs' front-matter block gains `planned: 2026-10-24   # set by /plan-hld's board PR`. bin/swarm.sh's finish and grants usage lines name an HLD. Run humanizer over the commands/ prose and the PR description, and say so in the PR.
+commands/hld.md step 5 adds that /swarm-dev:swarm plans the agreed HLD next. The HLD READMEs describe `planned:` in the prose under the front-matter block (set only by /plan-hld's board PR), never as a line in the fenced skeleton: commands/hld.md step 1 copies that skeleton, so a `planned:` line there would mark every new HLD as planned and offer it for deletion once agreed. bin/swarm.sh's finish and grants usage lines name an HLD. Run humanizer over the commands/ prose and the PR description, and say so in the PR.
 
 **Done when:**
 - tests/plan_hld_test.sh (one grep per rule, as tests/hld_command_test.sh does) fails if commands/plan-hld.md loses: three survey agents; one hld-lead; the skeptic cap of five; codex; critic; `swarm.sh agent plan-$1`; `.swarm/$1/`; `swarm.sh grants $1` before the ask; active under `epics` and draft otherwise; `hld: $1` on every epic; `planned:`; the `## Epics` link; board-pr plan-$1; codex-review; log-finding; `board-pr done plan-$1`; `swarm.sh close plan-$1`; the stop when the board PR is already open.
@@ -34,4 +34,5 @@ commands/hld.md step 5 adds that /swarm-dev:swarm plans the agreed HLD next. The
 - tests/roles_test.sh: hld-lead is in ROLE_GROUPS and policy, `swarm.sh policy hld-lead` prints `claude fable xhigh`, and commands/plan-hld.md reaches the role. The 'hld-lead is in neither' check (:62-64) is gone.
 - tests/review_test.sh: `swarm.sh agent plan-h cx codex` starts codex with `-s workspace-write -C <project>/.swarm/h`.
 - tests/command_names_test.sh requires commands/plan-hld.md; doc_check, skill_test and `claude plugin validate .` pass.
+- tests/plan_hld_test.sh fails if the fenced skeleton in templates/docs/hld/README.md holds a `planned:` line.
 - `make test` passes.
