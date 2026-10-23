@@ -145,7 +145,7 @@ pull 4 d closed null "${r21}"   # reopened, pushed to and closed again
 flow > /dev/null
 check "once closed PR 4's updated_at moves, its commits and runs are read again" "$(calls 'pulls/4/') $(calls 'branch story/d ')" "1 1"
 check "and the ones kept under the old updated_at are deleted" "$(find "${C}/commits" "${C}/runs" -name '4-*' | wc -l | tr -d ' ')" 2
-inode() { stat -f %i "$1" 2>/dev/null || stat -c %i "$1"; }   # BSD, then GNU
+inode() { python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_ino)' "$1"; }   # stat's flags differ on BSD and GNU
 before="$(inode "${C}/merged.json") $(inode "${C}/runs.json")"; flow > /dev/null
 check "a flow that lists nothing new writes neither listing" "$(inode "${C}/merged.json") $(inode "${C}/runs.json")" "${before}"
 flow --until "$(ago 6)" > /dev/null
