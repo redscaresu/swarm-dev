@@ -124,6 +124,10 @@ lists them all.
 
 ## Updating
 
+When the lead merges a swarm-dev release with `swarm.sh merge --release`, it updates the plugin and
+starts `swarm.sh upgrade` for the running agents itself. Then it asks you to restart the lead
+session (`/exit`, then `claude --continue`). Otherwise, update by hand:
+
 ```bash
 claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swarm-dev
 ```

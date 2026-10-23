@@ -269,9 +269,11 @@ Repeat until a step below says stop:
      green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
      what it printed and stop. If `swarm.sh config merge` is `agent`, run
      `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it.
-     Then check that the tag `v<new>` exists and that `gh release view v<new>` shows the release.
-     For swarm-dev's own repo, merge has updated the plugin and started the agents' upgrade: tell
-     the user its restart line (`/exit`, then `claude --continue`) and any warning it printed. Run `swarm.sh dash --check`, which compares every figure dash shows with the command that
+     For swarm-dev's own repo, merge has confirmed the tag and the GitHub release, updated the
+     plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
+     `claude --continue`) and any warning it printed. For any other repo, check that the tag
+     `v<new>` exists and that `gh release view v<new>` shows the release. Run
+     `swarm.sh dash --check`, which compares every figure dash shows with the command that
      owns it and exits 1 naming each one that differs. If it fails, run it once more, since a
      figure can move between the two reads; if it fails again, file a `kind: code` story naming the
      fields it printed. Remove the worktree and the branch, and go back to 1. If it is `human`,
