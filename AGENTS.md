@@ -103,6 +103,7 @@ Useful while it runs:
 bin/swarm.sh          the entry point: usage, settings, the model policy, the command dispatch
 bin/lib/*.sh          the commands by group (agents, board, build, dash, lifecycle, merge, reports)
 bin/lib/*.py          the Python helpers the commands run
+bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr) and lead-stop.sh (the lead's turn ends only when next allows)
@@ -124,6 +125,7 @@ shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scr
 python3 -m py_compile bin/lib/*.py
 make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
+                                            # it unsets the swarm env that points at a real project, and dash starts no detached refresh
 claude plugin validate .
 ```
 
