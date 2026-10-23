@@ -350,7 +350,7 @@ CHECKLIST=(
   "- A new code path must enforce every rule the existing paths enforce."
   "- A zero or empty value shown to a person must say what it means."
   "- A repair path that changes something must say what it did."
-  "- For each function, flag or message the diff changes, re-read its header comment, error text and the README/docs/reference.md lines naming it; a sentence the code no longer matches is a finding."
+  "- For each function, flag or message that the diff changes, re-read its header comment, error text and the README and docs lines that name it; a sentence the code no longer matches is a finding."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
 )
 for l in "${CHECKLIST[@]}"; do
