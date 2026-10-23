@@ -69,7 +69,11 @@ printf 'w1:p6 is where the brief says to look\n' > "${P}/.swarm/state/brief-x.md
 printf 'w1:p7 halfway\n' > "${P}/.swarm/state/e1.tmp"
 printf '2026-10-01\tconduct\tconduct-e1\tclaude\topus\thigh\tsess-1\n2026-10-02\tcode\ts-one\tclaude\topus\thigh\tsess-2\n' > "${P}/.swarm/agents.tsv"
 # Today's cost, the same as `swarm.sh cost <today>`: 1M input at $4 + 1M output at $20.
-printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
+# Every watch's clock is fixed (SWARM_DASH_NOW) here, so its ages (s-three's "up 15h54m") cannot tick
+# over a minute between frames and print a changed frame; the header's own HH:MM:SS still moves. The
+# row's day comes from it too, so a setup that crosses midnight still agrees with the clock.
+DASH_NOW="$(date +%s)"
+printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(python3 -c 'import datetime, sys; print(datetime.date.fromtimestamp(int(sys.argv[1])))' "${DASH_NOW}")" >> "${P}/.swarm/agents.tsv"
 echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":1000000}}}' > "${ROOT}/projects/p/sess-today.jsonl"
 # One escalate agent whose session ran on opus (its first message with a model), not the fable its
 # policy names; the ladder shows the session's model. No docs agent: docs shows 0.
@@ -155,14 +159,24 @@ snapshot() { (cd "${P}" && find docs .swarm -path .swarm/gh-cache -prune -o -typ
 before="$(snapshot)"
 
 # --watch off a terminal prints a frame only when it changed, plain, until stopped.
-# The stubs go first on PATH, so no watch here reaches the real herdr or gh. It waits up to 30 s for
-# the first frame, then 2 s more, in which an unchanged frame must not print again.
-(cd "${P}" && exec env -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
+# The stubs go first on PATH, so no watch here reaches the real herdr or gh. A python3 ahead of them
+# logs each run of dash_render.py, one per frame, wherever the script falls among its arguments.
+# Renders run one after another, so once the third has started the second has been compared with the
+# first and, had it changed, printed: the test waits up to 120 s for that (30 s a render, and the first
+# gh and cost pass), and an unchanged frame must not have printed again.
+mkdir -p "${ROOT}/countpy"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\nfor a; do case "$a" in */dash_render.py) echo render >> "%s" ;; esac; done\nexec "%s" "$@"\n' "${ROOT}/renders.log" "$(command -v python3)" > "${ROOT}/countpy/python3"
+chmod +x "${ROOT}/countpy/python3"
+renders() { if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }   # <log>
+(cd "${P}" && exec env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${ROOT}/countpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
 pid=$!
-for _ in $(seq 150); do grep -q -- '─ needs you' "${ROOT}/watch.out" && break; sleep 0.2; done
-sleep 2; kill -TERM "${pid}" || true; wait "${pid}" || true
+for _ in $(seq 600); do [ "$(renders "${ROOT}/renders.log")" -ge 3 ] && break; sleep 0.2; done
+got="$(renders "${ROOT}/renders.log")"
+kill -TERM "${pid}" || true; wait "${pid}" || true
 w="$(cat "${ROOT}/watch.out")"
 check "--watch off a terminal draws the frame" has "─ needs you" "${w}"
+check "--watch off a terminal renders a third frame" test "${got}" -ge 3
 check "--watch off a terminal does not repeat an unchanged frame" test "$(grep -c -- '─ needs you' <<< "${w}")" -eq 1
 check "--watch off a terminal has no ANSI escapes" lacks $'\033' "${w}"
 
@@ -226,11 +240,8 @@ while select.select([fd], [], [], 0.5)[0]:   # what the watch wrote before it ex
 open(out_path, "wb").write(out)
 sys.exit(os.waitstatus_to_exitcode(status))
 PY
-# The frame's clock is fixed (SWARM_DASH_NOW) at the test's start, so its ages cannot tick over a
-# minute between frames; the header's own HH:MM:SS still moves.
-PTY_NOW="$(date +%s)"
 ptywatch() { # <out> <seconds> <resize-after> <q> [<key>@<seconds>...]; PTY_BIN puts another stub dir first on PATH
-  (cd "${P}" && env -u HERDR_ENV SWARM_DASH_NOW="${PTY_NOW}" PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
+  (cd "${P}" && env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
 }
 plain() { python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read().replace("\r", "")))' < "$1"; }
 frames() { grep -o -- '╭─ needs you' | wc -l | tr -d ' '; }
@@ -274,16 +285,17 @@ PTY_BIN="${ROOT}/longpy" ptywatch "${ROOT}/pty3.out" 30 0 3 || true
 text="$(plain "${ROOT}/pty3.out")"
 check "a failed render is cut to the terminal's height" test "$(wc -l <<< "${text}" | tr -d ' ')" -le 30
 check "a cut failed render keeps its error line" grep -q '^(dash: this render failed; retrying in 30s)' <<< "${text}"
-# A render that fails shows its error in the frame, and the watch keeps going.
+# A render that fails shows its error in the frame, and the watch keeps going: it renders again after
+# the failed one (up to 60 s for the two, 30 s a render), so the error was printed and the loop went on.
 mkdir -p "${ROOT}/badpy"
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\nif [ -n "${DASH_PROJECT:-}" ]; then echo "render boom" >&2; exit 1; fi\nexec "%s" "$@"\n' "$(command -v python3)" > "${ROOT}/badpy/python3"
+printf '#!/bin/sh\nfor a; do case "$a" in */dash_render.py) echo render >> "%s"; echo "render boom" >&2; exit 1 ;; esac; done\nexec "%s" "$@"\n' "${ROOT}/badrenders.log" "$(command -v python3)" > "${ROOT}/badpy/python3"
 chmod +x "${ROOT}/badpy/python3"
-(cd "${P}" && exec env -u HERDR_ENV PATH="${ROOT}/badpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/badwatch.out" 2>&1) &
+(cd "${P}" && exec env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${ROOT}/badpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/badwatch.out" 2>&1) &
 pid=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q "render boom" "${ROOT}/badwatch.out" && break; sleep 1; done
-sleep 2; alive=no
-if kill -0 "${pid}" 2>/dev/null; then alive=yes; fi
+for _ in $(seq 300); do [ "$(renders "${ROOT}/badrenders.log")" -ge 2 ] && break; sleep 0.2; done
+alive=no
+if [ "$(renders "${ROOT}/badrenders.log")" -ge 2 ] && kill -0 "${pid}" 2>/dev/null; then alive=yes; fi
 kill -TERM "${pid}" || true; wait "${pid}" || true
 w="$(cat "${ROOT}/badwatch.out")"
 check "--watch shows a failed render's error" has "render boom" "${w}"
