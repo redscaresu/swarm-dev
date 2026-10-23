@@ -41,10 +41,11 @@ case "$1 $2" in
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
                   "$H/sessions" ;;
   "agent prompt") # prompt holds how the brief goes: fail (herdr surely sent nothing), unread (no reply
-                  # read), or sent (sent, and never taken up).
+                  # read), unreadgone (unread, and review-s13's pane gone), or sent (sent, and never taken up).
                   case "$(cat "$H/prompt" 2>/dev/null)" in
                     fail) echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1 ;;
                     unread) exit 1 ;;
+                    unreadgone) awk '$1 != "review-s13"' "$H/agents" > "$H/agents.new" && mv "$H/agents.new" "$H/agents"; exit 1 ;;
                     sent) exit 0 ;;
                   esac
                   # With quick, the agent writes its findings file while its brief is still being delivered.
@@ -251,6 +252,13 @@ echo "head: OLDER-REVIEW" > "${p}/.swarm/reviews/s12.md.prev"; echo fail > "${RO
 check "a failed start of review-s12 does not bring back an older run's findings left aside" "1|no|no" \
   "$(set +e; run review-agent s12 "${PR}" >/dev/null; echo "$?")|$([[ -e "${p}/.swarm/reviews/s12.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/reviews/s12.md.prev" ]] && echo yes || echo no)"
 rm "${ROOT}/prompt" "${ROOT}/getidle"
+# With no pane left, an error that says the brief may have gone out still fails and puts the file back.
+sed "s/s4/s13/g" "${b}/stories/s4.md" > "${b}/stories/s13.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/s13 "${ROOT}/svc-wt/s13" origin/main
+echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s13.md"; echo unreadgone > "${ROOT}/prompt"
+check "when review-s13's brief may have gone out but its pane is gone, review-agent fails and puts the findings back" "1|head: OLD-REVIEW|no" \
+  "$(set +e; SWARM_SLEEP_SCALE=0.02 run review-agent s13 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s13.md")|$([[ -e "${p}/.swarm/reviews/s13.md.prev" ]] && echo yes || echo no)"
+rm "${ROOT}/prompt"
 
 # --- An agent that writes its findings before review-agent returns keeps them: only the last
 # review's file is removed.

@@ -586,23 +586,24 @@ review_agent() {
 
 # review_start_failed <slug> <err> — after review_agent's start of review-<slug> failed with <err>,
 # its last findings file (if any) moved aside to <slug>.md.prev by that start. With its pane open and
-# reading working or blocked, the start was unclear but the agent runs: say so and succeed. Reading
-# anything else, with <err> saying the brief may have gone out (deliver_prompt's sent or unread
-# tries), say it may have its brief and fail. Otherwise (no pane, or herdr surely sent nothing) close
+# busy or waiting (read_state: its session's word, herdr's working or blocked for codex), the start
+# was unclear but the agent runs: say so and succeed. In any other state, with <err> saying the brief
+# may have gone out (deliver_prompt's sent or unread tries), say it may have its brief and fail. Otherwise (no pane, or herdr surely sent nothing) close
 # its pane, put that file back and die. In both first cases the file stays aside.
 review_start_failed() {
-  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" status pane kept="" note=""
-  name="$(agent_name "review-$1")"; status="$(agent_field "${name}" agent_status)"
+  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" state=none pane kept="" note=""
+  name="$(agent_name "review-$1")"; pane="$(agent_field "${name}" pane_id)"
+  [[ -z "${pane}" ]] || state="$(read_state "${name}")"
   [[ ! -f "${f}.prev" ]] || kept="; the last review is kept aside in ${f}.prev"
-  case "${status}:$2" in
-    working:*|blocked:*)
+  case "${state}:$2" in
+    none:*) ;;   # no pane: nothing runs, whatever <err> says
+    busy:*|waiting*|herdr:working:*|herdr:blocked:*)
       echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: wait for it with swarm.sh wait review-$1"
       return 0 ;;
-    ?*:*"may or may not have the brief"*|?*:*"herdr sent it the brief"*|?*:*"could not be read"*)
-      echo "review-agent: review-$1's start was unclear: it reads ${status} and may have its brief${kept}: see herdr agent read ${name}, then wait for it with swarm.sh wait review-$1, or close it and start the review again"
+    *:*"may or may not have the brief"*|*:*"herdr sent it the brief"*|*:*"could not be read"*)
+      echo "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}: see herdr agent read ${name}, then wait for it with swarm.sh wait review-$1, or close it and start the review again"
       return 1 ;;
   esac
-  pane="$(agent_field "${name}" pane_id)"
   if [[ -n "${pane}" ]]; then
     note=" (its pane ${pane} is closed)"
     herdr pane close "${pane}" >/dev/null 2>&1 || note=" (its pane ${pane} could not be closed: close it by hand)"

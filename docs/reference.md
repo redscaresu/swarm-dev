@@ -658,8 +658,8 @@ head or has uncommitted changes, or when `review-<slug>` is still working or sti
 findings file (idle while its codex runs, not finished). It moves the last review's file aside
 before the new agent's brief goes, puts it back if herdr cannot start the agent, and deletes it once
 the agent has started. When the start fails while `review-<slug>` has a pane, the file stays aside
-as `<slug>.md.prev` and `review-agent` exits 0 in two cases. If the agent reads working or blocked,
-it says the agent is running and records the head. If herdr may have sent the brief (its reply could
+as `<slug>.md.prev` and `review-agent` exits 0 in two cases. If the agent's session reads busy or
+waiting (herdr's working or blocked for codex), it says the agent is running and records the head. If herdr may have sent the brief (its reply could
 not be read, or it was sent and not taken up), it says the agent may have its brief and records no
 head, so `watch` and `next` still list the PR as unreviewed. Either way, `wait review-<slug>` waits
 for a new file. When herdr surely sent nothing, it closes the pane, puts the file back and fails. For a story stacked on
