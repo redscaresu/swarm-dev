@@ -70,7 +70,7 @@ board_pr() {
       files="$(git -C "${wt}" -c core.quotepath=off diff --name-only --no-renames "$(git -C "${wt}" merge-base HEAD "origin/${base}")" \
         && git -C "${wt}" -c core.quotepath=off ls-files --others --exclude-standard)" || die "board-pr: cannot list the changes in ${wt}"
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
-      while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"
+      while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"   # loose-match: ok rel ends in /, so a path under the board
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
       # answer (commands/plan-epic.md step 0), written since this worktree started: an older one is an
       # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. A
@@ -185,7 +185,7 @@ key_moves() {
     done
   fi
   if [[ -n "${2:-}" ]]; then
-    [[ "$(get_fm - status <<< "${up}")" != "done" || " review building held " != *" $(get_fm - status < "${f}") "* ]] || return 0
+    [[ "$(get_fm - status <<< "${up}")" != "done" || " review building held " != *" $(get_fm - status < "${f}") "* ]] || return 0   # loose-match: ok space-padded, so a whole word
     for k in ${skip}; do
       v="$(get_fm - "${k}" < "${f}")"; u="$(get_fm - "${k}" <<< "${up}")"
       [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" || "${v}" == "${u}" ]] \
@@ -832,7 +832,7 @@ handover_brief() {
                git -C "${wt}" diff --no-index -- /dev/null "${p}" || (( $? < 128 )) || break
              done
            } 2>/dev/null | head -n "${HANDOVER_DIFF_LINES}" || true)"
-  while [[ "${diff}" == *"${fence}"* ]]; do fence+='`'; done
+  while [[ "${diff}" == *"${fence}"* ]]; do fence+='`'; done   # loose-match: ok any run of backticks in the diff
   head="$(git -C "${wt}" rev-parse HEAD)"
   reviewed="$(sed -n 's/^head: *//p' "${findings}" 2>/dev/null | head -n 1 || true)"   # no findings file: none
   if [[ ! -f "${findings}" ]]; then found="No review findings on file."
@@ -1169,7 +1169,7 @@ close_pane() {
 # ce's or the backlog's.
 label_record() {
   local r="${1#"${STATE_DIR}/$2"}"
-  [[ "${1}" == "${STATE_DIR}/$2"* && ( -z "${r}" || "${r}" =~ ^-[0-9]+$ ) ]]
+  [[ "${1}" == "${STATE_DIR}/$2"* && ( -z "${r}" || "${r}" =~ ^-[0-9]+$ ) ]]   # loose-match: ok r, the rest after the prefix, is checked to be empty or -<n>
 }
 
 # record_has <tab-record> <pane> — succeed when the record has a line for <pane>.
@@ -2011,7 +2011,7 @@ upgrade_round() {
   done <<< "${list}"
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" == conduct && -e "${UPGRADE_DIR}/ready-${name}" && ! -e "${UPGRADE_DIR}/left-${name}" ]] || continue
-    if [[ "${held}" == *" $(upgrade_epic "${name}" conduct) "* ]]; then waits=1; continue; fi
+    if [[ "${held}" == *" $(upgrade_epic "${name}" conduct) "* ]]; then waits=1; continue; fi   # loose-match: ok space-padded, so a whole word
     upgrade_conductor "${name}" "${pane}" "${cur}" "$2" "$(upgrade_round_end "$3")" || waits=1
   done <<< "${list}"
   UPGRADE_HERDR=""
@@ -2030,7 +2030,7 @@ upgrade_reread() {
   upgrade_list "$1" "$2" > "${d}/list"
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && ( "${cur}" == old || -e "${d}/hand-${name}" ) ]] || continue
-    ! grep -q "^${name}"$'\t' "${d}/list" || continue
+    ! grep -q "^${name}"$'\t' "${d}/list" || continue   # loose-match: ok agent names are [a-z0-9_-], anchored by ^ and a tab
     if [[ -e "${d}/hand-${name}" ]]; then
       rm -f "$(upgrade_paused "${name}")"; : > "${d}/gone-${name}"
       upgrade_left "${name}" "it left herdr's agent list while paused for its handover"
@@ -2152,7 +2152,7 @@ upgrade_hold() {
   c="$(conductor_name "$1")"
   [[ ! -e "${UPGRADE_DIR}/ready-${c}" && ! -e "${UPGRADE_DIR}/gone-${c}" ]] || return 0
   if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left
-  elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi
+  elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi   # loose-match: ok conductor names are [a-z0-9_-], anchored by ^ and a tab
 }
 
 # upgrade_ask <conductor> <pane> <epic> <version> — where the conductor is with its handover. The

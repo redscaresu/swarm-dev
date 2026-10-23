@@ -267,7 +267,7 @@ dash_check() {
     # Each kind has its own row: merge, or decide for an escalated or held story, which dash draws as a
     # merge row once it is in review. A merge item counts by its slug or by any PR status lists for it.
     v=merge; [[ "${x%%:*}" == merge ]] || v="(merge|decide escalated story)"
-    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi
+    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: merge or an alternation
     [[ "${x%%:*}" == merge ]] || continue
     for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do
       if [[ " ${drawn} " == *" ${f} "* ]]; then got+=" ${x}"; break; fi
@@ -351,14 +351,14 @@ dash_cut() {
   local shown="$1" rest="$2" piece
   if [[ "${shown}" != *…* ]]; then printf '%s' "$1"; return; fi
   piece="${shown%%…*}"; shown="${shown#*…}"
-  if [[ "${rest}" != "${piece}"* ]]; then printf '%s' "$1"; return; fi
+  if [[ "${rest}" != "${piece}"* ]]; then printf '%s' "$1"; return; fi   # loose-match: ok the first piece of a cut line starts the full one
   rest="${rest#"${piece}"}"
   while [[ "${shown}" == *…* ]]; do
     piece="${shown%%…*}"; shown="${shown#*…}"
-    if [[ "${rest}" != *"${piece}"* ]]; then printf '%s' "$1"; return; fi
+    if [[ "${rest}" != *"${piece}"* ]]; then printf '%s' "$1"; return; fi   # loose-match: ok a piece of a cut line may sit anywhere in the full one
     rest="${rest#*"${piece}"}"
   done
-  if [[ "${rest}" == *"${shown}" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi
+  if [[ "${rest}" == *"${shown}" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi   # loose-match: ok the last piece of a cut line ends the full one
 }
 
 # dash_names <word> <text> — true when a line of <text> has <word> as a whole word (words split at
