@@ -1374,8 +1374,17 @@ PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (
 `swarm.sh grants <PR URL>` prints). Then the holds of `merge = agent` apply too, so a `costs: money`
 story's PR, and a board PR that changes a `costs:` line, still wait for you. Any other PR is
 refused with `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`, as
-is a PR whose HLD cannot be read or has a grant swarm.sh does not know. `--release` is not
-affected.
+is a PR whose HLD cannot be read or has a grant swarm.sh does not know. Under `merge = human`,
+`--release` merges only when the release is covered: at least one story file was deleted on the
+base since origin's tag `v<base version>`, and every such story, read as it was just before the
+commit that deleted it, falls under an agreed HLD that lists `release`. The story's epics and HLD
+are read as they were then, except that the board's copy wins where the board still has one, so a
+grant you take off an HLD stops counting. A story the board still holds as `done`, because its PR
+left the file in place, must fall under such an HLD too, though it never counts as the story merged
+since the tag. Otherwise it refuses with `<PR URL> waits on the user's merge (merge = human, and
+story <slug>, merged since v<version>, is under no agreed HLD that grants release)`, naming the
+first story it found uncovered. A board outside the project's repo never covers a release. A
+covered release still goes through the docs check below.
 
 `swarm.sh merge [--board|--release] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
 unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`

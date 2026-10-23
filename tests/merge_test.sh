@@ -756,8 +756,9 @@ release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge 
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
 is "--release: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
-release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; merge --release "${URL}"
-is "--release with merge = human asks for no HLD grant (release_check's)" 0 "${rc}"
+# With merge = human the lead merges a release only under HLDs that grant release (below).
+human_release() { release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; merge --release "${URL}"; }
+human_release; refused "--release with merge = human and no story merged since the tag" "${URL} waits on the user's merge (merge = human, and no story was merged into main since v1.2.0, so no HLD covers it)"
 release_pr; echo '[{"filename":".claude-plugin/plugin.json"},{"filename":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
 merge --release "${URL}"; refused "--release with another file" "changes bin/swarm.sh, not only .claude-plugin/plugin.json"
 release_pr; echo '[{"filename":"docs/stories/s.md"}]' > "${FX}/files"
@@ -835,6 +836,43 @@ commit bin/y.sh README.md
 release_pr; merge --release "${URL}"
 is "--release against an annotated tag it has not fetched: exits 0" 0 "${rc}"
 git -C "${P}" config --unset remote.origin.tagOpt
+# With merge = human, --release merges only when every story deleted on main since the tag, read as
+# it was just before, is under an agreed HLD granting release: its epic as that commit had it, the
+# HLD as the board has it now. The docs gate holds whatever the grant says.
+fm() { { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${P}/$1"; } # <file> <front-matter line>...
+landed() { # <file> <front-matter line>... — that file committed on main, pushed
+  fm "$@"; git -C "${P}" add -f "$1"; git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m "$1"; git -C "${P}" push -q origin HEAD:refs/heads/main
+}
+gone() { # <file>... — deleted in one commit on main, pushed, as a story's PR deletes its story
+  git -C "${P}" rm -q "$@"; git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m "rm $*"; git -C "${P}" push -q origin HEAD:refs/heads/main
+}
+dropped() { # <file> — deleted on main by a merge commit whose parents both have it, pushed
+  local gt=(git -C "${P}" -c user.name=t -c user.email=t@t) side
+  side="$("${gt[@]}" commit-tree -p HEAD -m side "HEAD^{tree}")"; "${gt[@]}" rm -q "$1"
+  "${gt[@]}" update-ref HEAD "$("${gt[@]}" commit-tree -p HEAD -p "${side}" -m "merge, dropping $1" "$("${gt[@]}" write-tree)")"
+  "${gt[@]}" push -q origin HEAD:refs/heads/main
+}
+retag; landed docs/hld/ship.md "status: agreed" "grants: [merge, release]"; landed docs/epics/shipped.md "hld: ship"
+landed docs/stories/shipped-a.md "epic: shipped"; gone docs/stories/shipped-a.md
+landed docs/stories/shipped-b.md "epic: shipped"; gone docs/stories/shipped-b.md docs/epics/shipped.md
+human_release
+is "--release with merge = human, every story since the tag under an HLD granting release, its epic gone: exits 0" 0 "${rc}"
+check "--release with merge = human, every story under an HLD granting release: merged" merged
+item kept "status: done" "epic: none-such"
+human_release; refused "--release with merge = human and a done story still on the board under no HLD" "story kept, done on the board, is under no agreed HLD that grants release"
+rm "${P}/docs/stories/kept.md"
+fm docs/hld/ship.md "status: agreed" "grants: [merge]"
+human_release; refused "--release with merge = human, the board's HLD no longer granting release" "story shipped-b, merged since v1.2.0, is under no agreed HLD that grants release"
+fm docs/hld/ship.md "status: agreed" "grants: [merge, release]"
+landed docs/stories/stray.md "epic: none-such"; gone docs/stories/stray.md
+human_release; refused "--release with merge = human and a story since the tag under no HLD" "${URL} waits on the user's merge (merge = human, and story stray, merged since v1.2.0, is under no agreed HLD that grants release)"
+retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-d.md "epic: shipped"; gone docs/stories/shipped-d.md docs/epics/shipped.md
+landed docs/stories/merged-away.md "epic: none-such"; dropped docs/stories/merged-away.md
+human_release; refused "--release with merge = human and a story a merge commit deleted under no HLD" "story merged-away, merged since v1.2.0, is under no agreed HLD that grants release"
+retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-c.md "epic: shipped"; gone docs/stories/shipped-c.md docs/epics/shipped.md
+commit bin/z.sh
+human_release; refused "--release with merge = human, covered, with bin/ changed and no docs" "bin/z.sh changed since v1.2.0 but README.md, AGENTS.md and docs/ did not"
+retag
 # A release of the plugin's own repo (plugin.json's repository), once its tag and published release
 # are on the merge commit or after it: the marketplace and the plugin are updated, then the new
 # version's upgrade starts once in each swarm project herdr runs an agent in, found by the agent's
