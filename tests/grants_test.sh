@@ -16,12 +16,12 @@ git -C "${P}" init -q
 git -C "${P}" remote add origin https://github.com/o/r.git
 fails=0
 
-# gh: repo view names o/r; pr view <n> answers ${FX}/pr.<n>; api <path> answers ${FX}/<path with / and
-# ? as _>, else a 404.
+# gh: repo view names o/r (fails with ${FX}/repo-view.fail); pr view <n> answers ${FX}/pr.<n>; api
+# <path> answers ${FX}/<path with / and ? as _>, else a 404.
 printf '#!/usr/bin/env bash\nFX="%s"\n' "${FX}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 case "$1 $2" in
-  "repo view") echo '{"nameWithOwner":"O/R"}' ;;
+  "repo view") [ ! -e "${FX}/repo-view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"nameWithOwner":"O/R"}' ;;
   "pr view") cat "${FX}/pr.$3" ;;
   *) for a in "$@"; do p="${a}"; done; p="${p//\//_}"; p="${p//\?/_}"
      if [ -e "${FX}/${p}" ]; then cat "${FX}/${p}"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
@@ -131,6 +131,25 @@ expect board-pr-outside-board-none https://github.com/o/r/pull/11 none
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.12"
 echo '[{"filename":"bin/x.sh"},{"filename":"docs/epics/top-b.md"}]' > "${FX}/repos_o_r_pulls_12_files_per_page=100"
 expect story-pr-touching-other-hld-none https://github.com/o/r/pull/12 none
+
+# With no origin, or no nameWithOwner for it, story PR #3's files cannot be checked: none.
+git -C "${P}" remote remove origin
+expect no-origin-none https://github.com/o/r/pull/3 none
+git -C "${P}" remote add origin https://github.com/o/r.git
+: > "${FX}/repo-view.fail"
+expect no-repo-name-none https://github.com/o/r/pull/3 none
+rm "${FX}/repo-view.fail"
+
+# board PR #13 adds we#ird.md under child and deletes s-child: the # is read as itself, so both are A.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.13"
+echo '[{"filename":"docs/stories/we#ird.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_13_files_per_page=100"
+item "${FX}/repos_o_r_contents_docs_stories_we%23ird.md_ref=${HEAD}" "status: ready" "epic: child"
+expect board-pr-odd-name https://github.com/o/r/pull/13 "$(printf '%s\nmerge\nstories' "${A}")"
+
+# board PR #14 touches ghost.md, on neither the board nor the head, beside s-child (A): none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.14"
+echo '[{"filename":"docs/stories/ghost.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_14_files_per_page=100"
+expect board-pr-no-version-none https://github.com/o/r/pull/14 none
 
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none

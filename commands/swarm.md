@@ -27,7 +27,8 @@ outside the repo is edited where it is, since `board-pr` refuses it. A conductor
 edit to a story goes through `swarm.sh board-pr` too (its brief says so). `swarm.sh finish` and
 `swarm.sh drop` open their own board PR, `finish-<slug>` or `drop-<slug>`, and print the
 `swarm.sh merge --board <url>` that lands it: run that, or with `merge = human` hand the PR to the
-user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. Once it has merged, `swarm.sh board-pr done <that name>` clears its worktree away.
+user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. A `costs: money`
+PR, or one stacked on one, stays the user's to merge, grant or not. Once it has merged, `swarm.sh board-pr done <that name>` clears its worktree away.
 
 `swarm.sh board-pr start <name>` prints the worktree's path, `<repo>-wt/_board-<name>` (beside the
 story worktrees, never one of them), on a new `board/<name>` branch from origin's base. Edit the
@@ -138,7 +139,8 @@ Repeat until a step below says stop:
      they say go, with its **You:** steps. Once it is done, run `swarm.sh finish <slug>` and land
      the board PR it opens as above: `swarm.sh merge --board <url>`, or with `merge = human` hand
      it to the user and wait until they merge it, unless `swarm.sh grants <url>` lists `merge` for
-     it, which lets you run the merge. Then run `swarm.sh reconcile`, and leave
+     it, which lets you run the merge (a `costs: money` PR, or one stacked on one, stays the
+     user's, grant or not). Then run `swarm.sh reconcile`, and leave
      `swarm.sh unblock` to the conductor: after each wait it runs `swarm.sh unblock --startable`
      and builds every ready story of its own with no build yet. Act on each `also:` story once. It stays `ready`, and
      `next` names it again, until its `finish-<slug>` board PR merges, so skip one you have
@@ -244,7 +246,7 @@ Repeat until a step below says stop:
        `drop-<slug>` when the board is in the repo. With `merge = agent`, land that PR with the
        `swarm.sh merge --board` line it prints. With `merge = human` you never merge: hand the PR
        to the user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you land it
-       as above. Until the PR merges, `next` names the story again: that is a wait on the
+       as above; a `costs: money` PR, or one stacked on one, stays the user's, grant or not. Until the PR merges, `next` names the story again: that is a wait on the
        user's merge, so name the board PR, show what `swarm.sh status` lists under Waiting on
        you, and stop.
 
@@ -312,5 +314,6 @@ count it:
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
 is `human` unless the user asks you to merge a PR, `swarm.sh grants <PR URL>` lists `merge` for it,
 or it is a release PR it lists `release` for, and then only with `swarm.sh merge <PR URL>`
-(not `gh pr merge`, not `gh api`, not the web page), and never give a `lead` story to an agent.
+(not `gh pr merge`, not `gh api`, not the web page). A `costs: money` PR, or one stacked on one,
+is the user's to merge whatever the grant says. Never give a `lead` story to an agent.
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.

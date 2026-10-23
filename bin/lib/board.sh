@@ -611,17 +611,19 @@ one_hld() { local u; u="$(sort -u)"; [[ -z "${u}" || "${u}" == *$'\n'* ]] || ech
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR in the
 # project's repo that touches the board's hld/ is under none: only the user changes an HLD.
 pr_hld() (
-  local s url repo n info="" head="" pre p view="" err
+  local s url repo n info="" head="" pre p q view="" err
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
   # The board's path in the repo, with a trailing /; empty for a board at the repo's root.
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
-  if [[ ${BOARD_IN_REPO} == 1 ]] && p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)"; then
-    # A URL pr_stories reads but this does not is under none: its files could not be checked.
+  if [[ ${BOARD_IN_REPO} == 1 ]]; then
+    # A URL pr_stories reads but this does not, or a repo whose origin cannot be read, is under none:
+    # the PR's files could not be checked.
     [[ "${url}" =~ ^https://github\.com/([a-z0-9._-]+/[a-z0-9._-]+)/pull/0*([0-9]+)$ ]] || return 0
     repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
-    p="$(gh repo view "${p}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" || die "grants: gh cannot tell which GitHub repo origin is"
+    p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 0
+    p="$(gh repo view "${p}" --json nameWithOwner 2>/dev/null | json "d['nameWithOwner'].lower()" 2>/dev/null)" || return 0
     if [[ "${repo}" == "${p}" ]]; then
       info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles | json "d['headRefOid'] + ' ' + str(d['changedFiles'])")" \
         || die "grants: gh cannot read ${url}"
@@ -637,7 +639,9 @@ pr_hld() (
     [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
     p="${p#"${pre}"}"
     [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
-    if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${pre}${p}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
+    # Quoted, so a # or ? in a name is read as itself; a 404 is then a file the head does not have.
+    q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "${pre}${p}")"
+    if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
     grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
     rm -f "${view}/${p}"
   done <<< "${info}"
@@ -649,6 +653,7 @@ pr_hld() (
       [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
       [[ ! -f "${BOARD}/${p}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${p}")"
       [[ ! -f "${view}/${p}" ]] || printf '%s\n' "$(item_hld "${view}/${p}" "${view}/epics")"
+      [[ -f "${BOARD}/${p}" || -f "${view}/${p}" ]] || echo   # in neither: under none
     done <<< "${info}"
   } | one_hld
 )
