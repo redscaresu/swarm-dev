@@ -21,12 +21,12 @@ commands/hld.md mirrors commands/epic.md (steps 0 to 5), with these differences:
 - Step 5 sets `status: agreed` (not active) once `D/agreed` exists, opens the board PR with one codex-review pass, and closes both agents by name. It must not name `plan-hld`, since tests/removed_test.sh still forbids it; the plan-hld epic adds the line pointing at it.
 - Front matter `description:` starts "Use when asked to write, start or resume an HLD or a design", with an `argument-hint:`, like epic.md.
 
-bin/swarm.sh: ROLE_GROUPS' design group gains `hld,hld-review,hld-lead`, and policy() gets `hld) claude fable high`, `hld-review) claude fable xhigh` and `hld-lead) claude fable xhigh` (the old values, at 47a8ced9).
+bin/swarm.sh: ROLE_GROUPS' design group gains `hld,hld-review`, and policy() gets `hld) claude fable high` and `hld-review) claude fable xhigh` (the old values, at 47a8ced9). `hld-lead` is not added here: the plan-hld epic adds it together with its caller, and with the tests/removed_test.sh change that allows it.
 
-Tests: tests/command_names_test.sh:5 and 21-24 now require commands/hld.md to exist. tests/roles_test.sh:57-61 now require the three roles to exist and `swarm.sh policy` to answer for each. Its reached-by-a-literal-caller check covers `hld` and `hld-review` through commands/hld.md. `hld-lead` has no caller until plan-hld; exempt it in the test with a comment naming the plan-hld epic. docs/features.tsv gets the hld and hld-review rows if features_test asks for them.
+Tests: tests/command_names_test.sh:5 and 21-24 now require commands/hld.md to exist. tests/roles_test.sh:57-61 now require `hld` and `hld-review` to exist and `swarm.sh policy` to answer for each, and still forbid `hld-lead`. Its reached-by-a-literal-caller check covers both through commands/hld.md. docs/features.tsv gets the hld and hld-review rows if features_test asks for them.
 
 **Done when:**
-- `swarm.sh policy hld`, `policy hld-review` and `policy hld-lead` print their policies, and tests/roles_test.sh checks this.
+- `swarm.sh policy hld` and `policy hld-review` print their policies, and tests/roles_test.sh checks this.
 - tests/command_names_test.sh passes with commands/hld.md present, and `claude plugin validate .` passes in CI.
 - commands/hld.md sets `status: agreed` only after `D/agreed` exists, and plan_epic_test-style phrase checks in a test assert the close-by-name lines and the `_hld` tab.
 - `make test` passes.
