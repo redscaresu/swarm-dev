@@ -533,11 +533,11 @@ build_story() {
 # names that commit. Refused, starting nothing and touching no file, when
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
-# started (kept aside until then, and left aside when the start fails but the agent runs), so the
-# conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
+# started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
+# the conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
 # which review_on_head reads.
 review_agent() {
-  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
+  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at err
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -569,19 +569,46 @@ review_agent() {
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
   # The last review's file is moved aside before the brief goes (a quick agent's new file must not be
-  # the one removed), put back when the start fails with no agent, and dropped once it has started.
-  # A failed start whose agent runs anyway (its brief maybe taken) keeps it aside, so wait
-  # review-<slug> cannot end on a review of an earlier head.
+  # the one removed), and dropped once the agent has started. A .prev left from an earlier run is an
+  # older head's, never to be put back, and the head on record is written again only for this start.
+  rm -f "${out}.prev" "${out%.md}.head"
   [[ ! -f "${out}" ]] || mv "${out}" "${out}.prev"
-  if (start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"); then
+  # start_agent's stderr is kept to tell an unclear start from one that surely sent nothing.
+  if { err="$( (start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}") 2>&1 1>&3 )"; } 3>&1; then
     rm -f "${out}.prev"
-  elif [[ -n "$(agent_field "$(agent_name "review-${slug}")" pane_id)" ]]; then
-    echo "review-agent: review-${slug}'s start was unclear, but the agent is running; the last review is kept aside in ${out}.prev: wait for it with swarm.sh wait review-${slug}, and see herdr agent read $(agent_name "review-${slug}")"
   else
-    [[ ! -f "${out}.prev" ]] || mv "${out}.prev" "${out}"
-    die "review-agent: review-${slug} did not start; ${out} is as it was"
+    [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2
+    # Open but not working: no head on record, so watch and next still call the PR unreviewed.
+    review_start_failed "${slug}" "${err}" || return 0
   fi
   echo "${head}" > "${out%.md}.head"
+}
+
+# review_start_failed <slug> <err> — after review_agent's start of review-<slug> failed with <err>,
+# its last findings file (if any) moved aside to <slug>.md.prev by that start. With its pane open and
+# reading working or blocked, the start was unclear but the agent runs: say so and succeed. Reading
+# anything else, with <err> saying the brief may have gone out (deliver_prompt's sent or unread
+# tries), say it may have its brief and fail. Otherwise (no pane, or herdr surely sent nothing) close
+# its pane, put that file back and die. In both first cases the file stays aside.
+review_start_failed() {
+  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" status pane kept="" note=""
+  name="$(agent_name "review-$1")"; status="$(agent_field "${name}" agent_status)"
+  [[ ! -f "${f}.prev" ]] || kept="; the last review is kept aside in ${f}.prev"
+  case "${status}:$2" in
+    working:*|blocked:*)
+      echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: wait for it with swarm.sh wait review-$1"
+      return 0 ;;
+    ?*:*"may or may not have the brief"*|?*:*"herdr sent it the brief"*|?*:*"could not be read"*)
+      echo "review-agent: review-$1's start was unclear: it reads ${status} and may have its brief${kept}: see herdr agent read ${name}, then wait for it with swarm.sh wait review-$1, or close it and start the review again"
+      return 1 ;;
+  esac
+  pane="$(agent_field "${name}" pane_id)"
+  if [[ -n "${pane}" ]]; then
+    note=" (its pane ${pane} is closed)"
+    herdr pane close "${pane}" >/dev/null 2>&1 || note=" (its pane ${pane} could not be closed: close it by hand)"
+  fi
+  [[ ! -f "${f}.prev" ]] || mv "${f}.prev" "${f}"
+  die "review-agent: review-$1 did not start${note}; ${f} is as it was"
 }
 
 # review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is

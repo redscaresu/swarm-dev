@@ -657,9 +657,12 @@ story.
 head or has uncommitted changes, or when `review-<slug>` is still working or still open with no
 findings file (idle while its codex runs, not finished). It moves the last review's file aside
 before the new agent's brief goes, puts it back if herdr cannot start the agent, and deletes it once
-the agent has started. When the start fails but `review-<slug>` has a pane, the brief may have
-reached it: the file stays aside as `<slug>.md.prev`, `review-agent` says the agent is running and
-exits 0, and `wait review-<slug>` waits for the new file. For a story stacked on
+the agent has started. When the start fails while `review-<slug>` has a pane, the file stays aside
+as `<slug>.md.prev` and `review-agent` exits 0 in two cases. If the agent reads working or blocked,
+it says the agent is running and records the head. If herdr may have sent the brief (its reply could
+not be read, or it was sent and not taken up), it says the agent may have its brief and records no
+head, so `watch` and `next` still list the PR as unreviewed. Either way, `wait review-<slug>` waits
+for a new file. When herdr surely sent nothing, it closes the pane, puts the file back and fails. For a story stacked on
 parents, the brief names their branches: their code is in the diff against the base, but the agent
 lists it neither as a finding nor as out of scope. The conductor waits on each review in the background
 with `swarm.sh wait review-<slug>`. A review agent goes idle while its codex runs in the
