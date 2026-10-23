@@ -1035,7 +1035,19 @@ granted merge; merge "${URL}"
 is "merge = human, the same story PR under grants: [merge] merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
 granted merge "costs: money"; merge "${URL}"; refused "merge = human, a costs: money story under grants: [merge]" "held: s costs money"
 granted merge; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"; refused "merge = human, a conductor's pane under grants: [merge]" "pane w:c"
-granted "merge, deploy"; merge "${URL}"; refused "merge = human, an HLD with a grant swarm.sh does not know" "docs/hld/h.md has a grant swarm.sh does not know"
+granted "merge, deploy"; merge "${URL}"; refused "merge = human, an HLD with a grant swarm.sh does not know" "hld/h.md cannot be read, so ${URL} waits on the user's merge"
+check "merge = human, an HLD with a grant swarm.sh does not know: hld_grants says why" said "grants must be epics, stories, merge or release"
+granted merge; printf -- '---\nstatus: agreed\ngrants:\n  - merge\n---\n\n# h\n' > "${P}/docs/hld/h.md"; merge "${URL}"
+refused "merge = human, an HLD whose grants: is a block list" "hld/h.md cannot be read, so ${URL} waits on the user's merge"
+check "merge = human, an HLD whose grants: is a block list: hld_grants says why" said "grants must be a one-line [..] list"
+# merge's own refusals come first, before any HLD is read.
+no_grant_read() { ! grep -q 'headRefOid,changedFiles' "${ROOT}/gh.log"; }
+fresh "merge = human"; item s "status: ready" "prs: ${URL}"; merge "${URL}"
+refused "merge = human, a story PR not in review" "s is ready, not review"
+check "merge = human, a story PR not in review: no HLD read" no_grant_read
+granted merge; rm "${S}"; echo '[{"filename":"docs/epics/g.md"},{"filename":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
+merge --board "${URL}"; refused "merge = human, a granted board PR with a file off the board" "changes bin/swarm.sh, outside docs/"
+check "merge = human, a granted board PR with a file off the board: no HLD read" no_grant_read
 # Board PRs: through the epics they touch.
 granted merge; rm "${S}"; hld h2 merge g2
 echo '[{"filename":"docs/epics/g.md","status":"modified"},{"filename":"docs/epics/g2.md","status":"modified"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
@@ -1044,7 +1056,10 @@ granted merge; rm "${S}"; echo '[{"filename":"docs/epics/g.md","status":"modifie
 is "merge = human, a board PR under one HLD granting merge merges" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
 granted merge; rm "${S}"; echo '[{"filename":"docs/epics/g.md","status":"modified"}]' > "${FX}/files"
 printf 'diff --git a/docs/epics/g.md b/docs/epics/g.md\n--- a/docs/epics/g.md\n+++ b/docs/epics/g.md\n@@ -2,3 +2,3 @@\n status: active\n-costs: money\n+costs: none\n' > "${FX}/diff"
-merge --board "${URL}"; refused "merge = human, a board PR under grants: [merge] that changes a costs: line" "changes a costs: line in docs/epics/g.md"
+merge --board "${URL}"; refused "merge = human, a board PR under grants: [merge] that changes a costs: line" \
+  "changes a costs: line in docs/epics/g.md"
+check "merge = human, a board PR under grants: [merge] that changes a costs: line: the whole line, with no mode in it" \
+  grep -qxF "swarm: merge: held: ${URL} changes a costs: line in docs/epics/g.md; the user merges it" "${ROOT}/out"
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
