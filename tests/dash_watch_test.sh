@@ -69,7 +69,11 @@ printf 'w1:p6 is where the brief says to look\n' > "${P}/.swarm/state/brief-x.md
 printf 'w1:p7 halfway\n' > "${P}/.swarm/state/e1.tmp"
 printf '2026-10-01\tconduct\tconduct-e1\tclaude\topus\thigh\tsess-1\n2026-10-02\tcode\ts-one\tclaude\topus\thigh\tsess-2\n' > "${P}/.swarm/agents.tsv"
 # Today's cost, the same as `swarm.sh cost <today>`: 1M input at $4 + 1M output at $20.
-printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
+# Every watch's clock is fixed (SWARM_DASH_NOW) here, so its ages (s-three's "up 15h54m") cannot tick
+# over a minute between frames and print a changed frame; the header's own HH:MM:SS still moves. The
+# row's day comes from it too, so a setup that crosses midnight still agrees with the clock.
+DASH_NOW="$(date +%s)"
+printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(python3 -c 'import datetime, sys; print(datetime.date.fromtimestamp(int(sys.argv[1])))' "${DASH_NOW}")" >> "${P}/.swarm/agents.tsv"
 echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":1000000}}}' > "${ROOT}/projects/p/sess-today.jsonl"
 # One escalate agent whose session ran on opus (its first message with a model), not the fable its
 # policy names; the ladder shows the session's model. No docs agent: docs shows 0.
@@ -154,20 +158,26 @@ snapshot() { (cd "${P}" && find docs .swarm -path .swarm/gh-cache -prune -o -typ
   find docs .swarm -path .swarm/gh-cache -prune -o ! -name gh-calls.tsv -print0 | sort -z | xargs -0 ls -ld) ; }
 before="$(snapshot)"
 
-# Every watch's clock is fixed (SWARM_DASH_NOW) at the test's start, so its ages (s-three's "up
-# 15h54m") cannot tick over a minute between frames and print a changed frame; the header's own
-# HH:MM:SS still moves.
-DASH_NOW="$(date +%s)"
-
 # --watch off a terminal prints a frame only when it changed, plain, until stopped.
-# The stubs go first on PATH, so no watch here reaches the real herdr or gh. It waits up to 30 s for
-# the first frame, then 2 s more, in which an unchanged frame must not print again.
-(cd "${P}" && exec env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
+# The stubs go first on PATH, so no watch here reaches the real herdr or gh. A python3 ahead of them
+# logs each render's start (dash_render.py, the one python3 run with DASH_PROJECT set). The test waits
+# up to 30 s for the first frame, then up to 30 s more for two more renders to start: by then the
+# render after the first frame has finished, and an unchanged frame must not have printed again.
+mkdir -p "${ROOT}/countpy"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\nif [ -n "${DASH_PROJECT:-}" ]; then echo render >> "%s"; fi\nexec "%s" "$@"\n' "${ROOT}/renders.log" "$(command -v python3)" > "${ROOT}/countpy/python3"
+chmod +x "${ROOT}/countpy/python3"
+renders() { if [ -f "${ROOT}/renders.log" ]; then wc -l < "${ROOT}/renders.log" | tr -d ' '; else echo 0; fi; }
+(cd "${P}" && exec env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${ROOT}/countpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
 pid=$!
 for _ in $(seq 150); do grep -q -- '─ needs you' "${ROOT}/watch.out" && break; sleep 0.2; done
-sleep 2; kill -TERM "${pid}" || true; wait "${pid}" || true
+want=$(($(renders) + 2))
+for _ in $(seq 150); do [ "$(renders)" -ge "${want}" ] && break; sleep 0.2; done
+got="$(renders)"
+kill -TERM "${pid}" || true; wait "${pid}" || true
 w="$(cat "${ROOT}/watch.out")"
 check "--watch off a terminal draws the frame" has "─ needs you" "${w}"
+check "--watch off a terminal renders again after its first frame" test "${got}" -ge "${want}"
 check "--watch off a terminal does not repeat an unchanged frame" test "$(grep -c -- '─ needs you' <<< "${w}")" -eq 1
 check "--watch off a terminal has no ANSI escapes" lacks $'\033' "${w}"
 
@@ -281,7 +291,7 @@ mkdir -p "${ROOT}/badpy"
 # shellcheck disable=SC2016 # the stub's own shell expands these
 printf '#!/bin/sh\nif [ -n "${DASH_PROJECT:-}" ]; then echo "render boom" >&2; exit 1; fi\nexec "%s" "$@"\n' "$(command -v python3)" > "${ROOT}/badpy/python3"
 chmod +x "${ROOT}/badpy/python3"
-(cd "${P}" && exec env -u HERDR_ENV PATH="${ROOT}/badpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/badwatch.out" 2>&1) &
+(cd "${P}" && exec env -u HERDR_ENV SWARM_DASH_NOW="${DASH_NOW}" PATH="${ROOT}/badpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/badwatch.out" 2>&1) &
 pid=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q "render boom" "${ROOT}/badwatch.out" && break; sleep 1; done
 sleep 2; alive=no
