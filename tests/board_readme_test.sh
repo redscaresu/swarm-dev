@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# board_readme_test.sh — swarm-dev's own board/stories/README.md and board/epics/README.md match the
+# board_readme_test.sh — swarm-dev's own board/stories/, board/epics/ and board/hld/ READMEs match the
 # templates a project copies under templates/docs/. A change to one without the other fails here.
 set -euo pipefail
 
@@ -19,7 +19,7 @@ if same "${tmp}/a" "${tmp}/b"; then
 fi
 echo "ok   the compare tells two files one line apart"
 
-for kind in stories epics; do
+for kind in stories epics hld; do
   board="board/${kind}/README.md" template="templates/docs/${kind}/README.md"
   if ! same "${board}" "${template}"; then
     echo "FAIL ${board} and ${template} differ; change both:"
