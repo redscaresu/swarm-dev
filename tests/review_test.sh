@@ -67,7 +67,10 @@ case "$2" in
   repos/o/svc/commits/abc1234def/check-runs*) cat "$F/runs.json" ;;
   repos/o/svc/check-runs/1/annotations*) cat "$F/annotations.json" ;;
   repos/o/svc/code-scanning/alerts*) cat "$F/alerts.json" ;;
-  repos/o/svc/commits/head*/check-runs) if [ -f "$F/runs-fail" ]; then cat "$F/runs-fail"; exit 1; fi
+  repos/o/svc/commits/head*/check-runs*) h="${2#repos/o/svc/commits/}"; h="${h%%/*}"
+             # runs-fail: every read fails, or only the heads listed in runs-fail-heads. head7 is still running.
+             if [ -f "$F/runs-fail" ] && { [ ! -f "$F/runs-fail-heads" ] || grep -qx "$h" "$F/runs-fail-heads"; }; then cat "$F/runs-fail"; exit 1; fi
+             if [ "$h" = head7 ]; then echo '1 1'; exit 0; fi
              while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
              out="$(echo '{"check_runs":[{"status":"completed"}]}' | jq -r "$q")"; printf '%s\n' "${out}" ;;
   *) echo "stub gh: unexpected $*" >&2; exit 1 ;;
@@ -600,7 +603,23 @@ out="$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PA
 check "watch prints no syntax error on a rate-limited check-runs read" "no" "$(grep -q 'syntax error' <<< "${out}" && echo yes || echo no)"
 check "watch says a failed check-runs read failed once" "1" "$(grep -c "gh cannot read o/svc #3's check runs" <<< "${out}")"
 check "watch polls on after a failed check-runs read" "yes" "$([[ $(grep -c 'commits/head6/check-runs' "${ROOT}/gh/calls") -ge 2 ]] && echo yes || echo no)"
-rm -f "${ROOT}/gh/runs-fail"; mv "${ROOT}/gh/prlist.orig" "${ROOT}/gh/prlist.json"
+check "watch says why gh could not read the check runs" "1" "$(grep -c "(API rate limit exceeded for user ID 1.)" <<< "${out}")"
+check "watch reads up to 100 check runs" "yes" "$(grep -q 'commits/head6/check-runs?per_page=100' "${ROOT}/gh/calls" && echo yes || echo no)"
+# One PR's read fails while another's succeeds (its checks still run): the failure is said once, not on
+# every poll, and a failure on the other PR is named too once it fails.
+item "${w}/docs" stories/fix-main-abcdef1.md "status: review" "kind: code" "repo: svc"
+{ sed 's/}]$/},/' "${ROOT}/gh/prlist.json"
+  echo ' {"number": 5, "headRefName": "story/fix-main-abcdef1", "headRefOid": "head7", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]'; } > "${ROOT}/gh/prlist.two"
+mv "${ROOT}/gh/prlist.two" "${ROOT}/gh/prlist.json"
+echo head6 > "${ROOT}/gh/runs-fail-heads"; : > "${ROOT}/gh/calls"
+out="$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 3; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1 || true)"
+check "watch says one PR's failed read once while another PR's read succeeds" "1" "$(grep -c "gh cannot read o/svc #3's check runs" <<< "${out}")"
+check "watch polls the succeeding PR on every poll beside the failing one" "yes" "$([[ $(grep -c 'commits/head7/check-runs' "${ROOT}/gh/calls") -ge 2 ]] && echo yes || echo no)"
+echo 'head6
+head7' > "${ROOT}/gh/runs-fail-heads"; : > "${ROOT}/gh/calls"
+out="$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 3; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1 || true)"
+check "watch names each PR whose read failed, once each" "1 1" "$(grep -c "gh cannot read o/svc #3's check runs" <<< "${out}") $(grep -c "gh cannot read o/svc #5's check runs" <<< "${out}")"
+rm -f "${ROOT}/gh/runs-fail" "${ROOT}/gh/runs-fail-heads" "${w}/docs/stories/fix-main-abcdef1.md"; mv "${ROOT}/gh/prlist.orig" "${ROOT}/gh/prlist.json"
 
 # watch reports this project's agents whose session is waiting, with what each waits for; herdr
 # lists every project's (lead, in w:6, is another's). A Claude agent's state is its session's (the
