@@ -28,3 +28,13 @@ after: safer-faster-swarm. The lead posts here: flow's merged-in-main share over
 - **Fresh agent on main's README:** `/swarm-dev:swarm` first appears in prose at line 47, and `swarm.sh init` at line 70. Folded into docs-review-readme's Done when.
 - **ci_health:** printed `gh failed` and dropped 26 of about 31 PRs. Filed flow-ci-health-gh-errors.
 - Epic cost so far: $985.35 over 83 builds (`flow --epic safer-faster-swarm`).
+
+## Results after v0.26.0 (2026-10-23)
+
+- **GitHub API budget:** REST 4089/5000 and GraphQL 4736/5000 left at 14:35 UTC, 4 minutes before REST's reset, with 7 agents running (`gh api rate_limit`). The drain is fixed (#385, #381). `flow` gh_calls: busiest hour 102 REST runs.
+- **Merged-in-main share:** 44% (12 of 27, `flow --epic safer-faster-swarm`), against the 55% baseline. Better. All epics since 2026-10-22: 37%.
+- **CI time:** median 3.8 min per PR, down from 8.4 (`flow --since 2026-10-22` ci_health, after #343's four shards). The target is under 3 minutes: missed by 0.8. Filed ci-three-minutes.
+- **Flaky tests:** codex_test and wait_pr_test last flaked 2026-10-22, before their fixes. New since 0.26: tests/dash_watch_test.sh (3 runs, 2026-10-23, e.g. https://github.com/redscaresu/swarm-dev/actions/runs/39879081962/attempts/1), and queue_test and review_test (1 each). Filed dash-watch-test-flake.
+- **Builder subagents' share:** the model-fit `subagents` block is still empty, so the share is 0%, under 10%. sonnet-share-on's phase 2 is unchanged.
+- **dash --check:** every figure agrees on swarm-dev.
+- **Fresh agent on README:** README now opens with `swarm.sh init` and `/swarm-dev:swarm` (#396).
