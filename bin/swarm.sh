@@ -29,6 +29,7 @@
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
+#   swarm.sh grants <story | epic | PR URL>                the agreed HLD over it (a story's epic:, then parent: up to an epic with hld:; a PR's stories, or a board PR's touched epics and stories, all under one HLD) and its grants, one per line, or none
 #   swarm.sh plan-unasked [--declined] <epic>               record that a later epic next offered has had its unasked plan, so next offers it no more; --declined: that the user declined it
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
@@ -468,6 +469,7 @@ dispatch() {
     drop)   drop_story "${1:-}" "${*:2}" ;;
     dialog) dialog_answered "${1:-}" "${2:-}" ;;
     plan-unasked) plan_unasked "$@" ;;
+    grants) grants "$@" ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     merge)  merge_pr "$@" ;;
@@ -502,7 +504,7 @@ dispatch() {
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _label _trusted _pane _mtime _step-up _step"
+READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _label _trusted _pane _mtime _step-up _step"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {

@@ -114,7 +114,9 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   only when its story names it under `env:`.
 - In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
   go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
-- Nothing merges until you say so, unless you set `merge = agent`.
+- Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
+  lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
+  its grants.
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.

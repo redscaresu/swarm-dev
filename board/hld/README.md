@@ -31,3 +31,13 @@ grants: []
 
 An HLD is `agreed` before any epic is planned from it; each epic links back with
 `hld: <file-name-without-.md>`. Only the user sets `superseded`, by hand, when a later HLD replaces it.
+
+`grants:` lists what the lead may do under this HLD without asking the user, once it is `agreed`:
+
+- `epics`: plan epics from the HLD.
+- `stories`: write an epic's stories and open the board PR without asking (`/plan-epic`).
+- `merge`: merge a story PR or board PR under the HLD, even with `merge = human`.
+- `release`: merge a release PR whose stories since the last tag are all under HLDs that grant it.
+
+An absent `grants:` means none. Only the user sets it. `swarm.sh grants <story | epic | PR URL>`
+prints the agreed HLD over an item and its grants, or `none`.

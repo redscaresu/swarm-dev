@@ -566,6 +566,123 @@ pr_stories() {
     { for (j = 2; j <= NF; j++) { m = split($j, u, ","); for (i = 1; i <= m; i++) if (canon(u[i]) == k) { print $1; next } } }' <<< "${rows}"
 }
 
+# GRANTS: the values an HLD's grants: may hold.
+GRANTS="epics stories merge release"
+
+# hld_grants <hld file> — the grants in its front matter's grants: (get_fm, as a slug_list), one per
+# line; none for an absent line. Any other value, a [ with no ] on its line, or a YAML block list
+# (after blank or comment lines too), dies with the file and line, as a bad config does.
+hld_grants() {
+  local g list n
+  n="$(awk '/^---$/ && ++c == 2 { exit }
+    c == 1 && !g && index($0, "grants:") == 1 { g = NR; v = substr($0, 8); sub(/#.*/, "", v)
+      if (index(v, "[") && !index(v, "]")) { print g; exit }
+      if (v ~ /[^[:space:]]/) exit
+      next }
+    g && /^[[:space:]]*(#.*)?$/ { next }
+    g { if (/^[[:space:]]*-/) print g; exit }' "$1")"
+  [[ -z "${n}" ]] || die "$1:${n}: grants must be a one-line [..] list"
+  read -r -a list <<< "$(slug_list "$(get_fm "$1" grants)")" || true
+  for g in ${list[@]+"${list[@]}"}; do
+    [[ " ${GRANTS} " == *" ${g} "* ]] && { echo "${g}"; continue; }
+    n="$(awk '/^---$/ && ++c == 2 { exit } c == 1 && index($0, "grants:") == 1 { print NR; exit }' "$1")"
+    die "$1:${n}: grants must be epics, stories, merge or release"
+  done
+}
+
+# item_hld <story or epic file> [epics dir] — the agreed HLD file in ${BOARD}/hld over it: a story's
+# epic:, then each epic's parent:, up to the first epic with hld:, read in [epics dir] (${BOARD}/epics).
+# A seen list ends a parent: cycle. Prints nothing (fails closed) on a missing epic, a missing HLD
+# file, a draft or superseded HLD, a story with no epic, or a cycle.
+item_hld() {
+  local f="$1" e="${2:-${BOARD}/epics}" seen=" " next h
+  [[ "${f%/*}" != */stories ]] || { next="$(slug_list "$(get_fm "${f}" epic)")"; f="${e}/${next}.md"; }
+  while [[ "${next:-}" =~ ^[a-z0-9-]*$ && -f "${f}" && "${seen}" != *" ${f} "* ]]; do
+    seen+="${f} "
+    h="$(slug_list "$(get_fm "${f}" hld)")"
+    if [[ -n "${h}" ]]; then
+      [[ "${h}" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
+      h="${BOARD}/hld/${h}.md"
+      [[ ! -f "${h}" || "$(get_fm "${h}" status)" != agreed ]] || echo "${h}"
+      return 0
+    fi
+    next="$(slug_list "$(get_fm "${f}" parent)")"; f="${e}/${next}.md"
+  done
+}
+
+# one_hld — the HLD named on every line of stdin (item_hld's answers, an empty line for an item under
+# none), or nothing when there is none, an empty line, or two.
+one_hld() { local u; u="$(sort -u)"; [[ -z "${u}" || "${u}" == *$'\n'* ]] || echo "${u}"; }
+
+# pr_hld <pr-url> — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
+# lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
+# touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
+# copy of the board's epics with the head's over them; the HLDs always the board's. A PR that touches
+# .claude/swarm/ (in any repo), or the board's hld/, is under none: only the user changes those. A PR
+# no story lists that touches any file but the board's epics and stories is under none too.
+pr_hld() (
+  local s url repo n own="" info="" head="" pre p q view="" err
+  url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
+  trap 'rm -rf "${view}"' EXIT
+  s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
+  # The board's path in the repo, with a trailing /; empty for a board at the repo's root.
+  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  # A URL pr_stories reads but this does not, or a board repo whose origin cannot be read, is under
+  # none: the PR's files could not be checked.
+  [[ "${url}" =~ ^https://github\.com/([a-z0-9._-]+/[a-z0-9._-]+)/pull/0*([0-9]+)$ ]] || return 0
+  repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+  if [[ ${BOARD_IN_REPO} == 1 ]]; then
+    p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 0
+    own="$(gh repo view "${p}" --json nameWithOwner 2>/dev/null | json "d['nameWithOwner'].lower()" 2>/dev/null)" || return 0
+  fi
+  # No story lists it and the board is not in its repo: nothing on the board is under it.
+  [[ -n "${s}" || "${repo}" == "${own}" ]] || return 0
+  info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles | json "d['headRefOid'] + ' ' + str(d['changedFiles'])")" \
+    || die "grants: gh cannot read ${url}"
+  head="${info% *}"
+  info="$(ci_gate files "${repo}" "${n}" "${info#* }")" || die "grants: cannot list every file ${url} changes: ${info}"
+  [[ $'\n'"${info}" != *$'\n.claude/swarm/'* ]] || return 0
+  if [[ "${repo}" == "${own}" ]]; then
+    [[ $'\n'"${info}" != *$'\n'"${pre}hld/"* ]] || return 0   # loose-match: ok a whole line's prefix, the board's hld/
+  else
+    head=""   # the board is not in its repo, so none of its files is a board file
+  fi
+  view="$(mktemp -d)"; mkdir "${view}/epics" "${view}/stories"
+  cp "${BOARD}/epics/"*.md "${view}/epics/" 2>/dev/null || true
+  err="${view}/err"
+  while [[ -n "${head}" ]] && IFS= read -r p; do
+    [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
+    p="${p#"${pre}"}"
+    [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
+    # Quoted, so a # or ? in a name is read as itself; a 404 is then a file the head does not have.
+    q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "${pre}${p}")"
+    if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
+    grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
+    rm -f "${view}/${p}"
+  done <<< "${info}"
+  {
+    for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
+    while [[ -n "${head}" ]] && IFS= read -r p; do
+      [[ "${p}" == "${pre}"* && "${p#"${pre}"}" =~ ^(epics|stories)/[^/]+\.md$ ]] || { [[ -n "${s}" ]] || echo; continue; }   # loose-match: ok pre is empty or ends in /
+      p="${p#"${pre}"}"
+      [[ ! -f "${BOARD}/${p}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${p}")"
+      [[ ! -f "${view}/${p}" ]] || printf '%s\n' "$(item_hld "${view}/${p}" "${view}/epics")"
+      [[ -f "${BOARD}/${p}" || -f "${view}/${p}" ]] || echo   # in neither: under none
+    done <<< "${info}"
+  } | one_hld
+)
+
+# grants <story | epic | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
+# PR) and its grants (hld_grants), one per line, or none.
+grants() {
+  local h g
+  [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | PR URL>"
+  if [[ "$1" == https://* ]]; then h="$(pr_hld "$1")" || exit 1; else g="$(item_file "$1")" || exit 1; h="$(item_hld "${g}")"; fi
+  [[ -n "${h}" ]] || { echo none; return 0; }
+  g="$(hld_grants "${h}")" || exit 1
+  printf '%s\n%s\n' "${h}" "${g:-none}"
+}
+
 # money_walk <slugs> — why their PRs wait for the user's merge, or nothing: the first of these stories,
 # or of the open stories they depend on at any depth (a stacked PR carries its parents' commits), whose
 # costs: holds its merge (costs_money). <slugs> is one string, split on spaces and newlines.
