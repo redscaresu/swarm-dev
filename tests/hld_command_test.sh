@@ -25,12 +25,15 @@ hasnt() { # <name> <pattern> [text]
 
 has description '^--- description: Use when asked to write, start or resume an HLD or a design\.'
 has argument-hint 'argument-hint: "'
-has dated-file 'create `docs/hld/YYYY-MM-DD-<slug>\.md`, dated today, from the skeleton'
+has dated-file '`<file>` is `YYYY-MM-DD-<slug>`, dated today: create `docs/hld/<file>\.md` from the skeleton'
 has fills-title-date 'fill in `title:` and `date:`'
-has exact-slug 'without its leading `YYYY-MM-DD-`, is exactly `<slug>`'
+has exact-slug 'without its leading `YYYY-MM-DD-`, is exactly that slug'
 has resume-by-file-name 'with its file name without `\.md` as the argument, never its `title:`'
 has argument-not-readme 'exists and is not the README'
 has bare-headings 'write the ten section headings bare \(`## Problem`'
+has no-slash 'If the argument contains `/`, stop'
+has slug-from-file 'by name or by title, `<file>` is its name without `\.md` and `<slug>` is `<file>` without its leading `YYYY-MM-DD-`'
+has reviewer-path 'attack the draft in `docs/hld/<file>\.md`'
 has d-dir '`D` below is `\.swarm/hld-<slug>`'
 has resume-draft-grep "grep -l '\^status: draft\\$' docs/hld/\\*\\.md\`, never the README"
 has several-ask 'Several: list them with their titles and ask which'

@@ -18,18 +18,23 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
      stands and that `/swarm-dev:swarm` continues it. Offer to start a new HLD if they give a title.
      Then stop.
 
-1. If `docs/hld/<argument>.md` exists and is not the README (`README.md` in any case), that file is the HLD and its slug is its name without the
-   leading `YYYY-MM-DD-`. Otherwise make the slug from the title: lowercase it, turn every run of
-   characters other than `a-z` and `0-9` into one `-`, and trim `-` from both ends (`Add
+1. If the argument contains `/`, stop and ask the user for a title: an HLD lives only in
+   `docs/hld/`. If `docs/hld/<argument>.md` exists and is not the README (`README.md` in any
+   case), that file is the HLD. Otherwise make a slug from the title: lowercase it, turn every run
+   of characters other than `a-z` and `0-9` into one `-`, and trim `-` from both ends (`Add
    rate-limiting (v2)!` is `add-rate-limiting-v2`). If the slug is empty, stop and ask the user
-   for another title. If an HLD whose name, without its leading `YYYY-MM-DD-`, is exactly `<slug>`
-   exists (`2026-10-23-add-cache.md` is `add-cache`, never `cache`), or an HLD with this title does, and is
-   `status: draft`, resume it. If it exists with any other status (agreed or superseded), it is
-   not for co-writing: stop, say so with its status, and let the user pick another title.
-   Otherwise create `docs/hld/YYYY-MM-DD-<slug>.md`, dated today, from the skeleton in the fenced
-   block of `${CLAUDE_PLUGIN_ROOT}/templates/docs/hld/README.md`: fill in `title:` and `date:` and
-   the `# ` heading, set `status: draft`, keep `grants: []`, and write the ten section headings
-   bare (`## Problem`, `## Goals`, ...), dropping the guide text after each heading in the skeleton.
+   for another title. The HLD is then the one whose name, without its leading `YYYY-MM-DD-`, is
+   exactly that slug (`2026-10-23-add-cache.md` is `add-cache`, never `cache`), or else the one
+   whose `title:` is this title. Whenever step 1 resolves to an existing file, by name or by
+   title, `<file>` is its name without `.md` and `<slug>` is `<file>` without its leading
+   `YYYY-MM-DD-`, whatever the title says now. If that file is `status: draft`, resume it. If it
+   has any other status (agreed or superseded), it is not for co-writing: stop, say so with its
+   status, and let the user pick another title. Otherwise `<slug>` is the slug made from the
+   title and `<file>` is `YYYY-MM-DD-<slug>`, dated today: create `docs/hld/<file>.md` from the
+   skeleton in the fenced block of `${CLAUDE_PLUGIN_ROOT}/templates/docs/hld/README.md`: fill in
+   `title:` and `date:` and the `# ` heading, set `status: draft`, keep `grants: []`, and write
+   the ten section headings bare (`## Problem`, `## Goals`, ...), dropping the guide text after
+   each heading in the skeleton.
 
 2. Write the co-author's brief to `.swarm/briefs/hld-<slug>.md`. `D` below is `.swarm/hld-<slug>`.
 
@@ -59,7 +64,7 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    whatever has or has not happened in this step: the user may agree without ever saying the
    draft is ready, or the reviewer may never write its file. The moment `D/agreed` exists, go to
    step 5. Meanwhile, wait until `D/ready` exists. Then
-   write a reviewer brief (attack the draft, do not rewrite it: a problem with no evidence, goals
+   write a reviewer brief (attack the draft in `docs/hld/<file>.md`, do not rewrite it: a problem with no evidence, goals
    that cannot be checked or could not fail, a design that contradicts an ADR or a safety rule,
    non-goals that leave its edge unclear, alternatives not weighed, risks not named, open
    questions that block planning it into epics, and its `grants:` as a risk: each grant hands
@@ -68,7 +73,7 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    `swarm.sh agent _hld hld-review-<slug> "$PWD" hld-review <brief>`. Wait until `D/review.md`
    is written, then `swarm.sh wait hld-<slug>` (tell refuses a busy co-author) and hand it over:
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
-   together." to a file and run `swarm.sh tell hld-<slug> nudge <file>`.
+   together." to a file `<note>` and run `swarm.sh tell hld-<slug> nudge <note>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
    `status: agreed`; nothing plans epics from a draft HLD. Open a board PR for the HLD with one
    `swarm.sh codex-review` pass (a board outside the project's repo has no board PR: the HLD is
