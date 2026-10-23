@@ -69,8 +69,9 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name, since a shorter one can run
    a different command. After your yes, it runs `swarm.sh init`, which adds the board
    (`docs/epics/` and `docs/stories/`), `.claude/swarm/config`, and a CI workflow and pre-commit
-   hook that run `make check`.
-4. Back in `/swarm-dev:swarm`, the first time it asks once for your rules for builders: commit trailers,
+   hook that run `make check`. It then stops and tells you to run `claude` in the project once and
+   accept the trust prompt (step 2, if you have not).
+4. Run `/swarm-dev:swarm` again. The first time, it asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.
 5. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm`. Run it each
