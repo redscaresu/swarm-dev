@@ -611,14 +611,17 @@ one_hld() { local u; u="$(sort -u)"; [[ -z "${u}" || "${u}" == *$'\n'* ]] || ech
 # has it (a file the PR deletes too) and as the PR's head has it, read in a copy of the board's epics
 # with the head's over them; the HLDs always the board's.
 pr_hld() (
-  local s url="$1" repo n info="" head="" rel p view="" err
+  local s url repo n info="" head="" rel p view="" err
+  url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
   rel="${BOARD#"${PROJECT_DIR}"/}"
-  if [[ ${BOARD_IN_REPO} == 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/0*([0-9]+)$ ]] \
-    && repo="${BASH_REMATCH[1]}" && n="${BASH_REMATCH[2]}" && p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)"; then
+  if [[ ${BOARD_IN_REPO} == 1 ]] && p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)"; then
+    # A URL pr_stories reads but this does not is under none: its files could not be checked.
+    [[ "${url}" =~ ^https://github\.com/([a-z0-9._-]+/[a-z0-9._-]+)/pull/0*([0-9]+)$ ]] || return 0
+    repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
     p="$(gh repo view "${p}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" || die "grants: gh cannot tell which GitHub repo origin is"
-    if [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${p}" ]]; then
+    if [[ "${repo}" == "${p}" ]]; then
       info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles | json "d['headRefOid'] + ' ' + str(d['changedFiles'])")" \
         || die "grants: gh cannot read ${url}"
       head="${info% *}"
@@ -635,6 +638,7 @@ pr_hld() (
   cp "${BOARD}/epics/"*.md "${view}/epics/" 2>/dev/null || true
   err="${view}/err"
   while IFS= read -r p; do
+    [[ "${p}" == "${rel}/"* ]] || continue
     s="${p#"${rel}/"}"
     [[ "${s}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
     if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${p}?ref=${head}" > "${view}/${s}" 2> "${err}"; then continue; fi
@@ -642,6 +646,7 @@ pr_hld() (
     rm -f "${view}/${s}"
   done <<< "${info}"
   while IFS= read -r p; do
+    [[ "${p}" == "${rel}/"* ]] || continue
     s="${p#"${rel}/"}"
     [[ "${s}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
     [[ ! -f "${BOARD}/${s}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${s}")"

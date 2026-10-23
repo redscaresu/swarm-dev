@@ -86,6 +86,10 @@ echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.4"
 echo '[{"filename":"bin/x.sh"},{"filename":"docs/hld/2026-01-01-a.md"}]' > "${FX}/repos_o_r_pulls_4_files_per_page=100"
 expect story-pr https://github.com/o/r/pull/03 "$(printf '%s\nmerge\nstories' "${A}")"
 expect story-pr-touching-hld-none https://github.com/o/r/pull/4 none
+expect story-pr-host-case-touching-hld-none https://GitHub.com/O/r/pull/4 none
+expect story-pr-host-case https://GitHub.com/O/r/pull/3 "$(printf '%s\nmerge\nstories' "${A}")"
+# pr_stories reads it as #4, but its files cannot be listed by that spelling: none.
+expect story-pr-odd-spelling-none 'https://github.com/o/r/pull/4,' none
 
 grants s-bad
 if [[ ${rc} -ne 0 ]] && grep -qF "${B}/hld/bad.md:4: grants must be epics, stories, merge or release" "${ROOT}/out"; then
@@ -116,6 +120,11 @@ expect board-pr-rehomed-none https://github.com/o/r/pull/9 none
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.10"
 echo '[{"filename":"docs/hld/2026-01-01-a.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_10_files_per_page=100"
 expect board-pr-touching-hld-none https://github.com/o/r/pull/10 none
+
+# board PR #11 changes epics/child.md outside the board (docs/): none.
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.11"
+echo '[{"filename":"epics/child.md"}]' > "${FX}/repos_o_r_pulls_11_files_per_page=100"
+expect board-pr-outside-board-none https://github.com/o/r/pull/11 none
 
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none
