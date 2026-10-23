@@ -269,7 +269,7 @@ merge ins: left out '"${U}"$'/15: '"$(g rev-parse --short=12 story/m15)"$': git 
 # ci_health's flaky tests: a fifth project, its origin o/r, its PRs #1 (t1, epic e1) and #2 (t2). gh
 # lists 11 of the 12 runs of o/r created 10-01 to 10-03. Run 11 was red on both attempts (e_test.sh)
 # before run 10, on the same head, workflow and event, went red and then green on its rerun, its
-# failed log naming a_test.sh twice: both flaky, as the row counts them. Run 21 (push) red on c_test.sh,
+# failed log naming a_test.sh twice, beside a byte that is not UTF-8: both flaky, as the row counts them. Run 21 (push) red on c_test.sh,
 # then green; run 24 red, green, red (c_test.sh both times) and green; run 25 red (f_test.sh), green,
 # then red; run 20 red on both attempts (b_test.sh), alone on its head: no flake. Run 22 red, then
 # green, its log one gh cannot read; run 26's first attempt gh cannot read; run 27's log is go test's,
@@ -320,7 +320,7 @@ listing 2026-10-06..2026-10-06 1 "$(arun 90 c9 CI push success 2 2026-10-06T10:0
 for a in 10-1 11-1 30-1 30-2 20-1 21-1 22-1 24-1 24-3 25-1 27-1; do echo '{"conclusion":"failure"}' > "${TG}/attempt-${a}"; done
 for a in 24-2 25-2; do echo '{"conclusion":"success"}' > "${TG}/attempt-${a}"; done
 F=$'test-shard (1)\tRun this shard\'s tests\t2026-10-01T10:05:00Z'
-printf '%s\n' "${F} FAIL tests/a_test.sh 3s" "${F} FAIL a check in it" "${F} FAIL tests/a_test.sh: its job ended without a result" > "${TG}/log-10-1"
+printf '%s\n' "${F} "$'\xff' "${F} FAIL tests/a_test.sh 3s" "${F} FAIL a check in it" "${F} FAIL tests/a_test.sh: its job ended without a result" > "${TG}/log-10-1"
 printf '%s\n' "${F} FAIL tests/c_test.sh 4s" "${F} FAIL a check: want 'FAIL tests/z_test.sh 3s', got ''" "${F}   FAIL tests/y_test.sh 3s" \
   "${F} > FAIL tests/y_test.sh 3s" > "${TG}/log-30-1"; for a in 21-1 24-1 24-3; do cp "${TG}/log-30-1" "${TG}/log-${a}"; done
 printf '%s\n' "${F} FAIL tests/c_test.sh 5s" "${F} TIMEOUT tests/d_test.sh after 600s" > "${TG}/log-30-2"
@@ -365,8 +365,31 @@ flaky() { (cd "${FP:-${T}}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECT
 FH=$'test_file\tflaky_runs\tlast_seen\texample_run'
 L=https://github.com/o/r/actions/runs
 : > "${TG}/gh.log"
+got="$(flaky --since 2026-10-01 --until 2026-10-03)"
+check "ci_health: a failed log with a byte that is not UTF-8 is still read: a_test.sh is flaky, and no line says not JSON" \
+  "$(grep -E 'a_test|not JSON' <<< "${got}")" $'tests/a_test.sh\t1\t2026-10-01\t'"${L}"'/10/attempts/1'
+# Under an ASCII locale (UTF-8 mode off) gh() still reads gh's output as UTF-8: é kept, a log's 0xff as
+# U+FFFD. A JSON answer's 0xff still fails, so gh_cache caches nothing; one on a failed call's stderr
+# keeps gh's error (and its retries).
+mkdir -p "${dir}/ugh"; cat > "${dir}/ugh/gh" <<'EOF'
+#!/bin/sh
+case "$1" in
+  json) printf '{"t": "\377"}' ;;
+  502) printf 'HTTP 502 \377' >&2; exit 1 ;;
+  *) printf 'caf\303\251 \377' ;;
+esac
+EOF
+chmod +x "${dir}/ugh/gh"
+check "report.gh reads gh's output as UTF-8 under a locale that is not, a log's byte that is not UTF-8 as U+FFFD, a JSON answer's as not JSON, uncached, gh's error's kept" \
+  "$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 SWARM_SLEEP_SCALE=0 SWARM_GH_CACHE="${dir}/ucache" PATH="${dir}/ugh:${PATH}" python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1]); import gh_cache, report
+print(ascii(report.gh("log", parse=str)))
+print(ascii(gh_cache.cached("o/r", "j", lambda: report.gh("json"), lambda v: True)), report.ERROR[0], os.path.exists(gh_cache.path("o/r", "j")))
+print(ascii(report.gh("502")), ascii(report.ERROR[0]))' "$(dirname "${SWARM}")/lib")" \
+  "'caf\\xe9 \\ufffd'
+None gh json: an answer that is not JSON False
+None 'gh 502: HTTP 502 \\ufffd'"
 check "ci_health: the test files a head's red attempts failed before a green one, as the row counts flakes, a run once per file, worst first; what gh did not list or could not read is named, and logs with no test file line counted" \
-  "$(flaky --since 2026-10-01 --until 2026-10-03)" "${FH}"$'
+  "${got}" "${FH}"$'
 tests/c_test.sh\t3\t2026-10-02\t'"${L}"$'/30/attempts/1
 tests/d_test.sh\t1\t2026-10-02\t'"${L}"$'/30/attempts/2
 tests/f_test.sh\t1\t2026-10-01\t'"${L}"$'/25/attempts/1
