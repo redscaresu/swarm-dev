@@ -142,12 +142,20 @@ returned() {
   for ((i = 0; i < $1; i++)); do [[ ! -e "${ROOT}/rc" ]] || { lpid=""; return 0; }; sleep 0.1; done
   return 1
 }
-# kill_tree <pid> — a process and everything under it.
-kill_tree() { local c; for c in $(pgrep -P "$1"); do kill_tree "${c}"; done; kill "$1" 2>/dev/null || true; }
-# stop — end a background run, swarm.sh and the subshells around it, even one that never took the lock.
+# freeze <pid> — stop a process, then everything under it, top down, printing each pid: a stopped
+# process forks nothing, so no child is born after its parent's children were listed.
+freeze() { local c; kill -STOP "$1" 2>/dev/null || return 0; echo "$1"; for c in $(pgrep -P "$1"); do freeze "${c}"; done; }
+# stop — end a background run, swarm.sh and the subshells around it, even one that never took the lock,
+# and see each of its processes gone within 5 s. One left would share the next case's .swarm/lead.
 stop() {
+  local pids i
   [[ -z "${lpid}" ]] && return 0
-  kill_tree "${lpid}"; wait "${lpid}" 2>/dev/null || true; lpid=""
+  pids="$(freeze "${lpid}" | paste -sd, -)"
+  # shellcheck disable=SC2086 # one pid per word
+  kill -KILL ${pids//,/ } 2>/dev/null || true
+  wait "${lpid}" 2>/dev/null || true; lpid=""
+  for ((i = 0; i < 50; i++)); do ps -p "${pids}" > /dev/null 2>&1 || return 0; sleep 0.1; done
+  echo "FAIL stop left the run's processes alive: ${pids}"; fails=$((fails + 1))
 }
 out() { cat "${ROOT}/out"; }
 rc() { cat "${ROOT}/rc" 2>/dev/null; }
@@ -261,6 +269,14 @@ checks failure "${H}"; checks success "${H2}"
 check "it read the cached head again before it would wake" logged "${H}/check-runs" 2
 must "it polled" polls 1   # the read that did it has decided
 check "a cached green head that a re-run turned red does not wake it when the item's other PR goes green" nothing_yet
+check "a head the fresh re-read finds red is gone from LEAD_GREEN after that poll" \
+  test "$(grep -c "^${URL} ${H}$" "${P}/.swarm/lead/green")" == 0
+# No longer cached, PR 7's head is read red in each poll's first pass, which then stops before PR 8: a
+# fresh re-read comes only after a first pass that read PR 8 green. So PR 8 is read no more, however
+# late the counts are taken.
+v8=$(grep -c '^pr view 8 ' "${ROOT}/gh.log" || true)
+must "a poll ended" first_read "$(seen_id)"; must "a poll ended" first_read "$(seen_id)"
+check "the next poll makes no fresh re-read for it" test "$(grep -c '^pr view 8 ' "${ROOT}/gh.log" || true)" == "${v8}"
 stop
 
 fresh "merge = human"
