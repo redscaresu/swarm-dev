@@ -10,13 +10,15 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
 
 0. **No title given: pick up where things left off.** List the draft HLDs
    (`grep -l '^status: draft$' docs/hld/*.md`, never the README).
-   - One draft: resume it (step 1, with its title from the file's `title:`).
-   - Several: list them with their titles and ask which; do not guess.
+   - One draft: resume it (step 1, with its file name without `.md` as the argument, never its
+     `title:`, which the user may have edited since).
+   - Several: list them with their titles and ask which; do not guess. Resume the one chosen by
+     its file name, as above.
    - None: there is no HLD in progress. Run `swarm.sh _step` (next's step, which starts no conductor) and tell the user where the chain
      stands and that `/swarm-dev:swarm` continues it. Offer to start a new HLD if they give a title.
      Then stop.
 
-1. If `docs/hld/<argument>.md` exists, that file is the HLD and its slug is its name without the
+1. If `docs/hld/<argument>.md` exists and is not the README (`README.md` in any case), that file is the HLD and its slug is its name without the
    leading `YYYY-MM-DD-`. Otherwise make the slug from the title: lowercase it, turn every run of
    characters other than `a-z` and `0-9` into one `-`, and trim `-` from both ends (`Add
    rate-limiting (v2)!` is `add-rate-limiting-v2`). If the slug is empty, stop and ask the user
@@ -26,7 +28,8 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    not for co-writing: stop, say so with its status, and let the user pick another title.
    Otherwise create `docs/hld/YYYY-MM-DD-<slug>.md`, dated today, from the skeleton in the fenced
    block of `${CLAUDE_PLUGIN_ROOT}/templates/docs/hld/README.md`: fill in `title:` and `date:` and
-   the `# ` heading, set `status: draft`, keep `grants: []` and the ten sections.
+   the `# ` heading, set `status: draft`, keep `grants: []`, and write the ten section headings
+   bare (`## Problem`, `## Goals`, ...), dropping the guide text after each heading in the skeleton.
 
 2. Write the co-author's brief to `.swarm/briefs/hld-<slug>.md`. `D` below is `.swarm/hld-<slug>`.
 
