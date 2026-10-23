@@ -11,8 +11,8 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 ## Quick start
 
 1. Install, then restart Claude Code: `claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev`
-2. In your project's git root, inside [herdr](https://herdr.dev), run `swarm.sh init`.
-3. Start `claude` and run `/swarm-dev:swarm`. It stops each time it needs you.
+2. In your project's git root, inside [herdr](https://herdr.dev), start `claude`.
+3. Run `/swarm-dev:swarm`. After your yes it runs `swarm.sh init`, then stops each time it needs you.
 
 [Getting started](#getting-started) has the details and what to check first.
 
@@ -66,11 +66,11 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 1. Install the plugin (above), then restart Claude Code.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
-3. Inside herdr, run `swarm.sh init`. Or run `claude` and `/swarm-dev:swarm`, which runs it after your
-   yes. Type the whole command name, since a shorter one can run a different command. `init` adds the board
+3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name, since a shorter one can run
+   a different command. After your yes, it runs `swarm.sh init`, which adds the board
    (`docs/epics/` and `docs/stories/`), `.claude/swarm/config`, and a CI workflow and pre-commit
    hook that run `make check`.
-4. In `claude`, run `/swarm-dev:swarm`. The first time, it asks once for your rules for builders: commit trailers,
+4. Back in `/swarm-dev:swarm`, the first time it asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.
 5. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm`. Run it each
