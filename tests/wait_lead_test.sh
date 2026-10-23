@@ -95,11 +95,15 @@ seen_id() { { ls -i "${P}/.swarm/lead/seen" 2>/dev/null || true; } | awk '{ prin
 # first_read [seen id] — wait until the run has read the board once more than the id says: its seen file
 # is a new one, written when a read ends. A fixed sleep is not that: a slow gh or a loaded runner reads
 # later, and a read that lands after the case changed the board, the head or the checks sees the changed
-# ones, not the ones the case starts from. It ends at once when the run has exited (its rc file): a case
-# that expects it to sleep says so in its check. False when 60 s pass with neither.
+# ones, not the ones the case starts from. False when the run exits (its rc file) or 60 s pass without
+# one: a run that dies before it reads is not one that read.
 first_read() {
   local i
-  for ((i = 0; i < 600; i++)); do [[ "$(seen_id)" != "$1" || -e "${ROOT}/rc" ]] && return 0; sleep 0.1; done
+  for ((i = 0; i < 600; i++)); do
+    [[ "$(seen_id)" == "$1" ]] || return 0
+    [[ ! -e "${ROOT}/rc" ]] || return 1
+    sleep 0.1
+  done
   return 1
 }
 # start [VAR=value]... <timeout-ms> — lead in the background, once it has read the board.
@@ -121,7 +125,8 @@ polls() {
   for ((i = 0; i < 600; i++)); do [[ $(reads) -ge ${want} || -e "${ROOT}/rc" ]] && return 0; sleep 0.1; done
   return 1
 }
-# logged <text> <n> — true once gh's log holds <n> lines with <text>, false if the run exits first.
+# logged <text> <n> — true once gh's log holds <n> lines with <text>; false if the run exits first or 30 s
+# pass.
 logged() {
   local i
   for ((i = 0; i < 300; i++)); do
@@ -161,6 +166,7 @@ held x paused
 check "an escalated story held since returns within two polls" returned 25
 check "it prints held: <slug> (<cause>) and exits 0" test "$(out)|$(rc)" == "held: x (paused)|0"
 check "it logs one lead-woken line for it" test "$(events)" == "lead-woken x"
+rm -f "${FX}/ln.slow"
 
 # --- what lands between two runs wakes the second at once.
 again; held y paused
@@ -173,11 +179,16 @@ fresh
 (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_LEAD_POLL=1 bash "${SWARM}" wait --lead 20000 \
   > "${ROOT}/out.a" 2>&1 && echo 0 > "${ROOT}/rc.a" || echo $? > "${ROOT}/rc.a") 2>/dev/null &
 apid=$!; must "the earlier run read the board once" first_read ""
-start 20000
+# The new run is waited on itself: the earlier one rewrites seen every poll, so start would return on that.
+lead 20000 &
+lpid=$!
+saw() { local i; for ((i = 0; i < 600; i++)); do grep -q "$1" "${ROOT}/out" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
+must "the new run took over" saw 'stopping the earlier run'
 for ((i = 0; i < 30; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
 check "a new wait --lead stops the earlier one" test -e "${ROOT}/rc.a"
 check "the earlier one ends with nothing printed" test ! -s "${ROOT}/out.a"
 wait "${apid}" 2>/dev/null || true
+must "the new run read the board once" first_read "$(seen_id)"
 check "the new one says it took over" grep -q 'stopping the earlier run' "${ROOT}/out"
 alive() { ps -p "$(cat "$1" 2>/dev/null || echo 0)" > /dev/null 2>&1; }
 check "the new one holds the pid file" alive "${P}/.swarm/lead/pid"
@@ -187,7 +198,8 @@ check "the new one prints what landed" test "$(grep -v '^swarm:' "${ROOT}/out")"
 check "its pid file is gone once it returns" test ! -e "${P}/.swarm/lead/pid"
 
 fresh; touch "${FX}/ln.fail"
-start 20000
+lead 20000 &
+lpid=$!
 check "when the pid file cannot be made, it stops instead of spinning" returned 30
 check "it says it cannot write the pid file" grep -q 'cannot write .*/lead/pid' "${ROOT}/out"
 stop; rm -f "${FX}/ln.fail"
