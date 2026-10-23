@@ -40,7 +40,7 @@ user why. The full table of stops and what to do is in README § When `/swarm-de
 | `/epic <title>` | write a draft epic with a co-author; nothing plans it until the user agrees it |
 | `/plan-epic <epic>` | split an epic into stories |
 | `/swarm-dev:swarm` | do the next step and loop until the user must decide |
-| `swarm.sh next` | name the next step without doing it |
+| `swarm.sh next` | name the next step; it also starts a conductor for ready work that has none |
 | `swarm.sh status` | agents that need a look, and what waits on the user |
 | `swarm.sh dash --watch` | live dashboard: board, agents, recent events |
 | `swarm.sh conduct <epic>` | start a conductor that builds one epic |
