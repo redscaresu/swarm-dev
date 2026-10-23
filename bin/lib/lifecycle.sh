@@ -660,7 +660,7 @@ step_up_resume() {
 # recorded before deliver_prompt failed is closed and loses its agents.tsv line, so a resume starts it
 # afresh and the rung is on record once.
 start_rung() {
-  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base goal="${PREFLIGHT_GOAL}"
+  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base since goal="${PREFLIGHT_GOAL}"
   read -r trigger from to role < "${prompt%.md}.step-up"
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   names="$(story_env "${f}")" || die "${names}"
@@ -675,7 +675,7 @@ start_rung() {
     || die "step-up: ${slug}'s ${from} builder is closed, but origin's default branch could not be read (see above); once it can, run swarm.sh step-up --resume ${slug}"
   handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" \
     "$( [[ ! -f "${prompt%.md}.findings.md" ]] || echo "${prompt%.md}.findings.md")" > "${prompt}"
-  n="$(wc -l < "${AGENTS_LOG}")"; n=$((n))
+  n="$(wc -l < "${AGENTS_LOG}")"; n=$((n)); since="$(date +%s)"   # before the brief, for send_goal
   set +e
   (set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
   rc=$?
@@ -702,7 +702,7 @@ start_rung() {
   printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # A /goal that does not set is said on its own: the step-up stands.
   set +e
-  (set -e; send_goal "${slug}" "${prompt%.md}.goal.md" brief)
+  (set -e; send_goal "${slug}" "${prompt%.md}.goal.md" brief "${since}")
   rc=$?
   set -e
   [[ ${rc} -eq 0 ]] || echo "swarm: ${slug}: stepped up, and its ${to} builder runs, but its /goal did not set (see above): send ${prompt%.md}.goal.md as its /goal by hand" >&2

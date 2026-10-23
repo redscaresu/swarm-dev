@@ -349,18 +349,23 @@ goal_entry() {
 # lead to read. <since> defaults to now. The /goal goes only into a
 # turn that has started: herdr can say working while the session is still idle, and deliver_prompt
 # takes blocked as taken up, so it waits up to PROMPT_TIMEOUT_MS for the session (session_state) to
-# read busy, and fails with nothing sent if it reads waiting (a dialog, where Enter could approve
-# what auto mode flagged) or never reads busy. Each failure says the brief or the findings were
-# delivered, so they are not sent again.
+# read busy, or idle with own work (session_mtime) at or after <since>: a short first turn that ended
+# before this read took the brief. It fails with nothing sent if it reads waiting (a dialog, where
+# Enter could approve what auto mode flagged) or neither. Each failure says the brief or the findings
+# were delivered, so they are not sent again.
 send_goal() {
-  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline state pre post
+  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline state pre post t s
   name="$(agent_name "${slug}")"
   pre="${slug}: the brief was delivered, but"; post="; do not send it again"
   [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; }
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
-  while state="$(session_state "${name}")"; [[ "${state}" != busy && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
+  # session_mtime is whole seconds; tell's <since> may not be: round it up, so work before it never counts.
+  s="${since%.*}"; [[ "${s}" == "${since}" ]] || s=$((s + 1))
+  while state="$(session_state "${name}")"
+    if [[ "${state}" == idle ]]; then t="$(session_mtime "${name}")"; [[ -z "${t}" || "${t}" -lt "${s}" ]] || state=ran; fi
+    [[ "${state}" != busy && "${state}" != ran && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
   case "${state}" in
-    busy) ;;
+    busy|ran) ;;
     waiting*) die "${pre} its builder is waiting on $(waiting_for "${state}"), so no /goal was sent; answer it (herdr agent read ${name})${post}" ;;
     *) die "${pre} its session did not read busy within $((PROMPT_TIMEOUT_MS / 1000))s (${state}), so no /goal was sent${post}" ;;
   esac
@@ -483,7 +488,7 @@ goal_preflight() {
 }
 
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names since
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -519,11 +524,12 @@ build_story() {
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   epic="$(fm "${story}" epic)"
+  since="$(date +%s)"   # before the brief: send_goal counts a turn that ran since as having taken it
   start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
   # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
-  [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief
+  [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief "${since}"
 }
 
 # review_agent <slug> <PR URL> — start review-<slug> on a story's PR in the story's worktree and tab,
