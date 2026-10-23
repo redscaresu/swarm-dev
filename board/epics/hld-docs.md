@@ -1,7 +1,7 @@
 ---
 status: active
 parent: retro-and-shared-rules
-depends_on: [hld-grants, plan-hld, epic-guard]
+depends_on: [plan-hld, epic-guard]
 check: make test
 ---
 
@@ -14,7 +14,7 @@ The parent's goal 6.
 - docs/reference.md has a § Writing an HLD and a § Decomposing an HLD, and names `lead_epics` and the epic guard.
 - README.md's quick start and AGENTS.md's three-step run name `/hld` as the place a release's worth of work starts. AGENTS.md's never-merge rule under `merge = human` names the grants.
 - docs/assets/swarm-flow.workflow.json has the HLD step. A `kind: lead` story re-renders the light and dark PNGs from it with archify (**You:** run archify, which is on your machine).
-- `hld/` remnants the other children did not make real are removed: bin/lib/build.sh:865 and the line in docs/method.md:104.
+- Each `hld/` remnant in the parent's Problem is now real or removed. docs/method.md:104, docs/reference.md:1355 and bin/lib/build.sh:871 stay, now real.
 - tests/doc_check_test.sh passes.
 
 **Out of scope:** writing the first HLD (the parent's **Your part**).
