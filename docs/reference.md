@@ -1175,8 +1175,9 @@ not. They are empty when there is none, and an epic with only such builds still 
 
 The `idle_slots` section asks whether the swarm sat idle while work was ready. It prints TSV `epic
 idle_min no_conductor_min most_ready`, one row per epic and a last `all` row, or the `--epic` row
-alone. `idle_min` is the minutes in the window when at least one of the epic's stories was ready
-with no build while its conductor ran. A story goes ready at an `unblock`, `reconcile ... ok
+alone. When no story (or none of that epic) was ready in the window, a line says so in place of a
+row of zeros. `idle_min` is the minutes in the window when at least one of the epic's stories was
+ready with no build while its conductor ran. A story goes ready at an `unblock`, `reconcile ... ok
 (reopened)`, `reset` or `reset:held` event, or at a close that sent it back to ready. That is any
 close except the first one after a `review` or `kept` event for the build, which leaves the story in
 review (a later close, the drop, sends it back). Every wait counts: the first runs from the first
@@ -1193,12 +1194,13 @@ section warns once on stderr, as what it reads is then left out. The same minute
 of the epic running go under `no_conductor_min`. `most_ready` is the most of its stories ready with
 no build at once, clashing or not. The `all` row counts a minute once however many epics were idle
 in it, and it includes the stories with no epic, under the backlog conductor. Builds keep
-`agents.tsv`'s order. Each runs from its start to its slug's next ok close, else to its next build,
-else to the end of the window. A build with no session log yet starts at 00:00 on its `agents.tsv`
-day, and no earlier than the build before it ended. Such a build counts as built since its story
-went ready, unless a close readied the story. A conductor runs as `held_min` reads it: from an ok
-`conduct` event until the next one, a close of its agent or its report. A backlog run ends on a
-close of `conduct-backlog` or of the project's own backlog conductor name.
+`agents.tsv`'s order. Each runs from its start to its slug's next ok close or `reconcile ... ok
+(finished...)` (reconcile closes a merged story's builder itself), else to its next build, else to
+the end of the window. A build with no session log yet starts at 00:00 on its `agents.tsv` day, and
+no earlier than the build before it ended. Such a build counts as built since its story went ready,
+unless a close readied the story. A conductor runs as `held_min` reads it: from an ok `conduct`
+event until the next one, a close of its agent or its report. A backlog run ends on a close of
+`conduct-backlog` or of the project's own backlog conductor name.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying

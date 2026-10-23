@@ -445,7 +445,7 @@ I="${dir}/idle"; mkdir -p "${I}/.swarm" "${I}/docs/stories"; git -C "${I}" init 
 ist() { printf -- '---\nkind: code\nstatus: ready\nepic: %s\ntouches: [%s]\n---\n' "$2" "$3" > "${I}/docs/stories/$1.md"; }
 ist ia e9 src/a.sh; ist ib e9 src/b.sh; ist ic e10 src/c.sh
 mkdir -p "${I}/docs/epics"   # every epic here is active but e14 (later) and e26 (split)
-for e in e9 e10 e11 e12 e13 e15 e16 e17 e18 e19 e20 e21 e22 e23 e24 e25; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
+for e in e9 e10 e11 e12 e13 e15 e16 e17 e18 e19 e20 e21 e22 e23 e24 e25 e28 e29 e30 e31; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
 mkdir -p "${I}/.swarm/board-state/stories"; echo 'status: review' > "${I}/.swarm/board-state/stories/ib"   # closed: in review
 for x in ia:10:10 ib:09:30 ic:12:20; do
   printf '{"cwd":"%s/idle-wt/%s","timestamp":"2026-10-01T%s:00Z"}\n{"timestamp":"2026-10-01T%s:00Z"}\n' "${dir}" "${x%%:*}" "${x#*:}" "${x#*:}" \
@@ -501,11 +501,11 @@ check "idle_slots: a story a close sent back to ready waits again from that clos
 # in is ready from 23:00, but its epic e14 is later: no conductor will run it.
 ist in e14 src/n.sh; printf -- '---\nstatus: later\n---\n' > "${I}/docs/epics/e14.md"
 printf '%s\n' $'2026-10-01T23:00:00Z\tunblock\tin\tw:1\tok' >> "${I}/.swarm/events.tsv"
-check "idle_slots: a ready story in a later epic is not waiting" "$(idle --until 2026-10-01 --epic e14)" "${IH}"$'\ne14\t0\t0\t0'
+check "idle_slots: a ready story in a later epic is not waiting" "$(idle --until 2026-10-01 --epic e14)" "no story of epic e14 was ready in the window"
 # io (e15) is unblocked at 10:00 and its build has no session log yet: built, not waiting.
 ist io e15 src/o.sh; printf '%s\n' "2026-10-01${B}io${O}-" >> "${I}/.swarm/agents.tsv"
 printf '%s\n' $'2026-10-01T10:00:00Z\tunblock\tio\tw:1\tok' >> "${I}/.swarm/events.tsv"
-check "idle_slots: a build with no session log still counts as a build" "$(idle --until 2026-10-01 --epic e15)" "${IH}"$'\ne15\t0\t0\t0'
+check "idle_slots: a build with no session log still counts as a build" "$(idle --until 2026-10-01 --epic e15)" "no story of epic e15 was ready in the window"
 # ip (e16)'s log-less build is closed at 15:00, sending it back to ready: it waits from then to midnight.
 ist ip e16 src/p.sh; printf '%s\n' "2026-10-01${B}ip${O}-" >> "${I}/.swarm/agents.tsv"
 printf '%s\n' $'2026-10-01T10:00:00Z\tunblock\tip\tw:1\tok' $'2026-10-01T15:00:00Z\tclose\tip\tw:1\tok' >> "${I}/.swarm/events.tsv"
@@ -561,7 +561,26 @@ printf -- '---\nkind: research\nstatus: ready\nepic: e25\ntouches: [src/kb.sh]\n
 ist kc e26 src/kc.sh; printf -- '---\nstatus: split\n---\n' > "${I}/docs/epics/e26.md"; ist kd e27 src/kd.sh
 ev 23:00 unblock kb; ev 23:00 unblock kc; ev 23:00 unblock kd
 check "idle_slots: a ready story next would not build (another kind, an epic not active or missing) is not waiting" \
-  "$(for e in e25 e26 e27; do idle --until 2026-10-01 --epic "${e}" | tail -1; done)" $'e25\t0\t0\t0\ne26\t0\t0\t0\ne27\t0\t0\t0'
+  "$(for e in e25 e26 e27; do idle --until 2026-10-01 --epic "${e}"; done)" "$(for e in e25 e26 e27; do echo "no story of epic ${e} was ready in the window"; done)"
+# ma (e28) builds from 09:00 and merges at 10:00: reconcile closes its builder and logs only its finish.
+# mb, clashing with it, waits 10:00-10:30 with nothing running.
+ist ma e28 src/m.sh; ist mb e28 src/m.sh; sl ma ma 09:00; sl mb mb 10:30; ag ma sma; ag mb smb
+ev 10:00 reconcile ma 'ok (finished by its PR)'; ev 10:00 unblock mb
+check "idle_slots: reconcile's finish ends a merged story's build" "$(idle --until 2026-10-01 --epic e28)" "${IH}"$'\ne28\t0\t30\t1'
+# mc (e29): its kept event and its builder's close share 11:00:00, and close --drop at 13:00 sends it back.
+ist mc e29 src/mc.sh; sl mc mc 10:00; ag mc smc; ev 09:00 unblock mc; ev 11:00 kept mc "ok (https://github.com/o/r/pull/9)"; ev 11:00 close mc; ev 13:00 close mc
+check "idle_slots: a kept event and its close in one second, then the drop, send the story back" \
+  "$(idle --until 2026-10-01 --epic e29)" "${IH}"$'\ne29\t0\t720\t1'
+# md (e30) builds at 10:00; two closes in one second (11:00) end it and its log-less retry, so me,
+# clashing with md and waiting 12:00-12:20, is not blocked.
+ist md e30 src/md.sh; ist me e30 src/md.sh; sl md md 10:00; sl me me 12:20; ag md smd; ag md -; ag me sme
+ev 11:00 close md; ev 11:00 close md; ev 12:00 unblock me
+check "idle_slots: two closes in one second end two builds" "$(idle --until 2026-10-01 --epic e30)" "${IH}"$'\ne30\t0\t20\t1'
+# mf (e31) builds 10:00, closes at 11:00 and retries in that same second, closing at 12:00, then goes
+# to review. mg, clashing with mf and waiting 11:10-11:20, is blocked by the retry.
+ist mf e31 src/mf.sh; ist mg e31 src/mf.sh; sl mf1 mf 10:00; sl mf2 mf 11:00; sl mg mg 11:20; ag mf smf1; ag mf smf2; ag mg smg
+echo 'status: review' > "${I}/.swarm/board-state/stories/mf"; ev 11:00 close mf; ev 12:00 close mf; ev 11:10 unblock mg
+check "idle_slots: a close at its retry's first second ends the build before it" "$(idle --until 2026-10-01 --epic e31)" "${IH}"$'\ne31\t0\t0\t1'
 # On the 2nd, with the board's ready stories gone: the backlog's ik (no epic) is ready from 10:00 under
 # the backlog conductor (09:00 on); epic backlog-cleanup's conductor closing at 12:00 does not end it.
 # im, built 11:00-11:30 and touching ik's file, is a merged story whose text has a byte that is not UTF-8.
@@ -588,6 +607,9 @@ out="$(cd "${I}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=idle_s
   bash "${SWARM}" flow --since 2026-10-02 --until 2026-10-02 2>&1)"
 check "idle_slots: a git call that fails warns once on stderr" \
   "$(grep -c '^warning: idle_slots: git show in .* failed (fatal: show refused): what it reads is left out$' <<< "${out}"; grep '^all' <<< "${out}")" $'1\nall\t840\t0\t1'
+
+check "idle_slots: with nothing ready, a line says so in place of a zero row" \
+  "$(idle --since 2026-09-01 --until 2026-09-01; idle --since 2026-10-02 --epic nope)" $'no story was ready in the window\nno story of epic nope was ready in the window'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

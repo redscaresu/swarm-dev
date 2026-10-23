@@ -16,8 +16,10 @@
 # outcomes' board_log reads it, and a build with no start (no session log yet) on that day or later
 # counts as built since, unless a close readied it. Builds keep agents.tsv's order: each runs from
 # its started (with none, 00:00 local on its agents.tsv day, and no earlier than its slug's build
-# before it ended, as throughput's) to its first ok close after that which no earlier build of its
-# slug took, before the slug's next build with a known start, else to that start, else to the
+# before it ended, as throughput's) to its first ok close, or `reconcile ... ok (finished...)` (a
+# merged story's builder, which reconcile closes itself), after that which no earlier build of its
+# slug took, by the slug's next build with a known start (a close in its first second is the earlier
+# build's), else to that start, else to the
 # window's end. Two stories clash as touches_rows.py reads touches (the same file:symbol in the same
 # repo, or either naming the bare file, with SWARM_REPOS_DIR as build.sh's REPOS_DIR), unless one
 # depends on the other (a stacked start), each story read as story_text reads it, so a build before
@@ -93,6 +95,7 @@ hi = min((datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).t
 
 conducts, closes, reports = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
 readies, reviews = collections.defaultdict(list), collections.defaultdict(list)   # by agent_name: ready events; review or kept
+stops = collections.defaultdict(list)   # by agent_name: what ends a build, its closes and reconcile's finishes
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     e = line.rstrip("\n").split("\t")
     t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
@@ -106,6 +109,9 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
         conducts[e[2]].append(t)
     elif e[1].split(":")[0] == "close":
         closes[agent_name(e[2])].append(t)
+        stops[agent_name(e[2])].append(t)
+    elif e[1] == "reconcile" and e[4].startswith("ok (finished"):
+        stops[agent_name(e[2])].append(t)
     elif e[1] == "report" and secs(e[4][len("ok ("):-1]) is not None:
         reports["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
 
@@ -134,9 +140,10 @@ for slug, rs in by_slug.items():
             b0 = max(b0, ended) if ended is not None else b0
             loose[slug].append(r["date"])
         upto = next((k for k in known[i + 1:] if k is not None), hi)
-        c = min((t for t in closes[agent_name(slug)] if b0 <= t < upto and t not in taken), default=None)
-        taken.add(c)
-        ended = c if c is not None else upto
+        c = min(((t, k) for k, t in enumerate(stops[agent_name(slug)]) if b0 <= t <= upto and k not in taken), default=None)
+        taken.add(c[1] if c else None)   # by index, as throughput's: two in one second are two
+        # A close at the next build's start is this build's: the retry started once it closed.
+        ended = c[0] if c else upto
         builds.append((slug, b0, ended))
         starts[slug].append(b0)
 
@@ -145,7 +152,7 @@ def sent_back(slug, c):
     # event since the build before it started, which leaves the story in review.
     n = agent_name(slug)
     since = [r for r in reviews[n] if max((b for b in starts[slug] if b <= c), default=float("-inf")) <= r <= c]
-    return not since or any(max(since) < x < c for x in closes[n])
+    return not since or any(max(since) <= x < c for x in closes[n])   # kept and its close share a second
 
 def readied(slug):
     n = agent_name(slug)
@@ -209,7 +216,11 @@ for a, b in zip(points, points[1:]):
         most[g] = max(most[g], n)
     most[None] = max(most[None], len(waiting))
 
+# A zero row only for what had a ready story in the window: with none, a line says so.
+measured = {epic_of[s] for s, r0, r1 in ready if r0 < hi and r1 > lo}
+if epic and epic not in measured or not measured:
+    print(f"no story{f' of epic {epic}' if epic else ''} was ready in the window")
+    sys.exit()   # ends this section alone (flow_report.py)
 print("epic\tidle_min\tno_conductor_min\tmost_ready")
-groups = sorted({epic_of[s] for s, r0, r1 in ready if epic_of[s] and r0 < hi and r1 > lo})
-for g in [epic] if epic else groups + [None]:
+for g in [epic] if epic else sorted(measured - {""}) + [None]:
     print("\t".join([g or "all", str(round(idle[g] / 60)), str(round(none[g] / 60)), str(most[g])]))
