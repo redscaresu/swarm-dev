@@ -173,12 +173,13 @@ workflows() { # <name>... — .github/workflows on the merge commit: each <name>
 # item <slug> <front-matter line>... — a fresh story: its file, and no state file.
 item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${P}/docs/stories/$1.md"; rm -f "${P}/.swarm/board-state/stories/$1"; }
 
-# fresh [config line]... — story s in review with prs: ${URL}; head ${H1} with one green check run
-# and no status; squash allowed; on the merge commit a green check run and a green run of the one
-# workflow that runs on push to main.
+# fresh [config line]... — merge = agent (a later line overrides it), since with merge = human the
+# lead merges only under an HLD that grants merge (the grant cases below); story s in review with
+# prs: ${URL}; head ${H1} with one green check run and no status; squash allowed; on the merge commit
+# a green check run and a green run of the one workflow that runs on push to main.
 fresh() {
   rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log" "${P}"/docs/stories/fix-main-*; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
-  printf '%s\n' "$@" > "${P}/.claude/swarm/config"
+  printf '%s\n' "merge = agent" "$@" > "${P}/.claude/swarm/config"
   echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
   echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"; : > "${FX}/diff"
   echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; echo '[]' > "${FX}/rules"; echo 'Branch not protected' > "${FX}/branch.404"
@@ -755,6 +756,8 @@ release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge 
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
 is "--release: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; merge --release "${URL}"
+is "--release with merge = human asks for no HLD grant (release_check's)" 0 "${rc}"
 release_pr; echo '[{"filename":".claude-plugin/plugin.json"},{"filename":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
 merge --release "${URL}"; refused "--release with another file" "changes bin/swarm.sh, not only .claude-plugin/plugin.json"
 release_pr; echo '[{"filename":"docs/stories/s.md"}]' > "${FX}/files"
@@ -921,7 +924,7 @@ check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r -
 
 # --- Who may merge: outside herdr (above), the lead's own pane, and with merge = agent a conductor.
 fresh; merge HERDR_ENV=1 HERDR_PANE_ID=w:b "${URL}"; refused "a builder's pane" "pane w:b is one this project started"
-fresh; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"; refused "a conductor's pane with merge = human" "pane w:c"
+fresh "merge = human"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"; refused "a conductor's pane with merge = human" "pane w:c"
 fresh "merge = agent"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"
 is "a conductor's pane with merge = agent: exits 0" 0 "${rc}"
 fresh "merge = agent"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b "${URL}"; refused "a builder's pane with merge = agent" "pane w:b"
@@ -1014,9 +1017,35 @@ fresh "merge = agent"; item s "status: blocked" "depends_on: [p]"; item p "statu
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review s "${URL}" > "${ROOT}/out" 2>&1) || true
 check "review's held line says (costs money) when a parent cannot be read" said "held: s waits for p (costs money) to merge"
 chmod 644 "${P}/docs/stories/p.md"; rm -f "${P}/docs/stories/p.md"
-# With merge = human the user's PRs are all theirs: the lead merges one when asked, as before.
-fresh; item s "status: review" "prs: ${URL}" "costs: money"; merge "${URL}"
-is "with merge = human, the lead's swarm.sh merge of a costs: money story goes ahead" 0 "${rc}"
+# --- With merge = human the lead merges a story or board PR only under an agreed HLD that grants
+# merge, and then under merge = agent's holds; a pane this project started is refused all the same.
+WAIT="waits on the user's merge (merge = human, and no HLD grants merge for it)"
+fresh "merge = human"; item s "status: review" "prs: ${URL}" "costs: money"; merge "${URL}"
+refused "with merge = human, the lead's swarm.sh merge of a story under no HLD" "${URL} ${WAIT}"
+# hld <name> <grants> <epic> — an agreed HLD granting <grants>, and an active epic whose hld: names it.
+hld() {
+  mkdir -p "${P}/docs/hld" "${P}/docs/epics"
+  printf -- '---\nstatus: agreed\ngrants: [%s]\n---\n\n# %s\n' "$2" "$1" > "${P}/docs/hld/$1.md"
+  printf -- '---\nstatus: active\nhld: %s\n---\n\n# %s\n' "$1" "$3" > "${P}/docs/epics/$3.md"
+}
+# granted <grants> [front-matter line]... — merge = human, and s in review under epic g, under HLD h.
+granted() { fresh "merge = human"; hld h "$1" g; item s "status: review" "prs: ${URL}" "epic: g" "${@:2}"; }
+granted stories; merge "${URL}"; refused "merge = human, a story PR under an HLD with no merge grant" "${URL} ${WAIT}"
+granted merge; merge "${URL}"
+is "merge = human, the same story PR under grants: [merge] merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+granted merge "costs: money"; merge "${URL}"; refused "merge = human, a costs: money story under grants: [merge]" "held: s costs money"
+granted merge; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"; refused "merge = human, a conductor's pane under grants: [merge]" "pane w:c"
+granted "merge, deploy"; merge "${URL}"; refused "merge = human, an HLD with a grant swarm.sh does not know" "docs/hld/h.md has a grant swarm.sh does not know"
+# Board PRs: through the epics they touch.
+granted merge; rm "${S}"; hld h2 merge g2
+echo '[{"filename":"docs/epics/g.md","status":"modified"},{"filename":"docs/epics/g2.md","status":"modified"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
+merge --board "${URL}"; refused "merge = human, a board PR touching epics under two HLDs" "${URL} ${WAIT}"
+granted merge; rm "${S}"; echo '[{"filename":"docs/epics/g.md","status":"modified"}]' > "${FX}/files"; merge --board "${URL}"
+is "merge = human, a board PR under one HLD granting merge merges" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+granted merge; rm "${S}"; echo '[{"filename":"docs/epics/g.md","status":"modified"}]' > "${FX}/files"
+printf 'diff --git a/docs/epics/g.md b/docs/epics/g.md\n--- a/docs/epics/g.md\n+++ b/docs/epics/g.md\n@@ -2,3 +2,3 @@\n status: active\n-costs: money\n+costs: none\n' > "${FX}/diff"
+merge --board "${URL}"; refused "merge = human, a board PR under grants: [merge] that changes a costs: line" "changes a costs: line in docs/epics/g.md"
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
 check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"

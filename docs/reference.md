@@ -1369,8 +1369,13 @@ CI on the base times out, it merges nothing more and stops, and says so in its r
 red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below): the conductor starts
 its builder at once, ahead of every other story, and merges nothing else until that fix lands. It stops only when what is left needs the lead: a story only
 the lead can finish, or a merge that `swarm.sh merge` refused or could not confirm. The lead merges
-with `swarm.sh merge`: a one-off story with `merge = agent`, and any PR you ask it to merge, under
-`merge = human` too.
+with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
+PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (the HLD
+`swarm.sh grants <PR URL>` prints). Then the holds of `merge = agent` apply too, so a `costs: money`
+story's PR, and a board PR that changes a `costs:` line, still wait for you. Any other PR is
+refused with `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`, as
+is a PR whose HLD cannot be read or has a grant swarm.sh does not know. `--release` is not
+affected.
 
 `swarm.sh merge [--board|--release] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
 unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
