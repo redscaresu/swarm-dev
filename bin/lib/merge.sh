@@ -765,14 +765,15 @@ queue_stopped() {
 
 # within <seconds> <command>... — the command in its own process group, the group KILLed after
 # <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
-# its children. Else the command's own status (128+N for a signal).
+# its children. Else the command's own status (128+N for a signal). <seconds> is often a deadline's time
+# left, below 0 once a read ran past it: -- keeps perl from taking -1 for a switch of its own (exit 25).
 within() {
   perl -e 'my $t = shift; $t = 1 if $t < 1;
     defined(my $p = fork) or exit 127;
     if (!$p) { setpgrp; exec @ARGV or exit 127 }
     $SIG{ALRM} = sub { kill "KILL", -$p; exit 142 };
     alarm $t; waitpid $p, 0;
-    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
 }
 
 # rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
@@ -794,6 +795,8 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
+# A read gets at least 1s (within), so --timeout 0 may end on its first read, before any check read:
+# it promises no read, only a timed-out exit 2, since any floor a read is promised is a clock to miss.
 # A rate limit with its budget spent (rate_reset: GraphQL's or REST's, whichever the error came from) is
 # waited out once, to its reset, printed, the transient-error count starting over, and the default
 # deadline and the no-check grace move by that wait; past a --timeout deadline it ends at once, naming

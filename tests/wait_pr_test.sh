@@ -246,13 +246,22 @@ is "stays pending past the default deadline: exits 2" 2 "${rc}"
 check "stays pending past the default deadline: names what is pending" said "still pending: test (queued)"
 is "stays pending past the default deadline: one read" 1 "$(reads)"
 at_deadline "stays pending past the default deadline"
-# A zero deadline ends it too. Exit 2 only: the one read it gets runs within the 1s floor, which a
-# loaded runner can miss, so how many reads it made is not fixed.
+# A zero deadline ends it too, as timed out. How many reads it made is not checked: wait-pr does
+# not promise one at 0 (wait_pr), since its reads run within the 1s floor, which a loaded runner
+# can miss before python3 or gh starts.
 for v in --timeout SWARM_MERGE_CI_SECONDS; do
   fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"
   if [[ "${v}" == --timeout ]]; then wait_pr --timeout 0; else wait_pr SWARM_MERGE_CI_SECONDS=0; fi
   is "stays pending past a zero ${v}: exits 2" 2 "${rc}"
+  check "stays pending past a zero ${v}: says timed out" said "swarm: wait-pr: timed out after "
 done
+# Past the deadline, a read's time left is below 0: within gives it the 1s floor, as perl would
+# otherwise take -1 for a switch and exit 25, which wait-pr reported as "ci_gate failed (exit 25)".
+# shellcheck source=/dev/null
+# shellcheck disable=SC2034 # merge.sh reads PROJECT_DIR as it loads
+within_rc() { (PROJECT_DIR="${P}"; . "$(dirname "${SWARM}")/lib/merge.sh"; within "$@") > /dev/null 2>&1 && echo 0 || echo $?; }
+is "within -1 runs the command: exits 0" 0 "$(within_rc -1 true)"
+is "within -1 a command that hangs: the 1s floor kills it" 142 "$(within_rc -1 sleep "${HANG}")"
 fresh; wait_pr --timeout soon
 is "a --timeout that is not seconds: exits 2" 2 "${rc}"
 check "a --timeout that is not seconds: prints usage" said "usage: swarm.sh wait-pr"
