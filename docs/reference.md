@@ -709,7 +709,7 @@ burst of notes sends one prompt now and one a minute later, and a prompt that wa
 answered without reading the inbox, is sent once more. A prompt that fails is warned of and its time
 taken back, so the next note tries again. No prompt goes to a conductor mid-turn, one that has
 written its report, or one that `upgrade` asked for a handover and has not yet told to carry on
-(`conduct-<epic>.upgrade`, ignored once an hour old). After each `wait` or `watch` returns, the
+(`conduct-<epic>.upgrade`, which upgrade touches each round and which is ignored once an hour old). After each `wait` or `watch` returns, the
 conductor moves the inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added
 meanwhile starts a new file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
 so the conductor reads and deletes it first. It does all of this once more just before it writes its
@@ -1563,15 +1563,29 @@ command. Each hook calls herdr in the background, so a herdr that hangs never ho
 on. After `swarm.sh update` (or `claude plugin update`) and a restart of your own session, run
 `swarm.sh upgrade <epic>` to move that epic's agents (its conductor, builders and review agents) to
 the installed version. `swarm.sh upgrade backlog` moves the backlog conductor and the stories with
-no epic, and with no argument it moves every agent the project started. upgrade first checks the
+no epic, and with no argument it moves every agent the project started. upgrade runs detached
+until it is done: it starts itself again under `nohup`, in a process group of its own, and once
+that worker holds the project's upgrade it prints the worker's pid and its log,
+`.swarm/upgrade-<version>.log`, and returns, so closing the session that started it does not stop
+it. A worker that stops first, as one that finds another upgrade running does, has its lines
+printed and its exit code returned instead. `--foreground` runs it in your shell instead. One upgrade runs per
+project. A second one, while the first runs, prints the running one's pid and log and starts
+nothing. It exits 0 when the running one moves its agents too (the same epic, or every agent), and
+1 when it does not: `<epic> was not moved; run it again once the running one ends`. A pid file
+whose process is no longer a `swarm.sh upgrade` counts as none running. While it runs, `swarm.sh
+status` names it, its epic, and that epic's agents not yet on the version it moves them to.
+upgrade first checks the
 conductor's `env:` names, as `conduct` does; if one is refused, it asks the conductor for nothing.
 Otherwise the conductor writes a handover to `.swarm/handover-<epic>-<date>.md` (each open PR with
 its review round, what its builder still owes, and findings it has not sent) and ends its turn. A
 conductor already on the new version does this too whenever its builders will restart, so it never
 acts on one mid-restart. An idle conductor is asked by prompt; a busy one gets a note in its inbox,
-which it reads when its wait returns. upgrade waits for the file and for the conductor to go idle
-(it stops waiting at once if the conductor's session is gone), then reads the agents again, so a builder the conductor started meanwhile is moved too. Then, in
-rounds, it restarts every builder that Claude Code reports idle, or whose turn stopped on an API
+which it reads when its wait returns. upgrade works in rounds. Each round reads the agents again,
+so one started meanwhile is moved too, and picks up a handover that came late: a conductor's
+builders wait while its handover is not written or it is not idle, read again each round, since a
+conductor whose turn ended can be woken by a background watch. A conductor that got the request in its
+inbox and is idle with no handover is asked again by prompt, and one whose session is gone is named
+at once. Each round restarts every builder that Claude Code reports idle, or whose turn stopped on an API
 error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
 it to check. Claude Code also reports `busy` for a session whose turn is over but whose background
 shells (a `make test`, a `wait-pr`, a conductor's `watch`) still run, so a session reported busy is
@@ -1579,7 +1593,9 @@ read from its log too: when its last assistant entry has ended its turn, with no
 for a result and no user entry after it (a prompt, a scheduled one included, or a tool result), it counts as idle and is restarted, its
 background commands, subagents and monitors stopped (it is told to start them again). A subagent's own entries in the main log are not the session's turn. A turn still in progress, one
 waiting on a tool call's result, one waiting on a prompt, and one whose log cannot be read stay
-busy, are never interrupted and wait for a later round. One whose session is gone or unknown is named at once and not restarted. A restart
+busy, are never interrupted and wait for a later round. A builder that goes busy between the round's
+read and its restart is waited for one round (60 seconds) at most, then waits for the next, so a
+round never stalls and the paused conductors' markers stay fresh. One whose session is gone or unknown is named at once and not restarted. A restart
 sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
@@ -1591,15 +1607,30 @@ since its brief names the old one, and that the restart stopped its background c
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
 restarted and which were left: restarted and told to carry on, or, if it was already on the new
 version or its restart failed before its claude exited, only told to carry on.
-upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. It prints each
-agent as `<name>: <old> -> <new>`, and `swarm.sh version` in a pane confirms it. If a restart fails
-from the first ctrl+c on, upgrade leaves the pane open and prints the `claude --resume <session>`
-that brings it back, and the folder to run it in. An agent still busy after `SWARM_UPGRADE_WAIT_MS`
-(30 minutes, for the whole run) is named and left on its old version. A conductor with no handover
-by then, or still busy after writing one, is told to carry on as before: by prompt once it is idle
-(upgrade waits up to `SWARM_UPGRADE_GRACE_MS`, 5 minutes, more for that), else in its inbox. Every
-builder is held with it. upgrade then exits 1. Run it again once they
-are idle; it skips the agents already on the new version.
+upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. When it is done
+it prints one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or
+`<name>: already on <new>` (with a reason, when a conductor already on it wrote no handover: it is
+never left, and fails nothing), then `upgrade done: <n> moved, <m> left (exit <code>)`, so a log
+that ends without that line was cut off. Only an agent whose version changed counts as moved. The
+run is logged as one event, the detached worker's, with its epic as the target. `swarm.sh version` in a pane confirms the version. If a restart
+fails from the first ctrl+c on, upgrade leaves the pane open, and the agent's line names the
+`claude --resume <session>` that brings it back and the folder to run it in. A conductor that
+could not be told to carry on gets a line saying to tell it by hand. A TERM to the run (a HUP does
+not reach it: the worker runs under `nohup`) names
+each agent it had not moved as left (one cut off mid-restart with its `claude --resume` line), tells
+each conductor it paused which of its builders were restarted and to carry on as before, and ends
+the log on `upgrade stopped: <n> moved, <m> left (exit 143)`. A KILL or a reboot
+cannot, and leaves that conductor waiting for a prompt. An agent that leaves herdr's agent list
+before it is moved is named as left, never forgotten; when it is a paused conductor, its builders no
+longer wait on it. A session Claude Code reports as unknown (a bad read of its list) waits for the
+next round, as a busy one does; only a gone one is left. A run that never reads herdr's list exits
+1 and says no agent was moved. upgrade stops when every agent is moved or left,
+or after `SWARM_UPGRADE_WAIT_MS` (2 hours, for the whole run). An agent still busy then is left on
+its old version. A conductor with no handover by then, or still busy after writing one, is told to
+carry on as before: by prompt once it is idle (upgrade waits up to `SWARM_UPGRADE_GRACE_MS`, 5
+minutes, more for that), else in its inbox. Its builders are left with it, named for the reason:
+their conductor wrote no handover, or wrote one but stayed busy. upgrade exits 1 when any
+agent is left; a later run skips the agents already on the new version.
 
 **Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang. A merge queue
@@ -1642,7 +1673,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh init` | Set a project up, from its git root: the board templates, `.claude/swarm/` with a commented `commit_trailers` line, the `.gitignore` lines, a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch, and fails when make has no `check` target, with a gate (`.github/swarm-board-only.sh`) that skips a PR or push changing only the board's own files (with workflows already there, it writes the gate and prints the step to add; a board outside the repo gets no gate; when origin's default branch can't be found, no CI), and a pre-commit hook that runs `make check` except on a commit that changes only the board's own files (when a hook exists or `core.hooksPath` is set, it writes none and prints the lines to add before any `exec`, or, for a global `core.hooksPath`, says to add them nowhere there). It ends by listing the files it wrote that git does not track yet, to commit. A second run changes nothing. |
 | `swarm.sh status` | Show agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights, and a third when someone had to step in. `swarm.sh dash --project <dir>` (repeatable) draws several projects. `swarm.sh dash --check` compares each figure with the command that owns it and exits 1 naming each one that differs. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
-| `swarm.sh upgrade [<epic>\|backlog]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It prints each one's old and new version and never touches a worktree. |
+| `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
 | `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, or a green PR in review that waits on you, and print each new one. |
