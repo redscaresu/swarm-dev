@@ -351,7 +351,7 @@ CHECKLIST=(
   "- A zero or empty value shown to a person must say what it means."
   "- A repair path that changes something must say what it did."
   "- For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it."
-  "- A comment, doc or error-text line that no longer matches the changed code is a finding, even when its file is outside the touches."
+  "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
 )
 for l in "${CHECKLIST[@]}"; do
