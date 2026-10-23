@@ -4,10 +4,12 @@
 # herdr's blocking ones (`herdr ... --wait`, `herdr agent wait`, `herdr pane wait-output`), also
 # behind if/elif/while/then/do, exec, command, time, nohup, env, a path and a `${VAR:-herdr}` command
 # word. A bound is
-#   - `within` as the command's prefix, in a file that defines it or sources bin/lib/merge.sh: a perl
-#     alarm, so it also runs on stock macOS. merge.sh's takes <seconds> first (below 1 counts as 1);
-#     hooks/lead-stop.sh's takes the command and runs against its own ${deadline}. The reader tells
-#     them apart by the definition: one that passes `-- "$@"` takes seconds;
+#   - `within` as the command's prefix: a perl alarm, so it also runs on stock macOS. merge.sh's takes
+#     <seconds> first (below 1 counts as 1); hooks/lead-stop.sh's takes the command and runs against
+#     its own ${deadline}. A file that defines `within` has that one (the reader tells them apart by
+#     the definition: one that passes `-- "$@"` takes seconds). bin/swarm.sh and bin/lib/*.sh have
+#     merge.sh's, as swarm.sh sources them all together; so has any file that sources merge.sh. In
+#     another file (other hooks, gh-shim) `within` is not there;
 #   - `timeout <seconds>` as the prefix (coreutils; stock macOS has none, so prefer `within`; a
 #     zero turns it off);
 #   - `--max-time`, `-m` (also inside a bundle, `-sm 5`) or `--timeout` as an option of its own, for
@@ -44,7 +46,7 @@ SECS_ANY = r'(?:\d\S*|"[^"]*"|\'[^\']*\'|\$\S*)'   # one word: a number, a quote
 ZERO = r'0+(?:\.0*)?[smhd]?'
 COMMAND_WORD = r'^"?\$\{\w+:-(curl|gh|herdr)\}"?(?=\s|$)'
 CALLS = [r'curl(\s|$)', r'gh\s+run\s+download\b', r'gh\s+run\s+view\b.*\s--log',
-         r'herdr\s+(agent\s+wait|pane\s+wait-output)\b', r'herdr\b.*\s--wait(\s|=|$)']
+         r'herdr\s+(agent\s+wait|pane\s+wait-output)\b', r'herdr\s.*\s--wait(\s|=|$)']
 BOUND = re.compile(r'--(?:max-time|timeout)(=.*)?')
 # Per command, the options that take a value, so that the word after one is not an option. A
 # value-taking option missing here can hide a bound; add it. curl's -n -p -a -j -q take none.
@@ -55,9 +57,9 @@ VALUE_OPTS = {
     "herdr": set('--until --match --source --lines --workspace --tab --pane'.split()),
 }
 CURL_VALUE_LETTERS = set("HdowXuAebcFTx")
-HINT = ("bound it with `within <seconds> cmd` in a file that defines or sources bin/lib/merge.sh's "
-        "within (hooks/lead-stop.sh's own within takes the command, `within cmd`; stock macOS has no "
-        "timeout), or --max-time/-m/--timeout as an option (curl and herdr; gh has no timeout flag, "
+HINT = ("bound it with `within <seconds> cmd` (bin/swarm.sh and bin/lib/*.sh have merge.sh's within; "
+        "hooks/lead-stop.sh's own takes the command, `within cmd`; in another file define it or "
+        "source merge.sh; stock macOS has no timeout), or --max-time/-m/--timeout as an option (curl and herdr; gh has no timeout flag, "
         "so a gh call takes only the prefix), or end the line with `# no-timeout: <reason>`")
 
 
@@ -86,7 +88,7 @@ def unbounded(cmd, within_kind):
         words = shlex.split(s)
     except ValueError:
         words = s.split()
-    opts = VALUE_OPTS[words[0]]
+    opts = VALUE_OPTS.get(words[0], set())   # words[0] is curl or herdr: CALLS match the whole word
     value = None   # the last bound option wins, as in curl
     for k, w in enumerate(words):
         m, number = BOUND.fullmatch(w), None
@@ -243,7 +245,8 @@ class Scan:
 
 for path in sys.argv[1:]:
     text = open(path, errors="replace").read()
-    within_kind = "seconds" if re.search(r'^\s*(?:source|\.)\s+\S*merge\.sh', text, re.M) else None
+    sourced = re.search(r'/bin/(?:lib/[^/]+\.sh|swarm\.sh)$', path) or re.search(r'^\s*(?:source|\.)\s+\S*merge\.sh', text, re.M)
+    within_kind = "seconds" if sourced else None   # swarm.sh sources every bin/lib file with merge.sh
     defined = re.search(r'^\s*within\(\)[^\n]*', text, re.M)
     if defined:
         body = defined.group(0) if defined.group(0).rstrip().endswith("}") else text[defined.start():].split("\n}", 1)[0]
@@ -264,13 +267,18 @@ fails=0
 check() { # <name> <want> <got>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
-flagged() { # <line>... — how many findings untimed prints
-  printf '%s\n' "$@" > "${dir}/f.sh"; untimed "${dir}/f.sh" | wc -l | tr -d ' '
+flagged_at() { # <path under the fixture root> <line>... — how many findings untimed prints, or crash
+  local out; mkdir -p "$(dirname "${dir}/$1")"; local at="$1"; shift
+  printf '%s\n' "$@" > "${dir}/${at}"
+  out="$(untimed "${dir}/${at}")" || { echo crash; return; }
+  printf '%s\n' "${out}" | grep -c . || true
 }
+flagged() { flagged_at f.sh "$@"; } # <line>... — the same for a file of no particular place
 
 check "a bare curl is flagged" 1 "$(flagged 'x="$(curl -fsSL "$URL")"')"
 check "a bare gh run download is flagged" 1 "$(flagged '  gh run download "$id" --dir out')"
 check "a bare gh run view --log-failed is flagged" 1 "$(flagged 'log="$(gh run view "$id" --log-failed)"')"
+check "a prose word that starts with herdr is not a call, and does not crash the scan" 0 "$(flagged 'cat <<EOF' "herdr's pane --wait for it" 'EOF')"
 check "a bare herdr --wait is flagged" 1 "$(flagged 'herdr agent prompt a hi --wait --until idle')"
 check "a bare herdr agent wait is flagged" 1 "$(flagged 'herdr agent wait "$t" --until idle')"
 check "a bare herdr pane wait-output is flagged" 1 "$(flagged 'herdr pane wait-output "$p" --match ready')"
@@ -280,7 +288,7 @@ check "a bare call behind exec, command, env, nohup, time or a path is flagged" 
   'exec curl "$U"' 'command curl "$U"' 'env FOO=1 curl "$U"' 'env -u X FOO=1 curl "$U"' \
   'nohup gh run download 1' 'time curl "$U"' 'exec env FOO=1 curl "$U"' '/usr/bin/curl "$U"')"
 check "a bare call is flagged once, not once per line, when it continues" 1 "$(flagged 'gh run download "$id" \' '  --dir out')"
-check "a bare call on a file's last line ending in a backslash is flagged" 1 "$(printf 'curl "$U" \\' > "${dir}/f.sh"; untimed "${dir}/f.sh" | wc -l | tr -d ' ')"
+check "a bare call on a file's last line ending in a backslash is flagged" 1 "$(printf 'curl "$U" \\' > "${dir}/f.sh"; untimed "${dir}/f.sh" | grep -c . || true)"
 check "a call after a comment ending in a backslash is flagged" 1 "$(flagged '# note \' 'curl "$U"')"
 check "a call after a double-quoted string that spans lines is flagged" 1 "$(flagged 'x="a' 'b"; curl "$U"')"
 check "a call inside a multi-line substitution is flagged" 1 "$(flagged 'x="$(' '  curl "$U"' ')"')"
@@ -295,6 +303,11 @@ check "a duration of \$((...)) or a quoted substitution is one word" 0 \
   "$(flagged "${W_SECONDS}" 'within $((e - n)) curl "$U"' 'within "$((e - n))" curl "$U"' 'within "$(release_left "$e")" gh api x' 'timeout $((e - n)) curl "$U"')"
 check "within, sourced from merge.sh, passes" 0 "$(flagged 'source "${LIB}/merge.sh"' 'within 30 curl "$U"')"
 check "within in a file that neither defines nor sources it is flagged" 1 "$(flagged 'within 30 curl "$U"')"
+check "within in bin/lib/*.sh and bin/swarm.sh is merge.sh's, as swarm.sh sources them together" 00 \
+  "$(flagged_at bin/lib/x.sh 'within 30 gh run view "$id" --log-failed')$(flagged_at bin/swarm.sh 'within 30 curl "$U"')"
+check "within in another hook or gh-shim is flagged" 11 \
+  "$(flagged_at hooks/x.sh 'within 30 curl "$U"')$(flagged_at bin/gh-shim/gh 'within 30 curl "$U"')"
+check "bin/lib's within still needs its seconds" 1 "$(flagged_at bin/lib/x.sh 'within curl "$U"')"
 check "within with no seconds is flagged" 1 "$(flagged "${W_SECONDS}" 'within curl "$U"')"
 check "timeout 0 is no bound in a file that has merge.sh's within" 1 "$(flagged "${W_SECONDS}" 'timeout 0 curl "$U"')"
 check "within with a zero is a 1 s bound in merge.sh's" 0 "$(flagged "${W_SECONDS}" 'within 0 curl "$U"')"
