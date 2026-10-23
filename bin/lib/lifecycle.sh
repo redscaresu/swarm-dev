@@ -1772,7 +1772,7 @@ upgrade_agents() {
       echo "${name}: ${names}; asked for no handover, left on $(agent_version "${name}")"; rc=1; held=1
     elif hand="$(upgrade_handover "${name}" "${pane}" "${e}" "${new}" "${end}" </dev/null)"; then
       ready+="${name}"$'\t'"${pane}"$'\t'"${e}"$'\t'"${hand}"$'\t'"${cur}"$'\t'"${names}"$'\n'   # tabs: the path may hold spaces
-    else rc=1; held=1; fi   # upgrade_handover said why
+    else rc=1; held=1; rm -f "$(upgrade_paused "${name}")"; fi   # upgrade_handover said why
   done <<< "${list}"
   # ponytail: one missing handover holds every builder, any epic's; hold only that epic's if a run
   # without <epic> over several conductors needs it.
@@ -1811,14 +1811,17 @@ upgrade_agents() {
   about="Builders restarted on swarm-dev ${new}:${moved:- none}. Left on their old version:${left:- none}."
   while IFS=$'\t' read -r name pane e hand cur names; do
     [[ -n "${name}" ]] || continue
+    # Its pause marker goes once it has been told to carry on, whichever way, so no note wakes it before.
     if [[ "${cur}" == new ]]; then
       if upgrade_say "${name}" "${pane}" "swarm.sh upgrade is done with your builders. ${about} Your handover is ${hand}. Carry on where you stopped." </dev/null; then
         echo "${name}: already on ${new}, told to carry on"
       else echo "${name}: could not be told to carry on; tell it by hand"; rc=1; fi
-      continue
+      rm -f "$(upgrade_paused "${name}")"; continue
     fi
-    ( upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
-      upgrade_told "${name}" "${pane}" "${new}" "Your handover is ${hand}. ${about} Carry on where you stopped." ) </dev/null && continue
+    if ( upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
+      upgrade_told "${name}" "${pane}" "${new}" "Your handover is ${hand}. ${about} Carry on where you stopped." ) </dev/null; then
+      rm -f "$(upgrade_paused "${name}")"; continue
+    fi
     rc=1
     # Its restart failed: one still running claude ended its turn for upgrade, so it is told to carry
     # on; one whose claude exited got its resume hint from upgrade_one.
@@ -1826,6 +1829,7 @@ upgrade_agents() {
       upgrade_say "${name}" "${pane}" "swarm.sh upgrade could not restart you, so you stay on the version you run. ${about} Your handover is ${hand}. Carry on where you stopped." </dev/null \
         || echo "${name}: could not be told to carry on; tell it by hand"
     fi
+    rm -f "$(upgrade_paused "${name}")"
   done <<< "${ready}"
   [[ ${rc} -eq 0 ]] || echo "Run swarm.sh upgrade${epic:+ ${epic}} again once the agents named above are idle."
   return "${rc}"
@@ -1915,10 +1919,13 @@ upgrade_env() {
 # once it is written and the conductor is idle; it stops waiting at once if the session is gone. At
 # <end-ms> without both, the request is withdrawn: once the conductor is idle (UPGRADE_GRACE_MS more),
 # by prompt, since one that ended its turn reads no inbox; else by a note. It fails, naming why.
+# From the request on, <inbox>.upgrade (upgrade_paused) holds back tell's wake prompt (note_wake), so a
+# note does not send the paused conductor back to its waits; upgrade_agents removes it.
 upgrade_handover() {
   local day file n=1
   day="$(date +%F)"; file="${PROJECT_DIR}/.swarm/handover-$3-${day}.md"
   while [[ -e "${file}" ]]; do n=$((n + 1)); file="${PROJECT_DIR}/.swarm/handover-$3-${day}-${n}.md"; done
+  mkdir -p "$(dirname "$(upgrade_paused "$1")")" && : > "$(upgrade_paused "$1")" || return 1
   upgrade_say "$1" "$2" "swarm.sh upgrade is moving this epic's agents to swarm-dev $4, restarting each with --resume, so it keeps its context. Write a handover to ${file}: each open PR with its review round, what its builder still owes, and any findings you have not sent. Then end your turn: start nothing and run no wait or watch until upgrade tells you to carry on." || return 1
   while [[ ! -s "${file}" ]] && (($(now_ms) < $5)); do
     case "$(upgrade_state "$1" "$2")" in gone|unknown) echo "$1: its Claude session is gone, so it wrote no handover; left on $(agent_version "$1")" >&2; return 1 ;; esac
@@ -1930,6 +1937,10 @@ upgrade_handover() {
   echo "$1: no handover by the end of the wait, told to carry on as before, left on $(agent_version "$1")" >&2
   return 1
 }
+
+# upgrade_paused <conductor> — the file that says upgrade asked <conductor> for a handover and has not
+# yet told it to carry on (upgrade_handover).
+upgrade_paused() { echo "$(conductor_inbox "$1").upgrade"; }
 
 # UPGRADE_HINT: what upgrade_one's EXIT trap prints once the agent's claude has exited, set then.
 UPGRADE_HINT=""
