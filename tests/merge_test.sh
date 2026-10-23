@@ -72,8 +72,9 @@ case "$1 $2" in
                 *) [ ! -e "${FX}/run.hang" ] || sleep 60; serve "run.$3.log" ;;
               esac ;;
   # A rerun of a run's failed jobs runs ${FX}/rerun.<id> (it writes what CI reads next); with none,
-  # GitHub refuses it.
-  "run rerun") [ -e "${FX}/rerun.$3" ] || { echo "gh: run $3 cannot be rerun (HTTP 403)" >&2; exit 1; }; sh "${FX}/rerun.$3" ;;
+  # GitHub refuses it. With ${FX}/rerun-502, the first one fails with a 5xx.
+  "run rerun") [ ! -e "${FX}/rerun-502" ] || { rm "${FX}/rerun-502"; echo "gh: HTTP 502" >&2; exit 1; }
+               [ -e "${FX}/rerun.$3" ] || { echo "gh: run $3 cannot be rerun (HTTP 403)" >&2; exit 1; }; sh "${FX}/rerun.$3" ;;
   # Coloured, as with CLICOLOR_FORCE or GH_FORCE_TTY, unless asked for --color never.
   "pr diff") case "$*" in *"--color never"*) cat "${FX}/diff" ;; *) sed "s/^/$(printf '\033')[1m/" "${FX}/diff" ;; esac ;;
   api*)
@@ -485,8 +486,15 @@ job() { printf '{"name":"%s","status":"%s","conclusion":"%s","html_url":"https:/
 # main until the wait runs out, and, seen before test's run, is a warning once test passes.
 required_test; checks "${FX}/${M}.checks"; wfruns "${FX}/${M}.runs" "$(run ci completed startup_failure "${M}")"
 merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
-check "a required check with no run yet: a red workflow run is held until the wait runs out, no fix-main" \
-  and_logged '^main-ci s timeout .*ci (startup_failure).*held until every required check has a run' bash -c "[ ${rc} = 1 ] && [ ! -e '${FM}' ]"
+check "a required check with no run yet: a red workflow run is held until the wait runs out, which names test, no fix-main" \
+  and_logged "^main-ci s timeout .*ci (startup_failure).*held until every required check has a run.*test (required, no run on ${M:0:7})" \
+  bash -c "[ ${rc} = 1 ] && [ ! -e '${FM}' ]"
+# A check named test from another app than the one the rule binds it to is not test: held, not red.
+required_test; echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}}]' > "${FX}/rules"
+checks "${FX}/${M}.checks" '{"name":"test","status":"completed","conclusion":"failure","html_url":"https://ci.example/1","app":{"id":999}}'
+merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+check "a red test from an app the rule does not bind: held, the wait times out naming test, no fix-main" \
+  and_logged "^main-ci s timeout .*test (failure).*held until.*test (required, no run on ${M:0:7})" bash -c "[ ${rc} = 1 ] && [ ! -e '${FM}' ]"
 required_test; checks "${FX}/${M}.checks.1" "$(run scorecard completed startup_failure)"
 checks "${FX}/${M}.checks" "$(run test completed success)" "$(run scorecard completed startup_failure)"; merge "${URL}"
 check "a red check seen before test has a run: a warning once test passes, no rerun, no fix-main" \
@@ -503,21 +511,38 @@ check "a red test whose run outlasts the wait: red, fix-main, no rerun" \
 # A refused rerun (run 99, no rerun.99) and one under way (run 98) are said, in the story too.
 required_test; echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"},{"context":"lint"}]}}]' > "${FX}/rules"
 checks "${FX}/${M}.checks" "$(job test completed failure 99/job/5)" "$(job lint completed failure 98/job/1)"; echo : > "${FX}/rerun.98"; merge "${URL}"
-check "a refused rerun: red, its refusal and the rerun under way said, in the story too" \
-  bash -c "[ ${rc} = 1 ] && grep -q \"^fix-main: .*A rerun of run 99's failed jobs was refused: .*HTTP 403.*A rerun of run 98's failed jobs is under way\" '${ROOT}/out' \
-    && grep -qF \"A rerun of run 99's failed jobs was refused\" '${FM}'"
-# Branch protection that cannot be read (unreadable JSON, a 502) leaves the ruleset's test to decide, and says so.
-for bp in branch branch.fail; do
-  required_test; echo nope > "${FX}/${bp}"; checks "${FX}/${M}.checks" "$(run test completed success)" "$(run scorecard completed failure)"; merge "${URL}"
-  check "branch protection that cannot be read (${bp}): the ruleset's test decides, and a warning says so" \
-    bash -c "[ ${rc} = 0 ] && grep -qF 'warning: scorecard (failure)' '${ROOT}/out' && grep -q '^warning: could not read main.s branch protection (' '${ROOT}/out'"
+check "a refused rerun: red, its refusal and the rerun under way said with the CI output, in the story too" \
+  bash -c "[ ${rc} = 1 ] && grep -q \"^  note: A rerun of run 99's failed jobs was refused: .*HTTP 403.*A rerun of run 98's failed jobs is under way\" '${ROOT}/out' \
+    && grep -qx 'fix-main: test (failure); lint (failure) on ${M:0:7}' '${ROOT}/out' && grep -q \"^note: A rerun of run 99's failed jobs was refused\" '${FM}'"
+# A rerun that finished green is not under way: lint's run 98 went green on its rerun before test's
+# run 99, then red, was refused its own.
+required_test; echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"},{"context":"lint"}]}}]' > "${FX}/rules"
+wf() { printf '{"id":%s,"run_attempt":%s,"name":"w%s","status":"%s","conclusion":"%s","path":".github/workflows/ci.yml","head_sha":"%s"}' "$1" "$2" "$1" "$3" "$4" "${M}"; }
+checks "${FX}/${M}.checks" "$(job lint completed failure 98/job/1)" "$(job test in_progress '' 99/job/5)"
+wfruns "${FX}/${M}.runs" "$(wf 98 1 completed failure)" "$(wf 99 1 in_progress '')"
+{ echo "printf '{\"total_count\":2,\"check_runs\":[%s,%s]}' '$(job lint completed success 98/job/2)' '$(job test completed failure 99/job/5)' > '${FX}/${M}.checks'"
+  echo "printf '{\"total_count\":2,\"workflow_runs\":[%s,%s]}' '$(wf 98 2 completed success)' '$(wf 99 1 completed failure)' > '${FX}/${M}.runs'"; } > "${FX}/rerun.98"
+merge "${URL}"
+check "a rerun that finished green is not called under way" \
+  bash -c "[ ${rc} = 1 ] && grep -q \"^  note: A rerun of run 99's failed jobs was refused\" '${ROOT}/out' && ! grep -q 'run 98.s failed jobs is under way' '${ROOT}/out'"
+# Branch protection that cannot be read (unreadable JSON, a 502, a token's Not Found), its rulesets
+# read or not: every check counts, and a warning says so.
+for bp in branch branch.fail branch.404; do
+  required_test; [ "${bp}" = branch.404 ] && echo 'Not Found' > "${FX}/${bp}" || echo nope > "${FX}/${bp}"
+  checks "${FX}/${M}.checks" "$(run test completed success)" "$(run scorecard completed failure)"; merge "${URL}"
+  check "branch protection that cannot be read (${bp}): every check counts, and a warning says so" \
+    and_logged '^main-ci s red scorecard (failure)' bash -c "[ ${rc} = 1 ] && grep -q '^warning: could not read main.s required checks (' '${ROOT}/out'"
 done
 # A status on the run's own URL, the same on every attempt, is new again once its rerun posts.
 required_test; checks "${FX}/${M}.checks"
 statuses "${FX}/${M}.status" '{"context":"test","state":"failure","target_url":"https://github.com/o/r/actions/runs/99","updated_at":"2026-10-22T10:00:00Z"}'
 echo "printf '{\"total_count\":1,\"statuses\":[{\"context\":\"test\",\"state\":\"success\",\"target_url\":\"https://github.com/o/r/actions/runs/99\",\"updated_at\":\"2026-10-22T10:05:00Z\"}]}' > '${FX}/${M}.status'" > "${FX}/rerun.99"
+printf 'test\tRun tests\t2026-10-18T10:00:01.1Z FAIL tests/x_test.sh\n' > "${FX}/run.99.log"
 merge SWARM_MERGE_CI_SECONDS=3 "${URL}"
 check "a required status on its run's URL, green on its rerun: green, flaky" bash -c "[ ${rc} = 0 ] && grep -q '^flaky: test (' '${ROOT}/out'"
+# Run 99 is not in the commit's run listing, so its attempt is unknown: attempt 1's log is read.
+check "a rerun whose run was not listed: attempt 1's FAIL line on the flaky line" \
+  bash -c "grep -qF 'run view 99 --repo o/r --attempt 1 --log-failed' '${ROOT}/gh.log' && grep -qF 'flaky: test (FAIL tests/x_test.sh), green on rerun' '${ROOT}/out'"
 # Rules that cannot be read: every check counts again.
 required_test; echo '[' > "${FX}/rules"; checks "${FX}/${M}.checks" "$(run test completed success)" "$(run scorecard completed failure)"; merge "${URL}"
 check "rules that cannot be read: a red scorecard is a red main" and_logged '^main-ci s red .*scorecard' test "${rc}" = 1
@@ -556,8 +581,13 @@ red_test failure; merge "${URL}"
 is "a required check red twice: exits non-zero" 1 "${rc}"
 check "a required check red twice: reran once, no flake" \
   bash -c "[ \"\$(grep -c '^run rerun 99' '${ROOT}/gh.log')\" = 1 ] && ! grep -q '^flake' <(cut -f2 '${P}/.swarm/events.tsv')"
-check "a required check red twice: fix-main says the rerun failed too" \
-  bash -c "grep -qF \"fix-main: test (failure) on ${M:0:7} (Run 99's failed jobs were rerun once, and the rerun failed too)\" '${ROOT}/out' && grep -qF 'the rerun failed too' '${FM}'"
+check "a required check red twice: fix-main says the rerun failed too, with the CI output" \
+  bash -c "grep -qx 'fix-main: test (failure) on ${M:0:7}' '${ROOT}/out' && grep -qF \"  note: Run 99's failed jobs were rerun once, and the rerun failed too\" '${ROOT}/out' \
+    && grep -qF \"note: Run 99's failed jobs were rerun once, and the rerun failed too\" '${FM}'"
+# A 5xx on a rerun is a missed poll: the rerun is tried again, and goes green.
+red_test success; : > "${FX}/rerun-502"; merge "${URL}"
+check "a 5xx on a rerun: tried again, green, flaky, no fix-main" \
+  bash -c "[ ${rc} = 0 ] && [ \"\$(grep -c '^run rerun 99' '${ROOT}/gh.log')\" = 2 ] && grep -q '^flaky: test (FAIL' '${ROOT}/out' && [ ! -e '${FM}' ]"
 # Each run gets its own rerun: lint (run 98) goes red only after test's run 99 was rerun.
 required_test; echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"},{"context":"lint"}]}}]' > "${FX}/rules"
 checks "${FX}/${M}.checks" "$(job test completed failure 99/job/5)" "$(job lint in_progress '' 98/job/1)"

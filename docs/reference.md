@@ -1365,20 +1365,23 @@ files the PR changes must have a run on that commit, and every run and check the
 commit needs no check run of its own when no workflow is expected on it, but then it waits a minute
 before calling main green, for checks other apps post just after the push. A failed read is a
 missed poll, and three in a row end the wait as an error. When the base requires status checks (its
-rulesets and branch protection, read once per merge), only those can make main red. A part of the
-rules it cannot read prints `warning: could not read <base>'s <part> (<why>)`, and the part it read
-still decides; with none read, every check counts. Any other red check or workflow run waits until
-each required check has a run on the merge commit (a workflow that never started holds main until
-the wait runs out), then prints `warning: <check> is red on <base>, which does not require it` and
+rulesets and branch protection, read once per merge, each check bound to the app the rule names),
+only those can make main red. When any part of the rules cannot be read, merge prints `warning:
+could not read <base>'s required checks (<why>), so every check counts`, and every check does. Any
+other red check or workflow run waits until each required check has a run on the merge commit (a
+workflow that never started holds main until the wait runs out, and the timeout names the required
+checks with no run), then prints `warning: <check> is red on <base>, which does not require it` and
 leaves main green. Once every required check has finished green, nothing else is waited on. A
 red whose every check is a GitHub Actions job gets one rerun per run: once those runs have
 finished, merge reruns their failed jobs (`gh run rerun --failed`) and waits again, for the full
-time. A red whose run is still going when the wait runs out is red. If a rerun goes green, merge
+time. A red whose run is still going when the wait runs out is red. A transient gh error on the
+rerun (a 5xx, a rate limit, a dropped connection) is a missed poll, and three in a row end the wait
+as an error. If a rerun goes green, merge
 prints `flaky: <jobs> (<the FAIL lines of the attempt that failed>), green on rerun` and logs a
-`flake` line. If it goes red again, merge writes the fix-main story, and the story and its
-`fix-main:` line say the rerun failed too. A red that is not an Actions job writes the story at
-once, and so does a rerun GitHub refuses: the story says why it was refused and names any rerun
-still under way. `swarm.sh reconcile` clears a red main by the same rule: once each required check
+`flake` line. If it goes red again, merge writes the fix-main story. A red that is not an Actions
+job writes the story at once, and so does a rerun GitHub refuses. A `note:` line first among the
+story's CI output, and among merge's, says that the rerun failed too, or why GitHub refused it, and
+names any rerun still under way. `swarm.sh reconcile` clears a red main by the same rule: once each required check
 has a run, only those must pass. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
