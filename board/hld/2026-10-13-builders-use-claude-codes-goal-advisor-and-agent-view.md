@@ -1,7 +1,7 @@
 ---
 title: Builders use Claude Code's goal and agent view, with Fable on call
 date: 2026-10-13
-status: agreed
+status: superseded
 ---
 
 # Builders use Claude Code's goal and agent view, with Fable on call
