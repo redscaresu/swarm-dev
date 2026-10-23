@@ -62,7 +62,7 @@ echo "epic: child" >> "${B}/stories/s-none.md"
 # (a walk that loops is ended by make test's per-file timeout).
 grants() {
   rc=0
-  (cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" \
+  (cd "${PROJ:-${P}}" && env -u SWARM_PROJECT -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" \
     bash "${SWARM}" grants "$1" > "${ROOT}/out" 2>&1) || rc=$?
 }
 expect() { # <name> <arg> <expected output>
@@ -134,5 +134,19 @@ expect story-pr-touching-other-hld-none https://github.com/o/r/pull/12 none
 
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none
+
+# A board at the repo's root (board_dir = .): its hld/, epics/ and stories/ are the PR's paths as they are.
+R="${ROOT}/rootproj"; mkdir -p "${R}/.claude/swarm" "${R}/hld" "${R}/epics" "${R}/stories"
+git -C "${R}" init -q; git -C "${R}" remote add origin https://github.com/o/r.git
+echo "board_dir = ." > "${R}/.claude/swarm/config"
+cp "${A}" "${R}/hld/"; cp "${B}/epics/top.md" "${B}/epics/child.md" "${R}/epics/"
+item "${R}/stories/r-story.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/21"
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.21"
+echo '[{"filename":"bin/x.sh"},{"filename":"hld/2026-01-01-a.md"}]' > "${FX}/repos_o_r_pulls_21_files_per_page=100"
+PROJ="${R}" expect root-board-story-pr-touching-hld-none https://github.com/o/r/pull/21 none
+echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.22"
+echo '[{"filename":"stories/r-new.md"}]' > "${FX}/repos_o_r_pulls_22_files_per_page=100"
+item "${FX}/repos_o_r_contents_stories_r-new.md_ref=${HEAD}" "status: ready" "epic: child"
+PROJ="${R}" expect root-board-board-pr https://github.com/o/r/pull/22 "$(printf '%s\nmerge\nstories' "${R}/hld/2026-01-01-a.md")"
 
 [[ ${fails} -eq 0 ]]
