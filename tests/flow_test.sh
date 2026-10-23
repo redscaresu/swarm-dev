@@ -368,6 +368,11 @@ L=https://github.com/o/r/actions/runs
 got="$(flaky --since 2026-10-01 --until 2026-10-03)"
 check "ci_health: a failed log with a byte that is not UTF-8 is still read: a_test.sh is flaky, and no line says not JSON" \
   "$(grep -E 'a_test|not JSON' <<< "${got}")" $'tests/a_test.sh\t1\t2026-10-01\t'"${L}"'/10/attempts/1'
+# Under an ASCII locale (UTF-8 mode off) gh() still reads gh's output as UTF-8: é kept, 0xff as U+FFFD.
+mkdir -p "${dir}/ugh"; printf '#!/bin/sh\nprintf '"'"'caf\\303\\251 \\377'"'"'\n' > "${dir}/ugh/gh"; chmod +x "${dir}/ugh/gh"
+check "report.gh reads gh's output as UTF-8 under a locale that is not, a byte that is not UTF-8 as U+FFFD" \
+  "$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 PATH="${dir}/ugh:${PATH}" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import report; print(ascii(report.gh("x", parse=str)))' "$(dirname "${SWARM}")/lib")" \
+  "'caf\\xe9 \\ufffd'"
 check "ci_health: the test files a head's red attempts failed before a green one, as the row counts flakes, a run once per file, worst first; what gh did not list or could not read is named, and logs with no test file line counted" \
   "${got}" "${FH}"$'
 tests/c_test.sh\t3\t2026-10-02\t'"${L}"$'/30/attempts/1

@@ -207,7 +207,7 @@ def gh(*args, seconds=GH_SECONDS, parse=json.loads):
         return None
     for wait in (1, 2, 0):
         try:
-            got = subprocess.run(["gh", *args], capture_output=True, text=True, errors="replace", timeout=seconds)
+            got = subprocess.run(["gh", *args], capture_output=True, encoding="utf-8", errors="replace", timeout=seconds)
             if got.returncode == 0:
                 ERROR[0] = f"{call}: an answer it could not read"   # when its caller finds no list or object
                 return parse(got.stdout)
