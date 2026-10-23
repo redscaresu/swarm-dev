@@ -69,10 +69,11 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 3. Inside herdr, run `swarm.sh init`. Or run `claude` and `/swarm-dev:swarm`, which runs it after your
    yes. Type the whole command name, since a shorter one can run a different command. `init` adds the board
    (`docs/epics/` and `docs/stories/`), `.claude/swarm/config`, and a CI workflow and pre-commit
-   hook that run `make check`. It also asks once for your rules for builders: commit trailers,
+   hook that run `make check`.
+4. Run `/swarm-dev:swarm`. The first time, it asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.
-4. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm`. Run it each
+5. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm`. Run it each
    time it stops for you.
 
 Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
