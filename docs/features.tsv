@@ -1,6 +1,6 @@
 feature	landed	metric	baseline	uses
 /epic	safer-faster-swarm	outcomes: story_merged share of builds	132 of 144 (as /hld, infrafactory, outcomes to 2026-10-16)	role:epic
-/plan-epic	2026-09-29	flow reviewers: findings raised per PR	4.1 (565 over 137 PRs) (infrafactory, flow reviewers to 2026-10-16)	role:skeptic role:survey
+/plan-epic	2026-09-29	flow reviewers: findings raised per PR	4.1 (565 over 137 PRs) (infrafactory, flow reviewers to 2026-10-16)	role:critic role:survey
 /swarm-dev:swarm	2026-09-29	flow: builders_mean (all)	0.37, max 8 (infrafactory, flow --until 2026-10-16)	event:conduct
 status	2026-10-02	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
 dash	2026-10-11	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
@@ -43,7 +43,7 @@ review agents	leaner-faster-swarm	flow: review_wait_min (all)	unavailable: no re
 backlog conductor	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	agent:conduct-backlog
 wait --lead	leaner-faster-swarm	outcomes: PR-to-merge time	unavailable: outcomes has no PR-to-merge time before outcomes-timings; 3 held stories waited 2 h unnoticed on 2026-10-16	event:lead-woken
 planning during review	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	role:lead
-short chains	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:skeptic
+short chains	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:critic
 flow ci_health	safer-faster-swarm	flow ci_health: ci_min_median, red_runs_per_pr, flakes	unavailable: the section is new in this epic, and gh's rate limit was spent on 2026-10-17; its first run gives the baseline	unlogged: a read-only command leaves no events.tsv line
 releases	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic (infrafactory, flow --until 2026-10-16)	unlogged: merge --release logs as merge, so a release is not told apart
 flow incidents	safer-faster-swarm	flow incidents: incidents per day by kind	unavailable: incident lines are new in this epic; its first week of flow incidents gives the baseline	unlogged: a read-only section, and the incident lines it counts are not ok events

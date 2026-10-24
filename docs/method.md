@@ -6,13 +6,17 @@ each step is in [`reference.md`](reference.md).
 
 ## The planning chain
 
-1. **Epic**: `/epic <title>` opens a pane on the most capable model, where you write
+1. **HLD** (optional): `/hld <title>` opens a pane where you write `docs/hld/YYYY-MM-DD-<slug>.md`
+   with a co-author: a release's worth of work, and the `grants:` (`epics`, `stories`, `merge`,
+   `release`) that say what the lead may do under it unasked. `/plan-hld` then splits the agreed
+   HLD into epics (reference.md § Writing an HLD, § Decomposing an HLD).
+2. **Epic**: `/epic <title>` opens a pane on the most capable model, where you write
    `docs/epics/<slug>.md` with it as `status: draft`: the problem with evidence, goals that can be
    checked, non-goals and constraints. A reviewer attacks the draft, and it becomes `active` only
    when you agree it (reference.md § Writing an epic).
-2. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. Skeptics and
-   codex check for gaps and overlaps (reference.md § Scoping an epic).
-3. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
+3. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. A critic and codex
+   check them for gaps and overlaps, a skeptic each `risk: high` one (reference.md § Scoping an epic).
+4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
    one at a time. Two stories clash only when their `touches` name the same `file:symbol` in the
@@ -21,11 +25,12 @@ each step is in [`reference.md`](reference.md).
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
    code. A review on the latest head whose findings are all declined is a pass: the conductor
-   rebuts each in the PR, logs it as declined (reference.md § The outer loop), then merges it or hands it over.
+   rebuts each in the PR, logs it as declined (reference.md § The outer loop), then merges it or hands
+   it over. An epic is done when its last story's PR deletes the epic file.
 
-`/swarm-dev:swarm` runs the chain after the epic. `swarm.sh next` reads the board and names the next
-step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft epic, a
-`lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
+`/swarm-dev:swarm` runs the chain once an HLD or epic is agreed. `swarm.sh next` reads the board and names the next
+step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD or epic, a plan or finish PR
+awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
 `depends_on` story (one an agent builds, not in review) shares no file in `touches` with it and has no `needs:` line naming what it uses
 (the lead drops the dependency or adds the line). When the step leaves the builders idle and no
@@ -43,42 +48,37 @@ When `next` says to wait on a conductor, it also lists each ready `lead` story t
 depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no
 conductor will build them.
 
-A story the swarm must not build says so with `kind: lead`: the lead runs it, and any step that is
-yours is marked **You:** in it. An open question for you is a `lead` story too, so the board's
-**Waiting on you** view lists it. An epic is done when its last story's PR deletes the epic file.
-
-The session that runs the chain supervises, reviews and merges. It does not do the agents' work.
-
 ## Who does what
 
 Three parties do the work, and the plan decides which one does each step, not the build.
 
-- **You** agree each epic, approve the stories, merge PRs (with `merge = human`), say go
-  before each `lead` story, and do its **You:** steps.
-- **The lead** is your Claude Code session, the one you run `/swarm-dev:swarm` in. It supervises, reviews
-  and runs `lead` stories. If it stops while `next` names a step it has not started, a hook sends it back once.
-- **Agents** plan, conduct and build everything else, each in its own pane; builders also get
-  their own worktree.
-
-The lead's messages to agents go through `swarm.sh tell`, never a bare `herdr agent prompt`. When
-the board is in the project's repo, its board edits go through `swarm.sh board-pr`, each in its own
-worktree, never the main checkout (reference.md § The lead).
+- **You** agree each HLD and epic, approve the stories, merge PRs (with `merge = human`), say go
+  before each `lead` story, and do its **You:** steps. An agreed HLD's `grants:`, which only you set,
+  hand the lead some of that: `epics` and `stories` skip your agreement of its epics and approval of
+  their stories; `merge` lets it merge a story or board PR under the HLD, and `release` a release whose
+  stories are all under HLDs that grant it, with `swarm.sh merge`. A `costs: money` PR still waits for you.
+- **The lead** is your Claude Code session, the one you run `/swarm-dev:swarm` in. It supervises,
+  reviews and runs `lead` stories, never the agents' work. Its messages to agents go through
+  `swarm.sh tell`, never a bare `herdr agent prompt`, and when the board is in the project's repo its
+  board edits go through `swarm.sh board-pr`, each in its own worktree, never the main checkout
+  (reference.md § The lead). If it stops while `next` names a step it has not started, a hook sends it back once.
+- **Agents** plan, conduct and build everything else, each in its own pane, builders in a worktree too.
 
 A story is `kind: lead`, never an agent's, when it:
 
 - changes real cloud, uses credentials, or changes permissions;
 - is hard to undo (deletes data, turns something off, a production change): its **Done when** names
   your go-ahead;
-- needs a person: a decision, a portal click, another team's approval, a network only you can reach.
-  That step is a **You:** line in the story, and the lead does the rest around it.
+- needs a person: a decision, a portal click, another team's approval, a network only you can reach,
+  or the answer to an open question, which the board's **Waiting on you** view then lists. That step
+  is a **You:** line in the story, and the lead does the rest around it.
 
-A merge is never a story of its own. A `kind` that is none of code, docs, chore or lead is never
-built: `swarm.sh` stops and names it.
+A merge is never a story. A `kind` other than code, docs, chore or lead is never built: `swarm.sh` stops and names it.
 
-**Planned up front.** `/epic` writes each epic's **Your part**: the human steps it expects.
-`/plan-epic` turns them into `lead` stories, and its report ends with **What you will do**, so you
-see your share of the work before you approve it. A step found during the build that needs you is a
-new `lead` story, not done quietly.
+**Planned up front.** `/epic` writes each epic's **Your part**, the human steps it expects, and
+`/plan-epic` turns them into `lead` stories and ends its report with **What you will do**, so you see
+your share of the work before you approve it. A step found during the build that needs you is a new
+`lead` story, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
 step says how the lead learns it is done. A status or flag raised for you says who clears it and how.

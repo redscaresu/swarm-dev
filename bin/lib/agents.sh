@@ -1612,9 +1612,9 @@ tell_agent() {
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
   # The file's own first line is what its session log is read for: every tell starts with the header.
   line="$(awk 'NF { print; exit }' "${f}")"
-  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" deliver_prompt "${name}" "${msg}"; echo "told ${name}"; return; fi
+  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"; echo "told ${name}"; return; fi
   since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
-  DELIVER_LINE="${line}" deliver_prompt "${name}" "${msg}"
+  DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
@@ -1623,9 +1623,35 @@ tell_agent() {
   echo "told ${name}"
 }
 
+# tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other
+# stderr it printed. A findings tell herdr sent also says what to do: findings_told counts it as a
+# round, so the same findings sent again as findings would count that round twice. After "may or may
+# not have the brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice)
+# herdr may have dropped both, so the pane says whether to send them again, as a nudge: a nudge is
+# not a round.
+tell_deliver() {
+  local err why rc
+  # Not `{ ...; } || rc=$?`: on the left of || set -e is ignored inside deliver_prompt too, so an
+  # own_target die in `target="$(own_target ...)"` would not stop it, and it would prompt an empty target.
+  # The bare set -e after is the state tell_agent, its one caller, runs in: dispatch's set -e.
+  set +e; { err="$( set -e; deliver_prompt "$1" "$2" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+  # A success keeps its stderr too: deliver_prompt warns when herdr sent the brief and did not show the turn start.
+  if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; return 0; fi
+  if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; exit "${rc}"; fi
+  why="${err##*swarm: }"; err="${err%swarm: *}"
+  [[ -z "${err}" ]] || printf '%s' "${err}" >&2
+  case "$3:${why}" in
+    findings:*"the brief was not taken up: herdr sent it the brief"*)
+      die "${why}; the findings count as a round: read its pane (herdr agent read $1) and, if it shows they never arrived, send them again as a nudge (swarm.sh tell $1 nudge <file>), which is not a round" ;;
+    findings:*"herdr sent it the brief"*) die "${why}; the findings count as delivered, a findings round of its build, so do not send them again" ;;
+  esac
+  die "${why}"
+}
+
 # findings_told <slug> [since] — how many findings tells (a bare tell, from logs before kinds, too) <slug>
 # has had since [since], or since its build started (build_started): ok ones, and those herdr sent but deliver_prompt
-# did not see taken up ("herdr sent it the brief"); not one herdr never sent.
+# did not see taken up ("herdr sent it the brief"); not one herdr never sent. Nor one whose reply
+# "could not be read" with none sent: whether it went out is unknown, so it is not counted.
 findings_told() {
   awk -F'\t' -v s="$1" -v t="${2:-$(build_started "$1")}" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
     END { print n + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
