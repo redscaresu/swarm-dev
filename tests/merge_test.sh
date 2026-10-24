@@ -118,7 +118,9 @@ case "$1 $2" in
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
-      */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
+      # ${FX}/on-contents runs once first: another process's fetch while release_check reads.
+      */contents/*) [ ! -e "${FX}/on-contents" ] || { sh "${FX}/on-contents"; rm -f "${FX}/on-contents"; }
+                    f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
                     [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
       # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>. A
       # commit's files: commit.<sha>, else one file outside the board.
@@ -756,7 +758,7 @@ git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init; 
 git -C "${P}" push -q origin HEAD:refs/heads/main v1.2.0; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
 release_pr() {
   fresh; rm "${S}"; echo '[{"filename":".claude-plugin/plugin.json","status":"modified"}]' > "${FX}/files"
-  echo '{"name":"x","version":"1.2.0","hooks":{}}' > "${FX}/wf.plugin.json.main"
+  echo '{"name":"x","version":"1.2.0","hooks":{}}' > "${FX}/wf.plugin.json"
   echo '{"name":"x","version":"1.3.0","hooks":{}}' > "${FX}/wf.plugin.json.${H1}"
   parent "$(git -C "${ROOT}/origin.git" rev-parse main)"
 }
@@ -781,14 +783,14 @@ release_pr; echo '{"name":"x","version":"1.3.0","hooks":{},"mcpServers":{"m":{"c
 merge --release "${URL}"; refused "--release that adds mcpServers to plugin.json" "changes more of .claude-plugin/plugin.json than its version"
 release_pr; echo '{"name":"x","hooks":{}}' > "${FX}/wf.plugin.json.${H1}"
 merge --release "${URL}"; refused "--release that drops the version" "its version None is not MAJOR.MINOR.PATCH"
-release_pr; echo '{"name":"x","version":"1.3.0","hooks":{},"strict":true}' > "${FX}/wf.plugin.json.main"
+release_pr; echo '{"name":"x","version":"1.3.0","hooks":{},"strict":true}' > "${FX}/wf.plugin.json"
 echo '{"name":"x","version":"1.4.0","hooks":{},"strict":1}' > "${FX}/wf.plugin.json.${H1}"
 merge --release "${URL}"; refused "--release that turns true into 1" "changes more of .claude-plugin/plugin.json than its version; if main changed plugin.json after the release branch was cut, merge origin/main into it and retry"
 for v in 1.2.0:"is not greater than '1.2.0' on main" 1.1.9:"is not greater than '1.2.0' on main" 1.3.0-rc:"its version '1.3.0-rc' is not MAJOR.MINOR.PATCH"; do
   release_pr; echo "{\"name\":\"x\",\"version\":\"${v%%:*}\",\"hooks\":{}}" > "${FX}/wf.plugin.json.${H1}"
   merge --release "${URL}"; refused "--release to version ${v%%:*}" "${v#*:}"
 done
-release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json.main" "${FX}/wf.plugin.json.feature"
+release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json" "${FX}/wf.plugin.json.feature"
 merge --release "${URL}"; refused "--release for a PR into another branch" "goes into feature, not main, the project's base"
 # A release ships its docs: bin/, commands/ or hooks/ changed since origin's tag needs README.md,
 # AGENTS.md or docs/ changed too, or a "Docs: none — <reason>" line in the PR body; a commands/*.md
@@ -815,11 +817,11 @@ for b in 'Docs: none' 'Docs: none \u2014\r\nmore' 'Docs: none \u2014 \r\nmore' '
   release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
   refused "--release with '${b}' and no reason" "bin/x.sh changed since v1.2.0"
 done
-release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
+release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json"
 merge --release "${URL}"; refused "--release with no tag for the base's version" "no v1.2.5 tag on origin to compare against: tag main's last release v1.2.5, or give the PR body a line 'Docs: none — '"
 # v1.2.5 on a commit that is not on main.
 git -C "${P}" tag v1.2.5 "$(git -C "${P}" -c user.name=t -c user.email=t@t commit-tree -m side "HEAD^{tree}")"; git -C "${P}" push -q origin v1.2.5
-release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
+release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json"
 merge --release "${URL}"; refused "--release with the base's tag off the base" "the tag v1.2.5 is not on origin/main"
 # origin's tag is read, never fetched over the local one.
 git -C "${P}" tag -f v1.2.0 HEAD >/dev/null; local_tag="$(git -C "${P}" rev-parse v1.2.0)"
@@ -930,6 +932,13 @@ human_release moved "${late}"
 refused "--release with merge = human and a story under no HLD landed on main between the check and the merge" "story late, merged since v1.2.0, is under no agreed HLD that grants release"
 check "--release with main moved after the check: says so, and checks again" said "origin/main moved from ${was:0:7} to ${late:0:7} since the release check, so it runs again"
 retag
+fetched() { echo "git -C '${P}' update-ref refs/remotes/origin/main $1" > "${FX}/on-contents"; } # <sha> — the local origin/main moves mid-check
+landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-h.md "epic: shipped"; gone docs/stories/shipped-h.md docs/epics/shipped.md
+was="$(gt rev-parse HEAD)"; late="$(held eval 'landed docs/stories/late2.md "epic: none-such"; gone docs/stories/late2.md')"
+human_release fetched "${late}"
+is "--release with origin/main moved locally mid-check: the checks read the commit fetched first, and it merges" "0 yes" "${rc} $(merged && echo yes)"
+check "--release reads the base's plugin.json at the commit it fetched" grep -q "contents/.claude-plugin/plugin.json?ref=${was}" "${ROOT}/gh.log"
+push; retag
 # A release of the plugin's own repo (plugin.json's repository), once its tag and published release
 # are on the merge commit or after it: the marketplace and the plugin are updated, then the new
 # version's upgrade starts once in each swarm project herdr runs an agent in, found by the agent's
@@ -1022,10 +1031,14 @@ own_release; echo "git -C '${ROOT}/origin.git' update-ref refs/heads/main ${late
 is "--release whose merge commit's parent is not the base it checked: exits 0" 0 "${rc}"
 check "--release whose merge commit's parent is not the base it checked: names the unchecked commits" said "refused: aaaaaaa's first parent is ${late:0:7}, not ${was:0:7}, the base the release check read, so it ships ${shipped} unchecked; the plugin was not updated"
 check "--release whose merge commit's parent is not the base it checked: no plugin update, no upgrade" bash -c "[ ! -e '${ROOT}/claude.log' ] && [ ! -e '${ROOT}/upgrade.log' ]"
+check "--release whose merge commit's parent is not the base it checked: logs the refusal" logged "merge ${OWN} upgrade refused: aaaaaaa's first parent is ${late:0:7}, not ${was:0:7}"
+own_release; parent "${H2}"; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge --release "${OWN}"
+check "--release with base CI not green and another parent: the CI warning alone, no parent refusal" bash -c "grep -q 'CI on the base is not green' '${ROOT}/out' && ! grep -q 'refused:' '${ROOT}/out'"
 own_release; rm "${FX}/commit.${M}"; merge --release "${OWN}"
 check "--release whose merge commit's parent gh cannot read: refused, and no plugin update" bash -c "grep -qF 'refused: gh cannot read the first parent of aaaaaaa' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
-own_release; echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; merge --release "${URL}"
+own_release; echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; parent "${H2}"; merge --release "${URL}"
 is "--release of another repo: exits 0" 0 "${rc}"
+check "--release of another repo whose merge commit has another parent: no plugin advice" bash -c "! grep -q 'refused:' '${ROOT}/out'"
 check "--release of another repo: no plugin update, no upgrade" bash -c "[ ! -e '${ROOT}/claude.log' ] && [ ! -e '${ROOT}/upgrade.log' ]"
 check "--release of another repo: says why" said "o/r is not this plugin's repo (${OWN_REPO}), so the plugin is not updated"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"

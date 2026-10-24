@@ -1756,16 +1756,15 @@ stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
-Once a release merges, `merge --release` reads its merge commit's first parent through gh. If that
-is not the base the release check last read, a PR landed between that read and the merge, and the
-release shipped commits no check read. merge prints `refused: <merge commit>'s first parent is
-<sha>, not <sha>, the base the release check read, so it ships <commits> unchecked`, followed by
-what to run once you have checked them. It then skips the plugin update and the upgrade below. When
-gh can't read the parent, it refuses the same way. Neither changes merge's exit code.
-
 When the release is swarm-dev's own (its repo is the GitHub repo named by `repository` in the
 plugin's `plugin.json`; otherwise merge prints a line saying it skipped this step), `merge
---release` also updates the plugin and moves the agents onto it, once CI on the base is green. It
+--release` also updates the plugin and moves the agents onto it, once CI on the base is green. First
+it reads the merge commit's first parent through gh. If that is not the base the release check last
+read, a PR landed between that read and the merge, and the release shipped commits no check read.
+merge then prints `refused: <merge commit>'s first parent is <sha>, not <sha>, the base the release
+check read, so it ships <commits> unchecked`, followed by what to run once you have checked them,
+logs it as a `merge` line in `.swarm/events.tsv`, and updates nothing. When gh can't read the
+parent, it refuses the same way. Otherwise it
 waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a
 later commit of the base, and a published GitHub release. Then it runs `claude plugin marketplace
 update swarm-dev` and `claude plugin update swarm-dev@swarm-dev`, 5 minutes at most each. Once the
@@ -1782,8 +1781,8 @@ one. When CI on the base is not green, the release can't be confirmed or the upd
 a warning naming the new version's `swarm.sh upgrade` to run once the plugin is updated, and
 upgrades nothing. An upgrade that fails, takes too long to start, or finds another upgrade already
 running in its project and starts nothing gets the same kind of warning, and merge moves on to the
-next project. The release still counts as done, and none of these warnings changes merge's exit
-code.
+next project. The release still counts as done, and neither these warnings nor the refusal above
+changes merge's exit code.
 
 ## Commands
 

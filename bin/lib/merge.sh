@@ -376,11 +376,8 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
-  # A release of this plugin moves the installed plugin and the running agents onto it, once its merge
-  # commit sits on the base release_check read; it never fails the merge.
-  if [[ "${only}" == --release && -n "${oid}" ]] && release_parent "${repo}" "${oid}" "${base}"; then
-    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}"
-  fi
+  # A release of this plugin moves the installed plugin and the running agents onto it; it never fails the merge.
+  [[ "${only}" != --release || -z "${oid}" ]] || release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}"
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -1037,7 +1034,8 @@ wait_pr() {
 }
 
 # release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> — after merge --release of
-# this plugin's own repo (plugin_repo), with CI on the base green: once release_confirmed, update the
+# this plugin's own repo (plugin_repo), with CI on the base green and the merge commit on the base
+# release_check read (release_parent): once release_confirmed, update the
 # marketplace and the plugin, then start the new version's swarm.sh upgrade (detached; bounded by
 # UPGRADE_START_WAIT; with release_path's PATH, so the agents it restarts find the new swarm.sh) in
 # each of agent_projects, and ask the user to restart the lead session in this project and each of
@@ -1052,6 +1050,7 @@ release_upgrade() {
   new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
   hint="run swarm.sh update, then ${new} upgrade in each project with agents"
   [[ $4 -eq ${MAIN_CI_OK} ]] || { echo "warning: CI on the base is not green, so the plugin was not updated: once v$3 is published, ${hint}"; return 0; }
+  release_parent "$1" "$2" "$5" "${hint}" || return 0
   release_confirmed "$1" "$2" "$3" "$5" \
     || { echo "warning: no tag v$3 on the base at or after ${2:0:7} with a published GitHub release, so the plugin was not updated: once there is, ${hint}"; return 0; }
   if ! { within "${PLUGIN_UPDATE_WAIT}" claude plugin marketplace update "${MARKETPLACE}" \
@@ -1188,9 +1187,9 @@ release_moved() {
   release_check "$@"
 }
 
-# release_parent <owner/repo> <merge commit> <base> — 0 when the merge commit's first parent is
-# RELEASE_BASE, the base release_check last read; else print a refusal naming the commits between the
-# two, which the release ships unchecked, and fail, so the plugin is not updated.
+# release_parent <owner/repo> <merge commit> <base> <hint> — 0 when the merge commit's first parent is
+# RELEASE_BASE, the base release_check last read; else log and print a refusal naming the commits
+# between the two, which the release ships unchecked, with <hint>, and fail: release_upgrade updates nothing.
 # ponytail: a rebase of a release PR with several commits reads its own commit as the parent and
 # refuses; read <merge commit>~<its commits> (as merge --board's prev) if a release ever has more.
 release_parent() {
@@ -1204,7 +1203,8 @@ release_parent() {
   else
     why="gh cannot read the first parent of ${2:0:7}, so whether it ships commits the release check never read is unknown"
   fi
-  echo "refused: ${why}; the plugin was not updated and no agent was moved: check those commits, then run swarm.sh update and the new version's swarm.sh upgrade in each project with agents"
+  record_event merge "${MERGE_TARGET}" "upgrade refused: ${why}"
+  echo "refused: ${why}; the plugin was not updated and no agent was moved: once those commits are checked, $4"
   return 1
 }
 
@@ -1213,15 +1213,15 @@ release_parent() {
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
 # that version is MAJOR.MINOR.PATCH and greater than the base's, with merge = human release_grant
 # finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes. It
-# fetches origin/<base> once, first, and sets RELEASE_BASE to the commit it fetched: what the checks
-# read, or older, so a base that moved under them reads as moved (release_moved).
+# fetches origin/<base> once, first, and sets RELEASE_BASE to the commit it fetched, which every check
+# reads (gh at that SHA, git at it), so a base that moves after the fetch reads as moved (release_moved).
 release_check() {
   local want old new why body was tag
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
   RELEASE_BASE="$(release_base "$2")" || merge_fail "--release: cannot fetch origin/$2 to check the release against"
-  old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$2")" \
-    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2"
+  old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=${RELEASE_BASE}")" \
+    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
   new="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$3")" \
     || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
   why="$(OLD="${old}" NEW="${new}" BASE="$2" python3 -c 'import json,os,re
@@ -1271,11 +1271,11 @@ release_grant() (
   mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld" "${view}/origin/stories"
   # origin/<base>'s board (release_check fetched it); a directory it does not have is empty.
   for s in epics hld stories; do
-    git -C "${PROJECT_DIR}" archive --format=tar "origin/$2:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
+    git -C "${PROJECT_DIR}" archive --format=tar "${RELEASE_BASE}:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
   done
   # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
   git -C "${PROJECT_DIR}" log -z --first-parent --diff-merges=first-parent --no-renames --diff-filter=D --name-only --format=%H \
-    "$4..origin/$2" -- "${pre}stories/" > "${view}/list" || { echo "git cannot list the stories deleted on origin/$2 since v$3"; exit 0; }
+    "$4..${RELEASE_BASE}" -- "${pre}stories/" > "${view}/list" || { echo "git cannot list the stories deleted on origin/$2 since v$3"; exit 0; }
   while IFS= read -r -d '' p; do
     p="${p#$'\n'}"
     [[ ! "${p}" =~ ^[0-9a-f]{40,}$ ]] || { c="${p}"; continue; }
@@ -1319,7 +1319,7 @@ release_done() {
     | json "' '.join((p.get('mergeCommit') or {}).get('oid') or '' for p in d)")" || return 2
   read -r -a list <<< "${oid}" || true
   for oid in ${list[@]+"${list[@]}"}; do
-    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "origin/$3" 2>/dev/null || continue
+    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "${RELEASE_BASE}" 2>/dev/null || continue
     git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "$4" 2>/dev/null || return 0
   done
   return 1
@@ -1344,7 +1344,7 @@ release_tag() {
     | awk '{ t = $1 } $2 ~ /\^\{\}$/ { c = $1 } END { print (c != "" ? c : t) }')" || rc=$?
   [[ ${rc} != 2 ]] || { echo "no v$2 tag on origin to compare against: tag $1's last release v$2$3"; return 1; }
   [[ ${rc} == 0 && "${tag}" =~ ^[0-9a-f]{40}$ ]] || { echo "cannot read origin's tag v$2 to read what changed since it"; return 1; }
-  git -C "${PROJECT_DIR}" merge-base --is-ancestor "${tag}" "origin/$1" 2>/dev/null \
+  git -C "${PROJECT_DIR}" merge-base --is-ancestor "${tag}" "${RELEASE_BASE}" 2>/dev/null \
     || { echo "the tag v$2 is not on origin/$1, so the changes since it are unknown: retag v$2 on $1$3"; return 1; }
   echo "${tag}"
 }
@@ -1360,12 +1360,12 @@ release_docs() {
   local tag="${4:-}" code docs p ex=()
   ! docs_none <<< "$1" || return 0
   [[ -n "${tag}" ]] || tag="$(release_tag "$2" "$3" ", or give the PR body ${DOCS_NONE_FORMS}")" || merge_fail "--release: ${tag}"
-  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- bin commands hooks)" \
+  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- bin commands hooks)" \
     || merge_fail "--release: git cannot diff v$3 with origin/$2"
   [[ -n "${code}" ]] || return 0
   grep -qv '^commands/.*\.md$' <<< "${code}" || return 0
   while IFS= read -r p; do ex+=(":(exclude)${p%/}"); done < <(board_paths)
-  docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
+  docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
     || merge_fail "--release: git cannot diff v$3 with origin/$2"
   [[ -z "${docs}" ]] || return 0
   merge_fail "--release: ${code//$'\n'/, } changed since v$3 but README.md, AGENTS.md and docs/ did not: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"
