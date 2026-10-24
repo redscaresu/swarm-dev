@@ -679,6 +679,7 @@ grants() {
   local h g
   [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | PR URL>"
   if [[ "$1" == https://* ]]; then h="$(pr_hld "$1")" || exit 1
+  # Keep this slug check and the story/epic lookups in step with item_file's.
   elif [[ "$1" =~ ^[a-z0-9-]+$ && ! -f "${BOARD}/stories/$1.md" && ! -f "${BOARD}/epics/$1.md" && -f "${BOARD}/hld/$1.md" ]]; then
     h="${BOARD}/hld/$1.md"   # a story or epic of the name wins; only then the HLD itself
     [[ "$(get_fm "${h}" status)" == agreed ]] || h=""
