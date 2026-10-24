@@ -2,7 +2,7 @@
   "schema_version": 2,
   "diagram_type": "workflow",
   "meta": {
-    "title": "How the swarm builds an epic",
+    "title": "How the swarm turns a design into merged PRs",
     "quality_profile": "showcase",
     "output": "docs/assets/swarm-flow.html"
   },
@@ -33,7 +33,7 @@
     },
     {
       "id": "planning",
-      "label": "Write + plan",
+      "label": "Design + plan",
       "fromCol": 1,
       "toCol": 2,
       "variant": "emphasis"
@@ -48,8 +48,10 @@
   ],
   "mainPath": [
     "init",
-    "epic",
+    "hld",
     "swarm",
+    "planhld",
+    "epic",
     "planepic",
     "approve",
     "board",
@@ -59,18 +61,27 @@
   ],
   "nodes": [
     {
+      "id": "hld",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "label": "/swarm-dev:hld",
+      "sublabel": "write it with a co-author",
+      "width": 140
+    },
+    {
       "id": "epic",
       "lane": "you",
-      "col": 1,
+      "col": 2,
       "type": "external",
       "label": "/swarm-dev:epic",
-      "sublabel": "write it with a co-author",
+      "sublabel": "agree each, or write one",
       "width": 140
     },
     {
       "id": "approve",
       "lane": "you",
-      "col": 2,
+      "col": 3,
       "type": "security",
       "label": "Approve",
       "sublabel": "the stories",
@@ -79,7 +90,7 @@
     {
       "id": "leadstory",
       "lane": "you",
-      "col": 3,
+      "col": 4,
       "type": "security",
       "label": "Lead stories",
       "sublabel": "say go; do the You: steps",
@@ -91,7 +102,7 @@
       "col": 5,
       "type": "security",
       "label": "Merge",
-      "sublabel": "or the conductor merges",
+      "sublabel": "or the lead, with a grant",
       "width": 140
     },
     {
@@ -109,16 +120,25 @@
       "col": 3,
       "type": "database",
       "label": "The board",
-      "sublabel": "docs/: epics, stories",
+      "sublabel": "docs/: hld, epics, stories",
+      "width": 140
+    },
+    {
+      "id": "planhld",
+      "lane": "plan",
+      "col": 1,
+      "type": "messagebus",
+      "label": "/plan-hld",
+      "sublabel": "the HLD into epics",
       "width": 140
     },
     {
       "id": "planepic",
       "lane": "plan",
-      "col": 1,
+      "col": 2,
       "type": "messagebus",
       "label": "/plan-epic",
-      "sublabel": "stories + skeptics",
+      "sublabel": "stories; skeptics if risky",
       "width": 140
     },
     {
@@ -178,8 +198,8 @@
   ],
   "edges": [
     {
-      "id": "epic-agreed",
-      "from": "epic",
+      "id": "hld-agreed",
+      "from": "hld",
       "to": "swarm",
       "label": "agreed",
       "variant": "emphasis"
@@ -187,8 +207,21 @@
     {
       "id": "swarm-plan",
       "from": "swarm",
-      "to": "planepic",
+      "to": "planhld",
       "label": "plans it"
+    },
+    {
+      "id": "epics",
+      "from": "planhld",
+      "to": "epic",
+      "label": "epics"
+    },
+    {
+      "id": "epic-agreed",
+      "from": "epic",
+      "to": "planepic",
+      "label": "agreed",
+      "variant": "emphasis"
     },
     {
       "id": "stories",
@@ -255,9 +288,9 @@
       "variant": "dashed"
     },
     {
-      "id": "init-epic",
+      "id": "init-hld",
       "from": "init",
-      "to": "epic",
+      "to": "hld",
       "label": "board ready"
     },
     {
