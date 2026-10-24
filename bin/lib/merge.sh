@@ -1153,22 +1153,26 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 
 # release_grant <owner/repo> <base> <version> <tag> — why HLDs do not cover the release, or nothing
 # when they do: at least one stories/*.md was deleted on origin/<base> since <tag>, origin's tag
-# v<version>, and
-# each, read at its deleting commit's parent, is under an agreed HLD (item_hld) that grants release
-# (release_story). Only the base's own commits count (--first-parent; a merge commit's deletions are
-# against its first parent), so a story branch's merge of the base never lists a story the base
-# deleted before the tag. A story's epics are that commit's, with the board's over them where it still
-# has them; its HLD is the board's alone, so an HLD the user deleted, or a grant taken off one, no
-# longer counts. A story the board still holds as done (its PR left the file, so reconcile marked it
-# done) must be under one too when release_done finds it merged since the tag, but never counts as the
-# one story merged. It names the first story it fails on.
+# v<version>, and each, read at its deleting commit's parent, is under an agreed HLD (item_hld) that
+# grants release (release_story). Only the base's own commits count (--first-parent; a merge
+# commit's deletions are against its first parent), so a story branch's merge of the base never lists
+# a story the base deleted before the tag. The board is read as origin/<base> has it, never the
+# checkout, which may not have pulled: a story's epics are that commit's with origin's over them, and
+# its HLD is origin's alone, so an HLD the user deleted, or a grant taken off one, no longer counts. A
+# story the board still holds as done (its PR left the file, so reconcile marked it done) must be
+# under one too when release_done finds it merged since the tag, and then counts as merged, or when gh
+# cannot tell, and then does not. It names the first story it fails on.
 release_grant() (
-  local pre p c="" last="" view slug s why n=0
+  local pre p c="" last="" view slug s why when rc n=0
   [[ ${BOARD_IN_REPO} == 1 ]] || { echo "the board is outside the project's repo, so the stories merged since v$3 cannot be read"; exit 0; }
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
   view="$(mktemp -d)" && [[ -d "${view}" ]] || { echo "mktemp -d failed, so the stories merged since v$3 cannot be read"; exit 0; }
   trap 'rm -rf "${view}"' EXIT
-  mkdir -p "${view}/stories"
+  mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld"
+  # origin/<base>'s board (release_tag fetched it); a directory it does not have is empty.
+  for s in epics hld; do
+    git -C "${PROJECT_DIR}" archive --format=tar "origin/$2:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
+  done
   # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
   git -C "${PROJECT_DIR}" log -z --first-parent --diff-merges=first-parent --no-renames --diff-filter=D --name-only --format=%H \
     "$4..origin/$2" -- "${pre}stories/" > "${view}/list" || { echo "git cannot list the stories deleted on origin/$2 since v$3"; exit 0; }
@@ -1181,32 +1185,36 @@ release_grant() (
     if [[ "${c}" != "${last}" ]]; then
       last="${c}"; rm -rf "${view}/epics"; mkdir "${view}/epics"
       git -C "${PROJECT_DIR}" archive --format=tar "${c}^:${pre}epics" 2>/dev/null | tar -xf - -C "${view}/epics" 2>/dev/null || true
-      cp "${BOARD}/epics/"*.md "${view}/epics/" 2>/dev/null || true
+      cp "${view}/origin/epics/"*.md "${view}/epics/" 2>/dev/null || true
     fi
     s="${view}/stories/${slug}.md"
     git -C "${PROJECT_DIR}" show "${c}^:${p}" > "${s}" 2>/dev/null || { echo "git cannot read ${p} before ${c:0:7}"; exit 0; }
     n=$((n + 1))
-    why="$(release_story "${slug}" "$(item_hld "${s}" "${view}/epics")" "merged since v$3")"
+    why="$(release_story "${slug}" "$(item_hld "${s}" "${view}/epics" "${view}/origin/hld")" "merged since v$3")"
     [[ -z "${why}" ]] || { echo "${why}"; exit 0; }
   done < "${view}/list"
   while IFS= read -r s; do
     [[ "$(get_fm "${s}" status)" == "done" ]] || continue
-    slug="$(basename "${s}" .md)"
-    release_done "${slug}" "$1" "$2" "$4" || continue
-    why="$(release_story "${slug}" "$(item_hld "${s}")" "done on the board since v$3")"
+    slug="$(basename "${s}" .md)" rc=0
+    release_done "${slug}" "$1" "$2" "$4" || rc=$?
+    [[ ${rc} != 1 ]] || continue
+    when="done on the board since v$3"
+    [[ ${rc} == 0 ]] || when="done on the board (gh cannot list its PRs, so it may have merged since v$3)"
+    why="$(release_story "${slug}" "$(item_hld "${s}" "${view}/origin/epics" "${view}/origin/hld")" "${when}")"
     [[ -z "${why}" ]] || { echo "${why}"; exit 0; }
+    [[ ${rc} != 0 ]] || n=$((n + 1))
   done < <(board stories)
   [[ ${n} -gt 0 ]] || echo "no story was merged into $2 since v$3, so no HLD covers it"
 )
 
-# release_done <slug> <owner/repo> <base> <tag> — true when a PR from story/<slug>, the branch each of
-# its builds pushes, merged since <tag>: its merge commit is on origin/<base> and not on <tag>. The
-# branch is what is left to find them by, as reconcile clears a done story's prs:. True when gh cannot
-# list them (fails closed).
+# release_done <slug> <owner/repo> <base> <tag> — 0 when a PR from story/<slug>, the branch each of
+# its builds pushes, merged since <tag>: its merge commit is on origin/<base> and not on <tag>; 1 when
+# none did; 2 when gh cannot list them. The branch is what is left to find them by, as reconcile
+# clears a done story's prs:.
 release_done() {
   local oid list
   oid="$(gh pr list --repo "$2" --head "story/$1" --state merged --limit 100 --json mergeCommit \
-    | json "' '.join((p.get('mergeCommit') or {}).get('oid') or '' for p in d)")" || return 0
+    | json "' '.join((p.get('mergeCommit') or {}).get('oid') or '' for p in d)")" || return 2
   read -r -a list <<< "${oid}" || true
   for oid in ${list[@]+"${list[@]}"}; do
     git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "origin/$3" 2>/dev/null || continue
@@ -1216,10 +1224,11 @@ release_done() {
 }
 
 # release_story <slug> <hld file> <when> — why the story (<when>: how it is in the release) leaves the
-# release uncovered, or nothing when <hld file>, item_hld's answer for it, grants release.
+# release uncovered, or nothing when <hld file>, item_hld's answer for it, grants release. An HLD whose
+# grants: cannot be read (hld_grants' own line says why) leaves it uncovered.
 release_story() {
   local g=""
-  [[ -z "$2" ]] || g="$(hld_grants "$2")" || { echo "hld/${2##*/}, over story $1, has a grant swarm.sh does not know"; return 0; }
+  [[ -z "$2" ]] || g="$(hld_grants "$2")" || { echo "the grants: of hld/${2##*/}, over story $1, cannot be read"; return 0; }
   [[ -n "$2" && $'\n'"${g}"$'\n' == *$'\n'release$'\n'* ]] || echo "story $1, $3, is under no agreed HLD that grants release"
 }
 

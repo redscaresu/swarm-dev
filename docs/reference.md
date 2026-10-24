@@ -1378,13 +1378,15 @@ is a PR whose HLD cannot be read or has a grant swarm.sh does not know. Under `m
 `--release` merges only when the release is covered: at least one story file was deleted by the
 base's own commits since origin's tag `v<base version>` (a merge commit's deletions count against
 its first parent), and every such story, read as it was just before the commit that deleted it,
-falls under an agreed HLD that lists `release`. The story's epics are read as they were then, except
-that the board's copy wins where the board still has one. Its HLD is read from the board alone, so
-deleting an HLD, or taking a grant off one, stops it counting. A story the board still holds as
-`done`, because its PR left the file in place, must fall under such an HLD too when a PR from its
-`story/<slug>` branch merged since the tag, though it never counts as the story merged. Otherwise it
-refuses with `<PR URL> waits on the user's merge (merge = human, and
-story <slug>, merged since v<version>, is under no agreed HLD that grants release)`, naming the
+falls under an agreed HLD that lists `release`. It reads the board from the base on origin, since
+your checkout may not have pulled. The story's epics are read as they were then, except that the
+base's copy wins where it still has one. Its HLD comes from the base alone, so deleting an HLD, or
+taking a grant off one, stops it counting once that change is on the base. A
+story the board still holds as `done`, because its PR left the file in place, must fall under such
+an HLD too when a PR from its `story/<slug>` branch merged since the tag, and then counts as a story
+merged, or when gh cannot list those PRs, and then does not. Otherwise it refuses with `<PR URL> waits on
+the user's merge (merge = human, and story <slug>, merged since v<version>, is under no agreed HLD
+that grants release)`, naming the
 first story it found uncovered. A board outside the project's repo never covers a release. A
 covered release still goes through the docs check below.
 

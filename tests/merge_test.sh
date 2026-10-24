@@ -65,8 +65,9 @@ case "$1 $2" in
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
-  # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none.
+  # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none; with ${FX}/prlist.<slug>.fail, a 5xx.
   "pr list") h=""; prev=""; for a in "$@"; do [ "${prev}" != --head ] || h="${a##*/}"; prev="${a}"; done
+             [ ! -e "${FX}/prlist.${h}.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
              cat "${FX}/prlist.${h}" 2>/dev/null || echo '[]' ;;
   # A run's status (run.<id>.status, read like any fixture), or its failed-job log: --log-failed's
   # "<job>\t<step>\t<timestamp> <line>" lines, which hang with ${FX}/run.hang.
@@ -842,7 +843,7 @@ is "--release against an annotated tag it has not fetched: exits 0" 0 "${rc}"
 git -C "${P}" config --unset remote.origin.tagOpt
 # With merge = human, --release merges only when every story deleted on main since the tag (main's
 # own commits, a merge's deletions against its first parent), read as it was just before, is under
-# an agreed HLD granting release: its epic as that commit had it, the HLD as the board has it now. A
+# an agreed HLD granting release: its epic as that commit had it, the HLD as origin's main has it. A
 # story done on the board since the tag counts too. The docs gate holds whatever the grant says.
 front() { { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${P}/$1"; } # <file> <front-matter line>...
 gt() { git -C "${P}" -c user.name=t -c user.email=t@t "$@"; }
@@ -864,12 +865,17 @@ item kept "status: ready" "epic: none-such"; mkdir -p "${P}/.swarm/board-state/s
 human_release branch_merged kept HEAD; refused "--release with merge = human and a story reconcile marked done since the tag, under no HLD" "story kept, done on the board since v1.2.0, is under no agreed HLD that grants release"
 human_release branch_merged kept v1.2.0
 is "--release with merge = human and a story reconcile marked done before the tag, under no HLD: exits 0" 0 "${rc}"
+human_release touch "${FX}/prlist.kept.fail"
+refused "--release with merge = human, a story reconcile marked done under no HLD, and gh unable to list its PRs" "story kept, done on the board (gh cannot list its PRs, so it may have merged since v1.2.0), is under no agreed HLD that grants release"
 rm "${P}/docs/stories/kept.md" "${P}/.swarm/board-state/stories/kept"
-front docs/hld/ship.md "status: agreed" "grants: [merge]"
-human_release; refused "--release with merge = human, the board's HLD no longer granting release" "story shipped-b, merged since v1.2.0, is under no agreed HLD that grants release"
-front docs/hld/ship.md "status: agreed" "grants: [merge, release]"; mv "${P}/docs/hld/ship.md" "${ROOT}/ship.md"
-human_release; refused "--release with merge = human, the HLD gone from the board" "story shipped-b, merged since v1.2.0, is under no agreed HLD that grants release"
-mv "${ROOT}/ship.md" "${P}/docs/hld/ship.md"
+# The board is read as origin's main has it: the checkout may not have pulled.
+landed docs/hld/ship.md "status: agreed" "grants: [merge]"; front docs/hld/ship.md "status: agreed" "grants: [merge, release]"
+human_release; refused "--release with merge = human, the HLD granting release in the checkout but not on main" "story shipped-b, merged since v1.2.0, is under no agreed HLD that grants release"
+landed docs/hld/ship.md "status: agreed" "grants:" "  - release"
+human_release; refused "--release with merge = human and an HLD whose grants: is a block list" "the grants: of hld/ship.md, over story shipped-b, cannot be read"
+gone docs/hld/ship.md
+human_release; refused "--release with merge = human and the HLD deleted on main" "story shipped-b, merged since v1.2.0, is under no agreed HLD that grants release"
+landed docs/hld/ship.md "status: agreed" "grants: [merge, release]"
 landed docs/stories/stray.md "epic: none-such"; gone docs/stories/stray.md
 human_release; refused "--release with merge = human and a story since the tag under no HLD" "${URL} waits on the user's merge (merge = human, and story stray, merged since v1.2.0, is under no agreed HLD that grants release)"
 retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-d.md "epic: shipped"; gone docs/stories/shipped-d.md docs/epics/shipped.md
@@ -885,6 +891,12 @@ retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-f.m
 merge_in "$(gt commit-tree -p "${side}" -p HEAD -m "merge main into the branch" "HEAD^{tree}")"
 human_release
 is "--release with merge = human and a story main deleted before the tag, which a branch's merge of main deletes again: exits 0" 0 "${rc}"
+# The one story since the tag kept its file: reconcile marked it done, and gh shows its PR merged.
+retag; landed docs/epics/shipped.md "hld: ship"
+item kept "status: ready" "epic: shipped"; printf 'status: done\nstatus@base: ready\n' > "${P}/.swarm/board-state/stories/kept"
+human_release branch_merged kept HEAD
+is "--release with merge = human and only a story reconcile marked done since the tag, under an HLD granting release: exits 0" 0 "${rc}"
+rm "${P}/docs/stories/kept.md" "${P}/.swarm/board-state/stories/kept"; gone docs/epics/shipped.md
 retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-c.md "epic: shipped"; gone docs/stories/shipped-c.md docs/epics/shipped.md
 commit bin/z.sh
 human_release; refused "--release with merge = human, covered, with bin/ changed and no docs" "bin/z.sh changed since v1.2.0 but README.md, AGENTS.md and docs/ did not"

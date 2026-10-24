@@ -590,19 +590,20 @@ hld_grants() {
   done
 }
 
-# item_hld <story or epic file> [epics dir] — the agreed HLD file in ${BOARD}/hld over it: a story's
-# epic:, then each epic's parent:, up to the first epic with hld:, read in [epics dir] (${BOARD}/epics).
+# item_hld <story or epic file> [epics dir] [hld dir] — the agreed HLD file in [hld dir] (${BOARD}/hld)
+# over it: a story's epic:, then each epic's parent:, up to the first epic with hld:, read in [epics
+# dir] (${BOARD}/epics).
 # A seen list ends a parent: cycle. Prints nothing (fails closed) on a missing epic, a missing HLD
 # file, a draft or superseded HLD, a story with no epic, or a cycle.
 item_hld() {
-  local f="$1" e="${2:-${BOARD}/epics}" seen=" " next h
+  local f="$1" e="${2:-${BOARD}/epics}" d="${3:-${BOARD}/hld}" seen=" " next h
   [[ "${f%/*}" != */stories ]] || { next="$(slug_list "$(get_fm "${f}" epic)")"; f="${e}/${next}.md"; }
   while [[ "${next:-}" =~ ^[a-z0-9-]*$ && -f "${f}" && "${seen}" != *" ${f} "* ]]; do
     seen+="${f} "
     h="$(slug_list "$(get_fm "${f}" hld)")"
     if [[ -n "${h}" ]]; then
       [[ "${h}" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
-      h="${BOARD}/hld/${h}.md"
+      h="${d}/${h}.md"
       [[ ! -f "${h}" || "$(get_fm "${h}" status)" != agreed ]] || echo "${h}"
       return 0
     fi
