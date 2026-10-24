@@ -1448,7 +1448,10 @@ the holds of `merge = agent` apply too, so a `costs: money` story's PR, and a bo
 `costs:` line, still wait for you. Without it, `merge` refuses with
 `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`. When a board
 story or the PR's files cannot be read, so the HLD over it is unknown, it refuses with
-`cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. When the HLD's `grants:`
+`cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. `merge` reads the grant at
+the head it pinned: when the PR's head moves off it before or after the grant lists the PR's files,
+`merge` refuses with `the head of <PR URL> moved off <sha> while the grant read it, so no grant covers
+the head: review the new head`. When the HLD's `grants:`
 holds a value swarm.sh does not know, or is not a one-line `[..]` list, it prints the line naming the
 HLD's file and line, then refuses with
 `the grants: of <HLD file> cannot be read, so <PR URL> waits on the user's merge`. Under `merge = human`,

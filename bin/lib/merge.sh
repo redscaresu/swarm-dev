@@ -114,12 +114,15 @@ merge_caller() {
   echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
 }
 
-# merge_grant <pr-url> — under merge = human, why the lead may not merge the PR, or nothing when the
-# one agreed HLD over it (pr_hld) grants merge (hld_grants). A PR it cannot resolve, or an HLD whose
-# grants: cannot be read (hld_grants' own line says why), waits on the user too.
+# merge_grant <pr-url> <head> — under merge = human, why the lead may not merge the PR, or nothing when
+# the one agreed HLD over it at <head>, the head merge pinned (pr_hld), grants merge (hld_grants). A
+# head that moved off <head>, a PR it cannot resolve, or an HLD whose grants: cannot be read
+# (hld_grants' own line says why), waits on the user too.
 merge_grant() {
-  local h g=""
-  h="$(pr_hld "$1")" || { echo "cannot tell which HLD $1 is under, so it waits on the user's merge"; return 0; }
+  local h g="" rc=0
+  h="$(pr_hld "$1" "$2")" || rc=$?
+  [[ ${rc} -ne ${HEAD_MOVED} ]] || { echo "the head of $1 moved off ${2:0:7} while the grant read it, so no grant covers the head: review the new head"; return 0; }
+  [[ ${rc} -eq 0 ]] || { echo "cannot tell which HLD $1 is under, so it waits on the user's merge"; return 0; }
   [[ -z "${h}" ]] || g="$(hld_grants "${h}")" || { echo "the grants: of ${h} cannot be read, so $1 waits on the user's merge"; return 0; }
   [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
 }
@@ -289,7 +292,7 @@ merge_pr() {
   # head's CI check, which costs fewer gh calls: the grant reads the PR, its files and each board file
   # it touches.
   if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
-    why="$(merge_grant "${url}")"
+    why="$(merge_grant "${url}" "${head}")"
     [[ -z "${why}" ]] || merge_fail "${why}"
     merge_hold "${url}"
   fi
