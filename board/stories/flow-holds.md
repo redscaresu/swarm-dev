@@ -3,7 +3,7 @@ kind: code
 status: blocked
 depends_on: [hold-event]
 needs: "hold-event: the events.tsv `hold` line (slug, reason)"
-touches: [bin/lib/flow_holds.py, bin/lib/flow.sh, tests/flow_holds_test.sh, docs/reference.md]
+touches: [bin/lib/flow_holds.py, bin/lib/flow.sh:holds section wiring, tests/flow_holds_test.sh, docs/reference.md:flow entry]
 estimate_lines: 110
 easy: false
 ---
