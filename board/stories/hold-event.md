@@ -2,7 +2,7 @@
 kind: code
 status: ready
 depends_on: []
-touches: [bin/swarm.sh, bin/lib/build.sh, tests/hold_test.sh]
+touches: [bin/swarm.sh:usage header and dispatch case, bin/lib/build.sh:startable_rule, docs/reference.md:command list, tests/hold_test.sh]
 estimate_lines: 80
 easy: true
 ---
