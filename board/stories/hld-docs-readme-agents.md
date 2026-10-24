@@ -13,7 +13,7 @@ easy: false
 Needs, from each depends_on: the shipped `/hld` and `/plan-hld` commands and the grants' names, as merged on main.
 
 - README.md's quick start and AGENTS.md's three-step run name `/hld` as where a release's worth of work starts.
-- AGENTS.md's never-merge rule under `merge = human` names the `merge` and `release` grants as its exception.
+- AGENTS.md's never-merge rule under `merge = human` (AGENTS.md:85) names the `merge` and `release` grants as its exception. README.md's waiting-PR row (around :90) says the lead lands a PR whose HLD grants `merge`.
 - docs/assets/swarm-flow.workflow.json gains the HLD step ahead of the epic step. Its /plan-epic node (:121) still says "stories + skeptics": since #432, skeptics run only on `risk: high` stories, so reword it.
 - Re-render docs/assets/swarm-flow-light.png and swarm-flow-dark.png from it with archify, the local skill at ~/.claude/skills/archify/archify: `node bin/archify.mjs validate workflow <json>`, then `render workflow <json> <out.html>`, then screenshot only the diagram in light and dark (`?theme=dark`) with Playwright and the installed Chrome, at 1440 px wide like the current PNGs, with no viewer chrome (title bar, toolbar, zoom controls). Render into a scratch directory, never into the skill.
 - Prose goes through the humanizer.
