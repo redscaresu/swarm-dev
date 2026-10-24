@@ -1,7 +1,8 @@
 # AGENTS.md
 
-swarm-dev is a Claude Code plugin that turns an agreed epic into merged PRs. Agents split the epic
-into one-PR stories and build them in parallel, each in its own herdr pane and git worktree.
+swarm-dev is a Claude Code plugin that turns an agreed high-level design (HLD) into merged PRs.
+Agents plan it into epics, split each epic into one-PR stories and build them in parallel, each in
+its own herdr pane and git worktree.
 
 Check these first. If any fails, stop and tell the user which one:
 
@@ -18,12 +19,16 @@ Then run these three, in order:
    `docs/stories/`), `.claude/swarm/` with a config, the `.gitignore` lines, a CI workflow and a
    pre-commit hook that run `make check`. With no `check` target in the Makefile, init says so;
    add one, or CI fails every change that is not board-only.
-2. `/epic <title>` (the plugin's full name is `/swarm-dev:epic`). It leaves `docs/epics/<slug>.md`,
-   written with the user in its own pane. It stays `status: draft` until the user agrees it, then
-   becomes `active`.
-3. `/swarm-dev:swarm`. It reads the board with `swarm.sh next`, plans the epic into stories,
-   builds them and loops until the user must decide. It leaves `docs/stories/<slug>.md` files and
-   one PR per story. With the default `merge = human` the user merges each PR; with
+2. `/hld <title>` (the plugin's full name is `/swarm-dev:hld`). It leaves
+   `docs/hld/<date>-<slug>.md`, a release's worth of work written with the user in its own pane.
+   It stays `status: draft` until the user agrees it, then becomes `agreed`. Its `grants:` list
+   what the swarm may do under it unasked: `epics`, `stories`, `merge`, `release`. Only the user
+   sets them. One epic with no HLD starts with `/epic <title>` (`/swarm-dev:epic`) instead; it
+   leaves `docs/epics/<slug>.md`, `active` once the user agrees it.
+3. `/swarm-dev:swarm`. It reads the board with `swarm.sh next`, plans the HLD into epics, each
+   epic into stories, builds them and loops until the user must decide. It leaves
+   `docs/epics/<slug>.md` and `docs/stories/<slug>.md` files and one PR per story. With the
+   default `merge = human` the user merges each PR, unless the HLD over it grants `merge`; with
    `merge = agent` the swarm merges them. Run it again after each decision.
 
 The method, and why it is shaped this way, is in [`docs/method.md`](docs/method.md). Read it before
@@ -52,6 +57,8 @@ also run one by one, and which each wait for the user's approval:
 
 | Step | You run | It produces |
 |---|---|---|
+| HLD | `/hld <title>` | `docs/hld/<date>-<slug>.md`, a draft co-written in its own pane and attacked by a reviewer; `agreed` once the user agrees it, with the `grants:` only they set |
+| Epics | `/plan-hld <hld>` | `docs/epics/<slug>.md` per epic, as drafts the user agrees one by one through `/epic`, or `active` at once when the HLD grants `epics` |
 | Epic | `/epic <title>` | `docs/epics/<slug>.md`, a draft co-written in its own pane and attacked by a reviewer; `active` once the user agrees it |
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval; a large epic is split into child epics first |
 | Build | `swarm.sh conduct <epic-slug>` or `conduct --backlog` | a fresh conductor that builds the epic (or the ready stories with no epic), starts a review agent per green PR, and merges only with `merge = agent` |
@@ -83,7 +90,10 @@ Useful while it runs:
   command exists for it. The exception is a small epic (three stories or fewer, none `risk: high`),
   which `/plan-epic` has the lead plan alone.
 - Never merge a PR whose checks are not all green on its head commit. With `merge = human` (the
-  default), never merge at all: `swarm.sh review <slug> <PR URL>` hands it to the user.
+  default), never merge, with two exceptions: a PR whose agreed HLD grants `merge`
+  (`swarm.sh grants <PR URL>`), and the version bump when every story merged since the last tag is
+  under an HLD that grants `release`. Otherwise `swarm.sh review <slug> <PR URL>` hands it to the
+  user.
 - Agents start with an allowlisted environment. A token you exported reaches a builder only when
   its story names it under `env:`.
 - The plugin's guard hook refuses a raw merge, a `cd <dir>` followed by `;` (write

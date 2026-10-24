@@ -22,6 +22,7 @@ PLUGIN_UPDATE_WAIT=300  # how long each claude plugin update a release runs may 
 HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may take
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
+PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -70,7 +71,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # safe, ...). Else print why and fail (1); a read that fails is a failure too, and a 404 from branch
 # protection is unprotected only when GitHub says "Branch not protected".
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
-# too; fails (3) unless there are <changed> of them.
+# too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
+# "<status> <path>" (added, modified, removed, renamed).
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
@@ -123,6 +125,57 @@ merge_grant() {
   [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
 }
 
+# merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
+# branch or head SHA (merge_pr's locals base, head, repo and n), through gh's contents API as
+# release_check reads it; fails 1 when it is absent and 2 on any other failure. At the head a 404 is
+# absent only for a path the PR removes or renames away (merge_gone): one it keeps there means gh
+# cannot read the head (a fork's), where every epic would read as deleted.
+merge_read() {
+  local ref="${head}" q err rc=0
+  [[ "$1" == head ]] || ref="${base}"
+  # Quoted, as pr_hld quotes it, so a # or ? in a name is read as itself.
+  q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$2")" || return 2
+  # The file's bytes go to stdout (fd 3); gh's stderr into err, to tell a 404 from the rest.
+  { err="$(gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${ref}" 2>&1 >&3)" || rc=$?; } 3>&1
+  [[ ${rc} -ne 0 ]] || return 0
+  [[ "${err}" == *"HTTP 404"* ]] || return 2
+  [[ "$1" == head ]] || return 1
+  err="$(merge_gone)" || return 2
+  grep -qxF -- "$2" <<< "${err}" || return 2
+  return 1
+}
+
+# merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_pr's
+# locals repo and n); fails when gh cannot list them.
+merge_gone() {
+  gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" \
+    | json "'\n'.join(p for page in d for f in page for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
+}
+
+# unticketed_why <line> — epic_unticketed's failure line as merge --board says it: a read error at the
+# base or head names the ref gh read there, the base branch or the head SHA (merge_pr's locals base
+# and head); any other line as it is.
+unticketed_why() {
+  local re='^cannot read (.+) at the (base|head)$' ref="${base}"
+  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }
+  [[ "${BASH_REMATCH[2]}" == base ]] || ref="${head:0:7}"
+  echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}"
+}
+
+# epic_guard — merge --board's refusal of a PR that sets an epic active with no ticket (merge_pr's
+# locals files and url): epic_unticketed on one changed path at a time, so a read error or a bad
+# grants: names the epic it was checking too. A failure that printed no reason refuses all the same.
+epic_guard() {
+  local p s why
+  while IFS= read -r p; do
+    s="$(basename "${p}" .md)"
+    # Outside the $(...), where a merge_fail would not stop this.
+    why="$(epic_unticketed merge_read "${p}")" \
+      || merge_fail "--board: $(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
+    [[ -z "${why}" ]] || merge_fail "--board: ${url} sets ${s} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
+  done <<< "${files}"
+}
+
 # merge_hold <pr-url> — stop merge when pr_held holds the PR for the user.
 merge_hold() {
   local why
@@ -151,9 +204,12 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; with merge = human and no --release, merge_grant
-# finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the board's own repo and every path it changes,
-# old or new, is on the board; with --release: the PR is in the project's own repo and every path it
-# changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
+# finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the
+# board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
+# with no ticket (epic_unticketed, under either merge mode); with --release: the PR is in the
+# project's own repo and every path it changes is .claude-plugin/plugin.json, release_check's, and
+# with merge = human release_check also finds at least one story merged since the last tag, each
+# under an agreed HLD granting release), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
@@ -210,12 +266,15 @@ merge_pr() {
     own="$(gh repo view "${origin}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
       || merge_fail "${only}: gh cannot tell which GitHub repo ${origin} is"
     [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${own}" ]] || merge_fail "${only}: ${url} is not in ${own}, ${whose} repo"
-    rel="${BOARD#"${PROJECT_DIR}"/}"
+    # A board at the project root has no folder to be under: its own paths (board_paths) stand in.
+    rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}"
     # A renamed file's old path counts too: renaming bin/x to the board is not a board-only change.
     info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "${only}: cannot list every file ${url} changes: ${info}"
     files="${info}"
     while IFS= read -r p; do
-      if [[ "${only}" == --board ]]; then
+      if [[ "${only}" == --board && -z "${rel}" ]]; then
+        on_board_paths "${p}" || merge_fail "--board: ${url} changes ${p}, outside the board's paths ($(board_paths | paste -sd' ' - | sed 's/ /, /g'))"
+      elif [[ "${only}" == --board ]]; then
         [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"
       else
         [[ "${p}" == .claude-plugin/plugin.json ]] || merge_fail "--release: ${url} changes ${p}, not only .claude-plugin/plugin.json"
@@ -224,9 +283,14 @@ merge_pr() {
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  # An epic set active with no ticket is the user's to agree under either merge mode. After the head's
+  # CI check, as the grant below, so a red PR costs no contents reads; before the grant, so its
+  # refusal cannot hide this one.
+  [[ "${only}" != --board ]] || epic_guard
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
-  # then under merge = agent's holds. --release is release_check's. It runs after the head's CI check,
-  # which costs fewer gh calls: the grant reads the PR, its files and each board file it touches.
+  # then under merge = agent's holds. --release is release_check's. Like epic_guard, it runs after the
+  # head's CI check, which costs fewer gh calls: the grant reads the PR, its files and each board file
+  # it touches.
   if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
     why="$(merge_grant "${url}")"
     [[ -z "${why}" ]] || merge_fail "${why}"
@@ -269,6 +333,7 @@ merge_pr() {
     # A batch is pushed at its last commit, and the push-only workflows run there alone.
     [[ -z "${oid}" ]] || oid="$(ci_gate pushed "${repo}" "${base}" "${oid}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")"
   else
+    [[ "${only}" != --release ]] || release_moved "${repo}" "${base}" "${head}" "${n}"
     why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
     # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
     read -r state oid <<< "$(merged_state "${n}" "${repo}")"
@@ -318,8 +383,12 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
-  # A release of this plugin moves the installed plugin and the running agents onto it; it never fails the merge.
-  [[ "${only}" != --release || -z "${oid}" ]] || release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}"
+  # A release of this plugin moves the installed plugin and the running agents onto it, unless it shipped
+  # commits no release check read, which any release reports; neither ever fails the merge.
+  if [[ "${only}" == --release && -n "${oid}" ]]; then
+    p=checked; release_parent "${repo}" "${oid}" "${base}" || p=""
+    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}"
+  fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -475,7 +544,8 @@ live_at() {
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d="${BOARD#"${PROJECT_DIR}"/}/"
+  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d=""
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
@@ -711,6 +781,17 @@ board_paths() {
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
   printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
+}
+
+# on_board_paths <file> — <file> is one of board_paths' entries, or under one that ends in a slash,
+# as the board-only CI gate has it: Board.base is that file alone, not Board.base.py.
+on_board_paths() {
+  local q
+  while IFS= read -r q; do
+    if [[ "${q}" == */ ]]; then [[ "$1" != "${q}"* ]] || return 0   # loose-match: ok a directory prefix, ended by its slash
+    else [[ "$1" != "${q}" ]] || return 0; fi
+  done < <(board_paths)
+  return 1
 }
 
 # clear_red_main <key> <sha> <why> — CI is green at <sha> for <key>: when red_mains holds that key
@@ -975,8 +1056,9 @@ wait_pr() {
   done
 }
 
-# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> — after merge --release of
-# this plugin's own repo (plugin_repo), with CI on the base green: once release_confirmed, update the
+# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> — after merge
+# --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set (the
+# merge commit is on the base release_check read: release_parent): once release_confirmed, update the
 # marketplace and the plugin, then start the new version's swarm.sh upgrade (detached; bounded by
 # UPGRADE_START_WAIT; with release_path's PATH, so the agents it restarts find the new swarm.sh) in
 # each of agent_projects, and ask the user to restart the lead session in this project and each of
@@ -991,6 +1073,7 @@ release_upgrade() {
   new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
   hint="run swarm.sh update, then ${new} upgrade in each project with agents"
   [[ $4 -eq ${MAIN_CI_OK} ]] || { echo "warning: CI on the base is not green, so the plugin was not updated: once v$3 is published, ${hint}"; return 0; }
+  [[ -n "$6" ]] || { echo "refused: the release ships commits no release check read, so the plugin was not updated and no agent was moved: once they are checked, ${hint}"; return 0; }
   release_confirmed "$1" "$2" "$3" "$5" \
     || { echo "warning: no tag v$3 on the base at or after ${2:0:7} with a published GitHub release, so the plugin was not updated: once there is, ${hint}"; return 0; }
   if ! { within "${PLUGIN_UPDATE_WAIT}" claude plugin marketplace update "${MARKETPLACE}" \
@@ -1113,17 +1196,55 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   printf '%s' "${out}"
 }
 
+# release_base <base> — origin/<base>'s commit, fetched now; fails when git cannot fetch or read it.
+release_base() { fetch_branch "${PROJECT_DIR}" "$1" && git -C "${PROJECT_DIR}" rev-parse --verify -q "origin/$1^{commit}"; }
+
+# release_moved <owner/repo> <base> <head> <pr> — right before the merge: when origin/<base> moved
+# since release_check read RELEASE_BASE, a story may have landed that no grant covers, so release_check
+# runs again on the new base, and refuses if it fails.
+release_moved() {
+  local now
+  now="$(release_base "$2")" || merge_fail "--release: cannot fetch origin/$2 to see whether it moved since the release check"
+  [[ "${now}" != "${RELEASE_BASE}" ]] || return 0
+  echo "origin/$2 moved from ${RELEASE_BASE:0:7} to ${now:0:7} since the release check, so it runs again"
+  release_check "$@"
+}
+
+# release_parent <owner/repo> <merge commit> <base> — 0 when the merge commit's first parent, read
+# within PARENT_READ_WAIT, is RELEASE_BASE, the base release_check last read; else log and print a
+# warning naming the commits between the two, which the release ships unchecked, and fail.
+# ponytail: a rebase of a release PR with several commits reads its own commit as the parent and
+# refuses; read <merge commit>~<its commits> (as merge --board's prev) if a release ever has more.
+release_parent() {
+  local p log why
+  p="$(within "${PARENT_READ_WAIT}" gh api "repos/$1/commits/$2" 2>/dev/null </dev/null | json "d['parents'][0]['sha']" 2>/dev/null)" || p=""
+  [[ "${p}" != "${RELEASE_BASE}" ]] || return 0
+  if [[ "${p}" =~ ^[0-9a-f]{40}$ ]]; then
+    fetch_branch "${PROJECT_DIR}" "$3" || true
+    log="$(git -C "${PROJECT_DIR}" log --format=%h "${RELEASE_BASE}..${p}" 2>/dev/null | paste -sd' ' -)" || log=""
+    why="${2:0:7}'s first parent is ${p:0:7}, not ${RELEASE_BASE:0:7}, the base the release check read, so it ships ${log:-${RELEASE_BASE:0:7}..${p:0:7}} unchecked"
+  else
+    why="gh cannot read the first parent of ${2:0:7}, so whether it ships commits the release check never read is unknown"
+  fi
+  record_event merge "${MERGE_TARGET}" "unchecked: ${why}"
+  echo "warning: ${why}"
+  return 1
+}
+
 # release_check <owner/repo> <base> <head> <pr> — merge --release's checks past the file list: the PR goes
 # into the project's base, its plugin.json differs from the base's only in "version" (compared as
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
 # that version is MAJOR.MINOR.PATCH and greater than the base's, with merge = human release_grant
-# finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes.
+# finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes. It
+# fetches origin/<base> once, first, and sets RELEASE_BASE to the commit it fetched, which every check
+# reads (gh at that SHA, git at it), so a base that moves after the fetch reads as moved (release_moved).
 release_check() {
   local want old new why body was tag
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
-  old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$2")" \
-    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2"
+  RELEASE_BASE="$(release_base "$2")" || merge_fail "--release: cannot fetch origin/$2 to check the release against"
+  old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=${RELEASE_BASE}")" \
+    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
   new="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$3")" \
     || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
   why="$(OLD="${old}" NEW="${new}" BASE="$2" python3 -c 'import json,os,re
@@ -1171,13 +1292,13 @@ release_grant() (
   view="$(mktemp -d)" && [[ -d "${view}" ]] || { echo "mktemp -d failed, so the stories merged since v$3 cannot be read"; exit 0; }
   trap 'rm -rf "${view}"' EXIT
   mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld" "${view}/origin/stories"
-  # origin/<base>'s board (release_tag fetched it); a directory it does not have is empty.
+  # origin/<base>'s board (release_check fetched it); a directory it does not have is empty.
   for s in epics hld stories; do
-    git -C "${PROJECT_DIR}" archive --format=tar "origin/$2:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
+    git -C "${PROJECT_DIR}" archive --format=tar "${RELEASE_BASE}:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
   done
   # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
   git -C "${PROJECT_DIR}" log -z --first-parent --diff-merges=first-parent --no-renames --diff-filter=D --name-only --format=%H \
-    "$4..origin/$2" -- "${pre}stories/" > "${view}/list" || { echo "git cannot list the stories deleted on origin/$2 since v$3"; exit 0; }
+    "$4..${RELEASE_BASE}" -- "${pre}stories/" > "${view}/list" || { echo "git cannot list the stories deleted on origin/$2 since v$3"; exit 0; }
   while IFS= read -r -d '' p; do
     p="${p#$'\n'}"
     [[ ! "${p}" =~ ^[0-9a-f]{40,}$ ]] || { c="${p}"; continue; }
@@ -1200,7 +1321,7 @@ release_grant() (
   while IFS= read -r s; do
     [[ "$(BOARD="${view}/origin" get_fm "${s}" status)" == "done" ]] || continue
     slug="$(basename "${s}" .md)" rc=0
-    release_done "${slug}" "$1" "$2" "$4" || rc=$?
+    release_done "${slug}" "$1" "$4" || rc=$?
     [[ ${rc} != 1 ]] || continue
     when="done on the board since v$3"
     [[ ${rc} == 0 ]] || when="done on the board (gh cannot list its PRs, so it may have merged since v$3)"
@@ -1211,8 +1332,9 @@ release_grant() (
   [[ ${n} -gt 0 ]] || echo "no story was merged into $2 since v$3, so no HLD covers it"
 )
 
-# release_done <slug> <owner/repo> <base> <tag> — 0 when a PR from story/<slug>, the branch each of
-# its builds pushes, merged since <tag>: its merge commit is on origin/<base> and not on <tag>; 1 when
+# release_done <slug> <owner/repo> <tag> — 0 when a PR from story/<slug>, the branch each of its
+# builds pushes, merged since <tag>: its merge commit is on RELEASE_BASE, the base release_check
+# read, and not on <tag>; 1 when
 # none did; 2 when gh cannot list them. The branch is what is left to find them by, as reconcile
 # clears a done story's prs:.
 release_done() {
@@ -1221,8 +1343,8 @@ release_done() {
     | json "' '.join((p.get('mergeCommit') or {}).get('oid') or '' for p in d)")" || return 2
   read -r -a list <<< "${oid}" || true
   for oid in ${list[@]+"${list[@]}"}; do
-    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "origin/$3" 2>/dev/null || continue
-    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "$4" 2>/dev/null || return 0
+    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "${RELEASE_BASE}" 2>/dev/null || continue
+    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "$3" 2>/dev/null || return 0
   done
   return 1
 }
@@ -1236,18 +1358,17 @@ release_story() {
   [[ -n "$2" && $'\n'"${g}"$'\n' == *$'\n'release$'\n'* ]] || echo "story $1, $3, is under no agreed HLD that grants release"
 }
 
-# release_tag <base> <version> <fix> — the commit of origin's tag v<version> once origin/<base> is
-# fetched and holds it, else why not, with <fix> after the user's own way past it, and fail. origin's
-# tag is read by its commit's SHA, so a local tag is never fetched over.
+# release_tag <base> <version> <fix> — the commit of origin's tag v<version> when origin/<base>, as
+# release_check fetched it, holds it, else why not, with <fix> after the user's own way past it, and
+# fail. origin's tag is read by its commit's SHA, so a local tag is never fetched over.
 release_tag() {
   local tag rc=0
-  fetch_branch "${PROJECT_DIR}" "$1" || { echo "cannot fetch origin/$1 to read what changed since v$2"; return 1; }
   # An annotated tag's commit is its peeled ref (^{}): the tag object may never have been fetched.
   tag="$(git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/tags/v$2" "refs/tags/v$2^{}" 2>/dev/null \
     | awk '{ t = $1 } $2 ~ /\^\{\}$/ { c = $1 } END { print (c != "" ? c : t) }')" || rc=$?
   [[ ${rc} != 2 ]] || { echo "no v$2 tag on origin to compare against: tag $1's last release v$2$3"; return 1; }
   [[ ${rc} == 0 && "${tag}" =~ ^[0-9a-f]{40}$ ]] || { echo "cannot read origin's tag v$2 to read what changed since it"; return 1; }
-  git -C "${PROJECT_DIR}" merge-base --is-ancestor "${tag}" "origin/$1" 2>/dev/null \
+  git -C "${PROJECT_DIR}" merge-base --is-ancestor "${tag}" "${RELEASE_BASE}" 2>/dev/null \
     || { echo "the tag v$2 is not on origin/$1, so the changes since it are unknown: retag v$2 on $1$3"; return 1; }
   echo "${tag}"
 }
@@ -1263,12 +1384,12 @@ release_docs() {
   local tag="${4:-}" code docs p ex=()
   ! docs_none <<< "$1" || return 0
   [[ -n "${tag}" ]] || tag="$(release_tag "$2" "$3" ", or give the PR body ${DOCS_NONE_FORMS}")" || merge_fail "--release: ${tag}"
-  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- bin commands hooks)" \
+  code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- bin commands hooks)" \
     || merge_fail "--release: git cannot diff v$3 with origin/$2"
   [[ -n "${code}" ]] || return 0
   grep -qv '^commands/.*\.md$' <<< "${code}" || return 0
   while IFS= read -r p; do ex+=(":(exclude)${p%/}"); done < <(board_paths)
-  docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
+  docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "${RELEASE_BASE}" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
     || merge_fail "--release: git cannot diff v$3 with origin/$2"
   [[ -z "${docs}" ]] || return 0
   merge_fail "--release: ${code//$'\n'/, } changed since v$3 but README.md, AGENTS.md and docs/ did not: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"

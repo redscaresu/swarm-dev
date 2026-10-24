@@ -528,7 +528,7 @@ expect "a project with a buildable story is not idle" "story r" \
   "item stories/r.md 'status: ready' 'kind: code'"
 if ! grep -q '^idle: ' <<< "${out}"; then echo "ok   a project with a buildable story is not named idle"
 else echo "FAIL a project with a buildable story is named idle: ${out}"; fails=$((fails + 1)); fi
-# The lead's half: swarm.md says what to do with each idle: line, plan-epic's skeptic checks for it.
+# The lead's half: swarm.md says what to do with each idle: line, plan-epic's critic checks for it.
 cmds="$(dirname "${SWARM}")/../commands"
 got=""
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
@@ -537,9 +537,9 @@ grep -qF '`idle: <story> waits on <dep> but shares no touches with it`' "${cmds}
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
 grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
-grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's skeptic has no disjoint-touches check"
+grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
 }
-if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's skeptic checks disjoint touches"
+if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's critic checks disjoint touches"
 else echo "FAIL${got}"; fails=$((fails + 1)); fi
 expect "stories before planning" "conduct e2" \
   "item epics/e0.md 'status: draft'" \
