@@ -722,7 +722,14 @@ review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <bra
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. To reach a busy conductor, the lead runs
+session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
+(a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
+session reads busy or waiting, or its log has the message as a new prompt (for a `tell`, the file's
+first line). When the session read idle before the send and shows no sign of it, the message goes
+once more, and the command fails if it still shows nothing. With no session to read (codex, a session
+Claude Code does not list yet, or one it reads busy or not at all), a message herdr sent is never
+sent again: when herdr shows no turn, the command succeeds and warns that herdr sent it the brief and
+did not show the turn start. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
 `.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
 whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a
@@ -987,7 +994,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `epic_totals`, `features`, `gh_calls`, `holds`, `idle_slots`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `review_loops`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `gh_calls`, `holds`, `idle_slots`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `review_loops`, `reviewers`, `test_runs`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing but its own gh calls' lines in `.swarm/gh-calls.tsv` and its cache (below), except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
@@ -1339,6 +1346,30 @@ adds none), the fixes, the share of them found in round 1, round 2, round 3
 and later, and on the top rung (`escalate_ladder`'s last model; `-` with no ladder), the builds that
 stepped up with their fixes per round up to and after the first step-up, and the failed step-ups.
 With no story in the window it prints one line saying so.
+
+The `test_runs` section shows how long local test runs take under load, so a test queue or a `JOBS`
+change can be decided from numbers. `scripts/test.sh` appends a line to the main checkout's
+`.swarm/test-runs.tsv` as each run starts and as it ends. It finds the file through `git rev-parse
+--path-format=absolute --git-common-dir`, so every worktree's runs land in one file, and never
+through `SWARM_PROJECT`, which tests run without. A line holds the start and end times (UTC), the
+seconds taken, `JOBS`, the filter, the branch, the 1-minute load average and the CPUs, how many other
+runs were going, the exit status, and the run's PID. The filter is `all` when the files run are every
+`tests/*_test.sh`, else `TESTS`, else how many files (`1 files`), with ` shard i/N` after it for a
+`SHARD` run, which is no full run. Each line reads the load, CPUs and other runs at its own moment,
+and the start line leaves end, seconds and status empty, so a run that was killed still leaves its
+start. A run counts as going while its mark, a file named by its PID in `.swarm/test-runs.d/`, is
+there: test.sh writes it at the start and removes it at the end, and a mark whose PID has gone is
+removed when the next run counts. A write that fails is skipped and never changes the run's exit
+status. A `TEST_RUNS_LOG` that is set names the file instead (empty logs nothing); test.sh sets it
+empty for its jobs, so a run a test starts itself logs nothing and is never counted as going.
+The section reads the full runs (`all`) whose start falls in the window, by local day, less those
+interrupted (a status of 128 or more). Each end line pairs with its start line (the same start time and PID), and a run's at_once
+is the larger of the two lines' other runs, plus the run itself. It prints TSV `at_once runs
+median_s p90_s median_load`: the runs by at_once (1, 2, 3-4 and 5+), each with its median and p90
+(nearest rank) seconds and the median load at the start (`-` with no run). After a blank line, TSV
+`start seconds branch at_once status` lists the 5 slowest. With no log, as in a project with no
+`scripts/test.sh`, it prints nothing; with no full run in the window, a line that says so.
+`--epic` does not narrow it.
 
 ## The outer loop
 
@@ -1878,7 +1909,7 @@ changes merge's exit code.
 | `swarm.sh hold <slug> <why>` | Log that a conductor held a ready story back this wave, and why: what it clashes with (a story or PR) and the shared files, or the other reason (the give-up rule, closed this wave, `not held:`). It writes one `hold` line, target the slug, outcome `ok (<why>)`. It dies, writing nothing, on a slug that is not a ready story on the board, and on one whose PR was closed unmerged (its last event is reconcile's reopen): that story is the lead's, and a `hold` line would drop the mark `unblock --startable` prints for it. The conductor runs it for each `startable:` story it does not start, other than a closed-unmerged one: at most once per wave for a story, and in a later wave only when the reason changed. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `holds` (one row per hold of a ready story: its epic, the first hold's reason and the minutes until its next build started, or how it ended with no build (`dropped`, or `removed` once its story file left the board), or `open`; then the built holds' minutes per reason class, `clash` when the reason names a PR or a hyphenated story that had started by then, `other` for anything else, give-up, closed this wave and `not held:` included), `idle_slots` (per epic, the minutes a story sat ready with no build and nothing it clashed with running, while its conductor ran and while none did, and the most ready at once), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `review_loops` (per story PR, each review round's builder model, minutes, findings fixed and declined and step-up, how its loop ended, and totals for tuning the stop and escalation rules), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, review rounds per PR, and once findings carry `--round`, each round's yield and the round each story's review stopped in; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `holds` (one row per hold of a ready story: its epic, the first hold's reason and the minutes until its next build started, or how it ended with no build (`dropped`, or `removed` once its story file left the board), or `open`; then the built holds' minutes per reason class, `clash` when the reason names a PR or a hyphenated story that had started by then, `other` for anything else, give-up, closed this wave and `not held:` included), `idle_slots` (per epic, the minutes a story sat ready with no build and nothing it clashed with running, while its conductor ran and while none did, and the most ready at once), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `review_loops` (per story PR, each review round's builder model, minutes, findings fixed and declined and step-up, how its loop ended, and totals for tuning the stop and escalation rules), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, review rounds per PR, and once findings carry `--round`, each round's yield and the round each story's review stopped in; `--epic` counts only that epic's PRs and lists them), `test_runs` (local `scripts/test.sh` full runs by how many ran at once, the larger of the count at the start and at the end, with the median and p90 seconds and the median load at the start, and the 5 slowest, from `.swarm/test-runs.tsv`), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
 
 ## Cleanup, escalation and session logs
 
@@ -1933,8 +1964,10 @@ in the worktree (an `index.lock`, or a merge, rebase, cherry-pick or revert in p
 stops and names it: finish or abort it there, then resume. If the start fails, step-up stops at the
 step that failed, with that step's message, and logs nothing as an escalation. A builder's
 brief is sent at most twice, and a Fable builder, which at xhigh can take longer to start, gets 300
-seconds over both tries to show it took it; `SWARM_PROMPT_TIMEOUT_MS` overrides that.
-When a new rung's brief may have gone out but still reads as not taken up, or unsure, step-up keeps
+seconds over both tries to show it took it (150 for its one try when it has no Claude session to
+read yet, see `tell`); `SWARM_PROMPT_TIMEOUT_MS` overrides that.
+When a new rung's brief may have gone out but still reads as not taken up, or unsure, or herdr sent
+it once and did not show the turn start (the start's warning), step-up keeps
 its pane, warns, and reads it once more over 300 seconds, then says `took up its brief after all`
 if it did. A builder blocked on a question before its brief went is not read again. If herdr gives
 no status for it during that read, step-up stops and keeps its pane and agents.tsv line: look at it
