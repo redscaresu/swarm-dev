@@ -18,6 +18,7 @@
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong; or, --filed, a declined out-of-scope one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh intervene <kind> "<one line>"                  log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first)
+#   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
@@ -420,6 +421,16 @@ intervene() {
   echo "logged: $1: $2"
 }
 
+# hold <slug> <why> — log that a conductor held a ready story back: a hold line, target the slug, outcome
+# the reason. Its only line, as intervene's (target !), so a slug that is not a ready story logs nothing.
+hold() {
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "hold: bad slug '$1': swarm.sh hold <slug> <why>"
+  [[ -f "${BOARD}/stories/$1.md" && "$(get_fm "${BOARD}/stories/$1.md" status)" == ready ]] || die "hold: $1 is not a ready story on the board"
+  [[ -n "${2//[[:space:]]/}" ]] || die "hold: say why: swarm.sh hold $1 '<why>'"
+  append_event hold "$1" "$2" || die "hold: could not write ${EVENTS_LOG}; nothing was logged"
+  echo "logged: hold $1: $2"
+}
+
 # Everything runs from main, called on the last line with `exit` beside it: bash reads a
 # script as it executes, so a `git pull` that rewrites this file during a long `wait` would
 # otherwise make it resume reading the new file mid-line.
@@ -460,6 +471,7 @@ dispatch() {
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     intervene) intervene "${1:-}" "${*:2}" ;;
+    hold)   hold "${1:-}" "${*:2}" ;;
     lessons) [[ $# -eq 0 || ( $# -eq 1 && "$1" == --all ) ]] || die "usage: swarm.sh lessons [--all]"
             moved lessons "outcomes' recurring block" "outcomes [--since YYYY-MM-DD]" ;;
     features) moved features "flow's features section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
@@ -817,7 +829,7 @@ main_signal() {
 # outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
 # A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
-# log one line per item themselves, and merge and intervene (target !) every line they write, so main logs none
+# log one line per item themselves, and merge, intervene and hold (target !) every line they write, so main logs none
 # for them but an interrupt. A tell's command is tell:<kind>, a close's close:<cause> and a
 # board-pr's board-pr:<step>, so the target stays the slug (a board-pr's name). A reset or drop
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
@@ -840,7 +852,7 @@ main() {
                  [[ "${FINDING_OUTCOME}" == fixed ]] || EV_CMD="log-finding:${FINDING_OUTCOME}"
                  EV_TARGET="${*:$((FINDING_SKIP + 2)):2}" ;;
     reconcile|unblock) EV_TARGET=+ ;;
-    merge|intervene) EV_TARGET='!' ;;
+    merge|intervene|hold) EV_TARGET='!' ;;
     tidy) EV_TARGET=- ;;
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
     # old form, tell <slug> <file>, would put a path there).
