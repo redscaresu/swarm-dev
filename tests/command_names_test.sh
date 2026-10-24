@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # command_names_test.sh — nothing a user reads tells them to type a bare /swarm. In a fresh install
 # Claude Code's slash menu completes /swarm to /swarm-dev:epic (it ranks the shorter name first), so
-# the name that works is /swarm-dev:swarm. /epic and /plan-epic resolve as typed, and /hld writes
-# an HLD above them.
+# the name that works is /swarm-dev:swarm. /epic and /plan-epic resolve as typed, /hld writes
+# an HLD above them, and /plan-hld plans it into epics.
 set -euo pipefail
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -18,8 +18,8 @@ if [[ -n "${bare}" ]]; then
   echo "FAIL a bare /swarm, which runs /swarm-dev:epic; write /swarm-dev:swarm:"; echo "${bare}"; exit 1
 fi
 echo "ok   no bare /swarm"
-if [[ ! -f commands/epic.md || ! -f commands/hld.md ]]; then
-  echo "FAIL commands/epic.md and commands/hld.md must both exist"; exit 1
+if [[ ! -f commands/epic.md || ! -f commands/hld.md || ! -f commands/plan-hld.md ]]; then
+  echo "FAIL commands/epic.md, commands/hld.md and commands/plan-hld.md must all exist"; exit 1
 fi
-echo "ok   /epic and /hld are commands"
+echo "ok   /epic, /hld and /plan-hld are commands"
 echo "all passed"

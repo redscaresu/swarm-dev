@@ -554,15 +554,21 @@ start_agent() {
     { echo "The project is ${PROJECT_DIR}; every relative path below is relative to it. You can write only in $(codex_out_dir "${tab}")."; echo; cat "${prompt_file}"; } > "${brief}"
     prompt_file="${brief}"
   fi
+  # Fable's brief gets SLOW_PROMPT_TIMEOUT_MS in all: herdr's wait stays as it is, and longer reads
+  # after it make each of deliver_prompt's two tries half of it. Local, so a later prompt keeps the default.
+  local SETTLE_READS="${SETTLE_READS}"
+  [[ "${model}" != fable || -n "${SWARM_PROMPT_TIMEOUT_MS:-}" ]] \
+    || SETTLE_READS=$(((SLOW_PROMPT_TIMEOUT_MS / 2 - PROMPT_TIMEOUT_MS) / 5000))
   deliver_prompt "${name}" "${prompt_file}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
 }
 
 # codex_out_dir <tab> — where a planning tab's agents write their answers: .swarm/<epic> for
-# scope-<epic>; empty for any other tab.
+# scope-<epic>, .swarm/<hld> for plan-<hld>; empty for any other tab.
 codex_out_dir() {
   case "$1" in
     scope-?*) echo "${PROJECT_DIR}/.swarm/${1#scope-}" ;;
+    plan-?*) echo "${PROJECT_DIR}/.swarm/${1#plan-}" ;;
   esac
 }
 
@@ -675,8 +681,11 @@ story_text() {
 }
 
 # PROMPT_TIMEOUT_MS: how long a prompt has to be taken up (deliver_prompt), and a /goal to show in
-# the session log (send_goal).
+# the session log (send_goal). SLOW_PROMPT_TIMEOUT_MS: how long start_agent gives a fable brief in all,
+# since fable at xhigh can take over 60 s to show it is working (SWARM_PROMPT_TIMEOUT_MS overrides
+# it), and how long start_rung reads a new rung again before closing it (rung_late).
 PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
+SLOW_PROMPT_TIMEOUT_MS=300000
 
 # deliver_prompt <name> <prompt-file> [<pane>] [once] — submit the brief and confirm the agent acted on it.
 # `agent start` returns once the agent is ready, but a slow starter (Fable at xhigh) could
@@ -1410,6 +1419,7 @@ note_wake_now() {
   arg="$(conduct_epic "$1")"; [[ "${arg}" != backlog ]] || arg=--backlog
   # A lane conductor that outlived a lower conductor_lanes reads its lane folded, as story_lane folds, or all with 1.
   lane="$(conduct_lane "$1")"
+  # shellcheck disable=SC2154 # assigned in another file
   [[ -z "${lane}" ]] || (( CFG_conductor_lanes == 1 )) || arg+=" --lane $(( (lane - 1) % CFG_conductor_lanes + 1 ))"
   if f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")"; then
     printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then run swarm.sh unblock --startable %s and start each story it prints as startable:, by the rule in your brief. Then end your turn, leaving any wait or watch you have running alone; start one only if none runs.\n' "$2.md" "$2.reading.md" "$2.reading.md" "${arg}" > "${f}"
@@ -1495,7 +1505,6 @@ tell_agent() {
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
-  # shellcheck disable=SC2154 # assigned in another file
   if [[ "${kind}" == note ]] && (( CFG_conductor_lanes > 1 )) && [[ -z "$(conduct_lane "${name}")" ]]; then
     e="$(conduct_epic "${name}")"
     for ((k = 1; k <= CFG_conductor_lanes; k++)); do
