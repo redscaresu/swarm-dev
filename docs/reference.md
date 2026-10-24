@@ -1280,27 +1280,37 @@ escalation rules can be tuned. It reads `events.tsv`, `findings.tsv` and `agents
 `gh`. Each build of a story (an `ok` `story` line, or an `escalate` build's `ok (attempt N)` with the
 `story` line after it) is its own loop, with its own rows. A loop is listed when a `review-agent`,
 `tell:findings` or `escalate` line of it falls in the window, by local day, and `--epic` keeps that
-epic's stories (from `outcomes`). A `review` line counts once for each PR it names, as that PR's story's
-(found through `outcomes`, so an epic's review reaches its stories), else as its target's. A loop's PR
-is the URL on its `ok` `review` line, else its build's `outcomes` row's (the row of its builder's
-latest `agents.tsv` line, as `outcomes` has one row per line), else, for the story's last loop, the
-story's, else `-`. Its rounds go in log order: an `ok` `review-agent` opens one, and a review agent
-started again before the round closed moves its start; an `ok` `tell:findings`, a `findings-*`
-step-up (which takes the tell's place), or the `ok` `review` or `merge` after the last tell closes
-it. A round no review agent opened has no minutes. The first block is TSV `story pr round model minutes fixed declined step_up`, a row
-per round: the builder's model (each build start and each step-up takes the next of the builder's
-`agents.tsv` lines in a builder role, and a step-up's model is its `to`), the minutes from the review agent's start to the round's close, the
-findings fixed and declined that `findings.tsv` logged with that `--round`, and each step-up in the
-round as `<trigger>: <from> -> <to> ok`, or `failed` for a `step-up` line that did not end `ok`
-(trigger `?`), or for a `tell` or `close` whose step-up failed partway (a tell's has trigger
-`findings` and closes the round, and a findings step-up resumed after it goes on that round). A step-up before the first round shows on round 1, ending `before review`. A PR whose findings name a later round than its events gets rows up to it. The second
-block is TSV `story pr rounds end`: `held-for-lead` after an `escalated` line, `pass` or
-`merged-after-fixes` once a `review` or `merge` closed its last round (that round fixed nothing, or
-something), else `open`. The last is one TSV row: the PRs, the median and p90 (nearest rank) rounds
-per PR, the minutes spent in round 3 and later, the fixes, the share of them found in round 1, round
-2, round 3 and later, and on the top rung (`escalate_ladder`'s last model; `-` with no ladder), the
-builds that stepped up with their fixes per round up to and after the first step-up, and the failed
-step-ups. With no story in the window it prints one line saying so.
+epic's stories (from `outcomes`). A `review` line counts once for each PR it names, as that PR's
+story's (found through `outcomes`, so an epic's review reaches its stories), else as its target's. A
+loop's PR is the URL on its `ok` `review` line, else its build's `outcomes` row's (the row of its
+builder's latest `agents.tsv` line, as `outcomes` has one row per 7-field line), else `-`. Each
+finding with a `--round` goes to one loop: the latest on its PR that started on or before the day it
+was logged, as `outcomes` gives findings to builds, so two builds on one PR never count a finding
+twice. Its rounds go in log order: an `ok` `review-agent` opens one, and a review agent started again
+before the round closed moves its start; an `ok` `tell:findings`, a `findings-*` step-up (which takes
+the tell's place), or the `ok` `review` or `merge` after the last tell closes it. A round no review
+agent opened has no minutes.
+
+The first block is TSV `story pr round model minutes fixed declined step_up`, a row per round: the
+builder's model (each build start and each step-up takes the next of the builder's `agents.tsv`
+lines in a builder role, and a step-up's model is its `to`), the minutes from the review agent's
+start to the round's close, the findings fixed and declined given to the loop with that `--round`,
+and each step-up in the round as `<trigger>: <from> -> <to> ok`, or `failed` for one that failed
+partway, after its builder was closed: a `step-up` or `step-up --resume` whose error says the builder
+is closed, but the next did not start (trigger `?`), or a `tell` or `close` whose step-up failed
+partway (a tell's has trigger `findings` and closes the round, and a findings step-up resumed after
+it goes on that round). A step-up refused before it changed anything (`nothing was closed`) is not
+one. A step-up before the first round shows on round 1, ending `before review`; a loop with no round
+shows its step-ups on a row whose round is `-`. A PR whose findings name a later round than its
+events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round:
+`held-for-lead` after an `escalated` line; once the PR merged (a `merge` line, or merged in
+`outcomes`), `pass` when its last round fixed nothing and `merged-after-fixes` when it fixed
+something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
+row over the loops with a round: the PRs, the median and p90 (nearest rank) rounds per PR, the
+minutes spent in round 3 and later, the fixes, the share of them found in round 1, round 2, round 3
+and later, and on the top rung (`escalate_ladder`'s last model; `-` with no ladder), the builds that
+stepped up with their fixes per round up to and after the first step-up, and the failed step-ups.
+With no story in the window it prints one line saying so.
 
 ## The outer loop
 
