@@ -1442,7 +1442,12 @@ else in the code changed; next to a `bin/` or `hooks/` change it does not. The b
 (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/`) are not docs, even when the board is
 `docs/`; the rest of `docs/` is. It compares against origin's tag by its SHA and never fetches
 over your local tag. It refuses when origin has no
-such tag or the tag is not on the base. No story or epic need list it.
+such tag or the tag is not on the base. No story or epic need list it. These checks all read one
+commit of the base: `--release` fetches the base from origin first and remembers what it got. Right
+before `gh pr merge` it fetches the base again. If the base moved, it prints `origin/<base> moved
+from <old> to <new> since the release check, so it runs again`, runs every `--release` check again
+on the new base, and refuses if one fails. A story that landed in between under no HLD granting
+`release` is refused like any other.
 The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
@@ -1750,6 +1755,13 @@ changes what a user runs, sees or has to do, a `Docs: none — <why>` line in th
 stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
+
+Once a release merges, `merge --release` reads its merge commit's first parent through gh. If that
+is not the base the release check last read, a PR landed between that read and the merge, and the
+release shipped commits no check read. merge prints `refused: <merge commit>'s first parent is
+<sha>, not <sha>, the base the release check read, so it ships <commits> unchecked`, followed by
+what to run once you have checked them. It then skips the plugin update and the upgrade below. When
+gh can't read the parent, it refuses the same way. Neither changes merge's exit code.
 
 When the release is swarm-dev's own (its repo is the GitHub repo named by `repository` in the
 plugin's `plugin.json`; otherwise merge prints a line saying it skipped this step), `merge

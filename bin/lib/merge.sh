@@ -326,6 +326,7 @@ merge_pr() {
     # A batch is pushed at its last commit, and the push-only workflows run there alone.
     [[ -z "${oid}" ]] || oid="$(ci_gate pushed "${repo}" "${base}" "${oid}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")"
   else
+    [[ "${only}" != --release ]] || release_moved "${repo}" "${base}" "${head}" "${n}"
     why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
     # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
     read -r state oid <<< "$(merged_state "${n}" "${repo}")"
@@ -375,8 +376,11 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
-  # A release of this plugin moves the installed plugin and the running agents onto it; it never fails the merge.
-  [[ "${only}" != --release || -z "${oid}" ]] || release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}"
+  # A release of this plugin moves the installed plugin and the running agents onto it, once its merge
+  # commit sits on the base release_check read; it never fails the merge.
+  if [[ "${only}" == --release && -n "${oid}" ]] && release_parent "${repo}" "${oid}" "${base}"; then
+    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}"
+  fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -1170,15 +1174,52 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   printf '%s' "${out}"
 }
 
+# release_base <base> — origin/<base>'s commit, fetched now; fails when git cannot fetch or read it.
+release_base() { fetch_branch "${PROJECT_DIR}" "$1" && git -C "${PROJECT_DIR}" rev-parse --verify -q "origin/$1^{commit}"; }
+
+# release_moved <owner/repo> <base> <head> <pr> — right before the merge: when origin/<base> moved
+# since release_check read RELEASE_BASE, a story may have landed that no grant covers, so release_check
+# runs again on the new base, and refuses if it fails.
+release_moved() {
+  local now
+  now="$(release_base "$2")" || merge_fail "--release: cannot fetch origin/$2 to see whether it moved since the release check"
+  [[ "${now}" != "${RELEASE_BASE}" ]] || return 0
+  echo "origin/$2 moved from ${RELEASE_BASE:0:7} to ${now:0:7} since the release check, so it runs again"
+  release_check "$@"
+}
+
+# release_parent <owner/repo> <merge commit> <base> — 0 when the merge commit's first parent is
+# RELEASE_BASE, the base release_check last read; else print a refusal naming the commits between the
+# two, which the release ships unchecked, and fail, so the plugin is not updated.
+# ponytail: a rebase of a release PR with several commits reads its own commit as the parent and
+# refuses; read <merge commit>~<its commits> (as merge --board's prev) if a release ever has more.
+release_parent() {
+  local p log why
+  p="$(gh api "repos/$1/commits/$2" 2>/dev/null | json "d['parents'][0]['sha']" 2>/dev/null)" || p=""
+  [[ "${p}" != "${RELEASE_BASE}" ]] || return 0
+  if [[ "${p}" =~ ^[0-9a-f]{40}$ ]]; then
+    fetch_branch "${PROJECT_DIR}" "$3" || true
+    log="$(git -C "${PROJECT_DIR}" log --format=%h "${RELEASE_BASE}..${p}" 2>/dev/null | paste -sd' ' -)" || log=""
+    why="${2:0:7}'s first parent is ${p:0:7}, not ${RELEASE_BASE:0:7}, the base the release check read, so it ships ${log:-${RELEASE_BASE:0:7}..${p:0:7}} unchecked"
+  else
+    why="gh cannot read the first parent of ${2:0:7}, so whether it ships commits the release check never read is unknown"
+  fi
+  echo "refused: ${why}; the plugin was not updated and no agent was moved: check those commits, then run swarm.sh update and the new version's swarm.sh upgrade in each project with agents"
+  return 1
+}
+
 # release_check <owner/repo> <base> <head> <pr> — merge --release's checks past the file list: the PR goes
 # into the project's base, its plugin.json differs from the base's only in "version" (compared as
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
 # that version is MAJOR.MINOR.PATCH and greater than the base's, with merge = human release_grant
-# finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes.
+# finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes. It
+# fetches origin/<base> once, first, and sets RELEASE_BASE to the commit it fetched: what the checks
+# read, or older, so a base that moved under them reads as moved (release_moved).
 release_check() {
   local want old new why body was tag
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
+  RELEASE_BASE="$(release_base "$2")" || merge_fail "--release: cannot fetch origin/$2 to check the release against"
   old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$2")" \
     || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2"
   new="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$3")" \
@@ -1228,7 +1269,7 @@ release_grant() (
   view="$(mktemp -d)" && [[ -d "${view}" ]] || { echo "mktemp -d failed, so the stories merged since v$3 cannot be read"; exit 0; }
   trap 'rm -rf "${view}"' EXIT
   mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld" "${view}/origin/stories"
-  # origin/<base>'s board (release_tag fetched it); a directory it does not have is empty.
+  # origin/<base>'s board (release_check fetched it); a directory it does not have is empty.
   for s in epics hld stories; do
     git -C "${PROJECT_DIR}" archive --format=tar "origin/$2:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
   done
@@ -1293,12 +1334,11 @@ release_story() {
   [[ -n "$2" && $'\n'"${g}"$'\n' == *$'\n'release$'\n'* ]] || echo "story $1, $3, is under no agreed HLD that grants release"
 }
 
-# release_tag <base> <version> <fix> — the commit of origin's tag v<version> once origin/<base> is
-# fetched and holds it, else why not, with <fix> after the user's own way past it, and fail. origin's
-# tag is read by its commit's SHA, so a local tag is never fetched over.
+# release_tag <base> <version> <fix> — the commit of origin's tag v<version> when origin/<base>, as
+# release_check fetched it, holds it, else why not, with <fix> after the user's own way past it, and
+# fail. origin's tag is read by its commit's SHA, so a local tag is never fetched over.
 release_tag() {
   local tag rc=0
-  fetch_branch "${PROJECT_DIR}" "$1" || { echo "cannot fetch origin/$1 to read what changed since v$2"; return 1; }
   # An annotated tag's commit is its peeled ref (^{}): the tag object may never have been fetched.
   tag="$(git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/tags/v$2" "refs/tags/v$2^{}" 2>/dev/null \
     | awk '{ t = $1 } $2 ~ /\^\{\}$/ { c = $1 } END { print (c != "" ? c : t) }')" || rc=$?
