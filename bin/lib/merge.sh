@@ -262,12 +262,15 @@ merge_pr() {
     own="$(gh repo view "${origin}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
       || merge_fail "${only}: gh cannot tell which GitHub repo ${origin} is"
     [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${own}" ]] || merge_fail "${only}: ${url} is not in ${own}, ${whose} repo"
-    rel="${BOARD#"${PROJECT_DIR}"/}"
+    # A board at the project root has no folder to be under: its own paths (board_paths) stand in.
+    rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}"
     # A renamed file's old path counts too: renaming bin/x to the board is not a board-only change.
     info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "${only}: cannot list every file ${url} changes: ${info}"
     files="${info}"
     while IFS= read -r p; do
-      if [[ "${only}" == --board ]]; then
+      if [[ "${only}" == --board && -z "${rel}" ]]; then
+        on_board_paths "${p}" || merge_fail "--board: ${url} changes ${p}, outside the board's paths"
+      elif [[ "${only}" == --board ]]; then
         [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"
       else
         [[ "${p}" == .claude-plugin/plugin.json ]] || merge_fail "--release: ${url} changes ${p}, not only .claude-plugin/plugin.json"
@@ -768,6 +771,13 @@ board_paths() {
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
   printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
+}
+
+# on_board_paths <file> — <file> is under one of board_paths' prefixes.
+on_board_paths() {
+  local q
+  while IFS= read -r q; do [[ "$1" != "${q}"* ]] || return 0; done < <(board_paths)   # loose-match: ok the prefix is the point: board_paths names directories and Board.base
+  return 1
 }
 
 # clear_red_main <key> <sha> <why> — CI is green at <sha> for <key>: when red_mains holds that key
