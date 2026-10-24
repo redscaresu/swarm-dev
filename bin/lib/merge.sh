@@ -88,8 +88,8 @@ ci_gate() {
 }
 
 # merge_caller — why the pane running this may not merge, or nothing when it may. Outside herdr it
-# is the lead's own session, which merges for the user under merge = human too. Inside herdr the pane
-# must be one this project did not start (the lead's), or, with merge = agent, a conductor's; when the
+# is the lead's own session, which merges under merge = human too, where merge_grant allows. Inside
+# herdr the pane must be one this project did not start (the lead's), or, with merge = agent, a conductor's; when the
 # pane cannot be identified (no HERDR_PANE_ID, an unreadable tab record, herdr cannot list its
 # agents) it may not. start_agent's guard blocks only a bare `gh pr merge`, so this is what stops a
 # builder merging through swarm.sh.
@@ -113,6 +113,23 @@ merge_caller() {
   echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
 }
 
+# merge_grant <pr-url> — under merge = human, why the lead may not merge the PR, or nothing when the
+# one agreed HLD over it (pr_hld) grants merge (hld_grants). A PR it cannot resolve, or an HLD whose
+# grants: cannot be read (hld_grants' own line says why), waits on the user too.
+merge_grant() {
+  local h g=""
+  h="$(pr_hld "$1")" || { echo "cannot tell which HLD $1 is under, so it waits on the user's merge"; return 0; }
+  [[ -z "${h}" ]] || g="$(hld_grants "${h}")" || { echo "the grants: of ${h} cannot be read, so $1 waits on the user's merge"; return 0; }
+  [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
+}
+
+# merge_hold <pr-url> — stop merge when pr_held holds the PR for the user.
+merge_hold() {
+  local why
+  why="$(pr_held "$1")"
+  [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it"; }
+}
+
 # merged_state <pr> <owner/repo> — "<state> <merge commit>" once the PR reads MERGED with one, read up
 # to MERGE_READS times, MERGE_READ_WAIT apart: GitHub may take a moment to say so, and a read may
 # fail. The state is unreadable when no read succeeded.
@@ -133,7 +150,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
-# story or stacked parent costs money is the user's) (with --board instead: the PR is in the board's own repo and every path it changes,
+# story or stacked parent costs money is the user's; with merge = human and no --release, merge_grant
+# finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the board's own repo and every path it changes,
 # old or new, is on the board; with --release: the PR is in the project's own repo and every path it
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
@@ -171,10 +189,7 @@ merge_pr() {
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
   # With merge = agent a PR whose story costs money is the user's, by any route (--board and --release too).
-  if [[ "${CFG_merge}" == agent ]]; then
-    why="$(pr_held "${url}")"
-    [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it"; }
-  fi
+  [[ "${CFG_merge}" != agent ]] || merge_hold "${url}"
   if [[ -z "${only}" ]]; then
     # Any item listing the URL may be the one in review.
     while IFS= read -r p; do
@@ -206,15 +221,23 @@ merge_pr() {
         [[ "${p}" == .claude-plugin/plugin.json ]] || merge_fail "--release: ${url} changes ${p}, not only .claude-plugin/plugin.json"
       fi
     done <<< "${info}"
-    if [[ "${only}" == --board && "${CFG_merge}" == agent ]]; then
-      # A board PR could lift a hold (costs: money to none, or a story deleted) before the agent merges it.
-      info="$(gh pr diff "${n}" --repo "${repo}" --color never)" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"
-      p="$(costs_diff <<< "${info}")"
-      [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; with merge = agent the user merges it"
-    fi
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
+  # then under merge = agent's holds. --release is release_check's. It runs after the head's CI check,
+  # which costs fewer gh calls: the grant reads the PR, its files and each board file it touches.
+  if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
+    why="$(merge_grant "${url}")"
+    [[ -z "${why}" ]] || merge_fail "${why}"
+    merge_hold "${url}"
+  fi
+  if [[ "${only}" == --board ]]; then
+    # A board PR could lift a hold (costs: money to none, or a story deleted) before it merges.
+    info="$(gh pr diff "${n}" --repo "${repo}" --color never)" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"
+    p="$(costs_diff <<< "${info}")"
+    [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; the user merges it"
+  fi
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"
