@@ -269,7 +269,7 @@ merge_pr() {
     files="${info}"
     while IFS= read -r p; do
       if [[ "${only}" == --board && -z "${rel}" ]]; then
-        on_board_paths "${p}" || merge_fail "--board: ${url} changes ${p}, outside the board's paths"
+        on_board_paths "${p}" || merge_fail "--board: ${url} changes ${p}, outside the board's paths ($(board_paths | paste -sd' ' - | sed 's/ /, /g'))"
       elif [[ "${only}" == --board ]]; then
         [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"
       else
@@ -535,7 +535,8 @@ live_at() {
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d="${BOARD#"${PROJECT_DIR}"/}/"
+  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d=""
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
@@ -773,10 +774,14 @@ board_paths() {
   printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
 }
 
-# on_board_paths <file> — <file> is under one of board_paths' prefixes.
+# on_board_paths <file> — <file> is one of board_paths' entries, or under one that ends in a slash,
+# as the board-only CI gate has it: Board.base is that file alone, not Board.base.py.
 on_board_paths() {
   local q
-  while IFS= read -r q; do [[ "$1" != "${q}"* ]] || return 0; done < <(board_paths)   # loose-match: ok the prefix is the point: board_paths names directories and Board.base
+  while IFS= read -r q; do
+    if [[ "${q}" == */ ]]; then [[ "$1" != "${q}"* ]] || return 0   # loose-match: ok a directory prefix, ended by its slash
+    else [[ "$1" != "${q}" ]] || return 0; fi
+  done < <(board_paths)
   return 1
 }
 

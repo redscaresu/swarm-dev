@@ -225,20 +225,46 @@ refused() {
 
 # A PR that changes only stories/ and epics/ files passes the board-only check and merges.
 fresh; rm "${S}";
-echo '[{"filename":"stories/s.md","status":"modified"},{"filename":"epics/e.md","status":"added"},{"filename":"hld/h.md","status":"added"}]' > "${FX}/files"; echo 3 > "${FX}/nfiles"
+echo '[{"filename":"stories/s.md","status":"modified"},{"filename":"epics/e.md","status":"added"},{"filename":"hld/h.md","status":"added"},{"filename":"Board.base","status":"modified"},{"filename":".obsidian/app.json","status":"added"}]' > "${FX}/files"; echo 5 > "${FX}/nfiles"
 { echo ---; echo "status: draft"; echo ---; } > "${FX}/wf.e.md"   # epic_guard reads e.md; a draft needs no ticket
 merge --board "${URL}"
-is "board at the root, stories/, epics/ and hld/ only: exits 0" 0 "${rc}"
-check "board at the root, stories/, epics/ and hld/ only: merged" merged
+is "board at the root, stories/, epics/, hld/, Board.base and .obsidian/ only: exits 0" 0 "${rc}"
+check "board at the root, stories/, epics/, hld/, Board.base and .obsidian/ only: merged" merged
 
 # One that also changes a file outside them is refused, whatever the order.
-for files in '[{"filename":"stories/s.md"},{"filename":"bin/swarm.sh"}]' '[{"filename":"README.md"},{"filename":"epics/e.md"}]'; do
-  fresh; rm "${S}"; echo "${files}" > "${FX}/files"; echo 2 > "${FX}/nfiles"
+for files in '[{"filename":"stories/s.md"},{"filename":"bin/swarm.sh"}]' '[{"filename":"README.md"},{"filename":"epics/e.md"}]' \
+  '[{"filename":"Board.base.py"}]' '[{"filename":"Board.base-backup"}]' '[{"filename":"Board.basement/x.sh"}]' '[{"filename":".obsidianx/x.sh"}]'; do
+  fresh; rm "${S}"; echo "${files}" > "${FX}/files"; grep -o '"filename"' <<< "${files}" | wc -l | tr -d ' ' > "${FX}/nfiles"
   merge --board "${URL}"; refused "board at the root, ${files}" "outside the board's paths"
 done
+check "board at the root, a refusal lists the board's paths" said "(stories/, epics/, hld/, Board.base, .obsidian/)"
 # Nor does a file renamed onto the board from outside.
 fresh; rm "${S}"; echo '[{"filename":"stories/x.md","previous_filename":"bin/swarm.sh","status":"renamed"}]' > "${FX}/files"
 merge --board "${URL}"; refused "board at the root, a file renamed onto stories/" "changes bin/swarm.sh, outside the board's paths"
+
+# --- ready_tell with the board at the root: a --board merge that readies r1 notes epic e's running
+# conductor (conduct-e, the herdr stub's). origin's main is P's HEAD; put and land commit board files
+# to it from another clone, as a board PR's merge does.
+git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "${P}" push -q origin HEAD:refs/heads/main; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+git clone -q "${ROOT}/origin.git" "${ROOT}/up"; git -C "${P}" fetch -q origin; git -C "${P}" branch -q -u origin/main
+put() { # <path> <front-matter line>... — a board file in that clone, staged
+  mkdir -p "$(dirname "${ROOT}/up/$1")"; { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${ROOT}/up/$1"; git -C "${ROOT}/up" add -f "$1"
+}
+land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
+put epics/e.md "status: active"; put stories/r0.md "status: ready" "kind: code" "epic: e"; land
+git -C "${P}" merge -q --ff-only '@{upstream}'
+put stories/r1.md "status: ready" "kind: code" "epic: e"; land
+fresh; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
+echo '[{"filename":"stories/r1.md","status":"added"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
+wfruns "${FX}/${OID}.runs" "$(run ci completed success "${OID}")"
+INBOX="${P}/.swarm/inbox/conduct-e.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
+is "board at the root, a merge that readies r1: exits 0" 0 "${rc}"
+check "board at the root, a merge that readies r1: notes conduct-e of r1 alone" \
+  grep -qF "The board PR ${URL} just merged, and these stories of epic e are ready now: r1. Start them now" "${INBOX}"
+check "board at the root, a merge that readies r1: says it noted conduct-e" said "noted conduct-e"
 
 echo
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
