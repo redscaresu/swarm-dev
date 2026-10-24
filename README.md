@@ -28,7 +28,8 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 1. **Write the work.** `/swarm-dev:epic <title>` opens a co-author agent in its own pane. Together
    you write the epic: the problem and its evidence, goals that can be checked (**Done when**), what
    is out of scope, and your part. A reviewer agent attacks the draft. Nothing is planned until you
-   agree it.
+   agree it. `swarm.sh board-pr` refuses a board PR that sets an epic `active` without your
+   agreement, a parent epic, an HLD that grants `epics`, or `lead_epics = on`.
 2. **Plan.** `/swarm-dev:swarm` splits the agreed epic into stories of one PR each. A survey agent
    reads the code, a lead agent writes the stories, and skeptic agents (on risky stories only), codex and a critic try to
    refute them. You approve the result, which is then written to the board. An epic too large for
@@ -119,6 +120,11 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. Under `merge = human`, the lead merges a release only when every story merged since
   the last tag is under an agreed HLD that lists `release`.
+- Under either merge mode, `swarm.sh merge --board` refuses a board PR that sets an epic `active`
+  with no ticket: an `agreed:` date the base's draft did not already have, a `parent:` that is
+  on the base (another epic, not one the PR adds), or an `hld:` naming an HLD that is `agreed` and
+  grants `epics` at the base and at the head.
+  `swarm.sh board-pr open` refuses the same PRs; `lead_epics = on` lifts both.
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.

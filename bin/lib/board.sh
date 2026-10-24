@@ -613,6 +613,71 @@ hld_grants() {
   done
 }
 
+# epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
+# line; README.md excepted) that goes active with no ticket, one per line: status: active at the head,
+# absent or draft at the base (status read as fm reads it, the first status: line anywhere, but from
+# the bytes, with no board-state override), and none of an agreed: date the base did not already
+# have (one left on a draft is stale), a parent: naming another epic the base has (so a PR cannot
+# name a parent it adds), or an hld: naming an HLD that is agreed and grants epics at both ends
+# (hld_ticket). Nothing with lead_epics = on. <reader>
+# base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
+# A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
+epic_unticketed() (
+  local reader="$1" pre p s now was rc out=""
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ "${CFG_lead_epics}" != on ]] || exit 0
+  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  # Not local: the EXIT trap runs once the locals are gone.
+  t="$(mktemp)" || { echo "cannot make a temp file"; exit 1; }
+  trap 'rm -f "${t}" "${t}.err"' EXIT
+  while IFS= read -r p; do
+    s="${p#"${pre}epics/"}"
+    [[ "${p}" == "${pre}epics/"* && "${s}" =~ ^[^/]+\.md$ && "${s}" != README.md ]] || continue
+    rc=0; now="$("${reader}" head "${p}")" || rc=$?
+    [[ ${rc} -ne 1 ]] || continue
+    [[ ${rc} -eq 0 ]] || { echo "cannot read ${p} at the head"; exit 1; }
+    [[ "$(slug_list "$(awk 'sub(/^status: */, "") { print; exit }' <<< "${now}")")" == active ]] || continue
+    rc=0; was="$("${reader}" base "${p}")" || rc=$?
+    [[ ${rc} -le 1 ]] || { echo "cannot read ${p} at the base"; exit 1; }
+    [[ ${rc} -eq 1 || "$(slug_list "$(awk 'sub(/^status: */, "") { print; exit }' <<< "${was}")")" == draft ]] || continue
+    s="${s%.md}"; p="$(slug_list "$(get_fm - agreed <<< "${now}")")"
+    [[ ! "${p}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || "${p}" == "$(slug_list "$(get_fm - agreed <<< "${was}")")" ]] || continue
+    p="$(slug_list "$(get_fm - parent <<< "${now}")")"
+    if [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "${s}" ]]; then
+      rc=0; "${reader}" base "${pre}epics/${p}.md" > /dev/null || rc=$?
+      [[ ${rc} -ne 0 ]] || continue
+      [[ ${rc} -eq 1 ]] || { echo "cannot read ${pre}epics/${p}.md at the base"; exit 1; }
+    fi
+    p="$(slug_list "$(get_fm - hld <<< "${now}")")"
+    if [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+      rc=0; hld_ticket "${reader}" "${pre}hld/${p}.md" "${t}" || rc=$?
+      [[ ${rc} -ne 0 ]] || continue
+      [[ ${rc} -eq 1 ]] || exit 1
+    fi
+    out+="${s}"$'\n'
+  done <<< "$2"
+  printf '%s' "${out}"
+)
+
+# hld_ticket <reader> <hld path> <tmp> — epic_unticketed's hld: ticket: true when the HLD is status:
+# agreed with epics in its grants (hld_grants, which reads a file: <reader>'s bytes go through <tmp>)
+# at both the base, so a PR cannot grant itself, and the head, so it cannot drop the grant either;
+# fails 1 when it is not, or is absent at either end; prints why and fails 2 on a read error or a bad
+# grants:, naming <hld path> and the end, never <tmp>.
+hld_ticket() {
+  local end rc g
+  for end in base head; do
+    rc=0; "$1" "${end}" "$2" > "$3" || rc=$?
+    [[ ${rc} -ne 1 ]] || return 1
+    [[ ${rc} -eq 0 ]] || { echo "cannot read $2 at the ${end}"; return 2; }
+    [[ "$(slug_list "$(get_fm "$3" status)")" == agreed ]] || return 1
+    if ! g="$(hld_grants "$3" 2> "$3.err")"; then
+      g="$(cat "$3.err")"; g="${g#swarm: }"; echo "${g//"$3:"/$2 at the ${end}, line }"; return 2
+    fi
+    grep -qxF epics <<< "${g}" || return 1
+  done
+}
+
 # item_hld <story or epic file> [epics dir] [hld dir] — the agreed HLD file in [hld dir] (${BOARD}/hld)
 # over it: a story's epic:, then each epic's parent:, up to the first epic with hld:, read in [epics
 # dir] (${BOARD}/epics).
