@@ -242,7 +242,7 @@ parallel. `risk: high` goes only to real-cloud, teardown, credentials and safety
 `.swarm/<epic>/`. The user sees refuted stories, contradictions, the risky stories and stories ÷
 longest chain first, and approves before the board PR opens; review fixes are folded into
 each story's scope. Once the board PR is open, each skeptic, codex and critic finding is logged
-against it with `log-finding --reviewer <who>`, declined ones with `--declined <reason>` too. A full run is about ten agents, so
+against it with `log-finding --reviewer <who>`, declined ones with `--declined <reason>` too. A full run is four agents (survey, lead, codex, critic) when no story is `risk: high`, plus up to five skeptics and, for a multi-repo epic, two more surveys, so
 scope deliberately.
 
 **Ship code switched off.** Code that adds a flag or setting merges with it off, so the merge
@@ -1751,7 +1751,7 @@ code.
 ## Cleanup, escalation and session logs
 
 Every agent is a full Claude Code session, on a model chosen by its role, and planning one epic
-starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
+starts four agents, plus a skeptic per `risk: high` story and two more surveys for a multi-repo epic. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
 touch real cloud or credentials. By default no agent merges; with `merge = agent` only the conductor
 does.
 

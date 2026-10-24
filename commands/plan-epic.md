@@ -58,7 +58,7 @@ one-repo epic; the review in step 3 is where the plan's bugs turn up.
 
 **2. Decompose** — one agent, `lead`, role `lead`, given the survey files. Output
 `{stories:[{slug, title, kind, risk, costs, repo, scope, done_when, needs, touches, depends_on, estimate_lines, easy}], waves, contradictions}`.
-`needs` is what the story uses from each `depends_on` story (the file or the function), empty when it has none.
+`needs` names each `depends_on` story with what the story uses from it (the file or the function), empty when it has none; the scope's opening line is written from it, so the two agree.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
 `estimate_lines` is the lead's guess at the PR's size; `easy` is true when it is under about 100 lines, adds no new command and no shared helper in `bin/swarm.sh`. A story is capped at one new command or one changed behaviour and about 300 lines; split a bigger one.
@@ -89,9 +89,9 @@ tell you which of the two broke something, and cannot be rolled back one half at
   `gh auth status` first, which fails inside codex's sandbox, and codex then stops without reviewing.
 - one `critic`, role `critic`, given the `depends_on` graph and the waves: what the plan missed — a change the epic's
 **Done when** needs that no story makes, an unrespected constraint, a test or doc nobody updates, a
-  real-cloud step hidden inside an agent story. For every story, skeptic or not, it also checks: a story that should carry `risk: high` (real cloud, teardown, credentials, a safety path) and does not, a `touches` clash inside a wave, a `depends_on` story that shares no file in `touches` with it while its `needs` is empty (disjoint touches: drop the dependency, or fill in `needs`), a wrong `kind` (an agent story that needs real cloud, credentials or a person), and a missing or wrong `costs: money` (a story whose merge can spend money). A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words for the whole-plan part, plus one short line for each story that has a problem.
+  real-cloud step hidden inside an agent story. For every story, skeptic or not, it also checks: a story that should carry `risk: high` (real cloud, teardown, credentials, a safety path) and does not, a `touches` clash inside a wave, each `depends_on` story that shares no file in `touches` with it and that its `needs` does not name (disjoint touches: drop the dependency, or name it in `needs`), a wrong `kind` (an agent story that needs real cloud, credentials or a person), and a missing or wrong `costs: money` (a story whose merge can spend money). A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words for the whole-plan part, plus one short line for each story that has a problem. A story moved to `risk: high` in review (by the critic or this session) gets its `skeptic-<slug>` before the report, within the cap of five.
 
-**Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
+**Then report**, in this order: which stories had a skeptic (or "no skeptic: no `risk: high` story"); refuted stories and why, with the critic's per-story problem lines beside them; contradictions; codex and critic findings
 the plan does not answer; the surviving stories with `kind`, `estimate_lines`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain (this session checks chain depth over the whole graph, since skeptics run only on `risk: high` stories); then **What you will do**: every `lead`
 story, what each needs from the user (its **You:** steps), and, with `merge = human`, that the user
 merges the resulting PRs. Ask before

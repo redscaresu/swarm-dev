@@ -66,7 +66,7 @@ crit=$(printf '%s' "$step3" | awk '/one `critic`/{on=1} on' | tr '\n' ' ' | tr -
 has skeptic-high 'one `skeptic-<slug>` per `risk: high` story' "$flat"
 has critic-risk 'should carry `risk: high`' "$crit"
 has critic-clash 'a `touches` clash inside a wave' "$crit"
-has critic-disjoint 'shares no file in `touches` with it while its `needs` is empty' "$crit"
+has critic-disjoint 'that its `needs` does not name' "$crit"
 has critic-kind 'a wrong `kind`' "$crit"
 has critic-graph 'given the `depends_on` graph and the waves' "$crit"
 has needs-schema 'done_when, needs, touches' "$flat"
