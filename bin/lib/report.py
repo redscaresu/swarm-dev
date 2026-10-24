@@ -12,6 +12,28 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
+# run_key(target) — a conduct or report event's target as a conductor run's key: <epic>, or --backlog
+# (a report logs backlog), with .l<k> for lane k's conductor (conductor_lanes).
+def run_key(target):
+    m = re.fullmatch(r"(.+)(\.l\d+)", target)
+    base, lane = (m.group(1), m.group(2)) if m else (target, "")
+    return ("--backlog" if base in ("backlog", "--backlog") else base) + lane
+
+# run_names(key) — the agent names a run key's conductor had, as bash conductor_name makes them: for
+# lane k, cut so -l<k> fits; the backlog's per-project SWARM_BACKLOG_CONDUCTOR, or conduct-backlog in
+# older logs.
+def run_names(key):
+    m = re.fullmatch(r"(.+)\.l(\d+)", key)
+    base, s = (m.group(1), f"-l{m.group(2)}") if m else (key, "")
+    if base != "--backlog":
+        return [agent_name("conduct-" + base)[:32 - len(s)] + s]
+    b = os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")
+    return ([] if s else ["conduct-backlog"]) + ([b[:-7][:25 - len(s)] + b[-7:] + s] if b else [])
+
+# run_report(events_dir, key) — the report file a run key's conductor writes.
+def run_report(events_dir, key):
+    return os.path.join(events_dir, "conduct-" + re.sub(r"^--backlog", "backlog", key) + ".report.md")
+
 # A step-up's escalate line: ok (<trigger>: <from> -> <to>).
 STEP_UP = re.compile(r"ok \(([a-z0-9-]+): (\S+) -> (\S+)\)")
 

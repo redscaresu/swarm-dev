@@ -473,6 +473,8 @@ conduct_group() {
   slugs="$(lane_slugs "${lane}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "$3"))"
   [[ -n "${slugs}" ]] || return 0
   name="$(group_conductor "${e}" "${lane}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
+  # A conductor of this epic under another conductor_lanes still runs: none starts beside it.
+  if ! why="$( (conduct_clash "${e/#-/backlog}" "${lane}") 2>&1)"; then echo "no conductor started: ${why#swarm: conduct: }"; return 0; fi
   if [[ -n "$(agent_field "${name}" pane_id)" ]]; then
     if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"; fi
     return 0
@@ -489,10 +491,11 @@ conduct_group() {
   ( set -e; start_conductor "${arg}" "${lane}" ) > "${log}" 2>&1 &
   # Logged as a dispatched swarm.sh conduct logs it, with its die line on a failure: outcomes builds
   # its conductor runs from these lines.
+  # A lane's start is logged as <arg>.l<lane>, the key its report and close are matched by.
   if wait $!; then
-    record_event conduct "${arg}"; echo "started: ${name} (swarm.sh conduct ${arg}${lane:+ --lane ${lane}})"
+    record_event conduct "${arg}${lane:+.l${lane}}"; echo "started: ${name} (swarm.sh conduct ${arg}${lane:+ --lane ${lane}})"
   else
-    c=$?; why="$(tail -1 "${log}")"; record_event conduct "${arg}" "${why#swarm: }"
+    c=$?; why="$(tail -1 "${log}")"; record_event conduct "${arg}${lane:+.l${lane}}" "${why#swarm: }"
     # An agent (a conductor's own board merge) has only its allowlisted env, which may be why: the
     # lead's next starts it.
     todo="run it yourself"; [[ -z "${SWARM_AGENT:-}" ]] || todo="the lead's swarm.sh next starts it"
@@ -1438,25 +1441,31 @@ docs_none() {
        END { exit !found }'
 }
 
-# watch_scope [--epic <slug>|--backlog] [repo...] — set WATCH_HEADS and WATCH_NAMES for watch. With
+# watch_scope [--epic <slug>|--backlog [--lane <k>]] [repo...] — set WATCH_HEADS and WATCH_NAMES for watch. With
 # --epic, only that epic's stories' story/<slug> heads count, and the fix-main stories' (no epic, but
 # every conductor builds and merges one), and with --backlog only those of stories with no epic
 # (WATCH_HEADS empty: every story/* head); the default repos are then those stories' repos: a
 # conductor must not wake for another epic's PR on the same board. WATCH_NAMES holds each
-# repo as the board names it (repo_slug resolves one). Dies with no repo to watch.
+# repo as the board names it (repo_slug resolves one). Dies with no repo to watch. With --lane, only
+# that conductor lane's stories (story_lane), fix-main ones too: lanes' heads never overlap, so one
+# lane's watch never takes another's report from the shared watch-seen.
 watch_scope() {
-  local epic="" stories=("${BOARD}"/stories/*.md) f
+  local epic="" stories=("${BOARD}"/stories/*.md) f lane=""
   WATCH_HEADS=""
+  [[ "${1:-}" != --lane ]] || die "watch: --lane goes after --epic <slug> or --backlog"
   if [[ "${1:-}" == --epic || "${1:-}" == --backlog ]]; then
     # The backlog's stories are those whose epic: is empty; heads stays non-empty, so no other PR counts.
     if [[ "$1" == --epic ]]; then
       epic="${2:?watch --epic needs an epic slug}"; shift 2
       [[ -f "${BOARD}/epics/${epic}.md" ]] || die "watch: no epic ${BOARD}/epics/${epic}.md"
     else shift; fi
+    # shellcheck disable=SC2153 # LANE is lane_flag's
+    if [[ "${1:-}" == --lane ]]; then lane_flag watch --lane "${2:-}"; lane="${LANE}"; shift 2; fi
     stories=(); WATCH_HEADS="-"
     for f in "${BOARD}"/stories/*.md; do
       [[ -f "${f}" && "$(basename "${f}")" != README.md ]] || continue
       [[ "$(fm "${f}" epic)" == "${epic}" || ( -n "${epic}" && "$(basename "${f}")" == fix-main-*.md ) ]] || continue
+      [[ -z "${lane}" || "$(story_lane "${f}")" == "${lane}" ]] || continue
       stories+=("${f}"); WATCH_HEADS="${WATCH_HEADS} story/$(basename "${f}" .md)"
     done
   fi
@@ -1535,7 +1544,7 @@ queued_sent() {
   done
 }
 
-# watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
+# watch [--epic <slug>|--backlog [--lane <k>]] [repo...] — block until a story/* PR in these repos (watch_scope)
 # needs the lead, print one line saying which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # when its head has had no check at all for WATCH_STALL_SECS (default 600), or when its head, its

@@ -6,8 +6,8 @@
 # rows give its story (a builder, or review-<slug>), or for conduct-<epic> its `conduct <epic>` start
 # (or its epic in the rows), under its own name or the ones retire_agent renames it to, `-` when none
 # does; --epic keeps that epic's rows.
-import collections, datetime, os
-from report import agent_name
+import collections, datetime, os, re
+from report import agent_name, run_key, run_names
 
 STOPS = ("api-error", "auto-denied")
 
@@ -27,8 +27,9 @@ for r in rows:
 counts, stops = collections.Counter(), collections.Counter()
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
-    if len(f) == 5 and f[1] == "conduct" and f[4] == "ok" and f[2] != "--backlog":
-        own("conduct-" + f[2], f[2])
+    if len(f) == 5 and f[1] == "conduct" and f[4] == "ok" and not run_key(f[2]).startswith("--backlog"):
+        k = run_key(f[2]); e = re.sub(r"\.l\d+$", "", k)   # a lane's start: <epic>.l<k>
+        own(run_names(k)[0] if k != e else "conduct-" + e, e)
     if len(f) != 5 or f[1] != "incident":
         continue
     try:

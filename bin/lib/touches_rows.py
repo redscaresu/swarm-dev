@@ -89,7 +89,9 @@ if __name__ == "__main__":
     mine = entries(fms[me], project_dir, repos_dir)
     for slug, fm in sorted(fms.items()):
         # A stacked story starts on its parents' branches: neither holds the other back.
-        if slug == me or slug in deps(fms[me]) or me in deps(fm) or fm.get("epic") and fm.get("epic") == fms[me].get("epic"):
+        # SWARM_SAME_EPIC: its own epic's stories too (unblock --lane's clash across conductor lanes).
+        same = fm.get("epic") and fm.get("epic") == fms[me].get("epic") and not os.environ.get("SWARM_SAME_EPIC")
+        if slug == me or slug in deps(fms[me]) or me in deps(fm) or same:
             continue
         hit = [e for e in entries(fm, project_dir, repos_dir) if any(overlap(e, m) for m in mine)]
         if hit:

@@ -888,6 +888,7 @@ main() {
     review) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
     board-pr) EV_TARGET="${3:-}"; case "${2:-}" in start|open|done) EV_CMD="board-pr:$2" ;; esac ;;
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
+    conduct) EV_TARGET="${2:-}"; [[ "${3:-}" != --lane ]] || EV_TARGET+=".l${4:-}" ;;   # a lane's: <epic>.l<k>, as conduct_group logs it
     step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     *) EV_TARGET="${2:-}" ;;
   esac

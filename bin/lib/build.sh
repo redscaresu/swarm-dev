@@ -494,7 +494,7 @@ goal_preflight() {
 }
 
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names since
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names since lane lock=""
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -520,12 +520,30 @@ build_story() {
       || die "${slug} was held until its parents merged, and its build is kept in ${wt}: never start it again. Act on the Stacked line swarm.sh status prints for ${slug}, then review it again and run swarm.sh review ${slug} <PR URL>"
     die "${slug} has a build already (${branch} or ${wt} exists in ${src}): it has started, so wait on its builder, and to build it again from scratch remove that worktree and branch first"
   fi
-  # Its lane, kept from here on whatever conductor_lanes becomes (story_lane reads it back).
+  # Its lane, kept from here on whatever conductor_lanes becomes (story_lane reads it back, folded): a
+  # lane: already there stays as written. A fix-main story is the lane conductor's that starts it.
   # shellcheck disable=SC2154 # assigned in another file
-  (( CFG_conductor_lanes == 1 )) || set_fm "${story}" lane "$(story_lane "${story}")"
+  if (( CFG_conductor_lanes > 1 )) && [[ ! "$(get_fm "${story}" lane)" =~ ^[1-9][0-9]*$ ]]; then
+    lane=""
+    [[ "${slug}" != fix-main-* || "${SWARM_AGENT:-}" != conduct-* ]] || lane="$(conduct_lane "${SWARM_AGENT}")"
+    [[ -n "${lane}" ]] || lane="$(story_lane "${story}")"
+    set_fm "${story}" lane "${lane}"
+  fi
+  # A started build in another lane of its epic touching the same thing: --strict refuses, as
+  # touches_overlap does across epics. Checked here, not only in unblock's earlier list, under one
+  # lock held until the worktree exists, so two lanes' starts cannot both pass the check.
+  if (( CFG_conductor_lanes > 1 )); then
+    lock="${STATE_DIR}/lane-start.lock"; mkdir -p "${STATE_DIR}"; state_lock "${lock}"
+    # shellcheck disable=SC2064 # expand now; the path is this project's
+    trap "rmdir '${lock}' 2>/dev/null || true" EXIT
+    lane="$(lane_clash "${slug}" "$(story_lane "${story}")")"
+    [[ -z "${lane}" || -z "${strict}" ]] || die "${slug}: ${lane#held: }; start it once that build is gone"
+    [[ -z "${lane}" ]] || echo "warning: ${slug}: ${lane#held: }" >&2
+  fi
   parents="$(open_parents "${story}")"
   if [[ -n "${parents}" ]]; then stack_start "${story}" "${src}" "${wt}" "${parents}"
   else git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"; fi
+  [[ -z "${lock}" ]] || { rmdir "${lock}"; trap - EXIT; }
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
   story_brief "${slug}" "${src}" "${base}" > "${prompt}"
@@ -892,15 +910,18 @@ board_pr_merge_rule() {
 # lane_rule <epic>|backlog — a lane conductor's (CONDUCT_LANE) bounds: its own stories, never another lane's PR.
 lane_rule() {
   [[ -n "${CONDUCT_LANE:-}" ]] || return 0
-  local arg="$1"; [[ "$1" != backlog ]] || arg=--backlog
+  local arg="$1" watch="--epic $1"; [[ "$1" != backlog ]] || { arg=--backlog; watch=--backlog; }
   cat <<EOF
 
 You are lane ${CONDUCT_LANE} of ${CFG_conductor_lanes} conductors for this work (conductor_lanes). Build, review and
 merge only your lane's stories: the ones \`swarm.sh unblock --startable ${arg} --lane ${CONDUCT_LANE}\` prints, and
 the ones whose build started in your lane. A story's lane is the \`lane:\` line in its front matter or in
-${BOARD_STATE_DIR}/stories/<slug>, written when its build starts. Never start, tell, close, review or
-merge another lane's story or PR, even when \`swarm.sh watch\` or \`swarm.sh status\` names it: its own
-conductor has it. Leave it, and wait on.
+${BOARD_STATE_DIR}/stories/<slug>, written when its build starts; one above ${CFG_conductor_lanes} counts as
+(lane - 1) mod ${CFG_conductor_lanes} + 1. Watch with \`swarm.sh watch ${watch} --lane ${CONDUCT_LANE}\`, which reports
+only your lane's PRs. A \`startable:\` line that ends \`(held: clashes with <other> in lane <j> ...)\` touches
+what another lane is building: do not start it; run \`swarm.sh hold <slug> '<why>'\` for it, and start it
+in a later wave, once that line is gone. Never start, tell, close, review or merge another lane's story
+or PR, even when \`swarm.sh status\` names it: its own conductor has it. Leave it, and wait on.
 EOF
 }
 
@@ -1100,6 +1121,7 @@ goal_rule_if_on() { [[ "${CFG_goal}" == off ]] || printf '\n\n%s' "$(goal_rule)"
 stacked_rule() {
   local mine="a story with \`epic: $1\`"
   [[ "$1" != backlog ]] || mine="a story with no \`epic:\`"
+  [[ -z "${CONDUCT_LANE:-}" ]] || mine+=" in your lane (above)"
   cat <<EOF
 After each \`swarm.sh wait\` or \`swarm.sh watch\` returns (after its inbox pass, below), and after a
 builder opens a PR, $(startable_rule "$1") Yours is ${mine}; a ready story whose worktree exists has
@@ -1150,7 +1172,7 @@ conduct_story_mode() {
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as reference.md
 § Building describes: pick waves of \`ready\` stories that do not clash,
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
+\`swarm.sh watch --epic ${epic}${CONDUCT_LANE:+ --lane ${CONDUCT_LANE}}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
 
 $(clash_rule)
@@ -1185,7 +1207,7 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`."
 Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as reference.md
 § Building describes: pick waves of them that do not clash, start each with
 \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch --backlog\` in the background, and review each PR. Each story's base branch is in
+\`swarm.sh watch --backlog${CONDUCT_LANE:+ --lane ${CONDUCT_LANE}}\` in the background, and review each PR. Each story's base branch is in
 its brief, .swarm/briefs/<slug>.md.
 
 A ready story whose worktree exists (\`<repo>-wt/<slug>\` beside its repo) has already started: never
@@ -1301,6 +1323,27 @@ epic_env() {
   printf '%s' "${out# }"
 }
 
+# conduct_clash <epic>|backlog <lane> — die, naming it, when a conductor of <epic> under another
+# conductor_lanes is running (a lane-less one beside lanes, or a lane past N), or when lane <lane>'s
+# name is another epic's lane-less conductor's (an epic named <epic>-l<lane>, or a cut at 32).
+conduct_clash() {
+  local c n e
+  while IFS= read -r c; do
+    [[ -n "${c}" && "$(conduct_epic "${c}")" == "$1" ]] || continue
+    n="$(conduct_lane "${c}")"
+    if [[ -z "$2" && -n "${n}" ]] || [[ -n "$2" && ( -z "${n}" || ${n} -gt ${CFG_conductor_lanes} ) ]]; then
+      die "conduct: ${c} runs for ${1} under another conductor_lanes; let it report and close it (swarm.sh close ${c}) first"
+    fi
+  done <<< "$(running_conductors)"
+  [[ -n "$2" ]] || return 0
+  n="$(conductor_name "$1" "$2")"
+  while IFS= read -r e; do
+    e="$(basename "${e}" .md)"
+    [[ "${e}" == "$1" || "$(conductor_name "${e}")" != "${n}" ]] \
+      || die "conduct: lane $2's conductor would be named ${n}, the epic ${e}'s conductor's name; rename one of them"
+  done < <(ls "${BOARD}/epics"/*.md 2>/dev/null)
+}
+
 # start_conductor <epic>|--backlog [lane] — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
 # With conductor_lanes above 1, <lane> is required: lane <lane>'s conductor, with a brief, report, inbox
@@ -1323,6 +1366,7 @@ start_conductor() {
     [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
+  conduct_clash "${epic}" "${lane}"
   require_claude
   if [[ "$1" == --backlog ]]; then names="$(epic_env "")"; else names="$(epic_env "${epic}")"; fi || die "${names}"
   name="$(conductor_name "${epic}" "${lane}")"; free_agent_name "${name}"   # a name held elsewhere leaves the report be
@@ -1332,7 +1376,7 @@ start_conductor() {
   report="${PROJECT_DIR}/.swarm/conduct-${key}.report.md"
   # A report left by an earlier run is not this one's. Its time, when that run ended, goes to
   # events.tsv first: outcomes' held_min ends the run there.
-  [[ ! -f "${report}" ]] || record_event report "${epic}" "ok ($(date -u -r "${report}" +%Y-%m-%dT%H:%M:%SZ))"
+  [[ ! -f "${report}" ]] || record_event report "${key}" "ok ($(date -u -r "${report}" +%Y-%m-%dT%H:%M:%SZ))"
   rm -f "${report}"
   read -r ws placeholder <<< "$(epic_workspace "${label}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.

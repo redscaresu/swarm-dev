@@ -33,7 +33,7 @@
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
 import collections, datetime, functools, glob, os, subprocess, sys, time
 import touches_rows
-from report import agent_name
+from report import agent_name, run_key, run_names, run_report
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
 project_dir = os.path.dirname(os.path.dirname(findings))
 board, repos_dir = os.environ.get("SWARM_BOARD", ""), os.environ.get("SWARM_REPOS_DIR", "")
@@ -108,25 +108,26 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     elif e[1] in ("review", "kept"):
         reviews[agent_name(e[2])].append(t)
     elif e[1] == "conduct":
-        conducts[e[2]].append(t)
+        conducts[run_key(e[2])].append(t)
     elif e[1].split(":")[0] == "close":
         closes[agent_name(e[2])].append(t)
         stops[agent_name(e[2])].append(t)
     elif e[1] == "reconcile" and e[4].startswith("ok (finished"):
         stops[agent_name(e[2])].append(t)
     elif e[1] == "report" and secs(e[4][len("ok ("):-1]) is not None:
-        reports["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
+        reports[run_key(e[2])].append(secs(e[4][len("ok ("):-1]))
 
-def conductor_runs(key):
-    # The (start, end) of each run of the epic's conductor (key --backlog for the backlog's).
-    if key == "--backlog":
-        ends = [t for n in {"conduct-backlog", os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")} - {""} for t in closes[n]]
-    else:
-        ends = list(closes[agent_name("conduct-" + key)])
-    report = os.path.join(os.path.dirname(events), f"conduct-{'backlog' if key == '--backlog' else key}.report.md")
+def one_runs(key):
+    # The (start, end) of each run of one conductor: an epic's, the backlog's (--backlog) or a lane's (.l<k>).
+    ends = [t for n in run_names(key) for t in closes[n]]
+    report = run_report(os.path.dirname(events), key)
     ends += reports[key] + ([os.path.getmtime(report)] if os.path.exists(report) else [])
     starts = sorted(conducts[key])
     return [(s, min([t for t in ends + starts[i + 1:] if t > s] + [hi])) for i, s in enumerate(starts)]
+
+def conductor_runs(key):
+    # The runs of the epic's conductors (key --backlog for the backlog's), each lane's too.
+    return [r for k in [key] + sorted(k for k in list(conducts) if k.startswith(key + ".l")) for r in one_runs(k)]
 
 # Stories are keyed by agent_name: a build with no session log has only agents.tsv's name, which
 # agent_name cuts to 32 characters. full_of gives a key's slug, for its story file.

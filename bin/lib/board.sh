@@ -330,9 +330,12 @@ conductors_queued() {
 # or the backlog's), once per repo (watch_repos warn: one that cannot be resolved is warned of and
 # skipped). Nothing when the scope cannot be read (watch_scope dies): next goes on.
 queued_lines() {
-  local e scope r
-  e="$(conduct_epic "$1")"
+  local e scope r lane
+  e="$(conduct_epic "$1")"; lane="$(conduct_lane "$1")"
   if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
+  # A lane conductor's own lane only (with one lane now, or a lane past it, all of its epic).
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${lane}" ]] || (( CFG_conductor_lanes == 1 || lane > CFG_conductor_lanes )) || scope+=(--lane "${lane}")
   (
     watch_scope "${scope[@]}"; watch_repos warn
     # Guarded: bash 3.2's set -u calls an empty array unbound, and no repo may have resolved.
@@ -1109,9 +1112,11 @@ unblock() {
 # finished, so after unblock (its last merge may ready another epic's stories) nothing is startable. A
 # line ends (stacked on <parents>) while depends_on has open stories, as story stacks it, and (its PR
 # <url> was closed unmerged) when the story's last event is reconcile's reopen, for the lead. With
-# <lane>, only the stories in that conductor lane (story_lane).
+# <lane>, only the stories in that conductor lane (story_lane), and a line ends (held: clashes with
+# <other> in lane <j> on <entries>) while a story of the same epic in another lane whose build has
+# started (a worktree, or in review) touches what it touches (lane_clash).
 unblock_startable() {
-  local want="$1" lane="${2:-}" slug e f open why
+  local want="$1" lane="${2:-}" slug e f open why held=""
   unblock
   if [[ "${want}" == --backlog ]]; then want=-
   else [[ -f "${BOARD}/epics/${want}.md" ]] || return 0; fi
@@ -1124,8 +1129,25 @@ unblock_startable() {
     if [[ "$(last_event "${slug}")" == $'reconcile	ok (reopened)' ]]; then
       why="its PR$(fm "${f}" prs | sed 's/^./ &/') was closed unmerged"
     fi
+    [[ -z "${lane}" ]] || held="$(lane_clash "${slug}" "${lane}")"
+    [[ -z "${held}" ]] || why="${held}"
     echo "startable: ${slug}${why:+ (${why})}"
   done < <(board_ready)
+}
+
+# lane_clash <slug> <lane> — "held: clashes with <other> in lane <j> on <entries>" for the first story of
+# <slug>'s own epic (or the backlog) outside lane <lane> whose build has started (its worktree exists,
+# or it is in review) and whose touches overlap <slug>'s (touches_rows, same epic included), else nothing.
+lane_clash() {
+  local other epic status entry mine j
+  mine="$(fm "${BOARD}/stories/$1.md" epic)"
+  while IFS=$'\t' read -r other epic status entry; do
+    [[ -n "${other}" && "${epic}" == "${mine:-none}" ]] || continue
+    j="$(story_lane "${BOARD}/stories/${other}.md")"
+    [[ "${j}" != "$2" ]] || continue
+    [[ "${status}" == review || "${status}" == held ]] || one_off_started "${other}" || continue
+    echo "held: clashes with ${other} in lane ${j} on ${entry}"; return 0
+  done <<< "$(SWARM_SAME_EPIC=1 touches_rows "$1" 2>/dev/null)"
 }
 
 # last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated.
