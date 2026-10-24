@@ -29,8 +29,8 @@ each step is in [`reference.md`](reference.md).
    it over. An epic is done when its last story's PR deletes the epic file.
 
 `/swarm-dev:swarm` runs the chain once an HLD or epic is agreed. `swarm.sh next` reads the board and names the next
-step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft epic, a
-`lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
+step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD or epic, a plan or finish PR
+awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
 `depends_on` story (one an agent builds, not in review) shares no file in `touches` with it and has no `needs:` line naming what it uses
 (the lead drops the dependency or adds the line). When the step leaves the builders idle and no
