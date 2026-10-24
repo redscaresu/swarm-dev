@@ -294,6 +294,17 @@ out="$(fresh; cd "${H}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/no
 check "an agreed unplanned HLD: the header's next names plan-hld ha" has "next plan-hld ha" "${out}"
 check "an agreed unplanned HLD has no needs-you row" lacks "HLD ha" "$(lbox "needs you" "${out}")"
 check "a draft HLD beside it keeps its agree draft HLD row" has "! agree draft HLD hd: /hld hd" "$(joined "$(lbox "needs you" "${out}")")"
+# An open plan PR (its worktree), then an open finish PR, is a row status and dash both show, as next's gate does.
+hrun() { # <swarm.sh args...> — in H, with herdr and gh failing
+  fresh; (cd "${H}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "$@" 2>&1 || true)
+}
+mkdir -p "${ROOT}/hproj-wt/_board-plan-ha"
+check "an open plan PR is under status's Waiting on you" has "  plan PR awaiting merge: ha" "$(sed -n '/^Waiting on you$/,/^$/p' <<< "$(hrun status)")"
+check "an open plan PR is a dash needs-you row" has "! plan PR awaiting merge: ha" "$(joined "$(lbox "needs you" "$(hrun dash)")")"
+printf -- '---\nstatus: agreed\nplanned: 2026-10-24\n---\n\n# ha\n' > "${H}/docs/hld/ha.md"
+mv "${ROOT}/hproj-wt/_board-plan-ha" "${ROOT}/hproj-wt/_board-finish-ha"
+check "an open finish PR is under status's Waiting on you" has "  finish PR awaiting merge: ha" "$(sed -n '/^Waiting on you$/,/^$/p' <<< "$(hrun status)")"
+check "an open finish PR is a dash needs-you row" has "! finish PR awaiting merge: ha" "$(joined "$(lbox "needs you" "$(hrun dash)")")"
 
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
