@@ -291,11 +291,12 @@ Repeat until a step below says stop:
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
-     only the user can write and agree it (the lead never sets a draft epic `active` itself, unless
-     it has a `parent:` because it is a split's child, an agreed HLD grants `epics` through its
-     `hld:`, `lead_epics = on` in `.claude/swarm/config`, or the user agreed it through /epic,
-     which writes `agreed:`), so offer to follow `/epic <slug>` to resume it, which
-     opens the co-author's pane and picks up the review and the agreement in the background; a PR
+     only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
+     The lead sets a draft epic `active` itself only when no agreement is needed: it has a
+     `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or
+     `lead_epics = on` in `.claude/swarm/config`. An `agreed:` already on a draft is stale (an epic
+     set back to draft by hand) and does not count. Offer to follow `/epic <slug>` to resume it,
+     which opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. Stop.
    - `done`: say so and stop. If this finds no file (`find <board>/epics <board>/stories

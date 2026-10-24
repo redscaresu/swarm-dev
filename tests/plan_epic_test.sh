@@ -101,7 +101,10 @@ for f in templates/docs/epics/README.md board/epics/README.md; do
   has "epic-format-active-$f" 'new or draft epic goes `active` only with `agreed:`[^.]*`parent:`[^.]*`epics`[^.]*`lead_epics = on`' "$t"
 done
 for f in commands/swarm.md skills/swarm-dev/SKILL.md; do
-  has "never-activate-$f" 'never sets a draft epic `active`[^.]*`parent:`[^.]*`epics`[^.]*`lead_epics' "$(tr '\n' ' ' < "$ROOT/$f" | tr -s ' ')"
+  s=$(tr '\n' ' ' < "$ROOT/$f" | tr -s ' ')
+  has "user-agrees-$f" 'nly the user agrees [^.]*through /epic, which writes `agreed:` as it sets `status: active`' "$s"
+  has "never-activate-$f" 'sets a draft epic `active` itself only when no agreement is needed: it has a `parent:`[^.]*`epics`[^.]*`lead_epics' "$s"
+  has "stale-agreed-$f" 'An `agreed:` already on a draft is stale[^.]*does not count' "$s"
 done
 has epic-resume-stale-review 'on a resume, move it to `D/review-stale.md`' "$eflat"
 has epic-agreed-watched-from-step-3 'watch for `D/agreed` from step 3 on, whatever has or has not happened in this step' "$eflat"
