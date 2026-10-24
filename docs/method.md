@@ -127,7 +127,7 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
 | `escalate_ladder` | empty | models from low to high, each once, such as `sonnet,opus,fable`: swarm.sh steps a struggling build up to the next one in the same worktree. Empty is off (reference.md § The escalation ladder) |
 | `step_up_findings` | `3` | `N`: with `escalate_ladder` set, a build's Nth round of review findings steps it up instead of being sent (reference.md § Settings) |
-| `top_rung_rounds` | `2` | `N`: with `escalate_ladder` set, the Nth round of review findings on its top rung holds the story for the lead instead (reference.md § Settings) |
+| `top_rung_rounds` | `2` | `N`: with `escalate_ladder` set, the Nth round of review findings on its top rung holds the story for the lead instead; at least `2` (reference.md § Settings) |
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |
 | `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference.md § Building) |
