@@ -2,8 +2,8 @@
 # removed_test.sh — the switches, modes and reports that were removed stay gone: none of their names
 # is in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh (this file excepted), and they say
 # verify only as git's --verify, or in the one LEGACY_BUILDER_ROLES line that keeps past verify
-# builds counted. cost, features
-# and review-yield, folded into flow, each print the flow section that holds their numbers and exit 0.
+# builds counted. cost, features and review-yield, folded into flow, each print the flow section that
+# holds their numbers and exit 0.
 # lessons, its rule PRs and its rules check stay gone from bin/ and commands/, whose collect step
 # files a checks: story instead.
 set -euo pipefail
