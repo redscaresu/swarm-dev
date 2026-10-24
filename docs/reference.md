@@ -1286,7 +1286,7 @@ epic's stories (from `outcomes`). A `review` line counts once for each PR it nam
 story's (found through `outcomes`, so an epic's review reaches its stories), else as its target's. A
 loop's PR is the URL on its `ok` `review` line, else its build's `outcomes` row's (the row of its
 builder's latest `agents.tsv` line, as `outcomes` has one row per 7-field line), else `-`. Rounds
-count per PR, as `log-finding --round` numbers them (the n-th review of a PR is its round n): a build
+count per PR, as findings' `--round` numbers them (the n-th review of a PR is its round n): a build
 on a PR starts after the rounds of the builds on it before. Each finding with a `--round` goes to one
 loop, the one whose rounds hold its round (the last on its PR takes any later round), so two builds
 on one PR never count a finding twice. A finding with no `--round`, or on a PR no loop has, counts
