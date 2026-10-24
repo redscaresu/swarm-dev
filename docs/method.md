@@ -19,7 +19,7 @@ each step is in [`reference.md`](reference.md).
    same repo, or when either names the bare file of a file the other also names; otherwise both
    build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
-   (one review whose findings went back to the builder), `/code-review` only the first that changes
+   (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
    code. A review on the latest head whose findings are all declined is a pass: the conductor
    rebuts each in the PR, logs it as declined (reference.md § The outer loop), then merges it or hands it over.
 

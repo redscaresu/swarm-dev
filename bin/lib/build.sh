@@ -54,8 +54,8 @@ Never wait for other PRs or reviews to gather first: run one review agent for ev
 once, with no cap below the number of green PRs. When \`swarm.sh watch\` prints, or the lead sends
 you, \`queued: <repo> #<n> <branch> green <m>m with no review on <sha>\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
 or has uncommitted changes: wait for the builder, then start it again. The review agent, review-<slug>, is read-only and runs in
-the story's worktree: it runs codex-review with the story's slug and, once per story, on the first
-round whose PR changes code (not only docs, board files or a dependency bump),
+the story's worktree: it runs codex-review with the story's slug and, on the story's first round
+only, when the PR changes code (not only docs, board files or a dependency bump),
 \`/code-review <PR>\` (review-agent counts the rounds itself), judges only the story's touches
 and **Done when**, and writes ${PROJECT_DIR}/.swarm/reviews/<slug>.md: a \`head: <SHA>\` line
 naming the commit it reviewed, its findings, and an out-of-scope section. Wait on each with
@@ -573,8 +573,6 @@ review_agent() {
   mkdir -p "${out%/*}"
   prompt="${PROJECT_DIR}/.swarm/briefs/review-${slug}.md"; mkdir -p "${prompt%/*}"
   round="$(review_round "${slug}")"
-  # A fresh build's first round reviews a new PR: an old build's /code-review does not cover it.
-  [[ "${round}" != 1 ]] || rm -f "${out%.md}.code-review"
   review_brief "${slug}" "${pr}" "${base}" "${out}" "${head}" "${round}" > "${prompt}"
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
@@ -736,22 +734,18 @@ EOF
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: read-only, the
-# story's touches and Done when, codex-review with the slug, /code-review when the PR changes code and no
-# earlier round ran it (its <findings file>.code-review marker, which the agent writes after one), the
+# story's touches and Done when, codex-review with the slug, /code-review on round 1 when the PR changes code, the
 # project's rules, and each finding written to the absolute <findings file> (the agent's cwd is the
 # worktree) under its head: line, with work outside the story listed apart for the conductor to decline.
 review_brief() {
-  local story="${BOARD}/stories/$1.md" rules cr marker="${4%.md}.code-review"
-  cr="This is review round $6 of the story, and an earlier round ran \`/code-review\` (${marker}
-exists): run codex alone, not \`/code-review\`."
-  [[ -f "${marker}" ]] || cr="This is review round $6 of the story. When the PR
+  local story="${BOARD}/stories/$1.md" rules cr
+  cr="This is review round $6 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
+  [[ "$6" != 1 ]] || cr="This is review round 1 of the story. When the PR
 changes code (not only docs, board files or a dependency bump), state the touches and Done when
-above, then run \`/code-review $2\`. Once it finishes, write ${marker} with the Write tool,
-holding one line, \`head: $5\`, so later rounds skip it."
+above, then run \`/code-review $2\`."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. You are read-only: never edit,
-commit or push here, and never merge, by any route. The files you write are ${4} and, after
-\`/code-review\`, ${marker}.
+commit or push here, and never merge, by any route. The one file you write is ${4}.
 
 The story touches: $(fm "${story}" touches)
 
