@@ -702,20 +702,29 @@ start_rung() {
     "$( [[ ! -f "${prompt%.md}.findings.md" ]] || echo "${prompt%.md}.findings.md")" > "${prompt}"
   n="$(wc -l < "${AGENTS_LOG}")"; n=$((n)); since="$(date +%s)"   # before the brief, for send_goal
   set +e
-  (set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
+  (set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" "${to}") 2> "${prompt%.md}.start-err"
   rc=$?
   set -e
+  cat "${prompt%.md}.start-err" >&2
   if [[ ${rc} -ne 0 ]] && awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR > n && $3 == a { f = 1 } END { exit !f }' "${AGENTS_LOG}"; then
-    # Recorded, but its brief was not taken up: closed (it would sit idle with no brief), and not on
-    # record until a resume starts it. A pane already gone is no reason to stop.
-    shut_agent "${slug}" >/dev/null 2>&1 || true
-    # Its line goes under the lock record_agent appends under, held from the read to the replace, so
-    # a line another conductor records meanwhile is kept.
-    state_lock "${AGENTS_LOG}.lock"
-    { awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
-        && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"; } || echo "step-up: could not take ${slug}'s unstarted ${to} builder off ${AGENTS_LOG}" >&2
-    rm -f "${AGENTS_LOG}.tmp"; rmdir "${AGENTS_LOG}.lock"
+    # Recorded, but its brief read as not taken up, or unsure: a slow starter may only need longer
+    # than its window, so it is read once more (rung_late) before anything is closed.
+    if grep -qE 'the brief was not taken up|may or may not have the brief' "${prompt%.md}.start-err" \
+       && rung_late "${slug}" "${to}"; then
+      rc=0
+    else
+      # Its brief was not taken up: closed (it would sit idle with no brief), and not on record
+      # until a resume starts it. A pane already gone is no reason to stop.
+      shut_agent "${slug}" >/dev/null 2>&1 || true
+      # Its line goes under the lock record_agent appends under, held from the read to the replace, so
+      # a line another conductor records meanwhile is kept.
+      state_lock "${AGENTS_LOG}.lock"
+      { awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
+          && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"; } || echo "step-up: could not take ${slug}'s unstarted ${to} builder off ${AGENTS_LOG}" >&2
+      rm -f "${AGENTS_LOG}.tmp"; rmdir "${AGENTS_LOG}.lock"
+    fi
   fi
+  rm -f "${prompt%.md}.start-err"
   [[ ${rc} -eq 0 ]] \
     || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
   # The rung runs: from here nothing is a failed step-up (step_up_failed's trap).
@@ -731,6 +740,18 @@ start_rung() {
   rc=$?
   set -e
   [[ ${rc} -eq 0 ]] || echo "swarm: ${slug}: stepped up, and its ${to} builder runs, but its /goal did not set (see above): send ${prompt%.md}.goal.md as its /goal by hand" >&2
+}
+
+# rung_late <slug> <model> — warn that <slug>'s new <model> builder has not shown it took up its
+# brief, and read it once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle,
+# no turn). Succeeds when that read finds it working, blocked or past a turn; an agent still idle
+# with no turn, or gone, fails, and start_rung closes it.
+rung_late() {
+  # shellcheck disable=SC2034 # prompt_settle reads SETTLE_READS
+  local PROMPT_TIMEOUT_MS SETTLE_READS
+  settle_window "${SLOW_PROMPT_TIMEOUT_MS}"
+  echo "step-up: warning: ${1}'s ${2} builder has not shown it took up its brief; its pane is kept and read again for $((PROMPT_TIMEOUT_MS / 1000))s before it is closed" >&2
+  [[ "$(prompt_settle "$(agent_name "$1")" idle -)" == taken ]]
 }
 
 # step_up_failed <slug> — step_up's exit trap once the old builder is closed: on a failure (start_rung
