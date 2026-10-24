@@ -180,7 +180,14 @@ Repeat until a step below says stop:
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. With
-     `conductor_lanes` above 1, run `swarm.sh conduct <epic> --lane <k>` for each lane k instead.
+     `conductor_lanes` above 1 the step is `conduct <epic> --lane <k>` (or `conduct --backlog --lane
+     <k>`), for a lane with ready stories and no conductor, even while another conductor works. Run
+     it as written, and do the same for each `also: conduct ... --lane <k>` line after the why. Then
+     handle each as `wait` on the conductor it started: `conduct-<epic>-l<k>`, or for the backlog
+     the `conduct-backlog-...-l<k>` name `swarm.sh status` lists. When the why begins `no conductor
+     for epic <e> of lane <k> started:` or `no backlog conductor of lane <k> started:`, a new
+     conductor would stop as that lane's last one did: run nothing, tell the user what the why says
+     and what clears it (as for `story` below), and stop.
    - `resume <slug>`: a one-off that an earlier run started (its worktree exists). If the last
      `.swarm/conduct-backlog.report.md` lists `<slug>` under `not started:` (a build that died
      leaves a worktree with no builder and no PR), start no new conductor: `next` names it again for

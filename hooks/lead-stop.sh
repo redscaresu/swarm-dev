@@ -11,7 +11,9 @@
 # own step, so it always blocks. hld has started once its finish board-PR worktree,
 # <repo>-wt/_board-finish-<hld>, exists. Another step has started when herdr runs an agent in one of
 # the project's panes (.swarm/state) named as agent_name names it (the subject, or conduct-<epic> for
-# conduct; for story and resume, the backlog conductor too, not a retired one), or for plan-epic any
+# conduct, or for conduct <epic>|--backlog --lane <k> that lane's, as swarm.sh _conductor names it,
+# whose stop counts too once its report is newer than every story and epic;
+# for story and resume, the backlog conductor too, not a retired one), or for plan-epic any
 # agent in tab scope-<epic> or scope-<epic>-<n> (plan-hld: plan-<hld>). A pane with no agent, or one
 # herdr calls unknown, is no agent. The stops the lead makes to wait on the user count as started
 # too: plan-epic once its plan is reported (the critic's answer in .swarm/<epic>/, newer than the
@@ -141,13 +143,14 @@ not_started() {
     if (i && (c == "" || c == " " || c == "(")) f = 1 } END { exit !f }' "${REPORT}" 2>/dev/null
 }
 
-# backlog_stopped — the backlog conductor's report is newer than every story and epic: a new one
-# would stop the same way, so the lead tells the user why and stops (commands/swarm.md, story).
+# backlog_stopped [report] — the backlog conductor's report (or <report>, a lane's) is newer than every
+# story and epic: a new one would stop the same way, so the lead tells the user why and stops
+# (commands/swarm.md, story and conduct).
 backlog_stopped() {
-  local b
-  [[ -f "${REPORT}" ]] || return 1
+  local b r="${1:-${REPORT}}"
+  [[ -f "${r}" ]] || return 1
   b="$(board)" || allow
-  [[ -z "$(find "${b}/stories" "${b}/epics" \( -name '*.md' -o -type d \) -newer "${REPORT}" 2>/dev/null)" ]]
+  [[ -z "$(find "${b}/stories" "${b}/epics" \( -name '*.md' -o -type d \) -newer "${r}" 2>/dev/null)" ]]
 }
 
 # plan_drafted <subject> <branch> <file> — the plan is reported and waits on the user: the critic's
@@ -187,7 +190,10 @@ started() {
     hld)       [[ -d "$(dirname "${project}")/$(basename "${project}")-wt/_board-finish-${subject}" ]] ;;
     story)     backlog_stopped || live "$(name "${subject}")" "" 1 ;;
     resume)    not_started "${subject}" || backlog_stopped || live "$(name "${subject}")" "" 1 ;;
-    conduct)   live "$(name "conduct-${subject}")" "" 0 ;;
+    conduct)   if [[ "${flag}" == --lane ]]; then
+                 backlog_stopped "${project}/.swarm/conduct-${subject#--}.l${lane}.report.md" && return 0
+                 n="$(swarm _conductor "${subject#--}" "${lane}")" || allow; live "${n}" "" 0
+               else live "$(name "conduct-${subject}")" "" 0; fi ;;
     collect)   return 1 ;;
     *)         return 0 ;;
   esac
@@ -195,8 +201,8 @@ started() {
 
 step=-
 line="$(swarm _step | sed -n 1p)" && [[ -n "${line}" ]] || allow
-read -r step subject _ <<< "${line}"
-subject="${subject:-}"
+read -r step subject flag lane _ <<< "${line}"
+subject="${subject:-}"; flag="${flag:-}"; lane="${lane:-}"
 if started; then log "${step}" allowed; exit 0; fi
 log "${step}" blocked
 LINE="${line}" python3 -I -c 'import json, os

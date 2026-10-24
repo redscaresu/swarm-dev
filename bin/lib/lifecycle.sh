@@ -2086,7 +2086,7 @@ upgrade_herdr() { if [[ -n "${UPGRADE_HERDR}" ]]; then printf '%s\n' "${UPGRADE_
 # stayed busy, or it wrote none.
 upgrade_held_why() {
   local f
-  f="$(cat "${UPGRADE_DIR}/hand-$(conductor_name "$1")" 2>/dev/null)" || f=""
+  f="$(cat "${UPGRADE_DIR}/hand-$(key_conductor "$1")" 2>/dev/null)" || f=""
   if [[ -n "${f}" && -s "${f}" ]]; then echo "its conductor wrote its handover but stayed busy"; else echo "its conductor wrote no handover"; fi
 }
 
@@ -2151,21 +2151,27 @@ upgrade_left() {
 }
 
 # upgrade_epic <name> <role> — the epic whose conductor <name> answers to, kept for the run: a
-# conductor's own (conduct_epic), a builder's or review agent's story's (backlog: none), - for one
-# with no story.
+# conductor's own (conductor_key), a builder's or review agent's story's (backlog: none), - for one
+# with no story. With conductor_lanes above 1, a lane's: <epic>.l<k>, k the story's lane (story_lane).
 upgrade_epic() {
   local f="${UPGRADE_DIR}/epic-$1" s e=-
   [[ ! -s "${f}" ]] || { cat "${f}"; return; }
-  if [[ "$2" == conduct ]]; then e="$(conduct_epic "$1")"
+  if [[ "$2" == conduct ]]; then e="$(conductor_key "$1")"
   else
     while IFS= read -r s; do
       [[ "$(agent_name "$(basename "${s}" .md)")" == "$1" || "$(agent_name "review-$(basename "${s}" .md)")" == "$1" ]] || continue
-      e="$(fm "${s}" epic)"; e="${e:-backlog}"; break
+      e="$(fm "${s}" epic)"; e="${e:-backlog}"
+      # shellcheck disable=SC2154 # assigned in another file
+      (( CFG_conductor_lanes == 1 )) || e+=".l$(story_lane "${s}")"
+      break
     done < <(board stories)
   fi
   echo "${e}" > "${f}"
   echo "${e}"
 }
+
+# key_conductor <epic> — the conductor of upgrade_epic's <epic>: <epic>.l<k> is lane k's.
+key_conductor() { if [[ "$1" == *.l* ]]; then conductor_name "${1%.l*}" "${1##*.l}"; else conductor_name "$1"; fi; }
 
 # upgrade_hold <epic> <list> — whether <epic>'s builders wait on its conductor: left when it was left
 # (or kept) with no handover, wait while it is in <list> (upgrade_list, not yet moved) and not idle with its
@@ -2174,7 +2180,7 @@ upgrade_epic() {
 upgrade_hold() {
   local c
   [[ "$1" != - ]] || return 0
-  c="$(conductor_name "$1")"
+  c="$(key_conductor "$1")"
   [[ ! -e "${UPGRADE_DIR}/ready-${c}" && ! -e "${UPGRADE_DIR}/gone-${c}" ]] || return 0
   if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left
   elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi   # loose-match: ok conductor names are [a-z0-9_-], anchored by ^ and a tab
@@ -2265,7 +2271,7 @@ upgrade_conductor() {
 # run restarted and which it left.
 upgrade_about() {
   local f n c moved="" left=""
-  c="$(conductor_name "$1")"
+  c="$(key_conductor "$1")"
   for f in "${UPGRADE_DIR}"/epic-*; do
     n="${f##*/epic-}"
     [[ -e "${f}" && "${n}" != "${c}" && "$(cat "${f}")" == "$1" ]] || continue
@@ -2276,13 +2282,14 @@ upgrade_about() {
 }
 
 # upgrade_want <epic>|backlog — the agent names upgrade moves, space-separated with a space each side:
-# the conductor and, for each story of <epic> (backlog: with no epic), its builder and review agent.
-# Empty with no argument: every agent.
+# the conductor (each lane's too, with conductor_lanes above 1) and, for each story of <epic> (backlog:
+# with no epic), its builder and review agent. Empty with no argument: every agent.
 upgrade_want() {
-  local f e="$1" want
+  local f e="$1" want k
   [[ -n "$1" ]] || return 0
   [[ "${e}" != backlog ]] || e=""
   want=" $(conductor_name "$1") "
+  (( CFG_conductor_lanes == 1 )) || for ((k = 1; k <= CFG_conductor_lanes; k++)); do want+="$(conductor_name "$1" "${k}") "; done
   while IFS= read -r f; do
     [[ "$(fm "${f}" epic)" == "${e}" ]] || continue
     f="$(basename "${f}" .md)"; want+="$(agent_name "${f}") $(agent_name "review-${f}") "
@@ -2346,9 +2353,9 @@ upgrade_told() {
 # upgrade_env <name> <role> [epic] — the env: names clean_env gives <name> again: a conductor's epic's
 # (epic_env, empty for the backlog's), a builder's story's (story_env), none for any other agent.
 upgrade_env() {
-  local f
+  local f e="${3%.l*}"   # a lane's key (upgrade_epic) is its epic's
   if [[ "$2" == conduct ]]; then
-    if [[ "$3" == backlog ]]; then epic_env ""; else epic_env "$3"; fi
+    if [[ "${e}" == backlog ]]; then epic_env ""; else epic_env "${e}"; fi
     return
   fi
   [[ " ${BUILDER_ROLES} " == *" $2 "* ]] || return 0

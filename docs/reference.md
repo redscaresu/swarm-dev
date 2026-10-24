@@ -316,8 +316,13 @@ conductor. `unblock --startable <epic>|--backlog --lane <k>` prints only lane k'
 lane's brief tells its conductor to build, review and merge only its own stories and never touch
 another lane's PR. A `swarm.sh tell <conductor> note` to the name without a lane goes to every running
 lane's inbox. Conductors that start on their own (below) start one per lane that has ready stories,
-and the notes after `merge --board` go to each lane with its own stories. With N = 1 nothing changes:
-no `--lane`, and the names above.
+and the notes after `merge --board` go to each lane with its own stories. `swarm.sh next` prints
+`conduct <epic> --lane <k>` (or `conduct --backlog --lane <k>`) for the first lane with ready stories
+and no conductor running, even while another conductor works, and an `also: conduct ... --lane <k>`
+line after the why for each other such lane. It names `collect <conductor>` for a lane that has
+reported only once every running lane of its epic or backlog has. `swarm.sh status`, `wait` and `wait --until-report` take a lane
+conductor's name like any other, and `swarm.sh upgrade` pauses each lane's conductor for its own
+builders. With N = 1 nothing changes: no `--lane`, and the names above.
 
 Conductors also start on their own, the backlog's and an epic's alike: after `swarm.sh merge
 --board` lands, once it has sent its notes (a conductor's own board merge included), and from
