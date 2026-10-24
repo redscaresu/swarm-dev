@@ -15,11 +15,14 @@
 # Epic e4's review hands over s-epic's PR (from its outcomes row) with another: s-epic passes. A review
 # hand-over alone is no merge: pass and merged-after-fixes need a merge line or the PR merged in outcomes,
 # so s-retry's P3, handed over and never merged, and s-two's P7, closed, are open. s-same is built twice
-# on one PR: each finding goes to the build running on the day it was logged. s-nopr's rebuild has no PR
+# on one PR: each finding goes to the build whose rounds hold its round. s-nopr's rebuild has no PR
 # yet: it takes none of its first build's findings. s-ref's step-up is refused before it changed
 # anything: no failed step-up. s-nor only steps up, with no review: a row with no round and no end
 # state. s-esc's escalate build starts late on 10-04 and is reviewed on 10-05: its start line puts it in
-# a 10-04 window. TZ is UTC.
+# a 10-04 window. Rounds count per PR: s-same's second build's review is its PR's round 2. s-agent's
+# conductor-started builder (an agent line) is a build on sonnet, its own agents.tsv line, so the escalate
+# build after it runs on fable with its own outcomes row's PR. s-mm merges, then is built again: the
+# rebuild is its own loop. s-retry's fable round fixes one: the top rung's share. TZ is UTC.
 set -euo pipefail
 export TZ=UTC
 
@@ -30,7 +33,7 @@ trap 'rm -rf "${dir}"' EXIT
 export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 S="${dir}/.swarm"
 mkdir -p "${S}"
-P1=https://github.com/o/r/pull/1 P2=https://github.com/o/r/pull/2 P3=https://github.com/o/r/pull/3 P4=https://github.com/o/r/pull/4 P5=https://github.com/o/r/pull/5 P6=https://github.com/o/r/pull/6 P7=https://github.com/o/r/pull/7 P8=https://github.com/o/r/pull/8 P10=https://github.com/o/r/pull/10 P11=https://github.com/o/r/pull/11
+P1=https://github.com/o/r/pull/1 P2=https://github.com/o/r/pull/2 P3=https://github.com/o/r/pull/3 P4=https://github.com/o/r/pull/4 P5=https://github.com/o/r/pull/5 P6=https://github.com/o/r/pull/6 P7=https://github.com/o/r/pull/7 P8=https://github.com/o/r/pull/8 P10=https://github.com/o/r/pull/10 P11=https://github.com/o/r/pull/11 P12=https://github.com/o/r/pull/12 P13=https://github.com/o/r/pull/13 P14=https://github.com/o/r/pull/14 P15=https://github.com/o/r/pull/15
 printf '%s\n' $'2026-10-01\tcode\ts-loop\tclaude\topus\txhigh\ta1' $'2026-10-01\treview\treview-s-loop\tclaude\topus\thigh\ta2' \
   $'2026-10-01\tescalate\ts-loop\tclaude\tfable\txhigh\ta3' $'2026-10-01\tcode-risky\ts-held\tclaude\topus\txhigh\ta4' \
   $'2026-10-01\tcode\ts-retry\tclaude\tsonnet\thigh\ta5' $'2026-10-01\tescalate\ts-retry\tclaude\topus\txhigh\ta6' \
@@ -42,7 +45,9 @@ printf '%s\n' $'2026-10-01\tcode\ts-loop\tclaude\topus\txhigh\ta1' $'2026-10-01\
   $'2026-10-01\tcode\ts-nopr\tclaude\topus\thigh\te1' $'2026-10-02\tcode\ts-nopr\tclaude\topus\thigh\te2' \
   $'2026-10-01\tcode\ts-ref\tclaude\topus\thigh\tf1' $'2026-10-01\tcode\ts-nor\tclaude\tsonnet\thigh\tg1' \
   $'2026-10-01\tescalate\ts-nor\tclaude\topus\txhigh\tg2' $'2026-10-01\tcode\ts-esc\tclaude\topus\thigh\th1' \
-  $'2026-10-04\tescalate\ts-esc\tclaude\tfable\txhigh\th2' > "${S}/agents.tsv"
+  $'2026-10-04\tescalate\ts-esc\tclaude\tfable\txhigh\th2' $'2026-10-01\tcode\ts-agent\tclaude\topus\thigh\ti1' \
+  $'2026-10-01\tcode-sonnet\ts-agent\tclaude\tsonnet\thigh\ti2' $'2026-10-01\tescalate\ts-agent\tclaude\tfable\txhigh\ti3' \
+  $'2026-10-01\tcode\ts-mm\tclaude\topus\thigh\tj1' $'2026-10-01\tcode\ts-mm\tclaude\topus\thigh\tj2' > "${S}/agents.tsv"
 ev() { printf '%sT%s:00Z\t%s\t%s\t-\t%s\n' "${DAY:-2026-10-01}" "$1" "$2" "$3" "$4" >> "${S}/events.tsv"; }
 ev 10:00 story s-loop ok
 ev 11:00 review-agent s-loop ok
@@ -111,22 +116,40 @@ DAY=2026-10-04 ev 23:50 escalate s-esc "ok (attempt 2)"
 DAY=2026-10-04 ev 23:50 story s-esc ok
 DAY=2026-10-05 ev 00:10 review-agent s-esc ok
 DAY=2026-10-05 ev 00:20 tell:findings s-esc ok
+ev 05:00 story s-agent ok
+ev 05:10 review-agent s-agent ok
+ev 05:20 tell:findings s-agent ok
+ev 05:30 agent s-agent ok
+ev 05:40 review-agent s-agent ok
+ev 05:50 tell:findings s-agent ok
+ev 06:00 escalate s-agent "ok (attempt 2)"
+ev 06:00 story s-agent ok
+ev 06:10 review-agent s-agent ok
+ev 06:20 merge s-agent ok
+ev 03:00 story s-mm ok
+ev 03:10 review-agent s-mm ok
+ev 03:20 merge s-mm ok
+ev 04:00 story s-mm ok
+ev 04:10 review-agent s-mm ok
+ev 04:20 tell:findings s-mm ok
 f() { printf '%s\tbug\t%s\tx\t%s\tcodex\t%s\t%s\n' "${DAY:-2026-10-01}" "$1" "$2" "$3" "$4" >> "${S}/findings.tsv"; }
 f "${P1}" fixed "" 1; f "${P1}" fixed "" 1; f "${P1}" declined nit 1
 f "${P1}" fixed "" 2
 f "${P1}" fixed "" 3; f "${P1}" declined nit 3; f "${P1}" declined wrong 3
 f "${P2}" fixed "" 1; f "${P2}" fixed "" 2
 f "${P5}" fixed "" 1; f "${P5}" fixed "" 1
-f "${P10}" fixed "" 1; DAY=2026-10-02 f "${P10}" fixed "" 1; DAY=2026-10-02 f "${P10}" declined nit 1
+f "${P10}" fixed "" 1; DAY=2026-10-02 f "${P10}" fixed "" 2; DAY=2026-10-02 f "${P10}" declined nit 2
+f "${P3}" fixed "" 1
 f "${P11}" fixed "" 1; DAY=2026-10-02 f "${P11}" declined nit 1
 rows="$(printf '%s\t%s\t%s\t%s\t%s\n' date slug epic pr pr_state 2026-10-01 s-loop e1 '' '' 2026-10-01 s-held e2 "${P2}" OPEN \
   2026-10-01 s-epic e4 "${P4}" MERGED 2026-10-01 s-rb e5 "${P5}" OPEN 2026-10-01 s-rb e5 "${P5}" OPEN 2026-10-01 s-rb e5 "${P6}" MERGED \
   2026-10-01 s-two e6 "${P7}" CLOSED 2026-10-01 s-two e6 "${P8}" MERGED 2026-10-01 s-same e7 "${P10}" OPEN 2026-10-02 s-same e7 "${P10}" OPEN \
-  2026-10-01 s-nopr e8 "${P11}" OPEN 2026-10-02 s-nopr e8 '' '')"
+  2026-10-01 s-nopr e8 "${P11}" OPEN 2026-10-02 s-nopr e8 '' '' 2026-10-01 s-agent e9 "${P12}" OPEN 2026-10-01 s-agent e9 "${P12}" OPEN \
+  2026-10-01 s-agent e9 "${P13}" MERGED 2026-10-01 s-mm e10 "${P14}" MERGED 2026-10-01 s-mm e10 "${P15}" OPEN)"
 
 loops() { # [since [epic [until]]] — the review_loops section, as flow_sections runs it
   SWARM_FINDING_REVIEWERS="codex" SWARM_LADDER=sonnet,opus,fable SWARM_ROWS="${rows}" python3 "${ROOT}/bin/lib/flow_report.py" \
-    "${1:-0000-00-00}" "${3:-9999-12-30}" "${2:-}" "${S}/agents.tsv" "${S}/events.tsv" "${S}/findings.tsv" x "code code-risky escalate" x x "" x review_loops \
+    "${1:-0000-00-00}" "${3:-9999-12-30}" "${2:-}" "${S}/agents.tsv" "${S}/events.tsv" "${S}/findings.tsv" x "code code-risky code-sonnet escalate" x x "" x review_loops \
     | grep -v '^## review_loops$'
 }
 fails=0
@@ -142,11 +165,11 @@ check "a failed step-up shows on its round, and its PR comes from the outcomes r
 row() { awk -F'\t' -v s="$1" '$1 == s && NF == 8' <<< "${2:-${out}}"; }   # <slug> [output] — its round rows
 end() { sed -n '/^story\tpr\trounds\tend$/,/^$/p' <<< "$1" | grep $'^'"$2"$'\t'; }
 check "end states: pass or merged-after-fixes once merged (a merge line, or merged in outcomes); held-for-lead after an escalated line; else open" \
-  "$(end "${out}" 's-[a-z]*')" "$(printf '%s\t%s\t%s\t%s\n' s-epic "${P4}" 1 pass s-esc - 1 open s-esc - 1 open s-held "${P2}" 2 held-for-lead \
-    s-loop "${P1}" 4 pass s-nopr "${P11}" 1 open s-nopr - 1 open s-part - 1 open s-rb "${P5}" 1 held-for-lead s-rb "${P6}" 1 pass \
-    s-ref - 1 open s-retry - 1 open s-retry "${P3}" 1 open s-same "${P10}" 1 open s-same "${P10}" 1 open s-two "${P7}" 1 open s-two "${P8}" 1 pass)"
+  "$(end "${out}" 's-[a-z]*')" "$(printf '%s\t%s\t%s\t%s\n' s-agent "${P12}" 1 open s-agent "${P12}" 2 open s-agent "${P13}" 1 pass s-epic "${P4}" 1 pass s-esc - 1 open s-esc - 1 open s-held "${P2}" 2 held-for-lead \
+    s-loop "${P1}" 4 pass s-mm "${P14}" 1 pass s-mm "${P15}" 1 open s-nopr "${P11}" 1 open s-nopr - 1 open s-part - 1 open s-rb "${P5}" 1 held-for-lead s-rb "${P6}" 1 pass \
+    s-ref - 1 open s-retry - 1 open s-retry "${P3}" 1 open s-same "${P10}" 1 open s-same "${P10}" 2 open s-two "${P7}" 1 open s-two "${P8}" 1 pass)"
 check "a step-up before review shows on round 1; a restarted review agent times the round from the restart; an escalate build is its own loop, on its model, with its own PR" \
-  "$(row s-retry)" "$(printf '%s\n' $'s-retry\t-\t1\topus\t10\t0\t0\tno-pr: sonnet -> opus ok before review' $'s-retry\t'"${P3}"$'\t1\tfable\t5\t0\t0\t-')"
+  "$(row s-retry)" "$(printf '%s\n' $'s-retry\t-\t1\topus\t10\t0\t0\tno-pr: sonnet -> opus ok before review' $'s-retry\t'"${P3}"$'\t1\tfable\t5\t1\t0\t-')"
 check "a tell whose step-up failed partway closes its round, with a failed findings step-up" "$(row s-part)" \
   $'s-part\t-\t1\topus\t10\t0\t0\tfindings: ? -> ? failed'
 check "a resumed findings step-up stays on its round; each build is its own loop, held or not, with its own outcomes row's PR" \
@@ -156,20 +179,26 @@ check "an escalate build's start line puts its loop in the window" "$(row s-esc 
 check "an epic's review of an earlier build's PR closes that build's round" "$(row s-two)" \
   "$(printf '%s\n' $'s-two\t'"${P7}"$'\t1\topus\t20\t0\t0\t-' $'s-two\t'"${P8}"$'\t1\topus\t5\t0\t0\t-')"
 check "an epic's review closes the round of each story whose PR it names" "$(row s-epic)" $'s-epic\t'"${P4}"$'\t1\topus\t20\t0\t0\t-'
-check "two builds on one PR: each finding goes to the build running the day it was logged" "$(row s-same)" \
-  "$(printf '%s\n' $'s-same\t'"${P10}"$'\t1\topus\t10\t1\t0\t-' $'s-same\t'"${P10}"$'\t1\topus\t20\t1\t1\t-')"
+check "rounds count per PR: a second build on a PR starts after the first's rounds, and takes the findings of its own" "$(row s-same)" \
+  "$(printf '%s\n' $'s-same\t'"${P10}"$'\t1\topus\t10\t1\t0\t-' $'s-same\t'"${P10}"$'\t2\topus\t20\t1\t1\t-')"
+check "an agent line starts a build on its own agents.tsv line, and the builds after it take theirs" "$(row s-agent)" \
+  "$(printf '%s\n' $'s-agent\t'"${P12}"$'\t1\topus\t10\t0\t0\t-' $'s-agent\t'"${P12}"$'\t2\tsonnet\t10\t0\t0\t-' $'s-agent\t'"${P13}"$'\t1\tfable\t10\t0\t0\t-')"
+check "a merge ends only its loop: a later build of the story is its own loop" "$(row s-mm)" \
+  "$(printf '%s\n' $'s-mm\t'"${P14}"$'\t1\topus\t10\t0\t0\t-' $'s-mm\t'"${P15}"$'\t1\topus\t10\t0\t0\t-')"
 check "a rebuild with no PR yet takes none of its first build's findings" "$(row s-nopr)" \
   "$(printf '%s\n' $'s-nopr\t'"${P11}"$'\t1\topus\t5\t1\t1\t-' $'s-nopr\t-\t1\topus\t-\t0\t0\t-')"
 check "a step-up refused before it changed anything is no step-up" "$(row s-ref)" $'s-ref\t-\t1\topus\t10\t0\t0\t-'
 check "a loop with no round shows its step-ups on a row with no round, and no end state" "$(row s-nor)|$(end "${out}" s-nor)" \
   $'s-nor\t-\t-\topus\t-\t0\t0\tno-pr: sonnet -> opus ok before review|'
-# 17 PRs: rounds 1 (fifteen), 2 and 4, s-nor's no-round loop left out; round 3 on: 30 + 15 minutes; 11
-# fixes: 8, 2 and 1 by round, none on fable; 6 fixes over 4 rounds up to a step-up (s-loop's rounds 1-3,
+# 14 PRs (each once, loops with no PR left out): rounds 1 (ten), 2 (three) and 4; round 3 on: 30 + 15
+# minutes; 12 fixes: 8, 3 and 1 by round, one on fable (s-retry's); 6 fixes over 4 rounds up to a step-up (s-loop's rounds 1-3,
 # s-rb's round 1), none over the 2 after (s-loop's round 4, s-retry's first build's round); s-held's,
 # s-part's and s-rb's failed step-ups, s-ref's refused one not among them.
 check "the totals match the fixtures" "$(tail -2 <<< "${out}")" \
   "$(printf '%s\n' $'prs\trounds_median\trounds_p90\tmin_round3_on\tfixes\tround1\tround2\tround3_on\ttop_rung\tstepped_up\tfixes_per_round_before\tfixes_per_round_after\tfailed_step_ups' \
-    $'17\t1\t2\t45\t11\t73%\t18%\t9%\t0%\t3\t1.5\t0\t3')"
+    $'14\t1\t2\t45\t12\t67%\t25%\t8%\t8%\t3\t1.5\t0\t3')"
+check "prs, rounds_median and rounds_p90 count each PR once, and no loop with no PR" "$(tail -1 <<< "${out}" | cut -f1-3)" $'14\t1\t2'
+check "a fixed finding on a top-rung round gives top_rung its share" "$(tail -1 <<< "${out}" | cut -f9)" "8%"
 check "--epic keeps that epic's stories" "$(loops "" e2 | cut -f1 | sort -u | tr '\n' ' ')" " 1 prs s-held story "
 check "--since past the loops leaves them out, in one line" "$(loops 2026-10-06)" "no review loop in the window"
 

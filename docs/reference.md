@@ -1277,16 +1277,20 @@ going. `--epic` narrows both blocks as it does the others.
 
 The `review_loops` section shows what each review round cost and what it bought, so the stop and
 escalation rules can be tuned. It reads `events.tsv`, `findings.tsv` and `agents.tsv`, and calls no
-`gh`. Each build of a story (an `ok` `story` line, or an `escalate` build's `ok (attempt N)` with the
-`story` line after it) is its own loop, with its own rows. A loop is listed when a `review-agent`,
+`gh`. Each build of a story (an `ok` `story` line, an `ok` `agent` line for a builder a conductor
+started, or an `escalate` build's `ok (attempt N)` with the `story` line after it) is its own loop,
+with its own rows; a `merge` line ends its loop, and the lines after it count for none until the next
+build starts. A loop is listed when a `review-agent`,
 `tell:findings` or `escalate` line of it falls in the window, by local day, and `--epic` keeps that
 epic's stories (from `outcomes`). A `review` line counts once for each PR it names, as that PR's
 story's (found through `outcomes`, so an epic's review reaches its stories), else as its target's. A
 loop's PR is the URL on its `ok` `review` line, else its build's `outcomes` row's (the row of its
-builder's latest `agents.tsv` line, as `outcomes` has one row per 7-field line), else `-`. Each
-finding with a `--round` goes to one loop: the latest on its PR that started on or before the day it
-was logged, as `outcomes` gives findings to builds, so two builds on one PR never count a finding
-twice. Its rounds go in log order: an `ok` `review-agent` opens one, and a review agent started again
+builder's latest `agents.tsv` line, as `outcomes` has one row per 7-field line), else `-`. Rounds
+count per PR, as `log-finding --round` numbers them (the n-th review of a PR is its round n): a build
+on a PR starts after the rounds of the builds on it before. Each finding with a `--round` goes to one
+loop, the one whose rounds hold its round (the last on its PR takes any later round), so two builds
+on one PR never count a finding twice. A finding with no `--round`, or on a PR no loop has, counts
+nowhere. Its rounds go in log order: an `ok` `review-agent` opens one, and a review agent started again
 before the round closed moves its start; an `ok` `tell:findings`, a `findings-*` step-up (which takes
 the tell's place), or the `ok` `review` or `merge` after the last tell closes it. A round no review
 agent opened has no minutes.
@@ -1302,12 +1306,14 @@ partway (a tell's has trigger `findings` and closes the round, and a findings st
 it goes on that round). A step-up refused before it changed anything (`nothing was closed`) is not
 one. A step-up before the first round shows on round 1, ending `before review`; a loop with no round
 shows its step-ups on a row whose round is `-`. A PR whose findings name a later round than its
-events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round:
+events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round, `rounds` its PR's last
+round in that loop:
 `held-for-lead` after an `escalated` line; once the PR merged (a `merge` line, or merged in
 `outcomes`), `pass` when its last round fixed nothing and `merged-after-fixes` when it fixed
 something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
-row over the loops with a round: the PRs, the median and p90 (nearest rank) rounds per PR, the
-minutes spent in round 3 and later, the fixes, the share of them found in round 1, round 2, round 3
+row over the loops with a round: the PRs (each once, loops with PR `-` left out), the median and p90
+(nearest rank) of their rounds, the minutes spent in round 3 and later (a round with unknown minutes
+adds none), the fixes, the share of them found in round 1, round 2, round 3
 and later, and on the top rung (`escalate_ladder`'s last model; `-` with no ladder), the builds that
 stepped up with their fixes per round up to and after the first step-up, and the failed step-ups.
 With no story in the window it prints one line saying so.

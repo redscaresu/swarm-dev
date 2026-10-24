@@ -365,10 +365,10 @@ dataset_report() {
 #   review_loops: per build of a story (listed when a review-agent, tell:findings or escalate line of
 #     it is in the window), from events.tsv, findings.tsv and agents.tsv with no gh call: TSV story pr round
 #     model minutes fixed declined step_up, a row per review round of each build (a review-agent opens it; a findings
-#     tell or findings step-up, or the review or merge after the last tell, closes it; each finding goes
-#     to the latest build on its PR started by the day it was logged); TSV story pr
-#     rounds end (held-for-lead; pass or merged-after-fixes once merged; else open); then one totals row: median and p90
-#     rounds, minutes in round 3 on, the share of fixes by round and on escalate_ladder's top rung,
+#     tell or findings step-up, or the review or merge after the last tell, closes it; rounds count per
+#     PR, and each finding goes to the build whose rounds hold its round); TSV story pr
+#     rounds end (held-for-lead; pass or merged-after-fixes once merged; else open); then one totals row: its PRs, each
+#     once, their median and p90 rounds, minutes in round 3 on, the share of fixes by round and on escalate_ladder's top rung,
 #     fixes per round before and after a step-up, and failed step-ups.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
