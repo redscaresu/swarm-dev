@@ -71,13 +71,29 @@ expect "an agreed HLD with no planned: is planned, a superseded one is not" "pla
 expect "an agreed HLD whose ## Epics holds a hand-written link is still planned" "plan-hld h" \
   "item hld/h.md 'status: agreed'" \
   "printf '%s\n' '## Epics' '- [e1](../epics/e1.md)' >> docs/hld/h.md"
-expect "an open plan PR (its worktree) lets the HLD fall through to the gate" "gate" \
+expect "an open plan PR (its worktree) lets the HLD fall through to the next arm" "escalated esc" \
   "item hld/h.md 'status: agreed'" \
-  "item stories/l.md 'status: ready' 'kind: lead'" \
+  "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'" \
   "mkdir -p \"\${PWD}-wt/_board-plan-h\""
+expect "an open plan PR with nothing else open is a gate row, not done" "gate" \
+  "item hld/h.md 'status: agreed'" \
+  "mkdir -p \"\${PWD}-wt/_board-plan-h\""
+if [[ "${out}" == *"plan PR awaiting merge: h"* ]]; then echo "ok   the gate lists the plan PR awaiting merge"
+else echo "FAIL the gate does not list the plan PR: ${out}"; fails=$((fails + 1)); fi
 expect "a planned HLD with an epic carrying its hld: plans the epic" "plan-epic e1" \
   "item hld/h.md 'status: agreed' 'planned: 2026-10-24'" \
   "item epics/e1.md 'status: active' 'hld: h'"
+# An HLD decomposed through /epic before planned: existed has epics carrying its hld:: never planned again.
+expect "an agreed HLD with no planned: and an epic carrying its hld: is not planned again" "gate" \
+  "item hld/h.md 'status: agreed'" \
+  "item epics/e1.md 'status: later' 'hld: h'"
+if [[ "${out}" != *"plan-hld"* ]]; then echo "ok   an HLD with an epic carrying its hld: gets no plan-hld"
+else echo "FAIL an HLD with an epic carrying its hld: gets plan-hld: ${out}"; fails=$((fails + 1)); fi
+# planned: with no value once quotes, brackets and a comment are gone is not planned.
+expect "planned: \"\" is not planned" "plan-hld h" \
+  "item hld/h.md 'status: agreed' 'planned: \"\"'"
+expect "planned: with only a comment is not planned" "plan-hld h" \
+  "item hld/h.md 'status: agreed' 'planned: # by /plan-hld'"
 expect "an epic whose hld: only shares a prefix does not count" "hld h" \
   "item hld/h.md 'status: agreed' 'planned: 2026-10-24'" \
   "item epics/e1.md 'status: later' 'hld: h-2'"

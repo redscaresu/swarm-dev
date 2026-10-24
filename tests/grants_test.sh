@@ -234,15 +234,15 @@ pr() {
   echo "[${l}]" > "${FX}/repos_o_r_pulls_${n}_files_per_page=100"
 }
 at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=h$1"; }   # at <n> <path> — <path>'s copy at #<n>'s head
-# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics at the
-# head, and epics p-one and p-two added with hld: <hld>.
+# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics (links
+# to the epics, then ${EXTRA}) at the head, and epics p-one and p-two added with hld: <hld>.
 planned() {
   local h="$2" g
   pr "$1" docs/epics/p-one.md docs/epics/p-two.md "docs/hld/$2.md"
   item "$(at "$1" docs/epics/p-one.md)" "status: active" "hld: ${h}"
   item "$(at "$1" docs/epics/p-two.md)" "status: active" "hld: ${3:-${h}}"
   g="$(get "${B}/hld/$2.md" grants)"
-  EPICS=$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n' \
+  EPICS=$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n'"${EXTRA:-}" \
     hld "$(at "$1" "docs/hld/$2.md")" "title: Plan" "status: $(get "${B}/hld/$2.md" status)" "planned: 2026-10-24" ${g:+"grants: ${g}"}
 }
 get() { sed -n "s/^$2: //p" "$1" | head -1; }   # get <file> <key> — its first <key>: value
@@ -316,6 +316,30 @@ pr 48 docs/hld/plan.md
 unread finish-pr-none-head-unread https://github.com/o/r/pull/48
 unread story-pr-touching-hld-head-unread https://github.com/o/r/pull/4
 unread plan-pr-draft-hld-head-unread https://github.com/o/r/pull/32
+# A # or ## heading hld_body cannot see (indented, setext, after a tab) after ## Epics: none, so a
+# changed line under it is not let through.
+for c in "indented:   ## Risks" $'setext:Risks\n-----' $'tab:#\tRisks'; do
+  h="plan-${c%%:*}"
+  AFTER="${c#*:}"$'\nthe risk\n' hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
+  AFTER="${c#*:}"$'\nthe risk\n' planned 50 "${h}"; sed -i.bak 's/^the risk$/a new risk/' "$(at 50 "docs/hld/${h}.md")"
+  expect "plan-pr-${c%%:*}-heading-none" https://github.com/o/r/pull/50 none
+done
+# The head adds an open fence, an open HTML comment or a hidden heading among its ## Epics links: none.
+for c in 'fence:```' 'comment:<!--' 'heading:   ## Notes'; do
+  EXTRA="${c#*:}"$'\n' planned 51 plan
+  expect "plan-pr-head-adds-${c%%:*}-none" https://github.com/o/r/pull/51 none
+done
+# planned: on the head: two lines, a change to the board's, or the board's deleted is none; the
+# board's kept is plan-p.
+hld "${B}/hld/plan-p.md" "title: Plan" "status: agreed" "planned: 2026-10-01" "grants: [merge]"
+planned 52 plan; sed -i.bak '/^planned:/p' "$(at 52 docs/hld/plan.md)"
+expect plan-pr-two-planned-lines-none https://github.com/o/r/pull/52 none
+planned 53 plan-p
+expect plan-pr-changes-planned-none https://github.com/o/r/pull/53 none
+planned 54 plan-p; sed -i.bak '/^planned:/d' "$(at 54 docs/hld/plan-p.md)"
+expect plan-pr-deletes-planned-none https://github.com/o/r/pull/54 none
+planned 55 plan-p; sed -i.bak 's/^planned: .*/planned: 2026-10-01/' "$(at 55 docs/hld/plan-p.md)"
+expect plan-pr-keeps-planned https://github.com/o/r/pull/55 "$(printf '%s\nmerge' "${B}/hld/plan-p.md")"
 
 # A board at the repo's root (board_dir = .): its hld/, epics/ and stories/ are the PR's paths as they are.
 R="${ROOT}/rootproj"; mkdir -p "${R}/.claude/swarm" "${R}/hld" "${R}/epics" "${R}/stories"

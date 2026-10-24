@@ -172,8 +172,10 @@ epic_has_after() {
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this (then unblocked_epic's, below) comes before its wait
-#   plan-hld <hld>    an agreed HLD with no planned: (hld_planned) and no plan board PR's worktree
+#   plan-hld <hld>    an agreed HLD with no planned: (hld_planned), no epic carrying its hld:
+#                     (hld_epics), and no plan board PR's worktree
 #                     (<repo>-wt/_board-plan-<hld>); with one, this falls through to the steps below
+#                     and the gate lists it (plan PR awaiting merge: <hld>)
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -187,8 +189,8 @@ epic_has_after() {
 #                     finish it with swarm.sh finish <hld>; while <repo>-wt/_board-finish-<hld> exists,
 #                     it is a gate row instead (finish PR awaiting merge: <hld>)
 #   gate              only the user can move the board: lead stories, blocked
-#                     stories, later stories and epics, draft epics and HLDs, finish PRs, and PRs
-#                     awaiting the user's merge
+#                     stories, later stories and epics, draft epics and HLDs, an HLD's plan and
+#                     finish PRs, and PRs awaiting the user's merge (waiting_on_user)
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
   local f slug epic story_epic buildable="" waiting="" when held n tag base sha stop
@@ -250,12 +252,11 @@ next_step() {
   epic="$(plannable_epic)"
   if [[ -n "${epic}" ]]; then echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return; fi
   # Neither HLD arm calls gh: dash runs next every frame. An open plan PR (its worktree) lets the
-  # steps below go on.
+  # steps below go on, and is a gate row (waiting_on_user).
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
-    [[ "$(get_fm "${f}" status)" == agreed ]] || continue
-    ! hld_planned "${f}" || continue
-    [[ ! -e "$(worktree_for "${PROJECT_DIR}" "_board-plan-${slug}")" ]] || continue
+    [[ "$(hld_due "${f}")" == plan ]] || continue
+    ! hld_pr_open "${slug}" plan || continue
     echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has not been planned into epics yet: run /plan-hld ${slug}"; return
   done < <(board hld)
   while IFS= read -r f; do
@@ -283,17 +284,14 @@ next_step() {
   if [[ -n "${epic}" ]]; then
     echo "plan-epic ${epic}"; echo "the later epic ${epic}'s dependencies are done; planning is read-only, and its stories wait for approval"; return
   fi
-  # A planned HLD with no epic left is finished; while its finish PR is open, it waits on the user.
+  # A planned HLD with no epic left is finished; while its finish PR is open, it is a gate row.
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
-    [[ "$(get_fm "${f}" status)" == agreed ]] && hld_planned "${f}" && [[ -z "$(hld_epics "${slug}")" ]] || continue
-    if [[ -e "$(worktree_for "${PROJECT_DIR}" "_board-finish-${slug}")" ]]; then
-      waiting+="  finish PR awaiting merge: ${slug}"$'\n'; continue
-    fi
+    [[ "$(hld_due "${f}")" == finish ]] || continue
+    ! hld_pr_open "${slug}" finish || continue
     echo "hld ${slug}"; echo "the planned HLD ${slug} has no epics left on the board: run swarm.sh finish ${slug}"; return
   done < <(board hld)
-  waiting+="$(waiting_on_user)"
-  waiting="${waiting%$'\n'}"
+  waiting="$(waiting_on_user)"
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
@@ -615,19 +613,20 @@ hld_grants() {
   done
 }
 
-# item_hld <story or epic file> [epics dir] — the agreed HLD file in ${BOARD}/hld over it: a story's
-# epic:, then each epic's parent:, up to the first epic with hld:, read in [epics dir] (${BOARD}/epics).
+# item_hld <story or epic file> [epics dir] [hld dir] — the agreed HLD file in [hld dir] (${BOARD}/hld)
+# over it: a story's epic:, then each epic's parent:, up to the first epic with hld:, read in [epics
+# dir] (${BOARD}/epics).
 # A seen list ends a parent: cycle. Prints nothing (fails closed) on a missing epic, a missing HLD
 # file, a draft or superseded HLD, a story with no epic, or a cycle.
 item_hld() {
-  local f="$1" e="${2:-${BOARD}/epics}" seen=" " next h
+  local f="$1" e="${2:-${BOARD}/epics}" d="${3:-${BOARD}/hld}" seen=" " next h
   [[ "${f%/*}" != */stories ]] || { next="$(slug_list "$(get_fm "${f}" epic)")"; f="${e}/${next}.md"; }
   while [[ "${next:-}" =~ ^[a-z0-9-]*$ && -f "${f}" && "${seen}" != *" ${f} "* ]]; do
     seen+="${f} "
     h="$(slug_list "$(get_fm "${f}" hld)")"
     if [[ -n "${h}" ]]; then
       [[ "${h}" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
-      h="${BOARD}/hld/${h}.md"
+      h="${d}/${h}.md"
       [[ ! -f "${h}" || "$(get_fm "${h}" status)" != agreed ]] || echo "${h}"
       return 0
     fi
@@ -635,19 +634,34 @@ item_hld() {
   done
 }
 
-# hld_epics <hld name> — the board's epic files whose front-matter hld: (get_fm, slug_list) is <hld
-# name> exactly, with no .md, as item_hld reads it.
+# hld_epics <hld name> [-1] — the board's epic files whose front-matter hld: (get_fm, slug_list) is
+# <hld name> exactly, with no .md, as item_hld reads it; with -1, only the first, for a test of presence.
 hld_epics() {
   local f
   while IFS= read -r f; do
-    [[ "$(slug_list "$(get_fm "${f}" hld)")" != "$1" ]] || echo "${f}"
+    [[ "$(slug_list "$(get_fm "${f}" hld)")" == "$1" ]] || continue
+    echo "${f}"
+    [[ "${2:-}" != -1 ]] || return 0
   done < <(board epics)
   return 0
 }
 
-# hld_planned <hld file> — true when its front matter has a planned: (get_fm), which /plan-hld's board
-# PR sets. Links under ## Epics decide nothing: one added by hand must not make it look planned.
-hld_planned() { [[ -n "$(get_fm "$1" planned)" ]]; }
+# hld_planned <hld file> — true when its front matter's planned: (get_fm) holds a value once quotes,
+# brackets and a trailing comment are gone (slug_list), which /plan-hld's board PR sets. Links under
+# ## Epics decide nothing: one added by hand must not make it look planned.
+hld_planned() { local v; v="$(fm_list "$1" planned)"; [[ -n "${v//[[:space:]]/}" ]]; }
+
+# hld_due <hld file> — for an agreed HLD that no epic names (hld_epics): plan with no planned:
+# (hld_planned), finish with it. Else nothing: an epic carrying its hld: means it was decomposed (an
+# HLD planned through /epic before planned: existed too), and is not planned again.
+hld_due() {
+  [[ "$(get_fm "$1" status)" == agreed && -z "$(hld_epics "$(basename "$1" .md)" -1)" ]] || return 0
+  if hld_planned "$1"; then echo finish; else echo plan; fi
+}
+
+# hld_pr_open <hld name> <plan|finish> — true while the HLD's plan or finish board PR's worktree
+# (<repo>-wt/_board-<plan|finish>-<hld>) exists: a local directory test, no gh.
+hld_pr_open() { [[ -e "$(worktree_for "${PROJECT_DIR}" "_board-$2-$1")" ]]; }
 
 # one_hld — the HLD named on every line of stdin (item_hld's answers, an empty line for an item under
 # none), or nothing when there is none, an empty line, or two.
@@ -660,12 +674,36 @@ hld_body() {
     n == 2 && /^##? / { e = ($0 == "## Epics"); print; next } !e' "$1"
 }
 
+# hld_plain <hld file> — true when nothing in the HLD's body hides from hld_body where a # or ## heading
+# is: no code fence or HTML comment, no # or ## heading indented, quoted, followed by a tab or empty,
+# and no setext heading (a line of = or - under a line of text).
+hld_plain() {
+  awk '/^---$/ && n < 2 { n++; next } n < 2 { next }
+    /^ ? ? ?(```|~~~)/ || /<!--/ { bad = 1 }
+    /^[ \t>]*##?([ \t]|$)/ && !/^##? / { bad = 1 }
+    /^ ? ? ?(=+|-+)[ \t]*$/ && p ~ /[^ \t]/ { bad = 1 }
+    { p = $0 } END { exit bad }' "$1"
+}
+
+# planned_lines <hld file> — its front matter's planned: lines, as they are.
+planned_lines() { awk '/^---$/ && ++n == 2 { exit } n == 1 && index($0, "planned:") == 1' "$1"; }
+
+# plan_head <hld file> <head copy> — true when <head copy> only plans <hld file>: one planned: line at
+# most, the same as the board's when the board has one, nothing hld_plain refuses, and no change
+# outside ## Epics (hld_body).
+plan_head() {
+  local b h
+  b="$(planned_lines "$1")"; h="$(planned_lines "$2")"
+  [[ "${h}" != *$'\n'* && ( -z "${b}" || "${b}" == "${h}" ) ]] || return 1
+  hld_plain "$2" || return 1
+  cmp -s <(hld_body "$1") <(hld_body "$2")
+}
+
 # plan_hld <files> <prefix> — the agreed HLD in ${BOARD}/hld that a board PR plans into epics, or a
 # failure. <files> are the PR's, one per line, each under the board's <prefix>: one hld/<H>.md and at
-# least one epics/*.md. An HLD with a code fence or an HTML comment fails: a ## Epics line in one is
-# no heading, and hld_body cannot tell. It reads no gh; pr_hld then checks the head (each file there,
-# the HLD changed only in hld_body) and reads each epic through item_hld, so one_hld still has to
-# agree on H. The HLD's grants are the board's, so a PR cannot grant itself.
+# least one epics/*.md, and the HLD agreed and plain (hld_plain). It reads no gh; pr_hld then checks
+# the head (each file there, the HLD's copy plan_head's) and reads each epic through item_hld, so
+# one_hld still has to agree on H. The HLD's grants are the board's, so a PR cannot grant itself.
 plan_hld() {
   local p h="" e=0 f
   while IFS= read -r p; do
@@ -677,7 +715,7 @@ plan_hld() {
   done <<< "$1"
   f="${BOARD}/hld/${h}.md"
   [[ -n "${h}" && ${e} -gt 0 && -f "${f}" && "$(get_fm "${f}" status)" == agreed ]] || return 1
-  ! grep -qE '^ {0,3}(```|~~~)|<!--' "${f}" || return 1
+  hld_plain "${f}" || return 1
   echo "${f}"
 }
 
@@ -731,7 +769,7 @@ pr_hld() (
     [[ -z "${plan}" ]] || return 0   # the plan PR deletes its HLD or an epic: under none
     rm -f "${view}/${p}"
   done <<< "${info}"
-  [[ -z "${plan}" ]] || cmp -s <(hld_body "${plan}") <(hld_body "${view}/hld/${plan##*/}") || return 0
+  [[ -z "${plan}" ]] || plan_head "${plan}" "${view}/hld/${plan##*/}" || return 0
   {
     for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
     while [[ -n "${head}" ]] && IFS= read -r p; do
@@ -794,7 +832,7 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 
 # waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
 # one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
-# next_step's gate, status and dash.
+# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too.
 waiting_on_user() {
   local f kind slug when waiting=""
   while IFS= read -r f; do
@@ -822,7 +860,12 @@ waiting_on_user() {
     esac
   done < <(board epics)
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" != draft ]] || waiting+="  draft hld: $(basename "${f}" .md), run /hld $(basename "${f}" .md)"$'\n'
+    slug=$(basename "${f}" .md)
+    # The directory test first: hld_due reads every epic, and dash runs this several times a frame.
+    if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
+    elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
+    elif hld_pr_open "${slug}" finish && [[ "$(hld_due "${f}")" == finish ]]; then waiting+="  finish PR awaiting merge: ${slug}"$'\n'
+    fi
   done < <(board hld)
   printf '%s' "${waiting%$'\n'}"
 }
@@ -985,7 +1028,8 @@ delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }
 
 # finish <slug> — take a merged story or epic off the board, or a finished HLD (<board>/hld/<slug>.md,
 # when no story or epic has the slug): delete its file (remove_item). An HLD hld_unfinished names a
-# reason for is refused before any board PR starts; remove_item checks it again on origin's base.
+# reason for is refused before any board PR starts, and an earlier run's finish worktree and branch go
+# with it (unstart), closing a PR that would still delete it; remove_item checks it again on origin's base.
 finish_item() {
   local f="${BOARD}/hld/$1.md" why left=""
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "bad slug '$1'"
@@ -994,7 +1038,10 @@ finish_item() {
   else
     while IFS= read -r why; do left+=" $(basename "${why}" .md)"; done < <(hld_epics "$1")
     why="$(hld_unfinished "$1" "$(cat "${f}")" "${left}")"
-    [[ -z "${why}" ]] || die "finish: ${why}"
+    if [[ -n "${why}" ]]; then
+      ! hld_pr_open "$1" finish || { unstart "finish-$1"; why+="; board/finish-$1 and its worktree are removed (an open PR on it closes)"; }
+      die "finish: ${why}"
+    fi
   fi
   remove_item finish "$1" "${f}"
 }
@@ -1007,7 +1054,8 @@ hld_unfinished() {
     draft) echo "the HLD $1 is a draft, the user's; run /hld $1"; return ;;
     superseded) echo "the HLD $1 is superseded: another HLD replaced it, and the user removes it"; return ;;
   esac
-  [[ -n "$(get_fm - planned <<< "$2")" ]] || { echo "the HLD $1 has no planned:, so it was never planned; run /plan-hld $1"; return; }
+  local v; v="$(slug_list "$(get_fm - planned <<< "$2")")"   # as hld_planned reads it
+  [[ -n "${v//[[:space:]]/}" ]] || { echo "the HLD $1 has no planned:, so it was never planned; run /plan-hld $1"; return; }
   [[ -z "$3" ]] || echo "the HLD $1 still has epics on the board:$3"
 }
 
@@ -1034,6 +1082,8 @@ remove_item() {
   # hides files). A refusal unstarts an earlier run's worktree too: its PR would still delete the HLD.
   if [[ "${f}" == "${BOARD}/hld/"* ]]; then
     base="$(base_for "${PROJECT_DIR}")"; ref="origin/${base}"; left=""
+    git -C "${PROJECT_DIR}" cat-file -e "${ref}:${rel}" 2>/dev/null \
+      || { unstart "${name}"; die "${verb}: ${rel} is already gone from ${ref}; board/${name} and its worktree are removed"; }
     while IFS= read -r p; do
       [[ "${p}" == *.md && "${p##*/}" != README.md ]] || continue
       [[ "$(slug_list "$(git -C "${PROJECT_DIR}" show "${ref}:${p}" | get_fm - hld)")" != "${slug}" ]] || left+=" $(basename "${p}" .md)"
