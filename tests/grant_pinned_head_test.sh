@@ -132,6 +132,17 @@ is "the PR retargeted after the pin: exits non-zero" 1 "${rc}"
 check "the PR retargeted after the pin: says its base is dev, not main" said "the base of ${URL} is dev, not main, so no grant covers it: review it against dev"
 check "the PR retargeted after the pin: no pr merge" not_merged
 
+# pr_hld's read gets no head, then no base, from gh: the grant cannot tell, and says which. (With no
+# head it reads no board file at all, so that PR is under none further on too.)
+fresh "${ON}"; echo > "${FX}/head.2"
+merge --head "${H1}" "${URL}"
+check "gh gives the grant no head: says so" said "grants: gh gave no head SHA for ${URL}"
+fresh "${ON}"; echo > "${FX}/base.2"
+merge --head "${H1}" "${URL}"
+is "gh gives the grant no base: exits non-zero" 1 "${rc}"
+check "gh gives the grant no base: says so" said "grants: gh gave no base branch for ${URL}"
+check "gh gives the grant no base: no pr merge" not_merged
+
 # The head reads ${H1}, but the PR lists its files for another head by then (a push and a push back):
 # the grant judges ${H1}'s, which add a workflow.
 fresh "${ON}"; at "${H1}" "${OFF}"

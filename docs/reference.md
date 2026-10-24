@@ -1454,7 +1454,7 @@ PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (
 the holds of `merge = agent` apply too, so a `costs: money` story's PR, and a board PR that changes a
 `costs:` line, still wait for you. Without it, `merge` refuses with
 `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`. When a board
-story or the PR's files cannot be read, so the HLD over it is unknown, it refuses with
+story, the PR's files, or its head or base cannot be read, so the HLD over it is unknown, it refuses with
 `cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. `merge` reads the grant,
 and the PR's files, at the head and base branch it pinned. When the PR's head has moved off it,
 `merge` refuses with `the head of <PR URL> is <sha>, not <pinned sha>, so no grant covers it: review

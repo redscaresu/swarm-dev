@@ -849,13 +849,15 @@ pr_hld() (
   fi
   # No story lists it and the board is not in its repo: nothing on the board is under it.
   [[ -n "${s}" || "${repo}" == "${own}" ]] || return 0
-  # Only a pinned read uses the base, where a missing one (-) never matches merge's and refuses. The
-  # head goes last: it may be empty.
+  # The head goes last, as it may be empty: a head gh cannot read, under none below, but never with a
+  # pin. A null one fails here, as gh failing would. Only a pinned read uses the base.
   info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles,baseRefName \
-    | json "'%s %s %s' % (d['changedFiles'], d.get('baseRefName') or '-', d['headRefOid'])")" || die "grants: gh cannot read ${url}"
+    | json "str(d['changedFiles']) + ' ' + (d.get('baseRefName') or '-') + ' ' + d['headRefOid']")" || die "grants: gh cannot read ${url}"
   read -r count base head <<< "${info}"
+  [[ ( -z "${head}" && -z "${pin}" ) || "${head}" =~ ^[0-9a-f]{40}$ ]] || die "grants: gh gave no head SHA for ${url}"
   if [[ -n "${pin}" ]]; then
-    [[ "${head} ${base}" == "${pin} $3" ]] || { echo "${head:--} ${base}"; exit "${PR_MOVED}"; }
+    [[ "${base}" != - ]] || die "grants: gh gave no base branch for ${url}"
+    [[ "${head} ${base}" == "${pin} $3" ]] || { echo "${head} ${base}"; exit "${PR_MOVED}"; }
     at=("${base}" "${pin}")   # at the pin: the PR's files API lists whatever head it has by then
   fi
   st="$(ci_gate files-status "${repo}" "${n}" "${count}" ${at[@]+"${at[@]}"})" || die "grants: cannot list every file ${url} changes: ${st}"
