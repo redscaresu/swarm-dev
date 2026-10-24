@@ -382,6 +382,10 @@ dataset_report() {
 #     there: on a merged PR pass (that round fixed nothing) or merged-after-fixes, else unmerged. --epic keeps only
 #     the PRs of that epic (outcomes epic column) in every block, and a last block lists every PR
 #     block 1 or 2 counted.
+#   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its full runs (TESTS all) whose start's local
+#     day is in the window: TSV at_once runs median_s p90_s median_load, per runs going at once as
+#     each started (1, 2, 3-4, 5+); then the 5 slowest, TSV start seconds branch at_once status. A line
+#     instead when there is no log or no full run in the window. --epic does not narrow it.
 #   throughput: one TSV row per epic, then `all` for the project, over the outcomes rows dated in the
 #     window and the ok events.tsv lines whose local day is in it; with --epic, that epic's row alone.
 #     builds; builders_mean and builders_max, how many builds ran at once, time-weighted over the span
