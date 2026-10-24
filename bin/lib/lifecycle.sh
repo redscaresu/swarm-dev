@@ -77,7 +77,9 @@ board_pr() {
       [[ -f "$4" && -r "$4" ]] || die "board-pr: no body file at $4"
       [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "${b}" ]] \
         || die "board-pr: ${wt} is not a worktree on ${b}; run swarm.sh board-pr start ${name}"
-      base="$(base_for "${PROJECT_DIR}")"
+      # base_for fetches origin/<base>, so the epic check reads it as it is now (an HLD superseded since
+      # the start counts).
+      base="$(base_for "${PROJECT_DIR}")" || die "board-pr: cannot fetch origin's base branch, so whether an epic goes active with no ticket is unknown"
       # The board's path from the root with a trailing /, or empty when the board is the root.
       rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
       # Committed and uncommitted changes since the base, a rename's old path too, and new files.

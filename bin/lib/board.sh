@@ -617,8 +617,9 @@ hld_grants() {
 # line; README.md excepted) that goes active with no ticket, one per line: status: active at the head,
 # absent or draft at the base (status read as fm reads it, the first status: line anywhere, but from
 # the bytes, with no board-state override), and none of an agreed: date the base did not already
-# have (one left on a draft is stale), a parent:, or an hld: naming an HLD that is agreed and grants
-# epics at both ends (hld_ticket). Nothing with lead_epics = on. <reader>
+# have (one left on a draft is stale), a parent: naming another epic the base has (so a PR cannot
+# name a parent it adds), or an hld: naming an HLD that is agreed and grants epics at both ends
+# (hld_ticket). Nothing with lead_epics = on. <reader>
 # base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
 # A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
@@ -641,7 +642,12 @@ epic_unticketed() (
     [[ ${rc} -eq 1 || "$(slug_list "$(awk 'sub(/^status: */, "") { print; exit }' <<< "${was}")")" == draft ]] || continue
     s="${s%.md}"; p="$(slug_list "$(get_fm - agreed <<< "${now}")")"
     [[ ! "${p}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || "${p}" == "$(slug_list "$(get_fm - agreed <<< "${was}")")" ]] || continue
-    [[ -z "$(slug_list "$(get_fm - parent <<< "${now}")")" ]] || continue
+    p="$(slug_list "$(get_fm - parent <<< "${now}")")"
+    if [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "${s}" ]]; then
+      rc=0; "${reader}" base "${pre}epics/${p}.md" > /dev/null || rc=$?
+      [[ ${rc} -ne 0 ]] || continue
+      [[ ${rc} -eq 1 ]] || { echo "cannot read ${pre}epics/${p}.md at the base"; exit 1; }
+    fi
     p="$(slug_list "$(get_fm - hld <<< "${now}")")"
     if [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
       rc=0; hld_ticket "${reader}" "${pre}hld/${p}.md" "${t}" || rc=$?
