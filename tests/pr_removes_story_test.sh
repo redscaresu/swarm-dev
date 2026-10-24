@@ -155,6 +155,9 @@ item "${B}/hld/hf.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hp.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hl.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hs.md" "status: superseded"
+item "${B}/hld/hb.md" "status: agreed" "planned: []"
+item "${B}/hld/hx.md" "status: agreed" "planned: 2026-10-24"
+item "${B}/hld/hz.md" "status: agreed" "planned: 2026-10-24"
 git -C "${P}" add -A && git -C "${P}" commit -qm hlds && git -C "${P}" push -q origin main
 sw "${P}" finish hd
 is "finish of an HLD an epic names: refused naming the epic" "1 yes" "${rc} $(has "still has epics on the board: hde" "${out}")"
@@ -168,12 +171,23 @@ is "finish of a draft HLD: no worktree or branch left" "no no no" "$(left hdr)"
 sw "${P}" finish hs
 is "finish of a superseded HLD: refused, the user removes it" "1 yes" "${rc} $(has "the HLD hs is superseded: another HLD replaced it, and the user removes it" "${out}")"
 is "finish of a superseded HLD: no worktree or branch left" "no no no" "$(left hs)"
+sw "${P}" finish hb
+is "finish of an HLD with planned: []: refused as never planned" "1 yes" "${rc} $(has "the HLD hb has no planned:" "${out}")"
 # An epic under hl only in the main checkout, not yet pushed: origin cannot see it, the main checkout can.
 item "${B}/epics/hle.md" "status: draft" "hld: hl"
 sw "${P}" finish hl
 is "finish of an HLD a main-checkout epic names: refused naming the epic" "1 yes" "${rc} $(has "finish: the HLD hl still has epics on the board: hle" "${out}")"
 is "finish of an HLD a main-checkout epic names: no worktree or branch left" "no no no" "$(left hl)"
 rm "${B}/epics/hle.md"
+# hx's finish PR opens; then an epic under hx merges and is pulled: a second finish closes that PR.
+sw "${P}" finish hx
+is "finish of a planned HLD, before an epic under it merges and is pulled: opens its board PR" "0 yes" "${rc} $(left hx | cut -d' ' -f3)"
+item "${B}/epics/hxe.md" "status: active" "hld: hx"
+git -C "${P}" add -A && git -C "${P}" commit -qm hxe && git -C "${P}" push -q origin main
+sw "${P}" finish hx
+is "a second finish of an HLD a pulled epic names: refused, naming the epic and the closing PR" "1 yes" \
+  "${rc} $(has "finish: the HLD hx still has epics on the board: hxe; board/finish-hx and its worktree are removed (an open PR on it closes)" "${out}")"
+is "a second finish of an HLD a pulled epic names: its worktree and branch are gone, on origin too" "no no no" "$(left hx)"
 # ho's finish PR opens; then on origin, not pulled into the main checkout: an epic under ho, hp without
 # its planned:, and a .gitattributes that keeps epics/ out of git archive.
 sw "${P}" finish ho
@@ -194,6 +208,14 @@ is "finish of an HLD an epic on origin names: no worktree or branch left" "no no
 sw "${P}" finish hp
 is "finish of an HLD with no planned: on origin: refused" "1 yes" "${rc} $(has "on origin/main, the HLD hp has no planned:" "${out}")"
 is "finish of an HLD with no planned: on origin: no worktree or branch left" "no no no" "$(left hp)"
+# hz's finish PR opens; then hz is deleted on origin (fetched, not pulled): a second finish says so.
+sw "${P}" finish hz
+git -C "${ROOT}/other" pull -q && git -C "${ROOT}/other" rm -q board/hld/hz.md
+git -C "${ROOT}/other" commit -qm "rm hz" && git -C "${ROOT}/other" push -q origin main
+git -C "${P}" fetch -q origin
+sw "${P}" finish hz
+is "a second finish of an HLD gone from origin: refused, saying so" "1 yes" "${rc} $(has "board/hld/hz.md is already gone from origin/main; board/finish-hz and its worktree are removed" "${out}")"
+is "a second finish of an HLD gone from origin: its worktree and branch are gone, on origin too" "no no no" "$(left hz)"
 : > "${ROOT}/gh.log"
 sw "${P}" finish hf
 is "finish of a planned HLD with no epic: exits 0" 0 "${rc}"

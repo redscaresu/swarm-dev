@@ -963,7 +963,8 @@ delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }
 
 # finish <slug> — take a merged story or epic off the board, or a finished HLD (<board>/hld/<slug>.md,
 # when no story or epic has the slug): delete its file (remove_item). An HLD hld_unfinished names a
-# reason for is refused before any board PR starts; remove_item checks it again on origin's base.
+# reason for is refused before any board PR starts, and an earlier run's finish worktree and branch go
+# with it (unstart), closing a PR that would still delete it; remove_item checks it again on origin's base.
 finish_item() {
   local f="${BOARD}/hld/$1.md" why left=""
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "bad slug '$1'"
@@ -972,7 +973,10 @@ finish_item() {
   else
     while IFS= read -r why; do left+=" $(basename "${why}" .md)"; done < <(hld_epics "$1")
     why="$(hld_unfinished "$1" "$(cat "${f}")" "${left}")"
-    [[ -z "${why}" ]] || die "finish: ${why}"
+    if [[ -n "${why}" ]]; then
+      ! hld_pr_open "$1" finish || { unstart "finish-$1"; why+="; board/finish-$1 and its worktree are removed (an open PR on it closes)"; }
+      die "finish: ${why}"
+    fi
   fi
   remove_item finish "$1" "${f}"
 }
@@ -985,7 +989,8 @@ hld_unfinished() {
     draft) echo "the HLD $1 is a draft, the user's; run /hld $1"; return ;;
     superseded) echo "the HLD $1 is superseded: another HLD replaced it, and the user removes it"; return ;;
   esac
-  [[ -n "$(get_fm - planned <<< "$2")" ]] || { echo "the HLD $1 has no planned:, so it was never planned; run /plan-hld $1"; return; }
+  local v; v="$(slug_list "$(get_fm - planned <<< "$2")")"   # as hld_planned reads it
+  [[ -n "${v//[[:space:]]/}" ]] || { echo "the HLD $1 has no planned:, so it was never planned; run /plan-hld $1"; return; }
   [[ -z "$3" ]] || echo "the HLD $1 still has epics on the board:$3"
 }
 
@@ -1012,6 +1017,8 @@ remove_item() {
   # hides files). A refusal unstarts an earlier run's worktree too: its PR would still delete the HLD.
   if [[ "${f}" == "${BOARD}/hld/"* ]]; then
     base="$(base_for "${PROJECT_DIR}")"; ref="origin/${base}"; left=""
+    git -C "${PROJECT_DIR}" cat-file -e "${ref}:${rel}" 2>/dev/null \
+      || { unstart "${name}"; die "${verb}: ${rel} is already gone from ${ref}; board/${name} and its worktree are removed"; }
     while IFS= read -r p; do
       [[ "${p}" == *.md && "${p##*/}" != README.md ]] || continue
       [[ "$(slug_list "$(git -C "${PROJECT_DIR}" show "${ref}:${p}" | get_fm - hld)")" != "${slug}" ]] || left+=" $(basename "${p}" .md)"
