@@ -156,6 +156,39 @@ STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
 check "plan-epic with only an answer that is not JSON blocks" blocked "plan-epic X"
 rm -rf "${project}/.swarm/X" "${project}/docs/epics/X.md"
 
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld blocked"
+check "plan-hld with no agent blocks, naming the line" blocked "plan-hld H"
+agents planner plan-H working
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld allowed"
+check "plan-hld with an agent in plan-H allows" [ -z "${out}" ]
+agents critic plan-H-2 working
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld allowed"
+check "plan-hld with an agent in plan-H-2 allows" [ -z "${out}" ]
+agents survey scope-H working
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld blocked"
+check "plan-hld with an agent in scope-H only blocks" blocked "plan-hld H"
+mkdir -p "${project}/.swarm/H" "${project}/docs/hld"
+echo "# H" > "${project}/docs/hld/H.md"; touch -t 202001010000 "${project}/docs/hld/H.md"
+echo '{}' > "${project}/.swarm/H/critic.json"
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld allowed"
+check "plan-hld with the critic's answer newer than the HLD allows" [ -z "${out}" ]
+touch -t 201901010000 "${project}/.swarm/H/critic.json"
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld blocked"
+check "plan-hld with only an answer older than the HLD blocks" blocked "plan-hld H"
+echo '{"cut' > "${project}/.swarm/H/critic.json"
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld blocked"
+check "plan-hld with only an answer that is not JSON blocks" blocked "plan-hld H"
+rm -rf "${project}/.swarm/H" "${project}/docs/hld"
+
+STUB_NEXT="hld H" run "lead-stop hld blocked"
+check "hld with no _board-finish-H blocks, naming the line" blocked "hld H"
+mkdir -p "${root}/project-wt/_board-finish-H"
+STUB_NEXT="hld H" run "lead-stop hld allowed"
+check "hld with _board-finish-H allows" [ -z "${out}" ]
+STUB_NEXT="hld G" run "lead-stop hld blocked"
+check "hld G with only _board-finish-H blocks" blocked "hld G"
+rm -rf "${root}/project-wt"
+
 start=$(date +%s)
 STUB_NEXT="plan-epic X" STUB_SLEEP=1.5 STUB_CONFIG_SLEEP=1.5 run "lead-stop plan-epic allowed"
 check "next and config board_dir past the one deadline together allow" [ -z "${out}" ]
@@ -173,6 +206,12 @@ STUB_NEXT="plan-epic X" run "lead-stop plan-epic allowed"
 check "plan-epic with stories committed on board/scope-X (planned alone, waiting on approval) allows" [ -z "${out}" ]
 STUB_NEXT="plan-epic Y" run "lead-stop plan-epic blocked"
 check "plan-epic Y with only board/scope-X blocks" blocked "plan-epic Y"
+g branch board/plan-H   # board-pr start: at the base
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld blocked"
+check "plan-hld with board/plan-H at the base blocks" blocked "plan-hld H"
+g update-ref refs/heads/board/plan-H "$(g commit-tree -p HEAD -m epics "HEAD^{tree}")"
+STUB_NEXT="plan-hld H" run "lead-stop plan-hld allowed"
+check "plan-hld with commits on board/plan-H allows" [ -z "${out}" ]
 g worktree add -q "${root}/wt" -b wt
 CWD="${root}/wt" STUB_NEXT="plan-epic Y" run ""
 check "from a worktree (not the lead) it allows" [ -z "${out}" ]

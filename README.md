@@ -30,14 +30,15 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
    is out of scope, and your part. A reviewer agent attacks the draft. Nothing is planned until you
    agree it.
 2. **Plan.** `/swarm-dev:swarm` splits the agreed epic into stories of one PR each. A survey agent
-   reads the code, a lead agent writes the stories, and skeptic agents, codex and a critic try to
+   reads the code, a lead agent writes the stories, and skeptic agents (on risky stories only), codex and a critic try to
    refute them. You approve the result, which is then written to the board. An epic too large for
    one run is split into smaller epics first.
 3. **Build.** A conductor agent starts one builder per story. Each builder works in its own git
    worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
    fixes what they find. A story that fails twice is rebuilt once on Fable, the most capable model,
    then handed to the lead.
-4. **Merge.** By default a green, reviewed PR waits for you, or for you to ask the lead to merge it.
+4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
+   the agreed HLD over its work lists `merge` in its `grants:`.
    With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
    waits for you. After a merge, main is judged by the checks it requires, and any other red check
    prints a `warning:` line. A required check that fails in GitHub Actions is rerun once; if it
