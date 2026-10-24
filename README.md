@@ -118,7 +118,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
-  its grants.
+  its grants. Under `merge = human`, the lead merges a release only when every story merged since
+  the last tag is under an agreed HLD that lists `release`.
 - Under either merge mode, `swarm.sh merge --board` refuses a board PR that sets an epic `active`
   with no ticket: an `agreed:` date from `/swarm-dev:epic`, a `parent:`, or an agreed HLD that
   grants `epics`. `swarm.sh board-pr open` refuses the same PRs; `lead_epics = on` lifts both.

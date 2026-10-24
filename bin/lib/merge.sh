@@ -1146,9 +1146,10 @@ for a in json.load(sys.stdin)["result"]["agents"]:
 # release_check <owner/repo> <base> <head> <pr> — merge --release's checks past the file list: the PR goes
 # into the project's base, its plugin.json differs from the base's only in "version" (compared as
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
-# that version is MAJOR.MINOR.PATCH and greater than the base's, and release_docs passes.
+# that version is MAJOR.MINOR.PATCH and greater than the base's, with merge = human release_grant
+# finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes.
 release_check() {
-  local want old new why body
+  local want old new why body was tag
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
   old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$2")" \
@@ -1171,27 +1172,127 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
   RELEASE_VERSION="$(plugin_version <<< "${new}")"
   body="$(gh pr view "$4" --repo "$1" --json body | json "d.get('body') or ''")" \
     || merge_fail "--release: gh cannot read the body of ${MERGE_TARGET}"
-  release_docs "${body}" "$2" "$(plugin_version <<< "${old}")"
+  was="$(plugin_version <<< "${old}")" tag=""
+  if [[ "${CFG_merge}" == human ]]; then
+    # Read once, so both gates compare against the same commit.
+    tag="$(release_tag "$2" "${was}" "")" || merge_fail "--release: ${tag}"
+    why="$(release_grant "$1" "$2" "${was}" "${tag}")" || why="cannot tell which HLDs the stories merged since v${was} are under"
+    [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET} waits on the user's merge (merge = human, and ${why})"
+  fi
+  release_docs "${body}" "$2" "${was}" "${tag}"
 }
 
-# release_docs <pr-body> <base> <version> — a release ships its docs: refuse when bin/, commands/ or
+# release_grant <owner/repo> <base> <version> <tag> — why HLDs do not cover the release, or nothing
+# when they do: at least one stories/*.md was deleted on origin/<base> since <tag>, origin's tag
+# v<version>, and each, read at its deleting commit's parent, is under an agreed HLD (item_hld) that
+# grants release (release_story). Only the base's own commits count (--first-parent; a merge
+# commit's deletions are against its first parent), so a story branch's merge of the base never lists
+# a story the base deleted before the tag. The board is read as origin/<base> has it, never the
+# checkout, which may not have pulled: a story's epics are that commit's with origin's over them, and
+# its HLD is origin's alone, so an HLD the user deleted, or a grant taken off one, no longer counts. A
+# story origin's board still holds as done in its state (its PR left the file, so reconcile marked it
+# done) must be
+# under one too when release_done finds it merged since the tag, and then counts as merged, or when gh
+# cannot tell, and then does not. It names the first story it fails on.
+release_grant() (
+  local pre p c="" last="" view slug s why when rc n=0
+  [[ ${BOARD_IN_REPO} == 1 ]] || { echo "the board is outside the project's repo, so the stories merged since v$3 cannot be read"; exit 0; }
+  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  view="$(mktemp -d)" && [[ -d "${view}" ]] || { echo "mktemp -d failed, so the stories merged since v$3 cannot be read"; exit 0; }
+  trap 'rm -rf "${view}"' EXIT
+  mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld" "${view}/origin/stories"
+  # origin/<base>'s board (release_tag fetched it); a directory it does not have is empty.
+  for s in epics hld stories; do
+    git -C "${PROJECT_DIR}" archive --format=tar "origin/$2:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
+  done
+  # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
+  git -C "${PROJECT_DIR}" log -z --first-parent --diff-merges=first-parent --no-renames --diff-filter=D --name-only --format=%H \
+    "$4..origin/$2" -- "${pre}stories/" > "${view}/list" || { echo "git cannot list the stories deleted on origin/$2 since v$3"; exit 0; }
+  while IFS= read -r -d '' p; do
+    p="${p#$'\n'}"
+    [[ ! "${p}" =~ ^[0-9a-f]{40,}$ ]] || { c="${p}"; continue; }
+    slug="${p#"${pre}stories/"}"
+    [[ "${slug}" == *.md && "${slug}" != */* && "${slug}" != README.md ]] || continue
+    slug="${slug%.md}"
+    if [[ "${c}" != "${last}" ]]; then
+      last="${c}"; rm -rf "${view}/epics"; mkdir "${view}/epics"
+      git -C "${PROJECT_DIR}" archive --format=tar "${c}^:${pre}epics" 2>/dev/null | tar -xf - -C "${view}/epics" 2>/dev/null || true
+      cp "${view}/origin/epics/"*.md "${view}/epics/" 2>/dev/null || true
+    fi
+    s="${view}/stories/${slug}.md"
+    git -C "${PROJECT_DIR}" show "${c}^:${p}" > "${s}" 2>/dev/null || { echo "git cannot read ${p} before ${c:0:7}"; exit 0; }
+    n=$((n + 1))
+    why="$(release_story "${slug}" "$(item_hld "${s}" "${view}/epics" "${view}/origin/hld")" "merged since v$3")"
+    [[ -z "${why}" ]] || { echo "${why}"; exit 0; }
+  done < "${view}/list"
+  # origin's stories, each with its state over it (get_fm: BOARD names the copy, so
+  # state_path finds the story's own state file).
+  while IFS= read -r s; do
+    [[ "$(BOARD="${view}/origin" get_fm "${s}" status)" == "done" ]] || continue
+    slug="$(basename "${s}" .md)" rc=0
+    release_done "${slug}" "$1" "$2" "$4" || rc=$?
+    [[ ${rc} != 1 ]] || continue
+    when="done on the board since v$3"
+    [[ ${rc} == 0 ]] || when="done on the board (gh cannot list its PRs, so it may have merged since v$3)"
+    why="$(release_story "${slug}" "$(item_hld "${s}" "${view}/origin/epics" "${view}/origin/hld")" "${when}")"
+    [[ -z "${why}" ]] || { echo "${why}"; exit 0; }
+    [[ ${rc} != 0 ]] || n=$((n + 1))
+  done < <(BOARD="${view}/origin" board stories)
+  [[ ${n} -gt 0 ]] || echo "no story was merged into $2 since v$3, so no HLD covers it"
+)
+
+# release_done <slug> <owner/repo> <base> <tag> — 0 when a PR from story/<slug>, the branch each of
+# its builds pushes, merged since <tag>: its merge commit is on origin/<base> and not on <tag>; 1 when
+# none did; 2 when gh cannot list them. The branch is what is left to find them by, as reconcile
+# clears a done story's prs:.
+release_done() {
+  local oid list
+  oid="$(gh pr list --repo "$2" --head "story/$1" --state merged --limit 100 --json mergeCommit \
+    | json "' '.join((p.get('mergeCommit') or {}).get('oid') or '' for p in d)")" || return 2
+  read -r -a list <<< "${oid}" || true
+  for oid in ${list[@]+"${list[@]}"}; do
+    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "origin/$3" 2>/dev/null || continue
+    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "$4" 2>/dev/null || return 0
+  done
+  return 1
+}
+
+# release_story <slug> <hld file> <when> — why the story (<when>: how it is in the release) leaves the
+# release uncovered, or nothing when <hld file>, item_hld's answer for it, grants release. An HLD whose
+# grants: cannot be read (hld_grants' own line says why) leaves it uncovered.
+release_story() {
+  local g=""
+  [[ -z "$2" ]] || g="$(hld_grants "$2")" || { echo "the grants: of hld/${2##*/}, over story $1, cannot be read"; return 0; }
+  [[ -n "$2" && $'\n'"${g}"$'\n' == *$'\n'release$'\n'* ]] || echo "story $1, $3, is under no agreed HLD that grants release"
+}
+
+# release_tag <base> <version> <fix> — the commit of origin's tag v<version> once origin/<base> is
+# fetched and holds it, else why not, with <fix> after the user's own way past it, and fail. origin's
+# tag is read by its commit's SHA, so a local tag is never fetched over.
+release_tag() {
+  local tag rc=0
+  fetch_branch "${PROJECT_DIR}" "$1" || { echo "cannot fetch origin/$1 to read what changed since v$2"; return 1; }
+  # An annotated tag's commit is its peeled ref (^{}): the tag object may never have been fetched.
+  tag="$(git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/tags/v$2" "refs/tags/v$2^{}" 2>/dev/null \
+    | awk '{ t = $1 } $2 ~ /\^\{\}$/ { c = $1 } END { print (c != "" ? c : t) }')" || rc=$?
+  [[ ${rc} != 2 ]] || { echo "no v$2 tag on origin to compare against: tag $1's last release v$2$3"; return 1; }
+  [[ ${rc} == 0 && "${tag}" =~ ^[0-9a-f]{40}$ ]] || { echo "cannot read origin's tag v$2 to read what changed since it"; return 1; }
+  git -C "${PROJECT_DIR}" merge-base --is-ancestor "${tag}" "origin/$1" 2>/dev/null \
+    || { echo "the tag v$2 is not on origin/$1, so the changes since it are unknown: retag v$2 on $1$3"; return 1; }
+  echo "${tag}"
+}
+
+# release_docs <pr-body> <base> <version> [tag] — a release ships its docs: refuse when bin/, commands/ or
 # hooks/ changed between origin's tag v<version> and origin/<base> but README.md, AGENTS.md and docs/
 # did not, naming the changed paths, unless docs_none finds a reason in the PR body. A change to
 # commands/*.md is the commands' own text, so it answers for itself, and only when nothing else in
 # the code changed. The board's own paths (board_paths) are not docs, even when the board is docs/.
-# origin's tag is compared by its commit's SHA, so a local tag is never fetched over; a tag missing
-# on origin or off origin/<base> refuses.
+# [tag] is origin's tag as release_check read it; without one, origin's tag (release_tag) missing or
+# off origin/<base> refuses.
 release_docs() {
-  local tag code docs p rc=0 ex=()
+  local tag="${4:-}" code docs p ex=()
   ! docs_none <<< "$1" || return 0
-  fetch_branch "${PROJECT_DIR}" "$2" || merge_fail "--release: cannot fetch origin/$2 to check the docs changed since v$3"
-  # An annotated tag's commit is its peeled ref (^{}): the tag object may never have been fetched.
-  tag="$(git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/tags/v$3" "refs/tags/v$3^{}" 2>/dev/null \
-    | awk '{ t = $1 } $2 ~ /\^\{\}$/ { c = $1 } END { print (c != "" ? c : t) }')" || rc=$?
-  [[ ${rc} != 2 ]] || merge_fail "--release: no v$3 tag on origin to compare against: tag $2's last release v$3, or give the PR body ${DOCS_NONE_FORMS}"
-  [[ ${rc} == 0 && "${tag}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--release: cannot read origin's tag v$3 to check the docs changed since it"
-  git -C "${PROJECT_DIR}" merge-base --is-ancestor "${tag}" "origin/$2" 2>/dev/null \
-    || merge_fail "--release: the tag v$3 is not on origin/$2, so the changes since it are unknown: retag v$3 on $2, or give the PR body ${DOCS_NONE_FORMS}"
+  [[ -n "${tag}" ]] || tag="$(release_tag "$2" "$3" ", or give the PR body ${DOCS_NONE_FORMS}")" || merge_fail "--release: ${tag}"
   code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- bin commands hooks)" \
     || merge_fail "--release: git cannot diff v$3 with origin/$2"
   [[ -n "${code}" ]] || return 0
