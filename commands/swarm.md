@@ -291,7 +291,9 @@ Repeat until a step below says stop:
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
-     only the user can write and agree it, so offer to follow `/epic <slug>` to resume it, which
+     only the user can write and agree it (the lead never sets an epic `active` itself, unless an
+     agreed HLD grants `epics` through the epic's `hld:`, `lead_epics = on` in
+     `.claude/swarm/config`, or the user agreed it through /epic, which writes `agreed:`), so offer to follow `/epic <slug>` to resume it, which
      opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. Stop.

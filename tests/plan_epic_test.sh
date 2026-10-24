@@ -93,6 +93,12 @@ has epic-slug-chars 'every run of characters other than `a-z` and `0-9` into one
 has epic-slug-backlog 'If the slug is empty or `backlog`.* stop' "$eflat"
 has epic-file-name-first 'If `docs/epics/<argument>.md` exists, that file is the epic and its name is the slug' "$eflat"
 has epic-resume-clears 'remove any old `D/ready` and `D/agreed`, on a resume too' "$eflat"
+has epic-writes-agreed 'set `status: active`; nothing plans a draft epic\. The same edit writes `agreed: <YYYY-MM-DD>`' "$eflat"
+has epic-resume-deletes-agreed 'on a resume too, and delete any `agreed:` line from the epic.s front matter' "$eflat"
+has epic-format-agreed '^agreed:' "$(cat "$ROOT/templates/docs/epics/README.md")"
+for f in commands/swarm.md skills/swarm-dev/SKILL.md; do
+  has "never-activate-$f" 'never sets an epic `active` itself.*`epics`.*`lead_epics' "$(tr '\n' ' ' < "$ROOT/$f" | tr -s ' ')"
+done
 has epic-resume-stale-review 'on a resume, move it to `D/review-stale.md`' "$eflat"
 has epic-agreed-watched-from-step-3 'watch for `D/agreed` from step 3 on, whatever has or has not happened in this step' "$eflat"
 has epic-close-by-name '`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`' "$eflat"

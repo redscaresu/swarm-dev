@@ -64,7 +64,8 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    > revise. When the user says they agree it, `touch D/agreed` and stop. Never create either file
    > unless the user said so.
 
-3. `mkdir -p D` and remove any old `D/ready` and `D/agreed`, on a resume too: a leftover
+3. `mkdir -p D` and remove any old `D/ready` and `D/agreed`, on a resume too, and delete any `agreed:` line from the
+   epic's front matter: a leftover
    `D/ready` would start a reviewer at once, and a leftover `D/agreed` would set the epic active
    with no fresh agreement. Remove an old `D/review.md` when starting a new epic; on a resume, move
    it to `D/review-stale.md` and tell the co-author it is the last review, written against an
@@ -85,7 +86,8 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
    together." to a file and run `swarm.sh tell epic-<slug> nudge <file>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
-   `status: active`; nothing plans a draft epic. Open a PR for the epic with one
+   `status: active`; nothing plans a draft epic. The same edit writes
+   `agreed: <YYYY-MM-DD>` (today's date) into the front matter. Open a PR for the epic with one
    `swarm.sh codex-review` pass, close the co-author and the reviewer (if it started) by name
    (`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`; never `swarm.sh close
    epic`, which would close every tab whose label starts `epic-`), and tell the user the epic is agreed and

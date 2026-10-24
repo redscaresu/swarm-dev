@@ -28,7 +28,9 @@ run inside herdr (`HERDR_ENV=1`), as does `swarm.sh conduct`. `swarm.sh init`, `
 
 It stops only when the user has to act: a draft epic, epics or stories to approve, a `lead`
 story, a PR to merge, an expired login (`/login`), a proposed rule, or a `blocked` or `later`
-item (the user sets it `ready` or `active` to start it). After the user acts, run
+item (the user sets it `ready` or `active` to start it). The lead never sets an epic `active` itself,
+unless an agreed HLD grants `epics` through the epic's `hld:`, `lead_epics = on`, or the user
+agreed it through /epic, which writes `agreed:`. After the user acts, run
 `/swarm-dev:swarm` again. A story that failed on Fable (`next` says `escalated <slug>`) is not a
 stop: the lead re-scopes it and runs `swarm.sh reset`, or runs `swarm.sh drop`, then tells the
 user why. The full table of stops and what to do is in README § When `/swarm-dev:swarm` stops for you.
