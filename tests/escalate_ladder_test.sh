@@ -35,7 +35,8 @@ lacks() { if grep -qF -- "$1" <<< "$2"; then echo "no, it has $1"; else echo yes
 
 # herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until a tab
 # closes (each story's builder has a tab of its own, and one is open at a time); tab and pane close
-# fail while ${ROOT}/closefail exists.
+# fail while ${ROOT}/closefail exists. While ${ROOT}/promptsent exists, agent prompt replies with no
+# status (sent) and agent get reads the agent idle with no completion_seq: a prompt never taken up.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" | tee "${STUB_BIN}/gh" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -46,7 +47,7 @@ case "$1 $2" in
                   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane run"|"pane wait-output") [ -n "$3" ] || exit 1 ;;   # herdr fails with no pane
-  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"},{"tab_id":"w:t10","label":"f1"},{"tab_id":"w:t11","label":"f2"}]}}' ;;
+  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"},{"tab_id":"w:t10","label":"f1"},{"tab_id":"w:t11","label":"f2"},{"tab_id":"w:t12","label":"f3"},{"tab_id":"w:t13","label":"f4"},{"tab_id":"w:t14","label":"f5"},{"tab_id":"w:t15","label":"f6"}]}}' ;;
   "tab close")    [ ! -e "$H/closefail" ] || exit 1
                   : > "$H/agents"; [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
   "pane close")   [ ! -e "$H/closefail" ] || exit 1
@@ -55,7 +56,9 @@ case "$1 $2" in
                   [ -e "$H/startghost" ] || echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
   "agent prompt") [ ! -e "$H/promptfail" ] || exit 1
+                  [ ! -e "$H/promptsent" ] || { echo '{"result":{}}'; exit 0; }   # sent, with no status
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent get")    [ ! -e "$H/promptsent" ] || echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
@@ -333,23 +336,44 @@ check "a held stacked child, an auto-merging or merged PR, and PRs gh cannot lis
   "$(has "h1 is held until its parents merge (held_by:)" "${o1}")|$(has "a PR on story/a1 has merged or is set to auto-merge" "${o2}")|$(has "a PR on story/g1 has merged or is set to auto-merge" "${o3}")|$(has "could not list the PRs on story/n1" "${o4}")|$(closes)|$(ls "${P}/.swarm/briefs/"*.step-up 2>/dev/null || echo none)"
 
 # A findings tell herdr sent, though the builder was not seen taking it up, is a round the builder
-# had: after one ok tell and one such, the next is round 3 and steps f1 up. One herdr never sent
-# is not: after one ok tell and one of those, f2's next tell is its round 2, and is sent.
+# had: after one ok tell and one such (f1, f3, f4: each outcome deliver_prompt logs once herdr sent
+# it), the next is round 3 and steps it up. One herdr never sent (f2), or whose reply could not be
+# read (f5), is not: after one ok tell and one of those, the next tell is round 2, and is sent.
 echo "fix it" > "${ROOT}/f.md"
+# f_story <slug> — a ready code story built on sonnet since 09:00, its builder idle in w:2.
+f_story() {
+  printf '%s\n' --- "status: ready" "kind: code" --- "" "# $1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/$1.md"
+  "${GIT[@]}" -C "${P}" worktree add -q -b "story/$1" "${ROOT}/proj-wt/$1" origin/main
+  printf '2026-10-01\tcode-sonnet\t%s\tclaude\tsonnet\thigh\tsess-%s\n' "$1" "$1" >> "${P}/.swarm/agents.tsv"
+  printf '2026-10-02T09:00:00Z\tstory\t%s\tw:2\tok\n2026-10-02T09:01:00Z\ttell:findings\t%s\tw:2\tok\n' "$1" "$1" >> "${P}/.swarm/events.tsv"
+  echo "w:2 $1" > "${P}/.swarm/state/$1"; echo "$1 w:2" > "${ROOT}/agents"
+  echo "[{\"sessionId\":\"sess-$1\",\"status\":\"idle\"}]" > "${CLAUDE_STUB_AGENTS}"
+}
 for f in "f1:the brief was not taken up: herdr sent it the brief twice, and herdr reads it idle with no turn finished since; see herdr agent read f1" \
-  "f2:herdr did not send it the brief (agent_not_found); see herdr agent read f2"; do
-  slug="${f%%:*}"
-  printf '%s\n' --- "status: ready" "kind: code" --- "" "# ${slug}" "" "**Done when:**" "- it holds" > "${P}/docs/stories/${slug}.md"
-  "${GIT[@]}" -C "${P}" worktree add -q -b "story/${slug}" "${ROOT}/proj-wt/${slug}" origin/main
-  printf '2026-10-01\tcode-sonnet\t%s\tclaude\tsonnet\thigh\tsess-%s\n' "${slug}" "${slug}" >> "${P}/.swarm/agents.tsv"
-  printf '2026-10-02T09:00:00Z\tstory\t%s\tw:2\tok\n2026-10-02T09:01:00Z\ttell:findings\t%s\tw:2\tok\n' "${slug}" "${slug}" >> "${P}/.swarm/events.tsv"
+  "f3:it may or may not have the brief: herdr sent it the brief once, then herdr gave no status for it; it was not sent again, see herdr agent read f3" \
+  "f4:herdr sent it the brief once, then could not send it again (pane_not_found); see herdr agent read f4" \
+  "f2:herdr did not send it the brief (agent_not_found); see herdr agent read f2" \
+  "f5:it may or may not have the brief: herdr's reply to the brief could not be read once, then herdr gave no status for it; it was not sent again, see herdr agent read f5"; do
+  slug="${f%%:*}"; f_story "${slug}"
   printf '2026-10-02T09:02:00Z\ttell:findings\t%s\tw:2\t%s: %s\n' "${slug}" "${slug}" "${f#*:}" >> "${P}/.swarm/events.tsv"
-  echo "w:2 ${slug}" > "${P}/.swarm/state/${slug}"; echo "${slug} w:2" > "${ROOT}/agents"
-  echo "[{\"sessionId\":\"sess-${slug}\",\"status\":\"idle\"}]" > "${CLAUDE_STUB_AGENTS}"
   run tell "${slug}" findings "${ROOT}/f.md" > "${ROOT}/tell-${slug}.out" || true
 done
-check "a findings tell herdr sent but not seen taken up counts toward round 3; one herdr never sent does not" "1|yes|0|yes" \
-  "$(grep -c $'\tescalate\tf1\t' "${P}/.swarm/events.tsv")|$(has "findings round 3 of its build" "$(cat "${ROOT}/tell-f1.out")")|$(grep -c $'\tescalate\tf2\t' "${P}/.swarm/events.tsv")|$(has "told f2" "$(cat "${ROOT}/tell-f2.out")")"
+# stepped_f <slug> — "up" when the tell stepped <slug> up (one escalate line, and it says so), "told"
+# when it sent the findings with no escalate line.
+stepped_f() {
+  if [[ "$(grep -c $'\tescalate\t'"$1"$'\t' "${P}/.swarm/events.tsv")" == 1 ]] && grep -q "findings round 3 of its build" "${ROOT}/tell-$1.out"; then echo up
+  elif ! grep -q $'\tescalate\t'"$1"$'\t' "${P}/.swarm/events.tsv" && grep -q "told $1" "${ROOT}/tell-$1.out"; then echo told
+  else echo "neither: $(cat "${ROOT}/tell-$1.out")"; fi
+}
+check "a findings tell herdr sent but not seen taken up counts toward round 3; one herdr never sent does not" "up|up|up|told|told" \
+  "$(stepped_f f1)|$(stepped_f f3)|$(stepped_f f4)|$(stepped_f f2)|$(stepped_f f5)"
+# f6, for real: herdr sends the findings twice and reads f6 idle with no turn finished each time. The
+# tell fails saying they count as delivered and are not to be sent again, and the next one steps f6 up.
+f_story f6; touch "${ROOT}/promptsent"
+out="$(SWARM_SLEEP_SCALE=0.02 run tell f6 findings "${ROOT}/f.md")" || true; rm "${ROOT}/promptsent"
+run tell f6 findings "${ROOT}/f.md" > "${ROOT}/tell-f6.out" || true
+check "a findings tell herdr sent but did not see taken up says the findings count as delivered, and it counts" "yes|yes|up" \
+  "$(has "herdr sent it the brief" "${out}")|$(has "the findings count as delivered, a findings round of its build, so do not send them again" "${out}")|$(stepped_f f6)"
 
 # --- A sonnet -> opus -> fable chain of step-ups on s2, today. In outcomes the three builds are one
 # attempt, the two replaced builds each have a close with cause step-up:<trigger>, and the Fable

@@ -1528,9 +1528,9 @@ tell_agent() {
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
-  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then deliver_prompt "${name}" "${msg}"; echo "told ${name}"; return; fi
+  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then tell_deliver "${name}" "${msg}" "${kind}"; echo "told ${name}"; return; fi
   since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
-  deliver_prompt "${name}" "${msg}"
+  tell_deliver "${name}" "${msg}" "${kind}"
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
@@ -1539,9 +1539,23 @@ tell_agent() {
   echo "told ${name}"
 }
 
+# tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message. A findings tell
+# herdr sent but did not see taken up also says the findings count as delivered: findings_told counts
+# it as a round, so the same findings sent again would count that round twice.
+tell_deliver() {
+  local err rc=0
+  err="$( (deliver_prompt "$1" "$2") 2>&1 >/dev/null )" || rc=$?
+  [[ ${rc} -ne 0 ]] || return 0
+  [[ "${err}" == *"swarm: "* ]] || exit "${rc}"
+  err="${err##*swarm: }"
+  [[ "$3" == findings && "${err}" == *"herdr sent it the brief"* ]] || die "${err}"
+  die "${err}; the findings count as delivered, a findings round of its build, so do not send them again"
+}
+
 # findings_told <slug> — how many findings tells (a bare tell, from logs before kinds, too) <slug>
 # has had since its build started (build_started): ok ones, and those herdr sent but deliver_prompt
-# did not see taken up ("herdr sent it the brief"); not one herdr never sent.
+# did not see taken up ("herdr sent it the brief"); not one herdr never sent. Nor one whose reply
+# "could not be read" with none sent: whether it went out is unknown, so it is not counted.
 findings_told() {
   awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
     END { print n + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
