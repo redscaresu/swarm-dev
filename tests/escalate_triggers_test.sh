@@ -128,6 +128,11 @@ for ladder in sonnet,opus,fable ""; do
     check "ladder '${ladder}': a third findings tell steps it up instead, the findings in its brief" \
       "ok (findings-3: sonnet -> opus)|yes|yes" \
       "$(stepped)|$(grep -q 'was not told: these were findings round 3' <<< "${out}" && echo yes)|$(grep -qx 'fix it' "${P}/.swarm/briefs/s1.md" && echo yes)"
+    fresh "${ladder}" idle; echo "step_up_findings = 2" >> "${P}/.claude/swarm/config"
+    printf '2026-10-18T10:01:00Z\ttell:findings\ts1\tw:1\tok\n' >> "${P}/.swarm/events.tsv"; echo "fix it" > "${ROOT}/f.md"
+    out="$(run tell s1 findings "${ROOT}/f.md")" || true
+    check "ladder '${ladder}': with step_up_findings = 2, the second findings tell steps it up" \
+      "ok (findings-2: sonnet -> opus)|yes" "$(stepped)|$(grep -q 'was not told: these were findings round 2' <<< "${out}" && echo yes)"
   else
     check "ladder '${ladder}': a third findings tell is sent" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
     # With the ladder off a step-up lock means nothing: a close goes on and counts the attempt.

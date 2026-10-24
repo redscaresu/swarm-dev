@@ -183,6 +183,11 @@ fresh fable 2; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a later round holds it, naming that round" "yes|no|ok (top-rung: findings round 3 on fable)|yes" \
   "$(grep -q 'these were findings round 3 on or above' <<< "${out}" && echo yes)|$(told "${out}")|$(held)|$(grep -q 'drew review findings round 3 there' "${block}" && echo yes)"
 
+fresh fable 1; echo "top_rung_rounds = 3" >> "${P}/.claude/swarm/config"; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable, top_rung_rounds = 3: the 2nd findings tell since the step-up is sent" "yes|" "$(told "${out}")|$(held)"
+fresh fable 2; echo "top_rung_rounds = 3" >> "${P}/.claude/swarm/config"; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable, top_rung_rounds = 3: the 3rd is held for the lead" "no|lead|ok (top-rung: findings round 3 on fable)" "$(told "${out}")|$(kind)|$(held)"
+
 # A fable build above a ladder that tops out at opus is on no rung with one above it: held as on the top.
 fresh fable 0; sed -i.x '/\tescalate\t/d' "${P}/.swarm/events.tsv"; echo "escalate_ladder = sonnet,opus" > "${P}/.claude/swarm/config"
 out="$(run tell s1 findings "${ROOT}/f.md")" || true

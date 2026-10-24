@@ -113,10 +113,8 @@ since a hook there runs in every repo. Last, init lists the files it wrote that 
 for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks once
 for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
-`.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
-runs it; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config`
-prints every setting and where it came from. Each key's full rules are in reference.md
-§ Settings, or the section named in its row.
+`.claude/swarm/config` holds `key = value` lines and `#` comments, parsed and never run; an unknown
+key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` prints each setting and its source.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -128,6 +126,8 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
 | `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
 | `escalate_ladder` | empty | models from low to high, each once, such as `sonnet,opus,fable`: swarm.sh steps a struggling build up to the next one in the same worktree. Empty is off (reference.md § The escalation ladder) |
+| `step_up_findings` | `3` | `N`: with `escalate_ladder` set, a build's Nth round of review findings steps it up instead of being sent (reference.md § Settings) |
+| `top_rung_rounds` | `2` | `N`: with `escalate_ladder` set, the Nth round of review findings on its top rung holds the story for the lead instead; at least `2` (reference.md § Settings) |
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |
 | `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference.md § Building) |
