@@ -381,13 +381,18 @@ lane k's, named `conduct-<epic>-l<k>` (the backlog's `conduct-backlog-<dir>-<has
 name stays at most 32 characters). `conduct` without `--lane` is refused. Each lane has its own brief,
 report (`.swarm/conduct-<epic>.l<k>.report.md`), inbox and tab. A story's lane is the `lane:` line in
 its front matter, or else the `cksum` of its slug mod N, plus 1. `swarm.sh story` writes it to the
-story's board state when its build starts (a `lane:` already there stays as written; a fix-main
-story takes the lane of the conductor that starts it), so a started story never changes lanes, even
-when N changes. A lane past a lowered N counts as lane (lane - 1) mod N + 1 wherever it is read, so no
-story is left without a conductor. `unblock --startable <epic>|--backlog --lane <k>` prints only lane
+story's board state once the build's worktree exists (a `lane:` already there stays as written; a
+fix-main story takes the lane of the conductor that starts it; a refused or failed start writes
+nothing), so a started story never changes lanes, even when N changes. A lane past a lowered N counts
+as lane (lane - 1) mod N + 1 wherever it is read, `--lane` on `watch` and `unblock --startable`
+included, so a lane conductor that outlived the change keeps working its folded lane and no story is
+left without a conductor; with N = 1 such a `--lane` is a no-op. `unblock --startable <epic>|--backlog --lane <k>` prints only lane
 k's stories, and ends a line `(held: clashes with <other> in lane <j> on <entries>)` while a story of
-the same epic in another lane, whose build has started, touches the same `file:symbol`; the lane holds
-it until that build is gone. `swarm.sh watch --epic <epic>|--backlog --lane <k>` reports only lane k's
+the same epic in another lane, whose build has started or is starting, touches the same `file:symbol`
+(any other note follows it after a `;`); the lane holds it until that build is gone, and `story
+--strict` refuses it. That check, and a reservation of the start in `.swarm/state/lane-start/`, run
+under `.swarm/state/lane-start.lock` for a moment; a start that finds the lock still held after 5
+seconds stops and says to retry. With N = 1 a start takes no lock. `swarm.sh watch --epic <epic>|--backlog --lane <k>` reports only lane k's
 PRs, so one lane's watch never takes another lane's report, and `next`'s `queued:` lines name the
 owning lane's conductor. The lane's brief tells its conductor to build, review and merge only its own
 stories and never touch another lane's PR. A `swarm.sh tell <conductor> note` to a name without a lane
@@ -395,7 +400,7 @@ that no pane holds goes to every running lane of that epic. A lane's `conduct` a
 `events.tsv` name it as `<epic>.l<k>` (`--backlog.l<k>`), which `outcomes`, `flow` and the login
 incident check match to its conductor. No lane starts while a conductor of the epic from another N
 runs (a lane-less one, or a lane past N), nor when its name is another epic's conductor's (an epic
-named `<epic>-l<k>`). Conductors that start on their own (below) start one per lane that has ready
+named `<epic>-l<k>`), and no conductor starts under a name a running lane of another epic holds. Conductors that start on their own (below) start one per lane that has ready
 stories, and the notes after `merge --board` go to each lane with its own stories. With N = 1 nothing
 changes: no `--lane`, and the names above.
 

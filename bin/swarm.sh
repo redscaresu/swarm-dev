@@ -446,14 +446,19 @@ hold() {
   echo "logged: hold $1: $2"
 }
 
-# lane_flag <cmd> [--lane <k>] — set LANE to <k>, 1 to conductor_lanes, or to nothing with no --lane.
+# lane_flag <cmd> [--lane <k>] — set LANE from --lane <k>, or to nothing with no --lane. conduct's <k>
+# is 1 to conductor_lanes, above 1. Any other command's folds a lane past a lowered conductor_lanes
+# onto (k - 1) mod conductor_lanes + 1, as story_lane folds a lane:, so a lane conductor that outlived
+# the change keeps working (with one lane, every story).
 lane_flag() {
   local cmd="$1"; shift
   LANE=""
   [[ $# -gt 0 ]] || return 0
   [[ $# -eq 2 && "$1" == --lane ]] || die "${cmd}: unknown argument '$1'"
-  (( CFG_conductor_lanes > 1 )) || die "${cmd}: --lane needs conductor_lanes above 1 (it is 1)"
-  [[ "$2" =~ ^[1-9][0-9]*$ && $2 -le CFG_conductor_lanes ]] || die "${cmd}: --lane takes 1 to ${CFG_conductor_lanes} (conductor_lanes), not '$2'"
+  [[ "$2" =~ ^[1-9][0-9]{0,5}$ ]] || die "${cmd}: --lane takes a whole number of 1 or more, not '$2'"
+  if [[ "${cmd}" != conduct ]]; then LANE=$(( ($2 - 1) % CFG_conductor_lanes + 1 )); return 0; fi
+  (( CFG_conductor_lanes > 1 )) || die "conduct: --lane needs conductor_lanes above 1 (it is 1)"
+  (( $2 <= CFG_conductor_lanes )) || die "conduct: --lane takes 1 to ${CFG_conductor_lanes} (conductor_lanes), not '$2'"
   LANE="$2"
 }
 

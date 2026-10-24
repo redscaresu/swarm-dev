@@ -335,9 +335,8 @@ queued_lines() {
   local e scope r lane
   e="$(conduct_epic "$1")"; lane="$(conduct_lane "$1")"
   if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
-  # A lane conductor's own lane only (with one lane now, or a lane past it, all of its epic).
-  # shellcheck disable=SC2154 # assigned in another file
-  [[ -z "${lane}" ]] || (( CFG_conductor_lanes == 1 || lane > CFG_conductor_lanes )) || scope+=(--lane "${lane}")
+  # A lane conductor's own lane only (watch_scope folds a lane past a lowered conductor_lanes).
+  [[ -z "${lane}" ]] || scope+=(--lane "${lane}")
   (
     watch_scope "${scope[@]}"; watch_repos warn
     # Guarded: bash 3.2's set -u calls an empty array unbound, and no repo may have resolved.
@@ -1126,9 +1125,9 @@ unblock() {
 # finished, so after unblock (its last merge may ready another epic's stories) nothing is startable. A
 # line ends (stacked on <parents>) while depends_on has open stories, as story stacks it, and (its PR
 # <url> was closed unmerged) when the story's last event is reconcile's reopen, for the lead. With
-# <lane>, only the stories in that conductor lane (story_lane), and a line ends (held: clashes with
-# <other> in lane <j> on <entries>) while a story of the same epic in another lane whose build has
-# started (a worktree, or in review) touches what it touches (lane_clash).
+# <lane>, only the stories in that conductor lane (story_lane), and a line's note starts held: clashes
+# with <other> in lane <j> on <entries> (before any other reason, kept after a ;) while a story of the
+# same epic in another lane whose build has started touches what it touches (lane_clash).
 unblock_startable() {
   local want="$1" lane="${2:-}" slug e f open why held=""
   unblock
@@ -1144,22 +1143,25 @@ unblock_startable() {
       why="its PR$(fm "${f}" prs | sed 's/^./ &/') was closed unmerged"
     fi
     [[ -z "${lane}" ]] || held="$(lane_clash "${slug}" "${lane}")"
-    [[ -z "${held}" ]] || why="${held}"
+    [[ -z "${held}" ]] || why="${held}${why:+; ${why}}"
     echo "startable: ${slug}${why:+ (${why})}"
   done < <(board_ready)
 }
 
 # lane_clash <slug> <lane> — "held: clashes with <other> in lane <j> on <entries>" for the first story of
 # <slug>'s own epic (or the backlog) outside lane <lane> whose build has started (its worktree exists,
-# or it is in review) and whose touches overlap <slug>'s (touches_rows, same epic included), else nothing.
+# or it is in review) or is starting (lane_start's reservation, under 10 minutes old, which holds its
+# lane), and whose touches overlap <slug>'s (touches_rows, same epic included), else nothing.
 lane_clash() {
-  local other epic status entry mine j
+  local other epic status entry mine j r
   mine="$(fm "${BOARD}/stories/$1.md" epic)"
   while IFS=$'\t' read -r other epic status entry; do
     [[ -n "${other}" && "${epic}" == "${mine:-none}" ]] || continue
-    j="$(story_lane "${BOARD}/stories/${other}.md")"
+    r="${STATE_DIR}/lane-start/${other}"
+    [[ -n "$(find "${r}" -mmin -10 2>/dev/null)" ]] || r=""
+    if [[ -n "${r}" ]]; then j="$(cat "${r}")"; else j="$(story_lane "${BOARD}/stories/${other}.md")"; fi
     [[ "${j}" != "$2" ]] || continue
-    [[ "${status}" == review || "${status}" == held ]] || one_off_started "${other}" || continue
+    [[ -n "${r}" || "${status}" == review || "${status}" == held ]] || one_off_started "${other}" || continue
     echo "held: clashes with ${other} in lane ${j} on ${entry}"; return 0
   done <<< "$(SWARM_SAME_EPIC=1 touches_rows "$1" 2>/dev/null)"
 }
