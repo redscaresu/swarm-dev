@@ -219,6 +219,23 @@ Repeat until a step below says stop:
      When `next`'s why names a conductor that is still working, start
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
+   - `plan-hld <hld>`: follow `/plan-hld <hld>`. Approving its epics is the user's decision: stop
+     and wait for it, unless `swarm.sh grants <hld>` lists `epics`, which lets it write them active
+     and open the board PR unasked. Its board PR lands like any other: the HLD's `merge` grant
+     covers it under `merge = human`. Once that PR has merged or been closed, run
+     `swarm.sh board-pr done plan-<hld>` and `swarm.sh close plan-<hld>`, so an abandoned worktree
+     never hides the HLD from `next` and its agents' tab closes.
+     When the gate lists `plan PR awaiting merge: <hld>` and no PR is open on `board/plan-<hld>`,
+     run `/plan-hld <hld>` again: it clears the worktree of a plan PR that merged or closed, and
+     resumes in one that stopped before `board-pr open`.
+   - `hld <hld>`: every epic planned from the HLD has left the board. Run `swarm.sh finish <hld>`.
+     Under `merge = agent`, merge the PR it opens with `swarm.sh merge --board <url>`, as any board
+     PR; under `merge = human`, hand it to the user: the finish PR is then the user's, grant or not.
+     Once that PR has merged or been closed, run `swarm.sh board-pr done finish-<hld>`, so an
+     abandoned worktree never hides the HLD from `next`. When the gate lists
+     `finish PR awaiting merge: <hld>`, read the PR (`gh pr list --head board/finish-<hld> --state all
+     --json url,state`): once it has merged or closed, run `swarm.sh board-pr done finish-<hld>`;
+     while it is open, it is the user's under `merge = human`, and yours to merge under `merge = agent`.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,
@@ -286,7 +303,11 @@ Repeat until a step below says stop:
        plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
        `claude --continue`) and any warning it printed. If CI on the base was not green, merge
        updated nothing and printed a warning naming what to run once the release is published:
-       tell the user that warning. For any other repo, check that the tag
+       tell the user that warning. If it printed `warning: ... ships <commits> unchecked` (or that gh
+       cannot read the merge commit's parent), a PR landed between the release check and the merge,
+       in any repo: tell the user those commits shipped in the release unchecked. For swarm-dev's
+       own repo merge then updated nothing and printed `refused: ...`: tell the user what that line
+       says to run. For any other repo, check that the tag
        `v<new>` exists and that `gh release view v<new>` shows the release. If merge instead printed
        `<url> is MERGED, not open` (the user merged it) or `unconfirmed (...)` and `gh pr view` shows
        it MERGED, merge stopped before it waited for CI on the base or ran the upgrade: look at CI on

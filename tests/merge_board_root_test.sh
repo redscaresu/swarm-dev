@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+# merge_board_root_test.sh — swarm.sh merge --board when board_dir is the project root: the board
+# check holds the board's own paths (stories/, epics/, ...), not the whole repo. The gh and herdr stubs
+# are merge_test.sh's, trimmed to what a board merge reads.
+set -euo pipefail
+
+SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+ROOT="$(cd "${tmp}" && pwd -P)"
+trap 'chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+P="${ROOT}/proj"; FX="${ROOT}/fx"; S="${P}/stories/s.md"
+H1=1111111111111111111111111111111111111111
+M=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; URL=https://github.com/o/r/pull/7
+mkdir -p "${P}/.claude/swarm" "${P}/stories" "${P}/.swarm/state" "${ROOT}/bin"
+git -C "${P}" init -q
+# The board's repo has an origin, a local bare repo the gh stub names o/r (${FX}/origin).
+git init -q --bare "${ROOT}/origin.git"; git -C "${P}" remote add origin "${ROOT}/origin.git"
+
+# gh: pr view, pr merge (fails unless --match-head-commit is ${FX}/head; marks the PR merged with
+# merge commit ${FX}/oid, else ${M}, and then fails the next ${FX}/readback-fails pr views) and repo view (the merge
+# methods, or with nameWithOwner ${FX}/origin) from ${FX}; each api path from serve's fixture.
+# STUB_FX, when set, is a run's own fixtures (two merges at once).
+# shellcheck disable=SC2016 # ${STUB_FX} is the stub's, expanded when it runs
+printf '#!/usr/bin/env bash\nFX="${STUB_FX:-%s}"; LOG="%s"; M="%s"\n' "${FX}" "${ROOT}/gh.log" "${M}" > "${ROOT}/bin/gh"
+cat >> "${ROOT}/bin/gh" <<'STUB'
+echo "$*" >> "${LOG}"
+# serve <key> — the fixture <key>.<n> on the nth read of <key> when there is one, else <key>; with
+# <key>.fail, print that (a partial answer) and fail; with <key>.<n>.fail, fail the nth read only;
+# with <key>.404, a 404 with its message; with none of them, a 404 Not Found.
+serve() {
+  local n; n=$(( $(cat "${FX}/$1.n" 2>/dev/null || echo 0) + 1 )); echo "${n}" > "${FX}/$1.n"
+  if [ -e "${FX}/$1.fail" ]; then cat "${FX}/$1.fail"; echo "gh: HTTP 502" >&2; exit 1; fi
+  if [ -e "${FX}/$1.${n}.fail" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+  if [ -e "${FX}/$1.${n}" ]; then cat "${FX}/$1.${n}"
+  elif [ -e "${FX}/$1" ]; then cat "${FX}/$1"
+  elif [ -e "${FX}/$1.404" ]; then echo "gh: $(cat "${FX}/$1.404") (HTTP 404)" >&2; exit 1
+  else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+}
+case "$1 $2" in
+  "pr view")
+    [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
+    left="$(cat "${FX}/readback-left" 2>/dev/null || echo 0)"
+    if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
+    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s}\n' \
+      "$(cat "${FX}/state.${3##*/}" 2>/dev/null || cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" \
+      "$(cat "${FX}/body" 2>/dev/null || echo null)" "$(cat "${FX}/commits" 2>/dev/null || echo '[{}]')" ;;
+  "pr merge")
+    case " $* " in *" --disable-auto "*) exit 0 ;; esac
+    want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
+    [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
+    # --auto enqueues (with ${FX}/auto-fails, then fails with a 5xx): the queue fixture
+    # (serve queue) says what happens next.
+    # With ${FX}/auto-sleeps the enqueue takes 5 s, for a signal to land during it.
+    case " $* " in *" --auto "*) [ ! -e "${FX}/auto-sleeps" ] || sleep 5
+      [ ! -e "${FX}/auto-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }; exit 0 ;; esac
+    [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
+    [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "$(cat "${FX}/oid" 2>/dev/null || echo "${M}")" > "${FX}/mergecommit"
+    [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
+    # ${FX}/on-merge runs once the PR has merged: another command's work during merge's CI wait.
+    [ ! -e "${FX}/on-merge" ] || sh "${FX}/on-merge"
+    # A 5xx after GitHub merged it.
+    [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
+  "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
+  # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none; with ${FX}/prlist.<slug>.fail, a 5xx.
+  "pr list") h=""; prev=""; for a in "$@"; do [ "${prev}" != --head ] || h="${a##*/}"; prev="${a}"; done
+             [ ! -e "${FX}/prlist.${h}.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+             cat "${FX}/prlist.${h}" 2>/dev/null || echo '[]' ;;
+  # A run's status (run.<id>.status, read like any fixture), or its failed-job log: --log-failed's
+  # "<job>\t<step>\t<timestamp> <line>" lines, which hang with ${FX}/run.hang.
+  "run view") case "$*" in
+                *"--json status"*) [ ! -e "${FX}/run.$3.statushang" ] || sleep 60; serve "run.$3.status" ;;
+                *) [ ! -e "${FX}/run.hang" ] || sleep 60; serve "run.$3.log" ;;
+              esac ;;
+  # A rerun of a run's failed jobs runs ${FX}/rerun.<id> (it writes what CI reads next); with none,
+  # GitHub refuses it. With ${FX}/rerun-502, the first one fails with a 5xx.
+  # With ${FX}/rerun-502.keep, every one does.
+  "run rerun") [ ! -e "${FX}/rerun-502" ] || { rm "${FX}/rerun-502"; echo "gh: HTTP 502" >&2; exit 1; }
+               [ ! -e "${FX}/rerun-502.keep" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+               [ -e "${FX}/rerun.$3" ] || { echo "gh: run $3 cannot be rerun (HTTP 403)" >&2; exit 1; }; sh "${FX}/rerun.$3" ;;
+  # Coloured, as with CLICOLOR_FORCE or GH_FORCE_TTY, unless asked for --color never.
+  "pr diff") case "$*" in *"--color never"*) cat "${FX}/diff" ;; *) sed "s/^/$(printf '\033')[1m/" "${FX}/diff" ;; esac ;;
+  api*)
+    for a in "$@"; do path="${a}"; done
+    sha="${path#*/commits/}"; sha="${sha%%/*}"
+    case "${path}" in
+      # The merge queue's read of the PR (api graphql); a read that says merged marks the PR so.
+      *"mergeQueue(branch"*) serve mq ;;   # whether the base has a merge queue
+      # Turning auto-merge off and dequeuing: they succeed, unless ${FX}/mutation.fail.
+      *"mutation("*) [ ! -e "${FX}/mutation.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"data":{}}' ;;
+      # With ${FX}/queue-sleeps the first read takes 5 s.
+      query=*) [ ! -e "${FX}/queue-sleeps" ] || { rm -f "${FX}/queue-sleeps"; sleep 5; }
+               out="$(serve queue)" || exit 1; echo "${out}"
+               case "${out}" in *'"state":"MERGED"'*) echo MERGED > "${FX}/state"; printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit" ;; esac ;;
+      */check-runs*) serve "${sha}.checks"
+                     # The head moves once its checks are read, before the merge.
+                     [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head" ;;
+      */commits/*/status*) serve "${sha}.status" ;;
+      *event=merge_group*) serve mgruns ;;
+      */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
+      # --slurp (merge_gone's read) wraps the one page in a list of pages.
+      */pulls/*/files*) case " $* " in *" --slurp "*) out="$(serve files)" || exit 1; echo "[${out}]" ;; *) serve files ;; esac ;;
+      */rules/branches/*) serve rules ;;
+      */git/ref/tags/*) serve tagref ;;     # the release's tag
+      */releases/tags/*) serve release ;;   # its GitHub release
+      */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
+      */branches/*) serve branch ;;
+      # compare/<base>...<head>: compare.<base>, else compare, else for a commit base the head holds
+      # it (fix-main's compare of a red commit with a green one).
+      */compare/*) c="${path##*/compare/}"; c="${c%%...*}"
+                   if [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
+                   elif [ -e "${FX}/compare" ] || [ "${#c}" != 40 ]; then serve compare
+                   else echo '{"status":"ahead","behind_by":0}'; fi ;;
+      */contents/.github/workflows\?*) serve workflows ;;
+      # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
+      */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
+                    [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
+      # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>. A
+      # commit's files: commit.<sha>, else one file outside the board.
+      */commits/*) [ -e "${FX}/commit.${sha}" ] || { echo '{"files":[{"filename":"bin/x"}]}'; exit 0; }; serve "commit.${sha}" ;;
+      *) echo "stub: no fixture for ${path}" >&2; exit 1 ;;
+    esac ;;
+  *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
+esac
+STUB
+printf '#!/bin/sh\nA="%s"\n' "${ROOT}/agents" > "${ROOT}/bin/herdr"
+cat >> "${ROOT}/bin/herdr" <<'STUB'
+[ ! -e "$A.fail" ] || exit 1
+echo "$*" >> "$A.log"
+case "$1 $2" in
+  # Enough for conduct to start a conductor: its agent joins the list, in pane w:new.
+  "--version ") echo "herdr 0.9.5" ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"w:new"}}}' ;;
+  "agent start") echo "$3 w:new" >> "$A" ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent list") [ ! -e "$A.garbage" ] || { echo "not json"; exit 0; }
+                awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\",\"cwd\":\"%s\",\"agent_session\":{\"value\":\"%s\"}}", (NR > 1 ? "," : ""), $1, $2, $3, $4 }
+                     END { print "]}}" }' "$A" ;;
+  "agent read") cat "$A.screen.$3" 2>/dev/null ;;   # a pane's text, when a case writes one
+esac
+STUB
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
+# claude: never the real one. Logs each call; plugin update fails with ${FX}/update.fail.
+# shellcheck disable=SC2016 # expanded when the stub runs
+printf '#!/bin/sh\necho "$*" >> "%s"\n[ "$2" != update ] || [ ! -e "%s/update.fail" ]\n' "${ROOT}/claude.log" "${FX}" > "${ROOT}/bin/claude"
+chmod +x "${ROOT}/bin/claude"
+# This project's panes: the conductor of epic e and the builder of story t.
+printf 'w:c conduct-e\nw:b t\n' > "${P}/.swarm/state/e"
+printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
+
+# run <name> <status> [conclusion] [sha] — one check run, or with [sha] one workflow run on it
+# (<name>.yml its path).
+run() {
+  local c=null; [[ -z "${3:-}" ]] || c="\"$3\""
+  printf '{"name":"%s","status":"%s","conclusion":%s,"html_url":"https://github.com/o/r/runs/%s","path":".github/workflows/%s.yml","head_sha":"%s"}' \
+    "$1" "$2" "${c}" "$1" "$1" "${4:-${M}}"
+}
+# page <file> <key> <total> <item>... — one page of a list, appended to <file>.
+page() { local f="$1" k="$2" t="$3" IFS=,; shift 3; printf '{"total_count":%s,"%s":[%s]}\n' "${t}" "${k}" "$*" >> "${f}"; }
+checks() { local f="$1"; shift; rm -f "${f}"; page "${f}" check_runs "$#" "$@"; }
+statuses() { local f="$1"; shift; rm -f "${f}"; page "${f}" statuses "$#" "$@"; }
+wfruns() { local f="$1"; shift; rm -f "${f}"; page "${f}" workflow_runs "$#" "$@"; }
+workflows() { # <name>... — .github/workflows on the merge commit: each <name>.yml runs on push to main
+  local w list=""
+  for w in "$@"; do
+    list+="${list:+,}{\"name\":\"${w}.yml\",\"path\":\".github/workflows/${w}.yml\",\"type\":\"file\"}"
+    printf 'name: %s\non:\n  pull_request:\n    types: [opened]\n  push:\n    branches: [main]   # main only\n' "${w}" > "${FX}/wf.${w}.yml"
+  done
+  echo "[${list}]" > "${FX}/workflows"
+}
+# item <slug> <front-matter line>... — a fresh story: its file, and no state file.
+item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${P}/stories/$1.md"; rm -f "${P}/.swarm/board-state/stories/$1"; }
+
+# fresh — merge = agent with the board at the project root, since with merge = human the
+# lead merges only under an HLD that grants merge (the grant cases below); story s in review with
+# prs: ${URL}; head ${H1} with one green check run and no status; squash allowed; on the merge commit
+# a green check run and a green run of the one workflow that runs on push to main.
+fresh() {
+  rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log" "${P}"/stories/fix-main-*; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
+  printf '%s\n' "merge = agent" "board_dir = ." > "${P}/.claude/swarm/config"
+  echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
+  echo '[{"filename":"stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"; : > "${FX}/diff"
+  echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; echo '[]' > "${FX}/rules"; echo 'Branch not protected' > "${FX}/branch.404"
+  echo '{"data":{"repository":{"mergeQueue":null}}}' > "${FX}/mq"
+  echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
+  checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
+  checks "${FX}/${M}.checks" "$(run test completed success)"; statuses "${FX}/${M}.status"
+  workflows ci; wfruns "${FX}/${M}.runs" "$(run ci completed success "${M}")"
+  item s "status: review" "prs: ${URL}"
+}
+# merge [VAR=value]... <args> — swarm.sh merge outside herdr unless VARs say otherwise; sets rc,
+# output in ${ROOT}/out.
+merge() {
+  local envs=()
+  while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
+  rc=0
+  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
+    SWARM_MERGE_CI_SECONDS=5 SWARM_RELEASE_WAIT=0 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
+}
+events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
+merge_lines() { events | grep -c '^merge ' || true; }
+logged() { events | grep -q -- "$1"; }
+# and_logged <pattern> <command>... — the command succeeds and events.tsv has a line matching
+# <pattern>: one check, so a miss counts as a FAIL and never ends the file under set -e.
+and_logged() { local p="$1"; shift; "$@" && logged "${p}"; }
+
+fails=0
+check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
+is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi; }
+merged() { grep -q '^pr merge' "${ROOT}/gh.log"; }
+not_merged() { ! merged; }
+said() { grep -qF -- "$1" "${ROOT}/out"; }
+# refused <name> <text> — the last merge failed naming <text>, called no pr merge, and logged one merge line.
+refused() {
+  is "$1: exits non-zero" 1 "${rc}"
+  check "$1: says ${2}" said "$2"
+  check "$1: no pr merge" not_merged
+  is "$1: one merge line" 1 "$(merge_lines)"
+}
+
+# A PR that changes only stories/ and epics/ files passes the board-only check and merges.
+fresh; rm "${S}";
+echo '[{"filename":"stories/s.md","status":"modified"},{"filename":"epics/e.md","status":"added"},{"filename":"hld/h.md","status":"added"},{"filename":"Board.base","status":"modified"},{"filename":".obsidian/app.json","status":"added"}]' > "${FX}/files"; echo 5 > "${FX}/nfiles"
+{ echo ---; echo "status: draft"; echo ---; } > "${FX}/wf.e.md"   # epic_guard reads e.md; a draft needs no ticket
+merge --board "${URL}"
+is "board at the root, stories/, epics/, hld/, Board.base and .obsidian/ only: exits 0" 0 "${rc}"
+check "board at the root, stories/, epics/, hld/, Board.base and .obsidian/ only: merged" merged
+
+# One that also changes a file outside them is refused, whatever the order.
+for files in '[{"filename":"stories/s.md"},{"filename":"bin/swarm.sh"}]' '[{"filename":"README.md"},{"filename":"epics/e.md"}]' \
+  '[{"filename":"Board.base.py"}]' '[{"filename":"Board.base-backup"}]' '[{"filename":"Board.basement/x.sh"}]' '[{"filename":".obsidianx/x.sh"}]'; do
+  fresh; rm "${S}"; echo "${files}" > "${FX}/files"; grep -o '"filename"' <<< "${files}" | wc -l | tr -d ' ' > "${FX}/nfiles"
+  merge --board "${URL}"; refused "board at the root, ${files}" "outside the board's paths"
+done
+check "board at the root, a refusal lists the board's paths" said "(stories/, epics/, hld/, Board.base, .obsidian/)"
+# Nor does a file renamed onto the board from outside.
+fresh; rm "${S}"; echo '[{"filename":"stories/x.md","previous_filename":"bin/swarm.sh","status":"renamed"}]' > "${FX}/files"
+merge --board "${URL}"; refused "board at the root, a file renamed onto stories/" "changes bin/swarm.sh, outside the board's paths"
+
+# --- ready_tell with the board at the root: a --board merge that readies r1 notes epic e's running
+# conductor (conduct-e, the herdr stub's). origin's main is P's HEAD; put and land commit board files
+# to it from another clone, as a board PR's merge does.
+git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "${P}" push -q origin HEAD:refs/heads/main; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+git clone -q "${ROOT}/origin.git" "${ROOT}/up"; git -C "${P}" fetch -q origin; git -C "${P}" branch -q -u origin/main
+put() { # <path> <front-matter line>... — a board file in that clone, staged
+  mkdir -p "$(dirname "${ROOT}/up/$1")"; { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${ROOT}/up/$1"; git -C "${ROOT}/up" add -f "$1"
+}
+land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
+put epics/e.md "status: active"; put stories/r0.md "status: ready" "kind: code" "epic: e"; land
+git -C "${P}" merge -q --ff-only '@{upstream}'
+put stories/r1.md "status: ready" "kind: code" "epic: e"; land
+fresh; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
+echo '[{"filename":"stories/r1.md","status":"added"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
+wfruns "${FX}/${OID}.runs" "$(run ci completed success "${OID}")"
+INBOX="${P}/.swarm/inbox/conduct-e.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
+is "board at the root, a merge that readies r1: exits 0" 0 "${rc}"
+check "board at the root, a merge that readies r1: notes conduct-e of r1 alone" \
+  grep -qF "The board PR ${URL} just merged, and these stories of epic e are ready now: r1. Start them now" "${INBOX}"
+check "board at the root, a merge that readies r1: says it noted conduct-e" said "noted conduct-e"
+
+echo
+[[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
+echo "all passed"

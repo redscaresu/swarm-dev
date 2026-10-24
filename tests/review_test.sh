@@ -366,8 +366,8 @@ check "neither brief still says work outside the touches is not a finding" "0|0"
   "$(grep -ci 'outside them is not a finding' <<< "${brief}" || true)|$(grep -ci 'outside them is not a finding' <<< "${fbrief}" || true)"
 check "the review brief's Out of scope holds only what a change outside the touches can fix" "yes" \
   "$(has "raised that only a" "${brief}")"
-check "the review agent's brief has the checklist among what to check, before When both are done" "yes" \
-  "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
+check "the review agent's brief has the checklist among what to check, before When the review is done" "yes" \
+  "$(awk '/^Hold the PR to these/ { h = NR } /^When the review is done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
 # marked_at <file> <text> — the line a brief should show for <file>'s line holding <text>: "- <file>:<n>: <line>",
 # <file> relative to the project.
 marked_at() { local n; n="$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)"; printf -- '- %s:%s: %s' "${1#"${p}"/}" "${n}" "$(sed -n "${n}p" "$1")"; }
@@ -470,6 +470,9 @@ check "codex outside a planning tab stays read-only" "yes" "$(has '-s read-only'
 check "a planning codex writes only in its tab's output dir, told where paths start" "yes|yes|yes" \
   "$(has "-s workspace-write -C ${p}/.swarm/ep -c" "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")|$([[ -d "${p}/.swarm/ep" ]] && echo yes || echo no)|$(has "The project is ${p}; every relative path below is relative to it." "$(grep '^agent prompt w:' "${ROOT}/herdr.log")")"
 check "codex starts with hooks off, so no trust dialog can take the brief" "yes" "$(has '-c features.hooks=false' "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")"
+(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent plan-h cxh "${p}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
+check "an HLD-planning codex (tab plan-<hld>) writes only in .swarm/<hld>" "yes" \
+  "$(has "-s workspace-write -C ${p}/.swarm/h -c" "$(grep '^agent start cxh ' "${ROOT}/herdr.log")")"
 
 # --- The session id: minted once per claude agent, passed to herdr, and recorded before the brief.
 tsv="${p}/.swarm/agents.tsv"

@@ -12,7 +12,9 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 
 1. Install, then restart Claude Code: `claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev`
 2. In your project's git root, inside [herdr](https://herdr.dev), start `claude`.
-3. Run `/swarm-dev:swarm`. After your yes it runs `swarm.sh init`, then stops each time it needs you.
+3. Run `/swarm-dev:swarm`. After your yes it runs `swarm.sh init`.
+4. Run `/swarm-dev:hld <title>` (`/hld` for short) and agree the design: a release's worth of work
+   starts there. Then `/swarm-dev:swarm` plans and builds it, and stops each time it needs you.
 
 [Getting started](#getting-started) has the details and what to check first.
 
@@ -22,12 +24,15 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/swarm-flow-dark.png">
-  <img alt="How the swarm builds an epic: swarm.sh init, /swarm-dev:epic, /swarm-dev:swarm, /plan-epic, your approval, the board, conductor, builders, review agent, merge" src="docs/assets/swarm-flow-light.png">
+  <img alt="How the swarm turns a design into merged PRs: swarm.sh init, /swarm-dev:hld, /swarm-dev:swarm, /plan-hld, /swarm-dev:epic, /plan-epic, your approval, the board, conductor, builders, review agent, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
-1. **Write the work.** `/swarm-dev:epic <title>` opens a co-author agent in its own pane. Together
-   you write the epic: the problem and its evidence, goals that can be checked (**Done when**), what
-   is out of scope, and your part. A reviewer agent attacks the draft. Nothing is planned until you
+1. **Write the work.** `/swarm-dev:hld <title>` opens a co-author agent in its own pane. Together
+   you write the high-level design (HLD): a release's worth of work, and the `grants:` that say
+   what the swarm may do under it without asking you. A reviewer agent attacks the draft. Once you
+   agree it, `/plan-hld` splits it into epics. You agree each epic with `/swarm-dev:epic <title>`,
+   which also writes a single epic from scratch: the problem and its evidence, goals that can be
+   checked (**Done when**), what is out of scope, and your part. Nothing is planned until you
    agree it. `swarm.sh board-pr` refuses a board PR that sets an epic `active` without your
    agreement, a parent epic, an HLD that grants `epics`, or `lead_epics = on`.
 2. **Plan.** `/swarm-dev:swarm` splits the agreed epic into stories of one PR each. A survey agent
@@ -76,8 +81,9 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 4. Run `/swarm-dev:swarm` again. The first time, it asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.
-5. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm`. Run it each
-   time it stops for you.
+5. Run `/swarm-dev:hld <title>`, agree the design, then run `/swarm-dev:swarm`: it plans the
+   design into epics, asks you to agree each, and builds them. For one epic with no design, run
+   `/swarm-dev:epic <title>` instead. Run `/swarm-dev:swarm` each time it stops for you.
 
 Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
 
@@ -85,10 +91,12 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 
 | You see | Do |
 |---|---|
+| a draft HLD | finish it with the co-author, then agree it; its `grants:` are yours to set |
+| proposed epics | agree each with `/swarm-dev:epic`, or say what to change |
 | a draft epic | finish it with the co-author, then agree it |
 | proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
-| a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
+| a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 | an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
@@ -120,6 +128,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. Under `merge = human`, the lead merges a release only when every story merged since
   the last tag is under an agreed HLD that lists `release`.
+- Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
+  `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.
@@ -128,7 +138,9 @@ lists them all.
 
 When the lead merges a swarm-dev release with `swarm.sh merge --release`, it updates the plugin and
 starts `swarm.sh upgrade` for the running agents itself. Then it asks you to restart the lead
-session (`/exit`, then `claude --continue`). Otherwise, update by hand:
+session (`/exit`, then `claude --continue`). If a PR landed on the base after the release was
+checked, it names the commits that shipped unchecked and updates nothing. In that case, or when
+you release some other way, update by hand:
 
 ```bash
 claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swarm-dev
