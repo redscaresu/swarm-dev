@@ -1989,8 +1989,8 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   tell counts when it went through, or when herdr sent the findings but the builder was not seen
   taking them up. That tell fails and says what to do. When the builder may or may not have the
   findings, do not send them again. When herdr read it idle with no turn after both tries ("not
-  taken up"), read its pane and send them again only if they never arrived. One herdr never sent,
-  or whose reply could not be read, does not count. Instructions
+  taken up"), read its pane, and if they never arrived send them again as `tell <slug> nudge`, which
+  is not a round. One herdr never sent, or whose reply could not be read, does not count. Instructions
   that are not review findings, such as a stacked child's merge, go as `tell <slug> nudge`.
 - `watch --epic` or `--backlog` steps up a story of its own whose builder is open, once the PR has
   gone red on two heads of the build. Every head it sees goes into `.swarm/red-heads.tsv`, and each

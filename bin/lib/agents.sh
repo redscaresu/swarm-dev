@@ -1613,19 +1613,24 @@ tell_agent() {
 
 # tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other
 # stderr it printed. A findings tell herdr sent also says what to do: findings_told counts it as a
-# round, so the same findings sent again would count that round twice. After "may or may not have the
-# brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice) herdr may
-# have dropped both, so the pane says whether to.
+# round, so the same findings sent again as findings would count that round twice. After "may or may
+# not have the brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice)
+# herdr may have dropped both, so the pane says whether to send them again, as a nudge: a nudge is
+# not a round.
 tell_deliver() {
-  local err why rc=0
-  { err="$( (deliver_prompt "$1" "$2") 2>&1 1>&3 )"; } 3>&1 || rc=$?
-  [[ ${rc} -ne 0 ]] || return 0
+  local err why rc
+  # Not `{ ...; } || rc=$?`: on the left of || set -e is ignored inside deliver_prompt too, so an
+  # own_target die in `target="$(own_target ...)"` would not stop it, and it would prompt an empty target.
+  # The bare set -e after is the state tell_agent, its one caller, runs in: dispatch's set -e.
+  set +e; { err="$( set -e; deliver_prompt "$1" "$2" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+  # A success keeps its stderr too: deliver_prompt warns when herdr sent the brief and did not show the turn start.
+  if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; return 0; fi
   if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; exit "${rc}"; fi
   why="${err##*swarm: }"; err="${err%swarm: *}"
   [[ -z "${err}" ]] || printf '%s' "${err}" >&2
   case "$3:${why}" in
     findings:*"the brief was not taken up: herdr sent it the brief"*)
-      die "${why}; the findings count as a round: read its pane (herdr agent read $1) and send them again only if it shows they never arrived" ;;
+      die "${why}; the findings count as a round: read its pane (herdr agent read $1) and, if it shows they never arrived, send them again as a nudge (swarm.sh tell $1 nudge <file>), which is not a round" ;;
     findings:*"herdr sent it the brief"*) die "${why}; the findings count as delivered, a findings round of its build, so do not send them again" ;;
   esac
   die "${why}"
