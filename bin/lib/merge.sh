@@ -203,7 +203,9 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; with merge = human and no --release, merge_grant
-# finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the board's own repo and every path it changes,
+# finds an HLD granting merge, and then pr_held finds nothing; with merge = human and --release, release_check
+# finds every story merged since the last tag under an agreed HLD granting release; with --board, epic_guard
+# finds no epic set active with no ticket) (with --board instead: the PR is in the board's own repo and every path it changes,
 # old or new, is on the board, and it sets no epic active with no ticket (epic_unticketed, under either
 # merge mode); with --release: the PR is in the project's own repo and every path it
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.

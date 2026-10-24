@@ -65,6 +65,68 @@ The lead handles each line at once and starts it again. It keeps what it last sa
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
 
+## Writing an HLD
+
+An HLD is a design for a release's worth of work, agreed with you before any epic is written. It
+sits above the epic: HLD, then epics, then stories. It is optional; a single epic needs none.
+
+1. **Start it.** In your Claude session, inside herdr: `/hld <title>`. This creates
+   `<board>/hld/YYYY-MM-DD-<slug>.md` from the skeleton in `hld/README.md` (which `swarm.sh init`
+   copies), as `status: draft` with `grants: []`, and opens a pane (tab `_hld`) with a co-author on
+   the `hld` role. `/hld` with no title resumes the one draft, asks which when there are several,
+   and with none tells you where the chain stands.
+2. **Write it in the co-author's pane.** It reads the code and the ADRs, then asks you the questions
+   that decide the design and fills the ten sections, Problem through Open questions, leaving
+   Epics empty. It asks which `grants:` the HLD carries and writes only what you name.
+3. **Say it is ready.** A reviewer (the `hld-review` role) attacks the draft, its `grants:` first:
+   each grant hands agents a step you take today, so it names what goes wrong if the grant is
+   misused. Its findings arrive in the co-author's pane.
+4. **Agree it.** Your session sets `status: agreed`, opens a board PR with one codex pass, and
+   closes the panes. Only you agree an HLD, and only you set `superseded`, by hand, when a newer
+   one replaces it. Nothing plans a draft.
+
+`grants:` is a one-line `[..]` list of `epics`, `stories`, `merge` and `release`. It is read only
+from an `agreed` HLD, and any other value stops `swarm.sh` with the HLD's file and line.
+
+| Grant | What the lead then does without asking you |
+|---|---|
+| `epics` | `/plan-hld` writes the HLD's epics `status: active` and opens the board PR without asking. Without it each epic is a draft that goes active only when you agree it through `/epic`. |
+| `stories` | `/plan-epic` writes each of those epics' stories without your approval. |
+| `merge` | Under `merge = human`, `swarm.sh merge` takes a story or board PR under the HLD (§ Merging). |
+| `release` | Under `merge = human`, `swarm.sh merge --release` takes a release whose stories since the last tag are all under HLDs that grant it. |
+
+`swarm.sh grants <story | epic | hld | PR URL>` prints the agreed HLD over an item and its grants.
+A `costs: money` PR waits for you whatever the HLD grants. `lead_epics = on` (§ Settings) lets
+the lead set any epic active with no HLD at all; with it `off`, the epic guard refuses an epic that
+goes active without an `agreed:` date, a `parent:`, or an `hld:` whose HLD grants `epics`
+(§ The lead, § Merging).
+
+## Decomposing an HLD
+
+`swarm.sh next` names `plan-hld <hld>` for an agreed HLD with no `planned:` line, no epic carrying
+its `hld:` and no plan worktree. `/plan-hld <hld>` (the file name without `.md`) then:
+
+1. Works on origin's copy of the board in `<repo>-wt/_board-plan-<hld>`, never the main checkout.
+   It stops when a plan PR for the HLD is open, and when the HLD is not agreed, has a `planned:`
+   value or already has epics naming it. A leftover worktree from an interrupted run is resumed,
+   or removed with `board-pr done` once its PR merged.
+2. Runs a swarm: three surveys (`survey-code`, `survey-constraints`, `survey-overlaps`), one
+   `hld-lead` that decomposes the HLD into epics (each independently shippable, with a **Done when**
+   that could fail, its `areas`, and its **Your part**), a `skeptic-<slug>` per epic (at most five),
+   one `codex` and one `critic`. Agents write JSON to `.swarm/<hld>/`, and a rerun reuses those newer
+   than the worktree.
+3. Writes one `epics/<slug>.md` per epic with `hld: <hld>`, sets the HLD's `planned: <today>` and
+   fills its `## Epics` section with one link per epic. It changes nothing else.
+4. Opens the board PR (`board-pr open plan-<hld>`) after one codex pass, with each epic `active`
+   when the HLD grants `epics` and `draft` otherwise. Findings are logged against the PR as in § Scoping an epic.
+
+`swarm.sh grants` accepts that PR as under the HLD only in this shape: one `planned:` line, the
+HLD changed after its last `## Epics` and nowhere else, and at least one epic added, with nothing
+else touched. With `merge` granted the lead lands it with `swarm.sh merge --board`; otherwise you
+merge it. After the merge `next` offers `plan-epic` for each active epic. Once every epic is built
+and gone from the board, `swarm.sh finish <hld>` deletes the planned HLD in a board PR. It refuses
+a draft, a superseded HLD, one with no `planned:` and one that still has epics.
+
 ## Writing an epic
 
 Everything starts here, and it is the one stage you do by hand: the epic decides what every story
@@ -1793,7 +1855,7 @@ code.
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
-| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. With `merge = human` the lead runs it only for a PR whose agreed HLD grants `merge`, and you merge the rest. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`, and refuses it while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line. Where the base has a merge queue, `merge` enqueues the PR. If CI on the base goes red on a commit it merged, it writes a `fix-main` story ([§ Merging](#merging)). |
+| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. With `merge = human` the lead runs it only for a PR whose agreed HLD grants `merge`, and you merge the rest. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`, and refuses it while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line. With `merge = human` it merges only when every story merged since the last tag is under an agreed HLD that grants `release`. `--board` refuses a board PR that sets an epic `active` with no ticket (the epic guard, [§ Merging](#merging)). Where the base has a merge queue, `merge` enqueues the PR. If CI on the base goes red on a commit it merged, it writes a `fix-main` story ([§ Merging](#merging)). |
 | `swarm.sh step-up <slug> <trigger>` | Close a struggling build and start the next model in `escalate_ladder` on the same branch, without counting an attempt. `<trigger>` is `findings-3`, `ci-red-2`, `stalled` or `no-pr`. `swarm.sh step-up --resume <slug>` starts a rung whose start failed. Refused while the ladder is empty ([§ The escalation ladder](#the-escalation-ladder)). |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
 | `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |

@@ -6,13 +6,18 @@ each step is in [`reference.md`](reference.md).
 
 ## The planning chain
 
-1. **Epic**: `/epic <title>` opens a pane on the most capable model, where you write
+1. **HLD** (optional): `/hld <title>` opens a pane where you write `docs/hld/YYYY-MM-DD-<slug>.md`
+   with a co-author, a design for a release's worth of work. When you agree it, you also say what
+   the lead may do under it without asking, in its `grants:` list: `epics`, `stories`, `merge` and
+   `release`. `/plan-hld` then splits the agreed HLD into epics (reference.md § Writing an HLD,
+   § Decomposing an HLD).
+2. **Epic**: `/epic <title>` opens a pane on the most capable model, where you write
    `docs/epics/<slug>.md` with it as `status: draft`: the problem with evidence, goals that can be
    checked, non-goals and constraints. A reviewer attacks the draft, and it becomes `active` only
    when you agree it (reference.md § Writing an epic).
-2. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. Skeptics and
-   codex check for gaps and overlaps (reference.md § Scoping an epic).
-3. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
+3. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. A critic and
+   codex check for gaps and overlaps, and a skeptic checks each `risk: high` story (reference.md § Scoping an epic).
+4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
    one at a time. Two stories clash only when their `touches` name the same `file:symbol` in the
@@ -53,8 +58,12 @@ The session that runs the chain supervises, reviews and merges. It does not do t
 
 Three parties do the work, and the plan decides which one does each step, not the build.
 
-- **You** agree each epic, approve the stories, merge PRs (with `merge = human`), say go
-  before each `lead` story, and do its **You:** steps.
+- **You** agree each HLD and epic, approve the stories, merge PRs (with `merge = human`), say go
+  before each `lead` story, and do its **You:** steps. The exception is an agreed HLD's `merge` and
+  `release` grants: the lead then merges a story or board PR under it, or a release whose stories
+  are all under HLDs that grant `release`, with `swarm.sh merge`. Its `epics` and `stories` grants
+  skip your agreement of an epic and your approval of its stories. You set `grants:` and no
+  agent does; a `costs: money` PR still waits for you.
 - **The lead** is your Claude Code session, the one you run `/swarm-dev:swarm` in. It supervises, reviews
   and runs `lead` stories. If it stops while `next` names a step it has not started, a hook sends it back once.
 - **Agents** plan, conduct and build everything else, each in its own pane; builders also get
