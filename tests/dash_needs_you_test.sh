@@ -285,6 +285,27 @@ check "lead off: the legend says ! is needs you" has "! needs you (session gone 
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
 
+# An agreed HLD with no planned: is the lead's to plan (next's plan-hld), no row the user must act on;
+# a draft one beside it keeps its row.
+H="${ROOT}/hproj"; mkdir -p "${H}/docs/hld" "${H}/docs/stories"; touch "${H}/docs/stories/README.md"; git -C "${H}" init -q
+printf -- '---\nstatus: agreed\n---\n\n# ha\n' > "${H}/docs/hld/ha.md"
+printf -- '---\nstatus: draft\n---\n\n# hd\n' > "${H}/docs/hld/hd.md"
+out="$(fresh; cd "${H}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "an agreed unplanned HLD: the header's next names plan-hld ha" has "next plan-hld ha" "${out}"
+check "an agreed unplanned HLD has no needs-you row" lacks "HLD ha" "$(lbox "needs you" "${out}")"
+check "a draft HLD beside it keeps its agree draft HLD row" has "! agree draft HLD hd: /hld hd" "$(joined "$(lbox "needs you" "${out}")")"
+# An open plan PR (its worktree), then an open finish PR, is a row status and dash both show, as next's gate does.
+hrun() { # <swarm.sh args...> — in H, with herdr and gh failing
+  fresh; (cd "${H}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "$@" 2>&1 || true)
+}
+mkdir -p "${ROOT}/hproj-wt/_board-plan-ha"
+check "an open plan PR is under status's Waiting on you" has "  plan PR awaiting merge: ha" "$(sed -n '/^Waiting on you$/,/^$/p' <<< "$(hrun status)")"
+check "an open plan PR is a dash needs-you row" has "! plan PR awaiting merge: ha" "$(joined "$(lbox "needs you" "$(hrun dash)")")"
+printf -- '---\nstatus: agreed\nplanned: 2026-10-24\n---\n\n# ha\n' > "${H}/docs/hld/ha.md"
+mv "${ROOT}/hproj-wt/_board-plan-ha" "${ROOT}/hproj-wt/_board-finish-ha"
+check "an open finish PR is under status's Waiting on you" has "  finish PR awaiting merge: ha" "$(sed -n '/^Waiting on you$/,/^$/p' <<< "$(hrun status)")"
+check "an open finish PR is a dash needs-you row" has "! finish PR awaiting merge: ha" "$(joined "$(lbox "needs you" "$(hrun dash)")")"
+
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

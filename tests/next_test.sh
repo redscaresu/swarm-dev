@@ -59,16 +59,65 @@ expect "a draft epic is in the gate beside a lead story" "gate" \
   "item stories/l.md 'status: ready' 'kind: lead'"
 if [[ "${out}" == *"lead: l"* && "${out}" == *"draft epic: e1, run /epic e1"* ]]; then echo "ok   the gate lists the lead story and the draft epic"
 else echo "FAIL the gate does not list both the lead story and the draft epic: ${out}"; fails=$((fails + 1)); fi
-# A draft HLD waits on the user, listed under waiting on you; an agreed or superseded one, and the README, are not.
+# A draft HLD waits on the user, listed under waiting on you; a superseded one, and the README, are not.
 expect "a draft HLD waits on the user" "gate" \
   "item hld/2026-01-01-a.md 'status: draft'"
 if [[ "${out}" == *"draft hld: 2026-01-01-a, run /hld 2026-01-01-a"* ]]; then echo "ok   a draft HLD is named as waiting on the user"
 else echo "FAIL a draft HLD is not named as waiting on the user: ${out}"; fails=$((fails + 1)); fi
-expect "agreed and superseded HLDs are ignored" "done" \
+# An agreed HLD is planned until its front matter says planned:, then finished once no epic names it.
+expect "an agreed HLD with no planned: is planned, a superseded one is not" "plan-hld 2026-01-01-b" \
   "item hld/2026-01-01-b.md 'status: agreed'" \
   "item hld/2026-01-01-c.md 'status: superseded'"
+expect "an agreed HLD whose ## Epics holds a hand-written link is still planned" "plan-hld h" \
+  "item hld/h.md 'status: agreed'" \
+  "printf '%s\n' '## Epics' '- [e1](../epics/e1.md)' >> docs/hld/h.md"
+expect "an open plan PR (its worktree) lets the HLD fall through to the next arm" "escalated esc" \
+  "item hld/h.md 'status: agreed'" \
+  "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'" \
+  "mkdir -p \"\${PWD}-wt/_board-plan-h\""
+expect "an open plan PR with nothing else open is a gate row, not done" "gate" \
+  "item hld/h.md 'status: agreed'" \
+  "mkdir -p \"\${PWD}-wt/_board-plan-h\""
+if [[ "${out}" == *"plan PR awaiting merge: h"* ]]; then echo "ok   the gate lists the plan PR awaiting merge"
+else echo "FAIL the gate does not list the plan PR: ${out}"; fails=$((fails + 1)); fi
+expect "a planned HLD with an epic carrying its hld: plans the epic" "plan-epic e1" \
+  "item hld/h.md 'status: agreed' 'planned: 2026-10-24'" \
+  "item epics/e1.md 'status: active' 'hld: h'"
+# An HLD decomposed through /epic before planned: existed has epics carrying its hld:: never planned again.
+expect "an agreed HLD with no planned: and an epic carrying its hld: is not planned again" "gate" \
+  "item hld/h.md 'status: agreed'" \
+  "item epics/e1.md 'status: later' 'hld: h'"
+if [[ "${out}" != *"plan-hld"* ]]; then echo "ok   an HLD with an epic carrying its hld: gets no plan-hld"
+else echo "FAIL an HLD with an epic carrying its hld: gets plan-hld: ${out}"; fails=$((fails + 1)); fi
+# planned: with no value once quotes, brackets and a comment are gone is not planned.
+expect "planned: \"\" is not planned" "plan-hld h" \
+  "item hld/h.md 'status: agreed' 'planned: \"\"'"
+expect "planned: with only a comment is not planned" "plan-hld h" \
+  "item hld/h.md 'status: agreed' 'planned: # by /plan-hld'"
+expect "an epic whose hld: only shares a prefix does not count" "hld h" \
+  "item hld/h.md 'status: agreed' 'planned: 2026-10-24'" \
+  "item epics/e1.md 'status: later' 'hld: h-2'"
+expect "a planned HLD with no epics left is finished" "hld h" \
+  "item hld/h.md 'status: agreed' 'planned: 2026-10-24'"
+if [[ "${out}" == *"swarm.sh finish h"* ]]; then echo "ok   the hld step names swarm.sh finish"
+else echo "FAIL the hld step does not name swarm.sh finish h: ${out}"; fails=$((fails + 1)); fi
+expect "an open finish PR (its worktree) is a gate row" "gate" \
+  "item hld/h.md 'status: agreed' 'planned: 2026-10-24'" \
+  "mkdir -p \"\${PWD}-wt/_board-finish-h\""
+if [[ "${out}" == *"finish PR awaiting merge: h"* ]]; then echo "ok   the gate lists the finish PR awaiting merge"
+else echo "FAIL the gate does not list the finish PR: ${out}"; fails=$((fails + 1)); fi
+expect "a superseded HLD with no planned: is not planned" "done" \
+  "item hld/h.md 'status: superseded'"
+expect "a superseded HLD with planned: is neither planned nor finished" "done" \
+  "item hld/h.md 'status: superseded' 'planned: 2026-10-24'"
+expect "a draft HLD with planned: is the gate's draft line" "gate" \
+  "item hld/h.md 'status: draft' 'planned: 2026-10-24'"
+if [[ "${out}" == *"draft hld: h, run /hld h"* && "${out}" != *"plan-hld"* ]]; then echo "ok   a draft HLD is only the gate's draft line"
+else echo "FAIL a draft HLD is not only the gate's draft line: ${out}"; fails=$((fails + 1)); fi
 expect "the HLD README is never listed" "done" \
   "item hld/README.md 'status: draft'"
+expect "an agreed HLD README is never planned" "done" \
+  "item hld/README.md 'status: agreed'"
 expect "an epic with an hld: key and its HLD present is planned" "plan-epic e1" \
   "item hld/2026-01-01-x.md 'status: agreed'" \
   "item epics/e1.md 'status: active' 'hld: 2026-01-01-x'"
