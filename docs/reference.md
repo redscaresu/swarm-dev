@@ -1783,6 +1783,10 @@ first checks each tab's panes. It keeps a tab that holds an agent that is workin
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It prints each of those agents as `kept`, and still closes the conductor's own pane.
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
+close takes only a pane or tab that `.swarm/state` records under exactly the name you give it.
+herdr cuts agent names at 32 characters, so two long names can look the same there. When nothing is
+recorded under the name but another record shares its first 32 characters, close closes nothing.
+It prints `not closed:` and names those records; run it again with the full name.
 
 ## Releases
 
