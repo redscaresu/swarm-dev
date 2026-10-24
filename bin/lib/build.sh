@@ -115,8 +115,10 @@ Log each finding that was fixed, and each one declined (rebutted with a reason),
     SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> --round <n> <kind> <PR URL> "<one line>"
     SWARM_PROJECT=${proj} ${sw} log-finding --declined <reason> --reviewer <who> --round <n> <kind> <PR URL> "<the finding, and why it was declined>"
 
-<n> is the review round the finding came from on a story PR (1 for its first review, as rounds are
-counted above), and 0 for a finding on a plan or a board PR.
+<n> is the review round the finding came from on a story PR: the n-th review of the PR is round n,
+the one that passes included, so a nit the passing review raised and you declined is logged under its
+own round. A review started again (head moved, no \`## Findings\` section, timed out or crashed) is
+no new round. <n> is 0 for a finding on a plan or a board PR.
 
 <reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
 it is real but not worth the change, and wrong when it is mistaken.

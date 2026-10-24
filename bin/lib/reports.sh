@@ -371,7 +371,7 @@ dataset_report() {
 #     more blocks: TSV round reviewer fixed declined nit out-of-scope wrong share_fixed, per round
 #     (0 a plan or board PR, unknown a row with none) each reviewer then all; and TSV story pr
 #     stopped_round why, per story PR with a round from 1 on, its last logged round and why it stopped
-#     there: pass (that round fixed nothing), merged-after-fixes or fixed-unmerged. --epic keeps only
+#     there: on a merged PR pass (that round fixed nothing) or merged-after-fixes, else unmerged. --epic keeps only
 #     the PRs of that epic (outcomes epic column) in every block, and a last block lists every PR
 #     block 1 or 2 counted.
 #   throughput: one TSV row per epic, then `all` for the project, over the outcomes rows dated in the

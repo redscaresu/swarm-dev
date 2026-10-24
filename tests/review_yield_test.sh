@@ -122,32 +122,52 @@ check "--epic clean finds the recorded split with gh failing" "$(yield_of "${P}"
 check "--since 2026-10-04 leaves out the clean split dated 2026-10-03" "$(yield_of "${P}" --since 2026-10-04 | grep -cF "${U}/10" || true)" "0"
 rm -rf "${dir}/heads" "${dir}/ghfail" "${P}/docs/epics" "${P}/.swarm/clean"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
-# --round: a by-round block and a per-story block, printed once a row has a round. a's PR #1: round 1
-# fixes 3 and declines 2 nits, round 2 fixes none and declines 4 nits, so a stopped in round 2 on a
-# pass. A board PR's round 0 counts per round but is no story's; a row with no round is round unknown.
-{ for _ in 1 2 3; do printf '2026-10-02\tk\to/r#1\tt\tfixed\tcodex\t\t1\n'; done
-  for _ in 1 2; do printf '2026-10-02\tk\to/r#1\tt\tdeclined\tcodex\tnit\t1\n'; done
-  for _ in 1 2 3 4; do printf '2026-10-03\tk\to/r#1\tt\tdeclined\tcodex\tnit\t2\n'; done
+# --round: a by-round block and a per-story block, printed once a row has a round. b's PR #2 (merged),
+# with one tell:findings (one round sent to its builder): round 1 fixes 3 and declines 2 nits, round 2
+# (the pass) fixes none and declines 4 nits, so b stopped in round 2 on a pass. A board PR's round 0
+# counts per round but is no story's; a row with no round is round unknown.
+cp "${P}/.swarm/events.tsv" "${dir}/events.bak"
+printf '2026-10-01T15:00:00Z\ttell:findings\tb\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
+printf '%s\tMERGED\t2026-10-04T00:00:00Z\n' "${U}/2" > "${dir}/prs/story_b"
+{ for _ in 1 2 3; do printf '2026-10-02\tk\to/r#2\tt\tfixed\tcodex\t\t1\n'; done
+  for _ in 1 2; do printf '2026-10-02\tk\to/r#2\tt\tdeclined\tcodex\tnit\t1\n'; done
+  for _ in 1 2 3 4; do printf '2026-10-03\tk\to/r#2\tt\tdeclined\tcodex\tnit\t2\n'; done
   printf '2026-10-02\tplan-gap\to/r#9\tt\tfixed\tskeptic\t\t0\n'
-  printf '2026-10-01\told\to/r#2\tt\tfixed\tlead\n'; } > "${P}/.swarm/findings.tsv"
+  printf '2026-10-01\told\to/r#1\tt\tfixed\tlead\n'; } > "${P}/.swarm/findings.tsv"
 by_round() { sed -n $'/^round\treviewer\t/,/^$/p; /^story\tpr\t/,/^$/p' <<< "$1" | grep -v '^exit '; }
-check "by round: round 1 3 fixed and 2 nits, round 2 0 fixed and 4 nits; a stopped in round 2 on a pass" \
+check "by round: round 1 3 fixed and 2 nits, round 2 0 fixed and 4 nits; b stopped in round 2 on a pass" \
   "$(by_round "$(yield_of "${P}")")" "$(printf '%s\n' $'round\treviewer\tfixed\tdeclined\tnit\tout-of-scope\twrong\tshare_fixed' \
   $'0\tskeptic\t1\t0\t0\t0\t0\t100%' $'0\tall\t1\t0\t0\t0\t0\t100%' \
   $'1\tcodex\t3\t2\t2\t0\t0\t60%' $'1\tall\t3\t2\t2\t0\t0\t60%' \
   $'2\tcodex\t0\t4\t4\t0\t0\t0%' $'2\tall\t0\t4\t4\t0\t0\t0%' \
   $'unknown\tlead\t1\t0\t0\t0\t0\t100%' $'unknown\tall\t1\t0\t0\t0\t0\t100%' "" \
-  $'story\tpr\tstopped_round\twhy' "a	${U}/1	2	pass")"
-printf '2026-10-03\tk\to/r#2\tt\tfixed\tlead\t\t1\n' >> "${P}/.swarm/findings.tsv"
-check "a story whose last round fixed something, its PR still open, stopped there fixed-unmerged" \
-  "$(yield_of "${P}" | grep -F "${U}/2")" "b	${U}/2	1	fixed-unmerged"
-printf '%s\tMERGED\t2026-10-04T00:00:00Z\n' "${U}/2" > "${dir}/prs/story_b"
-check "once that PR merged, it stopped there merged-after-fixes" \
-  "$(yield_of "${P}" | grep -F "${U}/2")" "b	${U}/2	1	merged-after-fixes"
+  $'story\tpr\tstopped_round\twhy' "b	${U}/2	2	pass")"
 printf '%s\tOPEN\t\n' "${U}/2" > "${dir}/prs/story_b"
+check "the same PR still open shows unmerged: its round 2 may not have happened" \
+  "$(yield_of "${P}" | grep -F "${U}/2")" "b	${U}/2	2	unmerged"
+# a's PR #1 sent its builder 3 rounds; its last logged row is round 3, and its final pass (round 4)
+# found nothing, so logged no row: a still stopped in round 4, on a pass.
+printf '2026-10-03\tk\to/r#1\tt\tfixed\tlead\t\t3\n' >> "${P}/.swarm/findings.tsv"
+printf '%s\tMERGED\t2026-10-04T00:00:00Z\n' "${U}/1" > "${dir}/prs/story_a"
+check "a PR whose final pass logged no row stopped in the round after its last tells_findings round, on a pass" \
+  "$(yield_of "${P}" | grep -F "${U}/1")" "a	${U}/1	4	pass"
+# a's build (2026-10-01) is before --since; its tells still count toward where its review stopped.
+check "--since after the build: the PR still stopped in round 4, on a pass" \
+  "$(yield_of "${P}" --since 2026-10-02 | grep -F "${U}/1")" "a	${U}/1	4	pass"
+# gh's state MERGED with no mergedAt still counts as merged, as epic_totals and merge_ins count it.
+printf '2026-10-03\tk\to/r#1\tt\tfixed\tlead\t\t4\n' >> "${P}/.swarm/findings.tsv"
+printf '%s\tMERGED\t\n' "${U}/1" > "${dir}/prs/story_a"
+check "a stop round that fixed something, its PR's state MERGED (no mergedAt): merged-after-fixes" \
+  "$(yield_of "${P}" | grep -F "${U}/1")" "a	${U}/1	4	merged-after-fixes"
+# The window picks the PRs listed; where each stopped comes from all its rows. With --since 2026-10-04
+# only a later round-4 nit is in the window, yet round 4's fix (dated 2026-10-03) still counts.
+printf '2026-10-04\tk\to/r#1\tt\tdeclined\tlead\tnit\t4\n' >> "${P}/.swarm/findings.tsv"
+check "--since past a stop round's fix: still merged-after-fixes" \
+  "$(yield_of "${P}" --since 2026-10-04 | grep -F "${U}/1")" "a	${U}/1	4	merged-after-fixes"
+printf '%s\tOPEN\t\n' "${U}/1" > "${dir}/prs/story_a"
 check "with no row in the window that has a round, neither block prints" \
   "$(yield_of "${P}" --until 2026-10-01 | grep -cE $'^(round|story)\t' || true)" "0"
-cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
+cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"; cp "${dir}/events.bak" "${P}/.swarm/events.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \
   $'codex\tall\t4\t1\t3\t75%\t0' $'codex\tvacuous\t3\t1\t2\t67%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' \

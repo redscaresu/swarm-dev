@@ -1261,10 +1261,13 @@ rounds. The first is TSV `round reviewer fixed declined nit out-of-scope wrong s
 round, each reviewer and then `all`, the findings fixed, declined in all and by reason, and fixed
 over raised as a whole percent. Round `0` is a plan or board PR, and `unknown` holds the rows logged
 without a round. The second is TSV `story pr stopped_round why`, one row per story PR with a round
-of 1 or more: its last logged round, and why review stopped there. `pass` means that round fixed
-nothing, `merged-after-fixes` that it fixed something and the PR then merged, and `fixed-unmerged`
-that it fixed something and the PR has not merged yet. A last pass that found nothing logs no row,
-so that PR shows the round before it. `--epic` narrows both blocks as it does the others.
+of 1 or more: the round its review stopped in, and why. A final pass that finds nothing logs no
+row, so the stop is the review after the PR's last round of findings sent to its builder (the
+`tells_findings` of all its builds, whatever their date, plus one), or its last logged round when
+that is later. A PR is listed when the window has a row of it with a round, and where it stopped is
+read from all its rows, whatever their date. For a merged PR, `pass` means the stop round fixed nothing and `merged-after-fixes`
+that it fixed something. A PR that has not merged shows `unmerged`, since its review may still be
+going. `--epic` narrows both blocks as it does the others.
 
 ## The outer loop
 
@@ -1274,8 +1277,8 @@ Each finding that review fixed is logged with
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR, and `split-critic` for the check on a large epic's split (commands/plan-epic.md step 0). A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
-review round a finding came from, 0 for a plan or board PR; the conductor passes it on each finding it
-logs, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
+review round a finding came from: the n-th review of a story PR is round n, the passing one included,
+and a plan or board PR is round 0. The conductor passes it on each finding it logs, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
 `/swarm-dev:swarm` files one story with `checks: <kind>` for each recurring kind that has no check
 yet, in a board PR named `check-<kind>` (written in place when the board is outside the repo, and
 noted in `.swarm/checks-filed.tsv` so the kind is filed once). The
