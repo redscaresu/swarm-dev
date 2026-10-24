@@ -285,6 +285,16 @@ check "lead off: the legend says ! is needs you" has "! needs you (session gone 
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
 
+# An agreed HLD with no planned: is the lead's to plan (next's plan-hld), no row the user must act on;
+# a draft one beside it keeps its row.
+H="${ROOT}/hproj"; mkdir -p "${H}/docs/hld" "${H}/docs/stories"; touch "${H}/docs/stories/README.md"; git -C "${H}" init -q
+printf -- '---\nstatus: agreed\n---\n\n# ha\n' > "${H}/docs/hld/ha.md"
+printf -- '---\nstatus: draft\n---\n\n# hd\n' > "${H}/docs/hld/hd.md"
+out="$(fresh; cd "${H}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "an agreed unplanned HLD: the header's next names plan-hld ha" has "next plan-hld ha" "${out}"
+check "an agreed unplanned HLD has no needs-you row" lacks "HLD ha" "$(lbox "needs you" "${out}")"
+check "a draft HLD beside it keeps its agree draft HLD row" has "! agree draft HLD hd: /hld hd" "$(joined "$(lbox "needs you" "${out}")")"
+
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
