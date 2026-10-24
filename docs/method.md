@@ -18,10 +18,10 @@ each step is in [`reference.md`](reference.md).
    one at a time. Two stories clash only when their `touches` name the same `file:symbol` in the
    same repo, or when either names the bare file of a file the other also names; otherwise both
    build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
-   the tests and pushes; a conflict never sends a story back to `ready`. Review stops after round 3,
-   a round being one review whose findings went back to the builder: from round 4 on, only a real
-   bug (wrong behaviour, data loss, a security hole) sends the PR back, and anything smaller is
-   declined with a reason and logged as declined (reference.md § The outer loop).
+   the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round,
+   and `/code-review` only the first, a round being one review whose findings went back to the
+   builder. A review whose findings are all declined is a pass: the conductor rebuts each one in
+   the PR, logs it as declined (reference.md § The outer loop) and merges at once.
 
 `/swarm-dev:swarm` runs the chain after the epic. `swarm.sh next` reads the board and names the next
 step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft epic, a

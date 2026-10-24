@@ -366,8 +366,8 @@ check "neither brief still says work outside the touches is not a finding" "0|0"
   "$(grep -ci 'outside them is not a finding' <<< "${brief}" || true)|$(grep -ci 'outside them is not a finding' <<< "${fbrief}" || true)"
 check "the review brief's Out of scope holds only what a change outside the touches can fix" "yes" \
   "$(has "raised that only a" "${brief}")"
-check "the review agent's brief has the checklist among what to check, before When both are done" "yes" \
-  "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
+check "the review agent's brief has the checklist among what to check, before When the review is done" "yes" \
+  "$(awk '/^Hold the PR to these/ { h = NR } /^When the review is done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
 # marked_at <file> <text> — the line a brief should show for <file>'s line holding <text>: "- <file>:<n>: <line>",
 # <file> relative to the project.
 marked_at() { local n; n="$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)"; printf -- '- %s:%s: %s' "${1#"${p}"/}" "${n}" "$(sed -n "${n}p" "$1")"; }
