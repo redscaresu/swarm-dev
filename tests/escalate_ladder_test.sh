@@ -46,7 +46,7 @@ case "$1 $2" in
                   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane run"|"pane wait-output") [ -n "$3" ] || exit 1 ;;   # herdr fails with no pane
-  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"}]}}' ;;
+  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"},{"tab_id":"w:t10","label":"f1"},{"tab_id":"w:t11","label":"f2"}]}}' ;;
   "tab close")    [ ! -e "$H/closefail" ] || exit 1
                   : > "$H/agents"; [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
   "pane close")   [ ! -e "$H/closefail" ] || exit 1
@@ -333,6 +333,25 @@ o1="$(run step-up h1 stalled)" || true; o2="$(run step-up a1 ci-red-2)" || true;
 touch "${ROOT}/ghfail"; o4="$(run step-up n1 stalled)" || true; rm "${ROOT}/ghfail"
 check "a held stacked child, an auto-merging or merged PR, and PRs gh cannot list are refused before anything closes" "yes|yes|yes|yes|${c}|none" \
   "$(has "h1 is held until its parents merge (held_by:)" "${o1}")|$(has "a PR on story/a1 has merged or is set to auto-merge" "${o2}")|$(has "a PR on story/g1 has merged or is set to auto-merge" "${o3}")|$(has "could not list the PRs on story/n1" "${o4}")|$(closes)|$(ls "${P}/.swarm/briefs/"*.step-up 2>/dev/null || echo none)"
+
+# A findings tell herdr sent, though the builder was not seen taking it up, is a round the builder
+# had: after one ok tell and one such, the next is round 3 and steps f1 up. One herdr never sent
+# is not: after one ok tell and one of those, f2's next tell is its round 2, and is sent.
+echo "fix it" > "${ROOT}/f.md"
+for f in "f1:the brief was not taken up: herdr sent it the brief twice, and herdr reads it idle with no turn finished since; see herdr agent read f1" \
+  "f2:herdr did not send it the brief (agent_not_found); see herdr agent read f2"; do
+  slug="${f%%:*}"
+  printf '%s\n' --- "status: ready" "kind: code" --- "" "# ${slug}" "" "**Done when:**" "- it holds" > "${P}/docs/stories/${slug}.md"
+  "${GIT[@]}" -C "${P}" worktree add -q -b "story/${slug}" "${ROOT}/proj-wt/${slug}" origin/main
+  printf '2026-10-01\tcode-sonnet\t%s\tclaude\tsonnet\thigh\tsess-%s\n' "${slug}" "${slug}" >> "${P}/.swarm/agents.tsv"
+  printf '2026-10-02T09:00:00Z\tstory\t%s\tw:2\tok\n2026-10-02T09:01:00Z\ttell:findings\t%s\tw:2\tok\n' "${slug}" "${slug}" >> "${P}/.swarm/events.tsv"
+  printf '2026-10-02T09:02:00Z\ttell:findings\t%s\tw:2\t%s: %s\n' "${slug}" "${slug}" "${f#*:}" >> "${P}/.swarm/events.tsv"
+  echo "w:2 ${slug}" > "${P}/.swarm/state/${slug}"; echo "${slug} w:2" > "${ROOT}/agents"
+  echo "[{\"sessionId\":\"sess-${slug}\",\"status\":\"idle\"}]" > "${CLAUDE_STUB_AGENTS}"
+  run tell "${slug}" findings "${ROOT}/f.md" > "${ROOT}/tell-${slug}.out" || true
+done
+check "a findings tell herdr sent but not seen taken up counts toward round 3; one herdr never sent does not" "1|yes|0|yes" \
+  "$(grep -c $'\tescalate\tf1\t' "${P}/.swarm/events.tsv")|$(has "findings round 3 of its build" "$(cat "${ROOT}/tell-f1.out")")|$(grep -c $'\tescalate\tf2\t' "${P}/.swarm/events.tsv")|$(has "told f2" "$(cat "${ROOT}/tell-f2.out")")"
 
 # --- A sonnet -> opus -> fable chain of step-ups on s2, today. In outcomes the three builds are one
 # attempt, the two replaced builds each have a close with cause step-up:<trigger>, and the Fable
