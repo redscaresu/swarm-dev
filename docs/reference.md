@@ -1853,7 +1853,9 @@ brief is sent at most twice, and a Fable builder, which at xhigh can take longer
 seconds over both tries to show it took it; `SWARM_PROMPT_TIMEOUT_MS` overrides that.
 When a new rung's brief may have gone out but still reads as not taken up, or unsure, step-up keeps
 its pane, warns, and reads it once more over 300 seconds, then says `took up its brief after all`
-if it did. A builder blocked on a question before its brief went is not read again. One still idle
+if it did. A builder blocked on a question before its brief went is not read again. If herdr gives
+no status for it during that read, step-up stops and keeps its pane and agents.tsv line: look at it
+with `herdr agent read <name>` before you resume. One still idle
 with no turn after that, or gone, has not started: it is closed and loses its agents.tsv line, so
 the rung is on record once, when it starts. The worktree, branch and step-up marker are kept, and
 `swarm.sh step-up --resume <slug>` writes the brief afresh and starts the rung once the cause is

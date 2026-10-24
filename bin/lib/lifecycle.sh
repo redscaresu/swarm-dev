@@ -685,7 +685,7 @@ step_up_resume() {
 # recorded before deliver_prompt failed is closed and loses its agents.tsv line, so a resume starts it
 # afresh and the rung is on record once.
 start_rung() {
-  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base since errf err goal="${PREFLIGHT_GOAL}"
+  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base since errf err late goal="${PREFLIGHT_GOAL}"
   read -r trigger from to role < "${prompt%.md}.step-up"
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   names="$(story_env "${f}")" || die "${names}"
@@ -715,9 +715,12 @@ start_rung() {
   if [[ ${rc} -ne 0 ]] && awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR > n && $3 == a { f = 1 } END { exit !f }' "${AGENTS_LOG}"; then
     # Recorded, but its brief may not have been taken up: a slow starter may only need longer than
     # its window, so it is read once more (rung_late) before anything is closed.
-    if rung_late "${slug}" "${to}" "${err}"; then
+    late=0; rung_late "${slug}" "${to}" "${err}" || late=$?
+    if [[ ${late} -eq 0 ]]; then
       rc=0
       echo "step-up: ${slug}'s ${to} builder took up its brief after all"
+    elif [[ ${late} -eq 2 ]]; then
+      die "step-up: ${slug}'s ${from} builder is closed, and herdr could not say whether the ${to} builder took up its brief; its pane is kept: look at it (herdr agent read $(agent_name "${slug}")) before resuming with swarm.sh step-up --resume ${slug}"
     else
       # Its brief was not taken up: closed (it would sit idle with no brief), and not on record
       # until a resume starts it. A pane already gone is no reason to stop.
@@ -754,10 +757,11 @@ start_rung() {
 # it, warn that <slug>'s new <model> builder has not shown it took up its brief, and read it by its
 # pane once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle, no turn).
 # Succeeds when that read finds it working, blocked or past a turn; fails on any other <err>, with no
-# pane (gone), or when it is still idle with no turn, and start_rung closes it.
+# pane (gone), or when it is still idle with no turn, and start_rung closes it. Returns 2 when the read
+# is unsure (herdr gave no status twice in a row), and start_rung keeps the pane.
 rung_late() {
   # shellcheck disable=SC2034 # prompt_settle reads SETTLE_READS
-  local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane
+  local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v
   case "$3" in
     *agent_blocked*) return 1 ;;
     *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) ;;
@@ -766,7 +770,13 @@ rung_late() {
   pane="$(agent_field "$(agent_name "$1")" pane_id)"
   [[ -n "${pane}" ]] || return 1
   echo "step-up: warning: $1's $2 builder has not shown it took up its brief; its pane is kept and read again for $((SLOW_PROMPT_TIMEOUT_MS / 1000))s before it is closed" >&2
-  [[ "$(prompt_settle "${pane}" idle -)" == taken ]]
+  v="$(prompt_settle "${pane}" idle -)"
+  case "${v}" in
+    taken) return 0 ;;
+    "again idle") return 1 ;;
+  esac
+  echo "step-up: $1's $2 builder: ${v#unsure }" >&2
+  return 2
 }
 
 # step_up_failed <slug> — step_up's exit trap once the old builder is closed: on a failure (start_rung

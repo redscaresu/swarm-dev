@@ -10,7 +10,8 @@
 # `agent get` by 5000, so the new builder reads working once the clock reaches ${ROOT}/late (never,
 # when it holds never); each `agent list` logs the clock. ${ROOT}/mode makes it fail: resend-fails
 # answers the second prompt server_unavailable; nobase gives no status before the first prompt;
-# blocked gives no reply to the first prompt, answers the second agent_blocked, and reads blocked from then on.
+# blocked gives no reply to the first prompt, answers the second agent_blocked, and reads blocked from then on;
+# hiccup gives no status once an `agent list` follows a prompt (rung_late's re-read).
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -40,7 +41,7 @@ case "$1 $2" in
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"}]}}' ;;
   "tab close"|"pane close") : > "$H/agents" ;;
-  "agent start")  echo 0 > "$H/ms"; echo 0 > "$H/prompts"; rm -f "$H/isblocked"; echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
+  "agent start")  echo 0 > "$H/ms"; echo 0 > "$H/prompts"; rm -f "$H/isblocked" "$H/reread"; echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent prompt") t=$(echo "$*" | grep -o -- '--timeout [0-9]*' | tail -1 | sed 's/.* //'); p=$(($(cat "$H/prompts") + 1)); echo "$p" > "$H/prompts"
                   case "$mode:$p" in
                     resend-fails:2) echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1 ;;
@@ -50,10 +51,11 @@ case "$1 $2" in
                   if up $((now + t)); then echo "$late" > "$H/ms"; echo '{"result":{"agent":{"agent_status":"working"}}}'
                   else echo $((now + t)) > "$H/ms"; echo '{"error":{"code":"timeout"}}' >&2; exit 1; fi ;;
   "agent get")    [ "$mode:$(cat "$H/prompts")" != nobase:0 ] || exit 1
+                  [ "$mode" != hiccup ] || [ ! -e "$H/reread" ] || exit 1
                   now=$((now + 5000)); echo "$now" > "$H/ms"
                   if [ -e "$H/isblocked" ]; then s=blocked; elif up "$now"; then s=working; else s=idle; fi
                   echo "{\"result\":{\"agent\":{\"agent_status\":\"$s\"}}}" ;;
-  "agent list")   echo "list at $now" >> "$H/herdr.log"
+  "agent list")   echo "list at $now" >> "$H/herdr.log"; [ "$(cat "$H/prompts" 2>/dev/null || echo 0)" = 0 ] || touch "$H/reread"
                   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
@@ -125,6 +127,12 @@ out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
 check "a rung blocked on a question before its brief went is closed at once, never read again" \
   "1|yes|no||2|kept|code opus" \
   "${rc}|$(has "(agent_blocked)" "${out}")|$(grep -qF "${SAID}" <<< "${out}" && echo yes || echo no)|$(escalate)|$(closes)|$(marker)|$(newest)"
+
+build_on opus never hiccup
+out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
+check "a rung herdr gives no status for during the re-read keeps its pane and agents.tsv line, and says to look before resuming" \
+  "1|yes|yes|yes||1|kept|escalate fable" \
+  "${rc}|$(has "s1's fable builder: herdr gave no status for it" "${out}")|$(has "its pane is kept: look at it (herdr agent read" "${out}")|$(has "step-up --resume s1" "${out}")|$(escalate)|$(closes)|$(marker)|$(newest)"
 
 build_on opus never
 out="$(run step-up s1 stalled)" && rc=0 || rc=$?
