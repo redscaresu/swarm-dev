@@ -636,12 +636,15 @@ is doing.
 
 **Review before closing.** A PR that changes only board files (no code) gets one
 `swarm.sh codex-review` pass plus the lead's own reading, not repeated passes. A story is reviewed when its latest head has passed
-codex and, if it changes code, the `/code-review` skill. The moment a story's PR head is green and
+codex and, on its first round when it changes code, the `/code-review` skill. The moment a story's PR head is green and
 mergeable, the conductor starts a review agent for it with `swarm.sh review-agent <slug> <PR URL>`.
 It does not wait for other PRs or reviews, and runs one for every green PR at once, so PRs that land
 together are reviewed together. The command returns straight away, and records the head it reviews
 in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab. It
-runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/code-review <PR URL>`.
+runs `codex-review` with `SWARM_STORY=<slug>` and, on the story's first round when the PR changes
+code, `/code-review <PR URL>`. From round 2 on it runs codex alone. `review-agent` counts the round
+from the findings `tell` sent the builder since the story's last build started (a step-up or a
+restarted builder does not start it again).
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. One exception: a comment, doc or error-text line that the changed code no
@@ -690,10 +693,11 @@ again or reads the diff itself. It sends the real findings to the story's builde
 <file>`, and logs each out-of-scope item with `log-finding --declined out-of-scope --reviewer <who>`.
 It starts a new review agent on the builder's next head. A round is one review whose findings went
 to the builder; a review started again (head moved, no findings section, a review agent that timed
-out or crashed) is not one. Review stops after round 3: from round 4 on, only a real bug (wrong
-behaviour, data loss, a security hole) sends the PR back. Anything
-smaller is declined with a reason and logged with `log-finding --declined <reason> --reviewer <who>`:
-`nit` for a nit or an edge case, `out-of-scope` or `wrong` where they apply. Before a story merges or goes to review, it
+out or crashed) is not one. A review on the latest head whose findings are all declined is a pass,
+never sent to the builder. Each declined finding is rebutted in the PR with a
+reason and logged with `log-finding --declined <reason> --reviewer <who>`: `nit` for a nit, an edge
+case or a low-value point, `out-of-scope` or `wrong` where they apply, and a point already declined
+with the reason it was first declined with. Before a story merges or goes to review, it
 compares the file's `head:` line with the PR's head, and reviews the new head when they differ. Once
 a PR's latest head has passed, it merges it (or hands it over) at once, never holding the result
 while other reviews run. A PR whose head has been green and mergeable for `queue_minutes` with no
