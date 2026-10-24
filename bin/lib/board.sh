@@ -172,7 +172,8 @@ epic_has_after() {
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this (then unblocked_epic's, below) comes before its wait
-#   plan-hld <hld>    an agreed HLD with no planned: (hld_planned) and no plan board PR's worktree
+#   plan-hld <hld>    an agreed HLD with no planned: (hld_planned), no epic carrying its hld:
+#                     (hld_epics), and no plan board PR's worktree
 #                     (<repo>-wt/_board-plan-<hld>); with one, this falls through to the steps below
 #                     and the gate lists it (plan PR awaiting merge: <hld>)
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
@@ -632,27 +633,29 @@ item_hld() {
   done
 }
 
-# hld_epics <hld name> — the board's epic files whose front-matter hld: (get_fm, slug_list) is <hld
-# name> exactly, with no .md, as item_hld reads it.
+# hld_epics <hld name> [-1] — the board's epic files whose front-matter hld: (get_fm, slug_list) is
+# <hld name> exactly, with no .md, as item_hld reads it; with -1, only the first, for a test of presence.
 hld_epics() {
   local f
   while IFS= read -r f; do
-    [[ "$(slug_list "$(get_fm "${f}" hld)")" != "$1" ]] || echo "${f}"
+    [[ "$(slug_list "$(get_fm "${f}" hld)")" == "$1" ]] || continue
+    echo "${f}"
+    [[ "${2:-}" != -1 ]] || return 0
   done < <(board epics)
   return 0
 }
 
-# hld_planned <hld file> — true when its front matter has a planned: (get_fm), which /plan-hld's board
-# PR sets. Links under ## Epics decide nothing: one added by hand must not make it look planned.
-hld_planned() { [[ -n "$(get_fm "$1" planned)" ]]; }
+# hld_planned <hld file> — true when its front matter's planned: (get_fm) holds a value once quotes,
+# brackets and a trailing comment are gone (slug_list), which /plan-hld's board PR sets. Links under
+# ## Epics decide nothing: one added by hand must not make it look planned.
+hld_planned() { local v; v="$(fm_list "$1" planned)"; [[ -n "${v//[[:space:]]/}" ]]; }
 
-# hld_due <hld file> — draft for a draft HLD; plan for an agreed one with no planned: (hld_planned);
-# finish for an agreed, planned one no epic names (hld_epics); else nothing (superseded, or epics left).
+# hld_due <hld file> — for an agreed HLD that no epic names (hld_epics): plan with no planned:
+# (hld_planned), finish with it. Else nothing: an epic carrying its hld: means it was decomposed (an
+# HLD planned through /epic before planned: existed too), and is not planned again.
 hld_due() {
-  case "$(get_fm "$1" status)" in
-    draft) echo draft ;;
-    agreed) if ! hld_planned "$1"; then echo plan; elif [[ -z "$(hld_epics "$(basename "$1" .md)")" ]]; then echo finish; fi ;;
-  esac
+  [[ "$(get_fm "$1" status)" == agreed && -z "$(hld_epics "$(basename "$1" .md)" -1)" ]] || return 0
+  if hld_planned "$1"; then echo finish; else echo plan; fi
 }
 
 # hld_pr_open <hld name> <plan|finish> — true while the HLD's plan or finish board PR's worktree
@@ -793,11 +796,11 @@ waiting_on_user() {
   done < <(board epics)
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
-    case "$(hld_due "${f}")" in
-      draft) waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n' ;;
-      plan) ! hld_pr_open "${slug}" plan || waiting+="  plan PR awaiting merge: ${slug}"$'\n' ;;
-      finish) ! hld_pr_open "${slug}" finish || waiting+="  finish PR awaiting merge: ${slug}"$'\n' ;;
-    esac
+    # The directory test first: hld_due reads every epic, and dash runs this several times a frame.
+    if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
+    elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
+    elif hld_pr_open "${slug}" finish && [[ "$(hld_due "${f}")" == finish ]]; then waiting+="  finish PR awaiting merge: ${slug}"$'\n'
+    fi
   done < <(board hld)
   printf '%s' "${waiting%$'\n'}"
 }
