@@ -1848,12 +1848,14 @@ The old builder is closed first, since the new one takes its name, and only then
 brief written, so it holds everything the old builder did. If closing it left a git step unfinished
 in the worktree (an `index.lock`, or a merge, rebase, cherry-pick or revert in progress), step-up
 stops and names it: finish or abort it there, then resume. If the start fails, step-up stops at the
-step that failed, with that step's message, and logs nothing as an escalation. A builder has 60
-seconds to show it took up its brief. A Fable builder, which at xhigh can take longer to start, has
-300; `SWARM_PROMPT_TIMEOUT_MS` overrides both. When a new rung's brief still reads as not taken up,
-or unsure, step-up keeps its pane, warns, and reads it once more over 300 seconds. If it is still
-idle with no turn after that, or gone, it has not started: it is closed and loses its agents.tsv
-line, so the rung is on record once, when it starts. The worktree, branch and step-up marker are kept, and
+step that failed, with that step's message, and logs nothing as an escalation. A builder's
+brief is sent at most twice, and a Fable builder, which at xhigh can take longer to start, gets 300
+seconds over both tries to show it took it; `SWARM_PROMPT_TIMEOUT_MS` overrides that.
+When a new rung's brief may have gone out but still reads as not taken up, or unsure, step-up keeps
+its pane, warns, and reads it once more over 300 seconds, then says `took up its brief after all`
+if it did. A builder blocked on a question before its brief went is not read again. One still idle
+with no turn after that, or gone, has not started: it is closed and loses its agents.tsv line, so
+the rung is on record once, when it starts. The worktree, branch and step-up marker are kept, and
 `swarm.sh step-up --resume <slug>` writes the brief afresh and starts the rung once the cause is
 fixed. A resume that starts logs the step-up and sends the `/goal` as step-up would have.
 
