@@ -821,18 +821,18 @@ plan_hld() {
   echo "${f}"
 }
 
-# pr_hld <pr-url> [<sha>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
+# pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
 # lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
 # touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR that touches
 # .claude/swarm/ (in any repo), or the board's hld/, is under none: only the user changes those. The
 # one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story lists that
-# touches any file but the board's epics and stories is under none too. With <sha>, the head merge
-# pinned, the PR's head must be <sha> before and after its files are listed (the files API lists the
-# current head's), or it exits HEAD_MOVED: judged at no head.
-HEAD_MOVED=3
+# touches any file but the board's epics and stories is under none too. With <sha> and <base>, the
+# head and base branch merge pinned: the files are <base>...<sha>'s (300 at most, else it cannot list
+# them all), and a PR whose head or base is not those prints "<head> <base>" and exits PR_MOVED.
+PR_MOVED=3
 pr_hld() (
-  local s url repo n own="" info="" st="" head="" pre p q view="" err plan="" g pin="${2:-}"
+  local s url repo n own="" info="" st="" head="" count base pre p q view="" err plan="" g pin="${2:-}" at=()
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
@@ -848,17 +848,16 @@ pr_hld() (
   fi
   # No story lists it and the board is not in its repo: nothing on the board is under it.
   [[ -n "${s}" || "${repo}" == "${own}" ]] || return 0
-  info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles | json "d['headRefOid'] + ' ' + str(d['changedFiles'])")" \
-    || die "grants: gh cannot read ${url}"
-  head="${info% *}"
-  [[ -z "${pin}" || "${head}" == "${pin}" ]] || exit "${HEAD_MOVED}"
-  st="$(ci_gate files-status "${repo}" "${n}" "${info#* }")" || die "grants: cannot list every file ${url} changes: ${st}"
-  # ponytail: a head that moves and comes back between the two reads passes; the compare API at <sha>
-  # would close that, capped at 300 files.
+  # Only a pinned read uses the base, where a missing one (-) never matches merge's and refuses. The
+  # head goes last: it may be empty.
+  info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles,baseRefName \
+    | json "'%s %s %s' % (d['changedFiles'], d.get('baseRefName') or '-', d['headRefOid'])")" || die "grants: gh cannot read ${url}"
+  read -r count base head <<< "${info}"
   if [[ -n "${pin}" ]]; then
-    info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid | json "d['headRefOid']")" || die "grants: gh cannot read ${url}"
-    [[ "${info}" == "${pin}" ]] || exit "${HEAD_MOVED}"
+    [[ "${head} ${base}" == "${pin} $3" ]] || { echo "${head:--} ${base}"; exit "${PR_MOVED}"; }
+    at=("${base}" "${pin}")   # at the pin: the PR's files API lists whatever head it has by then
   fi
+  st="$(ci_gate files-status "${repo}" "${n}" "${count}" ${at[@]+"${at[@]}"})" || die "grants: cannot list every file ${url} changes: ${st}"
   info="$(cut -d' ' -f2- <<< "${st}")"
   [[ $'\n'"${info}" != *$'\n.claude/swarm/'* ]] || return 0
   if [[ "${repo}" != "${own}" ]]; then head=""   # the board is not in its repo, so none of its files is a board file
