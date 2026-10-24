@@ -115,12 +115,20 @@ merge_caller() {
   echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
 }
 
-# merge_grant <pr-url> — under merge = human, why the lead may not merge the PR, or nothing when the
-# one agreed HLD over it (pr_hld) grants merge (hld_grants). A PR it cannot resolve, or an HLD whose
-# grants: cannot be read (hld_grants' own line says why), waits on the user too.
+# merge_grant <pr-url> <head> <base> — under merge = human, why the lead may not merge the PR, or
+# nothing when the one agreed HLD over it at <head> into <base>, the head and base merge pinned
+# (pr_hld), grants merge (hld_grants). A PR whose head or base moved off them, a PR it cannot
+# resolve, or an HLD whose grants: cannot be read (hld_grants' own line says why), waits on the user too.
 merge_grant() {
-  local h g=""
-  h="$(pr_hld "$1")" || { echo "cannot tell which HLD $1 is under, so it waits on the user's merge"; return 0; }
+  local h g="" rc=0 now base
+  h="$(pr_hld "$1" "$2" "$3")" || rc=$?
+  if [[ ${rc} -eq ${PR_MOVED} ]]; then
+    read -r now base <<< "${h}"
+    if [[ "${now}" != "$2" ]]; then echo "the head of $1 is ${now:0:7}, not ${2:0:7}, so no grant covers it: review the new head"
+    else echo "the base of $1 is ${base}, not $3, so no grant covers it: review it against ${base}"; fi
+    return 0
+  fi
+  [[ ${rc} -eq 0 ]] || { echo "cannot tell which HLD $1 is under, so it waits on the user's merge"; return 0; }
   [[ -z "${h}" ]] || g="$(hld_grants "${h}")" || { echo "the grants: of ${h} cannot be read, so $1 waits on the user's merge"; return 0; }
   [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
 }
@@ -290,7 +298,7 @@ merge_pr() {
   # head's CI check, which costs fewer gh calls: the grant reads the PR, its files and each board file
   # it touches.
   if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
-    why="$(merge_grant "${url}")"
+    why="$(merge_grant "${url}" "${head}" "${base}")"
     [[ -z "${why}" ]] || merge_fail "${why}"
     merge_hold "${url}"
   fi

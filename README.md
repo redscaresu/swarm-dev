@@ -126,7 +126,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
-  its grants. Under `merge = human`, the lead merges a release only when every story merged since
+  its grants. `swarm.sh merge` reads the grant at the head it merges, and refuses if a push has moved
+  the head. Under `merge = human`, the lead merges a release only when every story merged since
   the last tag is under an agreed HLD that lists `release`.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
