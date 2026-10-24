@@ -319,24 +319,34 @@ running_conductors() {
 }
 
 # collect_pick <conductors> — the conductor next_step looks at first, of <conductors> (running_conductors'
-# lines): the first, but a lane conductor that has reported while a lane of its epic or backlog in
-# <conductors> has not is passed over until its session is idle, so a reported lane is collected (and
-# can start again for stories readied since) without waiting for the slowest lane. Its epic is
-# collected once every lane has reported.
+# lines): a lane that has reported, whatever order herdr lists them in, unless a lane of its epic or
+# backlog in <conductors> has not and its session is not idle (lane_held); else the first of the rest.
+# So a reported lane is collected (and can start again for stories readied since) without waiting for
+# the slowest lane, and its epic is collected once every lane has reported.
 collect_pick() {
-  local c d
-  # On fds 3 and 4, as conduct_ready reads its lists: herdr, python and claude must not read them.
+  local c
+  # On fd 3, as conduct_ready reads its lists: herdr, python and claude must not read them.
+  while IFS= read -r c <&3; do
+    [[ -n "${c}" && -n "$(conduct_lane "${c}")" && -f "$(conductor_report "${c}")" ]] || continue
+    lane_held "${c}" "$1" || { echo "${c}"; return; }
+  done 3<<< "$1"
   while IFS= read -r c <&3; do
     [[ -n "${c}" ]] || continue
-    if [[ -f "$(conductor_report "${c}")" && -n "$(conduct_lane "${c}")" && "$(session_state "${c}")" != idle ]]; then
-      while IFS= read -r d <&4; do
-        [[ -n "${d}" && ! -f "$(conductor_report "${d}")" && -n "$(conduct_lane "${d}")" && "$(conduct_epic "${d}")" == "$(conduct_epic "${c}")" ]] || continue
-        c=""; break
-      done 4<<< "$1"
-      [[ -n "${c}" ]] || continue
-    fi
+    [[ -z "$(conduct_lane "${c}")" || ! -f "$(conductor_report "${c}")" ]] || continue   # a reported lane held above
     echo "${c}"; return
   done 3<<< "$1"
+}
+
+# lane_held <lane conductor> <conductors> — whether the reported <lane conductor> waits to be collected:
+# its session is not idle and a lane of its epic or backlog in <conductors> has not reported.
+lane_held() {
+  local d
+  [[ "$(session_state "$1")" != idle ]] || return 1
+  while IFS= read -r d <&4; do
+    [[ -n "${d}" && ! -f "$(conductor_report "${d}")" && -n "$(conduct_lane "${d}")" && "$(conduct_epic "${d}")" == "$(conduct_epic "$1")" ]] || continue
+    return 0
+  done 4<<< "$2"
+  return 1
 }
 
 # lane_conduct_step [running] — with conductor_lanes above 1, next_step's conduct step for the first

@@ -168,6 +168,12 @@ printf 't\tconduct\t%s\tclaude\t-\t-\tsess-l1\n' "${l1}" >> "${p}/.swarm/agents.
 echo '[{"sessionId":"sess-l1","status":"idle"}]' > "${ROOT}/claude.json"
 check "next with lane 1 reported and idle while lane 2 works collects lane 1" "collect ${l1}" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" step)"
 rm -f "${p}/.swarm/conduct-backlog.l1.report.md"
+# Whatever order herdr lists them in: lane 1 working and listed first, lane 2 reported and idle.
+touch "${p}/.swarm/conduct-backlog.l2.report.md"
+printf 't\tconduct\t%s\tclaude\t-\t-\tsess-l2\n' "${l2}" >> "${p}/.swarm/agents.tsv"
+echo '[{"sessionId":"sess-l2","status":"idle"}]' > "${ROOT}/claude.json"
+check "next with lane 1 working and listed first while lane 2 is reported and idle collects lane 2" "collect ${l2}" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" step)"
+rm -f "${p}/.swarm/conduct-backlog.l2.report.md"
 
 # --- Any working conductor stopped on an API error: no lane is named, as conduct_ready starts none.
 grep -v "^${l2} " "${ROOT}/agents" > "${ROOT}/agents.1"; mv "${ROOT}/agents.1" "${ROOT}/agents"
