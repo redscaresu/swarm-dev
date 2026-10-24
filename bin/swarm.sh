@@ -34,7 +34,7 @@
 #   swarm.sh plan-unasked [--declined] <epic>               record that a later epic next offered has had its unasked plan, so next offers it no more; --declined: that the user declined it
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
-#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile
+#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile; with merge = human, a story or board PR only under an agreed HLD that grants merge, and even then held for the user when it has costs: money; --release only when at least one story merged since the last tag and every one of them is under an HLD that grants release; --board also refuses a PR that sets an epic active with no ticket (agreed:, parent:, an HLD granting epics, or lead_epics = on)
 #   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs within 5 minutes, or still pending after <seconds> (default 1800)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
@@ -334,7 +334,7 @@ policy() {
     hld-lead)   echo "claude fable xhigh" ;;   # one decomposition decides every epic an HLD becomes
     survey)     echo "claude sonnet high" ;;   # reads and cites; feeds the lead, so not low
     lead)       echo "claude opus xhigh" ;;    # one decomposition decides the whole epic
-    skeptic)    echo "claude opus high" ;;     # the only gate a story passes before it is built
+    skeptic)    echo "claude opus high" ;;     # checks a risk: high story before it is built, and one epic of a /plan-hld plan; the critic checks the rest
     critic)     echo "claude opus high" ;;
     codex)      echo "codex default high" ;;   # a different model family, read-only
     code)       echo "claude opus high" ;;
