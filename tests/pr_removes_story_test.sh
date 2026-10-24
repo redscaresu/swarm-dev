@@ -153,6 +153,7 @@ item "${B}/hld/hdr.md" "status: draft"
 item "${B}/hld/ho.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hf.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hp.md" "status: agreed" "planned: 2026-10-24"
+item "${B}/hld/hl.md" "status: agreed" "planned: 2026-10-24"
 git -C "${P}" add -A && git -C "${P}" commit -qm hlds && git -C "${P}" push -q origin main
 sw "${P}" finish hd
 is "finish of an HLD an epic names: refused naming the epic" "1 yes" "${rc} $(has "still has epics on the board: hde" "${out}")"
@@ -163,6 +164,12 @@ is "finish of an agreed HLD with no planned:: no worktree or branch left" "no no
 sw "${P}" finish hdr
 is "finish of a draft HLD: refused" "1 yes" "${rc} $(has "the HLD hdr is a draft" "${out}")"
 is "finish of a draft HLD: no worktree or branch left" "no no no" "$(left hdr)"
+# An epic under hl only in the main checkout, not yet pushed: origin cannot see it, the main checkout can.
+item "${B}/epics/hle.md" "status: draft" "hld: hl"
+sw "${P}" finish hl
+is "finish of an HLD a main-checkout epic names: refused naming the epic" "1 yes" "${rc} $(has "finish: the HLD hl still has epics on the board: hle" "${out}")"
+is "finish of an HLD a main-checkout epic names: no worktree or branch left" "no no no" "$(left hl)"
+rm "${B}/epics/hle.md"
 # On origin, not pulled into the main checkout: an epic under ho, and hp without its planned:. A
 # finish-ho worktree started by hand before they merged is stale, so the check reads origin itself.
 sw "${P}" board-pr start finish-ho
