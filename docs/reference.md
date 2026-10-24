@@ -97,10 +97,12 @@ from an `agreed` HLD, and any other value stops `swarm.sh` with the HLD's file a
 | `release` | Under `merge = human`, `swarm.sh merge --release` takes a release whose stories since the last tag are all under HLDs that grant it. |
 
 `swarm.sh grants <story | epic | hld | PR URL>` prints the agreed HLD over an item and its grants.
-A `costs: money` PR waits for you whatever the HLD grants. `lead_epics = on` (§ Settings) lets
-the lead set any epic active with no HLD at all; with it `off`, the epic guard refuses an epic that
-goes active without an `agreed:` date, a `parent:`, or an `hld:` whose HLD grants `epics`
-(§ The lead, § Merging).
+A `costs: money` PR waits for you whatever the HLD grants, and a PR that touches `.claude/`,
+`.github/`, `hooks/` or a root `Makefile` (in any repo: each changes what checks a merge or what the
+agents may do), or the board's `hld/`, is under no HLD, so no grant covers it (§ Commands).
+`lead_epics = on` (§ Settings) lets the lead set any epic active with no HLD at all; with it `off`,
+the epic guard refuses an epic that goes active without an `agreed:` date, a `parent:`, or an `hld:`
+whose HLD grants `epics` (§ The lead, § Merging).
 
 ## Decomposing an HLD
 
