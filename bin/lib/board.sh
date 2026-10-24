@@ -692,11 +692,36 @@ plan_head() {
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}")
 }
 
+# epics_last <hld file> — true when ## Epics is the HLD's last section: its body has a line that is
+# exactly ## Epics, and no heading after the last one (a #-heading at any indent, quoted or in a list
+# item, or a setext underline under a line of text), whose section plan_head would leave open.
+epics_last() {
+  awk '/^---$/ && n < 2 { n++; next } n < 2 { next }
+    $0 == "## Epics" { e = 1; bad = 0; p = ""; next }
+    e && /^[ \t>]*([-*+][ \t]+|[0-9]+[.)][ \t]+)*#+([ \t]|$)/ { bad = 1 }
+    e && /^[ \t]*(=+|-+)[ \t]*$/ && p ~ /[^ \t]/ { bad = 1 }
+    { p = $0 } END { exit (!e || bad) }' "$1"
+}
+
+# draft_epics <files> <prefix> <view> — true when each epics/*.md in <files> (under the board's
+# <prefix>) is draft in <view>, the PR's head, or keeps the status the board's copy has: without the
+# epics grant, an epic the plan adds or edits waits on the user's /epic.
+draft_epics() {
+  local p s
+  while IFS= read -r p; do
+    p="${p#"$2"}"
+    [[ "${p}" =~ ^epics/[^/]+\.md$ ]] || continue
+    s="$(get_fm "$3/${p}" status)"
+    [[ "${s}" == draft || ( -f "${BOARD}/${p}" && "${s}" == "$(get_fm "${BOARD}/${p}" status)" ) ]] || return 1
+  done <<< "$1"
+}
+
 # plan_hld <files> <prefix> — the agreed HLD in ${BOARD}/hld that a board PR plans into epics, or a
 # failure. <files> are the PR's, one per line, each under the board's <prefix>: one hld/<H>.md and at
-# least one epics/*.md, and the HLD agreed with a ## Epics line (hld_top). It reads no gh; pr_hld then
-# checks the head (each file there, the HLD's copy plan_head's) and reads each epic through item_hld, so
-# one_hld still has to agree on H. The HLD's grants are the board's, so a PR cannot grant itself.
+# least one epics/*.md, and the HLD agreed with ## Epics as its last section (epics_last). It reads
+# no gh; pr_hld then checks the head (each file there, the HLD's copy plan_head's, each epic a draft
+# without the epics grant: draft_epics) and reads each epic through item_hld, so one_hld still has to
+# agree on H. The HLD's grants are the board's, so a PR cannot grant itself.
 plan_hld() {
   local p h="" e=0 f
   while IFS= read -r p; do
@@ -708,7 +733,7 @@ plan_hld() {
   done <<< "$1"
   f="${BOARD}/hld/${h}.md"
   [[ -n "${h}" && ${e} -gt 0 && -f "${f}" && "$(get_fm "${f}" status)" == agreed ]] || return 1
-  [[ -n "$(hld_top "${f}")" ]] || return 1
+  epics_last "${f}" || return 1
   echo "${f}"
 }
 
@@ -720,7 +745,7 @@ plan_hld() {
 # one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story lists that
 # touches any file but the board's epics and stories is under none too.
 pr_hld() (
-  local s url repo n own="" info="" head="" pre p q view="" err plan=""
+  local s url repo n own="" info="" head="" pre p q view="" err plan="" g
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
@@ -762,7 +787,11 @@ pr_hld() (
     [[ -z "${plan}" ]] || return 0   # the plan PR deletes its HLD or an epic: under none
     rm -f "${view}/${p}"
   done <<< "${info}"
-  [[ -z "${plan}" ]] || plan_head "${plan}" "${view}/hld/${plan##*/}" || return 0
+  if [[ -n "${plan}" ]]; then
+    plan_head "${plan}" "${view}/hld/${plan##*/}" || return 0
+    g="$(hld_grants "${plan}")" || exit 1
+    [[ $'\n'"${g}"$'\n' == *$'\n'epics$'\n'* ]] || draft_epics "${info}" "${pre}" "${view}" || return 0
+  fi
   {
     for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
     while [[ -n "${head}" ]] && IFS= read -r p; do
