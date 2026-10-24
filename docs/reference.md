@@ -1380,8 +1380,22 @@ story or the PR's files cannot be read, so the HLD over it is unknown, it refuse
 `cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. When the HLD's `grants:`
 holds a value swarm.sh does not know, or is not a one-line `[..]` list, it prints the line naming the
 HLD's file and line, then refuses with
-`the grants: of <HLD file> cannot be read, so <PR URL> waits on the user's merge`. `--release` is not
-affected.
+`the grants: of <HLD file> cannot be read, so <PR URL> waits on the user's merge`. Under `merge = human`,
+`--release` merges only when the release is covered: at least one story file was deleted by the
+base's own commits since origin's tag `v<base version>` (a merge commit's deletions count against
+its first parent), and every such story, read as it was just before the commit that deleted it,
+falls under an agreed HLD that lists `release`. It reads the board from the base on origin, since
+your checkout may not have pulled. The story's epics are read as they were then, except that the
+base's copy wins where it still has one. Its HLD comes from the base alone, so deleting an HLD, or
+taking a grant off one, stops it counting once that change is on the base. A
+story the base's board still holds, marked `done` in your board state because its PR left the file
+in place, must fall under such
+an HLD too when a PR from its `story/<slug>` branch merged since the tag, and then counts as a story
+merged, or when gh cannot list those PRs, and then does not. Otherwise it refuses with `<PR URL> waits on
+the user's merge (merge = human, and story <slug>, merged since v<version>, is under no agreed HLD
+that grants release)`, naming the
+first story it found uncovered. A board outside the project's repo never covers a release. A
+covered release still goes through the docs check below.
 
 `swarm.sh merge [--board|--release] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
 unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
