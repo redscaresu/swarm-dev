@@ -100,7 +100,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **Design is Fable.** An epic is co-written at `high`, because the user waits on every turn, and
   attacked at `xhigh` before it is agreed.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
-  critic run at `high`; a `risk: high` story gets a skeptic, and the critic checks the rest.
+  critic run at `high`; a `risk: high` story gets a skeptic, and the critic checks every story.
 - **Reading is Sonnet, chores are Haiku.** Surveys read and cite at `high`, since they feed the
   lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
   mechanical diff, checked by the conductor.
