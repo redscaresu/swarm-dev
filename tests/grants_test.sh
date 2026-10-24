@@ -343,6 +343,11 @@ planned 54 plan-p; sed -i.bak '/^planned:/d' "$(at 54 docs/hld/plan-p.md)"
 expect plan-pr-deletes-planned-none https://github.com/o/r/pull/54 none
 planned 55 plan-p; sed -i.bak 's/^planned: .*/planned: 2026-10-01/' "$(at 55 docs/hld/plan-p.md)"
 expect plan-pr-keeps-planned https://github.com/o/r/pull/55 "$(printf '%s\nmerge' "${B}/hld/plan-p.md")"
+# A plan PR that adds epics but no planned:, or an empty one, leaves plan unplanned: none.
+planned 58 plan; sed -i.bak '/^planned:/d' "$(at 58 docs/hld/plan.md)"
+expect plan-pr-no-planned-none https://github.com/o/r/pull/58 none
+planned 59 plan; sed -i.bak 's/^planned: .*/planned:/' "$(at 59 docs/hld/plan.md)"
+expect plan-pr-empty-planned-none https://github.com/o/r/pull/59 none
 
 # A board at the repo's root (board_dir = .): its hld/, epics/ and stories/ are the PR's paths as they are.
 R="${ROOT}/rootproj"; mkdir -p "${R}/.claude/swarm" "${R}/hld" "${R}/epics" "${R}/stories"
