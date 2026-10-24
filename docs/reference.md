@@ -1786,9 +1786,13 @@ its PRs. It prints each of those agents as `kept`, and still closes the conducto
 close takes the full recorded name. It closes only a pane or tab that `.swarm/state` records under
 exactly the name you give it. herdr and `swarm.sh` print agent names cut at 32 characters, so two
 long names can look the same, and a cut name matches no record. When nothing is recorded under the
-name and other records share its first 32 characters, close fails without closing anything, even
-when only one record shares them. It names those records. Pass one of those names to close it, or
-close them first and then close the name you gave.
+name and other records share its first 32 characters (even one), close closes no pane and names
+those records. Pass one of those names to close it, or close them first and then close the name you
+gave. It also closes no pane when herdr lists more than one agent under that cut on panes recorded
+with no name. A story's board work still goes on: the attempt is counted and the PR kept or the
+build cleared. A close of a name that has no story fails. A name with no record and nothing
+sharing its first 32 characters has nothing to close by mistake, so its close goes on, as it does
+for a pane closed by hand.
 
 ## Releases
 

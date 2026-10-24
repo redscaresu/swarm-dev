@@ -4,7 +4,8 @@
 # close each other's tab or pane, and a name with no exact record is refused, naming what shares its
 # cut, with nothing closed. herdr is a stub on PATH: it lists the tabs in ${ROOT}/tabs ("<id> <label>"),
 # the agents in ${ROOT}/agents ("<name> <pane>", idle) and the panes in ${ROOT}/panes ("<pane> <tab>"),
-# and records each tab close in ${ROOT}/tabs-closed and each pane close in ${ROOT}/panes-closed.
+# and records each tab close in ${ROOT}/tabs-closed and each pane close in ${ROOT}/panes-closed. gh is
+# a stub too: pr list gives no PRs. The project has an empty bare origin.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -16,6 +17,12 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"
 mkdir -p "${P}/docs/stories" "${ROOT}/bin"
 git -C "${P}" init -q
+git init -q --bare "${ROOT}/origin.git" && git -C "${P}" remote add origin "${ROOT}/origin.git"
+cat > "${ROOT}/bin/gh" <<'STUB'
+#!/bin/sh
+case "$1 $2" in "pr list") echo "[]" ;; esac
+STUB
+chmod +x "${ROOT}/bin/gh"
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
@@ -51,7 +58,7 @@ is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2'
 # naming <found> as sharing its cut, any not closed: line, and main's log line for it (ok or the refusal).
 refused() {
   local rc=0; close "$1" || rc=$?
-  echo "${rc}|$(closed)|$(grep -cF "swarm: close: nothing in .swarm/state is recorded as $1, and $2 share its first 32 characters" "${ROOT}/close.out")|$(grep -c '^not closed:' "${ROOT}/close.out")|$(grep -cF $'\tclose\t'"$1"$'\tw:me\tok' "${P}/.swarm/events.tsv")|$(grep -cF $'\tclose\t'"$1"$'\tw:me\tclose: nothing in' "${P}/.swarm/events.tsv")"
+  echo "${rc}|$(closed)|$(grep -cF "swarm: close: nothing in .swarm/state is recorded as $1, and $2 share its first 32 characters" "${ROOT}/close.out")|$(grep -c '^not closed:' "${ROOT}/close.out")|$(grep -cF $'\tclose\t'"$1"$'\tw:me\tok' "${P}/.swarm/events.tsv")|$(grep -cF $'\tclose\t'"$1"$'\tw:me\tclose: no pane was closed for '"$1" "${P}/.swarm/events.tsv")"
 }
 REFUSED="1|||1|0|0|1"
 
@@ -111,6 +118,49 @@ fixture e1 "w:p10 conductor" "${S}-brief.md" "# The brief for ${S}-z\n\nRead the
 rc=0; close "${S}-z" || rc=$?
 is "close ${S}-z, a brief ${S}-brief.md beside the records, is not refused and closes nothing" "0|||0" \
   "${rc}|$(closed)|$(grep -c 'nothing in .swarm/state is recorded' "${ROOT}/close.out")"
+
+# Only the pane is refused: a story's board work goes on. A merged story's close, as reconcile runs it,
+# exits 0, closes no pane, says why and is logged ok; a stalled --drop close of a ready one counts its
+# attempt and clears its build. herdr's cut name is B's, so A's build reads as open (failed_build).
+printf '%s\n' "$(name "${A}") w:p21" > "${ROOT}/agents"
+story() { printf -- '---\nstatus: %s\nkind: code\n---\n\n# %s\n' "$2" "$1" > "${P}/docs/stories/$1.md"; rm -rf "${P}/.swarm/board-state"; }
+story_close() {
+  local rc=0; close "$@" || rc=$?
+  echo "${rc}|$(closed)|$(grep -cF "swarm: close: nothing in .swarm/state is recorded as $1, and ${B} (pane w:p21 in tab e2) share" "${ROOT}/close.out")|$(grep -cF $'\tclose' "${P}/.swarm/events.tsv" | tr -d ' ')|$(grep -c $'\tok' "${P}/.swarm/events.tsv")"
+}
+story "${A}" review; fixture e1 "w:p10 conductor" e2 "w:p20 conductor\nw:p21 ${B}"; mkdir -p "${P}/.swarm/zdotdir/${S}"
+is "close ${A}, its story merged and its record gone, closes no pane, says why, and goes on (exit 0, logged ok)" "0|||1|1|1" \
+  "$(story_close "${A}")"
+is "and leaves the ZDOTDIR of ${S}, the cut name ${B} holds" "kept" "$([[ -d "${P}/.swarm/zdotdir/${S}" ]] && echo kept || echo gone)"
+story "${A}" ready; fixture e1 "w:p10 conductor" e2 "w:p20 conductor\nw:p21 ${B}"
+is "close ${A} stalled --drop, its story ready and its record gone, closes no pane and counts its attempt" "0|||1|1|1|1" \
+  "$(story_close "${A}" stalled --drop)|$(grep -c '^attempts: 1$' "${P}/.swarm/board-state/stories/${A}" 2>/dev/null)"
+rm -f "${P}/docs/stories/${A}.md"
+
+# A long builder whose record line has no name (an older record) is found by herdr's cut of its name;
+# two herdr agents under that cut, on unnamed lines, are refused rather than one picked.
+L=a-long-builder-slug-running-past-32-characters; LN="$(name "${L}")"
+printf '%s\n' "w:t6 e5" >> "${ROOT}/tabs"; printf '%s\n' "w:p40 w:t6" "w:p41 w:t6" > "${ROOT}/panes"
+printf '%s\n' "${LN} w:p40" > "${ROOT}/agents"; fixture e5 "w:p40\nw:p41"
+rc=0; close "${L}" || rc=$?
+is "close ${L}, its record line unnamed, closes the pane herdr lists as ${LN}" "0||w:p40" "${rc}|$(closed)"
+printf '%s\n' "${LN} w:p40" "${LN} w:p41" > "${ROOT}/agents"; fixture e5 "w:p40\nw:p41"
+rc=0; close "${L}" || rc=$?
+is "close ${L}, herdr listing ${LN} on both unnamed panes, fails and closes neither" "1|||1" \
+  "${rc}|$(closed)|$(grep -cF "herdr lists more than one agent as ${LN}" "${ROOT}/close.out")"
+
+# A long epic's conductor with no brief left (conduct_epic gives the cut): its epic's tab is found
+# from the one record whose conductor name is its own, and closes.
+E=aws-layer3-claim-sweep-reaper-long-epic; C="$(name "conduct-${E}")"
+printf '%s\n' "w:t7 ${E}" >> "${ROOT}/tabs"; printf '%s\n' "w:p50 w:t7" "w:p51 w:t7" > "${ROOT}/panes"
+printf '%s\n' "${C} w:p50" "s9 w:p51" > "${ROOT}/agents"; fixture "${E}" "w:p50 conductor\nw:p51 s9"
+rc=0; close "${C}" || rc=$?
+is "close ${C}, no brief left, closes its epic ${E}'s tab" "0|w:t7|" "${rc}|$(closed)"
+
+# A record mid-rewrite (record_drop's .tmp) is no tab of its own.
+printf '%s\n' "critic w:p1" "skeptic w:p2" > "${ROOT}/agents"
+fixture "${T1}" "w:p1 critic" "${T1}.tmp" "w:p1 critic" "${T2}" "w:p2 skeptic"
+is "close ${H}, ${T1}.tmp beside ${T1}, names ${T1} and ${T2} only" "${REFUSED}" "$(refused "${H}" "tab ${T1}, tab ${T2}")"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
