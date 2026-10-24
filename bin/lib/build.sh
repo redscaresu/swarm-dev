@@ -55,8 +55,8 @@ once, with no cap below the number of green PRs. When \`swarm.sh watch\` prints,
 you, \`queued: <repo> #<n> <branch> green <m>m with no review on <sha>\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
 or has uncommitted changes: wait for the builder, then start it again. The review agent, review-<slug>, is read-only and runs in
 the story's worktree: it runs codex-review with the story's slug and, on the story's first round
-only, when the PR changes code (not only docs, board files or a dependency bump), \`/code-review
-<PR>\` (review-agent counts the rounds itself), judges only the story's touches
+only, when the PR changes code (not only docs, board files or a dependency bump),
+\`/code-review <PR>\` (review-agent counts the rounds itself), judges only the story's touches
 and **Done when**, and writes ${PROJECT_DIR}/.swarm/reviews/<slug>.md: a \`head: <SHA>\` line
 naming the commit it reviewed, its findings, and an out-of-scope section. Wait on each with
 \`swarm.sh wait review-<slug>\` in the background, triage that story's file, then close the review
