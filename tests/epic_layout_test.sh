@@ -114,7 +114,7 @@ MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex
 logs_findings() {
   local f="${p}/.swarm/findings.tsv" line n
   while IFS= read -r line; do
-    line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"; line="${line//<reason>/nit}"
+    line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"; line="${line//<reason>/nit}"; line="${line//<n>/1}"
     line="${line%%\"<*}\"text\""   # the text placeholder is the last word
     n=0; [[ ! -f "${f}" ]] || n="$(wc -l < "${f}")"
     if ! (cd "${ROOT}" && env -u SWARM_PROJECT bash -c "${line}" >/dev/null 2>&1); then printf 'failed: %s|' "${line}"; continue; fi
