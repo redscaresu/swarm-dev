@@ -70,7 +70,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # safe, ...). Else print why and fail (1); a read that fails is a failure too, and a 404 from branch
 # protection is unprotected only when GitHub says "Branch not protected".
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
-# too; fails (3) unless there are <changed> of them.
+# too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
+# "<status> <path>" (added, modified, removed, renamed).
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
