@@ -271,8 +271,11 @@ Repeat until a step below says stop:
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
      green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
-     what it printed and stop. If `swarm.sh config merge` is `agent`, run
-     `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it.
+     what it printed and stop. Run
+     `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it,
+     under `merge = human` too: it merges there only when HLDs granting `release` cover the release.
+     If it refuses with "waits on the user's merge", go to the last step of this arm below. Any other
+     refusal is handled as under `agent`.
      For swarm-dev's own repo, merge has confirmed the tag and the GitHub release, updated the
      plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
      `claude --continue`) and any warning it printed. If CI on the base was not green, merge
@@ -282,8 +285,8 @@ Repeat until a step below says stop:
      `swarm.sh dash --check`, which compares every figure dash shows with the command that
      owns it and exits 1 naming each one that differs. If it fails, run it once more, since a
      figure can move between the two reads; if it fails again, file a `kind: code` story naming the
-     fields it printed. Remove the worktree and the branch, and go back to 1. If it is `human`,
-     run `swarm.sh dash --check`; if it fails, run it once more, and if it fails again, file a
+     fields it printed. Remove the worktree and the branch, and go back to 1. On the release-grant
+     refusal, run `swarm.sh dash --check`; if it fails, run it once more, and if it fails again, file a
      `kind: code` story naming the fields it printed. Keep the worktree and the branch: the bump
      PR still waits. Tell the user the PR waits on their merge, show what `swarm.sh status` lists
      under Waiting on you, and stop.
