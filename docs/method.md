@@ -136,6 +136,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference.md § Settings) |
 | `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: a new or draft epic goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
+| `conductor_lanes` | `1` | `N` above 1: an epic or the backlog gets N conductors (`swarm.sh conduct ... --lane <k>`), each building, reviewing and merging only its own stories (reference.md § Building) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -146,5 +147,4 @@ the lead runs `swarm.sh finish <slug>` once the PR merges.
 ## Where the rest is
 
 [`reference.md`](reference.md) holds the lead's board PRs and wake, writing an epic, model and effort,
-settings, scoping an epic, building, logs and outcomes, flow and features, the outer loop, merging
-and releases.
+settings, scoping an epic, building, logs and outcomes, flow and features, the outer loop, merging and releases.

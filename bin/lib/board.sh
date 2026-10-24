@@ -1108,15 +1108,17 @@ unblock() {
 # reconcile last left it and never pulls: pulling is reconcile's. An epic whose file is gone has
 # finished, so after unblock (its last merge may ready another epic's stories) nothing is startable. A
 # line ends (stacked on <parents>) while depends_on has open stories, as story stacks it, and (its PR
-# <url> was closed unmerged) when the story's last event is reconcile's reopen, for the lead.
+# <url> was closed unmerged) when the story's last event is reconcile's reopen, for the lead. With
+# <lane>, only the stories in that conductor lane (story_lane).
 unblock_startable() {
-  local want="$1" slug e f open why
+  local want="$1" lane="${2:-}" slug e f open why
   unblock
   if [[ "${want}" == --backlog ]]; then want=-
   else [[ -f "${BOARD}/epics/${want}.md" ]] || return 0; fi
   while read -r slug e; do
     [[ "${e}" == "${want}" ]] || continue
     f="${BOARD}/stories/${slug}.md"; why=""
+    [[ -z "${lane}" || "$(story_lane "${f}")" == "${lane}" ]] || continue
     open="$(open_deps "$(story_deps "${f}")")"
     [[ -z "${open}" ]] || why="stacked on ${open}"
     if [[ "$(last_event "${slug}")" == $'reconcile	ok (reopened)' ]]; then
@@ -1294,9 +1296,9 @@ set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
 # too, which review and unblock write, held_by, which review writes on a stacked story it holds, and
-# an epic's unasked_plan, which plan-unasked writes.
+# an epic's unasked_plan, which plan-unasked writes, and a story's lane, which story writes.
 # They live in BOARD_STATE_DIR, never in a tracked file.
-SET_FM_KEYS="attempts kind escalated_from held_for held_by kept status prs unasked_plan"
+SET_FM_KEYS="attempts kind escalated_from held_for held_by kept lane status prs unasked_plan"
 
 # set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
 # an empty <value> clears it. <key> must be one of SET_FM_KEYS.

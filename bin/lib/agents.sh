@@ -1468,7 +1468,7 @@ note_wake() { local rc=0; note_wake_now "$@" || rc=$?; [[ ${rc} -eq 2 ]] || note
 # upgrade's handover (<base>.upgrade, under an hour old). A lock it cannot take (exit 2), or a prompt that
 # fails, is warned of, and the failed one's stamp is taken back: the note is in the inbox either way.
 note_wake_now() {
-  local t f rc=0 arg
+  local t f rc=0 arg lane
   [[ -f "$2.md" && ! -f "$(conductor_report "$1")" && -z "$(find "$2.upgrade" -mmin -60 2>/dev/null)" ]] || return 0
   note_wake_due "$2" || return 0
   [[ "$(upgrade_state "$1" "$3")" == idle ]] || return 0
@@ -1478,6 +1478,10 @@ note_wake_now() {
   rmdir "$2.lock"
   [[ ${rc} -eq 0 ]] || return 0
   arg="$(conduct_epic "$1")"; [[ "${arg}" != backlog ]] || arg=--backlog
+  # A lane conductor that outlived a lower conductor_lanes reads its lane folded, as story_lane folds, or all with 1.
+  lane="$(conduct_lane "$1")"
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${lane}" ]] || (( CFG_conductor_lanes == 1 )) || arg+=" --lane $(( (lane - 1) % CFG_conductor_lanes + 1 ))"
   if f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")"; then
     printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then run swarm.sh unblock --startable %s and start each story it prints as startable:, by the rule in your brief. Then end your turn, leaving any wait or watch you have running alone; start one only if none runs.\n' "$2.md" "$2.reading.md" "$2.reading.md" "${arg}" > "${f}"
     (deliver_prompt "$1" "${f}" "$3" once) 2>/dev/null || rc=$?
@@ -1553,14 +1557,25 @@ note_lock() {
 # the handover brief, and the tell fails, saying so; a step-up that closed nothing sends them as usual.
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
-# is also prompted to read it now (note_wake).
+# is also prompted to read it now (note_wake). With conductor_lanes above 1, a note to the lane-less
+# name goes to every running lane conductor of that epic or backlog.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line
+  local kind="$2" f="$3" name msg state since inbox rc pane line e k l sent=""
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
+  if [[ "${kind}" == note ]] && (( CFG_conductor_lanes > 1 )) && [[ -z "$(conduct_lane "${name}")" ]]; then
+    e="$(conduct_epic "${name}")"
+    for ((k = 1; k <= CFG_conductor_lanes; k++)); do
+      l="$(conductor_name "${e}" "${k}")"
+      [[ -n "$(agent_field "${l}" pane_id)" ]] || continue
+      if (tell_agent "${l}" note "${f}"); then sent=1; fi
+    done
+    [[ -n "${sent}" ]] || die "could not reach any lane of ${name}: no lane conductor (conduct ... --lane <k>) this project started is running"
+    return
+  fi
   pane="$(agent_field "${name}" pane_id)"
   if [[ -z "${pane}" ]]; then
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
