@@ -263,7 +263,9 @@ next_step() {
     is_escalated "${f}" || continue
     slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
     echo "escalated ${slug}"
-    if [[ -n "${held}" ]]; then
+    if [[ "${held}" == top-rung ]]; then
+      echo "${slug} is held (top-rung): its builder on or above the ladder's top rung drew another findings round, which was not sent (the block names the file); re-scope it, lift the hold with swarm.sh reset ${slug} <reason> and send the findings with swarm.sh tell ${slug} findings <file>, or close its builder, PR and worktree as its block says and swarm.sh drop ${slug} <reason>, then tell the user why"
+    elif [[ -n "${held}" ]]; then
       echo "${slug} is held (${held}): its builder stopped on its goal, which counts nothing; lift the hold with swarm.sh reset ${slug} <reason> to build it again, or swarm.sh drop ${slug} <reason>, then tell the user why"
     elif [[ -n "${when}" ]] && impossible_block "${f}"; then
       echo "${slug}'s builder called its Done when impossible after its one reset (${when}): drop it with swarm.sh drop ${slug} <reason>, then tell the user why"
