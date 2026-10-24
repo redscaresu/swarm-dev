@@ -2,7 +2,7 @@
 kind: code
 status: ready
 depends_on: []
-touches: [bin/lib/build.sh:conductor review rule, the review agent's brief (find where review-<slug> is briefed), tests/conduct_brief_test.sh]
+touches: [bin/lib/build.sh:conductor review rule, the review agent's brief (find where review-<slug> is briefed), tests/review_agent_test.sh, tests/conduct_backlog_test.sh]
 estimate_lines: 80
 easy: false
 ---
