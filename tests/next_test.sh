@@ -927,19 +927,6 @@ if [[ "${got}" == "done" ]]; then echo "ok   another project's conductor is not 
   echo "FAIL another project's conductor is not waited on: want 'done', got '${got}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
-# A long conductor's agent name is cut at 32 characters; close must still find its full tab label.
-long="conduct-aws-layer3-claim-sweep-reap"
-dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
-[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-(cd "${dir}" && git init -q && mkdir -p .swarm/state && touch ".swarm/state/${long}" ".swarm/state/${long}-2" .swarm/state/short)
-short_name="$(cd "${dir}" && bash "${SWARM}" _name "${long}")"
-for pair in "${short_name}:${long}" "${long}:${long}" "short:short" "unknown:unknown"; do
-  got="$(cd "${dir}" && bash "${SWARM}" _label "${pair%%:*}")"
-  if [[ "${got}" == "${pair#*:}" ]]; then echo "ok   tab label for ${pair%%:*}"; else
-    echo "FAIL tab label for ${pair%%:*}: want '${pair#*:}', got '${got}'"; fails=$((fails + 1)); fi
-done
-rm -rf "${dir}"
-
 # `tell <slug> <kind> <file>` sends an idle builder the file and exits 0, leaving no temp file behind.
 # A Claude builder's state is its session's (agents.tsv's newest line for s1, then the claude stub's
 # fixture), never herdr's: it refuses one busy, waiting (naming on what), gone or unknown instead of
