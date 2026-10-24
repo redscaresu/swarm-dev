@@ -33,11 +33,12 @@ check() { # <name> <want> <got>
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 lacks() { if grep -qF -- "$1" <<< "$2"; then echo "no, it has $1"; else echo yes; fi; }
 
-# herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until a tab
-# closes (each story's builder has a tab of its own, and one is open at a time); tab and pane close
-# fail while ${ROOT}/closefail exists. While ${ROOT}/promptsent exists, agent prompt replies with no
-# status (sent) and agent get reads the agent idle with no completion_seq: a prompt never taken up;
-# with ${ROOT}/getnone too, agent get gives nothing, so whether it was taken up is unknown.
+# herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle (agent get of a
+# listed pane too), until a tab closes (each story's builder has a tab of its own, and one is open at a
+# time); tab and pane close fail while ${ROOT}/closefail exists. While ${ROOT}/promptsent exists, agent
+# prompt replies with no status (sent), and agent get reads the agent idle with no completion_seq: a
+# prompt never taken up; with ${ROOT}/getnone too, agent get gives nothing, so whether it was taken up
+# is unknown.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" | tee "${STUB_BIN}/gh" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -59,7 +60,8 @@ case "$1 $2" in
   "agent prompt") [ ! -e "$H/promptfail" ] || exit 1
                   [ ! -e "$H/promptsent" ] || { echo '{"result":{}}'; exit 0; }   # sent, with no status
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
-  "agent get")    [ ! -e "$H/promptsent" ] || [ -e "$H/getnone" ] || echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent get")    awk -v p="$3" '$2 == p { f = 1 } END { exit !f }' "$H/agents" || exit 1
+                  [ -e "$H/getnone" ] || echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;

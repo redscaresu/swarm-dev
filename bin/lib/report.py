@@ -42,13 +42,13 @@ def log_lines(path):
     except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
         return
 
-def finding_rows(path, outcomes=("fixed", "declined")):
+def finding_rows(path, outcomes=("fixed", "declined"), width=6):
     # Read first, so a report that does not pass SWARM_FINDING_REVIEWERS fails rather than drops every row.
     reviewers = os.environ["SWARM_FINDING_REVIEWERS"].split() + ["unknown"]
     if not os.path.exists(path):
         return []
-    rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
-    rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
+    rows = (l.rstrip("\n").split("\t")[:8] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
+    rows = ((f + ["fixed", "unknown"][len(f) - 4:] + ["", ""])[:width] for f in rows if len(f) >= 4)
     return [f for f in rows if f[4] in outcomes and f[5] in reviewers]
 
 def fixed_rows(path):

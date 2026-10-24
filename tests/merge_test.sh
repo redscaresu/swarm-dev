@@ -97,11 +97,14 @@ case "$1 $2" in
                case "${out}" in *'"state":"MERGED"'*) echo MERGED > "${FX}/state"; printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit" ;; esac ;;
       */check-runs*) serve "${sha}.checks"
                      # The head moves once its checks are read, before the merge.
-                     [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head" ;;
+                     [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head"
+                     # ${FX}/on-checks runs once then: another PR landing on the base while merge runs.
+                     [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/on-checks" ] || { sh "${FX}/on-checks"; rm -f "${FX}/on-checks"; } ;;
       */commits/*/status*) serve "${sha}.status" ;;
       *event=merge_group*) serve mgruns ;;
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
-      */pulls/*/files*) serve files ;;
+      # --slurp (merge_gone's read) wraps the one page in a list of pages.
+      */pulls/*/files*) case " $* " in *" --slurp "*) out="$(serve files)" || exit 1; echo "[${out}]" ;; *) serve files ;; esac ;;
       */rules/branches/*) serve rules ;;
       */git/ref/tags/*) serve tagref ;;     # the release's tag
       */releases/tags/*) serve release ;;   # its GitHub release
@@ -115,7 +118,9 @@ case "$1 $2" in
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
-      */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
+      # ${FX}/on-contents runs once first: another process's fetch while release_check reads.
+      */contents/*) [ ! -e "${FX}/on-contents" ] || { sh "${FX}/on-contents"; rm -f "${FX}/on-contents"; }
+                    f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
                     [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
       # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>. A
       # commit's files: commit.<sha>, else one file outside the board.
@@ -753,9 +758,12 @@ git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init; 
 git -C "${P}" push -q origin HEAD:refs/heads/main v1.2.0; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
 release_pr() {
   fresh; rm "${S}"; echo '[{"filename":".claude-plugin/plugin.json","status":"modified"}]' > "${FX}/files"
-  echo '{"name":"x","version":"1.2.0","hooks":{}}' > "${FX}/wf.plugin.json.main"
+  echo '{"name":"x","version":"1.2.0","hooks":{}}' > "${FX}/wf.plugin.json"
   echo '{"name":"x","version":"1.3.0","hooks":{}}' > "${FX}/wf.plugin.json.${H1}"
+  parent "$(git -C "${ROOT}/origin.git" rev-parse main)"
 }
+# parent <sha> — the merge commit's first parent, as gh reads it.
+parent() { printf '{"files":[{"filename":".claude-plugin/plugin.json"}],"parents":[{"sha":"%s"}]}' "$1" > "${FX}/commit.${M}"; }
 release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge --release "${URL}"
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
@@ -775,14 +783,14 @@ release_pr; echo '{"name":"x","version":"1.3.0","hooks":{},"mcpServers":{"m":{"c
 merge --release "${URL}"; refused "--release that adds mcpServers to plugin.json" "changes more of .claude-plugin/plugin.json than its version"
 release_pr; echo '{"name":"x","hooks":{}}' > "${FX}/wf.plugin.json.${H1}"
 merge --release "${URL}"; refused "--release that drops the version" "its version None is not MAJOR.MINOR.PATCH"
-release_pr; echo '{"name":"x","version":"1.3.0","hooks":{},"strict":true}' > "${FX}/wf.plugin.json.main"
+release_pr; echo '{"name":"x","version":"1.3.0","hooks":{},"strict":true}' > "${FX}/wf.plugin.json"
 echo '{"name":"x","version":"1.4.0","hooks":{},"strict":1}' > "${FX}/wf.plugin.json.${H1}"
 merge --release "${URL}"; refused "--release that turns true into 1" "changes more of .claude-plugin/plugin.json than its version; if main changed plugin.json after the release branch was cut, merge origin/main into it and retry"
 for v in 1.2.0:"is not greater than '1.2.0' on main" 1.1.9:"is not greater than '1.2.0' on main" 1.3.0-rc:"its version '1.3.0-rc' is not MAJOR.MINOR.PATCH"; do
   release_pr; echo "{\"name\":\"x\",\"version\":\"${v%%:*}\",\"hooks\":{}}" > "${FX}/wf.plugin.json.${H1}"
   merge --release "${URL}"; refused "--release to version ${v%%:*}" "${v#*:}"
 done
-release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json.main" "${FX}/wf.plugin.json.feature"
+release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json" "${FX}/wf.plugin.json.feature"
 merge --release "${URL}"; refused "--release for a PR into another branch" "goes into feature, not main, the project's base"
 # A release ships its docs: bin/, commands/ or hooks/ changed since origin's tag needs README.md,
 # AGENTS.md or docs/ changed too, or a "Docs: none — <reason>" line in the PR body; a commands/*.md
@@ -809,11 +817,11 @@ for b in 'Docs: none' 'Docs: none \u2014\r\nmore' 'Docs: none \u2014 \r\nmore' '
   release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
   refused "--release with '${b}' and no reason" "bin/x.sh changed since v1.2.0"
 done
-release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
+release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json"
 merge --release "${URL}"; refused "--release with no tag for the base's version" "no v1.2.5 tag on origin to compare against: tag main's last release v1.2.5, or give the PR body a line 'Docs: none — '"
 # v1.2.5 on a commit that is not on main.
 git -C "${P}" tag v1.2.5 "$(git -C "${P}" -c user.name=t -c user.email=t@t commit-tree -m side "HEAD^{tree}")"; git -C "${P}" push -q origin v1.2.5
-release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
+release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json"
 merge --release "${URL}"; refused "--release with the base's tag off the base" "the tag v1.2.5 is not on origin/main"
 # origin's tag is read, never fetched over the local one.
 git -C "${P}" tag -f v1.2.0 HEAD >/dev/null; local_tag="$(git -C "${P}" rev-parse v1.2.0)"
@@ -912,6 +920,25 @@ retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-c.m
 commit bin/z.sh
 human_release; refused "--release with merge = human, covered, with bin/ changed and no docs" "bin/z.sh changed since v1.2.0 but README.md, AGENTS.md and docs/ did not"
 retag
+# The base moves between the release check and the merge: the check runs again on the new base. A
+# story landed there under no HLD granting release is refused, though the first check passed.
+# held <command>... — run it (commits on main), then put origin's main back; prints the commit, for moved.
+held() { local was; was="$(gt rev-parse HEAD)"; "$@"; gt rev-parse HEAD; gt push -q -f origin "${was}:refs/heads/main"; }
+# moved <sha> — origin's main moves to <sha> once the head's checks are read.
+moved() { echo "git -C '${ROOT}/origin.git' update-ref refs/heads/main $1" > "${FX}/on-checks"; }
+landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-g.md "epic: shipped"; gone docs/stories/shipped-g.md docs/epics/shipped.md
+was="$(gt rev-parse HEAD)"; late="$(held eval 'landed docs/stories/late.md "epic: none-such"; gone docs/stories/late.md')"
+human_release moved "${late}"
+refused "--release with merge = human and a story under no HLD landed on main between the check and the merge" "story late, merged since v1.2.0, is under no agreed HLD that grants release"
+check "--release with main moved after the check: says so, and checks again" said "origin/main moved from ${was:0:7} to ${late:0:7} since the release check, so it runs again"
+retag
+fetched() { echo "git -C '${P}' update-ref refs/remotes/origin/main $1" > "${FX}/on-contents"; } # <sha> — the local origin/main moves mid-check
+landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-h.md "epic: shipped"; gone docs/stories/shipped-h.md docs/epics/shipped.md
+was="$(gt rev-parse HEAD)"; late="$(held eval 'landed docs/stories/late2.md "epic: none-such"; gone docs/stories/late2.md')"
+human_release fetched "${late}"
+is "--release with origin/main moved locally mid-check: the checks read the commit fetched first, and it merges" "0 yes" "${rc} $(merged && echo yes)"
+check "--release reads the base's plugin.json at the commit it fetched" grep -q "contents/.claude-plugin/plugin.json?ref=${was}" "${ROOT}/gh.log"
+push; retag
 # A release of the plugin's own repo (plugin.json's repository), once its tag and published release
 # are on the merge commit or after it: the marketplace and the plugin are updated, then the new
 # version's upgrade starts once in each swarm project herdr runs an agent in, found by the agent's
@@ -992,8 +1019,29 @@ check "--release whose GitHub release is a draft: no plugin update" test ! -e "$
 own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; echo '{"draft":true}' > "${FX}/release"; merge SWARM_RELEASE_WAIT=2 --release "${OWN}"
 is "--release waiting on a draft: the tag's commit is compared once, however many polls" "1|1" "$(grep -c "compare/${M}\.\.\.${H2}" "${ROOT}/gh.log")|$(grep -c "compare/main\.\.\.${H2}" "${ROOT}/gh.log")"
 check "--release waiting on a draft: polled more than once" bash -c "[ \$(grep -c 'git/ref/tags/v1.3.0' '${ROOT}/gh.log') -gt 1 ]"
-own_release; echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; merge --release "${URL}"
+# The merge commit sits on the base the release check read, else the release shipped commits no check
+# read: refused, naming them, and the plugin is not updated.
+was="$(gt rev-parse HEAD)"; late="$(held commit bin/late.sh README.md)"
+own_release; moved "${late}"; parent "${late}"; merge --release "${OWN}"
+is "--release with main moved after the check, checked again: exits 0" 0 "${rc}"
+check "--release with main moved after the check, checked again: says so" said "origin/main moved from ${was:0:7} to ${late:0:7} since the release check, so it runs again"
+check "--release with main moved after the check, checked again: merges onto it and updates the plugin" bash -c "grep -q '^pr merge' '${ROOT}/gh.log' && grep -q 'plugin update' '${ROOT}/claude.log'"
+was="${late}"; late="$(held eval 'commit bin/late2.sh; commit bin/late3.sh')"; shipped="$(gt log --format=%h "${was}..${late}" | paste -sd' ' -)"
+own_release; echo "git -C '${ROOT}/origin.git' update-ref refs/heads/main ${late}" > "${FX}/on-merge"; parent "${late}"; merge --release "${OWN}"
+is "--release whose merge commit's parent is not the base it checked: exits 0" 0 "${rc}"
+check "--release whose merge commit's parent is not the base it checked: names the unchecked commits" said "warning: aaaaaaa's first parent is ${late:0:7}, not ${was:0:7}, the base the release check read, so it ships ${shipped} unchecked"
+check "--release whose merge commit's parent is not the base it checked: says why the plugin was not updated" said "refused: the release ships commits no release check read, so the plugin was not updated and no agent was moved: once they are checked, run swarm.sh update, then ${NEW} upgrade"
+check "--release whose merge commit's parent is not the base it checked: no plugin update, no upgrade" bash -c "[ ! -e '${ROOT}/claude.log' ] && [ ! -e '${ROOT}/upgrade.log' ]"
+check "--release whose merge commit's parent is not the base it checked: logs the refusal" logged "merge ${OWN} unchecked: aaaaaaa's first parent is ${late:0:7}, not ${was:0:7}"
+# reported <target> — the warning that the merge commit's parent is H2, its events.tsv line, and no plugin advice.
+reported() { said "warning: aaaaaaa's first parent is 2222222, not " && logged "merge $1 unchecked: aaaaaaa's first parent is 2222222, not " && ! said "refused:"; }
+own_release; parent "${H2}"; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge --release "${OWN}"
+check "--release with base CI not green and another parent: reports and logs the unchecked commits, with no plugin advice" reported "${OWN}"
+own_release; rm "${FX}/commit.${M}"; merge --release "${OWN}"
+check "--release whose merge commit's parent gh cannot read: warns, and no plugin update" bash -c "grep -qF 'warning: gh cannot read the first parent of aaaaaaa' '${ROOT}/out' && grep -qF 'refused: the release ships commits no release check read' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
+own_release; echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; parent "${H2}"; merge --release "${URL}"
 is "--release of another repo: exits 0" 0 "${rc}"
+check "--release of another repo whose merge commit has another parent: reports and logs the unchecked commits, with no plugin advice" reported "${URL}"
 check "--release of another repo: no plugin update, no upgrade" bash -c "[ ! -e '${ROOT}/claude.log' ] && [ ! -e '${ROOT}/upgrade.log' ]"
 check "--release of another repo: says why" said "o/r is not this plugin's repo (${OWN_REPO}), so the plugin is not updated"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
@@ -1099,11 +1147,13 @@ chmod 644 "${P}/docs/stories/p.md"; rm -f "${P}/docs/stories/p.md"
 WAIT="waits on the user's merge (merge = human, and no HLD grants merge for it)"
 fresh "merge = human"; item s "status: review" "prs: ${URL}" "costs: money"; merge "${URL}"
 refused "with merge = human, the lead's swarm.sh merge of a story under no HLD" "${URL} ${WAIT}"
-# hld <name> <grants> <epic> — an agreed HLD granting <grants>, and an active epic whose hld: names it.
+# hld <name> <grants> <epic> — an agreed HLD granting <grants>, and an active epic whose hld: names it,
+# on the board and, at any ref, as gh reads it (merge --board's epic guard reads it at both ends).
 hld() {
   mkdir -p "${P}/docs/hld" "${P}/docs/epics"
   printf -- '---\nstatus: agreed\ngrants: [%s]\n---\n\n# %s\n' "$2" "$1" > "${P}/docs/hld/$1.md"
   printf -- '---\nstatus: active\nhld: %s\n---\n\n# %s\n' "$1" "$3" > "${P}/docs/epics/$3.md"
+  cp "${P}/docs/epics/$3.md" "${FX}/wf.$3.md"
 }
 # granted <grants> [front-matter line]... — merge = human, and s in review under epic g, under HLD h.
 granted() { fresh "merge = human"; hld h "$1" g; item s "status: review" "prs: ${URL}" "epic: g" "${@:2}"; }
@@ -1148,6 +1198,112 @@ merge --board "${URL}"; refused "merge = human, a board PR under grants: [merge]
 check "merge = human, a board PR under grants: [merge] that changes a costs: line: the whole line, with no mode in it" \
   grep -qxF "swarm: merge: held: ${URL} changes a costs: line in docs/epics/g.md; the user merges it" "${ROOT}/out"
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
+
+# --- merge --board refuses a PR that sets an epic active with no ticket (epic_unticketed), under
+# either merge mode. gh reads each epic and hld: HLD at the base branch (main) and at the head SHA
+# from wf.<file>.<ref>; the stub keys them by basename, so no HLD shares an epic's name.
+NT="active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
+# A refusal it cannot decide still names the epic: "<why>, so whether <url> sets <epic> ${UK} <epic>".
+UK="active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic"
+# epr <epics> [config line]... — fresh with the config lines, no story s, and a board PR changing
+# docs/epics/<epic>.md for each of the space-separated <epics>, in that order.
+epr() {
+  local e list=""
+  fresh "${@:2}"; rm "${S}"
+  for e in $1; do list+="${list:+,}{\"filename\":\"docs/epics/${e}.md\",\"status\":\"modified\"}"; done
+  echo "[${list}]" > "${FX}/files"; wc -w <<< "$1" | tr -d ' ' > "${FX}/nfiles"
+}
+# fx_at <file> <ref> <front-matter line>... — <file> (a basename) as gh reads it at <ref>.
+fx_at() { { echo ---; printf '%s\n' "${@:3}"; echo ---; } > "${FX}/wf.$1.$2"; }
+# guarded <case> <epic> — refused naming <epic> and /swarm-dev:epic <epic>.
+guarded() { refused "$1" "${URL} sets $2 ${NT} $2"; }
+hld_read() { grep -qF "repos/o/r/contents/docs/hld/$1.md?ref=main" "${ROOT}/gh.log"; }
+board_merged() { is "$1: exits 0" 0 "${rc}"; check "$1: merged" merged; }
+epr e1; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; guarded "--board, a new active epic with no ticket" e1
+epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
+guarded "--board, a draft-to-active flip with no ticket" e1
+# hld_guarded <case> <HLD> — e1 active under hld: <HLD>, absent at the base: refused, the HLD read at main.
+hld_guarded() {
+  fx_at e1.md "${H1}" "status: active" "hld: $2"; merge --board "${URL}"; guarded "$1" e1
+  check "$1: reads the HLD at the base branch" hld_read "$2"
+}
+epr e1; fx_at hd.md main "status: draft" "grants: [epics]"; fx_at hd.md "${H1}" "status: agreed" "grants: [epics]"
+hld_guarded "--board, hld: an HLD draft at the base, agreed at the head" hd
+epr e1; fx_at hx.md main "status: agreed" "grants: [epics]"; echo 2 > "${FX}/nfiles"
+echo '[{"filename":"docs/epics/e1.md","status":"modified"},{"filename":"docs/hld/hx.md","status":"removed"}]' > "${FX}/files"
+hld_guarded "--board, hld: an agreed HLD the head deletes" hx
+epr e1; fx_at hx.md main "status: agreed" "grants: [epics]"; fx_at hx.md "${H1}" "status: superseded" "grants: [epics]"
+hld_guarded "--board, hld: an agreed HLD the head supersedes" hx
+epr e1; fx_at hx.md main "status: agreed" "grants: [epics]"; fx_at hx.md "${H1}" "status: agreed" "grants: [merge]"
+hld_guarded "--board, hld: an agreed HLD whose epics grant the head removes" hx
+epr e1; fx_at hb.md main "status: agreed" "grants: [bogus]"; fx_at e1.md "${H1}" "status: active" "hld: hb"; merge --board "${URL}"
+refused "--board, hld: an HLD with a bad grant value" "--board: docs/hld/hb.md at the base, line 3: grants must be epics, stories, merge or release, so whether ${URL} sets e1 ${UK} e1"
+check "--board, hld: an HLD with a bad grant value: reads the HLD at the base branch" hld_read hb
+epr "a-ok b-no"; fx_at a-ok.md "${H1}" "status: active" "agreed: 2026-01-01"; fx_at b-no.md "${H1}" "status: active"
+merge --board "${URL}"; guarded "--board, a ticketed and an unticketed active epic" b-no
+check "--board, a ticketed and an unticketed active epic: does not name the ticketed one" bash -c "! grep -qF a-ok '${ROOT}/out'"
+epr "a-no b-ok"; fx_at a-no.md "${H1}" "status: active"; fx_at b-ok.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"
+merge --board "${URL}"; guarded "--board, an unticketed and a ticketed active epic" a-no
+check "--board, an unticketed and a ticketed active epic: does not name the ticketed one" bash -c "! grep -qF b-ok '${ROOT}/out'"
+epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.${H1}.fail"; merge --board "${URL}"
+refused "--board, a 502 on the epic's read at the head" "--board: gh cannot read docs/epics/e1.md at 1111111, so whether ${URL} sets e1 ${UK} e1"
+epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.main"; : > "${FX}/wf.e1.md.main.fail"; merge --board "${URL}"
+refused "--board, a 502 on the epic's read at the base" "--board: gh cannot read docs/epics/e1.md at main, so whether ${URL} sets e1 ${UK} e1"
+epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: 2026-01-01"; merge --board "${URL}"
+board_merged "--board, an epic set active with agreed:"
+# A parent: is a ticket only when it names another epic, active or split at the base (wf.<parent>.md.main).
+parent_read() { grep -qF "repos/o/r/contents/docs/epics/$1.md?ref=main" "${ROOT}/gh.log"; }
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"; merge --board "${URL}"
+board_merged "--board, parent: an epic on main"
+check "--board, parent: an epic on main: reads it at the base branch" parent_read old
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: bogus"; merge --board "${URL}"; guarded "--board, parent: an epic on no branch" e1
+check "--board, parent: an epic on no branch: reads it at the base branch" parent_read bogus
+epr "e1 kid"; fx_at e1.md "${H1}" "status: active" "parent: kid"; fx_at kid.md "${H1}" "status: draft"; merge --board "${URL}"
+guarded "--board, parent: an epic the same PR adds" e1
+check "--board, parent: an epic the same PR adds: reads it at the base branch" parent_read kid
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; : > "${FX}/wf.old.md.main"; : > "${FX}/wf.old.md.main.fail"; merge --board "${URL}"
+refused "--board, parent: a 502 on the parent's read at the base" "--board: gh cannot read docs/epics/old.md at main, so whether ${URL} sets e1 ${UK} e1"
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: dr"; fx_at dr.md main "status: draft"; merge --board "${URL}"
+guarded "--board, parent: a draft epic on the base" e1
+# A base status other than active, later, review, split or done needs a ticket, as a draft does.
+epr e1; fx_at e1.md main "depends_on: []"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
+guarded "--board, a base epic with no status: line set active" e1
+# A 404 at the head is absent only for a path the PR removes or renames away (its file list, read
+# --slurp): one it keeps there means gh cannot read the head, as for a fork's.
+gone_read() { grep -qF -- "--paginate --slurp repos/o/r/pulls/7/files" "${ROOT}/gh.log"; }
+epr e1; fx_at e1.md main "status: draft"; merge --board "${URL}"
+refused "--board, a head 404 on an epic the PR keeps" "--board: gh cannot read docs/epics/e1.md at 1111111, so whether ${URL} sets e1 ${UK} e1"
+check "--board, a head 404 on an epic the PR keeps: reads the PR's removed files" gone_read
+epr e1; echo '[{"filename":"docs/epics/e1.md","status":"removed"}]' > "${FX}/files"; fx_at e1.md main "status: active"; merge --board "${URL}"
+board_merged "--board, an epic the PR removes"
+epr e2; echo '[{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]' > "${FX}/files"
+fx_at e2.md "${H1}" "status: draft"; fx_at e1.md main "status: draft"; merge --board "${URL}"; board_merged "--board, an epic the PR renames away"
+# The guard runs after the head's CI check: a red head costs no contents read.
+epr e1; fx_at e1.md "${H1}" "status: active"; checks "${FX}/${H1}.checks" "$(run test completed failure)"; merge --board "${URL}"
+refused "--board, a red head that sets an epic active" "the head 1111111 is not green: test (failure)"
+check "--board, a red head that sets an epic active: no contents read" bash -c "! grep -q '/contents/' '${ROOT}/gh.log'"
+epr e1; fx_at hok.md main "status: agreed" "grants: [epics]"; fx_at hok.md "${H1}" "status: agreed" "grants: [epics]"
+fx_at e1.md "${H1}" "status: active" "hld: hok"; merge --board "${URL}"
+board_merged "--board, hld: an HLD agreed with grants: [epics] at both ends"
+check "--board, hld: an HLD agreed with grants: [epics] at both ends: reads the HLD at the base branch" hld_read hok
+epr e1 "lead_epics = on"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; board_merged "--board, lead_epics = on, with no ticket"
+epr e1; fx_at e1.md main "status: later"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; board_merged "--board, later to active"
+epr e1; fx_at e1.md main "status: active"; fx_at e1.md "${H1}" "status: active" "depends_on: []"; merge --board "${URL}"
+board_merged "--board, a PR that changes no epic's status"
+# Under merge = human the HLD grants merge, not epics: merge_grant lets the lead through (the active
+# epic's PR merges), so the flip's refusal is the guard's own.
+epr g "merge = human"; hld hm merge g; fx_at hm.md main "status: agreed" "grants: [merge]"; fx_at hm.md "${H1}" "status: agreed" "grants: [merge]"
+fx_at g.md main "status: active" "hld: hm"; fx_at g.md "${H1}" "status: active" "hld: hm"; merge --board "${URL}"
+board_merged "--board, merge = human, an active epic's PR under grants: [merge]"
+epr g "merge = human"; fx_at hm.md main "status: agreed" "grants: [merge]"; fx_at hm.md "${H1}" "status: agreed" "grants: [merge]"
+fx_at g.md main "status: draft" "hld: hm"; fx_at g.md "${H1}" "status: active" "hld: hm"; merge --board "${URL}"
+guarded "--board, merge = human, a draft-to-active flip under grants: [merge]" g
+check "--board, merge = human, a draft-to-active flip under grants: [merge]: reads the HLD at the base branch" hld_read hm
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
+# Under no HLD merge_grant refuses too, but the guard runs first: its line is the one said.
+epr e1 "merge = human"; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
+guarded "--board, merge = human, a draft-to-active flip under no HLD" e1
+check "--board, merge = human, a draft-to-active flip under no HLD: not merge_grant's refusal" bash -c "! grep -qF 'waits on the user' '${ROOT}/out'"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
 check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"
@@ -1583,8 +1739,10 @@ put() { # <path> <front-matter line>... — a board file in that clone, staged
 }
 land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
 pulled() { git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'; }
+# With lead_epics = on: these board PRs set epics active with no ticket, which merge --board's epic
+# guard (its own cases above) would refuse; what they test is ready_tell.
 bfresh() { # [config line]... — fresh, no story s, the PR the last land's commit, and the merge commit origin's tip (OID), green
-  fresh "$@"; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
+  fresh "lead_epics = on" "$@"; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
   git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | python3 -c 'import json, sys; print(json.dumps([{"filename": l.strip(), "status": "modified"} for l in sys.stdin]))' > "${FX}/files"
   git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ' > "${FX}/nfiles"
   checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
