@@ -825,11 +825,12 @@ plan_hld() {
 # lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
 # touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR that touches
-# .claude/swarm/ (in any repo), or the board's hld/, is under none: only the user changes those. The
-# one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story lists that
-# touches any file but the board's epics and stories is under none too. With <sha> and <base>, the
-# head and base branch merge pinned: the files are <base>...<sha>'s (300 at most, else it cannot list
-# them all), and a PR whose head or base is not those prints "<head> <base>" and exits PR_MOVED.
+# .claude/, .github/, hooks/ or a root Makefile, GNUmakefile or makefile (in any repo: what checks a
+# merge or what the agents may do), or the board's hld/, is under none: only the user changes those. The one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story
+# lists that touches any file but the board's epics and stories is under none too. With <sha> and
+# <base>, the head and base branch merge pinned: the files are <base>...<sha>'s (300 at most, else it
+# cannot list them all), and a PR whose head or base is not those prints "<head> <base>" and exits
+# PR_MOVED.
 PR_MOVED=3
 pr_hld() (
   local s url repo n own="" info="" st="" head="" count base pre p q view="" err plan="" g pin="${2:-}" at=()
@@ -859,7 +860,7 @@ pr_hld() (
   fi
   st="$(ci_gate files-status "${repo}" "${n}" "${count}" ${at[@]+"${at[@]}"})" || die "grants: cannot list every file ${url} changes: ${st}"
   info="$(cut -d' ' -f2- <<< "${st}")"
-  [[ $'\n'"${info}" != *$'\n.claude/swarm/'* ]] || return 0
+  ! grep -qE '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' <<< "${info}" || return 0
   if [[ "${repo}" != "${own}" ]]; then head=""   # the board is not in its repo, so none of its files is a board file
   # A PR that touches the board's hld/ is under none, but for the board PR that plans an HLD, whose
   # head can be read.

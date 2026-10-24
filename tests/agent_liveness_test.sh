@@ -313,7 +313,8 @@ check "a Task subagent's 5-minute-old tool call is a sign of life" test "${rc}:$
 # ones have no completion_seq key): done@<n> is done with both n; any other status has no
 # completion_seq; - is no answer. SWARM_PROMPT_TIMEOUT_MS is ${PTO:-15000}, so prompt_settle reads 3
 # times by default. With POSIX=1 deliver_prompt runs under set -o posix. dp prints "<rc>|<prompts
-# sent>|<own reads>|<die message>".
+# sent>|<own reads>|<die message>", and leaves deliver_prompt's stderr in ${ROOT}/dp/err (dpwarn).
+# The agent has no Claude session on record, so herdr alone answers.
 dp() {
   local D="${ROOT}/dp"; rm -rf "${D}"; mkdir -p "${D}"; : > "${D}/prompts"; : > "${D}/gets"
   PROJECT_DIR="${D}" SWARM_SLEEP_SCALE=0.01 SWARM_PROMPT_TIMEOUT_MS="${PTO:-15000}" bash -c 'source "$1/../bin/lib/agents.sh"
@@ -341,23 +342,30 @@ dp() {
       esac
     }
     [[ -z "${POSIX:-}" ]] || set -o posix
-    echo brief > "${PROJECT_DIR}/brief"; deliver_prompt a "${PROJECT_DIR}/brief" w:1' _ "${HERE}" && rc=0 || rc=$?
+    echo brief > "${PROJECT_DIR}/brief"; deliver_prompt a "${PROJECT_DIR}/brief" w:1' _ "${HERE}" 2> "${D}/err" && rc=0 || rc=$?
   echo "${rc}|$(wc -l < "${D}/prompts" | tr -d ' ')|$(wc -l < "${D}/gets" | tr -d ' ')|$(cat "${D}/died" 2>/dev/null)"
 }
+# dpwarn — the warning the last dp left, that herdr sent the brief and did not show the turn start.
+dpwarn() { grep "^warning: a: " "${ROOT}/dp/err" || true; }
 see="see herdr agent read a"
 unsure="a: it may or may not have the brief:"
 notagain="it was not sent again, ${see}"
 nobase="with nothing from before the prompt to compare it with; ${notagain}"
-idle2="a: the brief was not taken up: herdr sent it the brief twice, and herdr reads it idle with no turn finished since; ${see}"
+idle2="a: the brief was not taken up: herdr's reply to the brief could not be read twice, and herdr reads it idle with no turn finished since; ${see}"
+unseen="warning: a: herdr sent it the brief once, and herdr did not show the turn start (it reads it"
 check "a prompt reply of working sends one prompt and reads no own status after it" test "$(PROMPT_REPLY=working OWN=idle dp)" = "0|1|1|"
 check "an unreadable prompt reply from an agent working on its own read is one prompt, and success" \
   test "$(PROMPT_REPLY=junk OWN='idle working' dp)" = "0|1|2|"
 check "an unreadable prompt reply from an agent blocked on its own read is one prompt, and success" \
   test "$(PROMPT_REPLY=junk OWN='idle blocked' dp)" = "0|1|2|"
-check "an agent idle with no turn finished on every read of both tries gets two prompts, then the failure" \
-  test "$(PROMPT_REPLY=junk OWN=idle dp)" = "1|2|7|${idle2}"
-check "a dropped brief to a slow starter, idle the whole settle (agent_prompt_stalled), is sent again" \
-  test "$(PROMPT_REPLY='err:agent_prompt_stalled working' OWN=idle dp)" = "0|2|4|"
+check "a brief herdr sent to an agent idle with no turn finished on every read is not sent again, and succeeds" \
+  test "$(PROMPT_REPLY=junk OWN=idle dp)" = "0|1|4|"
+check "and it warns that herdr sent it the brief and did not show the turn start" \
+  test "$(dpwarn)" = "${unseen} idle with no turn finished since); it was not sent again, ${see}"
+check "a brief to a slow starter, idle the whole settle after agent_prompt_stalled (sent), is not sent again: a warning" \
+  test "$(PROMPT_REPLY='err:agent_prompt_stalled working' OWN=idle dp)|$(dpwarn | cut -c1-${#unseen})" = "0|1|4||${unseen}"
+check "an idle agent whose reply could not be read is sent it again on evidence it was not taken, with no warning" \
+  test "$(PROMPT_REPLY='fail working' OWN=idle dp)|$(dpwarn)" = "0|2|4||"
 check "a slow starter still idle on the first reads after the prompt, then working, gets one prompt" \
   test "$(PROMPT_REPLY=err:agent_prompt_stalled OWN='idle idle idle working' dp)" = "0|1|4|"
 check "an idle agent that took the prompt and is done by the first read (completion_seq now there) gets one prompt" \
@@ -366,10 +374,10 @@ check "an idle agent that reaches done between two reads gets one prompt" \
   test "$(PROMPT_REPLY=junk OWN='idle idle done@7' dp)" = "0|1|3|"
 check "a done agent that finished another turn since (completion_seq moved) took the prompt: one prompt" \
   test "$(PROMPT_REPLY=junk OWN='done@3 done@9' dp)" = "0|1|2|"
-check "an agent still done from an earlier turn (completion_seq unchanged) gets the brief again, then the failure" \
-  test "$(PROMPT_REPLY=junk OWN=done@3 dp)" = "1|2|7|a: the brief was not taken up: herdr sent it the brief twice, and herdr reads it done with no turn finished since; ${see}"
-check "a done agent sent the brief again that then works on it gets two prompts, and success" \
-  test "$(PROMPT_REPLY=junk OWN='done@3 done@3 done@3 done@3 working' dp)" = "0|2|5|"
+check "an agent still done from an earlier turn (completion_seq unchanged) is not sent the brief again: a warning" \
+  test "$(PROMPT_REPLY=junk OWN=done@3 dp)|$(dpwarn)" = "0|1|4||${unseen} done with no turn finished since); it was not sent again, ${see}"
+check "a done agent whose first reply could not be read is sent it again, and works on it: success" \
+  test "$(PROMPT_REPLY='fail junk' OWN='done@3 done@3 done@3 done@3 working' dp)" = "0|2|5|"
 check "an agent working before the prompt and idle after it with no completion_seq is sent nothing more" \
   test "$(PROMPT_REPLY=junk OWN='working idle' dp)" = "1|1|4|${unsure} herdr sent it the brief once, then herdr reads it idle with no turn finished since; ${notagain}"
 check "with no read before the prompt, a done agent is sent nothing more, and it may or may not have it" \
@@ -388,8 +396,8 @@ check "one failed own read between two that answer does not end the settle" \
   test "$(PROMPT_REPLY=junk OWN='idle - working' dp)" = "0|1|3|"
 check "an own status that stays unknown sends no second prompt and says so" \
   test "$(PROMPT_REPLY=junk OWN='idle unknown' dp)" = "1|1|4|${unsure} herdr sent it the brief once, then herdr reads it unknown with no turn finished since; ${notagain}"
-check "no status after a second prompt says the brief went out twice" \
-  test "$(PROMPT_REPLY=junk OWN='idle idle idle idle -' dp)" = "1|2|6|${unsure} herdr sent it the brief twice, then herdr gave no status for it; ${notagain}"
+check "no status after a second unreadable try says neither reply could be read" \
+  test "$(PROMPT_REPLY=fail OWN='idle idle idle idle -' dp)" = "1|2|6|${unsure} herdr's reply to the brief could not be read twice, then herdr gave no status for it; ${notagain}"
 check "herdr down (a failed prompt, no error it can read, no own status) says the reply could not be read" \
   test "$(PROMPT_REPLY=fail OWN=- dp)" = "1|1|3|${unsure} herdr's reply to the brief could not be read once, then herdr gave no status for it; ${notagain}"
 check "herdr down on both tries never says the brief was sent" \
@@ -401,8 +409,6 @@ check "agent_blocked (herdr sent nothing) on the first try fails at once, with n
 check "agent_blocked behind a warning line on stderr is still agent_blocked" \
   test "$(PROMPT_REPLY=warn:err:agent_blocked OWN=blocked dp)" = "1|1|1|a: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, ${see}"
 check "a reply of working behind a warning line on stderr is one prompt" test "$(PROMPT_REPLY=warn:working OWN=idle dp)" = "0|1|1|"
-check "agent_blocked on the second try, after a first prompt was sent, is the agent blocked on it: success" \
-  test "$(PROMPT_REPLY='junk err:agent_blocked' OWN=idle dp)" = "0|2|4|"
 check "agent_blocked on the second try, after a first prompt whose reply could not be read, may or may not have it" \
   test "$(PROMPT_REPLY='fail err:agent_blocked' OWN=idle dp)" = "1|2|4|${unsure} herdr's reply to the brief could not be read once, then herdr refused the next: it is blocked on a question (agent_blocked); ${notagain}"
 check "agent_not_found (nothing sent) fails at once, naming it" \
@@ -411,11 +417,11 @@ check "pane_not_found (a closed pane: nothing sent) fails at once, naming it" \
   test "$(PROMPT_REPLY=err:pane_not_found OWN=- dp)" = "1|1|1|a: herdr did not send it the brief (pane_not_found); ${see}"
 check "server_unavailable (no herdr server: nothing sent) fails at once, naming it" \
   test "$(PROMPT_REPLY=err:server_unavailable OWN=- dp)" = "1|1|1|a: herdr did not send it the brief (server_unavailable); ${see}"
-check "a prompt sent that stays idle, then agent_not_found, says it was sent once" \
-  test "$(PROMPT_REPLY='junk err:agent_not_found' OWN=idle dp)" = "1|2|4|a: herdr sent it the brief once, then could not send it again (agent_not_found); ${see}"
+check "a prompt whose reply could not be read, then agent_not_found, says so" \
+  test "$(PROMPT_REPLY='fail err:agent_not_found' OWN=idle dp)" = "1|2|4|a: herdr's reply to the brief could not be read once, then could not send it again (agent_not_found); ${see}"
 check "prompt_settle reads for SWARM_PROMPT_TIMEOUT_MS: 10 s is 2 reads a try" \
-  test "$(PTO=10000 PROMPT_REPLY=junk OWN=idle dp)" = "1|2|5|${idle2}"
-check "under set -o posix the failure still counts the prompts in words" test "$(POSIX=1 PROMPT_REPLY=junk OWN=idle dp)" = "1|2|7|${idle2}"
+  test "$(PTO=10000 PROMPT_REPLY=fail OWN=idle dp)" = "1|2|5|${idle2}"
+check "under set -o posix the failure still counts the prompts in words" test "$(POSIX=1 PROMPT_REPLY=fail OWN=idle dp)" = "1|2|7|${idle2}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

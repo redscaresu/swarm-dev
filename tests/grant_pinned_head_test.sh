@@ -3,10 +3,11 @@
 # head and base it pinned: a PR whose head or base has moved off them resolves to no HLD and does not
 # merge, the PR's files are read at the pin (compare <base>...<sha>) whatever head the PR lists them
 # for by then, a file list cut short resolves to none, and an unmoved head still resolves to its HLD
-# and merges. The PR is epic g's (no story lists it), so a file off the board, a workflow, puts it
-# under none. The gh stub is merge_test.sh's, trimmed to what a merge reads; its pr view serves the
-# head from ${FX}/head.<n> on the nth read, else ${FX}/head (the base likewise), and
-# compare/<base>...<sha> serves ${FX}/compare.<sha>.
+# and merges. A workflow file puts the PR under none (.github/ is a path only the user changes, and
+# the PR is epic g's, which no story lists, so a file off the board would too). The gh stub is
+# merge_test.sh's, trimmed to what a merge reads; its pr view serves the head from ${FX}/head.<n> on
+# the nth read, else ${FX}/head (the base likewise), and compare/<base>...<sha> serves
+# ${FX}/compare.<sha>.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"

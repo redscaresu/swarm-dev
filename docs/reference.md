@@ -705,7 +705,14 @@ review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <bra
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. To reach a busy conductor, the lead runs
+session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
+(a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
+session reads busy or waiting, or its log has the message as a new prompt (for a `tell`, the file's
+first line). When the session read idle before the send and shows no sign of it, the message goes
+once more, and the command fails if it still shows nothing. With no session to read (codex, a session
+Claude Code does not list yet, or one it reads busy or not at all), a message herdr sent is never
+sent again: when herdr shows no turn, the command succeeds and warns that herdr sent it the brief and
+did not show the turn start. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
 `.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
 whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a
@@ -1494,7 +1501,12 @@ else in the code changed; next to a `bin/` or `hooks/` change it does not. The b
 (`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/`) are not docs, even when the board is
 `docs/`; the rest of `docs/` is. It compares against origin's tag by its SHA and never fetches
 over your local tag. It refuses when origin has no
-such tag or the tag is not on the base. No story or epic need list it.
+such tag or the tag is not on the base. No story or epic need list it. These checks all read one
+commit of the base: `--release` fetches the base from origin first and remembers what it got. Right
+before `gh pr merge` it fetches the base again. If the base moved, it prints `origin/<base> moved
+from <old> to <new> since the release check, so it runs again`, runs every `--release` check again
+on the new base, and refuses if one fails. A story that landed in between under no HLD granting
+`release` is refused like any other.
 The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
@@ -1803,9 +1815,18 @@ stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
+Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30
+seconds at most. If that is not the base the release check last read, a PR landed between that read
+and the merge, and the release shipped commits no check read. merge then prints `warning: <merge
+commit>'s first parent is <sha>, not <sha>, the base the release check read, so it ships <commits>
+unchecked` and logs it as a `merge` line in `.swarm/events.tsv`, whatever the repo and whatever CI
+on the base says. When gh can't read the parent, it warns the same way.
+
 When the release is swarm-dev's own (its repo is the GitHub repo named by `repository` in the
 plugin's `plugin.json`; otherwise merge prints a line saying it skipped this step), `merge
---release` also updates the plugin and moves the agents onto it, once CI on the base is green. It
+--release` also updates the plugin and moves the agents onto it, once CI on the base is green. After
+that warning it updates nothing, and prints `refused: the release ships commits no release check
+read, so the plugin was not updated`, followed by what to run once they are checked. Otherwise it
 waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a
 later commit of the base, and a published GitHub release. Then it runs `claude plugin marketplace
 update swarm-dev` and `claude plugin update swarm-dev@swarm-dev`, 5 minutes at most each. Once the
@@ -1822,8 +1843,8 @@ one. When CI on the base is not green, the release can't be confirmed or the upd
 a warning naming the new version's `swarm.sh upgrade` to run once the plugin is updated, and
 upgrades nothing. An upgrade that fails, takes too long to start, or finds another upgrade already
 running in its project and starts nothing gets the same kind of warning, and merge moves on to the
-next project. The release still counts as done, and none of these warnings changes merge's exit
-code.
+next project. The release still counts as done, and neither these warnings nor the refusal above
+changes merge's exit code.
 
 ## Commands
 
@@ -1845,7 +1866,7 @@ code.
 | `swarm.sh step-up <slug> <trigger>` | Close a struggling build and start the next model in `escalate_ladder` on the same branch, without counting an attempt. `<trigger>` is `findings-3`, `ci-red-2`, `stalled` or `no-pr`. `swarm.sh step-up --resume <slug>` starts a rung whose start failed. Refused while the ladder is empty ([§ The escalation ladder](#the-escalation-ladder)). |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
 | `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
-| `swarm.sh grants <story \| epic \| PR URL>` | Print the agreed HLD over a story or epic and its grants, one per line, or `none`. A story goes to its `epic:`, then each `parent:`, up to the first epic with `hld:`; a draft or superseded HLD, a missing one, a missing epic, a story with no epic and a `parent:` cycle all give `none`. A name that is no story or epic but an HLD in the board's `hld/` is that HLD: an agreed one prints itself and its grants, any other gives `none`; a story or epic of the same name wins. A story PR is its stories' (their `prs:` lines); a board PR is the epics and stories it touches, each as the board has it and as the PR's head has it, and a PR that touches `.claude/swarm/` (in any repo) or the board's `hld/`, or a PR no story lists that touches anything but the board's epics and stories, gives `none`. /plan-hld's board PR is the exception: a PR that modifies one agreed HLD, setting or keeping its single `planned: YYYY-MM-DD` line and changing it otherwise only after its last `## Epics` line, and adds at least one epic and changes nothing else, each epic under that HLD at the PR's head, is under that HLD, with the grants of the board's copy. The HLD's last section must be `## Epics`: after that line, both the board's copy and the PR's may hold only blank lines and list items whose whole content is one markdown link to an epic file in the board's `epics/`, or to one the PR adds, with the epic's slug as the link text. Without the `epics` grant each added epic must be a `draft` at the PR's head. Deleting the HLD, or any other change to it, gives `none`. Items under two HLDs give `none`. A grant other than `epics`, `stories`, `merge` or `release`, a `[` with no `]` on its line, or a `grants:` written as a YAML block list, stops it with the HLD's file and line. `/plan-epic` runs it before asking, and skips the question when it lists `stories`. |
+| `swarm.sh grants <story \| epic \| PR URL>` | Print the agreed HLD over a story or epic and its grants, one per line, or `none`. A story goes to its `epic:`, then each `parent:`, up to the first epic with `hld:`; a draft or superseded HLD, a missing one, a missing epic, a story with no epic and a `parent:` cycle all give `none`. A name that is no story or epic but an HLD in the board's `hld/` is that HLD: an agreed one prints itself and its grants, any other gives `none`; a story or epic of the same name wins. A story PR is its stories' (their `prs:` lines); a board PR is the epics and stories it touches, each as the board has it and as the PR's head has it, and a PR that touches `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile` (in any repo, since each changes what checks a merge or what the agents may do) or the board's `hld/`, or a PR no story lists that touches anything but the board's epics and stories, gives `none`. /plan-hld's board PR is the exception: a PR that modifies one agreed HLD, setting or keeping its single `planned: YYYY-MM-DD` line and changing it otherwise only after its last `## Epics` line, and adds at least one epic and changes nothing else, each epic under that HLD at the PR's head, is under that HLD, with the grants of the board's copy. The HLD's last section must be `## Epics`: after that line, both the board's copy and the PR's may hold only blank lines and list items whose whole content is one markdown link to an epic file in the board's `epics/`, or to one the PR adds, with the epic's slug as the link text. Without the `epics` grant each added epic must be a `draft` at the PR's head. Deleting the HLD, or any other change to it, gives `none`. Items under two HLDs give `none`. A grant other than `epics`, `stories`, `merge` or `release`, a `[` with no `]` on its line, or a `grants:` written as a YAML block list, stops it with the HLD's file and line. `/plan-epic` runs it before asking, and skips the question when it lists `stories`. |
 | `swarm.sh plan-unasked [--declined] <epic>` | Record, in board state, that a `later` epic `next` offered (its dependencies done) has had its unasked plan. The lead runs it before that `/plan-epic`. `next` offers the epic no more. The gate lists it as planned unasked on that date: with no stories yet, run `/plan-epic <epic>` again if that plan stopped; with stories, set it `active` to start it. With `--declined`, the user declined the plan, and the gate says that instead. |
 | `swarm.sh log-finding [--declined <reason> \| --filed] [--reviewer <who>] [--round <n>] <kind> <PR URL> <text>` | Log a review finding by kind. `--round <n>` records the review round it came from (0 for a plan or board PR). `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). `--filed` records that the lead filed a declined out-of-scope finding as a story, so `swarm.sh next` stops offering it; no report counts a filed row. The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic (the check on a large epic's split), or escaped for a defect found after its PR merged; a gap in a split that a later plan or build finds is logged `--reviewer escaped split-gap` against the split's board PR. |
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
@@ -1905,9 +1926,18 @@ The old builder is closed first, since the new one takes its name, and only then
 brief written, so it holds everything the old builder did. If closing it left a git step unfinished
 in the worktree (an `index.lock`, or a merge, rebase, cherry-pick or revert in progress), step-up
 stops and names it: finish or abort it there, then resume. If the start fails, step-up stops at the
-step that failed, with that step's message, and logs nothing as an escalation. A new builder that
-never took up its brief has not started: it is closed and loses its agents.tsv line, so the rung is
-on record once, when it starts. The worktree, branch and step-up marker are kept, and
+step that failed, with that step's message, and logs nothing as an escalation. A builder's
+brief is sent at most twice, and a Fable builder, which at xhigh can take longer to start, gets 300
+seconds over both tries to show it took it (150 for its one try when it has no Claude session to
+read yet, see `tell`); `SWARM_PROMPT_TIMEOUT_MS` overrides that.
+When a new rung's brief may have gone out but still reads as not taken up, or unsure, or herdr sent
+it once and did not show the turn start (the start's warning), step-up keeps
+its pane, warns, and reads it once more over 300 seconds, then says `took up its brief after all`
+if it did. A builder blocked on a question before its brief went is not read again. If herdr gives
+no status for it during that read, step-up stops and keeps its pane and agents.tsv line: look at it
+with `herdr agent read <name>` before you resume. One still idle
+with no turn after that, or gone, has not started: it is closed and loses its agents.tsv line, so
+the rung is on record once, when it starts. The worktree, branch and step-up marker are kept, and
 `swarm.sh step-up --resume <slug>` writes the brief afresh and starts the rung once the cause is
 fixed. A resume that starts logs the step-up and sends the `/goal` as step-up would have.
 
