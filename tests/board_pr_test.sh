@@ -3,7 +3,8 @@
 # anything that could touch the main checkout; open commits board files only and opens one PR; done
 # clears up only once the PR merged or closed; one events.tsv line per step. gh is a stub on PATH
 # that logs every call to gh.log and lists the PRs in ${ROOT}/prs (none without it); origin is a local
-# bare repo. A git wrapper on PATH fails `worktree add` while ${ROOT}/wt-add.fail exists,
+# bare repo. A git wrapper on PATH fails `worktree add` while ${ROOT}/wt-add.fail exists, `fetch` while
+# ${ROOT}/fetch.fail does,
 # `ls-remote` while ${ROOT}/ls-remote.fail does, and `push --delete` while ${ROOT}/push-delete.fail does.
 set -euo pipefail
 
@@ -50,6 +51,7 @@ printf '#!/usr/bin/env bash\nR="%s"; GIT="%s"\n' "${ROOT}" "$(command -v git)" >
 cat >> "${ROOT}/bin/git" <<'STUB'
 case " $* " in *" ls-remote "*) [ ! -e "${R}/ls-remote.fail" ] || { echo "fatal: could not read from remote" >&2; exit 128; } ;; esac
 case " $* " in *" push "*" --delete "*) [ ! -e "${R}/push-delete.fail" ] || { echo "error: failed to push some refs" >&2; exit 1; } ;; esac
+case " $* " in *" fetch "*) [ ! -e "${R}/fetch.fail" ] || { echo "fatal: could not read from remote" >&2; exit 128; } ;; esac
 case " $* " in *" worktree add "*) [ ! -e "${R}/wt-add.fail" ] || { echo "fatal: invalid reference: origin/main" >&2; exit 128; } ;; esac
 exec "${GIT}" "$@"
 STUB
@@ -290,6 +292,11 @@ refused "a name with .." "not a name" "${before}"
 # --- /plan-epic's large-epic path: the board PR that splits big (scope-big, big at status: split) opens
 # only once the split critic wrote .swarm/big/split-critic.json; a medium epic's board PR needs none.
 # The worktree's start is backdated, so a critic answer written in the same second still counts as newer.
+# big is on main before its split, as a /plan-epic split finds it, so its children's parent: counts.
+git clone -q "${ROOT}/origin.git" "${ROOT}/big-base"; mkdir -p "${ROOT}/big-base/board/epics"
+printf -- '---\nstatus: active\nagreed: 2026-01-01\n---\n\n# big\n' > "${ROOT}/big-base/board/epics/big.md"
+git -C "${ROOT}/big-base" add -A && git -C "${ROOT}/big-base" commit -qm "add big" && git -C "${ROOT}/big-base" push -q origin HEAD:main
+git -C "${P}" fetch -q origin
 rm -f "${ROOT}/prs"; bpr start scope-big; SB="${ROOT}/proj-wt/_board-scope-big/board/epics"; mkdir -p "${SB}"
 touch -t 202101010000 "${ROOT}/proj-wt/_board-scope-big/.git"
 printf -- '---\nstatus: split\ndepends_on: []\n---\n\n# big\n' > "${SB}/big.md"
@@ -350,12 +357,14 @@ guard_opens() { reset_log; bpr open "$1" "Epic" "${ROOT}/body.md"; is "$2 opens"
 on_main board/epics/flip.md '---\nstatus: draft\n---\n\n# flip\n'
 on_main board/epics/stale.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# stale\n'
 on_main board/epics/fresh.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# fresh\n'
+on_main board/epics/selfp.md '---\nstatus: draft\n---\n\n# selfp\n'
 on_main board/epics/later.md '---\nstatus: later\n---\n\n# later\n'
 on_main board/epics/act.md '---\nstatus: active\n---\n\n# act\n'
 on_main board/epics/gone.md '---\nstatus: active\n---\n\n# gone\n'
 on_main board/hld/h-draft.md '---\nstatus: draft\ngrants: [epics]\n---\n'
 on_main board/hld/h-ok.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/h-merge.md '---\nstatus: agreed\ngrants: [merge]\n---\n'
+on_main board/hld/h-move.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/h-bad.md '---\nstatus: agreed\ngrants: [bogus]\n---\n'
 git -C "${P}" fetch -q origin
 
@@ -370,6 +379,20 @@ bpr start stale; ep stale epics/stale.md '---\nstatus: active\nagreed: 2026-01-0
 guard_refused stale "a draft's stale agreed: left as it was on the flip to active" "stale ${NT} stale"
 bpr start body; ep body epics/e-body.md '---\ndepends_on: []\n---\n\n# e-body\nstatus: active\n'
 guard_refused body "an epic active by a body status: line, as fm reads it" "e-body ${NT} e-body"
+bpr start pbog; ep pbog epics/e-pbog.md '---\nstatus: active\nparent: bogus\n---\n'
+guard_refused pbog "parent: an epic the base does not have" "e-pbog ${NT} e-pbog"
+bpr start padd; ep padd epics/p-added.md '---\nstatus: draft\n---\n'; ep padd epics/e-padd.md '---\nstatus: active\nparent: p-added\n---\n'
+guard_refused padd "parent: an epic the same PR adds" "e-padd ${NT} e-padd"
+# selfp is on the base, so only the own-slug rule refuses it.
+bpr start pself; ep pself epics/selfp.md '---\nstatus: active\nparent: selfp\n---\n\n# selfp\n'
+guard_refused pself "parent: the epic's own slug" "selfp ${NT} selfp"
+# open judges against origin/main as it is now: an HLD superseded there since the start does not count.
+bpr start hmv; ep hmv epics/e-hmv.md '---\nstatus: active\nhld: h-move\n---\n'
+on_main board/hld/h-move.md '---\nstatus: superseded\ngrants: [epics]\n---\n'
+guard_refused hmv "hld: an HLD superseded on origin/main since the start" "e-hmv ${NT} e-hmv"
+bpr start fch; ep fch epics/e-fch.md '---\nstatus: active\nagreed: 2026-01-01\n---\n'; touch "${ROOT}/fetch.fail"
+guard_refused fch "a failed fetch of origin/main" "board-pr: cannot fetch origin's base branch"
+rm "${ROOT}/fetch.fail"
 bpr start hd; ep hd hld/h-draft.md '---\nstatus: agreed\ngrants: [epics]\n---\n'; ep hd epics/e-hd.md '---\nstatus: active\nhld: h-draft\n---\n'
 guard_refused hd "hld: an HLD draft at the base, agreed in the worktree" "e-hd ${NT}"
 bpr start hn; ep hn hld/h-new.md '---\nstatus: agreed\ngrants: [epics]\n---\n'; ep hn epics/e-hn.md '---\nstatus: active\nhld: h-new\n---\n'

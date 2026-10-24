@@ -29,7 +29,7 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
    you write the epic: the problem and its evidence, goals that can be checked (**Done when**), what
    is out of scope, and your part. A reviewer agent attacks the draft. Nothing is planned until you
    agree it. `swarm.sh board-pr` refuses a board PR that sets an epic `active` without your
-   agreement, a parent epic, or an HLD that grants `epics`.
+   agreement, a parent epic, an HLD that grants `epics`, or `lead_epics = on`.
 2. **Plan.** `/swarm-dev:swarm` splits the agreed epic into stories of one PR each. A survey agent
    reads the code, a lead agent writes the stories, and skeptic agents (on risky stories only), codex and a critic try to
    refute them. You approve the result, which is then written to the board. An epic too large for

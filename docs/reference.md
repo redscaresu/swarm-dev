@@ -32,9 +32,10 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   `scope-<epic>` board PR on an epic the base already has split (a missed child, a split-gap fix)
   needs no critic and leaves that record alone.
   `open` also refuses, before it commits or pushes, when an epic goes `active` (new, or `draft` at
-  the base) with no ticket: an `agreed:` date the base's draft did not already have, a `parent:`,
-  or an `hld:` naming an HLD that is `agreed` and grants `epics` both at the base and in the
-  worktree. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
+  the base) with no ticket: an `agreed:` date the base's draft did not already have, a `parent:`
+  that is on the base (another epic, not one the PR adds), or an `hld:` naming an HLD that is
+  `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
+  first, and a failed fetch or read refuses. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
   on the branch's tip (the local one, or origin's when there is none here) has merged or closed. A
   PR left by an earlier use of the name does not count. With no PR it removes an abandoned start:
