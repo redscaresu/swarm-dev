@@ -554,6 +554,11 @@ start_agent() {
     { echo "The project is ${PROJECT_DIR}; every relative path below is relative to it. You can write only in $(codex_out_dir "${tab}")."; echo; cat "${prompt_file}"; } > "${brief}"
     prompt_file="${brief}"
   fi
+  # Fable's brief gets SLOW_PROMPT_TIMEOUT_MS in all: herdr's wait stays as it is, and longer reads
+  # after it make each of deliver_prompt's two tries half of it. Local, so a later prompt keeps the default.
+  local SETTLE_READS="${SETTLE_READS}"
+  [[ "${model}" != fable || -n "${SWARM_PROMPT_TIMEOUT_MS:-}" ]] \
+    || SETTLE_READS=$(((SLOW_PROMPT_TIMEOUT_MS / 2 - PROMPT_TIMEOUT_MS) / 5000))
   deliver_prompt "${name}" "${prompt_file}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
 }
@@ -676,8 +681,11 @@ story_text() {
 }
 
 # PROMPT_TIMEOUT_MS: how long a prompt has to be taken up (deliver_prompt), and a /goal to show in
-# the session log (send_goal).
+# the session log (send_goal). SLOW_PROMPT_TIMEOUT_MS: how long start_agent gives a fable brief in all,
+# since fable at xhigh can take over 60 s to show it is working (SWARM_PROMPT_TIMEOUT_MS overrides
+# it), and how long start_rung reads a new rung again before closing it (rung_late).
 PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
+SLOW_PROMPT_TIMEOUT_MS=300000
 
 # deliver_prompt <name> <prompt-file> [<pane>] [once] — submit the brief and confirm the agent acted on it.
 # `agent start` returns once the agent is ready, but a slow starter (Fable at xhigh) could
