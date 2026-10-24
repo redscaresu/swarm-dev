@@ -362,6 +362,14 @@ dataset_report() {
 #     does not list, a commit git cannot find, a merge-in whose git log, merge-tree, diff or merge-base
 #     fails, or a one-parent "merge", each named on a `merge ins: left out` line. Then, after a blank
 #     line, TSV file conflicts: the top three files, or `none conflicted`.
+#   review_loops: per build of a story (listed when a review-agent, tell:findings or escalate line of
+#     it is in the window), from events.tsv, findings.tsv and agents.tsv with no gh call: TSV story pr round
+#     model minutes fixed declined step_up, a row per review round of each build (a review-agent opens it; a findings
+#     tell or findings step-up, or the review or merge after the last tell, closes it; rounds count per
+#     PR, and each finding goes to the build whose rounds hold its round); TSV story pr
+#     rounds end (held-for-lead; pass or merged-after-fixes once merged; else open); then one totals row: its PRs, each
+#     once, their median and p90 rounds, minutes in round 3 on, the share of fixes by round and on escalate_ladder's top rung,
+#     fixes per round before and after a step-up, and failed step-ups.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
@@ -440,7 +448,8 @@ flow_sections() {
     dir="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" || dir="!${dir}"
     repos+="${slug}"$'\t'"${dir//[$'\t\n']/ }"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_BOARD="${BOARD}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  # shellcheck disable=SC2154 # assigned in another file
+  SWARM_BOARD="${BOARD}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_LADDER="${CFG_escalate_ladder}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }
