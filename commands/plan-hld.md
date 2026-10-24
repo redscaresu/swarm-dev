@@ -115,14 +115,18 @@ draft`, and ask before `board-pr open`: each draft is then agreed by the user th
 Write in `<wt>`, never the main checkout. Write one `docs/epics/<slug>.md` per epic. An epic file
 there that already carries `hld: $1` is this plan's own, from the run you resume: overwrite it, and
 delete one the plan no longer has. Any other file of that slug in `docs/epics/` or `docs/stories/`
-would overwrite an unrelated epic or story: rename that epic first, and every `depends_on` that
-names it, and say so in the report. Front matter `status:` as above, `hld: $1` (the file name, no
-`.md`), `depends_on: [<epic slugs>]`, `[]` when none; body: goal, **Done when**, out of scope,
-constraints, **Your part**. In the same worktree set the HLD's front matter to one `planned:
-<today>` line and the lines under its `## Epics` to one link per epic, replacing what a run you
-resume wrote rather than adding to it; change nothing else in the HLD, and nothing else on the
-board, so `swarm.sh grants` can put the board PR under this HLD. Commit, run one `swarm.sh
-codex-review` pass there, then `swarm.sh board-pr open plan-$1 "<title>" <body-file>`. If it says
+would overwrite an unrelated epic or story, and a PR that changes an epic the board already has is
+no plan: rename that epic first, and every `depends_on` that names it, and say so in the report.
+Front matter `status:` as above, `hld: $1` (the file name, no `.md`), `depends_on: [<epic slugs>]`,
+`[]` when none; body: goal, **Done when**, out of scope, constraints, **Your part**. In the same
+worktree set the HLD's front matter to one `planned: YYYY-MM-DD` line, today's date and nothing
+after it, and the lines under its last `## Epics` to one `- [<slug>](../epics/<slug>.md)` per epic,
+the same slug in the text and the path and nothing else on the line, replacing what a run you
+resume wrote rather than adding to it. Change no line of the HLD above `## Epics`, write nothing
+after the links, and change nothing else on the board: the PR adds its epics, each carrying `hld:
+$1`, and touches no other file. `swarm.sh grants` puts the board PR under this HLD in that exact
+shape and under none in any other, where the `merge` grant no longer covers it. Commit, run one
+`swarm.sh codex-review` pass there, then `swarm.sh board-pr open plan-$1 "<title>" <body-file>`. If it says
 the PR on the branch has merged or closed, run `swarm.sh board-pr done plan-$1` and start again from
 the top. A board outside the project's repo is written in place: no commit, no board PR.
 
