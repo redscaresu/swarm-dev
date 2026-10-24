@@ -137,7 +137,9 @@ check "a worktree with uncommitted changes makes review-agent s1 fail with nothi
 rm "${ROOT}/svc-wt/s1/wip.txt"
 check "no refused start records a reviewed head for watch and next" "no" "$([[ -e "${p}/.swarm/reviews/s1.head" ]] && echo yes || echo no)"
 
-# --- One review agent: started in s1's worktree with role review, its brief scoped to s1.
+# --- One review agent: started in s1's worktree with role review, its brief scoped to s1. A
+# /code-review marker an older build left is removed on round 1.
+mkdir -p "${p}/.swarm/reviews"; echo "head: OLD" > "${p}/.swarm/reviews/s1.code-review"
 check "review-agent s1 returns at once, its agent still working" "back:0" "$(start s1)"
 out="$(cat "${ROOT}/start-s1.out")"
 check "review-agent s1 starts review-s1 in s1's worktree, with review's model and effort" "yes|yes|yes" \
@@ -169,9 +171,12 @@ check "with review-s1 still working, review-agent s1 fails, starts nothing, and 
 # s2's build stacked on s1 (#215's stacked event, then its story line).
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T10:00:00Z stacked s2 - "ok (on s1)" 2026-10-16T10:01:00Z story s2 - ok >> "${p}/.swarm/events.tsv"
 # s3's builder was sent findings once since its build started (one before it, from an older build,
-# does not count), so its review is round 2.
+# does not count), then stepped up, which keeps its PR: its review is round 2, and an earlier round
+# ran /code-review. s4 is on round 2 too, but no round has run /code-review (round 1 was docs only).
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T09:00:00Z tell:findings s3 - ok 2026-10-16T10:00:00Z story s3 - ok \
-  2026-10-16T10:30:00Z tell:findings s3 - ok >> "${p}/.swarm/events.tsv"
+  2026-10-16T10:30:00Z tell:findings s3 - ok 2026-10-16T10:40:00Z escalate s3 - ok \
+  2026-10-16T10:00:00Z story s4 - ok 2026-10-16T10:30:00Z tell:findings s4 - ok >> "${p}/.swarm/events.tsv"
+echo "head: ${HEAD_SHA}" > "${p}/.swarm/reviews/s3.code-review"
 back=""; echo "head: STALE" > "${p}/.swarm/reviews/s2.md"
 for s in s2 s3 s4; do back+="${s}:$(start "${s}") "; done
 check "a start removes the story's findings file from an earlier head, and leaves no copy aside, so its wait cannot end on it" "no|no" \
@@ -179,8 +184,13 @@ check "a start removes the story's findings file from an earlier head, and leave
 check "review-agent s2 to s4 each return within 10s while no review is done" "s2:back:0 s3:back:0 s4:back:0 " "${back}"
 check "a stacked story's brief leaves its parents' code out; another's says nothing of stacking" "yes|yes|0" \
   "$(has "This story is stacked on s1: their branches (origin/story/s1) are in its diff against origin/main" "$(cat "${p}/.swarm/briefs/review-s2.md")")|$(has "it is neither a finding nor out of scope" "$(cat "${p}/.swarm/briefs/review-s2.md")")|$(grep -c stacked "${p}/.swarm/briefs/review-s3.md" || true)"
-check "round 1's brief asks for codex and /code-review; round 2's for codex alone" "yes|yes|yes|yes|yes|no" \
-  "$(has "review round 1 of the story" "$(cat "${p}/.swarm/briefs/review-s1.md")")|$(has "then run \`/code-review ${PR}\`" "$(cat "${p}/.swarm/briefs/review-s1.md")")|$(has " codex-review " "$(cat "${p}/.swarm/briefs/review-s3.md")")|$(has "review round 2 of the story" "$(cat "${p}/.swarm/briefs/review-s3.md")")|$(has "run codex alone, not \`/code-review\`" "$(cat "${p}/.swarm/briefs/review-s3.md")")|$(grep -qF "/code-review ${PR}" "${p}/.swarm/briefs/review-s3.md" && echo yes || echo no)"
+r1="$(cat "${p}/.swarm/briefs/review-s1.md")"; r3="$(cat "${p}/.swarm/briefs/review-s3.md")"; r4="$(cat "${p}/.swarm/briefs/review-s4.md")"
+check "round 1's brief asks for codex and /code-review, and has the agent mark that it ran, its old marker gone" "yes|yes|yes|no" \
+  "$(has "review round 1 of the story" "${r1}")|$(has "then run \`/code-review ${PR}\`" "${r1}")|$(has "write ${p}/.swarm/reviews/s1.code-review with the Write tool" "${r1}")|$([[ -e "${p}/.swarm/reviews/s1.code-review" ]] && echo yes || echo no)"
+check "a round after a step-up is still round 2, and once /code-review has run it asks for codex alone" "yes|yes|yes|no" \
+  "$(has " codex-review " "${r3}")|$(has "review round 2 of the story" "${r3}")|$(has "run codex alone, not \`/code-review\`" "${r3}")|$(grep -qF "/code-review ${PR}" <<< "${r3}" && echo yes || echo no)"
+check "round 2 with no /code-review run yet asks for it" "yes|yes" \
+  "$(has "review round 2 of the story" "${r4}")|$(has "then run \`/code-review ${PR}\`" "${r4}")"
 check "herdr lists review-s1 to review-s4 working at once" "review-s1 working|review-s2 working|review-s3 working|review-s4 working" "$(working)"
 # done_review <slug> — the agent writes its findings file, then goes idle.
 done_review() { echo "head: ${HEAD_SHA}" > "${p}/.swarm/reviews/$1.md"; done_agent "review-$1"; }

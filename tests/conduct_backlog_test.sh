@@ -86,8 +86,8 @@ check "each gets its own brief, under its own project" "yes|yes" \
 check "each brief reports to its own project's report" "yes|no|yes|no" \
   "$(has "${ROOT}/${A_DIR}/.swarm/conduct-backlog.report.md" "$(cat "${brief_a}")")|$(hasnt "${ROOT}/${B_DIR}/" "$(cat "${brief_a}")")|$(has "${ROOT}/${B_DIR}/.swarm/conduct-backlog.report.md" "$(cat "${brief_b}")")|$(hasnt "${ROOT}/${A_DIR}/" "$(cat "${brief_b}")")"
 b="$(tr -s '[:space:]' ' ' < "${brief_a}")"
-check "the brief makes a review with nothing fixed a pass to merge at once, with no round-4 cap" "yes|yes|no|no" \
-  "$(has "A review on the latest head whose findings you fix none of is a pass, to merge at once" "${b}")|$(has "Never send such a review to the builder." "${b}")|$(grep -qF "round 4" <<< "${b}" && echo yes || echo no)|$(grep -qF "after round 3" <<< "${b}" && echo yes || echo no)"
+check "the brief makes a review with nothing fixed a pass, a repeat declined as before, with no round-4 cap" "yes|yes|yes|no|no" \
+  "$(has "A review on the latest head whose findings you fix none of is a pass: one with no findings" "${b}")|$(has "a point already declined with the reason it was first declined with" "${b}")|$(has "Never send such a review to the builder." "${b}")|$(grep -qF "round 4" <<< "${b}" && echo yes || echo no)|$(grep -qF "after round 3" <<< "${b}" && echo yes || echo no)"
 
 # next: each waits on its own; once A has reported, A collects and B still waits.
 check "next in each project waits on its own backlog conductor" "wait ${A}|wait ${B}" \
