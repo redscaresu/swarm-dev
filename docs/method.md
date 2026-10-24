@@ -93,26 +93,25 @@ project). `templates/docs/` holds the READMEs that define each format and an Obs
 
 ## Configuring a project
 
-`swarm.sh init`, run from the project's git root, copies the board templates into `board_dir`
-without overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and
-adds `.swarm/` and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no
-`.github/workflows`, it writes a `ci.yml` that runs `make check` on each PR and on pushes to origin's
-default branch. It reads that branch from the cached `origin/HEAD`, and asks origin only when that
-is missing, without prompting and for at most 15 seconds; with no answer it writes no CI and says
-so. The step fails, naming the target, when make has no `check` target. Its gate,
-`.github/swarm-board-only.sh`, skips the checks for a PR or push that changes only the board's own
-files (`stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under `board_dir`, so other pages
-in `docs/` still get checked). A board outside the repo gets the workflow without the gate. A
-`ci.yml` that init wrote carries a marker line; init leaves it alone after that and only writes the
-gate again if it is missing. With other workflows already there, init leaves them, writes the gate,
-and prints the step to add to the job that runs your checks. It also writes a git pre-commit hook
-that runs `make check`, skipping a commit that changes only the board's own files. While make has
-no `check` target, the hook only warns; CI is the check that fails. When a hook exists, or the repo sets `core.hooksPath`, init
-writes no hook and prints the lines to add before any `exec` in it (for husky, to
-`.husky/pre-commit`). A global `core.hooksPath` gets no hook and no lines, since a hook there runs in
-every repo. Last, init lists the files it wrote that git does not track yet, for you to commit:
-CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks once for the brief
-(`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
+`swarm.sh init`, run from the project's git root, copies the board templates into `board_dir` without
+overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and adds `.swarm/`
+and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it
+writes a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch. It reads
+that branch from the cached `origin/HEAD`, and asks origin only when that is missing, without prompting
+and for at most 15 seconds; with no answer it writes no CI and says so. The step fails, naming the
+target, when make has no `check` target. Its gate, `.github/swarm-board-only.sh`, skips the checks for a
+PR or push that changes only the board's own files (`stories/`, `epics/`, `hld/`, `Board.base` and
+`.obsidian/` under `board_dir`, so other pages in `docs/` still get checked). A board outside the repo
+gets the workflow without the gate. A `ci.yml` that init wrote carries a marker line; init leaves it
+alone after that and only writes the gate again if it is missing. With other workflows already there,
+init leaves them, writes the gate, and prints the step to add to the job that runs your checks. It also
+writes a git pre-commit hook that runs `make check`, skipping a commit that changes only the board's own
+files. While make has no `check` target, the hook only warns; CI is the check that fails. When a hook
+exists, or the repo sets `core.hooksPath`, init writes no hook and prints the lines to add before any
+`exec` in it (for husky, to `.husky/pre-commit`). A global `core.hooksPath` gets no hook and no lines,
+since a hook there runs in every repo. Last, init lists the files it wrote that git does not track yet,
+for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks once
+for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
 runs it; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config`
@@ -123,7 +122,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 |---|---|---|
 | `board_dir` | `docs` | where the board is, relative to the project unless absolute; a `"` or `\` in it is refused, since init writes it into quoted strings |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
-| `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
+| `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task (reference.md § Building) |
 | `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
@@ -135,6 +134,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage limit. Empty skips the review (reference.md § Building) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference.md § Settings) |
 | `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference.md § Settings) |
+| `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through you or a grant (`swarm.sh grants`; reference.md § Settings) |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with

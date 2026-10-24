@@ -674,11 +674,17 @@ pr_hld() (
 )
 
 # grants <story | epic | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
-# PR) and its grants (hld_grants), one per line, or none.
+# PR) and its grants (hld_grants), one per line, or none. A name that is no story or epic but an HLD
+# in ${BOARD}/hld is that HLD: an agreed one prints itself and its grants, any other none.
 grants() {
   local h g
   [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | PR URL>"
-  if [[ "$1" == https://* ]]; then h="$(pr_hld "$1")" || exit 1; else g="$(item_file "$1")" || exit 1; h="$(item_hld "${g}")"; fi
+  if [[ "$1" == https://* ]]; then h="$(pr_hld "$1")" || exit 1
+  # Keep this slug check and the story/epic lookups in step with item_file's.
+  elif [[ "$1" =~ ^[a-z0-9-]+$ && ! -f "${BOARD}/stories/$1.md" && ! -f "${BOARD}/epics/$1.md" && -f "${BOARD}/hld/$1.md" ]]; then
+    h="${BOARD}/hld/$1.md"   # a story or epic of the name wins; only then the HLD itself
+    [[ "$(get_fm "${h}" status)" == agreed ]] || h=""
+  else g="$(item_file "$1")" || exit 1; h="$(item_hld "${g}")"; fi
   [[ -n "${h}" ]] || { echo none; return 0; }
   g="$(hld_grants "${h}")" || exit 1
   printf '%s\n%s\n' "${h}" "${g:-none}"
