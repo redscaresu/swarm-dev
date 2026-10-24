@@ -22,6 +22,7 @@ PLUGIN_UPDATE_WAIT=300  # how long each claude plugin update a release runs may 
 HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may take
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
+PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -376,8 +377,12 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
-  # A release of this plugin moves the installed plugin and the running agents onto it; it never fails the merge.
-  [[ "${only}" != --release || -z "${oid}" ]] || release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}"
+  # A release of this plugin moves the installed plugin and the running agents onto it, unless it shipped
+  # commits no release check read, which any release reports; neither ever fails the merge.
+  if [[ "${only}" == --release && -n "${oid}" ]]; then
+    p=checked; release_parent "${repo}" "${oid}" "${base}" || p=""
+    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}"
+  fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -1033,9 +1038,9 @@ wait_pr() {
   done
 }
 
-# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> — after merge --release of
-# this plugin's own repo (plugin_repo), with CI on the base green and the merge commit on the base
-# release_check read (release_parent): once release_confirmed, update the
+# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> — after merge
+# --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set (the
+# merge commit is on the base release_check read: release_parent): once release_confirmed, update the
 # marketplace and the plugin, then start the new version's swarm.sh upgrade (detached; bounded by
 # UPGRADE_START_WAIT; with release_path's PATH, so the agents it restarts find the new swarm.sh) in
 # each of agent_projects, and ask the user to restart the lead session in this project and each of
@@ -1050,7 +1055,7 @@ release_upgrade() {
   new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
   hint="run swarm.sh update, then ${new} upgrade in each project with agents"
   [[ $4 -eq ${MAIN_CI_OK} ]] || { echo "warning: CI on the base is not green, so the plugin was not updated: once v$3 is published, ${hint}"; return 0; }
-  release_parent "$1" "$2" "$5" "${hint}" || return 0
+  [[ -n "$6" ]] || { echo "refused: the release ships commits no release check read, so the plugin was not updated and no agent was moved: once they are checked, ${hint}"; return 0; }
   release_confirmed "$1" "$2" "$3" "$5" \
     || { echo "warning: no tag v$3 on the base at or after ${2:0:7} with a published GitHub release, so the plugin was not updated: once there is, ${hint}"; return 0; }
   if ! { within "${PLUGIN_UPDATE_WAIT}" claude plugin marketplace update "${MARKETPLACE}" \
@@ -1187,14 +1192,14 @@ release_moved() {
   release_check "$@"
 }
 
-# release_parent <owner/repo> <merge commit> <base> <hint> — 0 when the merge commit's first parent is
-# RELEASE_BASE, the base release_check last read; else log and print a refusal naming the commits
-# between the two, which the release ships unchecked, with <hint>, and fail: release_upgrade updates nothing.
+# release_parent <owner/repo> <merge commit> <base> — 0 when the merge commit's first parent, read
+# within PARENT_READ_WAIT, is RELEASE_BASE, the base release_check last read; else log and print a
+# warning naming the commits between the two, which the release ships unchecked, and fail.
 # ponytail: a rebase of a release PR with several commits reads its own commit as the parent and
 # refuses; read <merge commit>~<its commits> (as merge --board's prev) if a release ever has more.
 release_parent() {
   local p log why
-  p="$(gh api "repos/$1/commits/$2" 2>/dev/null | json "d['parents'][0]['sha']" 2>/dev/null)" || p=""
+  p="$(within "${PARENT_READ_WAIT}" gh api "repos/$1/commits/$2" 2>/dev/null </dev/null | json "d['parents'][0]['sha']" 2>/dev/null)" || p=""
   [[ "${p}" != "${RELEASE_BASE}" ]] || return 0
   if [[ "${p}" =~ ^[0-9a-f]{40}$ ]]; then
     fetch_branch "${PROJECT_DIR}" "$3" || true
@@ -1203,8 +1208,8 @@ release_parent() {
   else
     why="gh cannot read the first parent of ${2:0:7}, so whether it ships commits the release check never read is unknown"
   fi
-  record_event merge "${MERGE_TARGET}" "upgrade refused: ${why}"
-  echo "refused: ${why}; the plugin was not updated and no agent was moved: once those commits are checked, $4"
+  record_event merge "${MERGE_TARGET}" "unchecked: ${why}"
+  echo "warning: ${why}"
   return 1
 }
 
@@ -1298,7 +1303,7 @@ release_grant() (
   while IFS= read -r s; do
     [[ "$(BOARD="${view}/origin" get_fm "${s}" status)" == "done" ]] || continue
     slug="$(basename "${s}" .md)" rc=0
-    release_done "${slug}" "$1" "$2" "$4" || rc=$?
+    release_done "${slug}" "$1" "$4" || rc=$?
     [[ ${rc} != 1 ]] || continue
     when="done on the board since v$3"
     [[ ${rc} == 0 ]] || when="done on the board (gh cannot list its PRs, so it may have merged since v$3)"
@@ -1309,8 +1314,9 @@ release_grant() (
   [[ ${n} -gt 0 ]] || echo "no story was merged into $2 since v$3, so no HLD covers it"
 )
 
-# release_done <slug> <owner/repo> <base> <tag> — 0 when a PR from story/<slug>, the branch each of
-# its builds pushes, merged since <tag>: its merge commit is on origin/<base> and not on <tag>; 1 when
+# release_done <slug> <owner/repo> <tag> — 0 when a PR from story/<slug>, the branch each of its
+# builds pushes, merged since <tag>: its merge commit is on RELEASE_BASE, the base release_check
+# read, and not on <tag>; 1 when
 # none did; 2 when gh cannot list them. The branch is what is left to find them by, as reconcile
 # clears a done story's prs:.
 release_done() {
@@ -1320,7 +1326,7 @@ release_done() {
   read -r -a list <<< "${oid}" || true
   for oid in ${list[@]+"${list[@]}"}; do
     git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "${RELEASE_BASE}" 2>/dev/null || continue
-    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "$4" 2>/dev/null || return 0
+    git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" "$3" 2>/dev/null || return 0
   done
   return 1
 }

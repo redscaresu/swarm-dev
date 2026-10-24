@@ -1756,15 +1756,18 @@ stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
+Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30
+seconds at most. If that is not the base the release check last read, a PR landed between that read
+and the merge, and the release shipped commits no check read. merge then prints `warning: <merge
+commit>'s first parent is <sha>, not <sha>, the base the release check read, so it ships <commits>
+unchecked` and logs it as a `merge` line in `.swarm/events.tsv`, whatever the repo and whatever CI
+on the base says. When gh can't read the parent, it warns the same way.
+
 When the release is swarm-dev's own (its repo is the GitHub repo named by `repository` in the
 plugin's `plugin.json`; otherwise merge prints a line saying it skipped this step), `merge
---release` also updates the plugin and moves the agents onto it, once CI on the base is green. First
-it reads the merge commit's first parent through gh. If that is not the base the release check last
-read, a PR landed between that read and the merge, and the release shipped commits no check read.
-merge then prints `refused: <merge commit>'s first parent is <sha>, not <sha>, the base the release
-check read, so it ships <commits> unchecked`, followed by what to run once you have checked them,
-logs it as a `merge` line in `.swarm/events.tsv`, and updates nothing. When gh can't read the
-parent, it refuses the same way. Otherwise it
+--release` also updates the plugin and moves the agents onto it, once CI on the base is green. After
+that warning it updates nothing, and prints `refused: the release ships commits no release check
+read, so the plugin was not updated`, followed by what to run once they are checked. Otherwise it
 waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a
 later commit of the base, and a published GitHub release. Then it runs `claude plugin marketplace
 update swarm-dev` and `claude plugin update swarm-dev@swarm-dev`, 5 minutes at most each. Once the
