@@ -18,15 +18,16 @@ FINDING_REASONS="out-of-scope nit wrong"
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
 # FINDING_OUTCOME (fixed, declined with --declined, or filed with --filed), FINDING_REASON to --declined's reason (empty
 # when the next word is a flag or missing), FINDING_REVIEWER to --reviewer's value (unset without
-# one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
+# one), FINDING_ROUND to --round's value (unset without one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
 # reads the events target with it before the command runs.
 finding_flags() {
   local n
-  FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER; FINDING_SKIP=0
-  while [[ "${1:-}" == --declined || "${1:-}" == --reviewer || "${1:-}" == --filed ]]; do
+  FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER FINDING_ROUND; FINDING_SKIP=0
+  while [[ "${1:-}" == --declined || "${1:-}" == --reviewer || "${1:-}" == --filed || "${1:-}" == --round ]]; do
     n=1
     # shellcheck disable=SC2034 # read in another file
     if [[ "$1" == --filed ]]; then FINDING_OUTCOME=filed
+    elif [[ "$1" == --round ]]; then FINDING_ROUND="${2-}"; [[ $# -lt 2 ]] || n=2
     elif [[ "$1" == --declined ]]; then
       FINDING_OUTCOME=declined
       [[ $# -lt 2 || "$2" == --* ]] || { FINDING_REASON="$2"; n=2; }
@@ -38,16 +39,18 @@ finding_flags() {
 # record_finding <kind> <pr-url> <text> <fixed|declined|filed> [reviewer] — log one finding, what became of
 # it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A declined one's
 # reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
-# text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
-# have four fields and were all fixed, and rows from before the reviewer column have five. An
-# escaped defect's outcome is escaped, so outcomes and flow's reviewers, which count what review raised,
-# leave it out; outcomes' recurring block and dash count fixed and escaped rows, never declined ones. A
+# text, outcome, reviewer, and a declined row adds the reason; with --round (finding_flags'
+# FINDING_ROUND: the review round, 0 for a plan or board PR) an eighth field holds it, after an empty
+# reason on a row that has none. Rows from before the outcome column have four fields and were all
+# fixed, rows from before the reviewer column have five, and rows from before the round column (or
+# logged without --round) are round unknown. An escaped defect's outcome is escaped, so outcomes and
+# flow's reviewers, which count what review raised, leave it out; outcomes' recurring block and dash count fixed and escaped rows, never declined ones. A
 # filed row (a declined out-of-scope finding the lead filed as a story) is counted by none of them: it
 # only stops out_of_scope_findings offering that text again.
 record_finding() {
-  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
+  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason="" round=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
-    || die "usage: swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr-url> <one line>"
+    || die "usage: swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <one line>"
   # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
   if [[ "${reviewer}" == escaped ]]; then
     [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined or filed: drop --${outcome}"
@@ -58,6 +61,10 @@ record_finding() {
       || die "--declined needs a reason, one of: ${FINDING_REASONS}"
     reason=$'\t'"${FINDING_REASON}"
   fi
+  if [[ -n "${FINDING_ROUND+set}" ]]; then
+    [[ "${FINDING_ROUND}" =~ ^[0-9]{1,3}$ ]] || die "--round needs the review round, a number (0 for a plan or board PR)"
+    round=$'\t'"${FINDING_ROUND}"; [[ -n "${reason}" ]] || reason=$'\t'
+  fi
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
@@ -66,7 +73,7 @@ record_finding() {
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}${round}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
 }
@@ -103,8 +110,8 @@ out_of_scope_findings() {
 #   row is not one); a row from before the outcome column is "fixed", and one from before the reviewer
 #   column "unknown".
 #   A reviewer is one of SWARM_FINDING_REVIEWERS (bash's FINDING_REVIEWERS, which every report that
-#   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
-#   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
+#   reads findings passes) or unknown. Fields past the sixth (a declined row's reason, the round) are
+#   ignored, so a column appended later drops no row; width=8 keeps those two, "" where a row has none. fixed_rows(path) is the first four fields of the fixed and
 #   escaped ones: both are a mistake someone fixed.
 #   turns(path, seen) is each of one session's turns, once, as (record, model, tokens, est. USD).
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
@@ -360,8 +367,13 @@ dataset_report() {
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
 #     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
 #     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
-#     rounds are not split by one. --epic keeps only the PRs of that epic (outcomes epic column) in
-#     both blocks, and a third block lists every PR either block counted.
+#     rounds are not split by one. Once a row in the window has a round (log-finding --round), two
+#     more blocks: TSV round reviewer fixed declined nit out-of-scope wrong share_fixed, per round
+#     (0 a plan or board PR, unknown a row with none) each reviewer then all; and TSV story pr
+#     stopped_round why, per story PR with a round from 1 on, its last logged round and why it stopped
+#     there: pass (that round fixed nothing), merged-after-fixes or fixed-unmerged. --epic keeps only
+#     the PRs of that epic (outcomes epic column) in every block, and a last block lists every PR
+#     block 1 or 2 counted.
 #   throughput: one TSV row per epic, then `all` for the project, over the outcomes rows dated in the
 #     window and the ok events.tsv lines whose local day is in it; with --epic, that epic's row alone.
 #     builds; builders_mean and builders_max, how many builds ran at once, time-weighted over the span

@@ -1,6 +1,7 @@
 # Reviewers, a flow section (flow_report.py gives its globals): findings raised, fixed and declined per
 # reviewer and kind, and the reworked PRs among those it raised them on, then the split critic's yield
-# per split, review rounds per PR, and with --epic the PRs counted.
+# per split, review rounds per PR, the yield of each review round (log-finding --round) and the round
+# each story's review stopped in, and with --epic the PRs counted.
 import collections, glob, os, re, subprocess
 from report import *
 rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
@@ -102,6 +103,36 @@ for r in rows:
 total = sum(rounds.values())
 per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
 print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
+# By review round (log-finding --round): per round, each reviewer and then all, the findings fixed,
+# declined in all and by reason, and the share fixed. Then per story PR (round 1 on; 0 is a plan or
+# board PR) the round its review stopped in, its last logged one, and why: pass when that round fixed
+# nothing, else merged-after-fixes once the PR merged, or fixed-unmerged before. Printed only once a
+# row in the window has a round; a row logged without one is round unknown.
+REASONS = ("nit", "out-of-scope", "wrong")
+by_round, per_pr, seen = collections.defaultdict(collections.Counter), collections.defaultdict(collections.Counter), {}
+for day, kind, pr, _, outcome, reviewer, reason, n in finding_rows(findings, width=8):
+    if since <= day <= until and (not epic or pr_key(pr) in urls):
+        n = int(n) if n.isdigit() else None
+        for who in (reviewer, None):
+            by_round[(n, who)][outcome] += 1
+            by_round[(n, who)][reason] += outcome == "declined"
+        if n:
+            per_pr[pr_key(pr)][n] += outcome == "fixed"
+            seen.setdefault(pr_key(pr), pr)
+if any(n is not None for n, _ in by_round):
+    print("\nround\treviewer\tfixed\tdeclined\t" + "\t".join(REASONS) + "\tshare_fixed")
+    for n, who in sorted(by_round, key=lambda k: (k[0] is None, k[0] or 0, k[1] is None, k[1] or "")):
+        got = by_round[(n, who)]
+        raised = got["fixed"] + got["declined"]
+        print("\t".join(["unknown" if n is None else str(n), who or "all", str(got["fixed"]), str(got["declined"])]
+                        + [str(got[r]) for r in REASONS] + [f"{int(100 * got['fixed'] / raised + 0.5)}%"]))
+    slug_of = {pr_key(r["pr"]): r["slug"] for r in rows}
+    merged = {pr_key(r["pr"]) for r in rows if r.get("merged_at")}
+    print("\nstory\tpr\tstopped_round\twhy")
+    for k in sorted(per_pr, key=lambda k: (slug_of.get(k, "-"), k)):
+        stop = max(per_pr[k])
+        why = "pass" if not per_pr[k][stop] else "merged-after-fixes" if k in merged else "fixed-unmerged"
+        print(f"{slug_of.get(k, '-')}\t{urls.get(k, seen[k])}\t{stop}\t{why}")
 if epic:
     print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
 if rework_unknown(rows, since):
