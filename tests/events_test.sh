@@ -164,6 +164,8 @@ done
 for arm in ${arms}; do
   [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init ]] && continue
   args=(); [[ "${arm}" == tidy ]] && args=(--yes); [[ "${arm}" == intervene ]] && args=(lead-hand x)
+  # hold logs only for a ready story on the board.
+  [[ "${arm}" == hold ]] && { printf -- '---\nstatus: ready\n---\n' > "${Q}/docs/stories/h.md"; args=(h x); }
   [[ "${arm}" == upgrade ]] && args=(--foreground)   # its starter only detaches the worker, which logs the run
   n=0; [[ "${ro}" == *" ${arm} "* ]] || n=1
   before="$(LOG="${Q}/.swarm/events.tsv" lines)"
@@ -171,6 +173,7 @@ for arm in ${arms}; do
   after="$(LOG="${Q}/.swarm/events.tsv" lines)"
   what="read-only, not logged"; [[ ${n} == 0 ]] || what="logged"
   check "arm ${arm}: ${what}" test "$((after - before))" -eq "${n}"
+  rm -f "${Q}/docs/stories/h.md"   # hold's ready story, so no later arm sees it
 done
 appends "next logs nothing" 0 - - - next
 appends "status logs nothing" 0 - - - status
