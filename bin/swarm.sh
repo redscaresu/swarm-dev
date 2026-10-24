@@ -3,7 +3,7 @@
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same function or file, and with --strict refuse
-#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
+#   swarm.sh conduct <epic>|--backlog [--lane <k>]          a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog; with conductor_lanes N above 1, --lane <k> (1 to N) is required and starts lane k's conductor, which builds only lane k's stories
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or a green PR in review that waits on the user (merge = human, or merge holds it); print each new one
@@ -25,7 +25,7 @@
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog] [--foreground]        after claude plugin update: runs detached (log .swarm/upgrade-<version>.log; one per project, a second names it), in rounds: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's); one still busy after SWARM_UPGRADE_WAIT_MS (2 hours) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version, exits 1 if any is left
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
-#   swarm.sh unblock [--startable <epic>|--backlog]         mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again; --startable: then print startable: <slug> for each ready story of that epic (--backlog: with no epic) whose build has not started, readied now or before, as reconcile last left the board (it never pulls), with (stacked on <parents>) or (its PR <url> was closed unmerged) when that applies; nothing once the epic's file is gone
+#   swarm.sh unblock [--startable <epic>|--backlog [--lane <k>]]  mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again; --startable: then print startable: <slug> for each ready story of that epic (--backlog: with no epic) whose build has not started, readied now or before, as reconcile last left the board (it never pulls), with (stacked on <parents>) or (its PR <url> was closed unmerged) when that applies; nothing once the epic's file is gone; --lane <k>: only lane k's stories
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
@@ -196,7 +196,8 @@ CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once
 # shellcheck disable=SC2034 # nothing reads it yet; epic-guard-board-pr does
 CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
-CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin lead_epics commit_trailers"
+CFG_conductor_lanes=1   # N > 1: an epic or the backlog has N conductors (conduct --lane <k>), each building its own stories
+CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin lead_epics commit_trailers conductor_lanes"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -222,7 +223,7 @@ load_config() {
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
       merge)
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
-      stall_minutes|queue_minutes|codex_minutes)
+      stall_minutes|queue_minutes|codex_minutes|conductor_lanes)
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: ${key} must be a positive whole number, not '${value}'" ;;
       sonnet_share|escalate_after)
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
@@ -438,6 +439,17 @@ hold() {
   echo "logged: hold $1: $2"
 }
 
+# lane_flag <cmd> [--lane <k>] — set LANE to <k>, 1 to conductor_lanes, or to nothing with no --lane.
+lane_flag() {
+  local cmd="$1"; shift
+  LANE=""
+  [[ $# -gt 0 ]] || return 0
+  [[ $# -eq 2 && "$1" == --lane ]] || die "${cmd}: unknown argument '$1'"
+  (( CFG_conductor_lanes > 1 )) || die "${cmd}: --lane needs conductor_lanes above 1 (it is 1)"
+  [[ "$2" =~ ^[1-9][0-9]*$ && $2 -le CFG_conductor_lanes ]] || die "${cmd}: --lane takes 1 to ${CFG_conductor_lanes} (conductor_lanes), not '$2'"
+  LANE="$2"
+}
+
 # Everything runs from main, called on the last line with `exit` beside it: bash reads a
 # script as it executes, so a `git pull` that rewrites this file during a long `wait` would
 # otherwise make it resume reading the new file mid-line.
@@ -451,7 +463,7 @@ dispatch() {
             if [[ "${1:-}" == --strict ]]; then build_story "${2:?slug}" strict
             elif [[ "${2:-}" == --strict ]]; then build_story "$1" strict
             else [[ -z "${2:-}" ]] || die "story: unknown argument '$2'"; build_story "${1:?slug}"; fi ;;
-    conduct) require_herdr; start_conductor "${1:?epic}" ;;
+    conduct) require_herdr; lane_flag conduct "${@:2}"; start_conductor "${1:?epic}" "${LANE}" ;;
     close)  require_herdr
             if [[ "${*: -1}" == --all ]]; then CLOSE_ALL=1; set -- "${@:1:$#-1}"; fi
             if [[ "${*: -1}" == --drop ]]; then CLOSE_DROP=1; set -- "${@:1:$#-1}"; fi
@@ -462,8 +474,8 @@ dispatch() {
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) if [[ "${1:-}" == --startable ]]; then
-               [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
-               unblock_startable "$2"
+               [[ ( $# -eq 2 || ( $# -eq 4 && "$3" == --lane ) ) && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
+               lane_flag unblock "${@:3}"; unblock_startable "$2" "${LANE}"
              else [[ -z "${1:-}" ]] || die "unblock: unknown argument '$1'"; unblock; fi ;;
     next)   next_report ;;
     status) status_report "${1:-}" ;;
@@ -504,7 +516,7 @@ dispatch() {
     _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _step)  next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds
-    _conductor) conductor_name "${1:?epic or backlog}"; echo ;;   # test hook: a conductor's agent name
+    _conductor) conductor_name "${1:?epic or backlog}" "${2:-}"; echo ;;   # test hook: a conductor's agent name (of lane $2)
     _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name

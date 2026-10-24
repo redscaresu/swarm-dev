@@ -179,7 +179,8 @@ Repeat until a step below says stop:
      so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
-   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
+   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. With
+     `conductor_lanes` above 1, run `swarm.sh conduct <epic> --lane <k>` for each lane k instead.
    - `resume <slug>`: a one-off that an earlier run started (its worktree exists). If the last
      `.swarm/conduct-backlog.report.md` lists `<slug>` under `not started:` (a build that died
      leaves a worktree with no builder and no PR), start no new conductor: `next` names it again for

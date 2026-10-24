@@ -37,7 +37,8 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 3. **Build.** A conductor agent starts one builder per story. Each builder works in its own git
    worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
    fixes what they find. A story that fails twice is rebuilt once on Fable, the most capable model,
-   then handed to the lead.
+   then handed to the lead. With `conductor_lanes = N`, an epic or the backlog gets N conductors,
+   each with its own share of the stories (`swarm.sh conduct <epic> --lane <k>`).
 4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
    the agreed HLD over its work lists `merge` in its `grants:`.
    With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
