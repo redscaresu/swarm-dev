@@ -6,15 +6,17 @@
 # nested `claude -p` are not the lead), and a swarm project ($SWARM_PROJECT, else the nearest folder
 # at or above the cwd with .claude/swarm/config, as find_project looks). It reads next's step with
 # `swarm.sh _step`, next_step alone: next adds gh calls (conductors_queued) for lines past the first.
-# When the step is plan-epic, story, resume, collect or conduct and has not started, it prints a
-# block decision naming the line; any other step allows the stop. collect is the lead's own step, so
-# it always blocks. Another step has started when herdr runs an agent in one of the project's panes
-# (.swarm/state) named as agent_name names it (the subject, or conduct-<epic> for conduct; for story
-# and resume, the backlog conductor too, not a retired one), or for plan-epic any agent in tab
-# scope-<epic> or scope-<epic>-<n>. A pane with no agent, or one herdr calls unknown, is no agent.
-# The stops the lead makes to wait on the user count as started too: plan-epic once its plan is
-# reported (the critic's answer in .swarm/<epic>/, newer than the epic and parsing, or stories
-# committed on the board/scope-<epic> branch, the small path's); story once the backlog conductor's
+# When the step is plan-epic, plan-hld, hld, story, resume, collect or conduct and has not started,
+# it prints a block decision naming the line; any other step allows the stop. collect is the lead's
+# own step, so it always blocks. hld has started once its finish board-PR worktree,
+# <repo>-wt/_board-finish-<hld>, exists. Another step has started when herdr runs an agent in one of
+# the project's panes (.swarm/state) named as agent_name names it (the subject, or conduct-<epic> for
+# conduct; for story and resume, the backlog conductor too, not a retired one), or for plan-epic any
+# agent in tab scope-<epic> or scope-<epic>-<n> (plan-hld: plan-<hld>). A pane with no agent, or one
+# herdr calls unknown, is no agent. The stops the lead makes to wait on the user count as started
+# too: plan-epic once its plan is reported (the critic's answer in .swarm/<epic>/, newer than the
+# epic and parsing, or stories committed on the board/scope-<epic> branch, the small path's), and
+# plan-hld the same with the HLD and board/plan-<hld>; story once the backlog conductor's
 # report is newer than every story and epic (commands/swarm.md); and resume once that holds or the
 # report lists the slug under `not started:`. stop_hook_active (the turn was blocked once already)
 # allows the stop, so a lead with a reason not to act says so and stops. The whole hook runs within
@@ -148,15 +150,16 @@ backlog_stopped() {
   [[ -z "$(find "${b}/stories" "${b}/epics" \( -name '*.md' -o -type d \) -newer "${REPORT}" 2>/dev/null)" ]]
 }
 
-# plan_drafted <epic> — the plan is reported and waits on the user: the critic's answer (verify's,
-# the last a planner writes) parses as JSON and is newer than the epic (an older one belongs to a
-# previous plan, as /plan-epic reads it), or the small path's stories are committed on the
-# board/scope-<epic> branch, past origin's default branch (board-pr start makes the branch empty).
+# plan_drafted <subject> <branch> <file> — the plan is reported and waits on the user: the critic's
+# answer (verify's, the last a planner writes) in .swarm/<subject>/ parses as JSON and is newer than
+# the board's <file>, the epic or HLD (an older one belongs to a previous plan, as /plan-epic reads
+# it), or the small path's stories are committed on <branch>, past origin's default branch
+# (board-pr start makes the branch empty).
 plan_drafted() {
   local b base past
-  if git -C "${project}" show-ref -q --verify "refs/heads/board/scope-$1" 2>/dev/null; then
+  if git -C "${project}" show-ref -q --verify "refs/heads/$2" 2>/dev/null; then
     base="$(git -C "${project}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || allow
-    past="$(git -C "${project}" rev-list -n 1 "${base}..refs/heads/board/scope-$1" 2>/dev/null)" || allow
+    past="$(git -C "${project}" rev-list -n 1 "${base}..refs/heads/$2" 2>/dev/null)" || allow
     [[ -z "${past}" ]] || return 0
   fi
   b="$(board)" || allow
@@ -173,13 +176,15 @@ try:
         sys.exit(0)
 except (OSError, ValueError):
     pass
-sys.exit(1)' "${project}/.swarm/$1/critic.json" "${b}/epics/$1.md" 2>/dev/null
+sys.exit(1)' "${project}/.swarm/$1/critic.json" "${b}/$3" 2>/dev/null
 }
 
 # started — the step next names is under way, or is a stop that waits on the user.
 started() {
   case "${step}" in
-    plan-epic) plan_drafted "${subject}" || live "" "scope-${subject}" 0 ;;
+    plan-epic) plan_drafted "${subject}" "board/scope-${subject}" "epics/${subject}.md" || live "" "scope-${subject}" 0 ;;
+    plan-hld)  plan_drafted "${subject}" "board/plan-${subject}" "hld/${subject}.md" || live "" "plan-${subject}" 0 ;;
+    hld)       [[ -d "$(dirname "${project}")/$(basename "${project}")-wt/_board-finish-${subject}" ]] ;;
     story)     backlog_stopped || live "$(name "${subject}")" "" 1 ;;
     resume)    not_started "${subject}" || backlog_stopped || live "$(name "${subject}")" "" 1 ;;
     conduct)   live "$(name "conduct-${subject}")" "" 0 ;;
