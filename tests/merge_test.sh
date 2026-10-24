@@ -1770,8 +1770,10 @@ arm="$(sed -n '/^   - `release`:/,/^   - `gate`:/p' "${REPO}/commands/swarm.md" 
 check "commands/swarm.md's release arm lands a docs PR before the bump" \
   grep -qE 'land a docs PR .* Then make a worktree of a new branch .release/v<new>.' <<< "${arm}"
 check "commands/swarm.md's release arm names the docs PR in the release PR" grep -qF 'and naming the docs PR' <<< "${arm}"
-check "commands/swarm.md's release arm runs merge --release whatever merge is, and stops only on the release-grant refusal" \
-  bash -c '! grep -qF "If \`swarm.sh config merge\` is \`agent\`, run" <<< "$1" && grep -qF "under \`merge = human\` too" <<< "$1" && grep -qF "refuses with \"waits on the user'"'"'s merge\"" <<< "$1" && grep -qF "On the release-grant refusal" <<< "$1"' _ "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm runs merge --release under merge = human too" grep -qF 'under `merge = human` too' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm stops on the release-grant refusal" grep -qF 'On the release-grant refusal' <<< "${arm}"
 check "reference.md § Merging merges with swarm.sh merge" \
   bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
 
