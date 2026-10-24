@@ -1481,15 +1481,15 @@ note_lock() {
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
 # the handover brief, and the tell fails, saying so; a step-up that closed nothing sends them as usual.
-# On the ladder's top rung (top_rung) the TOP_RUNG_FINDINGS-th since it got there or the lead last
-# reset the story (top_rung_since), or any after, are
-# not sent either: the story is held for the lead with them (top_rung_hold), and the tell fails; where
-# a step-up could not run (step_up_story), nothing is held and they are sent as usual.
+# On or above the ladder's top rung (top_rung) the TOP_RUNG_FINDINGS-th since it got there or the lead
+# last reset the story (top_rung_since), or any after, are not sent either: the story is held for the
+# lead with them (top_rung_hold), and the tell fails, naming the round; where a step-up could not run
+# (step_up_story), nothing is held and they are sent as usual.
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane
+  local kind="$2" f="$3" name msg state since inbox rc pane n
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1522,9 +1522,13 @@ tell_agent() {
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
-  if [[ "${kind}" == findings ]] && top_rung "$1" && (( $(findings_told "$1" "$(top_rung_since "$1")") >= TOP_RUNG_FINDINGS - 1 )); then
-    ! top_rung_hold "$1" "${f}" \
-      || die "tell: ${name} was not told: these were findings round ${TOP_RUNG_FINDINGS} on the ladder's top rung, so $1 is held for the lead (held_for: top-rung, kind: lead) with them in its block; its builder and PR are kept"
+  if [[ "${kind}" == findings ]] && top_rung "$1"; then
+    n=$(( $(findings_told "$1" "$(top_rung_since "$1")") + 1 ))
+    if (( n >= TOP_RUNG_FINDINGS )); then
+      # Outside any condition, with set +e: top_rung_hold's subshell runs under set -e.
+      set +e; top_rung_hold "$1" "${f}" "${n}"; rc=$?; set -e
+      [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${n} on or above the ladder's top rung, so $1 is held for the lead (held_for: top-rung, kind: lead) with them in its block; its builder and PR are kept"
+    fi
   fi
   if [[ "${kind}" == findings ]] && (( $(findings_told "$1") >= STEP_UP_FINDINGS - 1 )); then
     rc=0; ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}" || rc=$?

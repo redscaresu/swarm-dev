@@ -224,10 +224,11 @@ Repeat until a step below says stop:
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,
      its block starts **Held (<cause>).**, and `next`'s line names the hold): its builder paused or
      its goal was cleared on an error, nothing failed, and there is nothing to re-scope. A top-rung
-     hold (`held_for: top-rung`) is the exception: its builder on the ladder's top rung kept drawing
-     findings, so narrow the scope to something that fails closed, split the story, or accept the PR
-     with follow-ups, then lift the hold and send the kept builder the findings file its block names
-     (`swarm.sh tell <slug> findings <file>`). Deciding what happens to it is
+     hold (`held_for: top-rung`) is the exception: its builder on or above the ladder's top rung kept
+     drawing findings, so narrow the scope to something that fails closed, split the story, or accept
+     the PR with follow-ups, then lift the hold and send the kept builder the findings file its block
+     names (`swarm.sh tell <slug> findings <file>`). To drop it instead, close its builder, PR and
+     worktree first, as its block says. Deciding what happens to it is
      yours, not the user's, so this is not a stop. Read the story, its block (`.swarm/escalated/<slug>`) and the attempts'
      PRs it lists, with their review findings. Then decide on the spot, and tell the user in a line
      or two what you chose and why:

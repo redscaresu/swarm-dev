@@ -2,10 +2,12 @@
 # ladder_top_rung_test.sh — with escalate_ladder = sonnet,opus,fable, a builder on the top rung (fable)
 # that has had one findings tell since its step-up is not sent the next: the story is held for the lead
 # (held_for: top-rung, kind: lead) with the findings in its block and kept in a file reset leaves, its
-# builder and PR kept, and next names it; a retried tell is refused. A tell from before the step-up does
-# not count; a build that started on fable counts from its start. Where a step-up could not run (a story
-# in review, a merged or auto-merging PR, another step-up running) nothing is held. On opus the findings
-# tells go on as before: the second is sent and the third steps it up. herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH.
+# builder and PR kept, and next names it; a retried tell is refused, and the kept file sent as a later
+# round holds it again. A tell from before the step-up does not count; a build that started on fable
+# counts from its start, and so does one above a ladder that tops out at opus. A later round is named
+# as it is. Where a step-up could not run (a story in review, a merged or auto-merging PR, another
+# step-up running) nothing is held; a hold that fails after its block is written sends nothing. On opus
+# the findings tells go on as before: the second is sent and the third steps it up. herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -115,11 +117,13 @@ HELD="ok (top-rung: findings round 2 on fable)"
 echo "${OPEN_PR}" > "${ROOT}/prs.json"
 fresh fable 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: the 2nd findings tell since the step-up is not sent" "yes|no" \
-  "$(grep -q 'was not told: these were findings round 2 on the ladder' <<< "${out}" && echo yes)|$(told "${out}")"
+  "$(grep -q 'was not told: these were findings round 2 on or above the ladder' <<< "${out}" && echo yes)|$(told "${out}")"
 check "fable: the story is escalated to the lead, logged, with no step-up" "lead|code|top-rung|${HELD}||" \
   "$(kind)|$(fm_of escalated_from)|$(fm_of held_for)|$(held)|$(escalated)|$(stepped)"
 check "fable: its block holds the findings and the PR" "yes|yes|yes|yes" \
   "$(grep -qx 'add the missing guard' "${block}" && echo yes)|$(grep -qx -- '- https://github.com/o/proj/pull/5' "${block}" && echo yes)|$(grep -qF "swarm.sh tell s1 findings ${kept}" "${block}" && echo yes)|$(cmp -s "${ROOT}/f.md" "${kept}" && echo yes)"
+check "fable: its block says to close the builder, PR and worktree before a drop" "yes|yes|yes" \
+  "$(grep -qF 'swarm.sh close s1' "${block}" && echo yes)|$(grep -qF 'gh pr close https://github.com/o/proj/pull/5 --delete-branch' "${block}" && echo yes)|$(grep -qF "worktree remove ${WT}" "${block}" && echo yes)"
 check "fable: the builder is kept" "s1 w:1" "$(cat "${ROOT}/agents")"
 check "fable: next names it escalated" "yes|yes" "$(run next > "${ROOT}/next.out"; grep -qx 'escalated s1' "${ROOT}/next.out" && echo yes)|$(grep -q 'held (top-rung)' "${ROOT}/next.out" && echo yes)"
 out="$(run tell s1 findings "${ROOT}/f.md")" || true
@@ -137,6 +141,9 @@ check "fable: reset puts its kind back" "code|reset:held|yes" \
   "$(kind)|$(awk -F'\t' '$2 ~ /^reset/ { print $2 }' "${P}/.swarm/events.tsv")|$([[ -f "${kept}" ]] && echo yes)"
 out="$(run tell s1 findings "${kept}")" || true
 check "fable: after the lead's reset, the kept builder's next findings tell is sent" "yes|${HELD}" "$(told "${out}")|$(held)"
+out="$(run tell s1 findings "${kept}")" || true
+check "fable: the kept file sent as the next round holds it again, and stays as it was" "no|${HELD},${HELD}|yes|yes" \
+  "$(told "${out}")|$(held)|$(grep -qx 'add the missing guard' "${kept}" && echo yes)|$(grep -qx 'add the missing guard' "${block}" && echo yes)"
 
 fresh fable 0; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a tell from before the step-up does not count, so the first since is sent" "yes|" "$(told "${out}")|$(held)"
@@ -150,10 +157,12 @@ fresh fable 1; mkdir -p "${P}/.swarm/board-state/stories"; printf '%s\n' --- "st
 out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a story in review is not held, and is told" "yes|code||yes" \
   "$(told "${out}")|$(kind)|$(held)|$(grep -q 'was not held for the lead' <<< "${out}" && echo yes)"
-for pr in '[{"url":"https://github.com/o/proj/pull/5","state":"MERGED"}]' '[{"url":"https://github.com/o/proj/pull/5","state":"OPEN","autoMergeRequest":{"enabledAt":"x"}}]'; do
-  echo "${pr}" > "${ROOT}/prs.json"; fresh fable 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
-  check "fable: a PR that $(grep -q MERGED <<< "${pr}" && echo merged || echo 'is set to auto-merge') holds nothing, and is told" "yes|code|" "$(told "${out}")|$(kind)|$(held)"
-done
+echo '[{"url":"https://github.com/o/proj/pull/5","state":"MERGED"}]' > "${ROOT}/prs.json"
+fresh fable 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable: a PR that merged holds nothing, and is told" "yes|code|" "$(told "${out}")|$(kind)|$(held)"
+echo '[{"url":"https://github.com/o/proj/pull/5","state":"OPEN","autoMergeRequest":{"enabledAt":"x"}}]' > "${ROOT}/prs.json"
+fresh fable 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable: a PR that is set to auto-merge holds nothing, and is told" "yes|code|" "$(told "${out}")|$(kind)|$(held)"
 echo "${OPEN_PR}" > "${ROOT}/prs.json"
 
 # Another step-up or hold of it running: the tell is refused, and nothing is held.
@@ -161,6 +170,23 @@ fresh fable 1; mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm
 out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a held step-up lock refuses the tell, holding nothing" "yes|no|code|" \
   "$(grep -q 'a step-up or hold of it is running' <<< "${out}" && echo yes)|$(told "${out}")|$(kind)|$(held)"
+
+# A hold that fails after its block is written (the board state cannot be written): the tell fails,
+# and the findings are not sent.
+fresh fable 1; mkdir -p "${P}/.swarm/board-state/stories"; chmod a-w "${P}/.swarm/board-state/stories"
+out="$(run tell s1 findings "${ROOT}/f.md")" || true
+chmod u+w "${P}/.swarm/board-state/stories"
+check "fable: a hold that fails after its block is written fails the tell, sending nothing" "yes|no|yes" \
+  "$(grep -q 'its top-rung hold failed partway' <<< "${out}" && echo yes)|$(told "${out}")|$([[ -f "${block}" ]] && echo yes)"
+
+fresh fable 2; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable: a later round holds it, naming that round" "yes|no|ok (top-rung: findings round 3 on fable)|yes" \
+  "$(grep -q 'these were findings round 3 on or above' <<< "${out}" && echo yes)|$(told "${out}")|$(held)|$(grep -q 'drew review findings round 3 there' "${block}" && echo yes)"
+
+# A fable build above a ladder that tops out at opus is on no rung with one above it: held as on the top.
+fresh fable 0; sed -i.x '/\tescalate\t/d' "${P}/.swarm/events.tsv"; echo "escalate_ladder = sonnet,opus" > "${P}/.claude/swarm/config"
+out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable above a sonnet,opus ladder: its 2nd findings round holds it" "no|${HELD}" "$(told "${out}")|$(held)"
 
 fresh opus 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "opus: the 2nd findings tell since the step-up is sent, as today" "yes|code|" "$(told "${out}")|$(kind)|$(held)"
