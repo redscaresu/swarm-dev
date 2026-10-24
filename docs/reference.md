@@ -1909,8 +1909,10 @@ in the worktree (an `index.lock`, or a merge, rebase, cherry-pick or revert in p
 stops and names it: finish or abort it there, then resume. If the start fails, step-up stops at the
 step that failed, with that step's message, and logs nothing as an escalation. A builder's
 brief is sent at most twice, and a Fable builder, which at xhigh can take longer to start, gets 300
-seconds over both tries to show it took it; `SWARM_PROMPT_TIMEOUT_MS` overrides that.
-When a new rung's brief may have gone out but still reads as not taken up, or unsure, step-up keeps
+seconds over both tries to show it took it (150 for its one try when it has no Claude session to
+read yet, see `tell`); `SWARM_PROMPT_TIMEOUT_MS` overrides that.
+When a new rung's brief may have gone out but still reads as not taken up, or unsure, or herdr sent
+it once and did not show the turn start (the start's warning), step-up keeps
 its pane, warns, and reads it once more over 300 seconds, then says `took up its brief after all`
 if it did. A builder blocked on a question before its brief went is not read again. If herdr gives
 no status for it during that read, step-up stops and keeps its pane and agents.tsv line: look at it
