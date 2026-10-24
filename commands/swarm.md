@@ -219,6 +219,14 @@ Repeat until a step below says stop:
      When `next`'s why names a conductor that is still working, start
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
+   - `plan-hld <hld>`: follow `/plan-hld <hld>`. Approving its epics is the user's decision: stop
+     and wait for it, unless `swarm.sh grants <hld>` lists `epics`, which lets it write them active
+     and open the board PR unasked. Its board PR lands like any other: the HLD's `merge` grant
+     covers it under `merge = human`.
+   - `hld <hld>`: every epic planned from the HLD has left the board. Run `swarm.sh finish <hld>`
+     and hand the PR it opens to the user: under `merge = human` the finish PR is always the user's,
+     grant or not. Once that PR has merged or been closed, run `swarm.sh board-pr done finish-<hld>`,
+     so an abandoned worktree never hides the HLD from `next`.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,

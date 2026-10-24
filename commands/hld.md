@@ -79,4 +79,5 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    `swarm.sh codex-review` pass (a board outside the project's repo has no board PR: the HLD is
    agreed where it is, with no commit), close the co-author and the reviewer (if it started) by name
    (`swarm.sh close hld-<slug>`, then `swarm.sh close hld-review-<slug>`; never `swarm.sh close
-   hld`, which would close every tab whose label starts `hld-`), and tell the user the HLD is agreed.
+   hld`, which would close every tab whose label starts `hld-`), and tell the user the HLD is agreed
+   and that `/swarm-dev:swarm` plans it into epics next, once its board PR has merged.

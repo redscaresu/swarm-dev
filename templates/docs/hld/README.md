@@ -30,7 +30,9 @@ grants: []
 ```
 
 An HLD is `agreed` before any epic is planned from it; each epic links back with
-`hld: <file-name-without-.md>`. Only the user sets `superseded`, by hand, when a later HLD replaces it.
+`hld: <file-name-without-.md>`. `/plan-hld` plans it, and its board PR adds `planned: <date>` to the
+front matter, the day it was planned. Nothing else sets it, so the skeleton above has no such line.
+Only the user sets `superseded`, by hand, when a later HLD replaces it.
 
 `grants:` lists what the lead may do under this HLD without asking the user, once it is `agreed`:
 
