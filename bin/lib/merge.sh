@@ -223,8 +223,10 @@ merge_pr() {
     done <<< "${info}"
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
   fi
+  why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
-  # then under merge = agent's holds. --release is release_check's.
+  # then under merge = agent's holds. --release is release_check's. It runs after the head's CI check,
+  # which costs fewer gh calls: the grant reads the PR, its files and each board file it touches.
   if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
     why="$(merge_grant "${url}")"
     [[ -z "${why}" ]] || merge_fail "${why}"
@@ -236,7 +238,6 @@ merge_pr() {
     p="$(costs_diff <<< "${info}")"
     [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; the user merges it"
   fi
-  why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"

@@ -1030,9 +1030,20 @@ hld() {
 }
 # granted <grants> [front-matter line]... — merge = human, and s in review under epic g, under HLD h.
 granted() { fresh "merge = human"; hld h "$1" g; item s "status: review" "prs: ${URL}" "epic: g" "${@:2}"; }
+# no_grant_read — pr_hld never ran: merge read the PR once (its own pr view) and read no board file at
+# a head (pr_hld reads each epic or story the PR touches through contents/, as grant_read shows).
+no_grant_read() { [[ "$(grep -c '^pr view' "${ROOT}/gh.log")" == 1 ]] && ! grep -q '/contents/docs/' "${ROOT}/gh.log"; }
+grant_read() { grep -q "repos/o/r/contents/docs/stories/s.md?ref=${H1}" "${ROOT}/gh.log"; }
 granted stories; merge "${URL}"; refused "merge = human, a story PR under an HLD with no merge grant" "${URL} ${WAIT}"
 granted merge; merge "${URL}"
 is "merge = human, the same story PR under grants: [merge] merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+check "merge = human, the same story PR under grants: [merge]: the grant read s.md at the head" grant_read
+granted merge; checks "${FX}/${H1}.checks" "$(run test completed failure)"; merge "${URL}"
+refused "merge = human, a red head under grants: [merge]" "the head 1111111 is not green: test (failure)"
+check "merge = human, a red head under grants: [merge]: no HLD read" no_grant_read
+granted merge; echo '[]' > "${FX}/files.fail"; merge "${URL}"
+refused "merge = human, a PR whose files cannot be listed" "cannot tell which HLD ${URL} is under, so it waits on the user's merge"
+check "merge = human, a PR whose files cannot be listed: pr_hld says why" said "grants: cannot list every file ${URL} changes"
 granted merge "costs: money"; merge "${URL}"; refused "merge = human, a costs: money story under grants: [merge]" "held: s costs money"
 granted merge; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"; refused "merge = human, a conductor's pane under grants: [merge]" "pane w:c"
 granted "merge, deploy"; merge "${URL}"; refused "merge = human, an HLD with a grant swarm.sh does not know" "hld/h.md cannot be read, so ${URL} waits on the user's merge"
@@ -1041,7 +1052,6 @@ granted merge; printf -- '---\nstatus: agreed\ngrants:\n  - merge\n---\n\n# h\n'
 refused "merge = human, an HLD whose grants: is a block list" "hld/h.md cannot be read, so ${URL} waits on the user's merge"
 check "merge = human, an HLD whose grants: is a block list: hld_grants says why" said "grants must be a one-line [..] list"
 # merge's own refusals come first, before any HLD is read.
-no_grant_read() { ! grep -q 'headRefOid,changedFiles' "${ROOT}/gh.log"; }
 fresh "merge = human"; item s "status: ready" "prs: ${URL}"; merge "${URL}"
 refused "merge = human, a story PR not in review" "s is ready, not review"
 check "merge = human, a story PR not in review: no HLD read" no_grant_read
