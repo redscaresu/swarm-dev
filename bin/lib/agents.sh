@@ -1539,17 +1539,24 @@ tell_agent() {
   echo "told ${name}"
 }
 
-# tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message. A findings tell
-# herdr sent but did not see taken up also says the findings count as delivered: findings_told counts
-# it as a round, so the same findings sent again would count that round twice.
+# tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other
+# stderr it printed. A findings tell herdr sent also says what to do: findings_told counts it as a
+# round, so the same findings sent again would count that round twice. After "may or may not have the
+# brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice) herdr may
+# have dropped both, so the pane says whether to.
 tell_deliver() {
-  local err rc=0
-  err="$( (deliver_prompt "$1" "$2") 2>&1 >/dev/null )" || rc=$?
+  local err why rc=0
+  { err="$( (deliver_prompt "$1" "$2") 2>&1 1>&3 )"; } 3>&1 || rc=$?
   [[ ${rc} -ne 0 ]] || return 0
-  [[ "${err}" == *"swarm: "* ]] || exit "${rc}"
-  err="${err##*swarm: }"
-  [[ "$3" == findings && "${err}" == *"herdr sent it the brief"* ]] || die "${err}"
-  die "${err}; the findings count as delivered, a findings round of its build, so do not send them again"
+  if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; exit "${rc}"; fi
+  why="${err##*swarm: }"; err="${err%swarm: *}"
+  [[ -z "${err}" ]] || printf '%s' "${err}" >&2
+  case "$3:${why}" in
+    findings:*"the brief was not taken up: herdr sent it the brief"*)
+      die "${why}; the findings count as a round: read its pane (herdr agent read $1) and send them again only if it shows they never arrived" ;;
+    findings:*"herdr sent it the brief"*) die "${why}; the findings count as delivered, a findings round of its build, so do not send them again" ;;
+  esac
+  die "${why}"
 }
 
 # findings_told <slug> — how many findings tells (a bare tell, from logs before kinds, too) <slug>

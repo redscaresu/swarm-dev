@@ -36,7 +36,8 @@ lacks() { if grep -qF -- "$1" <<< "$2"; then echo "no, it has $1"; else echo yes
 # herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until a tab
 # closes (each story's builder has a tab of its own, and one is open at a time); tab and pane close
 # fail while ${ROOT}/closefail exists. While ${ROOT}/promptsent exists, agent prompt replies with no
-# status (sent) and agent get reads the agent idle with no completion_seq: a prompt never taken up.
+# status (sent) and agent get reads the agent idle with no completion_seq: a prompt never taken up;
+# with ${ROOT}/getnone too, agent get gives nothing, so whether it was taken up is unknown.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" | tee "${STUB_BIN}/gh" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -47,7 +48,7 @@ case "$1 $2" in
                   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane run"|"pane wait-output") [ -n "$3" ] || exit 1 ;;   # herdr fails with no pane
-  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"},{"tab_id":"w:t10","label":"f1"},{"tab_id":"w:t11","label":"f2"},{"tab_id":"w:t12","label":"f3"},{"tab_id":"w:t13","label":"f4"},{"tab_id":"w:t14","label":"f5"},{"tab_id":"w:t15","label":"f6"}]}}' ;;
+  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"},{"tab_id":"w:t10","label":"f1"},{"tab_id":"w:t11","label":"f2"},{"tab_id":"w:t12","label":"f3"},{"tab_id":"w:t13","label":"f4"},{"tab_id":"w:t14","label":"f5"},{"tab_id":"w:t15","label":"f6"},{"tab_id":"w:t16","label":"f7"}]}}' ;;
   "tab close")    [ ! -e "$H/closefail" ] || exit 1
                   : > "$H/agents"; [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
   "pane close")   [ ! -e "$H/closefail" ] || exit 1
@@ -58,7 +59,7 @@ case "$1 $2" in
   "agent prompt") [ ! -e "$H/promptfail" ] || exit 1
                   [ ! -e "$H/promptsent" ] || { echo '{"result":{}}'; exit 0; }   # sent, with no status
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
-  "agent get")    [ ! -e "$H/promptsent" ] || echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent get")    [ ! -e "$H/promptsent" ] || [ -e "$H/getnone" ] || echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
@@ -368,12 +369,19 @@ stepped_f() {
 check "a findings tell herdr sent but not seen taken up counts toward round 3; one herdr never sent does not" "up|up|up|told|told" \
   "$(stepped_f f1)|$(stepped_f f3)|$(stepped_f f4)|$(stepped_f f2)|$(stepped_f f5)"
 # f6, for real: herdr sends the findings twice and reads f6 idle with no turn finished each time. The
-# tell fails saying they count as delivered and are not to be sent again, and the next one steps f6 up.
+# tell fails saying they count as a round, to be sent again only if f6's pane shows they never
+# arrived, and the next one steps f6 up. f7: herdr sends them once and then gives no status, so f7
+# may or may not have them: they count as delivered and are not to be sent again.
 f_story f6; touch "${ROOT}/promptsent"
-out="$(SWARM_SLEEP_SCALE=0.02 run tell f6 findings "${ROOT}/f.md")" || true; rm "${ROOT}/promptsent"
+out6="$(SWARM_SLEEP_SCALE=0.02 run tell f6 findings "${ROOT}/f.md")" || true; rm "${ROOT}/promptsent"
 run tell f6 findings "${ROOT}/f.md" > "${ROOT}/tell-f6.out" || true
-check "a findings tell herdr sent but did not see taken up says the findings count as delivered, and it counts" "yes|yes|up" \
-  "$(has "herdr sent it the brief" "${out}")|$(has "the findings count as delivered, a findings round of its build, so do not send them again" "${out}")|$(stepped_f f6)"
+f_story f7; touch "${ROOT}/promptsent" "${ROOT}/getnone"
+out7="$(SWARM_SLEEP_SCALE=0.02 run tell f7 findings "${ROOT}/f.md")" || true; rm "${ROOT}/promptsent" "${ROOT}/getnone"
+run tell f7 findings "${ROOT}/f.md" > "${ROOT}/tell-f7.out" || true
+check "a findings tell herdr sent but did not see taken up counts as a round, and says to resend only if its pane shows they never arrived" "yes|yes|up" \
+  "$(has "the brief was not taken up: herdr sent it the brief twice" "${out6}")|$(has "the findings count as a round: read its pane (herdr agent read f6) and send them again only if it shows they never arrived" "${out6}")|$(stepped_f f6)"
+check "a findings tell herdr sent that may or may not have arrived counts as delivered, not to be sent again" "yes|yes|yes|up" \
+  "$(has "it may or may not have the brief: herdr sent it the brief once" "${out7}")|$(has "the findings count as delivered, a findings round of its build, so do not send them again" "${out7}")|$(lacks "read its pane" "${out7}")|$(stepped_f f7)"
 
 # --- A sonnet -> opus -> fable chain of step-ups on s2, today. In outcomes the three builds are one
 # attempt, the two replaced builds each have a close with cause step-up:<trigger>, and the Fable
