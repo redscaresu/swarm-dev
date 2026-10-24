@@ -4,7 +4,7 @@
 # sparkline with today's count and the 7-day average from 60 columns, the rate and running gauges
 # with the best 7 days and the 7-day peak from 100, the text line alone at 59, and a running count
 # that is the one `swarm.sh status` gives (no codex review in it), against a peak on the same 7
-# calendar days. A cut frame (a watched one, 120 columns by 30 to 39 lines with the ladder, and 160 by
+# calendar days. A cut frame (a watched one, 120 columns by 31 to 40 lines with the ladder, and 160 by
 # 20 to 25) keeps the ladder, running now, at least 3 rows of recent and the whole left column before
 # the lines under the speedometer.
 set -euo pipefail
@@ -33,19 +33,19 @@ both() { has "$1" "$3" && has "$2" "$3"; }
 sleepers=()
 trap 'kill ${sleepers[@]+"${sleepers[@]}"} 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
 
-out="$(cut 120 30 --ladder)"
-check "at 120x30 the ladder and the top of running now show: the lines under the speedometer gave way" has "│ ● conduct-alpha-core  up" "${out}"
-check "at 120x30 the sparkline does not show" lacks "14 days" "${out}"
-check "at 120x30 the gauges do not show" lacks "of peak" "${out}"
-out="$(cut 120 38 --ladder)"
-check "at 120x38 the sparkline's line goes first" lacks "14 days" "${out}"
-check "at 120x38 the gauges still show" has "of peak" "${out}"
+out="$(cut 120 31 --ladder)"
+check "at 120x31 the ladder and the top of running now show: the lines under the speedometer gave way" has "│ ● conduct-alpha-core  up" "${out}"
+check "at 120x31 the sparkline does not show" lacks "14 days" "${out}"
+check "at 120x31 the gauges do not show" lacks "of peak" "${out}"
 out="$(cut 120 39 --ladder)"
-check "at 120x39 the sparkline shows" has "14 days" "${out}"
-check "at 120x39 the gauges show" has "of peak" "${out}"
-check "at 120x39 the ladder is still whole" has "review-fallback→ " "${out}"
-check "at 120x39 running now is still whole" has "│ ● a-building          up" "${out}"
-check "at 120x39 recent keeps at least 3 rows" test "$(sed -n '/─ recent/,/╰/p' <<< "${out}" | grep -c ago)" -ge 3
+check "at 120x39 the sparkline's line goes first" lacks "14 days" "${out}"
+check "at 120x39 the gauges still show" has "of peak" "${out}"
+out="$(cut 120 40 --ladder)"
+check "at 120x40 the sparkline shows" has "14 days" "${out}"
+check "at 120x40 the gauges show" has "of peak" "${out}"
+check "at 120x40 the ladder is still whole" has "review-fallback→ " "${out}"
+check "at 120x40 running now is still whole" has "│ ● a-building          up" "${out}"
+check "at 120x40 recent keeps at least 3 rows" test "$(sed -n '/─ recent/,/╰/p' <<< "${out}" | grep -c ago)" -ge 3
 # From 140 columns the left column counts too: at 160x20 it is taller than the frame already, so the
 # lines under the speedometer go; at 24 they would push its last line out; at 25 both fit.
 check "at 160x20 the lines under the speedometer give way to the left column" lacks "14 days" "$(cut 160 20)"
