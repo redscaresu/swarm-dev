@@ -124,13 +124,13 @@ merge_grant() {
 }
 
 # merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
-# SHA or head SHA (merge_pr's locals boid, head, repo and n), through gh's contents API as
+# branch or head SHA (merge_pr's locals base, head, repo and n), through gh's contents API as
 # release_check reads it; fails 1 when it is absent and 2 on any other failure. At the head a 404 is
 # absent only for a path the PR removes or renames away (merge_gone): one it keeps there means gh
 # cannot read the head (a fork's), where every epic would read as deleted.
 merge_read() {
   local ref="${head}" q err rc=0
-  [[ "$1" == head ]] || ref="${boid}"
+  [[ "$1" == head ]] || ref="${base}"
   # Quoted, as pr_hld quotes it, so a # or ? in a name is read as itself.
   q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$2")" || return 2
   # The file's bytes go to stdout (fd 3); gh's stderr into err, to tell a 404 from the rest.
@@ -151,9 +151,10 @@ merge_gone() {
 }
 
 # unticketed_why <line> — epic_unticketed's failure line as merge --board says it: a read error at the
-# base or head names the SHA gh read there (merge_pr's locals boid and head); any other line as it is.
+# base or head names the ref gh read there, the base branch or the head SHA (merge_pr's locals base
+# and head); any other line as it is.
 unticketed_why() {
-  local re='^cannot read (.+) at the (base|head)$' ref="${boid:0:7}"
+  local re='^cannot read (.+) at the (base|head)$' ref="${base}"
   [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }
   [[ "${BASH_REMATCH[2]}" == base ]] || ref="${head:0:7}"
   echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}"
@@ -161,14 +162,14 @@ unticketed_why() {
 
 # epic_guard — merge --board's refusal of a PR that sets an epic active with no ticket (merge_pr's
 # locals files and url): epic_unticketed on one changed path at a time, so a read error or a bad
-# grants: names the epic it was checking too.
+# grants: names the epic it was checking too. A failure that printed no reason refuses all the same.
 epic_guard() {
   local p s why
   while IFS= read -r p; do
     s="$(basename "${p}" .md)"
     # Outside the $(...), where a merge_fail would not stop this.
     why="$(epic_unticketed merge_read "${p}")" \
-      || merge_fail "--board: $(unticketed_why "${why}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
+      || merge_fail "--board: $(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
     [[ -z "${why}" ]] || merge_fail "--board: ${url} sets ${s} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${files}"
 }
@@ -215,7 +216,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base boid changed f="" any="" p rel origin own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -231,14 +232,12 @@ merge_pr() {
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
   why="$(merge_caller)" || why="cannot tell whose pane this is"
   [[ -z "${why}" ]] || merge_fail "${why}"
-  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,baseRefOid,changedFiles \
-    | json "'%s %s %s %s %d' % (d['state'], d['headRefOid'], d['baseRefName'], d.get('baseRefOid') or '-', d['changedFiles'])")" \
+  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles \
+    | json "'%s %s %s %d' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'])")" \
     || merge_fail "gh cannot read ${url}"
-  read -r state head base boid changed <<< "${info}"
+  read -r state head base changed <<< "${info}"
   [[ "${head}" =~ ^[0-9a-f]{40}$ && "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
     || merge_fail "gh gave no head SHA, base branch or file count for ${url}"
-  # --board reads the board at the base's SHA, so its check and the merge see the same base.
-  [[ "${only}" != --board || "${boid}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--board: gh gave no base SHA for ${url}"
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
   # With merge = agent a PR whose story costs money is the user's, by any route (--board and --release too).

@@ -1410,7 +1410,7 @@ lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR mu
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
 under the board instead. Under either merge mode, `--board` also refuses a PR that sets an epic
 `active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green, it reads each
-epic and HLD through gh at the PR's base SHA and head SHA. Any read error refuses, as does a 404 at
+epic and HLD through gh at the PR's base branch and head SHA. Any read error refuses, as does a 404 at
 the head on a file the PR does not remove or rename away. With
 `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
