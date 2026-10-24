@@ -1770,6 +1770,16 @@ arm="$(sed -n '/^   - `release`:/,/^   - `gate`:/p' "${REPO}/commands/swarm.md" 
 check "commands/swarm.md's release arm lands a docs PR before the bump" \
   grep -qE 'land a docs PR .* Then make a worktree of a new branch .release/v<new>.' <<< "${arm}"
 check "commands/swarm.md's release arm names the docs PR in the release PR" grep -qF 'and naming the docs PR' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm runs merge --release under merge = human too" grep -qF 'under `merge = human` too' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm no longer runs merge --release only under merge = agent" \
+  bash -c '! grep -qF "If \`swarm.sh config merge\` is \`agent\`, run" <<< "$1"' _ "${arm}"
+check "commands/swarm.md's release arm names merge.sh's release-grant refusal" grep -qF "\"waits on the user's merge\"" <<< "${arm}"
+check "merge.sh refuses a release the grant does not cover with 'waits on the user's merge'" \
+  grep -qF "waits on the user's merge (merge = human" "${REPO}/bin/lib/merge.sh"
+check "commands/swarm.md's release arm keys the outcome on merged:, and leaves a refused PR waiting on the user" \
+  grep -qE 'by whether merge printed .merged:.,.* Any other refusal: under .merge = human. the release-grant refusal .* Tell the user what the refusal printed and that the PR waits on their merge' <<< "${arm}"
 check "reference.md § Merging merges with swarm.sh merge" \
   bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
 

@@ -1,7 +1,5 @@
 # swarm-dev builds itself: the board lives in board/, apart from the user docs in docs/.
 board_dir = board
-# Lesson rules land in AGENTS.md, which every agent (and you) already reads.
-lessons_file = AGENTS.md
 # The lead is a Claude session: dash puts what it can do in its own queue, apart from the user's.
 lead = session
 # The conductor merges its own green, reviewed PRs through swarm.sh merge (head pinned) and keeps going.
@@ -9,3 +7,7 @@ merge = agent
 # One in four easy, low-risk code stories builds on Sonnet (user, 2026-10-22: run sonnet-share-on here,
 # compare after 20 Sonnet builds). Stop early: two Sonnet builds in a row that miss a green, reviewed PR set it to 0.
 sonnet_share = 4
+# Review fallback when codex hits its usage limit (config-switch-ons, 2026-10-24).
+fallback_reviewer = sonnet
+# step-up hands a build to the next model on findings-3, ci-red-2, stalled or no-pr. The user agreed the Fable rung on 2026-10-21.
+escalate_ladder = sonnet,opus,fable

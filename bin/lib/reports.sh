@@ -333,6 +333,10 @@ dataset_report() {
 #     watch and the share of 5000; then, after a blank line, the same per subcommand (via swarm.sh
 #     <command> when swarm.sh ran it). Runs, not requests, so the share is a floor. A line instead
 #     when there is no log or none in the window. --epic does not narrow it.
+#   holds: TSV story epic reason held_min, one row per hold of a ready story (its first hold line in
+#     events.tsv to its next ok story line; dropped or removed (its story file deleted) when it
+#     ended with no build; else open), then the built holds' minutes per reason class (clash or other), or a line
+#     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
