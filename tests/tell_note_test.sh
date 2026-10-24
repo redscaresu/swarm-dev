@@ -16,12 +16,13 @@
 # conductor from ${ROOT}/agents ("<name> <pane> <session>") and logs each agent prompt to
 # ${ROOT}/prompts.log; claude agents --json prints ${ROOT}/claude.json.
 # Last, a builder told findings while herdr's screen reads it idle for every settle read of the first
-# try and done only after them (plan-hld-command's tells, 2026-10-24) gets one prompt, logged ok,
-# with no warning when its session shows it took it by the second settle read ($F/takes): it turns
-# busy, or its log gets the findings as a pasted prompt (a short turn between two reads). With only a
-# Task subagent's entry holding the text (sidechain), a tool result holding it (toolresult), or
-# another prompt (notice), past the findings already in its log from an earlier tell, it is not sent
-# again either: tell warns that herdr sent it the brief and did not show the turn start.
+# try and done only after them (plan-hld-command's tells, 2026-10-24), its log already holding the same
+# findings from an earlier tell. It gets one prompt, logged ok, when its session shows it took them by
+# the second settle read ($F/takes): it turns busy, or its log gets them as a pasted prompt (a short
+# turn between two reads). Its session shows no sign of them with only another tell's prompt
+# (othertell), a Task subagent's entry holding the findings' line (sidechain), a tool result holding it
+# (toolresult) or an automated prompt holding it (notice): sent once more, and the done read after
+# takes it. herdr idle on every read (never): sent twice, and the tell fails, not taken up.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -53,11 +54,12 @@ case "$1 $2" in
     if [ "${n}" -eq 3 ]; then case "$(cat "$F/takes" 2>/dev/null)" in
       busy) echo '[{"sessionId": "sb", "status": "busy"}]' > "$F/claude.json" ;;
       prompt) l='{"type":"user","message":{"content":"<pasted_content id=\"x\">\nFrom the conductor:\n\nstart s2 first\n</pasted_content>"}}' ;;
-      sidechain) l='{"type":"user","isSidechain":true,"message":{"content":"From the conductor:"}}' ;;
-      toolresult) l='{"type":"user","message":{"content":[{"type":"tool_result","content":"From the conductor:"}]}}' ;;
-      notice) l='{"type":"user","message":{"content":"<task-notification>done</task-notification>"}}' ;;
+      othertell) l='{"type":"user","message":{"content":"From the conductor:\n\nreview round 9"}}' ;;
+      sidechain) l='{"type":"user","isSidechain":true,"message":{"content":"From the conductor:\n\nstart s2 first"}}' ;;
+      toolresult) l='{"type":"user","message":{"content":[{"type":"tool_result","content":"start s2 first"}]}}' ;;
+      notice) l='{"type":"user","message":{"content":"<task-notification>start s2 first</task-notification>"}}' ;;
     esac; [ -z "${l:-}" ] || printf '%s\n' "${l}" >> "$F/claude-config/projects/p/sb.jsonl"; fi
-    if [ "${n}" -le 4 ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
+    if [ "${n}" -le 4 ] || [ "$(cat "$F/takes" 2>/dev/null)" = never ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
     else echo '{"result":{"agent":{"agent_status":"done","completion_seq":9}}}'; fi ;;
 esac
 EOF
@@ -181,19 +183,23 @@ check "a conductor replaced before the deferred check: the new one is" 1 "$(grep
 settle
 echo "w:9 b1" > "${p}/.swarm/state/b1"; echo "b1 w:9 sb" >> "${ROOT}/agents"
 printf '2026-10-24\tcode\tb1\tclaude\topus\thigh\tsb\n' >> "${p}/.swarm/agents.tsv"
-for how in busy:no prompt:no sidechain:yes toolresult:yes notice:yes; do
-  warned="${how#*:}" how="${how%:*}"
+for how in busy:1:ok prompt:1:ok othertell:2:ok sidechain:2:ok toolresult:2:ok notice:2:ok never:2:taken; do
+  want="${how#*:}" how="${how%%:*}" end="${want#*:}" want="${want%%:*}"
   echo "${how}" > "${ROOT}/takes"; rm -f "${ROOT}/gets"; : > "${ROOT}/prompts.log"
-  echo '{"type":"user","message":{"content":"From the conductor:"}}' > "${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # an earlier tell's
+  printf '%s\n' '{"type":"user","message":{"content":"From the conductor:\n\nstart s2 first"}}' > "${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # an earlier tell's
   echo '[{"sessionId": "sb", "status": "idle"}]' > "${ROOT}/claude.json"
   out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 SWARM_SLEEP_SCALE=0.01 SWARM_PROMPT_TIMEOUT_MS=15000 PATH="${ROOT}/bin:${PATH}" \
     bash "${SWARM}" tell b1 findings "${ROOT}/note" 2>&1)" || true
-  check "findings to a builder (${how}) while herdr read it idle: told" yes "$(grep -qx "told b1" <<< "${out}" && echo yes || echo no)"
-  check "findings to a builder (${how}) while herdr read it idle: sent once" 1 "$(grep -c 'agent prompt w:9' "${ROOT}/prompts.log" || true)"
-  check "findings to a builder (${how}) while herdr read it idle: warned it did not show the turn start" "${warned}" \
-    "$(grep -q "warning: b1: herdr sent it the brief once, and herdr did not show the turn start" <<< "${out}" && echo yes || echo no)"
-  check "findings to a builder (${how}) while herdr read it idle: the tell is logged ok" ok \
-    "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv")"
+  check "findings to a builder whose session shows ${how} while herdr read it idle: sent ${want} time(s)" "${want}" "$(grep -c 'agent prompt w:9' "${ROOT}/prompts.log" || true)"
+  check "findings to a builder whose session shows ${how} while herdr read it idle: no warning" no \
+    "$(grep -q "did not show the turn start" <<< "${out}" && echo yes || echo no)"
+  if [[ "${end}" == ok ]]; then
+    check "findings to a builder whose session shows ${how} while herdr read it idle: told, and logged ok" "yes|ok" \
+      "$(grep -qx "told b1" <<< "${out}" && echo yes || echo no)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv")"
+  else
+    check "findings to a builder whose session never shows them, herdr idle throughout: the tell fails, not taken up" yes \
+      "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv" | grep -q '^b1: the brief was not taken up: herdr sent it the brief twice' && echo yes || echo no)"
+  fi
 done
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

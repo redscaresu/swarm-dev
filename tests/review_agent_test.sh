@@ -247,11 +247,11 @@ check "and review-agent s8 again starts it" "back:0|${HEAD_SHA}" "$(start s8)|$(
 echo unread > "${ROOT}/prompt"
 check "when review-s10's brief may or may not have gone out and it works, review-agent exits 0, says it runs, and the old findings stay aside" "0|yes|no|head: OLD-REVIEW|${HEAD_SHA}" \
   "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s10 "${PR}")"; echo "$?|$(has "the agent is running" "${o}")")|$([[ -e "${p}/.swarm/reviews/s10.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s10.md.prev")|$(cat "${p}/.swarm/reviews/s10.head" 2>/dev/null)"
-# Sent once, the agent idle with no turn herdr shows: a brief herdr sent is never sent again, so the
-# agent has started, with a warning; its head goes on record and the old findings are gone.
+# Sent twice and not taken up, the agent idle: it may have the brief, so the old findings stay aside,
+# but review-agent fails, with no head on record, and says how to clear the pane.
 echo sent > "${ROOT}/prompt"; touch "${ROOT}/getidle" "${ROOT}/done/review-s11"
-check "when herdr sent review-s11's brief and shows no turn, review-agent starts it, warns, records its head and drops the old findings" "0|yes|no|no|yes" \
-  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s11 "${PR}")"; echo "$?|$(has "herdr sent it the brief once, and herdr did not show the turn start" "${o}")")|$([[ -e "${p}/.swarm/reviews/s11.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/reviews/s11.md.prev" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/reviews/s11.head" ]] && echo yes || echo no)"
+check "when review-s11's brief was not taken up after 2 tries, review-agent fails, says to close the pane, keeps the old findings aside and records no head" "1|yes|yes|no|head: OLD-REVIEW|no" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s11 "${PR}")"; echo "$?|$(has "may have its brief" "${o}")|$(has "herdr pane close" "${o}")")|$([[ -e "${p}/.swarm/reviews/s11.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s11.md.prev")|$([[ -e "${p}/.swarm/reviews/s11.head" ]] && echo yes || echo no)"
 # A .prev an earlier unclear start left, with no findings file now, is the last real review: a failed
 # start neither puts it back nor removes it.
 sed "s/s4/s12/g" "${b}/stories/s4.md" > "${b}/stories/s12.md"

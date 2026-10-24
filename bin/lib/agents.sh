@@ -683,14 +683,16 @@ PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
 # still drop a prompt sent at once, leaving it idle at an empty prompt while every later
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), and fails loudly rather than reporting success. It reports the
-# prompt taken on evidence (herdr's reply, or prompt_settle: working, blocked, a turn finished since,
-# or its Claude session, unless that read busy or waiting before the send: busy, waiting, or the
-# brief's first line in its log since). A prompt herdr sent is never sent again: herdr's screen can
+# prompt taken on evidence: herdr's reply, or prompt_settle (working, blocked, a turn finished since,
+# or, for an agent whose Claude session read idle before the send, that session busy, waiting, or
+# with the prompt in its log since: DELIVER_LINE, else the file's first non-blank line). It sends it
+# again only on evidence it was not taken: prompt_settle found the agent idle or done with no turn
+# finished since, and, if herdr sent it, that Claude session showed no sign of it. herdr's screen can
 # read idle through a whole turn (plan-hld-command's four findings tells on 2026-10-24, each sent
-# twice), so when prompt_settle finds no turn it succeeds with a warning that herdr sent it the
-# brief and did not show the turn start. One whose reply could not be read is sent again only on
-# evidence it was not taken: prompt_settle found the agent idle or done with no turn finished since.
-# A prompt herdr refused before sending fails at once, naming herdr's code. Anything else (no read
+# twice), so a prompt herdr sent to an agent with no session to read (codex, a session Claude Code
+# does not list yet, or one it reads busy, waiting or not at all) is never sent again: when no turn
+# shows, it succeeds with a warning that herdr sent it the brief and did not show the turn start. A
+# prompt herdr refused before sending fails at once, naming herdr's code. Anything else (no read
 # before the prompt, no status) fails saying it may or may not have it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
@@ -703,11 +705,11 @@ deliver_prompt() {
     return
   fi
   read -r status before <<< "$(agent_info "${target}")"   # the baseline, before anything goes out
-  # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG) that is
-  # not mid-turn already: one Claude Code does not list yet (a first brief) counts.
+  # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG) that
+  # Claude Code reads idle: the session to read.
   if awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n && $4 == "claude" { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null \
-    && [[ ! "$(session_state "${name}")" =~ ^(busy|waiting) ]] && mark="$(session_mark "${name}")"; then
-    sess="${name}" line="$(awk 'NF { print; exit }' "${prompt_file}")"
+    && [[ "$(session_state "${name}")" == idle ]] && mark="$(session_mark "${name}")"; then
+    sess="${name}" line="${DELIVER_LINE:-$(awk 'NF { print; exit }' "${prompt_file}")}"
   fi
   for try in 1 2; do
     reply="$(prompt_once "${target}" "${prompt_file}")"
@@ -715,7 +717,8 @@ deliver_prompt() {
       working|blocked) return 0 ;;
       sent) sent=$((sent + 1)) ;;
       unread) unread=$((unread + 1)) ;;
-      agent_blocked) [[ ${unread} -eq 0 ]] || die "${name}: it may or may not have the brief: $(sent_note 0 "${unread}"), then herdr refused the next: it is blocked on a question (agent_blocked); it was not sent again, see herdr agent read ${name}"
+      agent_blocked) [[ ${sent} -eq 0 ]] || return 0   # blocked on a question about the one herdr sent
+        [[ ${unread} -eq 0 ]] || die "${name}: it may or may not have the brief: $(sent_note 0 "${unread}"), then herdr refused the next: it is blocked on a question (agent_blocked); it was not sent again, see herdr agent read ${name}"
         die "${name}: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read ${name}" ;;
       *) [[ $((sent + unread)) -gt 0 ]] || die "${name}: herdr did not send it the brief (${reply}); see herdr agent read ${name}"
          die "${name}: $(sent_note "${sent}" "${unread}"), then could not send it again (${reply}); see herdr agent read ${name}" ;;
@@ -723,7 +726,7 @@ deliver_prompt() {
     verdict="$(prompt_settle "${target}" "${status}" "${before}" "${sess}" "${mark}" "${line}")"
     case "${verdict}" in
       taken) return 0 ;;
-      again\ *) if [[ ${sent} -gt 0 ]]; then
+      again\ *) if [[ ${sent} -gt 0 && -z "${sess}" ]]; then
           echo "warning: ${name}: $(sent_note "${sent}" "${unread}"), and herdr did not show the turn start (it reads it ${verdict#again } with no turn finished since); it was not sent again, see herdr agent read ${name}" >&2
           return 0
         fi ;;
@@ -836,8 +839,9 @@ print(os.path.getsize(path) if path else 0)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJ
 
 # session_took <name> <mark> <line> — succeed when <name>'s Claude session shows it took a prompt:
 # Claude Code reads it busy or waiting (one claude_agents call), or its main log has, past byte
-# <mark>, a user prompt whose text holds <line> (the brief's first line, whitespace aside). Not a tool
-# result or a Task subagent's entry (isSidechain): a turn the prompt did not start writes those too.
+# <mark>, a user prompt (panes.py's is_prompt, not a Task subagent's entry) whose text holds <line>
+# (whitespace aside). Not a tool result, an automated prompt or another tell's: a turn the prompt did
+# not start writes those too.
 session_took() {
   { claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
@@ -856,7 +860,7 @@ with open(path, "rb") as f:
             d = json.loads(l)
         except ValueError:
             continue
-        if not isinstance(d, dict) or d.get("type") != "user" or d.get("isSidechain") or d.get("isMeta"):
+        if not isinstance(d, dict) or d.get("type") != "user" or d.get("isSidechain") or not is_prompt(d):
             continue
         c = (d.get("message") or {}).get("content")
         if isinstance(c, list):
@@ -1542,7 +1546,7 @@ note_lock() {
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane
+  local kind="$2" f="$3" name msg state since inbox rc pane line
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1585,9 +1589,11 @@ tell_agent() {
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
-  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then deliver_prompt "${name}" "${msg}"; echo "told ${name}"; return; fi
+  # The file's own first line is what its session log is read for: every tell starts with the header.
+  line="$(awk 'NF { print; exit }' "${f}")"
+  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" deliver_prompt "${name}" "${msg}"; echo "told ${name}"; return; fi
   since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
-  deliver_prompt "${name}" "${msg}"
+  DELIVER_LINE="${line}" deliver_prompt "${name}" "${msg}"
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
