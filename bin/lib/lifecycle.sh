@@ -645,7 +645,7 @@ step_up() {
 # of a kind an agent builds (agent_kind), not a stacked child held for review (held_by:, which
 # build_story never starts again), with a worktree, and, as failed_build asks, no PR on story/<slug>
 # merged or set to auto-merge (its build is done, not stuck) and gh able to list them. STEP_SRC is its
-# repo dir and STEP_PR its open PR's URL, or empty when it has none. Run in the caller's shell, so a
+# repo dir, STEP_PR its open PR's URL, or empty when it has none, and STEP_PRS gh's list of them. Run in the caller's shell, so a
 # die is the command's own.
 step_up_story() {
   local f="${BOARD}/stories/$1.md" url prs
@@ -662,6 +662,7 @@ step_up_story() {
      || ! STEP_PR="$(json "next((p['url'] for p in d if p['state'] == 'OPEN'), '')" <<< "${prs}" 2>/dev/null)"; then
     die "step-up: could not list the PRs on story/$1 (git or gh), so nothing was closed"
   fi
+  STEP_PRS="${prs}"
   [[ "$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")" == False ]] \
     || die "step-up: a PR on story/$1 has merged or is set to auto-merge, so its build is done, not stuck; nothing was closed"
 }
@@ -1022,27 +1023,35 @@ top_rung_since() {
     END { print t }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
-# top_rung_story <slug> <findings> — a builder on the ladder's top rung (top_rung) still drew findings
-# round TOP_RUNG_FINDINGS there: they are not sent, and the story is the lead's to decide (lead_block,
-# logged as escalated) with <findings> in its block. The builder, its worktree and PR are kept, and
-# attempts: stays as it was. A story reset once already (reset_at) is offered only drop.
+# top_rung_hold <slug> <findings> — tell_agent's hold of a build on the ladder's top rung (top_rung)
+# drawing findings round TOP_RUNG_FINDINGS there. Under the story's step-up lock (ladder_step's), so
+# two tells never both hold it: a story held already (escalated_from:, whatever its status) is refused,
+# and it is held (top_rung_story) only where a step-up could run (step_up_story: ready, an agent's
+# kind, no held_by:, a worktree, no PR merged or set to auto-merge, gh able to list them). 0 when
+# held; 1 when nothing was held (said on stderr), and the findings go as usual.
+top_rung_hold() {
+  local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" rc=0
+  step_lock "${lock}" || die "tell: $1 was not told: a step-up or hold of it is running; wait on it, then tell it"
+  if [[ -n "$(get_fm "${BOARD}/stories/$1.md" escalated_from)" ]]; then
+    rm -rf "${lock}"; die "tell: $1 was not told: it is held for the lead already (escalated_from:); the lead decides it"
+  fi
+  (step_up_story "$1"; top_rung_story "$1" "$2") || rc=$?
+  rm -rf "${lock}"
+  [[ ${rc} -eq 0 ]] || echo "swarm: tell: $1 was not held for the lead (see above), so its findings go as usual" >&2
+  return "${rc}"
+}
+
+# top_rung_story <slug> <findings> — after step_up_story (STEP_PRS), hold the story for the lead as
+# held_story does (held_for: top-rung, logged held; reset lifts it, leaves attempts: as it is, and is
+# not the story's one reset), with <findings> in its block and kept in .swarm/briefs/<slug>.held-findings.md,
+# which reset leaves, for the lead to send after it. The builder, its worktree and PR are kept.
 top_rung_story() {
-  local src url prs="" none="" text when
-  if ! src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || ! url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
-     || ! prs="$(gh pr list -R "${url}" --head "story/$1" --state all --json url </dev/null 2>/dev/null)"; then
-    prs=""; none="swarm.sh did not list the PRs on story/$1, so look at them first: \`gh pr list --head story/$1 --state all\` in its repo."
-  fi
-  when="$(reset_at "$1")"
-  text="**Escalated (top rung).** Its builder on $(builder_model "$1"), the ladder's top rung, drew review findings round ${TOP_RUNG_FINDINGS} there, so they were not sent. The builder and its PR are kept. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'
-  if [[ -n "${when}" ]]; then
-    text+="- It was reset once already (${when}), and \`swarm.sh reset\` refuses a second, so drop it: run \`swarm.sh drop $1 <reason>\`, and put what is still wanted in a new story."
-  else
-    text+="- Narrow the scope to something that fails closed, split the story, or accept the PR with the findings below filed as follow-up stories; then run \`swarm.sh reset $1 <reason>\`, which puts its kind back and clears \`attempts:\`. At most one reset per story."$'\n'
-    text+="- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
-  fi
-  text+=$'\n\n'"The findings that were not sent:"$'\n\n'"$(cat "$2")"
-  lead_block "$1" "${text}" "${prs}" "${none}" >/dev/null
-  record_event escalated "$1" "ok (top-rung: findings round ${TOP_RUNG_FINDINGS} on $(builder_model "$1"))"
+  local kept="${PROJECT_DIR}/.swarm/briefs/$1.held-findings.md" m
+  m="$(builder_model "$1")"
+  { mkdir -p "${kept%/*}" && cp "$2" "${kept}"; } || die "$1: could not keep its findings in ${kept}, so the story is left as it was"
+  lead_block "$1" "**Held (top-rung).** Its builder on ${m}, the ladder's top rung, drew review findings round ${TOP_RUNG_FINDINGS} there, so they were not sent and no step-up is left. The builder and its PR are kept, and no attempt was counted. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Narrow the scope to something that fails closed, split the story, or accept the PR with the findings filed as follow-up stories. Then lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is (lifting a hold is not the story's one reset), and send the kept builder the findings it still needs: \`swarm.sh tell $1 findings ${kept}\` (reset leaves that file)."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."$'\n\n'"The findings that were not sent (kept in ${kept}):"$'\n\n'"$(cat "$2")" "${STEP_PRS}" >/dev/null
+  set_fm "${BOARD}/stories/$1.md" held_for top-rung
+  record_event held "$1" "ok (top-rung: findings round ${TOP_RUNG_FINDINGS} on ${m})"
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its

@@ -1483,7 +1483,8 @@ note_lock() {
 # the handover brief, and the tell fails, saying so; a step-up that closed nothing sends them as usual.
 # On the ladder's top rung (top_rung) the TOP_RUNG_FINDINGS-th since it got there or the lead last
 # reset the story (top_rung_since), or any after, are
-# not sent either: the story is held for the lead with them (top_rung_story), and the tell fails.
+# not sent either: the story is held for the lead with them (top_rung_hold), and the tell fails; where
+# a step-up could not run (step_up_story), nothing is held and they are sent as usual.
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
@@ -1522,10 +1523,8 @@ tell_agent() {
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
   if [[ "${kind}" == findings ]] && top_rung "$1" && (( $(findings_told "$1" "$(top_rung_since "$1")") >= TOP_RUNG_FINDINGS - 1 )); then
-    # Held already (a retried tell): a second lead_block would make escalated_from: lead.
-    ! is_escalated "${BOARD}/stories/$1.md" || die "tell: ${name} was not told: $1 is held for the lead already (escalated); the lead decides it"
-    top_rung_story "$1" "${f}"
-    die "tell: ${name} was not told: these were findings round ${TOP_RUNG_FINDINGS} on the ladder's top rung, so $1 is held for the lead (escalated, kind: lead) with them in its block; its builder and PR are kept"
+    ! top_rung_hold "$1" "${f}" \
+      || die "tell: ${name} was not told: these were findings round ${TOP_RUNG_FINDINGS} on the ladder's top rung, so $1 is held for the lead (held_for: top-rung, kind: lead) with them in its block; its builder and PR are kept"
   fi
   if [[ "${kind}" == findings ]] && (( $(findings_told "$1") >= STEP_UP_FINDINGS - 1 )); then
     rc=0; ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}" || rc=$?
