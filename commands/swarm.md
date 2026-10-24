@@ -226,8 +226,8 @@ Repeat until a step below says stop:
      `swarm.sh board-pr done plan-<hld>` and `swarm.sh close plan-<hld>`, so an abandoned worktree
      never hides the HLD from `next` and its agents' tab closes.
      When the gate lists `plan PR awaiting merge: <hld>` and no PR is open on `board/plan-<hld>`,
-     `/plan-hld` stopped before `board-pr open`: run `/plan-hld <hld>` again, which resumes in that
-     worktree.
+     run `/plan-hld <hld>` again: it clears the worktree of a plan PR that merged or closed, and
+     resumes in one that stopped before `board-pr open`.
    - `hld <hld>`: every epic planned from the HLD has left the board. Run `swarm.sh finish <hld>`
      and hand the PR it opens to the user: under `merge = human` the finish PR is always the user's,
      grant or not. Once that PR has merged or been closed, run `swarm.sh board-pr done finish-<hld>`,

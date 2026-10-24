@@ -33,20 +33,20 @@ hasnt() { # <name> <pattern> [text]
 }
 
 has description '^--- description: Use when asked to plan an agreed HLD into epics\.'
-has agreed-only 'Stop, saying why, when origin.s HLD is not `status: agreed`'
-has planned-refused 'when it has a `planned:` line \(it was planned already\)'
+has agreed-only 'when `<wt>`.s HLD is not `status: agreed`'
+has planned-refused 'when its `planned:` has a value \(it was planned already; an empty one, `""` or a bare `# comment` is none'
 has empty-arg 'If `\$1` is empty, list the agreed HLDs .* and ask which'
-has reads-origin 'git fetch origin`, then `git show origin/<base>:<board>/hld/\$1\.md`'
-has refuses-carried 'with no plan worktree to resume, an epic on origin already names it'
+has reads-origin 'Without `<wt>`, run `git fetch origin`, then `swarm\.sh board-pr start plan-\$1`, which makes `<wt>` from origin.s base'
+has refuses-carried 'or when an epic in `<wt>` already names it: .* `SWARM_PROJECT=<wt> swarm\.sh grants <epic>` prints `<wt>`.s `hld/\$1\.md` as its first line'
 has three-surveys 'role `survey`, three in parallel'
 has one-hld-lead 'one `hld-lead`, role `hld-lead`'
 has skeptic-cap 'role `skeptic` \(capped at five'
 has codex 'one `codex`, role `codex`'
 has critic 'one `critic`, role `critic`'
-has agent-tab 'swarm\.sh agent plan-\$1 <name> "\$PWD" <role>'
-has output-dir '`\.swarm/\$1/<name>\.json`'
+has agent-tab 'swarm\.sh agent plan-\$1 <name> "<wt>" <role>'
+has output-dir '`<project>/\.swarm/\$1/<name>\.json`'
 # The grants are read before the ask: the grants line comes before the "ask before" line.
-has grants-before-ask 'Before the ask, run `swarm\.sh grants \$1`.*ask before `board-pr open`'
+has grants-before-ask 'Before the ask, run `SWARM_PROJECT=<wt> swarm\.sh grants \$1`, which reads `<wt>`.s HLD.*ask before `board-pr open`'
 has active-under-epics 'lists `epics`, the HLD lets you write the epics `status: active`'
 has draft-otherwise 'Without it, write each epic `status: draft`'
 has own-epics 'An epic file there that already carries `hld: \$1` is this plan.s own, from the run you resume: overwrite it'
@@ -61,13 +61,17 @@ has log-finding 'swarm\.sh log-finding --reviewer skeptic\|codex\|critic'
 has board-pr-done 'swarm\.sh board-pr done plan-\$1'
 has done-on-close 'Once it has merged, or been closed unmerged, run `swarm\.sh board-pr done plan-\$1`'
 has close 'swarm\.sh close plan-\$1'
+has whole-plan-in-wt 'The whole plan runs on origin.s copy of the board in the plan worktree'
+has brief-reads-wt 'You are decomposing the agreed HLD `<wt>/docs/hld/\$1\.md`; read it first\. `<wt>` is origin.s copy of the project'
+has resume-mtime 'newer than `<wt>/\.git`'
 has stop-when-open 'If the board PR `plan-\$1` is already open \(`gh pr list --head board/plan-\$1 --state open --json url --jq .\.\[\]\.url.` prints a URL\), report its URL and stop'
-has resume-worktree 'exists with no open PR, an earlier run stopped there: resume in that worktree below instead of running `board-pr start`'
+has resume-worktree 'If `<wt>` exists, run `swarm\.sh board-pr done plan-\$1` first\. .* It refuses while `<wt>` holds this plan.s unopened work: an earlier run stopped there, so resume in `<wt>`'
 
 has swarm-plan-hld-step '- `plan-hld <hld>`: follow `/plan-hld <hld>`' "$swarm"
 has swarm-hld-step '- `hld <hld>`: .{0,120}`swarm\.sh finish <hld>`' "$swarm"
 has swarm-plan-done 'Once that PR has merged or been closed, run `swarm\.sh board-pr done plan-<hld>` and `swarm\.sh close plan-<hld>`' "$swarm"
 has hld-plans-next '`/swarm-dev:swarm` plans it into epics next: once its board PR has merged, or at once on a board outside the project.s repo' "$hld"
+has swarm-gate-rerun 'run `/plan-hld <hld>` again: it clears the worktree of a plan PR that merged or closed, and resumes in one that stopped before `board-pr open`' "$swarm"
 has swarm-finish-done 'swarm\.sh board-pr done finish-<hld>' "$swarm"
 
 hasnt skeleton-no-planned '^planned:' "$skeleton"
