@@ -192,8 +192,10 @@ CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_fallback_reviewer="" # empty: a codex usage limit skips codex's review; else a review agent on this model reviews in its place
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
+# shellcheck disable=SC2034 # nothing reads it yet; epic-guard-board-pr does
+CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
-CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin commit_trailers"
+CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin lead_epics commit_trailers"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -234,6 +236,8 @@ load_config() {
         [[ "${value}" == off || "${value}" == session ]] || die "${where}: lead must be off or session, not '${value}'" ;;
       merge_admin)
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: merge_admin must be off or on, not '${value}'" ;;
+      lead_epics)
+        [[ "${value}" == off || "${value}" == on ]] || die "${where}: lead_epics must be off or on, not '${value}'" ;;
       commit_trailers)
         [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
           || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;

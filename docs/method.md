@@ -135,13 +135,13 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage limit. Empty skips the review (reference.md § Building) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference.md § Settings) |
 | `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference.md § Settings) |
+| `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through you or a grant |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
 
-The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
-`.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
-project need not be a git repo: a board kept in a notes vault works, as long as every story names
-its `repo:`. When the board is not in the story's repo, the builder leaves the story file alone and
-the lead runs `swarm.sh finish <slug>` once the PR merges.
+The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with `.claude/swarm/config`,
+else the git repo you are in. A worktree resolves to its main checkout. The project need not be a git repo: a board kept
+in a notes vault works, as long as every story names its `repo:`. When the board is not in the story's repo, the builder
+leaves the story file alone and the lead runs `swarm.sh finish <slug>` once the PR merges.
 
 ## Where the rest is
 
