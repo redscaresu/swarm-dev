@@ -10,8 +10,8 @@ Decompose `docs/hld/$1.md` into epics. It must be `status: agreed`; if not, say 
 front matter has a `planned:` line, it has been planned already: say so and stop, since a second plan
 would write its epics again.
 Requires herdr (`HERDR_ENV=1`); if not inside herdr, say so and stop. If the board PR
-`plan-$1` is already open (`gh pr list --head board/plan-$1 --state open --json url` prints one),
-report its URL and stop: until it merges, main has no `planned:` for the HLD, and planning it again
+`plan-$1` is already open (`gh pr list --head board/plan-$1 --state open --json url --jq '.[].url'`
+prints a URL), report its URL and stop: until it merges, main has no `planned:` for the HLD, and planning it again
 would only open a second PR. If its worktree `<repo>-wt/_board-plan-$1` exists with no open PR,
 an earlier run stopped there: write in that worktree below instead of running `board-pr start`,
 which refuses a worktree that exists. `board-pr open` tells this run's PR from an earlier one on the
@@ -69,7 +69,9 @@ Before the ask, run `swarm.sh grants $1`. When it lists `epics`, the HLD lets yo
 draft is then agreed by the user through `/epic <slug>`, and nothing plans it until then.
 
 Write in a board-PR worktree (`swarm.sh board-pr start plan-$1`), never the main checkout. Write one
-`docs/epics/<slug>.md` per epic: front matter `status:` as above, `hld: $1` (the file name, no
+`docs/epics/<slug>.md` per epic. A slug that the worktree already has in `docs/epics/` or
+`docs/stories/` would overwrite an unrelated epic or story: rename that epic first, and every
+`depends_on` that names it, and say so in the report. Front matter `status:` as above, `hld: $1` (the file name, no
 `.md`), `depends_on: [<epic slugs>]`, `[]` when none; body: goal, **Done when**, out of scope,
 constraints, **Your part**. In the same worktree give the HLD `planned: <today>` in its front matter
 and a link to each epic under its `## Epics`; change nothing else in the HLD, and nothing else on the

@@ -222,7 +222,11 @@ Repeat until a step below says stop:
    - `plan-hld <hld>`: follow `/plan-hld <hld>`. Approving its epics is the user's decision: stop
      and wait for it, unless `swarm.sh grants <hld>` lists `epics`, which lets it write them active
      and open the board PR unasked. Its board PR lands like any other: the HLD's `merge` grant
-     covers it under `merge = human`.
+     covers it under `merge = human`. Once that PR has merged or been closed, run
+     `swarm.sh board-pr done plan-<hld>`, so an abandoned worktree never hides the HLD from `next`.
+     When the gate lists `plan PR awaiting merge: <hld>` and no PR is open on `board/plan-<hld>`,
+     `/plan-hld` stopped before `board-pr open`: run `/plan-hld <hld>` again, which resumes in that
+     worktree.
    - `hld <hld>`: every epic planned from the HLD has left the board. Run `swarm.sh finish <hld>`
      and hand the PR it opens to the user: under `merge = human` the finish PR is always the user's,
      grant or not. Once that PR has merged or been closed, run `swarm.sh board-pr done finish-<hld>`,
