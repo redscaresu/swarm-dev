@@ -1217,6 +1217,10 @@ fx_at g.md main "status: draft" "hld: hm"; fx_at g.md "${H1}" "status: active" "
 guarded "--board, merge = human, a draft-to-active flip under grants: [merge]" g
 check "--board, merge = human, a draft-to-active flip under grants: [merge]: reads the HLD at main" hld_read hm
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
+# Under no HLD merge_grant refuses too, but the guard runs first: its line is the one said.
+epr e1 "merge = human"; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
+guarded "--board, merge = human, a draft-to-active flip under no HLD" e1
+check "--board, merge = human, a draft-to-active flip under no HLD: not merge_grant's refusal" bash -c "! grep -qF 'waits on the user' '${ROOT}/out'"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
 check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"

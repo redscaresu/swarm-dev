@@ -138,6 +138,15 @@ merge_read() {
   return 2
 }
 
+# unticketed_why <line> — epic_unticketed's failure line as merge --board says it: a read error at the
+# base or head names the ref gh read there (merge_pr's locals base, head and url); any other line as it is.
+unticketed_why() {
+  local re='^cannot read (.+) at the (base|head)$' ref="${base}"
+  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }
+  [[ "${BASH_REMATCH[2]}" == base ]] || ref="${head:0:7}"
+  echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}, so whether ${url} sets an epic active with no ticket is unknown"
+}
+
 # merge_hold <pr-url> — stop merge when pr_held holds the PR for the user.
 merge_hold() {
   local why
@@ -241,14 +250,8 @@ merge_pr() {
     if [[ "${only}" == --board ]]; then
       # An epic set active with no ticket is the user's to agree under either merge mode, so this
       # runs before merge_grant's refusal could hide it. Outside the $(...), where a merge_fail would
-      # not stop this. A read error names its end; this names the ref gh read there.
-      p="$(epic_unticketed merge_read "${files}")" || {
-        if [[ "${p}" =~ ^cannot\ read\ (.+)\ at\ the\ (base|head)$ ]]; then
-          k="${head:0:7}"; [[ "${BASH_REMATCH[2]}" == head ]] || k="${base}"
-          p="gh cannot read ${BASH_REMATCH[1]} at ${k}, so whether ${url} sets an epic active with no ticket is unknown"
-        fi
-        merge_fail "--board: ${p}"
-      }
+      # not stop this.
+      p="$(epic_unticketed merge_read "${files}")" || merge_fail "--board: $(unticketed_why "${p}")"
       p="${p%%$'\n'*}"
       [[ -z "${p}" ]] || merge_fail "--board: ${url} sets ${p} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${p}"
     fi
