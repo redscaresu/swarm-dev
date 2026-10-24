@@ -154,6 +154,7 @@ item "${B}/hld/ho.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hf.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hp.md" "status: agreed" "planned: 2026-10-24"
 item "${B}/hld/hl.md" "status: agreed" "planned: 2026-10-24"
+item "${B}/hld/hs.md" "status: superseded"
 git -C "${P}" add -A && git -C "${P}" commit -qm hlds && git -C "${P}" push -q origin main
 sw "${P}" finish hd
 is "finish of an HLD an epic names: refused naming the epic" "1 yes" "${rc} $(has "still has epics on the board: hde" "${out}")"
@@ -164,24 +165,29 @@ is "finish of an agreed HLD with no planned:: no worktree or branch left" "no no
 sw "${P}" finish hdr
 is "finish of a draft HLD: refused" "1 yes" "${rc} $(has "the HLD hdr is a draft" "${out}")"
 is "finish of a draft HLD: no worktree or branch left" "no no no" "$(left hdr)"
+sw "${P}" finish hs
+is "finish of a superseded HLD: refused, the user removes it" "1 yes" "${rc} $(has "the HLD hs is superseded: another HLD replaced it, and the user removes it" "${out}")"
+is "finish of a superseded HLD: no worktree or branch left" "no no no" "$(left hs)"
 # An epic under hl only in the main checkout, not yet pushed: origin cannot see it, the main checkout can.
 item "${B}/epics/hle.md" "status: draft" "hld: hl"
 sw "${P}" finish hl
 is "finish of an HLD a main-checkout epic names: refused naming the epic" "1 yes" "${rc} $(has "finish: the HLD hl still has epics on the board: hle" "${out}")"
 is "finish of an HLD a main-checkout epic names: no worktree or branch left" "no no no" "$(left hl)"
 rm "${B}/epics/hle.md"
-# On origin, not pulled into the main checkout: an epic under ho, and hp without its planned:. A
-# finish-ho worktree started by hand before they merged is stale, so the check reads origin itself.
-sw "${P}" board-pr start finish-ho
+# ho's finish PR opens; then on origin, not pulled into the main checkout: an epic under ho, hp without
+# its planned:, and a .gitattributes that keeps epics/ out of git archive.
+sw "${P}" finish ho
+is "finish of a planned HLD, before an epic under it merges: opens its board PR" "0 yes" "${rc} $(left ho | cut -d' ' -f3)"
 git clone -q "${ROOT}/origin.git" "${ROOT}/other"
 item "${ROOT}/other/board/epics/hoe.md" "status: active" "hld: ho"
 item "${ROOT}/other/board/hld/hp.md" "status: agreed"
+printf 'board/epics/** export-ignore\n' > "${ROOT}/other/.gitattributes"
 git -C "${ROOT}/other" add -A && git -C "${ROOT}/other" commit -qm hoe && git -C "${ROOT}/other" push -q origin main
 git -C "${P}" fetch -q origin
 sw "${P}" finish ho
-is "finish of an HLD an epic on origin names, in a stale board worktree started by hand: refused, the worktree kept" "1 yes yes" \
-  "${rc} $(has "on origin/main, the HLD ho still has epics on the board: hoe" "${out}") $([[ -e "${ROOT}/proj-wt/_board-finish-ho" ]] && echo yes || echo no)"
-sw "${P}" board-pr "done" finish-ho
+is "a second finish of an HLD an epic on origin now names: refused, naming the epic and the closing PR" "1 yes" \
+  "${rc} $(has "on origin/main, the HLD ho still has epics on the board: hoe; board/finish-ho and its worktree are removed (an open PR on it closes)" "${out}")"
+is "a second finish of an HLD an epic on origin now names: its worktree and branch are gone, on origin too" "no no no" "$(left ho)"
 sw "${P}" finish ho
 is "finish of an HLD an epic on origin names: refused naming the epic" "1 yes" "${rc} $(has "on origin/main, the HLD ho still has epics on the board: hoe" "${out}")"
 is "finish of an HLD an epic on origin names: no worktree or branch left" "no no no" "$(left ho)"
