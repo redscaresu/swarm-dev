@@ -1388,7 +1388,8 @@ falls under an agreed HLD that lists `release`. It reads the board from the base
 your checkout may not have pulled. The story's epics are read as they were then, except that the
 base's copy wins where it still has one. Its HLD comes from the base alone, so deleting an HLD, or
 taking a grant off one, stops it counting once that change is on the base. A
-story the board still holds as `done`, because its PR left the file in place, must fall under such
+story the base's board still holds, marked `done` in your board state because its PR left the file
+in place, must fall under such
 an HLD too when a PR from its `story/<slug>` branch merged since the tag, and then counts as a story
 merged, or when gh cannot list those PRs, and then does not. Otherwise it refuses with `<PR URL> waits on
 the user's merge (merge = human, and story <slug>, merged since v<version>, is under no agreed HLD

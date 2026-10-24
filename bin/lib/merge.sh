@@ -1160,7 +1160,8 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 # a story the base deleted before the tag. The board is read as origin/<base> has it, never the
 # checkout, which may not have pulled: a story's epics are that commit's with origin's over them, and
 # its HLD is origin's alone, so an HLD the user deleted, or a grant taken off one, no longer counts. A
-# story the board still holds as done (its PR left the file, so reconcile marked it done) must be
+# story origin's board still holds as done in its state (its PR left the file, so reconcile marked it
+# done) must be
 # under one too when release_done finds it merged since the tag, and then counts as merged, or when gh
 # cannot tell, and then does not. It names the first story it fails on.
 release_grant() (
@@ -1169,9 +1170,9 @@ release_grant() (
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
   view="$(mktemp -d)" && [[ -d "${view}" ]] || { echo "mktemp -d failed, so the stories merged since v$3 cannot be read"; exit 0; }
   trap 'rm -rf "${view}"' EXIT
-  mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld"
+  mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld" "${view}/origin/stories"
   # origin/<base>'s board (release_tag fetched it); a directory it does not have is empty.
-  for s in epics hld; do
+  for s in epics hld stories; do
     git -C "${PROJECT_DIR}" archive --format=tar "origin/$2:${pre}${s}" 2>/dev/null | tar -xf - -C "${view}/origin/${s}" 2>/dev/null || true
   done
   # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
@@ -1194,8 +1195,10 @@ release_grant() (
     why="$(release_story "${slug}" "$(item_hld "${s}" "${view}/epics" "${view}/origin/hld")" "merged since v$3")"
     [[ -z "${why}" ]] || { echo "${why}"; exit 0; }
   done < "${view}/list"
+  # origin's stories, each with its state over it (get_fm: BOARD names the copy, so
+  # state_path finds the story's own state file).
   while IFS= read -r s; do
-    [[ "$(get_fm "${s}" status)" == "done" ]] || continue
+    [[ "$(BOARD="${view}/origin" get_fm "${s}" status)" == "done" ]] || continue
     slug="$(basename "${s}" .md)" rc=0
     release_done "${slug}" "$1" "$2" "$4" || rc=$?
     [[ ${rc} != 1 ]] || continue
@@ -1204,7 +1207,7 @@ release_grant() (
     why="$(release_story "${slug}" "$(item_hld "${s}" "${view}/origin/epics" "${view}/origin/hld")" "${when}")"
     [[ -z "${why}" ]] || { echo "${why}"; exit 0; }
     [[ ${rc} != 0 ]] || n=$((n + 1))
-  done < <(board stories)
+  done < <(BOARD="${view}/origin" board stories)
   [[ ${n} -gt 0 ]] || echo "no story was merged into $2 since v$3, so no HLD covers it"
 )
 
