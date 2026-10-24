@@ -1,8 +1,8 @@
 ---
 kind: lead
-status: blocked
+status: ready
 epic: safer-faster-swarm
-depends_on: [release-epic-close, remove-lessons, fallback-reviewer, escalate-ladder-triggers]
+depends_on: []
 touches: [.claude/swarm/config]
 after: safer-faster-swarm
 easy: false
