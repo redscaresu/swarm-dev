@@ -443,15 +443,22 @@ def covers(f, base, files):
             return False
     return True
 
-def pr_files(repo, n, changed, status=False):
+def pr_files(repo, n, changed, status=False, base=None, sha=None):
     """Every path PR n changes, a renamed file's old one too, or None when fewer than its changed
-    count come back (the API lists 3000 at most). With status, each as "<status> <path>": added,
-    modified, removed, renamed or copied, empty when the API gives none."""
+    count come back (the API lists 3000 at most). With base and sha, the files of base...sha
+    instead, the PR's files at that head whatever head it has now (the API lists 300 at most). With
+    status, each as "<status> <path>": added, modified, removed, renamed or copied, empty when the
+    API gives none."""
     got = []
-    for d in docs("repos/%s/pulls/%s/files?per_page=100" % (repo, n)):
-        if not isinstance(d, list):
-            raise Err("unreadable files for #" + n)
-        got += d
+    if sha:
+        got = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha))).get("files")
+        if not isinstance(got, list):
+            raise Err("unreadable files for %s...%s" % (base, sha[:7]))
+    else:
+        for d in docs("repos/%s/pulls/%s/files?per_page=100" % (repo, n)):
+            if not isinstance(d, list):
+                raise Err("unreadable files for #" + n)
+            got += d
     if len(got) != changed:
         return None
     try:
@@ -701,7 +708,7 @@ try:
         print(msg)
         sys.exit(rc)
     elif mode in ("files", "files-status"):
-        files = pr_files(repo, args[0], int(args[1]), mode == "files-status")
+        files = pr_files(repo, args[0], int(args[1]), mode == "files-status", *args[2:4])
         if not files:
             raise Err("gh listed no files, or fewer than the PR changes")
         print("\n".join(files))

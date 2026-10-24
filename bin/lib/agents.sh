@@ -554,15 +554,21 @@ start_agent() {
     { echo "The project is ${PROJECT_DIR}; every relative path below is relative to it. You can write only in $(codex_out_dir "${tab}")."; echo; cat "${prompt_file}"; } > "${brief}"
     prompt_file="${brief}"
   fi
+  # Fable's brief gets SLOW_PROMPT_TIMEOUT_MS in all: herdr's wait stays as it is, and longer reads
+  # after it make each of deliver_prompt's two tries half of it. Local, so a later prompt keeps the default.
+  local SETTLE_READS="${SETTLE_READS}"
+  [[ "${model}" != fable || -n "${SWARM_PROMPT_TIMEOUT_MS:-}" ]] \
+    || SETTLE_READS=$(((SLOW_PROMPT_TIMEOUT_MS / 2 - PROMPT_TIMEOUT_MS) / 5000))
   deliver_prompt "${name}" "${prompt_file}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
 }
 
 # codex_out_dir <tab> — where a planning tab's agents write their answers: .swarm/<epic> for
-# scope-<epic>; empty for any other tab.
+# scope-<epic>, .swarm/<hld> for plan-<hld>; empty for any other tab.
 codex_out_dir() {
   case "$1" in
     scope-?*) echo "${PROJECT_DIR}/.swarm/${1#scope-}" ;;
+    plan-?*) echo "${PROJECT_DIR}/.swarm/${1#plan-}" ;;
   esac
 }
 
@@ -675,23 +681,32 @@ story_text() {
 }
 
 # PROMPT_TIMEOUT_MS: how long a prompt has to be taken up (deliver_prompt), and a /goal to show in
-# the session log (send_goal).
+# the session log (send_goal). SLOW_PROMPT_TIMEOUT_MS: how long start_agent gives a fable brief in all,
+# since fable at xhigh can take over 60 s to show it is working (SWARM_PROMPT_TIMEOUT_MS overrides
+# it), and how long start_rung reads a new rung again before closing it (rung_late).
 PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
+SLOW_PROMPT_TIMEOUT_MS=300000
 
 # deliver_prompt <name> <prompt-file> [<pane>] [once] — submit the brief and confirm the agent acted on it.
 # `agent start` returns once the agent is ready, but a slow starter (Fable at xhigh) could
 # still drop a prompt sent at once, leaving it idle at an empty prompt while every later
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), and fails loudly rather than reporting success. It reports the
-# prompt taken only on evidence (herdr's reply, or prompt_settle: working, blocked, or a turn
-# finished since), and sends it again only on evidence it was not: prompt_settle found the agent
-# idle or done with no turn finished since. A prompt herdr refused before sending fails at once, naming
-# herdr's code. Anything else (no read before the prompt, no status) fails saying it may or may not
-# have it.
+# prompt taken on evidence: herdr's reply, or prompt_settle (working, blocked, a turn finished since,
+# or, for an agent whose Claude session read idle before the send, that session busy, waiting, or
+# with the prompt in its log since: DELIVER_LINE, else the file's first non-blank line). It sends it
+# again only on evidence it was not taken: prompt_settle found the agent idle or done with no turn
+# finished since, and, if herdr sent it, that Claude session showed no sign of it. herdr's screen can
+# read idle through a whole turn (plan-hld-command's four findings tells on 2026-10-24, each sent
+# twice), so a prompt herdr sent to an agent with no session to read (codex, a session Claude Code
+# does not list yet, or one it reads busy, waiting or not at all) is never sent again: when no turn
+# shows, it succeeds with a warning that herdr sent it the brief and did not show the turn start. A
+# prompt herdr refused before sending fails at once, naming herdr's code. Anything else (no read
+# before the prompt, no status) fails saying it may or may not have it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before try sent=0 unread=0
+  local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before try sent=0 unread=0 sess="" mark="" line=""
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
@@ -699,6 +714,12 @@ deliver_prompt() {
     return
   fi
   read -r status before <<< "$(agent_info "${target}")"   # the baseline, before anything goes out
+  # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG) that
+  # Claude Code reads idle: the session to read.
+  if awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n && $4 == "claude" { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null \
+    && [[ "$(session_state "${name}")" == idle ]] && mark="$(session_mark "${name}")"; then
+    sess="${name}" line="${DELIVER_LINE:-$(awk 'NF { print; exit }' "${prompt_file}")}"
+  fi
   for try in 1 2; do
     reply="$(prompt_once "${target}" "${prompt_file}")"
     case "${reply}" in
@@ -711,10 +732,13 @@ deliver_prompt() {
       *) [[ $((sent + unread)) -gt 0 ]] || die "${name}: herdr did not send it the brief (${reply}); see herdr agent read ${name}"
          die "${name}: $(sent_note "${sent}" "${unread}"), then could not send it again (${reply}); see herdr agent read ${name}" ;;
     esac
-    verdict="$(prompt_settle "${target}" "${status}" "${before}")"
+    verdict="$(prompt_settle "${target}" "${status}" "${before}" "${sess}" "${mark}" "${line}")"
     case "${verdict}" in
       taken) return 0 ;;
-      again\ *) ;;
+      again\ *) if [[ ${sent} -gt 0 && -z "${sess}" ]]; then
+          echo "warning: ${name}: $(sent_note "${sent}" "${unread}"), and herdr did not show the turn start (it reads it ${verdict#again } with no turn finished since); it was not sent again, see herdr agent read ${name}" >&2
+          return 0
+        fi ;;
       *) die "${name}: it may or may not have the brief: $(sent_note "${sent}" "${unread}"), then ${verdict#unsure }; it was not sent again, see herdr agent read ${name}" ;;
     esac
   done
@@ -783,13 +807,15 @@ agent_info() {
 # as a prompt has to be taken up, so a slow starter still idle after herdr's 5 s is not sent it again.
 SETTLE_READS=$((PROMPT_TIMEOUT_MS / 5000 > 1 ? PROMPT_TIMEOUT_MS / 5000 : 1))
 
-# prompt_settle <target> <status-before> <completion-before> — after a prompt that went out (or may
-# have) with no status in herdr's reply, read the agent (agent_info) until it shows it took it, and
-# print what came of it, against agent_info's read before the prompt (a status of - or unknown there is
-# no baseline). taken: working, blocked, or a completion_seq that was not there before (a turn
-# finished since). "again <status>": no turn ran, so it never took it: idle before and on the last
-# read with no completion_seq, or done with the same completion_seq. Else "unsure <why>": two failed
-# reads in a row (herdr down), no baseline, or anything else.
+# prompt_settle <target> <status-before> <completion-before> [<name> <mark> <line>] — after a prompt
+# that went out (or may have) with no status in herdr's reply, read the agent (agent_info) until it
+# shows it took it, and print what came of it, against agent_info's read before the prompt (a status
+# of - or unknown there is no baseline). taken: working, blocked, a completion_seq that was not there
+# before (a turn finished since), or, given <name>, its Claude session showing it took the prompt
+# (session_took past <mark>, for <line>), so a turn herdr's screen misses, or a short one between two
+# reads, counts. "again <status>": no turn ran: idle before and on the last read with no
+# completion_seq, or done with the same completion_seq. Else "unsure <why>": two failed reads in a
+# row (herdr down), no baseline, or anything else.
 prompt_settle() {
   local s="-" c="-" i misses=0 known=yes
   case "$2" in idle|done|working|blocked) ;; *) known="" ;; esac
@@ -802,11 +828,55 @@ prompt_settle() {
     esac
     misses=0
     if [[ -n "${known}" && "${c}" != - && "${c}" != "$3" ]]; then echo taken; return; fi
+    if [[ -n "${4:-}" ]] && session_took "$4" "$5" "$6"; then echo taken; return; fi
   done
   if [[ -n "${known}" && "${c}" == "$3" ]] && [[ ( "${s}" == idle && "$2" == idle ) || ( "${s}" == "done" && "${c}" != - ) ]]; then echo "again ${s}"
   elif [[ "${s}" == - ]]; then echo "unsure herdr gave no status for it"
   elif [[ -z "${known}" ]]; then echo "unsure herdr reads it ${s}, with nothing from before the prompt to compare it with"
   else echo "unsure herdr reads it ${s} with no turn finished since"; fi
+}
+
+# session_mark <name> — the byte size of <name>'s own Claude session log (its agents.tsv session id,
+# report.py's session_log), 0 when it has none yet, for session_took to read past.
+session_mark() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *; from report import session_log
+sid = session_id(sys.argv[1], sys.argv[2]); path = session_log(sys.argv[3], sid) if sid else ""
+print(os.path.getsize(path) if path else 0)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
+}
+
+# session_took <name> <mark> <line> — succeed when <name>'s Claude session shows it took a prompt:
+# Claude Code reads it busy or waiting (one claude_agents call), or its main log has, past byte
+# <mark>, a user prompt (panes.py's is_prompt, not a Task subagent's entry) whose text holds <line>
+# (whitespace aside). Not a tool result, an automated prompt or another tell's: a turn the prompt did
+# not start writes those too.
+session_took() {
+  { claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import json, os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *; from report import session_log
+log, name, projects, mark, line = sys.argv[1:6]
+if (session_state(log, name, sys.stdin.read() or None) or ("",))[0] in ("busy", "waiting"):
+    sys.exit(0)
+want, sid = " ".join(line.split()), session_id(log, name)
+path = session_log(projects, sid) if sid else ""
+if not want or not path:
+    sys.exit(1)
+with open(path, "rb") as f:
+    f.seek(int(mark))
+    for l in f:
+        try:
+            d = json.loads(l)
+        except ValueError:
+            continue
+        if not isinstance(d, dict) or d.get("type") != "user" or d.get("isSidechain") or not is_prompt(d):
+            continue
+        c = (d.get("message") or {}).get("content")
+        if isinstance(c, list):
+            c = " ".join(str(x.get("text") or "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+        if want in " ".join(str(c or "").split()):
+            sys.exit(0)
+sys.exit(1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "$3" 2>/dev/null
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
@@ -1490,7 +1560,7 @@ note_lock() {
 # is also prompted to read it now (note_wake). With conductor_lanes above 1, a note to the lane-less
 # name goes to every running lane conductor of that epic or backlog.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane e k l sent=""
+  local kind="$2" f="$3" name msg state since inbox rc pane line e k l sent=""
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1544,9 +1614,11 @@ tell_agent() {
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
-  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then deliver_prompt "${name}" "${msg}"; echo "told ${name}"; return; fi
+  # The file's own first line is what its session log is read for: every tell starts with the header.
+  line="$(awk 'NF { print; exit }' "${f}")"
+  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"; echo "told ${name}"; return; fi
   since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
-  deliver_prompt "${name}" "${msg}"
+  DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
@@ -1555,10 +1627,37 @@ tell_agent() {
   echo "told ${name}"
 }
 
-# findings_told <slug> — how many ok findings tells (a bare tell, from logs before kinds, too) <slug>
-# has had since its build started (build_started).
+# tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other
+# stderr it printed. A findings tell herdr sent also says what to do: findings_told counts it as a
+# round, so the same findings sent again as findings would count that round twice. After "may or may
+# not have the brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice)
+# herdr may have dropped both, so the pane says whether to send them again, as a nudge: a nudge is
+# not a round.
+tell_deliver() {
+  local err why rc
+  # Not `{ ...; } || rc=$?`: on the left of || set -e is ignored inside deliver_prompt too, so an
+  # own_target die in `target="$(own_target ...)"` would not stop it, and it would prompt an empty target.
+  # The bare set -e after is the state tell_agent, its one caller, runs in: dispatch's set -e.
+  set +e; { err="$( set -e; deliver_prompt "$1" "$2" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+  # A success keeps its stderr too: deliver_prompt warns when herdr sent the brief and did not show the turn start.
+  if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; return 0; fi
+  if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; exit "${rc}"; fi
+  why="${err##*swarm: }"; err="${err%swarm: *}"
+  [[ -z "${err}" ]] || printf '%s' "${err}" >&2
+  case "$3:${why}" in
+    findings:*"the brief was not taken up: herdr sent it the brief"*)
+      die "${why}; the findings count as a round: read its pane (herdr agent read $1) and, if it shows they never arrived, send them again as a nudge (swarm.sh tell $1 nudge <file>), which is not a round" ;;
+    findings:*"herdr sent it the brief"*) die "${why}; the findings count as delivered, a findings round of its build, so do not send them again" ;;
+  esac
+  die "${why}"
+}
+
+# findings_told <slug> — how many findings tells (a bare tell, from logs before kinds, too) <slug>
+# has had since its build started (build_started): ok ones, and those herdr sent but deliver_prompt
+# did not see taken up ("herdr sent it the brief"); not one herdr never sent. Nor one whose reply
+# "could not be read" with none sent: whether it went out is unknown, so it is not counted.
 findings_told() {
-  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && $5 == "ok" { n++ }
+  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
     END { print n + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
 }
 

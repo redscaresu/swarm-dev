@@ -198,10 +198,24 @@ echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.14"
 echo '[{"filename":"docs/stories/ghost.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_14_files_per_page=100"
 expect board-pr-no-version-none https://github.com/o/r/pull/14 none
 
-# story PR #15 (s-cfg, under A) also changes .claude/swarm/config: none.
+# story PR #15 (s-cfg, under A, which grants merge) also changes .claude/, .github/, a root Makefile
+# or hooks/: none. Changing none of them, it is A's.
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.15"
-echo '[{"filename":"bin/x.sh"},{"filename":".claude/swarm/config"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
-expect story-pr-touching-config-none https://github.com/o/r/pull/15 none
+for f in config:.claude/swarm/config workflow:.github/workflows/ci.yml board-only:.github/swarm-board-only.sh \
+  makefile:Makefile gnumakefile:GNUmakefile hooks:hooks/hooks.json settings:.claude/settings.json \
+  claude-hooks:.claude/hooks/x.sh; do
+  echo "[{\"filename\":\"bin/x.sh\"},{\"filename\":\"${f#*:}\"}]" > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+  expect "story-pr-touching-${f%%:*}-none" https://github.com/o/r/pull/15 none
+done
+echo '[{"filename":"bin/x.sh"},{"filename":"README.md"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect story-pr-touching-no-protected-path https://github.com/o/r/pull/15 "$(printf '%s\nmerge\nstories' "${A}")"
+# The root Makefile renamed away (its previous_filename), or deleting s-child (A) on the board beside
+# .github/: none.
+echo '[{"filename":"bin/x.sh"},{"status":"renamed","filename":"old/Makefile","previous_filename":"Makefile"}]' \
+  > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect story-pr-renaming-makefile-away-none https://github.com/o/r/pull/15 none
+echo '[{"filename":"docs/stories/s-child.md"},{"filename":".github/workflows/ci.yml"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect story-pr-touching-board-and-protected-path-none https://github.com/o/r/pull/15 none
 
 # board PR #16 deletes s-child (A) and changes docs/README.md, a board file that is no epic or story: none.
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.16"
@@ -212,6 +226,21 @@ expect board-pr-other-board-file-none https://github.com/o/r/pull/16 none
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.17"
 echo '[{"filename":"bin/x.sh"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_17_files_per_page=100"
 expect board-pr-code-file-none https://github.com/o/r/pull/17 none
+# expect_fail <name> <arg> — grants fails and prints no HLD.
+expect_fail() {
+  grants "$2"
+  if [[ ${rc} -ne 0 ]] && ! grep -q '/hld/' "${ROOT}/out"; then echo "ok   $1"
+  else echo "FAIL $1 (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
+}
+# Story s-null (under A) lists PR #57, which touches s-child.md; gh gives its head as null, then as no
+# SHA: grants fails rather than read the board at a head that is none and print A.
+item "${B}/stories/s-null.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/57"
+echo '[{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_57_files_per_page=100"
+echo '{"headRefOid":null,"changedFiles":1}' > "${FX}/pr.57"
+expect_fail null-head-fails https://github.com/o/r/pull/57
+echo '{"headRefOid":"None","changedFiles":1}' > "${FX}/pr.57"
+expect_fail no-sha-head-fails https://github.com/o/r/pull/57
+rm "${B}/stories/s-null.md"
 
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none
@@ -231,10 +260,10 @@ hld() {
 pr() {
   local n="$1" p l="" st; shift
   for p in "$@"; do st=added; [[ "${p}" != *hld/* ]] || st=modified; l+="${l:+,}{\"status\":\"${st}\",\"filename\":\"${p}\"}"; done   # loose-match: ok a path under hld/
-  echo "{\"headRefOid\":\"h${n}\",\"changedFiles\":$#}" > "${FX}/pr.${n}"
+  echo "{\"headRefOid\":\"$(printf '%040d' "${n}")\",\"changedFiles\":$#}" > "${FX}/pr.${n}"
   echo "[${l}]" > "${FX}/repos_o_r_pulls_${n}_files_per_page=100"
 }
-at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=h$1"; }   # at <n> <path> — <path>'s copy at #<n>'s head
+at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=$(printf '%040d' "$1")"; }   # at <n> <path> — <path>'s copy at #<n>'s head, <n> as 40 digits
 status() { sed -i.bak "s|\"status\":\"[a-z]*\",\"filename\":\"$2\"|\"status\":\"$3\",\"filename\":\"$2\"|" "${FX}/repos_o_r_pulls_$1_files_per_page=100"; }
 # planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics links
 # (${EPICS}, by default one list-item link each) at the head, and epics p-one and p-two added with

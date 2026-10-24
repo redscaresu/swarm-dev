@@ -120,6 +120,47 @@ if ! [[ "${limit}" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
+# Each run appends a line to the main checkout's .swarm/test-runs.tsv (found through git's common
+# dir, never SWARM_PROJECT, which is unset above) as it starts and as it ends, for flow's test_runs:
+# start and end (UTC), seconds, JOBS, the filter, branch, the 1-minute load and CPUs, the other runs
+# going, each line as of its own moment, the exit status and the run's PID; the start line leaves
+# end, seconds and status empty. The filter is all when the files are every tests/*_test.sh, else TESTS, else how many
+# files; then ` shard i/N` for a SHARD. A run going is a file named by its PID in test-runs.d beside
+# the log, there from its start to its end; one whose PID has gone is stale, and removed. TEST_RUNS_LOG,
+# when set, is the file instead, and set empty for the jobs, so a run a test starts itself logs
+# nothing and is no run going. A write that fails is skipped.
+runs_log="${TEST_RUNS_LOG-}"
+if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  runs_log="$(dirname "${common}")/.swarm/test-runs.tsv"
+fi
+export TEST_RUNS_LOG=""
+marks="$(dirname "${runs_log:-.}")/test-runs.d"
+if [[ "$(printf '%s\n' "${files[@]+"${files[@]}"}" | LC_ALL=C sort)" == "$(printf '%s\n' tests/*_test.sh | LC_ALL=C sort)" ]]; then
+  filter=all
+else
+  filter="${TESTS:-${#files[@]} files}"
+fi
+filter="${filter//$'\t'/ }${SHARD:+ shard ${SHARD}}"
+branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || echo -)"
+t_start=${SECONDS} t_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# others — how many other runs are going: live marks but this run's.
+others() {
+  local m n=0
+  for m in "${marks}"/*; do
+    [[ -e "${m}" && "${m##*/}" != "$$" ]] || continue
+    if kill -0 "${m##*/}" 2>/dev/null; then n=$((n + 1)); else rm -f "${m}"; fi
+  done
+  echo "${n}"
+}
+# log_run <end> <seconds> <status> — append this run's line, as of now, or nothing when it cannot.
+log_run() {
+  [[ -n "${runs_log}" ]] || return 0
+  { mkdir -p "${marks}" && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${t_iso}" "$1" "$2" "${JOBS:-4}" "${filter}" "${branch}" \
+    "$(LC_ALL=C uptime | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" "$(getconf _NPROCESSORS_ONLN)" "$(others)" "$3" "$$" >> "${runs_log}"; } 2>/dev/null || true
+}
+[[ -z "${runs_log}" ]] || { mkdir -p "${marks}" && : > "${marks}/$$"; } 2>/dev/null
+log_run "" "" ""
+
 run="$(mktemp -d)" || exit 1
 mkdir -p "${run}/logs" "${run}/jobs"
 # On any exit, stop the jobs left (only after xargs stopped early, or an interrupt, can there be
@@ -127,7 +168,7 @@ mkdir -p "${run}/logs" "${run}/jobs"
 # there, and KILL it 2 s later, and the job. Only then do the logs go.
 # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() {
-  local j i g left
+  local rc=$? j i g left
   for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -TERM "${j##*/}" 2>/dev/null; done
   for ((i = 50; i > 0; i--)); do
     left=""
@@ -141,6 +182,8 @@ cleanup() {
     kill -KILL "${j##*/}" 2>/dev/null
   done
   rm -rf "${run}"
+  log_run "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((SECONDS - t_start))" "${rc}"
+  [[ -z "${runs_log}" ]] || rm -f "${marks}/$$"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
