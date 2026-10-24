@@ -2,7 +2,9 @@
 # grants_test.sh — swarm.sh grants: the agreed HLD over a story, epic or PR and its grants, on a
 # fixture board. A story walks epic: then parent: up to an epic with hld:; a draft, superseded or
 # missing HLD, a story with no epic and a parent: cycle print none; a bad grant dies with the file and
-# line. gh is a stub on PATH answering a PR's files and head contents from ${FX}.
+# line. A name that is no story or epic but an HLD in hld/ is that HLD (an agreed one prints itself and
+# its grants, any other none); a story or epic of the same name wins; a path as the name dies with bad
+# slug. gh is a stub on PATH answering a PR's files and head contents from ${FX}.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -90,6 +92,30 @@ expect missing-hld-file-none s-gone none
 expect missing-epic-none s-orphan none
 expect no-epic-none s-none none
 expect parent-cycle-ends s-cyc none
+# An HLD named directly: an agreed one prints itself and its grants, none for no grants, a draft or
+# superseded one prints none, a bad grant dies with its file and line, and a story or epic of the
+# same name wins.
+item "${B}/hld/2026-01-01-c.md" "title: C" "status: agreed"
+item "${B}/hld/clash.md" "title: Clash" "status: agreed" "grants: [release]"
+item "${B}/stories/clash.md" "status: ready" "epic: child"
+expect hld-arg-agreed 2026-01-01-a "$(printf '%s\nmerge\nstories' "${A}")"
+expect hld-arg-no-grants-none 2026-01-01-c "$(printf '%s\nnone' "${B}/hld/2026-01-01-c.md")"
+expect hld-arg-draft-none draft none
+expect hld-arg-superseded-none old none
+item "${B}/hld/2026-01-01-d.md" "title: D" "status: agreed" "grants: [epics, merge]"
+expect hld-arg-epics-and-merge 2026-01-01-d "$(printf '%s\nepics\nmerge' "${B}/hld/2026-01-01-d.md")"
+item "${B}/hld/clash-e.md" "title: Clash E" "status: agreed" "grants: [release]"
+item "${B}/epics/clash-e.md" "status: active" "parent: top"
+expect hld-arg-and-epic-same-name-epic-wins clash-e "$(printf '%s\nmerge\nstories' "${A}")"
+expect hld-arg-and-story-same-name-story-wins clash "$(printf '%s\nmerge\nstories' "${A}")"
+grants bad
+if [[ ${rc} -ne 0 ]] && grep -qF "${B}/hld/bad.md:4: grants must be epics, stories, merge or release" "${ROOT}/out"; then
+  echo "ok   hld-arg-bad-grant-dies-with-file-and-line"
+else echo "FAIL hld-arg-bad-grant-dies-with-file-and-line (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
+grants ../epics/x
+if [[ ${rc} -ne 0 ]] && grep -qF "bad slug" "${ROOT}/out"; then echo "ok   path-arg-dies-bad-slug"
+else echo "FAIL path-arg-dies-bad-slug (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
+
 # story PRs: #3 changes code; #4 changes an HLD too, so it is under none.
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.3"
 echo '[{"filename":"bin/x.sh"}]' > "${FX}/repos_o_r_pulls_3_files_per_page=100"
