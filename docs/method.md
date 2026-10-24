@@ -108,10 +108,11 @@ gate again if it is missing. With other workflows already there, init leaves the
 and prints the step to add to the job that runs your checks. It also writes a git pre-commit hook
 that runs `make check`, skipping a commit that changes only the board's own files. While make has
 no `check` target, the hook only warns and CI fails. When a hook exists or the repo sets
-`core.hooksPath`, init writes no hook and prints the lines to add before its `exec` (husky:
+`core.hooksPath`, init writes no hook and prints the lines to add before any `exec` in it (husky:
 `.husky/pre-commit`). A global `core.hooksPath` gets neither, since it would hit every repo. Last,
-init lists the untracked files to commit; CI runs only once its workflow is committed. The next
-`/swarm-dev:swarm` asks once for the brief (`.claude/swarm/brief.md`); empty means you declined.
+init lists the files it wrote that git does not track yet, for you to commit; CI runs only once its
+workflow is committed. The next `/swarm-dev:swarm` asks once for the brief
+(`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
 runs it; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config`
@@ -146,5 +147,4 @@ the lead runs `swarm.sh finish <slug>` once the PR merges.
 ## Where the rest is
 
 [`reference.md`](reference.md) holds the lead's board PRs and wake, writing an epic, model and effort,
-settings, scoping an epic, building, logs and outcomes, flow and features, the outer loop, merging
-and releases.
+settings, scoping, building, logs, outcomes, flow, features, the outer loop, merging, releases.
