@@ -64,10 +64,10 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    > revise. When the user says they agree it, `touch D/agreed` and stop. Never create either file
    > unless the user said so.
 
-3. `mkdir -p D` and remove any old `D/ready` and `D/agreed`, on a resume too, and delete any `agreed:` line from the
-   epic's front matter: a leftover
+3. `mkdir -p D` and remove any old `D/ready` and `D/agreed`, on a resume too: a leftover
    `D/ready` would start a reviewer at once, and a leftover `D/agreed` would set the epic active
-   with no fresh agreement. Remove an old `D/review.md` when starting a new epic; on a resume, move
+   with no fresh agreement. Also delete any `agreed:` line from the epic's front matter: a stale
+   ticket would let a later draft to active flip pass with no fresh agreement. Remove an old `D/review.md` when starting a new epic; on a resume, move
    it to `D/review-stale.md` and tell the co-author it is the last review, written against an
    earlier draft. Then `swarm.sh agent _epic epic-<slug> "$PWD" epic .swarm/briefs/epic-<slug>.md`
    (the tab `_epic`: a leading underscore no epic or story slug can take, so closing it never

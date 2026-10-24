@@ -19,7 +19,7 @@ status: draft | active | later | review | split
 depends_on: [other-epic]
 parent: big-epic            # only on a child epic of a split one
 check: make test
-agreed: 2026-10-23         # set by /epic when the user agrees it
+agreed: <YYYY-MM-DD>      # set by /epic when the user agrees it
 ---
 
 # <Goal, as a sentence>
@@ -30,7 +30,7 @@ agreed: 2026-10-23         # set by /epic when the user agrees it
 **Your part:** the steps you or your own session will do (go-aheads, logins, hand steps), or none.
 ```
 
-An epic goes `active` only with `agreed:`, a `parent:`, an `hld:` whose agreed HLD grants `epics`, or `lead_epics = on`.
+A new or draft epic goes `active` only with `agreed:`, a `parent:`, an `hld:` whose agreed HLD grants `epics`, or `lead_epics = on`. A `later` epic needs none of these to go `active`.
 
 A story joins an epic with `epic: <epic-file-name-without-.md>` in its front matter. Scope a new
 epic with `/plan-epic <slug>` (swarm-dev `docs/reference.md` § Scoping an epic). In Obsidian,
