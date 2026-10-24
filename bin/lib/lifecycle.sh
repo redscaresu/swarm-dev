@@ -28,6 +28,20 @@ origin_has() {
   return "${rc}"
 }
 
+# board_read base|head <path> — epic_unticketed's reader for board_pr open: <path> at origin/<base>, or
+# in the worktree <wt> (board_pr's locals); fails 1 when it is absent and 2 when it cannot be read.
+board_read() {
+  local t
+  if [[ "$1" == base ]]; then
+    t="$(git -C "${wt}" ls-tree --name-only "origin/${base}" -- "$2")" || return 2
+    [[ -n "${t}" ]] || return 1
+    git -C "${wt}" show "origin/${base}:$2" || return 2
+  else
+    [[ -e "${wt}/$2" || -L "${wt}/$2" ]] || return 1
+    cat -- "${wt}/$2" 2>/dev/null || return 2
+  fi
+}
+
 # board_pr start|open|done <name> ... — the lead's board edits, each in its own worktree, never the
 # main checkout: start makes <repo>-wt/_board-<name> (a path no story slug makes) on a new
 # board/<name> from origin/<base> and prints its path; open <name> "<title>" <body-file> commits every change (all under the board) with
@@ -63,14 +77,25 @@ board_pr() {
       [[ -f "$4" && -r "$4" ]] || die "board-pr: no body file at $4"
       [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "${b}" ]] \
         || die "board-pr: ${wt} is not a worktree on ${b}; run swarm.sh board-pr start ${name}"
-      base="$(base_for "${PROJECT_DIR}")"
+      # base_for fetches origin/<base>, so the epic check reads it as it is now (an HLD superseded since
+      # the start counts).
+      base="$(base_for "${PROJECT_DIR}")" || die "board-pr: cannot fetch origin's base branch, so whether an epic goes active with no ticket is unknown"
       # The board's path from the root with a trailing /, or empty when the board is the root.
       rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
       # Committed and uncommitted changes since the base, a rename's old path too, and new files.
       files="$(git -C "${wt}" -c core.quotepath=off diff --name-only --no-renames "$(git -C "${wt}" merge-base HEAD "origin/${base}")" \
         && git -C "${wt}" -c core.quotepath=off ls-files --others --exclude-standard)" || die "board-pr: cannot list the changes in ${wt}"
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
-      while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"   # loose-match: ok rel ends in /, so a path under the board
+      # git C-quotes a path holding a ", \, tab or newline, and a quoted path would slip past the prefix
+      # checks here and in epic_unticketed.
+      while IFS= read -r f; do
+        [[ "${f}" != \"* ]] || die "board-pr: ${f} has a quote, backslash, tab or newline in its name; rename it"
+        [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"   # loose-match: ok rel ends in /, so a path under the board
+      done <<< "${files}"
+      # An epic that goes active with no ticket is refused before anything is pushed. Checked outside
+      # the $(...), where a die would not stop this.
+      f="$(epic_unticketed board_read "${files}")" || die "board-pr: ${f}"
+      [[ -z "${f}" ]] || { f="${f%%$'\n'*}"; die "board-pr: ${f} goes active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${f}"; }
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
       # answer (commands/plan-epic.md step 0), written since this worktree started: an older one is an
       # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. A

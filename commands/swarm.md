@@ -288,22 +288,37 @@ Repeat until a step below says stop:
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
      green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
-     what it printed and stop. If `swarm.sh config merge` is `agent`, run
-     `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it.
-     For swarm-dev's own repo, merge has confirmed the tag and the GitHub release, updated the
-     plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
-     `claude --continue`) and any warning it printed. If CI on the base was not green, merge
-     updated nothing and printed a warning naming what to run once the release is published:
-     tell the user that warning. For any other repo, check that the tag
-     `v<new>` exists and that `gh release view v<new>` shows the release. Run
-     `swarm.sh dash --check`, which compares every figure dash shows with the command that
-     owns it and exits 1 naming each one that differs. If it fails, run it once more, since a
-     figure can move between the two reads; if it fails again, file a `kind: code` story naming the
-     fields it printed. Remove the worktree and the branch, and go back to 1. If it is `human`,
-     run `swarm.sh dash --check`; if it fails, run it once more, and if it fails again, file a
-     `kind: code` story naming the fields it printed. Keep the worktree and the branch: the bump
-     PR still waits. Tell the user the PR waits on their merge, show what `swarm.sh status` lists
-     under Waiting on you, and stop.
+     what it printed and stop. Run
+     `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it,
+     under `merge = human` too: there it merges only when HLDs granting `release` cover the release.
+     Then go by whether merge printed `merged:`, not by its exit code:
+     - It printed `merged:`, even if it then exited non-zero (red CI on the base also printed `fix-main:`
+       and wrote a story; a CI timeout wrote none): tell the user what it printed. For swarm-dev's own
+       repo, merge has confirmed the tag and the GitHub release, updated the
+       plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
+       `claude --continue`) and any warning it printed. If CI on the base was not green, merge
+       updated nothing and printed a warning naming what to run once the release is published:
+       tell the user that warning. For any other repo, check that the tag
+       `v<new>` exists and that `gh release view v<new>` shows the release. If merge instead printed
+       `<url> is MERGED, not open` (the user merged it) or `unconfirmed (...)` and `gh pr view` shows
+       it MERGED, merge stopped before it waited for CI on the base or ran the upgrade: look at CI on
+       the base yourself, check the tag and the release, and tell the user the plugin update did not
+       run. Then run `swarm.sh dash --check`, which compares every figure dash shows with the command
+       that owns it and exits 1 naming each one that differs. If it fails, run it once more, since a
+       figure can move between the two reads; if it fails again, file a `kind: code` story naming the
+       fields it printed. Remove the worktree and the branch, and go back to 1.
+     - It refused because of the PR: a version not greater than the base's, more changed than the
+       version, a fix on it, a missing docs PR or `Docs: none` line, a head that moved, or a PR that is
+       CLOSED. The lead acts, under both settings: do what the refusal says (a fix or the docs goes to
+       the base first, as above; merge origin/<base> into the PR; or remove this worktree and the
+       `release/v<new>` branch, close the PR and cut the release again). Run `swarm.sh dash --check` as
+       above, then stop and go back to 1 once that is done.
+     - Any other refusal: under `merge = human` the release-grant refusal ("waits on the user's merge"),
+       a merge queue, a failed fetch of the base, a missing `v<version>` tag, a gh error. Keep the
+       worktree and the branch. Run `swarm.sh dash --check` as above. Tell the user what the refusal
+       printed and that the PR waits on their merge, show what `swarm.sh status` lists under Waiting on
+       you, and stop. Under `merge = agent` that holds for the merge-queue refusal and a missing tag,
+       which only the user clears; for any other refusal, tell the user what it printed and stop.
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked

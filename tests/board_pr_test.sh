@@ -3,7 +3,8 @@
 # anything that could touch the main checkout; open commits board files only and opens one PR; done
 # clears up only once the PR merged or closed; one events.tsv line per step. gh is a stub on PATH
 # that logs every call to gh.log and lists the PRs in ${ROOT}/prs (none without it); origin is a local
-# bare repo. A git wrapper on PATH fails `worktree add` while ${ROOT}/wt-add.fail exists,
+# bare repo. A git wrapper on PATH fails `worktree add` while ${ROOT}/wt-add.fail exists, `fetch` while
+# ${ROOT}/fetch.fail does,
 # `ls-remote` while ${ROOT}/ls-remote.fail does, and `push --delete` while ${ROOT}/push-delete.fail does.
 set -euo pipefail
 
@@ -50,6 +51,7 @@ printf '#!/usr/bin/env bash\nR="%s"; GIT="%s"\n' "${ROOT}" "$(command -v git)" >
 cat >> "${ROOT}/bin/git" <<'STUB'
 case " $* " in *" ls-remote "*) [ ! -e "${R}/ls-remote.fail" ] || { echo "fatal: could not read from remote" >&2; exit 128; } ;; esac
 case " $* " in *" push "*" --delete "*) [ ! -e "${R}/push-delete.fail" ] || { echo "error: failed to push some refs" >&2; exit 1; } ;; esac
+case " $* " in *" fetch "*) [ ! -e "${R}/fetch.fail" ] || { echo "fatal: could not read from remote" >&2; exit 128; } ;; esac
 case " $* " in *" worktree add "*) [ ! -e "${R}/wt-add.fail" ] || { echo "fatal: invalid reference: origin/main" >&2; exit 128; } ;; esac
 exec "${GIT}" "$@"
 STUB
@@ -290,6 +292,11 @@ refused "a name with .." "not a name" "${before}"
 # --- /plan-epic's large-epic path: the board PR that splits big (scope-big, big at status: split) opens
 # only once the split critic wrote .swarm/big/split-critic.json; a medium epic's board PR needs none.
 # The worktree's start is backdated, so a critic answer written in the same second still counts as newer.
+# big is on main before its split, as a /plan-epic split finds it, so its children's parent: counts.
+git clone -q "${ROOT}/origin.git" "${ROOT}/big-base"; mkdir -p "${ROOT}/big-base/board/epics"
+printf -- '---\nstatus: active\nagreed: 2026-01-01\n---\n\n# big\n' > "${ROOT}/big-base/board/epics/big.md"
+git -C "${ROOT}/big-base" add -A && git -C "${ROOT}/big-base" commit -qm "add big" && git -C "${ROOT}/big-base" push -q origin HEAD:main
+git -C "${P}" fetch -q origin
 rm -f "${ROOT}/prs"; bpr start scope-big; SB="${ROOT}/proj-wt/_board-scope-big/board/epics"; mkdir -p "${SB}"
 touch -t 202101010000 "${ROOT}/proj-wt/_board-scope-big/.git"
 printf -- '---\nstatus: split\ndepends_on: []\n---\n\n# big\n' > "${SB}/big.md"
@@ -322,10 +329,121 @@ reset_log; bpr open scope-old "Add old-b" "${ROOT}/body.md"
 is "a later board PR on an already-split epic opens with no split-critic.json" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
 is "it leaves the first split's record as it was" "2026-01-01	https://github.com/o/r/pull/1" "$(cat "${P}/.swarm/old/split-pr")"
 bpr start scope-med; mkdir -p "${ROOT}/proj-wt/_board-scope-med/board/epics"
-printf -- '---\nstatus: active\n---\n\n# med\n' > "${ROOT}/proj-wt/_board-scope-med/board/epics/med.md"
+printf -- '---\nstatus: active\nagreed: 2026-01-01\n---\n\n# med\n' > "${ROOT}/proj-wt/_board-scope-med/board/epics/med.md"
 echo story > "${ROOT}/proj-wt/_board-scope-med/board/stories/med-a.md"
 reset_log; bpr open scope-med "Plan med" "${ROOT}/body.md"
 is "a medium epic's board PR opens with no split-critic.json" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
+
+# --- An epic that goes active (new, or draft at the base) needs a ticket: agreed:, parent:, an hld:
+# naming an HLD agreed with grants: [epics] at both ends, or lead_epics = on. A refused PR creates no
+# PR and pushes nothing. Fixtures on origin/main go in through the old-split clone.
+NT="goes active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
+# on_main <path> <content> — commit <path> with <content> on origin/main, fetched here.
+on_main() {
+  mkdir -p "$(dirname "${ROOT}/old-split/$1")"; printf '%b' "$2" > "${ROOT}/old-split/$1"
+  git -C "${ROOT}/old-split" add "$1" && git -C "${ROOT}/old-split" commit -qm "add $1" && git -C "${ROOT}/old-split" push -q origin HEAD:main
+}
+# ep <board-pr name> <path under board/> <content> — write a file in that board PR's worktree.
+ep() { mkdir -p "$(dirname "${ROOT}/proj-wt/_board-$1/board/$2")"; printf '%b' "$3" > "${ROOT}/proj-wt/_board-$1/board/$2"; }
+# guard_refused <name> <case> <text> — open board PR <name>: refused saying <text>, with no gh pr
+# create and no board/<name> on origin.
+guard_refused() {
+  local before; before="$(snap)"; reset_log; bpr open "$1" "Epic" "${ROOT}/body.md"
+  refused "$2" "$3" "${before}"
+  is "$2: no gh pr create" 0 "$(grep -c '^pr create' "${ROOT}/gh.log" || true)"
+  check "$2: no board/$1 on origin" bash -c "! git -C '${P}' ls-remote --exit-code origin refs/heads/board/$1 >/dev/null"
+}
+guard_opens() { reset_log; bpr open "$1" "Epic" "${ROOT}/body.md"; is "$2 opens" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"; }
+on_main board/epics/flip.md '---\nstatus: draft\n---\n\n# flip\n'
+on_main board/epics/stale.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# stale\n'
+on_main board/epics/fresh.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# fresh\n'
+on_main board/epics/selfp.md '---\nstatus: draft\n---\n\n# selfp\n'
+on_main board/epics/pdraft.md '---\nstatus: draft\n---\n\n# pdraft\n'
+on_main board/epics/nostat.md '---\ndepends_on: []\n---\n\n# nostat\n'
+on_main board/epics/later.md '---\nstatus: later\n---\n\n# later\n'
+on_main board/epics/act.md '---\nstatus: active\n---\n\n# act\n'
+on_main board/epics/gone.md '---\nstatus: active\n---\n\n# gone\n'
+on_main board/hld/h-draft.md '---\nstatus: draft\ngrants: [epics]\n---\n'
+on_main board/hld/h-ok.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
+on_main board/hld/h-merge.md '---\nstatus: agreed\ngrants: [merge]\n---\n'
+on_main board/hld/h-move.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
+on_main board/hld/H.dot.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
+on_main board/hld/h-bad.md '---\nstatus: agreed\ngrants: [bogus]\n---\n'
+git -C "${P}" fetch -q origin
+
+bpr start new; ep new epics/e-new.md '---\nstatus: active\n---\n\n# e-new\n'
+guard_refused new "a new active epic with no ticket" "e-new ${NT} e-new"
+ep new epics/e-new.md '---\nstatus: draft\n---\n\n# e-new\n'
+git -C "${ROOT}/proj-wt/_board-new" add -A && git -C "${ROOT}/proj-wt/_board-new" commit -qm "e-new as a draft"
+guard_opens new "after the refusal, the same epic committed as status: draft"
+bpr start flip; ep flip epics/flip.md '---\nstatus: active\n---\n\n# flip\n'
+guard_refused flip "a draft-to-active flip with no ticket" "flip ${NT} flip"
+bpr start stale; ep stale epics/stale.md '---\nstatus: active\nagreed: 2026-01-01\n---\n\n# stale\n'
+guard_refused stale "a draft's stale agreed: left as it was on the flip to active" "stale ${NT} stale"
+bpr start body; ep body epics/e-body.md '---\ndepends_on: []\n---\n\n# e-body\nstatus: active\n'
+guard_refused body "an epic active by a body status: line, as fm reads it" "e-body ${NT} e-body"
+bpr start pbog; ep pbog epics/e-pbog.md '---\nstatus: active\nparent: bogus\n---\n'
+guard_refused pbog "parent: an epic the base does not have" "e-pbog ${NT} e-pbog"
+bpr start padd; ep padd epics/p-added.md '---\nstatus: draft\n---\n'; ep padd epics/e-padd.md '---\nstatus: active\nparent: p-added\n---\n'
+guard_refused padd "parent: an epic the same PR adds" "e-padd ${NT} e-padd"
+bpr start pdr; ep pdr epics/e-pdr.md '---\nstatus: active\nparent: pdraft\n---\n'
+guard_refused pdr "parent: a draft epic on main" "e-pdr ${NT} e-pdr"
+bpr start nst; ep nst epics/nostat.md '---\nstatus: active\ndepends_on: []\n---\n\n# nostat\n'
+guard_refused nst "an epic with no status: at the base, flipped to active" "nostat ${NT} nostat"
+# selfp is on the base, so only the own-slug rule refuses it.
+bpr start pself; ep pself epics/selfp.md '---\nstatus: active\nparent: selfp\n---\n\n# selfp\n'
+guard_refused pself "parent: the epic's own slug" "selfp ${NT} selfp"
+# open judges against origin/main as it is now: an HLD superseded there since the start does not count.
+bpr start hmv; ep hmv epics/e-hmv.md '---\nstatus: active\nhld: h-move\n---\n'
+on_main board/hld/h-move.md '---\nstatus: superseded\ngrants: [epics]\n---\n'
+guard_refused hmv "hld: an HLD superseded on origin/main since the start" "e-hmv ${NT} e-hmv"
+bpr start fch; ep fch epics/e-fch.md '---\nstatus: active\nagreed: 2026-01-01\n---\n'; touch "${ROOT}/fetch.fail"
+guard_refused fch "a failed fetch of origin/main" "board-pr: cannot fetch origin's base branch"
+rm "${ROOT}/fetch.fail"
+bpr start hd; ep hd hld/h-draft.md '---\nstatus: agreed\ngrants: [epics]\n---\n'; ep hd epics/e-hd.md '---\nstatus: active\nhld: h-draft\n---\n'
+guard_refused hd "hld: an HLD draft at the base, agreed in the worktree" "e-hd ${NT}"
+bpr start hn; ep hn hld/h-new.md '---\nstatus: agreed\ngrants: [epics]\n---\n'; ep hn epics/e-hn.md '---\nstatus: active\nhld: h-new\n---\n'
+guard_refused hn "hld: an HLD missing at the base, agreed in the worktree" "e-hn ${NT}"
+bpr start hdel; rm "${ROOT}/proj-wt/_board-hdel/board/hld/h-ok.md"; ep hdel epics/e-hdel.md '---\nstatus: active\nhld: h-ok\n---\n'
+guard_refused hdel "hld: an agreed HLD the worktree deletes" "e-hdel ${NT}"
+bpr start hsup; ep hsup hld/h-ok.md '---\nstatus: superseded\ngrants: [epics]\n---\n'; ep hsup epics/e-hsup.md '---\nstatus: active\nhld: h-ok\n---\n'
+guard_refused hsup "hld: an agreed HLD the worktree supersedes" "e-hsup ${NT}"
+bpr start hnoe; ep hnoe hld/h-ok.md '---\nstatus: agreed\ngrants: [merge]\n---\n'; ep hnoe epics/e-hnoe.md '---\nstatus: active\nhld: h-ok\n---\n'
+guard_refused hnoe "hld: an agreed HLD whose epics grant the worktree removes" "e-hnoe ${NT}"
+bpr start hdr; ep hdr epics/e-hdr.md '---\nstatus: active\nhld: h-draft\n---\n'
+guard_refused hdr "hld: a draft HLD" "e-hdr ${NT}"
+bpr start hm; ep hm epics/e-hm.md '---\nstatus: active\nhld: h-merge\n---\n'
+guard_refused hm "hld: an HLD whose grants lack epics" "e-hm ${NT}"
+bpr start hb; ep hb epics/e-hb.md '---\nstatus: active\nhld: h-bad\n---\n'
+guard_refused hb "hld: an HLD with a bad grant value" "board/hld/h-bad.md at the base, line 3: grants must be"
+is "a bad grant value: the refusal names the HLD, not a temp path" \
+  "swarm: board-pr: board/hld/h-bad.md at the base, line 3: grants must be epics, stories, merge or release" "$(cat "${ROOT}/err")"
+bpr start unr; ep unr epics/e-unr.md '---\nstatus: active\n---\n'; chmod 000 "${ROOT}/proj-wt/_board-unr/board/epics/e-unr.md"
+guard_refused unr "an unreadable epic in the worktree" "cannot read board/epics/e-unr.md at the head"
+chmod 644 "${ROOT}/proj-wt/_board-unr/board/epics/e-unr.md"
+bpr start two1; ep two1 epics/a-ok.md '---\nstatus: active\nagreed: 2026-01-01\n---\n'; ep two1 epics/b-no.md '---\nstatus: active\n---\n'
+guard_refused two1 "two active epics, the ticketed one first" "b-no ${NT} b-no"
+check "the ticketed one first: the refusal does not name it" bash -c "! grep -qF a-ok '${ROOT}/err'"
+bpr start two2; ep two2 epics/a-no.md '---\nstatus: active\n---\n'; ep two2 epics/b-ok.md '---\nstatus: active\nparent: old\n---\n'
+guard_refused two2 "two active epics, the unticketed one first" "a-no ${NT} a-no"
+check "the unticketed one first: the refusal does not name the ticketed one" bash -c "! grep -qF b-ok '${ROOT}/err'"
+
+bpr start hok; ep hok epics/e-hok.md '---\nstatus: active\nhld: h-ok\n---\n'
+guard_opens hok "hld: an HLD agreed with grants: [epics] at both ends"
+bpr start fresh; ep fresh epics/fresh.md '---\nstatus: active\nagreed: 2026-02-02\n---\n\n# fresh\n'
+guard_opens fresh "a draft flipped to active with a new agreed: date"
+bpr start hdot; ep hdot epics/e-hdot.md '---\nstatus: active\nhld: H.dot\n---\n'
+guard_opens hdot "hld: an HLD name item_hld takes (capitals and a dot)"
+bpr start later; ep later epics/later.md '---\nstatus: active\n---\n\n# later\n'
+guard_opens later "later to active"
+bpr start act; ep act epics/act.md '---\nstatus: active\n---\n\n# act, edited\n'
+guard_opens act "a body-only edit to an active epic"
+bpr start gone; rm "${ROOT}/proj-wt/_board-gone/board/epics/gone.md"
+guard_opens gone "a deleted epic"
+printf 'board_dir = board\nlead_epics = on\n' > "${P}/.claude/swarm/config"
+bpr start lead; ep lead epics/e-lead.md '---\nstatus: active\n---\n'
+guard_opens lead "lead_epics = on, with no ticket"
+printf 'board_dir = board\n' > "${P}/.claude/swarm/config"
 
 # --- board_dir = .: the whole repo is the board, so open takes any file.
 printf 'board_dir = .\n' > "${P}/.claude/swarm/config"
@@ -333,6 +451,9 @@ bpr start y; echo changed > "${ROOT}/proj-wt/_board-y/bin/tool"
 reset_log; bpr open y "Root board edit" "${ROOT}/body.md"
 is "board_dir = .: open exits 0" 0 "${rc}"
 is "board_dir = .: open prints the PR URL" "${URL}" "$(cat "${ROOT}/out")"
+# git C-quotes a path with a " in it ("epics/a\"b.md"), which would miss the epics/ prefix: refused.
+bpr start q; mkdir -p "${ROOT}/proj-wt/_board-q/epics"; printf -- '---\nstatus: active\n---\n' > "${ROOT}/proj-wt/_board-q/epics/a\"b.md"
+guard_refused q "board_dir = .: an active epic whose name holds a quote" 'board-pr: "epics/a\"b.md" has a quote, backslash, tab or newline in its name; rename it'
 
 # --- The docs send the lead's board edits through it.
 check "method.md § Who does what names swarm.sh board-pr" \

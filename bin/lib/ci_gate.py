@@ -443,9 +443,10 @@ def covers(f, base, files):
             return False
     return True
 
-def pr_files(repo, n, changed):
+def pr_files(repo, n, changed, status=False):
     """Every path PR n changes, a renamed file's old one too, or None when fewer than its changed
-    count come back (the API lists 3000 at most)."""
+    count come back (the API lists 3000 at most). With status, each as "<status> <path>": added,
+    modified, removed, renamed or copied, empty when the API gives none."""
     got = []
     for d in docs("repos/%s/pulls/%s/files?per_page=100" % (repo, n)):
         if not isinstance(d, list):
@@ -454,6 +455,8 @@ def pr_files(repo, n, changed):
     if len(got) != changed:
         return None
     try:
+        if status:
+            return ["%s %s" % (f.get("status") or "", p) for f in got for p in (f["filename"], f.get("previous_filename")) if p]
         return [p for f in got for p in (f["filename"], f.get("previous_filename")) if p]
     except (KeyError, TypeError, AttributeError) as e:
         raise Err("unreadable files for #%s: %r" % (n, e))
@@ -697,8 +700,8 @@ try:
         rc, msg = queued(repo, args[0], args[1], args[2], float(args[3]), float(args[4]), float(args[5]))
         print(msg)
         sys.exit(rc)
-    elif mode == "files":
-        files = pr_files(repo, args[0], int(args[1]))
+    elif mode in ("files", "files-status"):
+        files = pr_files(repo, args[0], int(args[1]), mode == "files-status")
         if not files:
             raise Err("gh listed no files, or fewer than the PR changes")
         print("\n".join(files))
