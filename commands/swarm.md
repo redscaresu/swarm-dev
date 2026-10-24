@@ -231,7 +231,10 @@ Repeat until a step below says stop:
    - `hld <hld>`: every epic planned from the HLD has left the board. Run `swarm.sh finish <hld>`
      and hand the PR it opens to the user: under `merge = human` the finish PR is always the user's,
      grant or not. Once that PR has merged or been closed, run `swarm.sh board-pr done finish-<hld>`,
-     so an abandoned worktree never hides the HLD from `next`.
+     so an abandoned worktree never hides the HLD from `next`. When the gate lists
+     `finish PR awaiting merge: <hld>`, read the PR (`gh pr list --head board/finish-<hld> --state all
+     --json url,state`): once it has merged or closed, run `swarm.sh board-pr done finish-<hld>`;
+     while it is open, it is the user's.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,

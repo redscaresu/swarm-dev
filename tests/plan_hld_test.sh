@@ -37,7 +37,8 @@ has agreed-only 'when `<wt>`.s HLD is not `status: agreed`'
 has planned-refused 'when its `planned:` has a value \(it was planned already; an empty one, `""` or a bare `# comment` is none'
 has empty-arg 'If `\$1` is empty, list the agreed HLDs .* and ask which'
 has reads-origin 'Without `<wt>`, run `git fetch origin`, then `swarm\.sh board-pr start plan-\$1`, which makes `<wt>` from origin.s base'
-has refuses-carried 'or when an epic in `<wt>` already names it: .* `SWARM_PROJECT=<wt> swarm\.sh grants <epic>` prints `<wt>`.s `hld/\$1\.md` as its first line'
+has refuses-carried 'or when an epic in `<wt>` already names it: .* An epic names it when its `hld:` is `\$1` itself, read as `next` reads it .*`parent:` is not followed\)\. One `git grep` over origin.s epics'
+has carried-grep 'git grep -lE "\^hld: .*origin/<base> -- .<board>/epics/\*\.md.`, where `<name>` is `\$1` with each `\.` written `\\\.`'
 has three-surveys 'role `survey`, three in parallel'
 has one-hld-lead 'one `hld-lead`, role `hld-lead`'
 has skeptic-cap 'role `skeptic` \(capped at five'
@@ -65,13 +66,15 @@ has whole-plan-in-wt 'The whole plan runs on origin.s copy of the board in the p
 has brief-reads-wt 'You are decomposing the agreed HLD `<wt>/docs/hld/\$1\.md`; read it first\. `<wt>` is origin.s copy of the project'
 has resume-mtime 'newer than `<wt>/\.git`'
 has stop-when-open 'If the board PR `plan-\$1` is already open \(`gh pr list --head board/plan-\$1 --state open --json url --jq .\.\[\]\.url.` prints a URL\), report its URL and stop'
-has resume-worktree 'If `<wt>` exists, run `swarm\.sh board-pr done plan-\$1` first\. .* It refuses while `<wt>` holds this plan.s unopened work: an earlier run stopped there, so resume in `<wt>`'
+has resume-worktree 'If `<wt>` exists, run `swarm\.sh board-pr done plan-\$1` first\. .* `<wt> has uncommitted changes`, and `no PR on board/plan-\$1 has its tip \.\.\., and it has commits past origin/<base>`\. On either, resume in `<wt>`'
+has other-refusal-stops 'On any other refusal \(a gh error, a tip that differs from origin.s, a locked worktree, the branch checked out elsewhere\), stop and report it'
 
 has swarm-plan-hld-step '- `plan-hld <hld>`: follow `/plan-hld <hld>`' "$swarm"
 has swarm-hld-step '- `hld <hld>`: .{0,120}`swarm\.sh finish <hld>`' "$swarm"
 has swarm-plan-done 'Once that PR has merged or been closed, run `swarm\.sh board-pr done plan-<hld>` and `swarm\.sh close plan-<hld>`' "$swarm"
 has hld-plans-next '`/swarm-dev:swarm` plans it into epics next: once its board PR has merged, or at once on a board outside the project.s repo' "$hld"
 has swarm-gate-rerun 'run `/plan-hld <hld>` again: it clears the worktree of a plan PR that merged or closed, and resumes in one that stopped before `board-pr open`' "$swarm"
+has swarm-finish-gate 'When the gate lists `finish PR awaiting merge: <hld>`, read the PR .* once it has merged or closed, run `swarm\.sh board-pr done finish-<hld>`' "$swarm"
 has swarm-finish-done 'swarm\.sh board-pr done finish-<hld>' "$swarm"
 
 hasnt skeleton-no-planned '^planned:' "$skeleton"

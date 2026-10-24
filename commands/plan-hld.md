@@ -19,17 +19,25 @@ The whole plan runs on origin's copy of the board in the plan worktree, `<wt>` b
   main has no `planned:` for the HLD, and planning it again would only open a second PR.
 - **A leftover worktree.** If `<wt>` exists, run `swarm.sh board-pr done plan-$1` first. It removes
   `<wt>` when the PR on its tip has merged or closed, or when the run that started it wrote nothing.
-  It refuses while `<wt>` holds this plan's unopened work: an earlier run stopped there, so resume
-  in `<wt>` and skip the checks below, which that run passed.
+  Two refusals mean this plan's unopened work is there, and an earlier run stopped: `<wt> has
+  uncommitted changes`, and `no PR on board/plan-$1 has its tip ..., and it has commits past
+  origin/<base>`. On either, resume in `<wt>` and skip the checks below, which that run passed. On
+  any other refusal (a gh error, a tip that differs from origin's, a locked worktree, the branch
+  checked out elsewhere), stop and report it.
 - **A new worktree.** Without `<wt>`, run `git fetch origin`, then `swarm.sh board-pr start plan-$1`,
   which makes `<wt>` from origin's base.
 - **Checks.** Stop, saying why, and remove the `<wt>` you just started with
   `swarm.sh board-pr done plan-$1`, when `<wt>`'s HLD is not `status: agreed`, when its `planned:`
   has a value (it was planned already; an empty one, `""` or a bare `# comment` is none, as
   `swarm.sh next` reads it), or when an epic in `<wt>` already names it: `swarm.sh next` never plans
-  an HLD that epics carry, and a second plan would write its epics again. An epic names it when
-  `SWARM_PROJECT=<wt> swarm.sh grants <epic>` prints `<wt>`'s `hld/$1.md` as its first line, for any
-  `<epic>` in `<wt>`'s `docs/epics/` (swarm.sh reads `hld:` with quotes, brackets and a comment).
+  an HLD that epics carry, and a second plan would write its epics again. An epic names it when its
+  `hld:` is `$1` itself, read as `next` reads it (quotes, one pair of brackets, a trailing comment and
+  whitespace aside; `parent:` is not followed). One `git grep` over origin's epics, which the `<wt>`
+  you just started holds, finds them:
+  `git grep -lE "^hld: *\[?[\"']?<name>[\"']?\]?[[:space:]]*(#.*)?\$" origin/<base> -- '<board>/epics/*.md'`,
+  where `<name>` is `$1` with each `.` written `\.`, `<base>` is what `swarm.sh base` prints and
+  `<board>` is the board's path in the repo; any file it prints names the HLD. On a board outside
+  the repo, run the same pattern with `grep -lE` over `docs/epics/*.md`.
 
 A board outside the project's repo has no worktree and no origin: skip the PR and worktree steps,
 read and write the board where it is, and read `<wt>` below as the project.
