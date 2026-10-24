@@ -147,8 +147,8 @@ def board_commits(*args):
 # (.swarm/conduct-<epic>.report.md), or the time the next conduct logged for it (a report event) as
 # it removed the file. A build that started after its run ended, or with no run, held 0. Retiring a
 # conductor is the next conduct's first step, and tidy closes only retired panes, so neither ends a
-# run sooner. An epic's conductor is conduct-<epic>; the backlog's is the per-project
-# SWARM_BACKLOG_CONDUCTOR (conductor_name), or conduct-backlog in older logs.
+# run sooner. A run's conductor has the agent names SWARM_RUN_NAMES gives it (run_names), or
+# conduct-backlog in older logs.
 # ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
 ready_at, blocked_at = collections.defaultdict(list), collections.defaultdict(list)
 conducting, closed, reported = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)

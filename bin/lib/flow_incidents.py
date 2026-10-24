@@ -29,7 +29,8 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     if len(f) == 5 and f[1] == "conduct" and f[4] == "ok" and not run_key(f[2]).startswith("--backlog"):
         k = run_key(f[2]); e = re.sub(r"\.l\d+$", "", k)   # a lane's start: <epic>.l<k>
-        own(run_names(k)[0] if k != e else "conduct-" + e, e)
+        names = run_names(k)
+        own(names[0] if k != e and names else "conduct-" + e, e)
     if len(f) != 5 or f[1] != "incident":
         continue
     try:

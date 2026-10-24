@@ -48,6 +48,8 @@ case "$1 $2" in
   "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
+  "pane close"|"tab close") p=$3; [ "$1" = tab ] && p="w:${3#t}"
+                      [ -e "$H/agents" ] && awk -v p="$p" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
 esac
 EOF
 printf '#!/bin/sh\necho "[]"\n' > "${ROOT}/bin/gh"
@@ -92,11 +94,11 @@ check "with conductor_lanes = 1, unblock --startable --backlog prints every read
 check "with conductor_lanes = 1, unblock --startable --lane 1 or --lane 2 prints every ready backlog story, as without it" "${all}|${all}" \
   "$(startable --backlog --lane 1)|$(startable --backlog --lane 2)"
 # A start with one lane takes no lane-start lock: one held does not stop it, and it writes no lane.
-mkdir -p "${p}/.swarm/state/lane-start.lock"
+mkdir -p "${p}/.swarm/lane-start.lock"
 run story --strict a1 >/dev/null 2>&1 || true
 check "with conductor_lanes = 1, a story --strict start runs while lane-start.lock is held, and writes no lane" "yes|" \
   "$([[ -d "${ROOT}/proj-wt/a1" ]] && echo yes || echo no)|$(grep '^lane:' "${p}/.swarm/board-state/stories/a1" 2>/dev/null || true)"
-rmdir "${p}/.swarm/state/lane-start.lock"
+rmdir "${p}/.swarm/lane-start.lock"
 g -C "${p}" worktree remove --force "${ROOT}/proj-wt/a1" 2>/dev/null; g -C "${p}" branch -qD story/a1 2>/dev/null || true
 check "with conductor_lanes = 1, conductor names are today's" "conduct-e|yes" \
   "$(run _conductor e)|$([[ "$(run _conductor backlog)" =~ ^conduct-backlog-proj-[0-9a-f]{6}$ ]] && echo yes || echo "no, got: $(run _conductor backlog)")"
@@ -121,6 +123,8 @@ check "some story is in lane 2 of 3 and would hash to lane 1 of 2 (the fixture i
 run story "${mv}" >"${ROOT}/story.out" || { echo "story failed:"; cat "${ROOT}/story.out"; }
 check "story writes its lane to the board state when its build starts" "lane: 2" \
   "$(grep '^lane:' "${p}/.swarm/board-state/stories/${mv}" 2>&1)"
+check "a lane start keeps its lock and reservations out of .swarm/state, the tab records' directory" "no|yes" \
+  "$(compgen -G "${p}/.swarm/state/lane-start*" >/dev/null && echo yes || echo no)|$([[ -d "${p}/.swarm/lane-start" ]] && echo yes || echo no)"
 lanes 2
 # Its build died: the worktree and branch go, so it is startable again.
 g -C "${p}" worktree remove --force "${ROOT}/proj-wt/${mv}" 2>/dev/null; g -C "${p}" branch -qD "story/${mv}" 2>/dev/null || true
@@ -148,17 +152,17 @@ out="$(run story --strict cy || true)"
 check "story --strict refuses lane 2's story while lane 1's clashing build runs, and makes no worktree" "yes|no" \
   "$(has "cy: clashes with cx in lane 1 on bin/x.sh:f" "${out}")|$([[ -d "${ROOT}/proj-wt/cy" ]] && echo yes || echo no)"
 # Another lane's start holds the lane-start lock: this start waits on it, then stops with no worktree.
-mkdir -p "${p}/.swarm/state/lane-start.lock"
+mkdir -p "${p}/.swarm/lane-start.lock"
 out="$(run story --strict cz || true)"
 check "while another lane's start holds the lane-start lock, story waits, then stops saying to retry, never to remove it, with no worktree" "yes|no|no" \
   "$(has "retry in a moment" "${out}")|$(grep -q 'remove' <<< "${out}" && echo yes || echo no)|$([[ -d "${ROOT}/proj-wt/cz" ]] && echo yes || echo no)"
-rmdir "${p}/.swarm/state/lane-start.lock"
+rmdir "${p}/.swarm/lane-start.lock"
 # A refused start leaves nothing behind: no lane written for a story with none of its own.
 nl=""; for s in cq1 cq2 cq3 cq4 cq5; do [[ "$(lane_of "${s}" 3)" == 1 ]] || { nl="${s}"; break; }; done
 item "${b}" "stories/${nl}.md" "status: ready" "kind: code" "touches: [bin/x.sh:f]"
 run story --strict "${nl}" >/dev/null 2>&1 || true
 check "a story --strict refused for a cross-lane clash writes no lane and no reservation" "|no" \
-  "$(grep '^lane:' "${p}/.swarm/board-state/stories/${nl}" 2>/dev/null || true)|$([[ -e "${p}/.swarm/state/lane-start/${nl}" ]] && echo yes || echo no)"
+  "$(grep '^lane:' "${p}/.swarm/board-state/stories/${nl}" 2>/dev/null || true)|$([[ -e "${p}/.swarm/lane-start/${nl}" ]] && echo yes || echo no)"
 # A closed-unmerged story keeps that note beside the clash, so it is never started.
 item "${b}" stories/cw.md "status: ready" "kind: code" "lane: 2" "touches: [bin/x.sh:f]" "prs: https://github.com/o/r/pull/7"
 printf '2026-10-24T10:00:00Z\treconcile\tcw\t-\tok (reopened)\n' >> "${p}/.swarm/events.tsv"
@@ -253,6 +257,24 @@ run tell "$(run _conductor "${long26}")" note "${ROOT}/note3" >/dev/null || true
 check "a note to a long epic's lane-less name reaches its lane 2 conductor's inbox" "yes" \
   "$(has "for the long epic" "$(cat "${p}/.swarm/inbox/$(run _conductor "${long26}" 2).md" 2>&1)")"
 
+# --- A lane conductor never ends the epic, with either merge mode: the lead does, once every lane reported.
+w2="$(cat "${p}/.swarm/briefs/conduct-w.l2.md" 2>&1)"
+printf 'conductor_lanes = 3\nmerge = agent\n' > "${p}/.claude/swarm/config"
+run conduct w --lane 3 >/dev/null
+w3="$(cat "${p}/.swarm/briefs/conduct-w.l3.md" 2>&1)"
+lanes 3
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "a lane brief never ends the epic and reports its lane done, with merge = human and = agent" "yes|no|yes|no|no" \
+  "$(has 'lane 2 done; the epic ends once every lane has reported' "${w2}")|$(grep -q 'swarm.sh review <epic> <every PR URL still waiting>' <<< "${w2}" && echo yes || echo no)|$(has 'lane 3 done; the epic ends once every lane has reported' "${w3}")|$(grep -qF 'swarm.sh finish <epic>` only' <<< "${w3}" && echo yes || echo no)|$(grep -q 'swarm.sh review <epic> <every PR URL still waiting>' <<< "${w3}" && echo yes || echo no)"
+
+# --- Closing a lane conductor, even with --all, closes its own pane alone: never the epic's tab with
+# another lane's builder in it.
+item "${b}" stories/ws.md "status: ready" "kind: code" "epic: w"
+run story ws >/dev/null 2>&1 || true
+run close conduct-w-l2 --all >/dev/null 2>&1 || true
+check "close conduct-w-l2 --all closes its own pane and leaves the builder in the epic's tab" "no|yes" \
+  "$(awk '$1 == "conduct-w-l2"' "${ROOT}/agents" | grep -q . && echo yes || echo no)|$(awk '$1 == "ws"' "${ROOT}/agents" | grep -q . && echo yes || echo no)"
+
 # --- A lane-less conductor of e from conductor_lanes = 1 still runs: no lane of e starts beside it.
 lanes 1
 run conduct e >/dev/null
@@ -266,6 +288,13 @@ item "${b}" epics/foo-l2.md "status: active"
 lanes 1
 check "with foo's lane 2 running, conduct foo-l2 is refused naming it, and starts nothing" "yes|1" \
   "$(has "conduct-foo-l2 is the name of foo's running conductor" "$(run conduct foo-l2 || true)")|$(grep -c '^agent start conduct-foo-l2 ' "${ROOT}/herdr.log")"
+
+# --- Lowered to 2 lanes, lane 3's conductor starts a fix-main story: its lane is folded onto lane 1.
+lanes 2
+item "${b}" stories/fix-main-abc1234.md "status: ready" "kind: code"
+SWARM_AGENT="$(run _conductor backlog 3)" run story fix-main-abc1234 >/dev/null 2>&1 || true
+check "a fix-main story started by lane 3's conductor after conductor_lanes became 2 is written as lane 1" "lane: 1" \
+  "$(grep '^lane:' "${p}/.swarm/board-state/stories/fix-main-abc1234" 2>&1)"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

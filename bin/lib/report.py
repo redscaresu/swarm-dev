@@ -19,16 +19,17 @@ def run_key(target):
     base, lane = (m.group(1), m.group(2)) if m else (target, "")
     return ("--backlog" if base in ("backlog", "--backlog") else base) + lane
 
-# run_names(key) — the agent names a run key's conductor had, as bash conductor_name makes them: for
-# lane k, cut so -l<k> fits; the backlog's per-project SWARM_BACKLOG_CONDUCTOR, or conduct-backlog in
-# older logs.
+# run_names(key) — the agent names a run key's conductor had: SWARM_RUN_NAMES (reports.sh run_names_env),
+# a "<target>\t<name>" line per conduct or report target in events.tsv with the name bash conductor_name
+# makes, so the name's cut lives there alone; and conduct-backlog, the backlog's in older logs.
+RUN_NAMES = {}
+for _line in os.environ.get("SWARM_RUN_NAMES", "").splitlines():
+    _target, _, _name = _line.partition("\t")
+    if _name:
+        RUN_NAMES.setdefault(run_key(_target), []).append(_name)
+
 def run_names(key):
-    m = re.fullmatch(r"(.+)\.l(\d+)", key)
-    base, s = (m.group(1), f"-l{m.group(2)}") if m else (key, "")
-    if base != "--backlog":
-        return [agent_name("conduct-" + base)[:32 - len(s)] + s]
-    b = os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")
-    return ([] if s else ["conduct-backlog"]) + ([b[:-7][:25 - len(s)] + b[-7:] + s] if b else [])
+    return (["conduct-backlog"] if key == "--backlog" else []) + RUN_NAMES.get(key, [])
 
 # run_report(events_dir, key) — the report file a run key's conductor writes.
 def run_report(events_dir, key):

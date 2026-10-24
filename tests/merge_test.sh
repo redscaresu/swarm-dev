@@ -1852,6 +1852,17 @@ bfresh; touch "${P}/.swarm/conduct-e.report.md"; merge --board "${URL}"; rm "${P
 check "a board merge whose conductor has reported: says r13 has no conductor yet" said "ready now: r13 (of epic e); no conductor runs for it yet"
 check "a board merge whose conductor has reported: no note names r13" bash -c "! grep -q r13 '${INBOX}'"
 check "a board merge whose conductor has reported: says to collect it first" said "no conductor started: conduct-e has reported; collect it first"
+# conductor_lanes is back at 1 while e's lane 1 conductor, conduct-e-l1 (its brief names it), still runs:
+# the lane-less conduct-e has no pane, so the note goes to the lane, and no conductor starts beside it.
+put docs/stories/r17.md "status: ready" "kind: code" "epic: e"; land
+bfresh; : > "${ROOT}/agents.log"; printf 'conduct-e-l1 w:c\nt w:b\n' > "${ROOT}/agents"
+mkdir -p "${P}/.swarm/briefs"; : > "${P}/.swarm/briefs/conduct-e.l1.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
+rm "${P}/.swarm/briefs/conduct-e.l1.md"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
+check "a board merge with conductor_lanes back at 1 while lane 1's conductor runs: the note reaches the lane's inbox" \
+  grep -qF "these stories of epic e are ready now: r17." "${P}/.swarm/inbox/conduct-e-l1.md"
+check "a board merge with conductor_lanes back at 1 while lane 1's conductor runs: starts no conduct-e beside it, and says why" \
+  bash -c "! grep -q '^agent start conduct-e ' '${ROOT}/agents.log' && grep -qF 'no conductor started: conduct-e-l1 runs for e under another conductor_lanes' '${ROOT}/out'"
 # r15, ready in draft epic h, moves to epic e: it was not buildable before, so it is new.
 put docs/epics/h.md "status: draft"; put docs/stories/r15.md "status: ready" "kind: code" "epic: h"; land; pulled
 put docs/stories/r15.md "status: ready" "kind: code" "epic: e"; land

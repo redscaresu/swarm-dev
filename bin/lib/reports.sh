@@ -134,6 +134,20 @@ OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
 GH_CACHE="${SWARM_GH_CACHE-${PROJECT_DIR}/.swarm/gh-cache}"
 GH_FRESH=""
 
+# run_names_env — SWARM_RUN_NAMES for the python reports (report.py run_names): each conduct or report
+# target in events.tsv (<epic>, --backlog, or backlog, with .l<k> for a lane's) and its conductor's agent
+# name, "<target>\t<name>" a line, so the name's cut is conductor_name's alone.
+run_names_env() {
+  local t e l
+  while IFS= read -r t; do
+    e="${t}"; l=""
+    [[ ! "${t}" =~ ^(.+)\.l([1-9][0-9]*)$ ]] || { e="${BASH_REMATCH[1]}"; l="${BASH_REMATCH[2]}"; }
+    [[ "${e}" != --backlog ]] || e=backlog
+    [[ "${e}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || continue
+    printf '%s\t%s\n' "${t}" "$(conductor_name "${e}" "${l}")"
+  done < <(awk -F'\t' '$2 == "conduct" || $2 == "report" { print $3 }' "${EVENTS_LOG}" 2>/dev/null | sort -u)
+}
+
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
@@ -223,7 +237,7 @@ outcomes_report() {
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   # SWARM_REWORK_SINCE: flow's --since, which bounds rework's gh search (outcomes' own --since otherwise).
   SWARM_REWORK_SINCE="${SWARM_REWORK_SINCE:-${since}}" \
-    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
+    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" SWARM_RUN_NAMES="$(run_names_env)" \
     SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
@@ -454,7 +468,7 @@ flow_sections() {
     repos+="${slug}"$'\t'"${dir//[$'\t\n']/ }"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
   # shellcheck disable=SC2154 # assigned in another file
-  SWARM_BOARD="${BOARD}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_LADDER="${CFG_escalate_ladder}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_BOARD="${BOARD}" SWARM_RUN_NAMES="$(run_names_env)" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_LADDER="${CFG_escalate_ladder}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }

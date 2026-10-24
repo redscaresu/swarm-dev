@@ -625,6 +625,13 @@ printf '%s\n' $'2026-10-02T09:00:00Z\tconduct\t--backlog\tw:1\tok' $'2026-10-02T
   $'2026-10-02T11:30:00Z\tclose\tim\tw:1\tok' $'2026-10-02T12:00:00Z\tclose\tconduct-backlog-cleanup\tw:1\tok' >> "${I}/.swarm/events.tsv"
 check "idle_slots: only the backlog's own conductor ends its run, and a merged story's bytes that are not UTF-8 still read" \
   "$(idle --since 2026-10-02 --until 2026-10-02)" "${IH}"$'\nall\t810\t0\t1'
+# On the 4th, the backlog's lane-less run over (closed on the 3rd), its lane 2 conductor runs 09:00 to
+# its own close at 12:00 (conductor_lanes): ik is idle those 180 minutes and without a conductor the rest.
+bn="$(cd "${I}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog)"; bn2="$(cd "${I}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog 2)"
+printf '%s\t%s\t%s\tw:1\tok\n' 2026-10-03T12:00:00Z close "${bn}" 2026-10-04T09:00:00Z conduct --backlog.l2 \
+  2026-10-04T12:00:00Z close "${bn2}" >> "${I}/.swarm/events.tsv"
+check "idle_slots: a lane conductor's run ends at its own close, under the backlog's row" \
+  "$(idle --since 2026-10-04 --until 2026-10-04)" "${IH}"$'\nall\t180\t1260\t1'
 
 # A git that refuses show: im's text is lost, so it clashes with nothing (14 hours idle), and idle_slots says so once.
 mkdir -p "${dir}/gitfail"

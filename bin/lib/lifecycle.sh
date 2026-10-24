@@ -1264,9 +1264,10 @@ has_records() {
 # close_epic <conductor> — the label of its epic's tabs: the name without conduct- when that is the
 # full name (the brief start_conductor wrote, .swarm/briefs/<name>.md, has it, or the name is not
 # AGENT_NAME_MAX long, so not cut), else conduct_epic's, from the newest brief with that conductor name.
-# A lane conductor's (conductor_lanes) is its epic's: its brief is conduct-<epic>.l<k>.md.
+# A lane conductor's (conductor_lanes) is its own tab's, its name: closing it never takes the epic's
+# tab, which every lane's builders share.
 close_epic() {
-  if [[ -n "$(conduct_lane "$1")" ]]; then conduct_epic "$1"
+  if [[ -n "$(conduct_lane "$1")" ]]; then echo "$1"
   elif [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"
   else conduct_epic "$1"; fi
 }

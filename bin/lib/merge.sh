@@ -450,12 +450,14 @@ lane_slugs() {
 # output is dropped, so next's first line stays the step even with stderr merged. With conductor_lanes
 # above 1, each lane is a group of its own (conduct_group), started only when it has stories.
 conduct_ready() {
-  local e ready c k rc=0
+  local e ready c k rc=0 running
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
   if ! herdr agent list >/dev/null 2>&1; then
     echo "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"; return 0
   fi
+  # Listed once, for every group's conduct_clash too.
+  running="$(running_conductors)"
   # On fd 3, as below: herdr and python must not read the list.
   while read -r c <&3; do
     [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
@@ -463,18 +465,19 @@ conduct_ready() {
       auth) echo "no conductor started: ${c} stopped on an expired login, which would stop a new one too"; return 0 ;;
       stuck) echo "no conductor started: ${c} stopped on an API error, which would stop a new one too"; return 0 ;;
     esac
-  done 3<<< "$(running_conductors)"
+  done 3<<< "${running}"
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
     # shellcheck disable=SC2154 # assigned in another file
-    if (( CFG_conductor_lanes == 1 )); then conduct_group "${e}" "" "${ready}" || rc=1; continue; fi
-    for ((k = 1; k <= CFG_conductor_lanes; k++)); do conduct_group "${e}" "${k}" "${ready}" || rc=1; done
+    if (( CFG_conductor_lanes == 1 )); then conduct_group "${e}" "" "${ready}" "${running}" || rc=1; continue; fi
+    for ((k = 1; k <= CFG_conductor_lanes; k++)); do conduct_group "${e}" "${k}" "${ready}" "${running}" || rc=1; done
   done 3< <(awk '{ print $2 }' <<< "${ready}" | sort -u)
   return "${rc}"
 }
 
-# conduct_group <epic> <lane> <ready> — conduct_ready's start for one group: <epic> as board_ready's
-# column, <lane> empty with no lanes, <ready> board_ready --started's lines. Returns 1 when a start failed.
+# conduct_group <epic> <lane> <ready> <running> — conduct_ready's start for one group: <epic> as board_ready's
+# column, <lane> empty with no lanes, <ready> board_ready --started's lines, <running> running_conductors'.
+# Returns 1 when a start failed.
 conduct_group() {
   local e="$1" lane="$2" name arg slugs log c why todo report
   # shellcheck disable=SC2046 # slugs, [a-z0-9-]
@@ -482,7 +485,7 @@ conduct_group() {
   [[ -n "${slugs}" ]] || return 0
   name="$(group_conductor "${e}" "${lane}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
   # A conductor of this epic under another conductor_lanes still runs: none starts beside it.
-  if ! why="$( (conduct_clash "${e/#-/backlog}" "${lane}") 2>&1)"; then echo "no conductor started: ${why#swarm: conduct: }"; return 0; fi
+  if ! why="$( (conduct_clash "${e/#-/backlog}" "${lane}" "$4") 2>&1)"; then echo "no conductor started: ${why#swarm: conduct: }"; return 0; fi
   if [[ -n "$(agent_field "${name}" pane_id)" ]]; then
     if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"; fi
     return 0
@@ -571,12 +574,14 @@ live_at() {
 # not at <prev>, the board <url> merged onto, but at <oid>, its own merge commit (not a queue batch's tip): not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,
-# say so. Then conduct_ready starts the conductors ready work lacks. With no upstream nothing is
+# say so; a lane-less name no pane holds while that epic's lane conductors still run (conductor_lanes
+# lowered to 1) is told, and tell_agent sends the note to each lane (note_lanes). Then conduct_ready
+# starts the conductors ready work lacks. With no upstream nothing is
 # pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one), a
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" all k lane d=""
+  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" all k lane d="" listed=""
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
@@ -608,6 +613,8 @@ ready_tell() {
         if (index(f, d) == 1 && kv[2] != 1) ch[substr(f, length(d) + 1)] = 1
         if (index(f, ed) == 1 && kv[2] != 1) ep[substr(f, length(ed) + 1)] = 1 } }
     $1 in ch || $2 in ep')"
+  # Once, not once per lane: whether herdr lists its agents does not change between them.
+  [[ -z "${new}" ]] || herdr agent list >/dev/null 2>&1 || listed=no
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
@@ -619,11 +626,11 @@ ready_tell() {
       slugs="$(lane_slugs "${lane}" ${all} | paste -sd' ' -)"
       [[ -n "${slugs}" ]] || continue
       name="$(group_conductor "${e}" "${lane}")"; of="of epic ${e}"; [[ "${e}" != - ]] || of="with no epic"
-      if ! herdr agent list >/dev/null 2>&1; then
+      if [[ "${listed}" == no ]]; then
         echo "warning: herdr cannot list its agents, so ${name} was not told that ${slugs} are ready"; continue
       fi
       # One that has written its report has finished (conductors_queued): nobody reads its inbox.
-      if [[ -z "$(agent_field "${name}" pane_id)" || -f "$(conductor_report "${name}")" ]]; then
+      if [[ -f "$(conductor_report "${name}")" ]] || { [[ -z "$(agent_field "${name}" pane_id)" && -z "$(note_lanes "${name}")" ]]; }; then
         echo "ready now: ${slugs} (${of}); no conductor runs for it yet"; continue
       fi
       note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"

@@ -140,8 +140,13 @@ EOF
 conduct_merge_rule() {
   local scope="of this epic" epic_end="" backlog=""
   [[ "$1" != backlog ]] || { backlog=1; scope="with no epic"; }
+  # A lane conductor never ends the epic: the lead does, once every lane has reported.
+  [[ -n "${backlog}" || -z "${CONDUCT_LANE:-}" ]] || epic_end=" You are one of the epic's lane
+conductors, so never end the epic yourself: no \`swarm.sh review <epic> ...\` and no \`swarm.sh finish
+<epic>\`. Once no story of your lane is left to start, review or merge, begin your report with the line
+\`lane ${CONDUCT_LANE} done; the epic ends once every lane has reported\`: the lead ends the epic then."
   if [[ "${CFG_merge}" == human ]]; then
-    [[ -n "${backlog}" ]] || epic_end=" When every story left
+    [[ -n "${backlog}" || -n "${CONDUCT_LANE:-}" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
 \`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge.
 A story \`swarm.sh status\` lists as \`kept:\` is not in review for this: a close kept its PR unreviewed,
@@ -156,7 +161,7 @@ to merge\`), the story is blocked again with its build kept: close its builder w
 $(held_ready_rule)${epic_end}
 EOF
   else
-    [[ -n "${backlog}" ]] || epic_end=" On a board in the project's repo,
+    [[ -n "${backlog}" || -n "${CONDUCT_LANE:-}" ]] || epic_end=" On a board in the project's repo,
 the epic leaves the board with its last story's PR, whose brief deletes the epic file. Run
 \`swarm.sh finish <epic>\` only on a board outside the repo, or when the epic file is still there after
 the last story merged and the epic's **Done when** holds; on a board in the repo it opens a board PR,
@@ -550,24 +555,26 @@ build_story() {
 
 # lane_start <slug> <story file> <strict> — a start's lane, with conductor_lanes above 1: its lane:
 # (folded, story_lane), else a fix-main story's starting lane conductor's, else story_lane's. Under
-# .swarm/state/lane-start.lock, held only for this check, a story of its epic in another lane whose build
+# .swarm/lane-start.lock (LANE_START_DIR's, out of the tab records' STATE_DIR), held only for this check, a story of its epic in another lane whose build
 # has started or is starting (lane_clash) refuses it with --strict, else is warned of; then the start
-# is reserved (.swarm/state/lane-start/<slug>, its lane), which lane_clash counts as started, and removed
+# is reserved (.swarm/lane-start/<slug>, its lane), which lane_clash counts as started, and removed
 # on exit unless build_story clears it. Sets LANE_PICKED and LANE_RESERVED.
-LANE_PICKED=""; LANE_RESERVED=""
+LANE_PICKED=""; LANE_RESERVED=""; LANE_START_DIR="${PROJECT_DIR}/.swarm/lane-start"
 lane_start() {
   local clash
   LANE_PICKED=""
   [[ "$(get_fm "$2" lane)" =~ ^[1-9][0-9]*$ || "$1" != fix-main-* || "${SWARM_AGENT:-}" != conduct-* ]] \
     || LANE_PICKED="$(conduct_lane "${SWARM_AGENT}")"
+  # Folded as story_lane and lane_flag fold: a lane past a lowered conductor_lanes.
+  [[ -z "${LANE_PICKED}" ]] || LANE_PICKED=$(( (LANE_PICKED - 1) % CFG_conductor_lanes + 1 ))
   [[ -n "${LANE_PICKED}" ]] || LANE_PICKED="$(story_lane "$2")"
-  mkdir -p "${STATE_DIR}/lane-start"
-  note_lock "${STATE_DIR}/lane-start" || die "$1: another story's start holds ${STATE_DIR}/lane-start.lock; retry in a moment"
+  mkdir -p "${LANE_START_DIR}"
+  note_lock "${LANE_START_DIR}" || die "$1: another story's start holds ${LANE_START_DIR}.lock; retry in a moment"
   clash="$(lane_clash "$1" "${LANE_PICKED}")"
-  if [[ -n "${clash}" && -n "$3" ]]; then rmdir "${STATE_DIR}/lane-start.lock"; die "$1: ${clash#held: }; start it once that build is gone"; fi
-  LANE_RESERVED="${STATE_DIR}/lane-start/$1"
+  if [[ -n "${clash}" && -n "$3" ]]; then rmdir "${LANE_START_DIR}.lock"; die "$1: ${clash#held: }; start it once that build is gone"; fi
+  LANE_RESERVED="${LANE_START_DIR}/$1"
   echo "${LANE_PICKED}" > "${LANE_RESERVED}"
-  rmdir "${STATE_DIR}/lane-start.lock"
+  rmdir "${LANE_START_DIR}.lock"
   # shellcheck disable=SC2064 # expand now; the path is this project's
   trap "rm -f '${LANE_RESERVED}'" EXIT
   [[ -z "${clash}" ]] || echo "warning: $1: ${clash#held: }" >&2
@@ -1343,30 +1350,29 @@ epic_env() {
   printf '%s' "${out# }"
 }
 
-# conduct_clash <epic>|backlog <lane> — die, naming it, when a conductor of <epic> under another
+# conduct_clash <epic>|backlog <lane> [running] — die, naming it, when a conductor of <epic> under another
 # conductor_lanes is running (a lane-less one beside lanes, or a lane past N), when a running conductor
 # of another epic holds the name this one would take (lane 2 of foo, conduct-foo-l2, for a lane-less
 # conduct foo-l2), or when lane <lane>'s name is another epic's lane-less conductor's (an epic named
-# <epic>-l<lane>, or a cut at 32).
+# <epic>-l<lane>, or a cut at 32). <running> is running_conductors' list, read here when not given.
 conduct_clash() {
-  local c n e want
+  local c n e want running="${3-$(running_conductors)}"
   want="$(conductor_name "$1" "$2")"
   while IFS= read -r c; do
     [[ -n "${c}" ]] || continue
-    [[ "${c}" != "${want}" || "$(conduct_epic "${c}")" == "$1" ]] \
-      || die "conduct: ${want} is the name of $(conduct_epic "${c}")'s running conductor; let it report and close it first, or rename ${1}"
-    [[ "$(conduct_epic "${c}")" == "$1" ]] || continue
-    n="$(conduct_lane "${c}")"
+    read -r e n <<< "$(conduct_split "${c}")"
+    [[ "${c}" != "${want}" || "${e}" == "$1" ]] \
+      || die "conduct: ${want} is the name of ${e}'s running conductor; let it report and close it first, or rename ${1}"
+    [[ "${e}" == "$1" ]] || continue
     if [[ -z "$2" && -n "${n}" ]] || [[ -n "$2" && ( -z "${n}" || ${n} -gt ${CFG_conductor_lanes} ) ]]; then
       die "conduct: ${c} runs for ${1} under another conductor_lanes; let it report and close it (swarm.sh close ${c}) first"
     fi
-  done <<< "$(running_conductors)"
+  done <<< "${running}"
   [[ -n "$2" ]] || return 0
-  n="$(conductor_name "$1" "$2")"
   while IFS= read -r e; do
     e="$(basename "${e}" .md)"
-    [[ "${e}" == "$1" || "$(conductor_name "${e}")" != "${n}" ]] \
-      || die "conduct: lane $2's conductor would be named ${n}, the epic ${e}'s conductor's name; rename one of them"
+    [[ "${e}" == "$1" || "$(conductor_name "${e}")" != "${want}" ]] \
+      || die "conduct: lane $2's conductor would be named ${want}, the epic ${e}'s conductor's name; rename one of them"
   done < <(ls "${BOARD}/epics"/*.md 2>/dev/null)
 }
 

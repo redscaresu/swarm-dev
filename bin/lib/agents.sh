@@ -1408,18 +1408,18 @@ wait_agent() {
 # login_incident <name> — log a login incident for <name>, once per expired login: not when its last
 # incident in events.tsv (an api-error, auto-denied or stalled one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
 # or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
-# after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
-# through conductor_name (cn: --backlog's is b, and a lane's target <epic>.l<k> its lane's name).
+# after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct's
+# target (<epic> or --backlog, with .l<k> for a lane's) as a run key (rk) against the conductor's
+# (conductor_key, k), so no copy of the name's cut is read here.
 login_incident() {
-  awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
+  local k=""
+  [[ "$1" != conduct-* ]] || k="$(conductor_key "$1")"
+  awk -F'\t' -v n="$1" -v k="${k}" '
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
-    function cn(t,   s) { s = ""
-      if (match(t, /\.l[0-9]+$/)) { s = "-l" substr(t, RSTART + 2); t = substr(t, 1, RSTART - 1) }
-      if (t == "--backlog") return s == "" ? b : substr(substr(b, 1, length(b) - 7), 1, 25 - length(s)) substr(b, length(b) - 6) s
-      return substr(an("conduct-" t), 1, 32 - length(s)) s }
+    function rk(t) { sub(/^--backlog/, "backlog", t); return t }
     $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied|stalled):/ { login = $5 ~ /^login:/ }
     $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
-    $5 == "ok" && ($2 == "conduct" ? cn($3) : $2 == "review-agent" ? an("review-" $3) : "") == n { login = 0 }
+    $5 == "ok" && (($2 == "conduct" && k != "" && rk($3) == k) || ($2 == "review-agent" && an("review-" $3) == n)) { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
     || record_event incident "$1" "login: Login expired"
 }
@@ -1547,6 +1547,20 @@ note_lock() {
   return 1
 }
 
+# note_lanes <name> — the running lane conductors of the epic (or backlog) a lane-less conductor name is
+# for, one a line: where a note to that name goes while no pane holds it (conductor_lanes lowered to 1
+# with its lanes still running; tell_agent, ready_tell). Nothing for a lane's own name.
+note_lanes() {
+  local e l le ll
+  [[ -z "$(conduct_lane "$1")" ]] || return 0
+  e="$(conduct_epic "$1")"
+  while IFS= read -r l; do
+    [[ -n "${l}" ]] || continue
+    read -r le ll <<< "$(conduct_split "${l}")"
+    [[ "${le}" != "${e}" || -z "${ll}" ]] || echo "${l}"
+  done <<< "$(running_conductors)"
+}
+
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
 # main logs it as tell:<kind>). A header line comes first, so findings that begin with '-' are never
@@ -1564,22 +1578,20 @@ note_lock() {
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake). A note to a lane-less name no pane holds goes to every
-# running lane conductor of that epic or backlog, whatever conductor_lanes is now.
+# running lane conductor of that epic or backlog (note_lanes), whatever conductor_lanes is now.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n e l sent=""
+  local kind="$2" f="$3" name msg state since inbox rc pane line n l sent=""
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
   pane="$(agent_field "${name}" pane_id)"
-  if [[ "${kind}" == note && -z "${pane}" && -z "$(conduct_lane "${name}")" ]]; then
-    e="$(conduct_epic "${name}")"
+  if [[ "${kind}" == note && -z "${pane}" ]]; then
     # On fd 3: the tells must not read the list.
     while IFS= read -r l <&3; do
-      [[ -n "${l}" && "$(conduct_epic "${l}")" == "${e}" && -n "$(conduct_lane "${l}")" ]] || continue
-      if (tell_agent "${l}" note "${f}"); then sent=1; fi
-    done 3<<< "$(running_conductors)"
+      [[ -z "${l}" ]] || { if (tell_agent "${l}" note "${f}"); then sent=1; fi; }
+    done 3<<< "$(note_lanes "${name}")"
     [[ -z "${sent}" ]] || return 0
   fi
   if [[ -z "${pane}" ]]; then

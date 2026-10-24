@@ -1157,7 +1157,7 @@ lane_clash() {
   mine="$(fm "${BOARD}/stories/$1.md" epic)"
   while IFS=$'\t' read -r other epic status entry; do
     [[ -n "${other}" && "${epic}" == "${mine:-none}" ]] || continue
-    r="${STATE_DIR}/lane-start/${other}"
+    r="${LANE_START_DIR}/${other}"
     [[ -n "$(find "${r}" -mmin -10 2>/dev/null)" ]] || r=""
     if [[ -n "${r}" ]]; then j="$(cat "${r}")"; else j="$(story_lane "${BOARD}/stories/${other}.md")"; fi
     [[ "${j}" != "$2" ]] || continue

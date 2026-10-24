@@ -27,8 +27,8 @@
 # depends on the other (a stacked start), each story read as story_text reads it, so a build before
 # --since counts too. A
 # conductor runs from an ok `conduct` event to its next one, an ok close of its agent, a report event
-# for it or its report file's time, as outcomes' held reads it; the backlog's agent is conduct-backlog
-# or SWARM_BACKLOG_CONDUCTOR (conductor_name backlog).
+# for it or its report file's time, as outcomes' held reads it; a run's agent names are SWARM_RUN_NAMES'
+# (run_names), or conduct-backlog in older logs.
 # ponytail: a build with no close runs to the window's end; read its session log's last entry, as throughput does, if that misleads.
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
 import collections, datetime, functools, glob, os, subprocess, sys, time
