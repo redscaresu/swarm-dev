@@ -15,6 +15,11 @@
 # when it fires, never one a new conduct replaced. herdr and claude are stubs on PATH: herdr lists the
 # conductor from ${ROOT}/agents ("<name> <pane> <session>") and logs each agent prompt to
 # ${ROOT}/prompts.log; claude agents --json prints ${ROOT}/claude.json.
+# Last, a builder told findings while herdr's screen reads it idle for every settle read of the first
+# try and done only after them (plan-hld-command's tells, 2026-10-24): whether its session turns busy
+# by the second settle read ($F/takes says busy) or stays idle with the prompt in its log by then
+# (prompt: a short turn between two reads), it gets one prompt, logged ok. A prompt in a Task
+# subagent's log only (subagent) is no sign it took it: sent again.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -42,6 +47,15 @@ case "$1 $2" in
     { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\",\"agent_session\":{\"value\":\"%s\"}}", (NR > 1 ? "," : ""), $1, $2, $3 }
     END { print "]}}" }' "$F/agents" ;;
   "agent prompt") [ ! -f "$F/promptfail" ] || exit 1; [ ! -f "$F/slow" ] || sleep 1; echo "$*" >> "$F/prompts.log" ;;
+  "agent get") n=$(($(cat "$F/gets" 2>/dev/null || echo 0) + 1)); echo "${n}" > "$F/gets"
+    if [ "${n}" -eq 3 ]; then case "$(cat "$F/takes" 2>/dev/null)" in
+      busy) echo '[{"sessionId": "sb", "status": "busy"}]' > "$F/claude.json" ;;
+      prompt) echo '{"type":"user","message":{"content":"From the conductor:"}}' >> "$F/claude-config/projects/p/sb.jsonl" ;;
+      subagent) mkdir -p "$F/claude-config/projects/p/sb/subagents"
+        echo '{"type":"user","message":{"content":"a task"}}' >> "$F/claude-config/projects/p/sb/subagents/a.jsonl" ;;
+    esac; fi
+    if [ "${n}" -le 4 ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
+    else echo '{"result":{"agent":{"agent_status":"done","completion_seq":9}}}'; fi ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
@@ -160,6 +174,22 @@ echo "w:8 conduct-e" > "${p}/.swarm/state/tab"; echo "conduct-e w:8 sc" > "${ROO
 settle
 check "a conductor replaced before the deferred check: the old pane is not prompted again" 1 "$(prompts)"
 check "a conductor replaced before the deferred check: the new one is" 1 "$(grep -c "agent prompt w:8" "${ROOT}/prompts.log" || true)"
+
+settle
+echo "w:9 b1" > "${p}/.swarm/state/b1"; echo "b1 w:9 sb" >> "${ROOT}/agents"
+printf '2026-10-24\tcode\tb1\tclaude\topus\thigh\tsb\n' >> "${p}/.swarm/agents.tsv"
+for how in busy:1 prompt:1 subagent:2; do
+  want="${how#*:}" how="${how%:*}"
+  echo "${how}" > "${ROOT}/takes"; rm -rf "${ROOT}/gets" "${CLAUDE_PROJECTS_DIR}/p/sb"; : > "${ROOT}/prompts.log"
+  echo '{"type":"user","message":{"content":"the brief"}}' > "${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # before the tell: not its prompt
+  echo '[{"sessionId": "sb", "status": "idle"}]' > "${ROOT}/claude.json"
+  out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 SWARM_SLEEP_SCALE=0.01 SWARM_PROMPT_TIMEOUT_MS=15000 PATH="${ROOT}/bin:${PATH}" \
+    bash "${SWARM}" tell b1 findings "${ROOT}/note" 2>&1)" || true
+  check "findings to a builder (${how}) while herdr read it idle: told" "told b1" "${out}"
+  check "findings to a builder (${how}) while herdr read it idle: sent ${want} time(s)" "${want}" "$(grep -c 'agent prompt w:9' "${ROOT}/prompts.log" || true)"
+  check "findings to a builder (${how}) while herdr read it idle: the tell is logged ok" ok \
+    "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv")"
+done
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
