@@ -18,7 +18,7 @@
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong; or, --filed, a declined out-of-scope one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh intervene <kind> "<one line>"                  log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first)
-#   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line
+#   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
@@ -422,12 +422,15 @@ intervene() {
 }
 
 # hold <slug> <why> — log that a conductor held a ready story back: a hold line, target the slug, outcome
-# the reason. Its only line, as intervene's (target !), so a slug that is not a ready story logs nothing.
+# ok (<why>). Its only line, as intervene's (target !), so a slug that is not a ready story logs nothing.
+# A story whose last event is reconcile's reopen is refused: a hold line after it would drop the
+# (its PR <url> was closed unmerged) mark unblock --startable reads from that event.
 hold() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "hold: bad slug '$1': swarm.sh hold <slug> <why>"
   [[ -f "${BOARD}/stories/$1.md" && "$(get_fm "${BOARD}/stories/$1.md" status)" == ready ]] || die "hold: $1 is not a ready story on the board"
+  [[ "$(last_event "$1")" != $'reconcile\tok (reopened)' ]] || die "hold: $1's PR was closed unmerged; it is the lead's: list it in your report"
   [[ -n "${2//[[:space:]]/}" ]] || die "hold: say why: swarm.sh hold $1 '<why>'"
-  append_event hold "$1" "$2" || die "hold: could not write ${EVENTS_LOG}; nothing was logged"
+  append_event hold "$1" "ok ($2)" || die "hold: could not write ${EVENTS_LOG}; nothing was logged"
   echo "logged: hold $1: $2"
 }
 

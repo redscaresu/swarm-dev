@@ -173,6 +173,7 @@ for arm in ${arms}; do
   after="$(LOG="${Q}/.swarm/events.tsv" lines)"
   what="read-only, not logged"; [[ ${n} == 0 ]] || what="logged"
   check "arm ${arm}: ${what}" test "$((after - before))" -eq "${n}"
+  rm -f "${Q}/docs/stories/h.md"   # hold's ready story, so no later arm sees it
 done
 appends "next logs nothing" 0 - - - next
 appends "status logs nothing" 0 - - - status
