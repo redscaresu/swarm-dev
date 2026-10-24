@@ -712,9 +712,11 @@ start_rung() {
       | { tee "${errf}" >&2 || cat >/dev/null; }; rc=${PIPESTATUS[0]}; } 3>&1
   err="$(cat "${errf}")"; rm -f "${errf}"; trap - HUP INT TERM
   set -e
-  if [[ ${rc} -ne 0 ]] && awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR > n && $3 == a { f = 1 } END { exit !f }' "${AGENTS_LOG}"; then
-    # Recorded, but its brief may not have been taken up: a slow starter may only need longer than
-    # its window, so it is read once more (rung_late) before anything is closed.
+  if { [[ ${rc} -ne 0 ]] || [[ "${err}" == *"herdr did not show the turn start"* ]]; } \
+    && awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR > n && $3 == a { f = 1 } END { exit !f }' "${AGENTS_LOG}"; then
+    # Recorded, but its brief may not have been taken up (start_agent failed, or herdr sent it once and
+    # deliver_prompt only warned): a slow starter may only need longer than its window, so it is read
+    # once more (rung_late) before anything is closed.
     late=0; rung_late "${slug}" "${to}" "${err}" || late=$?
     if [[ ${late} -eq 0 ]]; then
       rc=0
@@ -724,7 +726,7 @@ start_rung() {
     else
       # Its brief was not taken up: closed (it would sit idle with no brief), and not on record
       # until a resume starts it. A pane already gone is no reason to stop.
-      shut_agent "${slug}" >/dev/null 2>&1 || true
+      rc=1; shut_agent "${slug}" >/dev/null 2>&1 || true
       if [[ -n "${CLOSE_PANE_KEPT:-}" ]]; then echo "step-up: ${slug}'s ${to} builder's pane could not be closed: close it by hand" >&2
       else echo "step-up: ${slug}'s ${to} builder is closed" >&2; fi
       # Its line goes under the lock record_agent appends under, held from the read to the replace, so

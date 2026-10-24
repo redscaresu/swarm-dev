@@ -198,10 +198,24 @@ echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.14"
 echo '[{"filename":"docs/stories/ghost.md"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_14_files_per_page=100"
 expect board-pr-no-version-none https://github.com/o/r/pull/14 none
 
-# story PR #15 (s-cfg, under A) also changes .claude/swarm/config: none.
+# story PR #15 (s-cfg, under A, which grants merge) also changes .claude/, .github/, a root Makefile
+# or hooks/: none. Changing none of them, it is A's.
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.15"
-echo '[{"filename":"bin/x.sh"},{"filename":".claude/swarm/config"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
-expect story-pr-touching-config-none https://github.com/o/r/pull/15 none
+for f in config:.claude/swarm/config workflow:.github/workflows/ci.yml board-only:.github/swarm-board-only.sh \
+  makefile:Makefile gnumakefile:GNUmakefile hooks:hooks/hooks.json settings:.claude/settings.json \
+  claude-hooks:.claude/hooks/x.sh; do
+  echo "[{\"filename\":\"bin/x.sh\"},{\"filename\":\"${f#*:}\"}]" > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+  expect "story-pr-touching-${f%%:*}-none" https://github.com/o/r/pull/15 none
+done
+echo '[{"filename":"bin/x.sh"},{"filename":"README.md"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect story-pr-touching-no-protected-path https://github.com/o/r/pull/15 "$(printf '%s\nmerge\nstories' "${A}")"
+# The root Makefile renamed away (its previous_filename), or deleting s-child (A) on the board beside
+# .github/: none.
+echo '[{"filename":"bin/x.sh"},{"status":"renamed","filename":"old/Makefile","previous_filename":"Makefile"}]' \
+  > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect story-pr-renaming-makefile-away-none https://github.com/o/r/pull/15 none
+echo '[{"filename":"docs/stories/s-child.md"},{"filename":".github/workflows/ci.yml"}]' > "${FX}/repos_o_r_pulls_15_files_per_page=100"
+expect story-pr-touching-board-and-protected-path-none https://github.com/o/r/pull/15 none
 
 # board PR #16 deletes s-child (A) and changes docs/README.md, a board file that is no epic or story: none.
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.16"
