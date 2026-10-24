@@ -293,9 +293,9 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `queue_minutes` (default `30`): a story PR is queued when its head is green by `ci_gate`'s rule (every check run on every page and every commit status passed, at least one run), the last of them finished this many minutes ago, the PR is open and mergeable, its story is one an agent builds (never a `lead` story's), and that head has no review agent's review. A review counts when its findings file for the head is a pass (`## Findings`, no `head moved:`), or while the agent started on it (`.swarm/reviews/<slug>.head`) is still open in herdr with no file written: one that crashed, was closed or was tidied is no review. `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>` once per head, after it has reported the head's checks finished. `next`, while conductors work, prints the same line after its step's why for each such PR of every working conductor, ending in `(<conductor>)`, the one to send it to. A head is sent once: `watch` and `swarm.sh tell <conductor> note` (for each such line in the note) both record `queued <sha>` in `.swarm/state/watch-seen`, and neither `watch` nor `next` prints a recorded head again. `dash` and `status` do not look
 - `sonnet_share` (default `0`): `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
-- `escalate_ladder` (default empty): models from low to high, separated by commas, such as `sonnet,opus,fable`. Each must be one of the models building roles run on (`haiku`, `sonnet`, `opus`, `fable`), named once and in that order (a skipped rung is fine, as in `opus,fable`), or the config is refused, so a step-up never steps down or comes back to a model. Empty is off, and `swarm.sh step-up` refuses (§ The escalation ladder). On the top rung, where no step-up is left, `swarm.sh tell <slug> findings` does not send a builder its `top_rung_rounds`-th findings round since it got there, or since the lead last reset the story: the story is escalated to the lead (`kind: lead`, logged `escalated`, for `reset` or `drop`) with those findings in its block, and the builder and its PR are kept
+- `escalate_ladder` (default empty): models from low to high, separated by commas, such as `sonnet,opus,fable`. Each must be one of the models building roles run on (`haiku`, `sonnet`, `opus`, `fable`), named once and in that order (a skipped rung is fine, as in `opus,fable`), or the config is refused, so a step-up never steps down or comes back to a model. Empty is off, and `swarm.sh step-up` refuses (§ The escalation ladder). On or above the top rung, where no step-up is left (above it is a model past the ladder's top, such as an `escalate_after` Fable build with `sonnet,opus`), `swarm.sh tell <slug> findings` does not send a builder its `top_rung_rounds`-th findings round since it got there (or since the lead last reset the story), or any later one: the story is held for the lead (`kind: lead`, `held_for: top-rung`, for `reset` or `drop`) with those findings in its block, and the builder and its PR are kept
 - `step_up_findings` (default `3`): `N`: with `escalate_ladder` set, `swarm.sh tell <slug> findings` steps a builder up instead of sending it its Nth findings round of the build, and the step-up trigger is `findings-N` (§ The escalation ladder). A value that is not a whole number of 1 or more is refused, naming the key
-- `top_rung_rounds` (default `2`): `N`: with `escalate_ladder` set, a builder on the ladder's top rung is not sent its Nth findings round since it got there, or since the lead last reset the story; the story is held for the lead instead (`escalate_ladder` above). A value that is not a whole number of 1 or more is refused, naming the key
+- `top_rung_rounds` (default `2`): `N`: with `escalate_ladder` set, a builder on or above the ladder's top rung is not sent its Nth findings round since it got there (or since the lead last reset the story), or any later one; the story is held for the lead instead (`escalate_ladder` above). A value that is not a whole number of 1 or more is refused, naming the key
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
 - `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic)
@@ -1549,8 +1549,13 @@ PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (
 the holds of `merge = agent` apply too, so a `costs: money` story's PR, and a board PR that changes a
 `costs:` line, still wait for you. Without it, `merge` refuses with
 `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`. When a board
-story or the PR's files cannot be read, so the HLD over it is unknown, it refuses with
-`cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. When the HLD's `grants:`
+story, the PR's files, or its head or base cannot be read, so the HLD over it is unknown, it refuses with
+`cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. `merge` reads the grant,
+and the PR's files, at the head and base branch it pinned. When the PR's head has moved off it,
+`merge` refuses with `the head of <PR URL> is <sha>, not <pinned sha>, so no grant covers it: review
+the new head`, and when the PR has been retargeted, with `the base of <PR URL> is <branch>, not
+<pinned branch>, so no grant covers it: review it against <branch>`. GitHub lists 300 files at most
+at a given head, so a PR that changes more gets `cannot tell which HLD`. When the HLD's `grants:`
 holds a value swarm.sh does not know, or is not a one-line `[..]` list, it prints the line naming the
 HLD's file and line, then refuses with
 `the grants: of <HLD file> cannot be read, so <PR URL> waits on the user's merge`. Under `merge = human`,
@@ -2063,6 +2068,22 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   taken up"), read its pane, and if they never arrived send them again as `tell <slug> nudge`, which
   is not a round. One herdr never sent, or whose reply could not be read, does not count. Instructions
   that are not review findings, such as a stacked child's merge, go as `tell <slug> nudge`.
+- `tell <slug> findings` holds the story for the lead when its builder is on or above the top rung,
+  where no step-up is left, and the tell would be the second findings round there or a later one (the
+  block, the `held` line and the tell's message name the round). The rounds count from when
+  the builder reached that rung, or from the build's start when it began there (an `escalate_after`
+  Fable build, or the top of a two-rung ladder), or from the lead's last `reset` of the story,
+  whichever is latest. The findings are not sent and the tell fails, saying so. The story turns
+  `kind: lead` with `held_for: top-rung`, logged as `held`, and its block holds the findings, which
+  are also kept in `.swarm/briefs/<slug>.held-findings.md`. The builder and its PR are kept. The lead
+  narrows the scope, splits the story or accepts the PR with follow-ups, then lifts the hold with
+  `reset` (which keeps `attempts:` and is not the story's one reset) and sends that file with
+  `tell <slug> findings`; that tell counts like any other, so a later round holds the story again. Or
+  the lead drops the story: `drop` leaves the builder, PR and worktree, so the block says how to close
+  them first. A tell to a story already held is refused. A hold that fails after its block is written
+  fails the tell, and the findings are not sent. Where a
+  step-up would be refused (the story is not `ready`, is a held stacked child, or has a PR merged or
+  set to auto-merge), nothing is held and the findings go as usual.
 - `watch --epic` or `--backlog` steps up a story of its own whose builder is open, once the PR has
   gone red on two heads of the build. Every head it sees goes into `.swarm/red-heads.tsv`, and each
   is judged again on later polls until `ci_gate` calls it red or green, even after a new push. A
@@ -2071,9 +2092,9 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
 
 Each prints `stepped up: <slug> ...`, and the conductor's brief tells it to wait on that builder
 again, not to close, retry or tell it. A close that a step-up replaced logs no close: the escalate
-line ends that build. One step-up of a story runs at a time, under `.swarm/locks/step-up-<slug>`. No
-step-up is tried at the top rung or off the ladder, so the command carries on as it would with the
-ladder empty. A step-up that is refused, or fails before it closes the builder, says why on stderr,
+line ends that build. One step-up of a story runs at a time, under `.swarm/locks/step-up-<slug>`, which a
+top-rung hold takes too. No step-up is tried at the top rung or off the ladder, so the command
+carries on as it would with the ladder empty, apart from the top-rung hold above. A step-up that is refused, or fails before it closes the builder, says why on stderr,
 logs nothing (a refusal is no sign of life), and leaves the command to carry on the same way. `watch`
 does not try it again on the same head. A step-up whose new builder does not start, after the old one
 closed, prints `step-up failed: <slug>` and stops the command that ran it: a close counts nothing

@@ -263,7 +263,9 @@ next_step() {
     is_escalated "${f}" || continue
     slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
     echo "escalated ${slug}"
-    if [[ -n "${held}" ]]; then
+    if [[ "${held}" == top-rung ]]; then
+      echo "${slug} is held (top-rung): its builder on or above the ladder's top rung drew another findings round, which was not sent (the block names the file); re-scope it, lift the hold with swarm.sh reset ${slug} <reason> and send the findings with swarm.sh tell ${slug} findings <file>, or close its builder, PR and worktree as its block says and swarm.sh drop ${slug} <reason>, then tell the user why"
+    elif [[ -n "${held}" ]]; then
       echo "${slug} is held (${held}): its builder stopped on its goal, which counts nothing; lift the hold with swarm.sh reset ${slug} <reason> to build it again, or swarm.sh drop ${slug} <reason>, then tell the user why"
     elif [[ -n "${when}" ]] && impossible_block "${f}"; then
       echo "${slug}'s builder called its Done when impossible after its one reset (${when}): drop it with swarm.sh drop ${slug} <reason>, then tell the user why"
@@ -821,15 +823,19 @@ plan_hld() {
   echo "${f}"
 }
 
-# pr_hld <pr-url> — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
+# pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
 # lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
 # touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR that touches
 # .claude/, .github/, hooks/ or a root Makefile, GNUmakefile or makefile (in any repo: what checks a
 # merge or what the agents may do), or the board's hld/, is under none: only the user changes those. The one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story
-# lists that touches any file but the board's epics and stories is under none too.
+# lists that touches any file but the board's epics and stories is under none too. With <sha> and
+# <base>, the head and base branch merge pinned: the files are <base>...<sha>'s (300 at most, else it
+# cannot list them all), and a PR whose head or base is not those prints "<head> <base>" and exits
+# PR_MOVED.
+PR_MOVED=3
 pr_hld() (
-  local s url repo n own="" info="" st="" head="" pre p q view="" err plan="" g
+  local s url repo n own="" info="" st="" head="" count base pre p q view="" err plan="" g pin="${2:-}" at=()
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
@@ -845,10 +851,18 @@ pr_hld() (
   fi
   # No story lists it and the board is not in its repo: nothing on the board is under it.
   [[ -n "${s}" || "${repo}" == "${own}" ]] || return 0
-  info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles | json "d['headRefOid'] + ' ' + str(d['changedFiles'])")" \
-    || die "grants: gh cannot read ${url}"
-  head="${info% *}"
-  st="$(ci_gate files-status "${repo}" "${n}" "${info#* }")" || die "grants: cannot list every file ${url} changes: ${st}"
+  # The head goes last, as it may be empty: a head gh cannot read, under none below, but never with a
+  # pin. A null one fails here, as gh failing would. Only a pinned read uses the base.
+  info="$(gh pr view "${n}" --repo "${repo}" --json headRefOid,changedFiles,baseRefName \
+    | json "str(d['changedFiles']) + ' ' + (d.get('baseRefName') or '-') + ' ' + d['headRefOid']")" || die "grants: gh cannot read ${url}"
+  read -r count base head <<< "${info}"
+  [[ ( -z "${head}" && -z "${pin}" ) || "${head}" =~ ^[0-9a-f]{40}$ ]] || die "grants: gh gave no head SHA for ${url}"
+  if [[ -n "${pin}" ]]; then
+    [[ "${base}" != - ]] || die "grants: gh gave no base branch for ${url}"
+    [[ "${head} ${base}" == "${pin} $3" ]] || { echo "${head} ${base}"; exit "${PR_MOVED}"; }
+    at=("${base}" "${pin}")   # at the pin: the PR's files API lists whatever head it has by then
+  fi
+  st="$(ci_gate files-status "${repo}" "${n}" "${count}" ${at[@]+"${at[@]}"})" || die "grants: cannot list every file ${url} changes: ${st}"
   info="$(cut -d' ' -f2- <<< "${st}")"
   ! grep -qE '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' <<< "${info}" || return 0
   if [[ "${repo}" != "${own}" ]]; then head=""   # the board is not in its repo, so none of its files is a board file
