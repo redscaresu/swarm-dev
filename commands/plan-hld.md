@@ -17,28 +17,52 @@ The whole plan runs on origin's copy of the board in the plan worktree, `<wt>` b
 - **An open PR.** If the board PR `plan-$1` is already open (`gh pr list --head board/plan-$1
   --state open --json url --jq '.[].url'` prints a URL), report its URL and stop: until it merges,
   main has no `planned:` for the HLD, and planning it again would only open a second PR.
+- **Origin.** Run `git fetch origin` first: the checks below read origin's board, and `board-pr
+  start` makes `<wt>` from it.
 - **A leftover worktree.** If `<wt>` exists, run `swarm.sh board-pr done plan-$1` first. It removes
   `<wt>` when the PR on its tip has merged or closed, or when the run that started it wrote nothing.
-  It refuses while `<wt>` holds this plan's unopened work: an earlier run stopped there, so resume
-  in `<wt>` and skip the checks below, which that run passed.
-- **A new worktree.** Without `<wt>`, run `git fetch origin`, then `swarm.sh board-pr start plan-$1`,
-  which makes `<wt>` from origin's base.
-- **Checks.** Stop, saying why, and remove the `<wt>` you just started with
-  `swarm.sh board-pr done plan-$1`, when `<wt>`'s HLD is not `status: agreed`, when its `planned:`
-  has a value (it was planned already; an empty one, `""` or a bare `# comment` is none, as
-  `swarm.sh next` reads it), or when an epic in `<wt>` already names it: `swarm.sh next` never plans
-  an HLD that epics carry, and a second plan would write its epics again. An epic names it when
-  `SWARM_PROJECT=<wt> swarm.sh grants <epic>` prints `<wt>`'s `hld/$1.md` as its first line, for any
-  `<epic>` in `<wt>`'s `docs/epics/` (swarm.sh reads `hld:` with quotes, brackets and a comment).
+  Two refusals mean this plan's unopened work is there, and an earlier run stopped: `<wt> has
+  uncommitted changes`, and `no PR on board/plan-$1 has its tip ..., and it has commits past
+  origin/<base>`. On either, resume in `<wt>`, and still run the checks below: origin can have moved
+  since that run. On any other refusal (a gh error, a tip that differs from origin's, a locked
+  worktree, the branch checked out elsewhere), stop and report it.
+- **A new worktree.** Without `<wt>`, run `swarm.sh board-pr start plan-$1`, which makes `<wt>`
+  from origin's base.
+- **Checks.** Read origin's HLD, `git show origin/<base>:<board>/hld/$1.md`, where `<base>` is what
+  `swarm.sh base` prints and `<board>` is the board's path in the repo; never `<wt>`'s copy, which
+  on a resume carries the earlier run's `planned:`. Stop, saying why, when it is not `status:
+  agreed`, when its `planned:` has a value (it was planned already; an empty one, `""` or a bare
+  `# comment` is none, as `swarm.sh next` reads it), or when an epic on origin already names it:
+  `swarm.sh next` never plans an HLD that epics carry, and a second plan would write its epics
+  again. An epic names it when its front matter's `hld:` is `$1` itself, read as `next` reads it
+  (the lines between the file's first two `---`; quotes, one pair of brackets, a trailing comment
+  and whitespace aside; a body line is not read, and `parent:` is not followed). This loop over
+  origin's epics prints each that does:
 
-A board outside the project's repo has no worktree and no origin: skip the PR and worktree steps,
-read and write the board where it is, and read `<wt>` below as the project.
+      git ls-tree -r --name-only origin/<base> -- '<board>/epics/' | while read -r f; do
+        git show "origin/<base>:$f" | awk '/^---$/ && ++n == 2 { exit } n == 1' |
+          grep -qE "^hld: *\[?[\"']?<name>[\"']?\]?[[:space:]]*(#.*)?\$" && echo "$f"
+      done
+
+  where `<name>` is `$1` with each `.` written `\.`. On a resume, stop too when origin's HLD changed
+  since `<wt>` was started, which `git -C <wt> diff --quiet "$(git -C <wt> merge-base HEAD
+  origin/<base>)" origin/<base> -- <board>/hld/$1.md` reports by failing: that run's agents and its
+  `grants` read the old HLD, and the answers in `.swarm/$1/` are its. On a stop, remove a `<wt>` you
+  just started with `swarm.sh board-pr done plan-$1`; a resumed one holds the earlier run's work, so
+  leave it and say so. On a board outside the repo, feed each `docs/epics/*.md` to the same `awk`
+  and `grep`.
+
+A board outside the project's repo has no worktree and no origin: skip the PR, origin and worktree
+steps, run the checks on the board's own files, read and write the board where it is, and read
+`<wt>` below as the project.
 
 Run it as a swarm (`${CLAUDE_PLUGIN_ROOT}/docs/method.md` § The planning chain); every agent writes
 its answer as JSON to `<project>/.swarm/$1/<name>.json`, the only file it may write, and replies with
-that path. Put each brief in `.swarm/briefs/<name>.md`, then start each agent in `<wt>`:
+that path. Put each brief in `.swarm/briefs/<name>.md`, then start each agent in `<project>`, as
+`/plan-epic` does, so its one write lands inside its working directory; started in `<wt>`, it would
+write outside it, which can prompt or be refused, and `swarm.sh wait` then sits on a blocked agent:
 
-    swarm.sh agent plan-$1 <name> "<wt>" <role> .swarm/briefs/<name>.md
+    swarm.sh agent plan-$1 <name> "<project>" <role> .swarm/briefs/<name>.md
     swarm.sh wait <name>        # run in the background, one per agent
 
 Name agents as below (`survey-code`, `hld-lead`, `skeptic-<epic slug>`, `codex`, `critic`), never
@@ -56,9 +80,10 @@ was started; on a board outside the repo, `docs/hld/$1.md`), reuse it and do not
 again; an older one belongs to a previous plan, so start the agent.
 
 Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
-is origin's copy of the project: read the code, epics and stories there. Read-only — write nothing
-but your output file, never commit, never touch real cloud or credentials. Cite evidence as
-file:line. Keep free text short.* (with `<wt>` and the output path written out in full)
+is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
+you run and which can be behind. Read-only — write nothing but your output file, never commit, never
+touch real cloud or credentials. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
+`<project>` and the output path written out in full)
 
 1. **Survey** — role `survey`, three in parallel, output `{summary, facts:[{fact, evidence}]}`:
    `survey-code` (what the design changes and where), `survey-constraints` (ADRs, policies, safety
@@ -90,14 +115,18 @@ draft`, and ask before `board-pr open`: each draft is then agreed by the user th
 Write in `<wt>`, never the main checkout. Write one `docs/epics/<slug>.md` per epic. An epic file
 there that already carries `hld: $1` is this plan's own, from the run you resume: overwrite it, and
 delete one the plan no longer has. Any other file of that slug in `docs/epics/` or `docs/stories/`
-would overwrite an unrelated epic or story: rename that epic first, and every `depends_on` that
-names it, and say so in the report. Front matter `status:` as above, `hld: $1` (the file name, no
-`.md`), `depends_on: [<epic slugs>]`, `[]` when none; body: goal, **Done when**, out of scope,
-constraints, **Your part**. In the same worktree set the HLD's front matter to one `planned:
-<today>` line and the lines under its `## Epics` to one link per epic, replacing what a run you
-resume wrote rather than adding to it; change nothing else in the HLD, and nothing else on the
-board, so `swarm.sh grants` can put the board PR under this HLD. Commit, run one `swarm.sh
-codex-review` pass there, then `swarm.sh board-pr open plan-$1 "<title>" <body-file>`. If it says
+would overwrite an unrelated epic or story, and a PR that changes an epic the board already has is
+no plan: rename that epic first, and every `depends_on` that names it, and say so in the report.
+Front matter `status:` as above, `hld: $1` (the file name, no `.md`), `depends_on: [<epic slugs>]`,
+`[]` when none; body: goal, **Done when**, out of scope, constraints, **Your part**. In the same
+worktree set the HLD's front matter to one `planned: YYYY-MM-DD` line, today's date and nothing
+after it, and the lines under its last `## Epics` to one `- [<slug>](../epics/<slug>.md)` per epic,
+the same slug in the text and the path and nothing else on the line, replacing what a run you
+resume wrote rather than adding to it. Change no line of the HLD above `## Epics`, write nothing
+after the links, and change nothing else on the board: the PR adds its epics, each carrying `hld:
+$1`, and touches no other file. `swarm.sh grants` puts the board PR under this HLD in that exact
+shape and under none in any other, where the `merge` grant no longer covers it. Commit, run one
+`swarm.sh codex-review` pass there, then `swarm.sh board-pr open plan-$1 "<title>" <body-file>`. If it says
 the PR on the branch has merged or closed, run `swarm.sh board-pr done plan-$1` and start again from
 the top. A board outside the project's repo is written in place: no commit, no board PR.
 

@@ -31,29 +31,46 @@ has() { # <name> <pattern> [text]
 hasnt() { # <name> <pattern> [text]
   if grep -qE -- "$2" <<< "${3-$flat}"; then echo "FAIL $1"; fails=$((fails + 1)); else echo "ok   $1"; fi
 }
+hasF() { # <name> <fixed string> — for a pattern full of regex characters
+  if grep -qF -- "$2" <<< "$flat"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails + 1)); fi
+}
 
 has description '^--- description: Use when asked to plan an agreed HLD into epics\.'
-has agreed-only 'when `<wt>`.s HLD is not `status: agreed`'
+has agreed-only 'Read origin.s HLD, `git show origin/<base>:<board>/hld/\$1\.md`, .* never `<wt>`.s copy, which on a resume carries the earlier run.s `planned:`\. Stop, saying why, when it is not `status: agreed`'
 has planned-refused 'when its `planned:` has a value \(it was planned already; an empty one, `""` or a bare `# comment` is none'
 has empty-arg 'If `\$1` is empty, list the agreed HLDs .* and ask which'
-has reads-origin 'Without `<wt>`, run `git fetch origin`, then `swarm\.sh board-pr start plan-\$1`, which makes `<wt>` from origin.s base'
-has refuses-carried 'or when an epic in `<wt>` already names it: .* `SWARM_PROJECT=<wt> swarm\.sh grants <epic>` prints `<wt>`.s `hld/\$1\.md` as its first line'
+has fetch-first 'Run `git fetch origin` first: the checks below read origin.s board, and `board-pr start` makes `<wt>` from it'
+has reads-origin 'Without `<wt>`, run `swarm\.sh board-pr start plan-\$1`, which makes `<wt>` from origin.s base'
+has refuses-carried 'or when an epic on origin already names it: .* An epic names it when its front matter.s `hld:` is `\$1` itself, read as `next` reads it \(the lines between the file.s first two `---`; .* a body line is not read, and `parent:` is not followed\)'
+has carried-origin 'git ls-tree -r --name-only origin/<base> -- .<board>/epics/. \| while read -r f; do git show "origin/<base>:\$f" \| awk'
+# The loop's front-matter awk and the hld: pattern round 4 checked against slug_list, as a fixed
+# string: a quoted heredoc, so nothing in it is escaped twice.
+want=$(cat <<'EOF'
+awk '/^---$/ && ++n == 2 { exit } n == 1' | grep -qE "^hld: *\[?[\"']?<name>[\"']?\]?[[:space:]]*(#.*)?\$" && echo "$f" done where `<name>` is `$1` with each `.` written `\.`
+EOF
+)
+hasF carried-front-matter "$want"
+has resume-hld-changed 'On a resume, stop too when origin.s HLD changed since `<wt>` was started, which `git -C <wt> diff --quiet "\$\(git -C <wt> merge-base HEAD origin/<base>\)" origin/<base> -- <board>/hld/\$1\.md` reports by failing: that run.s agents and its `grants` read the old HLD'
+has resumed-wt-kept 'On a stop, remove a `<wt>` you just started with `swarm\.sh board-pr done plan-\$1`; a resumed one holds the earlier run.s work, so leave it and say so'
 has three-surveys 'role `survey`, three in parallel'
 has one-hld-lead 'one `hld-lead`, role `hld-lead`'
 has skeptic-cap 'role `skeptic` \(capped at five'
 has codex 'one `codex`, role `codex`'
 has critic 'one `critic`, role `critic`'
-has agent-tab 'swarm\.sh agent plan-\$1 <name> "<wt>" <role>'
+has agent-tab 'swarm\.sh agent plan-\$1 <name> "<project>" <role>'
+has agents-in-project 'start each agent in `<project>`, as `/plan-epic` does, so its one write lands inside its working directory'
 has output-dir '`<project>/\.swarm/\$1/<name>\.json`'
 # The grants are read before the ask: the grants line comes before the "ask before" line.
 has grants-before-ask 'Before the ask, run `SWARM_PROJECT=<wt> swarm\.sh grants \$1`, which reads `<wt>`.s HLD.*ask before `board-pr open`'
 has active-under-epics 'lists `epics`, the HLD lets you write the epics `status: active`'
 has draft-otherwise 'Without it, write each epic `status: draft`'
 has own-epics 'An epic file there that already carries `hld: \$1` is this plan.s own, from the run you resume: overwrite it'
-has slug-clash 'Any other file of that slug in `docs/epics/` or `docs/stories/` would overwrite an unrelated epic or story: rename that epic first'
+has slug-clash 'Any other file of that slug in `docs/epics/` or `docs/stories/` would overwrite an unrelated epic or story, and a PR that changes an epic the board already has is no plan: rename that epic first'
 has hld-on-epic '[Ff]ront matter `status:` as above, `hld: \$1`'
-has planned 'set the HLD.s front matter to one `planned: <today>` line'
-has epics-link 'the lines under its `## Epics` to one link per epic, replacing what a run you resume wrote rather than adding to it'
+# The plan PR's exact shape, the one plan_head and epic_links (bin/lib/board.sh) put under the HLD.
+has planned 'set the HLD.s front matter to one `planned: YYYY-MM-DD` line, today.s date and nothing after it'
+has epics-link 'the lines under its last `## Epics` to one `- \[<slug>\]\(\.\./epics/<slug>\.md\)` per epic, the same slug in the text and the path and nothing else on the line, replacing what a run you resume wrote rather than adding to it'
+has hld-top-unchanged 'Change no line of the HLD above `## Epics`, write nothing after the links, and change nothing else on the board: the PR adds its epics, each carrying `hld: \$1`, and touches no other file'
 has board-pr-start 'swarm\.sh board-pr start plan-\$1'
 has board-pr-open 'swarm\.sh board-pr open plan-\$1'
 has codex-review 'one `swarm\.sh codex-review` pass'
@@ -62,19 +79,37 @@ has board-pr-done 'swarm\.sh board-pr done plan-\$1'
 has done-on-close 'Once it has merged, or been closed unmerged, run `swarm\.sh board-pr done plan-\$1`'
 has close 'swarm\.sh close plan-\$1'
 has whole-plan-in-wt 'The whole plan runs on origin.s copy of the board in the plan worktree'
-has brief-reads-wt 'You are decomposing the agreed HLD `<wt>/docs/hld/\$1\.md`; read it first\. `<wt>` is origin.s copy of the project'
+has brief-reads-wt 'You are decomposing the agreed HLD `<wt>/docs/hld/\$1\.md`; read it first\. `<wt>` is origin.s copy of the project: read the code, epics and stories there, not in `<project>`, where you run'
 has resume-mtime 'newer than `<wt>/\.git`'
 has stop-when-open 'If the board PR `plan-\$1` is already open \(`gh pr list --head board/plan-\$1 --state open --json url --jq .\.\[\]\.url.` prints a URL\), report its URL and stop'
-has resume-worktree 'If `<wt>` exists, run `swarm\.sh board-pr done plan-\$1` first\. .* It refuses while `<wt>` holds this plan.s unopened work: an earlier run stopped there, so resume in `<wt>`'
+has resume-worktree 'If `<wt>` exists, run `swarm\.sh board-pr done plan-\$1` first\. .* `<wt> has uncommitted changes`, and `no PR on board/plan-\$1 has its tip \.\.\., and it has commits past origin/<base>`\. On either, resume in `<wt>`, and still run the checks below: origin can have moved since that run'
+has other-refusal-stops 'On any other refusal \(a gh error, a tip that differs from origin.s, a locked worktree, the branch checked out elsewhere\), stop and report it'
 
 has swarm-plan-hld-step '- `plan-hld <hld>`: follow `/plan-hld <hld>`' "$swarm"
 has swarm-hld-step '- `hld <hld>`: .{0,120}`swarm\.sh finish <hld>`' "$swarm"
+has swarm-finish-agent-merge 'Under `merge = agent`, merge the PR it opens with `swarm\.sh merge --board <url>`, as any board PR; under `merge = human`, hand it to the user: the finish PR is then the user.s, grant or not' "$swarm"
 has swarm-plan-done 'Once that PR has merged or been closed, run `swarm\.sh board-pr done plan-<hld>` and `swarm\.sh close plan-<hld>`' "$swarm"
 has hld-plans-next '`/swarm-dev:swarm` plans it into epics next: once its board PR has merged, or at once on a board outside the project.s repo' "$hld"
 has swarm-gate-rerun 'run `/plan-hld <hld>` again: it clears the worktree of a plan PR that merged or closed, and resumes in one that stopped before `board-pr open`' "$swarm"
+has swarm-finish-gate 'When the gate lists `finish PR awaiting merge: <hld>`, read the PR .* once it has merged or closed, run `swarm\.sh board-pr done finish-<hld>`' "$swarm"
 has swarm-finish-done 'swarm\.sh board-pr done finish-<hld>' "$swarm"
 
 hasnt skeleton-no-planned '^planned:' "$skeleton"
 has skeleton-found '^status: draft \| agreed \| superseded$' "$skeleton"
+
+# The carried-epic loop, run as the file holds it (its placeholders filled) over a clone whose
+# origin/main has four epics: it prints the two whose front matter hld: is the HLD (bare, and quoted
+# with a comment), and not the one that names it in its body nor the one with no front matter.
+git init -q "${iso}/o" && git -C "${iso}/o" -c user.name=t -c user.email=t@t -c commit.gpgsign=false checkout -q -b main
+mkdir -p "${iso}/o/docs/epics"
+printf -- '---\nstatus: active\nhld: h\n---\n\n# a\n' > "${iso}/o/docs/epics/a.md"
+printf -- '---\nstatus: active\nhld: other\n---\n\n# b\nhld: h\n' > "${iso}/o/docs/epics/b.md"
+printf -- 'hld: h\n\n# c\n' > "${iso}/o/docs/epics/c.md"
+printf -- '---\nstatus: active\nhld: "h" # note\n---\n\n# d\n' > "${iso}/o/docs/epics/d.md"
+git -C "${iso}/o" add -A && git -C "${iso}/o" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m epics
+git clone -q "${iso}/o" "${iso}/c"
+sed -n '/^      git ls-tree/,/^      done$/p' "$F" | sed 's/<base>/main/g; s#<board>#docs#g; s/<name>/h/g' > "${iso}/loop.sh"
+got="$(cd "${iso}/c" && bash "${iso}/loop.sh" || true)"
+if [ "$got" = $'docs/epics/a.md\ndocs/epics/d.md' ]; then echo "ok   carried-loop-runs"; else echo "FAIL carried-loop-runs: got '${got//$'\n'/ }'"; fails=$((fails + 1)); fi
 
 [ "$fails" -eq 0 ]

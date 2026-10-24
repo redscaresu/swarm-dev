@@ -1,7 +1,7 @@
 ---
 kind: lead
 status: blocked
-depends_on: [conductor-lanes-start]
+depends_on: [conductor-lanes-start, release-027]
 touches: [.claude/swarm/config]
 estimate_lines: 2
 easy: true
