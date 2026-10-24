@@ -943,17 +943,40 @@ last_event() { awk -F'\t' -v s="$1" '$3 == s { last = $2 "\t" $5 } END { print l
 # a later item with the slug starts with none: reconcile's, on a board outside the repo.
 delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }
 
-# finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
-finish_item() { remove_item finish "$1"; }
+# finish <slug> — take a merged story or epic off the board, or a finished HLD (<board>/hld/<slug>.md,
+# when no story or epic has the slug): delete its file (remove_item). An HLD hld_unfinished names a
+# reason for is refused before any board PR starts; remove_item checks it again on origin's base.
+finish_item() {
+  local f="${BOARD}/hld/$1.md" why
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "bad slug '$1'"
+  if [[ -f "${BOARD}/stories/$1.md" || -f "${BOARD}/epics/$1.md" || ! -f "${f}" ]]; then
+    f="$(item_file "$1")" || exit 1
+  else
+    why="$(hld_unfinished "${f}")"
+    [[ -z "${why}" ]] || die "finish: ${why}"
+  fi
+  remove_item finish "$1" "${f}"
+}
 
-# remove_item <verb> <slug> [<reason>] — finish's and drop's delete. A board outside the repo is
-# edited in place; one in it through the board PR <verb>-<slug> (board_pr), never the main checkout,
-# and a second run pushes to that PR. It prints the PR and the merge --board that lands it. A file
-# that is not on origin's base (an unmerged board PR adds it) is refused, and a run that fails clears
-# away the worktree and branch it started (unstart), so the next run starts clean.
+# hld_unfinished <hld file> — why finish refuses the HLD, or nothing: it is a draft (the user's), has
+# no planned: (hld_planned), so it was never planned, or an epic in ${BOARD}/epics names it (hld_epics).
+hld_unfinished() {
+  local h e left=""
+  h="$(basename "$1" .md)"
+  if [[ "$(get_fm "$1" status)" == draft ]]; then echo "the HLD ${h} is a draft, the user's; run /hld ${h}"; return; fi
+  hld_planned "$1" || { echo "the HLD ${h} has no planned:, so it was never planned; run /plan-hld ${h}"; return; }
+  while IFS= read -r e; do left+=" $(basename "${e}" .md)"; done < <(hld_epics "${h}")
+  [[ -z "${left}" ]] || echo "the HLD ${h} still has epics on the board:${left}"
+}
+
+# remove_item <verb> <slug> <file> [<reason>] — finish's and drop's delete of <file>. A board outside
+# the repo is edited in place; one in it through the board PR <verb>-<slug> (board_pr), never the main
+# checkout, and a second run pushes to that PR. It prints the PR and the merge --board that lands it. A
+# file that is not on origin's base (an unmerged board PR adds it) is refused, and so is an HLD
+# hld_unfinished names a reason for as origin's base has it; a run that fails clears away the worktree
+# and branch it started (unstart), so the next run starts clean.
 remove_item() {
-  local verb="$1" slug="$2" why="${3:-}" f rel name wt new="" body url title
-  f="$(item_file "${slug}")"
+  local verb="$1" slug="$2" f="$3" why="${4:-}" rel name wt new="" body url title left base view paths
   [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${f}"; return; }
   rel="${f#"${PROJECT_DIR}"/}"; name="${verb}-${slug}"
   wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
@@ -961,6 +984,18 @@ remove_item() {
     wt="$(board_pr start "${name}")" || die "${verb}: cannot start the board PR ${name}"
     new=1
     [[ -f "${wt}/${rel}" ]] || { unstart "${name}"; die "${verb}: ${rel} is not on origin/$(base_for "${PROJECT_DIR}") (is it in a board PR that has not merged?), so no board PR can delete it; merge that first"; }
+  fi
+  # An HLD is checked again as origin's base has it, the truth: an epic merged there, or the HLD changed
+  # there, and not yet pulled, refuses it. Read from origin/<base> itself, never the worktree, which an
+  # earlier run may have started before such a merge.
+  if [[ "${f}" == "${BOARD}/hld/"* ]]; then
+    base="$(base_for "${PROJECT_DIR}")"; view="$(mktemp -d)"; paths=("${rel}")
+    # A board whose last epic went, with no README there, has no epics/ in git's tree at all.
+    ! git -C "${PROJECT_DIR}" cat-file -e "origin/${base}:${rel%hld/*}epics" 2>/dev/null || paths+=("${rel%hld/*}epics")
+    git -C "${PROJECT_DIR}" archive "origin/${base}" "${paths[@]}" | tar -x -C "${view}" \
+      || { rm -rf "${view}"; [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: cannot read ${paths[*]} on origin/${base}"; }
+    left="$(BOARD="${view}${BOARD#"${PROJECT_DIR}"}" hld_unfinished "${view}/${rel}")"; rm -rf "${view}"
+    [[ -z "${left}" ]] || { [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: on origin/${base}, ${left}; pull first"; }
   fi
   # An earlier run's worktree has the file deleted already; its PR is open, so a failure leaves it.
   [[ ! -e "${wt}/${rel}" ]] || git -C "${wt}" rm -q -- "${rel}" \
@@ -1030,7 +1065,7 @@ drop_story() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "drop: bad slug '$1'"
   [[ -f "${f}" ]] || die "drop: no story ${f}"
   is_escalated "${f}" || die "drop: $1 is not an escalated story (ready, kind: lead, with escalated_from:), so it is not dropped"
-  remove_item drop "$1" "$2"
+  remove_item drop "$1" "${f}" "$2"
   echo "dropped: $1"
 }
 
