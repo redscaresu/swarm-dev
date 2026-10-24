@@ -35,6 +35,7 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   the base) with no ticket: an `agreed:` date the base's draft did not already have, a `parent:`,
   or an `hld:` naming an HLD that is `agreed` and grants `epics` both at the base and in the
   worktree. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
+  `swarm.sh merge --board` refuses the same PRs (§ Merging).
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
   on the branch's tip (the local one, or origin's when there is none here) has merged or closed. A
   PR left by an earlier use of the name does not count. With no PR it removes an abandoned start:
@@ -1391,7 +1392,10 @@ affected.
 unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
-under the board instead. With `--release`, for a release PR, the PR must be in the project's own
+under the board instead. Under either merge mode, `--board` also refuses a PR that sets an epic
+`active` with no ticket, as `board-pr open` does (§ The lead). It reads each epic and HLD through
+gh at the base branch and at the head, and any read error other than a 404 refuses too. With
+`--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
 greater than the base's. When `bin/`, `commands/` or `hooks/` changed between the tag

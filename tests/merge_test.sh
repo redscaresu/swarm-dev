@@ -1071,6 +1071,75 @@ merge --board "${URL}"; refused "merge = human, a board PR under grants: [merge]
 check "merge = human, a board PR under grants: [merge] that changes a costs: line: the whole line, with no mode in it" \
   grep -qxF "swarm: merge: held: ${URL} changes a costs: line in docs/epics/g.md; the user merges it" "${ROOT}/out"
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
+
+# --- merge --board refuses a PR that sets an epic active with no ticket (epic_unticketed), under
+# either merge mode. gh reads each epic and hld: HLD at main and at the head from wf.<file>.<ref>; the
+# stub keys them by basename, so no HLD shares an epic's name.
+NT="active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
+# epr <epics> [config line]... — fresh with the config lines, no story s, and a board PR changing
+# docs/epics/<epic>.md for each of the space-separated <epics>, in that order.
+epr() {
+  local e list=""
+  fresh "${@:2}"; rm "${S}"
+  for e in $1; do list+="${list:+,}{\"filename\":\"docs/epics/${e}.md\",\"status\":\"modified\"}"; done
+  echo "[${list}]" > "${FX}/files"; wc -w <<< "$1" | tr -d ' ' > "${FX}/nfiles"
+}
+# fx_at <file> <ref> <front-matter line>... — <file> (a basename) as gh reads it at <ref>.
+fx_at() { { echo ---; printf '%s\n' "${@:3}"; echo ---; } > "${FX}/wf.$1.$2"; }
+# guarded <case> <epic> — refused naming <epic> and /swarm-dev:epic <epic>.
+guarded() { refused "$1" "${URL} sets $2 ${NT} $2"; }
+hld_read() { grep -qF "repos/o/r/contents/docs/hld/$1.md?ref=main" "${ROOT}/gh.log"; }
+board_merged() { is "$1: exits 0" 0 "${rc}"; check "$1: merged" merged; }
+epr e1; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; guarded "--board, a new active epic with no ticket" e1
+epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
+guarded "--board, a draft-to-active flip with no ticket" e1
+# hld_guarded <case> <HLD> — e1 active under hld: <HLD>, absent at the base: refused, the HLD read at main.
+hld_guarded() {
+  fx_at e1.md "${H1}" "status: active" "hld: $2"; merge --board "${URL}"; guarded "$1" e1
+  check "$1: reads the HLD at main" hld_read "$2"
+}
+epr e1; fx_at hd.md main "status: draft" "grants: [epics]"; fx_at hd.md "${H1}" "status: agreed" "grants: [epics]"
+hld_guarded "--board, hld: an HLD draft at the base, agreed at the head" hd
+epr e1; fx_at hx.md main "status: agreed" "grants: [epics]"
+hld_guarded "--board, hld: an agreed HLD the head deletes" hx
+epr e1; fx_at hx.md main "status: agreed" "grants: [epics]"; fx_at hx.md "${H1}" "status: superseded" "grants: [epics]"
+hld_guarded "--board, hld: an agreed HLD the head supersedes" hx
+epr e1; fx_at hx.md main "status: agreed" "grants: [epics]"; fx_at hx.md "${H1}" "status: agreed" "grants: [merge]"
+hld_guarded "--board, hld: an agreed HLD whose epics grant the head removes" hx
+epr e1; fx_at hb.md main "status: agreed" "grants: [bogus]"; fx_at e1.md "${H1}" "status: active" "hld: hb"; merge --board "${URL}"
+refused "--board, hld: an HLD with a bad grant value" "--board: docs/hld/hb.md at the base, line 3: grants must be epics, stories, merge or release"
+check "--board, hld: an HLD with a bad grant value: reads the HLD at main" hld_read hb
+epr "a-ok b-no"; fx_at a-ok.md "${H1}" "status: active" "agreed: 2026-01-01"; fx_at b-no.md "${H1}" "status: active"
+merge --board "${URL}"; guarded "--board, a ticketed and an unticketed active epic" b-no
+check "--board, a ticketed and an unticketed active epic: does not name the ticketed one" bash -c "! grep -qF a-ok '${ROOT}/out'"
+epr "a-no b-ok"; fx_at a-no.md "${H1}" "status: active"; fx_at b-ok.md "${H1}" "status: active" "parent: p"
+merge --board "${URL}"; guarded "--board, an unticketed and a ticketed active epic" a-no
+check "--board, an unticketed and a ticketed active epic: does not name the ticketed one" bash -c "! grep -qF b-ok '${ROOT}/out'"
+epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.${H1}.fail"; merge --board "${URL}"
+refused "--board, a 502 on the epic's read at the head" "--board: gh cannot read docs/epics/e1.md at 1111111, so whether ${URL} sets an epic active with no ticket is unknown"
+epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.main"; : > "${FX}/wf.e1.md.main.fail"; merge --board "${URL}"
+refused "--board, a 502 on the epic's read at the base" "--board: gh cannot read docs/epics/e1.md at main, so whether ${URL} sets"
+epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: 2026-01-01"; merge --board "${URL}"
+board_merged "--board, an epic set active with agreed:"
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: p"; merge --board "${URL}"; board_merged "--board, an epic set active with parent:"
+epr e1; fx_at hok.md main "status: agreed" "grants: [epics]"; fx_at hok.md "${H1}" "status: agreed" "grants: [epics]"
+fx_at e1.md "${H1}" "status: active" "hld: hok"; merge --board "${URL}"
+board_merged "--board, hld: an HLD agreed with grants: [epics] at both ends"
+check "--board, hld: an HLD agreed with grants: [epics] at both ends: reads the HLD at main" hld_read hok
+epr e1 "lead_epics = on"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; board_merged "--board, lead_epics = on, with no ticket"
+epr e1; fx_at e1.md main "status: later"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; board_merged "--board, later to active"
+epr e1; fx_at e1.md main "status: active"; fx_at e1.md "${H1}" "status: active" "depends_on: []"; merge --board "${URL}"
+board_merged "--board, a PR that changes no epic's status"
+# Under merge = human the HLD grants merge, not epics: merge_grant lets the lead through (the active
+# epic's PR merges), so the flip's refusal is the guard's own.
+epr g "merge = human"; hld hm merge g; fx_at hm.md main "status: agreed" "grants: [merge]"; fx_at hm.md "${H1}" "status: agreed" "grants: [merge]"
+fx_at g.md main "status: active" "hld: hm"; fx_at g.md "${H1}" "status: active" "hld: hm"; merge --board "${URL}"
+board_merged "--board, merge = human, an active epic's PR under grants: [merge]"
+epr g "merge = human"; fx_at hm.md main "status: agreed" "grants: [merge]"; fx_at hm.md "${H1}" "status: agreed" "grants: [merge]"
+fx_at g.md main "status: draft" "hld: hm"; fx_at g.md "${H1}" "status: active" "hld: hm"; merge --board "${URL}"
+guarded "--board, merge = human, a draft-to-active flip under grants: [merge]" g
+check "--board, merge = human, a draft-to-active flip under grants: [merge]: reads the HLD at main" hld_read hm
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
 check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"

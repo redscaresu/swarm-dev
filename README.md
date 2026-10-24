@@ -119,6 +119,9 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants.
+- Under either merge mode, `swarm.sh merge --board` refuses a board PR that sets an epic `active`
+  with no ticket: an `agreed:` date from `/swarm-dev:epic`, a `parent:`, or an agreed HLD that
+  grants `epics`. `swarm.sh board-pr open` refuses the same PRs; `lead_epics = on` lifts both.
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.

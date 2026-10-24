@@ -123,6 +123,21 @@ merge_grant() {
   [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
 }
 
+# merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
+# branch or head SHA (merge_pr's locals base, head and repo), through gh's contents API as
+# release_check reads it; fails 1 on a 404 (absent) and 2 on any other failure.
+merge_read() {
+  local ref="${head}" q err rc=0
+  [[ "$1" == head ]] || ref="${base}"
+  # Quoted, as pr_hld quotes it, so a # or ? in a name is read as itself.
+  q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$2")" || return 2
+  # The file's bytes go to stdout (fd 3); gh's stderr into err, to tell a 404 from the rest.
+  { err="$(gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${ref}" 2>&1 >&3)" || rc=$?; } 3>&1
+  [[ ${rc} -ne 0 ]] || return 0
+  [[ "${err}" != *"HTTP 404"* ]] || return 1
+  return 2
+}
+
 # merge_hold <pr-url> — stop merge when pr_held holds the PR for the user.
 merge_hold() {
   local why
@@ -152,7 +167,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the board's own repo and every path it changes,
-# old or new, is on the board; with --release: the PR is in the project's own repo and every path it
+# old or new, is on the board, and it sets no epic active with no ticket (epic_unticketed, under either
+# merge mode); with --release: the PR is in the project's own repo and every path it
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
@@ -222,6 +238,20 @@ merge_pr() {
       fi
     done <<< "${info}"
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
+    if [[ "${only}" == --board ]]; then
+      # An epic set active with no ticket is the user's to agree under either merge mode, so this
+      # runs before merge_grant's refusal could hide it. Outside the $(...), where a merge_fail would
+      # not stop this. A read error names its end; this names the ref gh read there.
+      p="$(epic_unticketed merge_read "${files}")" || {
+        if [[ "${p}" =~ ^cannot\ read\ (.+)\ at\ the\ (base|head)$ ]]; then
+          k="${head:0:7}"; [[ "${BASH_REMATCH[2]}" == head ]] || k="${base}"
+          p="gh cannot read ${BASH_REMATCH[1]} at ${k}, so whether ${url} sets an epic active with no ticket is unknown"
+        fi
+        merge_fail "--board: ${p}"
+      }
+      p="${p%%$'\n'*}"
+      [[ -z "${p}" ]] || merge_fail "--board: ${url} sets ${p} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${p}"
+    fi
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
