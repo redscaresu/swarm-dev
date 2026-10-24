@@ -65,6 +65,9 @@ case "$1 $2" in
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
+  # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none.
+  "pr list") h=""; prev=""; for a in "$@"; do [ "${prev}" != --head ] || h="${a##*/}"; prev="${a}"; done
+             cat "${FX}/prlist.${h}" 2>/dev/null || echo '[]' ;;
   # A run's status (run.<id>.status, read like any fixture), or its failed-job log: --log-failed's
   # "<job>\t<step>\t<timestamp> <line>" lines, which hang with ${FX}/run.hang.
   "run view") case "$*" in
@@ -757,7 +760,8 @@ is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
 is "--release: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
 # With merge = human the lead merges a release only under HLDs that grant release (below).
-human_release() { release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; merge --release "${URL}"; }
+# human_release [command...] — release_pr with merge = human, the command run on its fixtures, then merge --release.
+human_release() { release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; "$@"; merge --release "${URL}"; }
 human_release; refused "--release with merge = human and no story merged since the tag" "${URL} waits on the user's merge (merge = human, and no story was merged into main since v1.2.0, so no HLD covers it)"
 release_pr; echo '[{"filename":".claude-plugin/plugin.json"},{"filename":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
 merge --release "${URL}"; refused "--release with another file" "changes bin/swarm.sh, not only .claude-plugin/plugin.json"
@@ -836,39 +840,51 @@ commit bin/y.sh README.md
 release_pr; merge --release "${URL}"
 is "--release against an annotated tag it has not fetched: exits 0" 0 "${rc}"
 git -C "${P}" config --unset remote.origin.tagOpt
-# With merge = human, --release merges only when every story deleted on main since the tag, read as
-# it was just before, is under an agreed HLD granting release: its epic as that commit had it, the
-# HLD as the board has it now. The docs gate holds whatever the grant says.
-fm() { { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${P}/$1"; } # <file> <front-matter line>...
-landed() { # <file> <front-matter line>... — that file committed on main, pushed
-  fm "$@"; git -C "${P}" add -f "$1"; git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m "$1"; git -C "${P}" push -q origin HEAD:refs/heads/main
-}
-gone() { # <file>... — deleted in one commit on main, pushed, as a story's PR deletes its story
-  git -C "${P}" rm -q "$@"; git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m "rm $*"; git -C "${P}" push -q origin HEAD:refs/heads/main
-}
-dropped() { # <file> — deleted on main by a merge commit whose parents both have it, pushed
-  local gt=(git -C "${P}" -c user.name=t -c user.email=t@t) side
-  side="$("${gt[@]}" commit-tree -p HEAD -m side "HEAD^{tree}")"; "${gt[@]}" rm -q "$1"
-  "${gt[@]}" update-ref HEAD "$("${gt[@]}" commit-tree -p HEAD -p "${side}" -m "merge, dropping $1" "$("${gt[@]}" write-tree)")"
-  "${gt[@]}" push -q origin HEAD:refs/heads/main
-}
+# With merge = human, --release merges only when every story deleted on main since the tag (main's
+# own commits, a merge's deletions against its first parent), read as it was just before, is under
+# an agreed HLD granting release: its epic as that commit had it, the HLD as the board has it now. A
+# story done on the board since the tag counts too. The docs gate holds whatever the grant says.
+front() { { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${P}/$1"; } # <file> <front-matter line>...
+gt() { git -C "${P}" -c user.name=t -c user.email=t@t "$@"; }
+push() { gt push -q origin HEAD:refs/heads/main; }
+landed() { front "$@"; gt add -f "$1"; gt commit -q -m "$1"; push; } # <file> <front-matter line>... — committed on main
+gone() { gt rm -q "$@"; gt commit -q -m "rm $*"; push; } # <file>... — deleted on main, as a story's PR deletes its story
+merge_in() { gt update-ref HEAD "$(gt commit-tree -p HEAD -p "$1" -m "merge $1" "${2:-HEAD}^{tree}")"; push; } # <commit> [tree] — merged into main
+dropped() { local side; side="$(gt commit-tree -p HEAD -m side "HEAD^{tree}")"; gt rm -q "$1"; merge_in "${side}" "$(gt write-tree)"; } # <file> — a merge deletes it
+# branch_merged <slug> <rev> — a PR from story/<slug> merged as <rev>.
+branch_merged() { printf '[{"mergeCommit":{"oid":"%s"}}]' "$(gt rev-parse "$2^{commit}")" > "${FX}/prlist.$1"; }
 retag; landed docs/hld/ship.md "status: agreed" "grants: [merge, release]"; landed docs/epics/shipped.md "hld: ship"
 landed docs/stories/shipped-a.md "epic: shipped"; gone docs/stories/shipped-a.md
 landed docs/stories/shipped-b.md "epic: shipped"; gone docs/stories/shipped-b.md docs/epics/shipped.md
 human_release
 is "--release with merge = human, every story since the tag under an HLD granting release, its epic gone: exits 0" 0 "${rc}"
 check "--release with merge = human, every story under an HLD granting release: merged" merged
-item kept "status: done" "epic: none-such"
-human_release; refused "--release with merge = human and a done story still on the board under no HLD" "story kept, done on the board, is under no agreed HLD that grants release"
-rm "${P}/docs/stories/kept.md"
-fm docs/hld/ship.md "status: agreed" "grants: [merge]"
+# kept: its PR left its file, so reconcile marked it done in its state and cleared its prs:.
+item kept "status: ready" "epic: none-such"; mkdir -p "${P}/.swarm/board-state/stories"; printf 'status: done\nstatus@base: ready\n' > "${P}/.swarm/board-state/stories/kept"
+human_release branch_merged kept HEAD; refused "--release with merge = human and a story reconcile marked done since the tag, under no HLD" "story kept, done on the board since v1.2.0, is under no agreed HLD that grants release"
+human_release branch_merged kept v1.2.0
+is "--release with merge = human and a story reconcile marked done before the tag, under no HLD: exits 0" 0 "${rc}"
+rm "${P}/docs/stories/kept.md" "${P}/.swarm/board-state/stories/kept"
+front docs/hld/ship.md "status: agreed" "grants: [merge]"
 human_release; refused "--release with merge = human, the board's HLD no longer granting release" "story shipped-b, merged since v1.2.0, is under no agreed HLD that grants release"
-fm docs/hld/ship.md "status: agreed" "grants: [merge, release]"
+front docs/hld/ship.md "status: agreed" "grants: [merge, release]"; mv "${P}/docs/hld/ship.md" "${ROOT}/ship.md"
+human_release; refused "--release with merge = human, the HLD gone from the board" "story shipped-b, merged since v1.2.0, is under no agreed HLD that grants release"
+mv "${ROOT}/ship.md" "${P}/docs/hld/ship.md"
 landed docs/stories/stray.md "epic: none-such"; gone docs/stories/stray.md
 human_release; refused "--release with merge = human and a story since the tag under no HLD" "${URL} waits on the user's merge (merge = human, and story stray, merged since v1.2.0, is under no agreed HLD that grants release)"
 retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-d.md "epic: shipped"; gone docs/stories/shipped-d.md docs/epics/shipped.md
 landed docs/stories/merged-away.md "epic: none-such"; dropped docs/stories/merged-away.md
 human_release; refused "--release with merge = human and a story a merge commit deleted under no HLD" "story merged-away, merged since v1.2.0, is under no agreed HLD that grants release"
+retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-e.md "epic: shipped"; gone docs/stories/shipped-e.md docs/epics/shipped.md
+landed "docs/stories/naïve.md" "epic: none-such"; gone "docs/stories/naïve.md"
+human_release; refused "--release with merge = human and a story with a non-ASCII name under no HLD" "story naïve, merged since v1.2.0, is under no agreed HLD that grants release"
+# A story branch cut before old was deleted merges main back in, then merges into main after the tag:
+# its merge of main deletes old against the branch, but old left main before the tag.
+landed docs/stories/old.md "epic: none-such"; side="$(gt commit-tree -p HEAD -m side "HEAD^{tree}")"; gone docs/stories/old.md
+retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-f.md "epic: shipped"; gone docs/stories/shipped-f.md docs/epics/shipped.md
+merge_in "$(gt commit-tree -p "${side}" -p HEAD -m "merge main into the branch" "HEAD^{tree}")"
+human_release
+is "--release with merge = human and a story main deleted before the tag, which a branch's merge of main deletes again: exits 0" 0 "${rc}"
 retag; landed docs/epics/shipped.md "hld: ship"; landed docs/stories/shipped-c.md "epic: shipped"; gone docs/stories/shipped-c.md docs/epics/shipped.md
 commit bin/z.sh
 human_release; refused "--release with merge = human, covered, with bin/ changed and no docs" "bin/z.sh changed since v1.2.0 but README.md, AGENTS.md and docs/ did not"
