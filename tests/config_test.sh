@@ -107,6 +107,21 @@ for v in -1 1.5 two; do
     "$(fails_with "${p}/.claude/swarm/config:1: escalate_after must be a non-negative whole number" run "${p}" config)"
 done
 check "escalate_after ships on, at 2" "2" "$(project "${p}"; run "${p}" config escalate_after)"
+check "step_up_findings ships at 3" "3" "$(project "${p}"; run "${p}" config step_up_findings)"
+check "top_rung_rounds ships at 2" "2" "$(project "${p}"; run "${p}" config top_rung_rounds)"
+for v in 0 -1 x 2.5; do
+  project "${p}" "step_up_findings = ${v}"
+  check "step_up_findings = ${v} is refused, naming the key" "yes" "$(fails_with "config:1: step_up_findings must be a positive whole number" run "${p}" config)"
+done
+for v in 1 0 -1 x 2.5; do
+  project "${p}" "top_rung_rounds = ${v}"
+  check "top_rung_rounds = ${v} is refused, saying why" "yes" \
+    "$(fails_with "config:1: top_rung_rounds must be a whole number of 2 or more, not '${v}': at 1, every findings round after the lead lifts" run "${p}" config)"
+done
+project "${p}" "top_rung_rounds = 3"
+check "top_rung_rounds is read" "3" "$(run "${p}" config top_rung_rounds)"
+project "${p}" "step_up_findings = 2"
+check "step_up_findings is read" "2" "$(run "${p}" config step_up_findings)"
 check "escalate_ladder ships empty (off)" "" "$(project "${p}"; run "${p}" config escalate_ladder)"
 project "${p}" "escalate_ladder = sonnet,opus,fable"
 check "escalate_ladder = sonnet,opus,fable is read" "sonnet,opus,fable" "$(run "${p}" config escalate_ladder)"

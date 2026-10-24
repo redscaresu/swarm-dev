@@ -559,16 +559,19 @@ close_agent() {
   escalate_story "$1" "${n}" "${prs}"
 }
 
-# STEP_UP_TRIGGERS: why a build is handed up the ladder: a third round of review findings, CI red
+# STEP_UP_TRIGGERS: why a build is handed up the ladder: round STEP_UP_FINDINGS of review findings, CI red
 # twice, a stalled builder, or a builder that stopped with no PR. step_trigger says each in prose.
-# STEP_UP_FINDINGS: the findings tell since a build started that steps it up (tell_agent);
-# STEP_UP_RED_HEADS: the red heads on its PR that do (ci_red_step). The trigger names carry them.
-STEP_UP_FINDINGS=3
+# STEP_UP_FINDINGS: the findings tell since a build started that steps it up (tell_agent; the
+# step_up_findings setting); STEP_UP_RED_HEADS: the red heads on its PR that do (ci_red_step). The
+# trigger names carry them.
+# shellcheck disable=SC2154 # assigned in another file
+STEP_UP_FINDINGS="${CFG_step_up_findings}"
 STEP_UP_RED_HEADS=2
 # TOP_RUNG_FINDINGS: the findings tell since a build reached the ladder's top rung (or started on or above it)
-# that holds the story for the lead instead (tell_agent, top_rung_story): past the top, only the lead.
-# shellcheck disable=SC2034 # read in another file
-TOP_RUNG_FINDINGS=2
+# that holds the story for the lead instead (tell_agent, top_rung_story; the top_rung_rounds setting):
+# past the top, only the lead.
+# shellcheck disable=SC2034,SC2154 # read in another file; CFG_top_rung_rounds is assigned in another file
+TOP_RUNG_FINDINGS="${CFG_top_rung_rounds}"
 # STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder, and only then.
 # STEP_UP_BUSY: ladder_step's when another step-up of the story holds its lock: it may be starting
 # the next builder, so the caller touches nothing.
