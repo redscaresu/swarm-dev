@@ -3,8 +3,9 @@
 # failure: start_agent gives a fable brief 300 s over both tries, and every other model's herdr's 60 s
 # wait, unless SWARM_PROMPT_TIMEOUT_MS says otherwise; and a new rung whose brief may have gone out but
 # reads as not taken up, or unsure, keeps its pane and is read once more over 300 s, closed (with the
-# step-up --resume marker kept) only when it is still idle with no turn. One blocked on a question
-# before its brief went is closed at once. herdr, gh and claude (tests/claude_stub.sh) are stubs on
+# step-up --resume marker kept) only when it is still idle with no turn. The rungs here have no Claude
+# session to read, so a brief herdr sent goes once (deliver_prompt warns) and the rung is read again
+# the same way. One blocked on a question before its brief went is closed at once. herdr, gh and claude (tests/claude_stub.sh) are stubs on
 # PATH. herdr keeps a clock of simulated milliseconds since the agent started: `agent prompt --timeout
 # <ms>` moves it on by <ms> (to ${ROOT}/late, then answers working, when that comes first) and each
 # `agent get` by 5000, so the new builder reads working once the clock reaches ${ROOT}/late (never,
@@ -95,10 +96,10 @@ newest() { awk -F'\t' '$3 == "s1" { l = $2 " " $5 } END { print l }' "${P}/.swar
 reread_at() { awk '/^agent prompt/ { p = 1 } p && /^list at / { print $3; exit }' "${ROOT}/herdr.log"; }
 SAID="its pane is kept and read again for 300s"; AFTER="s1's fable builder took up its brief after all"
 
-# Working at 130 s: past a 60 s try (herdr's wait, then 60 s of reads), within fable's 150 s.
+# Working at 130 s: past opus's one try (herdr's 60 s wait, then 60 s of reads), so the re-read finds it.
 build_on sonnet 130000
 out="$(run step-up s1 stalled)" && rc=0 || rc=$?
-check "a step-up to opus gives its brief 60 s" "0|60000,60000|ok (stalled: sonnet -> opus)" "${rc}|$(timeouts)|$(escalate)"
+check "a step-up to opus gives its brief 60 s" "0|60000|ok (stalled: sonnet -> opus)" "${rc}|$(timeouts)|$(escalate)"
 
 build_on opus 90000
 out="$(run step-up s1 stalled)" && rc=0 || rc=$?
@@ -107,15 +108,15 @@ check "a step-up to a fable that shows working only after 90 s succeeds at the f
 
 build_on opus 90000
 out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
-check "SWARM_PROMPT_TIMEOUT_MS overrides fable's window" "10000,10000|45000" "$(timeouts)|$(reread_at)"
+check "SWARM_PROMPT_TIMEOUT_MS overrides fable's window" "10000|25000" "$(timeouts)|$(reread_at)"
 check "a rung whose brief reads as not taken up keeps its pane, warns, is read again until it shows working, and says so: the step-up succeeds" \
   "0|yes|yes|ok (stalled: opus -> fable)|1|gone" \
   "${rc}|$(has "s1's fable builder has not shown it took up its brief; ${SAID}" "${out}")|$(has "${AFTER}" "${out}")|$(escalate)|$(closes)|$(marker)"
 
 build_on opus 90000 resend-fails
 out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
-check "a rung herdr sent the brief once and could not send again is read again, and rescued" \
-  "0|yes|yes|ok (stalled: opus -> fable)" "${rc}|$(has "could not send it again (server_unavailable)" "${out}")|$(has "${AFTER}" "${out}")|$(escalate)"
+check "a rung herdr sent the brief once is not sent it again, and is read again, and rescued" \
+  "0|yes|yes|ok (stalled: opus -> fable)" "${rc}|$(has "it was not sent again" "${out}")|$(has "${AFTER}" "${out}")|$(escalate)"
 
 build_on opus 90000 nobase
 out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
@@ -136,8 +137,8 @@ check "a rung herdr gives no status for during the re-read keeps its pane and ag
 
 build_on opus never
 out="$(run step-up s1 stalled)" && rc=0 || rc=$?
-check "a fable that never shows a turn fails its start after 300 s, and is read again for 300 s more" \
-  "60000,60000|305000|605000" "$(timeouts)|$(reread_at)|$(cat "${ROOT}/ms")"
+check "a fable that never shows a turn is warned about after its 150 s try, and read again for 300 s more" \
+  "60000|155000|455000" "$(timeouts)|$(reread_at)|$(cat "${ROOT}/ms")"
 check "then it is closed, and says so: no escalation, and the --resume marker is kept" \
   "1|yes|yes|yes||2|kept" \
   "${rc}|$(has "${SAID}" "${out}")|$(has "step-up: s1's fable builder is closed" "${out}")|$(has "run swarm.sh step-up --resume s1" "${out}")|$(escalate)|$(closes)|$(marker)"

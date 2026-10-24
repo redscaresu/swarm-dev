@@ -705,7 +705,14 @@ review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <bra
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. To reach a busy conductor, the lead runs
+session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
+(a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
+session reads busy or waiting, or its log has the message as a new prompt (for a `tell`, the file's
+first line). When the session read idle before the send and shows no sign of it, the message goes
+once more, and the command fails if it still shows nothing. With no session to read (codex, a session
+Claude Code does not list yet, or one it reads busy or not at all), a message herdr sent is never
+sent again: when herdr shows no turn, the command succeeds and warns that herdr sent it the brief and
+did not show the turn start. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
 `.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
 whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a
@@ -1916,8 +1923,10 @@ in the worktree (an `index.lock`, or a merge, rebase, cherry-pick or revert in p
 stops and names it: finish or abort it there, then resume. If the start fails, step-up stops at the
 step that failed, with that step's message, and logs nothing as an escalation. A builder's
 brief is sent at most twice, and a Fable builder, which at xhigh can take longer to start, gets 300
-seconds over both tries to show it took it; `SWARM_PROMPT_TIMEOUT_MS` overrides that.
-When a new rung's brief may have gone out but still reads as not taken up, or unsure, step-up keeps
+seconds over both tries to show it took it (150 for its one try when it has no Claude session to
+read yet, see `tell`); `SWARM_PROMPT_TIMEOUT_MS` overrides that.
+When a new rung's brief may have gone out but still reads as not taken up, or unsure, or herdr sent
+it once and did not show the turn start (the start's warning), step-up keeps
 its pane, warns, and reads it once more over 300 seconds, then says `took up its brief after all`
 if it did. A builder blocked on a question before its brief went is not read again. If herdr gives
 no status for it during that read, step-up stops and keeps its pane and agents.tsv line: look at it
