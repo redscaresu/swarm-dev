@@ -219,12 +219,12 @@ expect other-repo-none https://github.com/x/y/pull/7 none
 # /plan-hld's board PRs, each at head h<n>. A PR that sets plan's planned: and ## Epics links and adds
 # two epics with hld: plan is under plan; any other change to the HLD, a second HLD, deleting it, or an
 # epic under another HLD is under none.
-# hld <file> <front-matter line>... — an HLD whose ## Epics (holding ${EPICS}, then ${AFTER}) sits
-# between two sections, with ${BEFORE} at the end of the first.
+# hld <file> <front-matter line>... — an HLD whose last section, ## Epics, holds ${EPICS} then ${AFTER},
+# with ${BEFORE} at the end of its ## Design.
 hld() {
   local f="$1"; shift
   { echo ---; printf '%s\n' "$@"; echo ---
-    printf '\n# Plan\n\n## Design\nthe design\n%s\n## Epics\n%s\n%s## Open questions\nnone\n' "${BEFORE:-}" "${EPICS:-}" "${AFTER:-}"; } > "${f}"
+    printf '\n# Plan\n\n## Design\nthe design\n%s\n## Open questions\nnone\n\n## Epics\n%s\n%s' "${BEFORE:-}" "${EPICS:-}" "${AFTER:-}"; } > "${f}"
 }
 # pr <n> <path>... — PR #<n>, at head h<n>, changes <path>s.
 pr() {
@@ -235,12 +235,12 @@ pr() {
 }
 at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=h$1"; }   # at <n> <path> — <path>'s copy at #<n>'s head
 # planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics links at
-# the head, and epics p-one and p-two added with hld: <hld>.
+# the head, and epics p-one and p-two added with hld: <hld>, status: ${EPIC_STATUS} (draft).
 planned() {
   local h="$2" g
   pr "$1" docs/epics/p-one.md docs/epics/p-two.md "docs/hld/$2.md"
-  item "$(at "$1" docs/epics/p-one.md)" "status: active" "hld: ${h}"
-  item "$(at "$1" docs/epics/p-two.md)" "status: active" "hld: ${3:-${h}}"
+  item "$(at "$1" docs/epics/p-one.md)" "status: ${EPIC_STATUS:-draft}" "hld: ${h}"
+  item "$(at "$1" docs/epics/p-two.md)" "status: ${EPIC_STATUS:-draft}" "hld: ${3:-${h}}"
   g="$(get "${B}/hld/$2.md" grants)"
   EPICS=$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n' \
     hld "$(at "$1" "docs/hld/$2.md")" "title: Plan" "status: $(get "${B}/hld/$2.md" status)" "planned: 2026-10-24" ${g:+"grants: ${g}"}
@@ -308,24 +308,47 @@ unread finish-pr-none-head-unread https://github.com/o/r/pull/48
 unread story-pr-touching-hld-head-unread https://github.com/o/r/pull/4
 unread plan-pr-draft-hld-head-unread https://github.com/o/r/pull/32
 # Only lines after the board's last ## Epics may change. Each HLD hides a ## Epics line or a heading
-# (in <pre>, <details>, a code fence, a list item, indented, setext): #40 changes a line before the
-# last ## Epics and is none; #41 changes only lines after it and is under the HLD, so a code fence in
-# Design no longer forces none.
-# bypass <name> <before ## Epics> <after its links> <line to change before it> — both PRs on plan-<name>.
+# in its Design (in <pre>, <details>, a code fence, a list item, indented, setext): #40 changes a line
+# there and is none; #41 changes only a line after the last ## Epics and is under the HLD, so a code
+# fence in Design no longer forces none.
+# bypass <name> <end of ## Design> — both PRs on plan-<name>, whose ## Design ends with the hidden line.
 bypass() {
   local h="plan-$1"
-  BEFORE="$2" AFTER="$3" hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
-  BEFORE="$2" AFTER="$3" planned 40 "${h}"; sed -i.bak "s/^$4\$/changed/" "$(at 40 "docs/hld/${h}.md")"
+  BEFORE="$2" AFTER=$'the note\n' hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
+  BEFORE="$2" AFTER=$'the note\n' planned 40 "${h}"; sed -i.bak 's/^hidden$/changed/' "$(at 40 "docs/hld/${h}.md")"
   expect "plan-pr-$1-before-last-epics-none" https://github.com/o/r/pull/40 none
-  BEFORE="$2" AFTER="$3" planned 41 "${h}"; sed -i.bak 's/^none$/still open/; s/^the risk$/a new risk/' "$(at 41 "docs/hld/${h}.md")"
+  BEFORE="$2" AFTER=$'the note\n' planned 41 "${h}"; sed -i.bak 's/^the note$/a new note/' "$(at 41 "docs/hld/${h}.md")"
   expect "plan-pr-$1-after-last-epics" https://github.com/o/r/pull/41 "$(printf '%s\nmerge' "${B}/hld/${h}.md")"
 }
-bypass pre $'<pre>\n## Epics\nhidden\n</pre>\n' '' hidden
-bypass details $'<details>\n## Epics\nhidden\n</details>\n' '' hidden
-bypass fence $'```\n## Epics\nhidden\n```\n' '' hidden
-bypass list '' $'- ## Risks\nthe risk\n' 'the design'
-bypass indented $'   ## Epics\nhidden\n' $'   ## Risks\nthe risk\n' hidden
-bypass setext $'Epics\n-----\nhidden\n' $'Risks\n-----\nthe risk\n' hidden
+bypass pre $'<pre>\n## Epics\nhidden\n</pre>\n'
+bypass details $'<details>\n## Epics\nhidden\n</details>\n'
+bypass fence $'```\n## Epics\nhidden\n```\n'
+bypass list $'- ## Epics\nhidden\n'
+bypass indented $'   ## Epics\nhidden\n'
+bypass setext $'Epics\n-----\nhidden\n'
+# A heading after the board's last ## Epics opens a section plan_head would leave unpinned: none, though
+# the PR changes only the Epics links.
+for c in 'h1:# Appendix' 'h3:### Sub' 'indented:   ## Risks' $'setext:Risks\n-----' 'list:- ## Risks' 'quoted:> # Note'; do
+  h="plan-after-${c%%:*}"
+  AFTER="${c#*:}"$'\nthe risk\n' hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
+  AFTER="${c#*:}"$'\nthe risk\n' planned 60 "${h}"
+  expect "plan-pr-${c%%:*}-after-epics-none" https://github.com/o/r/pull/60 none
+done
+# Without the epics grant, each epic the plan adds is a draft: active ones are none, under an HLD that
+# grants epics they are its. An epic on the board flipped from draft to active is none; one kept active
+# is the HLD's.
+EPIC_STATUS=active planned 61 plan
+expect plan-pr-active-epics-without-epics-grant-none https://github.com/o/r/pull/61 none
+hld "${B}/hld/plan-e.md" "title: Plan" "status: agreed" "grants: [epics, merge]"
+EPIC_STATUS=active planned 62 plan-e
+expect plan-pr-active-epics-with-epics-grant https://github.com/o/r/pull/62 "$(printf '%s\nepics\nmerge' "${B}/hld/plan-e.md")"
+item "${B}/epics/p-draft.md" "status: draft" "hld: plan"
+pr 63 docs/epics/p-draft.md docs/hld/plan.md; item "$(at 63 docs/epics/p-draft.md)" "status: active" "hld: plan"
+cp "$(at 30 docs/hld/plan.md)" "$(at 63 docs/hld/plan.md)"
+expect plan-pr-activating-epic-none https://github.com/o/r/pull/63 none
+pr 64 docs/epics/p-board.md docs/hld/plan.md; item "$(at 64 docs/epics/p-board.md)" "status: active" "hld: plan"
+cp "$(at 30 docs/hld/plan.md)" "$(at 64 docs/hld/plan.md)"
+expect plan-pr-keeps-active-epic https://github.com/o/r/pull/64 "$(printf '%s\nmerge' "${B}/hld/plan.md")"
 # A plan PR whose head cannot be read, and one on an HLD with no ## Epics line: none.
 planned 56 plan; echo '{"headRefOid":"","changedFiles":3}' > "${FX}/pr.56"
 expect plan-pr-no-head-none https://github.com/o/r/pull/56 none
@@ -364,7 +387,7 @@ item "${FX}/repos_o_r_contents_stories_r-new.md_ref=${HEAD}" "status: ready" "ep
 PROJ="${R}" expect root-board-board-pr https://github.com/o/r/pull/22 "$(printf '%s\nmerge\nstories' "${R}/hld/2026-01-01-a.md")"
 # A plan PR on the root board: hld/plan.md (as #30 changes it) and epics/p-one.md under it.
 cp "${B}/hld/plan.md" "${R}/hld/"; pr 47 epics/p-one.md hld/plan.md
-item "$(at 47 epics/p-one.md)" "status: active" "hld: plan"; cp "$(at 30 docs/hld/plan.md)" "$(at 47 hld/plan.md)"
+item "$(at 47 epics/p-one.md)" "status: draft" "hld: plan"; cp "$(at 30 docs/hld/plan.md)" "$(at 47 hld/plan.md)"
 PROJ="${R}" expect root-board-plan-pr https://github.com/o/r/pull/47 "$(printf '%s\nmerge' "${R}/hld/plan.md")"
 
 # A board outside the repo: story PR #18 changes .claude/swarm/brief.md, so none; #19 changes code only.
