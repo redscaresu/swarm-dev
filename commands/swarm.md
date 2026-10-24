@@ -298,7 +298,11 @@ Repeat until a step below says stop:
        plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
        `claude --continue`) and any warning it printed. If CI on the base was not green, merge
        updated nothing and printed a warning naming what to run once the release is published:
-       tell the user that warning. For any other repo, check that the tag
+       tell the user that warning. If it printed `warning: ... ships <commits> unchecked` (or that gh
+       cannot read the merge commit's parent), a PR landed between the release check and the merge,
+       in any repo: tell the user those commits shipped in the release unchecked. For swarm-dev's
+       own repo merge then updated nothing and printed `refused: ...`: tell the user what that line
+       says to run. For any other repo, check that the tag
        `v<new>` exists and that `gh release view v<new>` shows the release. If merge instead printed
        `<url> is MERGED, not open` (the user merged it) or `unconfirmed (...)` and `gh pr view` shows
        it MERGED, merge stopped before it waited for CI on the base or ran the upgrade: look at CI on

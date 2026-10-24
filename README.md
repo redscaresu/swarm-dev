@@ -138,7 +138,9 @@ lists them all.
 
 When the lead merges a swarm-dev release with `swarm.sh merge --release`, it updates the plugin and
 starts `swarm.sh upgrade` for the running agents itself. Then it asks you to restart the lead
-session (`/exit`, then `claude --continue`). Otherwise, update by hand:
+session (`/exit`, then `claude --continue`). If a PR landed on the base after the release was
+checked, it names the commits that shipped unchecked and updates nothing. In that case, or when
+you release some other way, update by hand:
 
 ```bash
 claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swarm-dev
