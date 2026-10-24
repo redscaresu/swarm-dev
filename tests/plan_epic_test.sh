@@ -103,7 +103,7 @@ done
 for f in commands/swarm.md skills/swarm-dev/SKILL.md; do
   s=$(tr '\n' ' ' < "$ROOT/$f" | tr -s ' ')
   has "user-agrees-$f" 'nly the user agrees [^.]*through /epic, which writes `agreed:` as it sets `status: active`' "$s"
-  has "never-activate-$f" 'sets a draft epic `active` itself only when no agreement is needed: it has a `parent:`[^.]*`epics`[^.]*`lead_epics' "$s"
+  has "never-activate-$f" 'sets a new or draft epic `active` itself only when no agreement is needed: it has a `parent:`[^.]*`epics`[^.]*`lead_epics' "$s"
   has "stale-agreed-$f" 'An `agreed:` already on a draft is stale[^.]*does not count' "$s"
 done
 has epic-resume-stale-review 'on a resume, move it to `D/review-stale.md`' "$eflat"

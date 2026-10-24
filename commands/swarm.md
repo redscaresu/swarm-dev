@@ -292,7 +292,7 @@ Repeat until a step below says stop:
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
-     The lead sets a draft epic `active` itself only when no agreement is needed: it has a
+     The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
      `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or
      `lead_epics = on` in `.claude/swarm/config`. An `agreed:` already on a draft is stale (an epic
      set back to draft by hand) and does not count. Offer to follow `/epic <slug>` to resume it,
