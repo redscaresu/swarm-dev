@@ -1023,21 +1023,52 @@ unblock_startable() {
 # last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated.
 last_event() { awk -F'\t' -v s="$1" '$3 == s { last = $2 "\t" $5 } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
 
-# delete_item <file> — delete a story or epic's file where it is, and its state file (state_drop), so
+# delete_item <file> — delete a story, epic or HLD file where it is, and its state file (state_drop), so
 # a later item with the slug starts with none: reconcile's, on a board outside the repo.
 delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }
 
-# finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
-finish_item() { remove_item finish "$1"; }
+# finish <slug> — take a merged story or epic off the board, or a finished HLD (<board>/hld/<slug>.md,
+# when no story or epic has the slug): delete its file (remove_item). An HLD hld_unfinished names a
+# reason for is refused before any board PR starts, and an earlier run's finish worktree and branch go
+# with it (unstart), closing a PR that would still delete it; remove_item checks it again on origin's base.
+finish_item() {
+  local f="${BOARD}/hld/$1.md" why left=""
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "bad slug '$1'"
+  if [[ -f "${BOARD}/stories/$1.md" || -f "${BOARD}/epics/$1.md" || ! -f "${f}" ]]; then
+    f="$(item_file "$1")" || exit 1
+  else
+    while IFS= read -r why; do left+=" $(basename "${why}" .md)"; done < <(hld_epics "$1")
+    why="$(hld_unfinished "$1" "$(cat "${f}")" "${left}")"
+    if [[ -n "${why}" ]]; then
+      ! hld_pr_open "$1" finish || { unstart "finish-$1"; why+="; board/finish-$1 and its worktree are removed (an open PR on it closes)"; }
+      die "finish: ${why}"
+    fi
+  fi
+  remove_item finish "$1" "${f}"
+}
 
-# remove_item <verb> <slug> [<reason>] — finish's and drop's delete. A board outside the repo is
-# edited in place; one in it through the board PR <verb>-<slug> (board_pr), never the main checkout,
-# and a second run pushes to that PR. It prints the PR and the merge --board that lands it. A file
-# that is not on origin's base (an unmerged board PR adds it) is refused, and a run that fails clears
-# away the worktree and branch it started (unstart), so the next run starts clean.
+# hld_unfinished <hld> <its text> <epics> — why finish refuses the HLD, or nothing: it is a draft (the
+# user's), superseded (another HLD replaced it, and the user removes it), has no planned: (so it was
+# never planned), or <epics> (the slugs whose hld: names it, each after a space) is not empty.
+hld_unfinished() {
+  case "$(get_fm - status <<< "$2")" in
+    draft) echo "the HLD $1 is a draft, the user's; run /hld $1"; return ;;
+    superseded) echo "the HLD $1 is superseded: another HLD replaced it, and the user removes it"; return ;;
+  esac
+  local v; v="$(slug_list "$(get_fm - planned <<< "$2")")"   # as hld_planned reads it
+  [[ -n "${v//[[:space:]]/}" ]] || { echo "the HLD $1 has no planned:, so it was never planned; run /plan-hld $1"; return; }
+  [[ -z "$3" ]] || echo "the HLD $1 still has epics on the board:$3"
+}
+
+# remove_item <verb> <slug> <file> [<reason>] — finish's and drop's delete of <file>. A board outside
+# the repo is edited in place; one in it through the board PR <verb>-<slug> (board_pr), never the main
+# checkout, and a second run pushes to that PR. It prints the PR and the merge --board that lands it. A
+# file that is not on origin's base (an unmerged board PR adds it) is refused, and so is an HLD
+# hld_unfinished names a reason for as origin's base has it, which also clears away an earlier run's
+# worktree and branch, closing its PR; any other run that fails clears away the worktree and branch it
+# started (unstart), so the next run starts clean.
 remove_item() {
-  local verb="$1" slug="$2" why="${3:-}" f rel name wt new="" body url title
-  f="$(item_file "${slug}")"
+  local verb="$1" slug="$2" f="$3" why="${4:-}" rel name wt new="" body url title left base ref p
   [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${f}"; return; }
   rel="${f#"${PROJECT_DIR}"/}"; name="${verb}-${slug}"
   wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
@@ -1045,6 +1076,21 @@ remove_item() {
     wt="$(board_pr start "${name}")" || die "${verb}: cannot start the board PR ${name}"
     new=1
     [[ -f "${wt}/${rel}" ]] || { unstart "${name}"; die "${verb}: ${rel} is not on origin/$(base_for "${PROJECT_DIR}") (is it in a board PR that has not merged?), so no board PR can delete it; merge that first"; }
+  fi
+  # An HLD is checked again as origin's base has it, the truth: an epic merged there, or the HLD changed
+  # there, and not yet pulled, refuses it. Read from origin/<base> itself with git show, never the
+  # worktree (an earlier run may have started it before such a merge) nor git archive (export-ignore
+  # hides files). A refusal unstarts an earlier run's worktree too: its PR would still delete the HLD.
+  if [[ "${f}" == "${BOARD}/hld/"* ]]; then
+    base="$(base_for "${PROJECT_DIR}")"; ref="origin/${base}"; left=""
+    git -C "${PROJECT_DIR}" cat-file -e "${ref}:${rel}" 2>/dev/null \
+      || { unstart "${name}"; die "${verb}: ${rel} is already gone from ${ref}; board/${name} and its worktree are removed"; }
+    while IFS= read -r p; do
+      [[ "${p}" == *.md && "${p##*/}" != README.md ]] || continue
+      [[ "$(slug_list "$(git -C "${PROJECT_DIR}" show "${ref}:${p}" | get_fm - hld)")" != "${slug}" ]] || left+=" $(basename "${p}" .md)"
+    done < <(git -C "${PROJECT_DIR}" ls-tree --name-only "${ref}" -- "${rel%hld/*}epics/")
+    left="$(hld_unfinished "${slug}" "$(git -C "${PROJECT_DIR}" show "${ref}:${rel}")" "${left}")"
+    [[ -z "${left}" ]] || { unstart "${name}"; die "${verb}: on ${ref}, ${left}; board/${name} and its worktree are removed (an open PR on it closes), pull first"; }
   fi
   # An earlier run's worktree has the file deleted already; its PR is open, so a failure leaves it.
   [[ ! -e "${wt}/${rel}" ]] || git -C "${wt}" rm -q -- "${rel}" \
@@ -1114,7 +1160,7 @@ drop_story() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "drop: bad slug '$1'"
   [[ -f "${f}" ]] || die "drop: no story ${f}"
   is_escalated "${f}" || die "drop: $1 is not an escalated story (ready, kind: lead, with escalated_from:), so it is not dropped"
-  remove_item drop "$1" "$2"
+  remove_item drop "$1" "${f}" "$2"
   echo "dropped: $1"
 }
 
