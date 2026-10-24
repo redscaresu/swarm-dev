@@ -265,12 +265,15 @@ merge_pr() {
     own="$(gh repo view "${origin}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
       || merge_fail "${only}: gh cannot tell which GitHub repo ${origin} is"
     [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${own}" ]] || merge_fail "${only}: ${url} is not in ${own}, ${whose} repo"
-    rel="${BOARD#"${PROJECT_DIR}"/}"
+    # A board at the project root has no folder to be under: its own paths (board_paths) stand in.
+    rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}"
     # A renamed file's old path counts too: renaming bin/x to the board is not a board-only change.
     info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "${only}: cannot list every file ${url} changes: ${info}"
     files="${info}"
     while IFS= read -r p; do
-      if [[ "${only}" == --board ]]; then
+      if [[ "${only}" == --board && -z "${rel}" ]]; then
+        on_board_paths "${p}" || merge_fail "--board: ${url} changes ${p}, outside the board's paths ($(board_paths | paste -sd' ' - | sed 's/ /, /g'))"
+      elif [[ "${only}" == --board ]]; then
         [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"
       else
         [[ "${p}" == .claude-plugin/plugin.json ]] || merge_fail "--release: ${url} changes ${p}, not only .claude-plugin/plugin.json"
@@ -535,7 +538,8 @@ live_at() {
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d="${BOARD#"${PROJECT_DIR}"/}/"
+  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d=""
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
@@ -771,6 +775,17 @@ board_paths() {
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
   printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
+}
+
+# on_board_paths <file> — <file> is one of board_paths' entries, or under one that ends in a slash,
+# as the board-only CI gate has it: Board.base is that file alone, not Board.base.py.
+on_board_paths() {
+  local q
+  while IFS= read -r q; do
+    if [[ "${q}" == */ ]]; then [[ "$1" != "${q}"* ]] || return 0   # loose-match: ok a directory prefix, ended by its slash
+    else [[ "$1" != "${q}" ]] || return 0; fi
+  done < <(board_paths)
+  return 1
 }
 
 # clear_red_main <key> <sha> <why> — CI is green at <sha> for <key>: when red_mains holds that key
