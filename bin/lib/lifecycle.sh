@@ -685,7 +685,7 @@ step_up_resume() {
 # recorded before deliver_prompt failed is closed and loses its agents.tsv line, so a resume starts it
 # afresh and the rung is on record once.
 start_rung() {
-  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base since goal="${PREFLIGHT_GOAL}"
+  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base since errf err late goal="${PREFLIGHT_GOAL}"
   read -r trigger from to role < "${prompt%.md}.step-up"
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   names="$(story_env "${f}")" || die "${names}"
@@ -701,20 +701,39 @@ start_rung() {
   handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" \
     "$( [[ ! -f "${prompt%.md}.findings.md" ]] || echo "${prompt%.md}.findings.md")" > "${prompt}"
   n="$(wc -l < "${AGENTS_LOG}")"; n=$((n)); since="$(date +%s)"   # before the brief, for send_goal
+  # start_agent's stderr goes out as it comes, and a copy tells rung_late whether the brief may have
+  # gone out. The copy is read and removed at once, and on a signal before that (step_up's EXIT trap
+  # still runs on that exit, 128 + the signal's number).
+  errf="$(mktemp)" || die "step-up: ${slug}'s ${from} builder is closed, but mktemp failed, so no ${to} builder was started; run swarm.sh step-up --resume ${slug}"
+  # shellcheck disable=SC2064 # expand now: errf is local
+  { trap "rm -f '${errf}'; exit 129" HUP; trap "rm -f '${errf}'; exit 130" INT; trap "rm -f '${errf}'; exit 143" TERM; }
   set +e
-  (set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
-  rc=$?
+  { (set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" "${to}") 2>&1 1>&3 \
+      | { tee "${errf}" >&2 || cat >/dev/null; }; rc=${PIPESTATUS[0]}; } 3>&1
+  err="$(cat "${errf}")"; rm -f "${errf}"; trap - HUP INT TERM
   set -e
   if [[ ${rc} -ne 0 ]] && awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR > n && $3 == a { f = 1 } END { exit !f }' "${AGENTS_LOG}"; then
-    # Recorded, but its brief was not taken up: closed (it would sit idle with no brief), and not on
-    # record until a resume starts it. A pane already gone is no reason to stop.
-    shut_agent "${slug}" >/dev/null 2>&1 || true
-    # Its line goes under the lock record_agent appends under, held from the read to the replace, so
-    # a line another conductor records meanwhile is kept.
-    state_lock "${AGENTS_LOG}.lock"
-    { awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
-        && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"; } || echo "step-up: could not take ${slug}'s unstarted ${to} builder off ${AGENTS_LOG}" >&2
-    rm -f "${AGENTS_LOG}.tmp"; rmdir "${AGENTS_LOG}.lock"
+    # Recorded, but its brief may not have been taken up: a slow starter may only need longer than
+    # its window, so it is read once more (rung_late) before anything is closed.
+    late=0; rung_late "${slug}" "${to}" "${err}" || late=$?
+    if [[ ${late} -eq 0 ]]; then
+      rc=0
+      echo "step-up: ${slug}'s ${to} builder took up its brief after all"
+    elif [[ ${late} -eq 2 ]]; then
+      die "step-up: ${slug}'s ${from} builder is closed, and herdr could not say whether the ${to} builder took up its brief; its pane is kept: look at it (herdr agent read $(agent_name "${slug}")) before resuming with swarm.sh step-up --resume ${slug}"
+    else
+      # Its brief was not taken up: closed (it would sit idle with no brief), and not on record
+      # until a resume starts it. A pane already gone is no reason to stop.
+      shut_agent "${slug}" >/dev/null 2>&1 || true
+      if [[ -n "${CLOSE_PANE_KEPT:-}" ]]; then echo "step-up: ${slug}'s ${to} builder's pane could not be closed: close it by hand" >&2
+      else echo "step-up: ${slug}'s ${to} builder is closed" >&2; fi
+      # Its line goes under the lock record_agent appends under, held from the read to the replace, so
+      # a line another conductor records meanwhile is kept.
+      state_lock "${AGENTS_LOG}.lock"
+      { awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
+          && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"; } || echo "step-up: could not take ${slug}'s unstarted ${to} builder off ${AGENTS_LOG}" >&2
+      rm -f "${AGENTS_LOG}.tmp"; rmdir "${AGENTS_LOG}.lock"
+    fi
   fi
   [[ ${rc} -eq 0 ]] \
     || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
@@ -731,6 +750,33 @@ start_rung() {
   rc=$?
   set -e
   [[ ${rc} -eq 0 ]] || echo "swarm: ${slug}: stepped up, and its ${to} builder runs, but its /goal did not set (see above): send ${prompt%.md}.goal.md as its /goal by hand" >&2
+}
+
+# rung_late <slug> <model> <err> — when start_agent's stderr <err> says the brief may have gone out
+# (the tries review_start_failed reads as unclear) and the agent was not blocked on a question before
+# it, warn that <slug>'s new <model> builder has not shown it took up its brief, and read it by its
+# pane once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle, no turn).
+# Succeeds when that read finds it working, blocked or past a turn; fails on any other <err>, with no
+# pane (gone), or when it is still idle with no turn, and start_rung closes it. Returns 2 when the read
+# is unsure (herdr gave no status twice in a row), and start_rung keeps the pane.
+rung_late() {
+  # shellcheck disable=SC2034 # prompt_settle reads SETTLE_READS
+  local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v
+  case "$3" in
+    *agent_blocked*) return 1 ;;
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) ;;
+    *) return 1 ;;
+  esac
+  pane="$(agent_field "$(agent_name "$1")" pane_id)"
+  [[ -n "${pane}" ]] || return 1
+  echo "step-up: warning: $1's $2 builder has not shown it took up its brief; its pane is kept and read again for $((SLOW_PROMPT_TIMEOUT_MS / 1000))s before it is closed" >&2
+  v="$(prompt_settle "${pane}" idle -)"
+  case "${v}" in
+    taken) return 0 ;;
+    "again idle") return 1 ;;
+  esac
+  echo "step-up: $1's $2 builder: ${v#unsure }" >&2
+  return 2
 }
 
 # step_up_failed <slug> — step_up's exit trap once the old builder is closed: on a failure (start_rung

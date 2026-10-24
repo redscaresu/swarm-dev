@@ -49,19 +49,17 @@ story a "kind: chore"
 story a "kind: code" "attempts: 2"
 
 fails=0
-# /epic's reviewer is epic-review, and /hld's roles are hld and hld-review: each is in ROLE_GROUPS and
-# policy, and `swarm.sh policy` answers for it. hld-lead comes with its caller, in plan-hld.
+# /epic's reviewer is epic-review, /hld's roles are hld and hld-review, and /plan-hld's decomposer is
+# hld-lead: each is in ROLE_GROUPS and policy, and `swarm.sh policy` answers for it.
 pol="$(sed -n '/^policy() {$/,/^}$/p' "${SWARM}")"
-for rp in "epic-review:claude fable xhigh" "hld:claude fable high" "hld-review:claude fable xhigh"; do
+for rp in "epic-review:claude fable xhigh" "hld:claude fable high" "hld-review:claude fable xhigh" \
+  "hld-lead:claude fable xhigh"; do
   r="${rp%%:*}"; out=""
   if grep -qx -- "${r}" <<< "${roles}" && grep -q "^ *${r})" <<< "${pol}" \
     && out="$(cd "${tmp}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" policy "${r}" 2>&1)" && [[ "${out}" == "${rp#*:}" ]]; then
     echo "ok   ${r} is in ROLE_GROUPS and policy, and swarm.sh policy ${r} prints ${out}"
   else echo "FAIL ${r}: want it in ROLE_GROUPS and policy, and swarm.sh policy ${r} to print '${rp#*:}', got '${out}'"; fails=$((fails + 1)); fi
 done
-if grep -qx -- hld-lead <<< "${roles}" || grep -q '^ *hld-lead)' <<< "${pol}"; then
-  echo "FAIL hld-lead is in ROLE_GROUPS or policy"; fails=$((fails + 1))
-else echo "ok   hld-lead is in neither ROLE_GROUPS nor policy"; fi
 for r in ${roles}; do
   if grep -qx -- "${r}" <<< "${reached}"; then
     echo "ok   ${r} is reached"
