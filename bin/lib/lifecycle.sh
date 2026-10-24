@@ -573,6 +573,9 @@ close_agent() {
 # STEP_UP_RED_HEADS: the red heads on its PR that do (ci_red_step). The trigger names carry them.
 STEP_UP_FINDINGS=3
 STEP_UP_RED_HEADS=2
+# TOP_RUNG_FINDINGS: the findings tell since a build reached the ladder's top rung (or started on it)
+# that holds the story for the lead instead (tell_agent, top_rung_story): past the top, only the lead.
+TOP_RUNG_FINDINGS=2
 # STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder, and only then.
 # STEP_UP_BUSY: ladder_step's when another step-up of the story holds its lock: it may be starting
 # the next builder, so the caller touches nothing.
@@ -1001,6 +1004,45 @@ held_story() {
   set_fm "${BOARD}/stories/$1.md" held_for "$2"
   record_event held "$1" "ok ($2)"
   echo "held: $1 is kind: lead now (${2}), for the lead to lift the hold with reset, or drop"
+}
+
+# top_rung <slug> — with escalate_ladder set, <slug>'s builder is on one of LADDER_MODELS with no rung
+# above it (ladder_next), so no step-up is left.
+top_rung() {
+  local m
+  [[ -n "${CFG_escalate_ladder:-}" ]] || return 1
+  m="$(builder_model "$1")"
+  model_rank "${m}" >/dev/null && ! ladder_next "${m}" >/dev/null
+}
+
+# top_rung_since <slug> — when top-rung findings rounds count from: the newer of build_started and an
+# ok reset of <slug>, so a builder kept through the lead's reset gets fresh rounds.
+top_rung_since() {
+  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$2 ~ /^reset/ && $3 == s && index($5, "ok") == 1 && $1 > t { t = $1 }
+    END { print t }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
+# top_rung_story <slug> <findings> — a builder on the ladder's top rung (top_rung) still drew findings
+# round TOP_RUNG_FINDINGS there: they are not sent, and the story is the lead's to decide (lead_block,
+# logged as escalated) with <findings> in its block. The builder, its worktree and PR are kept, and
+# attempts: stays as it was. A story reset once already (reset_at) is offered only drop.
+top_rung_story() {
+  local src url prs="" none="" text when
+  if ! src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || ! url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
+     || ! prs="$(gh pr list -R "${url}" --head "story/$1" --state all --json url </dev/null 2>/dev/null)"; then
+    prs=""; none="swarm.sh did not list the PRs on story/$1, so look at them first: \`gh pr list --head story/$1 --state all\` in its repo."
+  fi
+  when="$(reset_at "$1")"
+  text="**Escalated (top rung).** Its builder on $(builder_model "$1"), the ladder's top rung, drew review findings round ${TOP_RUNG_FINDINGS} there, so they were not sent. The builder and its PR are kept. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'
+  if [[ -n "${when}" ]]; then
+    text+="- It was reset once already (${when}), and \`swarm.sh reset\` refuses a second, so drop it: run \`swarm.sh drop $1 <reason>\`, and put what is still wanted in a new story."
+  else
+    text+="- Narrow the scope to something that fails closed, split the story, or accept the PR with the findings below filed as follow-up stories; then run \`swarm.sh reset $1 <reason>\`, which puts its kind back and clears \`attempts:\`. At most one reset per story."$'\n'
+    text+="- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
+  fi
+  text+=$'\n\n'"The findings that were not sent:"$'\n\n'"$(cat "$2")"
+  lead_block "$1" "${text}" "${prs}" "${none}" >/dev/null
+  record_event escalated "$1" "ok (top-rung: findings round ${TOP_RUNG_FINDINGS} on $(builder_model "$1"))"
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its

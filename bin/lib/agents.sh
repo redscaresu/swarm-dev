@@ -1481,6 +1481,9 @@ note_lock() {
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
 # the handover brief, and the tell fails, saying so; a step-up that closed nothing sends them as usual.
+# On the ladder's top rung (top_rung) the TOP_RUNG_FINDINGS-th since it got there or the lead last
+# reset the story (top_rung_since), or any after, are
+# not sent either: the story is held for the lead with them (top_rung_story), and the tell fails.
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
@@ -1518,6 +1521,12 @@ tell_agent() {
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
+  if [[ "${kind}" == findings ]] && top_rung "$1" && (( $(findings_told "$1" "$(top_rung_since "$1")") >= TOP_RUNG_FINDINGS - 1 )); then
+    # Held already (a retried tell): a second lead_block would make escalated_from: lead.
+    ! is_escalated "${BOARD}/stories/$1.md" || die "tell: ${name} was not told: $1 is held for the lead already (escalated); the lead decides it"
+    top_rung_story "$1" "${f}"
+    die "tell: ${name} was not told: these were findings round ${TOP_RUNG_FINDINGS} on the ladder's top rung, so $1 is held for the lead (escalated, kind: lead) with them in its block; its builder and PR are kept"
+  fi
   if [[ "${kind}" == findings ]] && (( $(findings_told "$1") >= STEP_UP_FINDINGS - 1 )); then
     rc=0; ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}" || rc=$?
     [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
@@ -1539,11 +1548,11 @@ tell_agent() {
   echo "told ${name}"
 }
 
-# findings_told <slug> — how many findings tells (a bare tell, from logs before kinds, too) <slug>
-# has had since its build started (build_started): ok ones, and those herdr sent but deliver_prompt
+# findings_told <slug> [since] — how many findings tells (a bare tell, from logs before kinds, too) <slug>
+# has had since [since], or since its build started (build_started): ok ones, and those herdr sent but deliver_prompt
 # did not see taken up ("herdr sent it the brief"); not one herdr never sent.
 findings_told() {
-  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
+  awk -F'\t' -v s="$1" -v t="${2:-$(build_started "$1")}" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
     END { print n + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
 }
 
