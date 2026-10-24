@@ -1,10 +1,13 @@
 # Test runs, a flow section (flow_report.py gives its globals): scripts/test.sh's log, .swarm/test-runs.tsv
-# beside events.tsv, its end lines (the ones with an exit status) of full-suite runs (TESTS all) whose
-# start's local day is in the window. TSV at_once runs median_s p90_s median_load: the runs by how
-# many test.sh runs went at once as each started (itself and the others), 1, 2, 3-4 and 5+, each
-# with its median and p90 (nearest rank) seconds and median 1-minute load at the start (- with no run);
-# then, after a blank line, TSV start seconds branch at_once status: the 5 slowest, slowest first. A
-# line instead when there is no log or no full run in the window. --epic does not narrow it.
+# beside events.tsv, its end lines (the ones with an exit status) of full-suite runs (filter all)
+# whose start's local day is in the window, less the interrupted ones (a status of 128 or more). Each
+# end line pairs with its run's start line (the same start and PID). A run's at_once
+# is the larger of its start's and end's other runs, plus itself; its load is its start line's (the
+# end's when the start line is missing). TSV at_once runs median_s p90_s median_load: the runs by
+# at_once, 1, 2, 3-4 and 5+, each with its median and p90 (nearest rank) seconds and median load
+# (- with no run); then, after a blank line, TSV start seconds branch at_once status: the 5 slowest,
+# slowest first. With no log (a project with no scripts/test.sh) it prints nothing; with no full run
+# in the window, a line. --epic does not narrow it.
 import datetime, os, statistics
 
 BUCKETS = (("1", 1, 1), ("2", 2, 2), ("3-4", 3, 4), ("5+", 5, float("inf")))
@@ -16,25 +19,26 @@ def num(s):
     except ValueError:
         return None
 
-runs = []
 log = os.path.join(os.path.dirname(events), "test-runs.tsv")
-for line in open(log, errors="ignore") if os.path.exists(log) else ():
-    f = line.rstrip("\n").split("\t")
-    if len(f) != 10 or f[9] == "" or f[4] != "all" or not f[2].isdigit() or not f[8].isdigit():
-        continue   # a start line, a filtered run, or a torn one
+lines = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
+lines = [f for f in lines if len(f) == 11 and f[8].isdigit()]
+starts = {(f[0], f[10]): f for f in lines if f[9] == ""}
+runs = []
+for f in lines:
+    if f[4] != "all" or not f[2].isdigit() or not f[9].isdigit() or int(f[9]) >= 128:
+        continue   # a start line, a filtered or interrupted run, or a torn one
     try:
         day = datetime.datetime.fromisoformat(f[0].replace("Z", "+00:00")).astimezone().date().isoformat()
     except ValueError:
         continue
+    st = starts.get((f[0], f[10]), f)
     if since <= day <= until:
-        runs.append({"start": f[0], "seconds": int(f[2]), "branch": f[5], "load": num(f[6]),
-                     "at_once": int(f[8]) + 1, "status": f[9]})
+        runs.append({"start": f[0], "seconds": int(f[2]), "branch": f[5], "load": num(st[6]),
+                     "at_once": max(int(st[8]), int(f[8])) + 1, "status": f[9]})
 
-if not os.path.exists(log):
-    print(f"no test runs logged: no {log} yet (scripts/test.sh writes it on each run)")
-elif not runs:
+if lines and not runs:
     print(f"no full test runs logged in the window ({since} to {until})")
-else:
+elif runs:
     print("at_once\truns\tmedian_s\tp90_s\tmedian_load")
     for name, lo, hi in BUCKETS:
         b = [r for r in runs if lo <= r["at_once"] <= hi]

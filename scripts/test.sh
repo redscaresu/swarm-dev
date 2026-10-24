@@ -122,28 +122,43 @@ fi
 
 # Each run appends a line to the main checkout's .swarm/test-runs.tsv (found through git's common
 # dir, never SWARM_PROJECT, which is unset above) as it starts and as it ends, for flow's test_runs:
-# start and end (UTC), seconds, JOBS, TESTS (all when make ran every file; then ` shard i/N` for a
-# SHARD), branch, the 1-minute load and CPUs, the other test.sh runs going (all three at the start)
-# and the exit status; the start line leaves end, seconds and status empty. TEST_RUNS_LOG, when set, is the file instead, and set empty
-# for the jobs, so a test that runs test.sh itself logs nothing. A write that fails is skipped.
+# start and end (UTC), seconds, JOBS, the filter, branch, the 1-minute load and CPUs, the other runs
+# going, each line as of its own moment, the exit status and the run's PID; the start line leaves
+# end, seconds and status empty. The filter is all when the files are every tests/*_test.sh, else TESTS, else how many
+# files; then ` shard i/N` for a SHARD. A run going is a file named by its PID in test-runs.d beside
+# the log, there from its start to its end; one whose PID has gone is stale, and removed. TEST_RUNS_LOG,
+# when set, is the file instead, and set empty for the jobs, so a run a test starts itself logs
+# nothing and is no run going. A write that fails is skipped.
 runs_log="${TEST_RUNS_LOG-}"
-if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --git-common-dir 2>/dev/null)" && main="$(cd "${common}/.." 2>/dev/null && pwd)"; then
-  runs_log="${main}/.swarm/test-runs.tsv"
+if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  runs_log="$(dirname "${common}")/.swarm/test-runs.tsv"
 fi
 export TEST_RUNS_LOG=""
-t_start=${SECONDS}
-# Other runs: the bash processes running a scripts/test.sh that are no --one job and whose parent is
-# none of them (that is a run's own subshell), less this one.
-others="$(ps -Ao pid=,ppid=,args= 2>/dev/null | awk '$3 ~ /(^|\/)bash$/ && $4 ~ /(^|\/)scripts\/test\.sh$/ && $5 != "--one" { up[$1] = $2 }
-  END { n = 0; for (p in up) if (!(up[p] in up)) n++; print (n ? n - 1 : 0) }')"
-run_fields="$(printf '%s\t%s\t%s\t%s\t%s\t%s' "${JOBS:-4}" "${TESTS:-all}${SHARD:+ shard ${SHARD}}" "$(git symbolic-ref --short -q HEAD 2>/dev/null || echo -)" \
-  "$(uptime 2>/dev/null | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" "$(getconf _NPROCESSORS_ONLN 2>/dev/null)" "${others}" | tr '\n' ' ')"
-t_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-# log_run <end> <seconds> <status> — append this run's line, or nothing when it cannot.
+marks="$(dirname "${runs_log:-.}")/test-runs.d"
+if [[ "$(printf '%s\n' "${files[@]+"${files[@]}"}" | LC_ALL=C sort)" == "$(printf '%s\n' tests/*_test.sh | LC_ALL=C sort)" ]]; then
+  filter=all
+else
+  filter="${TESTS:-${#files[@]} files}"
+fi
+filter="${filter//$'\t'/ }${SHARD:+ shard ${SHARD}}"
+branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || echo -)"
+t_start=${SECONDS} t_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# others — how many other runs are going: live marks but this run's.
+others() {
+  local m n=0
+  for m in "${marks}"/*; do
+    [[ -e "${m}" && "${m##*/}" != "$$" ]] || continue
+    if kill -0 "${m##*/}" 2>/dev/null; then n=$((n + 1)); else rm -f "${m}"; fi
+  done
+  echo "${n}"
+}
+# log_run <end> <seconds> <status> — append this run's line, as of now, or nothing when it cannot.
 log_run() {
   [[ -n "${runs_log}" ]] || return 0
-  { mkdir -p "$(dirname "${runs_log}")" && printf '%s\t%s\t%s\t%s\t%s\n' "${t_iso}" "$1" "$2" "${run_fields}" "$3" >> "${runs_log}"; } 2>/dev/null || true
+  { mkdir -p "${marks}" && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${t_iso}" "$1" "$2" "${JOBS:-4}" "${filter}" "${branch}" \
+    "$(LC_ALL=C uptime | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" "$(getconf _NPROCESSORS_ONLN)" "$(others)" "$3" "$$" >> "${runs_log}"; } 2>/dev/null || true
 }
+[[ -z "${runs_log}" ]] || { mkdir -p "${marks}" && : > "${marks}/$$"; } 2>/dev/null
 log_run "" "" ""
 
 run="$(mktemp -d)" || exit 1
@@ -168,6 +183,7 @@ cleanup() {
   done
   rm -rf "${run}"
   log_run "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((SECONDS - t_start))" "${rc}"
+  [[ -z "${runs_log}" ]] || rm -f "${marks}/$$"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
