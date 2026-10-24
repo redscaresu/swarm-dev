@@ -100,7 +100,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **Design is Fable.** An epic is co-written at `high`, because the user waits on every turn, and
   attacked at `xhigh` before it is agreed.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
-  critic run at `high`, because a skeptic is the only gate a story passes before it is built.
+  critic run at `high`; a `risk: high` story gets a skeptic, and the critic checks every story.
 - **Reading is Sonnet, chores are Haiku.** Surveys read and cite at `high`, since they feed the
   lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
   mechanical diff, checked by the conductor.
@@ -238,12 +238,12 @@ stories, or goals that can ship apart) is split by the lead alone into child epi
 counts as done once none of its children is left. Any other epic gets one survey agent unless its text names another repo (three
 then), one lead decomposition into one-PR stories with `kind`, `touches` and `depends_on` (a
 chain at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`),
-and a skeptic per story (capped at five, the rest logged), a codex pass and a critic, all in
+a skeptic only on each `risk: high` story (capped at five, the rest logged), a codex pass and a critic, all in
 parallel. `risk: high` goes only to real-cloud, teardown, credentials and safety paths. Agents write their answers to
 `.swarm/<epic>/`. The user sees refuted stories, contradictions, the risky stories and stories ÷
 longest chain first, and approves before the board PR opens; review fixes are folded into
 each story's scope. Once the board PR is open, each skeptic, codex and critic finding is logged
-against it with `log-finding --reviewer <who>`, declined ones with `--declined <reason>` too. A full run is about ten agents, so
+against it with `log-finding --reviewer <who>`, declined ones with `--declined <reason>` too. A full run is four agents (survey, lead, codex, critic) when no story is `risk: high`, plus up to five skeptics (including any added when review moves a story to `risk: high`) and, for a multi-repo epic, two more surveys, so
 scope deliberately.
 
 **Ship code switched off.** Code that adds a flag or setting merges with it off, so the merge
@@ -1741,7 +1741,7 @@ code.
 | `swarm.sh step-up <slug> <trigger>` | Close a struggling build and start the next model in `escalate_ladder` on the same branch, without counting an attempt. `<trigger>` is `findings-3`, `ci-red-2`, `stalled` or `no-pr`. `swarm.sh step-up --resume <slug>` starts a rung whose start failed. Refused while the ladder is empty ([§ The escalation ladder](#the-escalation-ladder)). |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
 | `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
-| `swarm.sh grants <story \| epic \| PR URL>` | Print the agreed HLD over a story or epic and its grants, one per line, or `none`. A story goes to its `epic:`, then each `parent:`, up to the first epic with `hld:`; a draft or superseded HLD, a missing one, a missing epic, a story with no epic and a `parent:` cycle all give `none`. A story PR is its stories' (their `prs:` lines); a board PR is the epics and stories it touches, each as the board has it and as the PR's head has it, and a PR that touches `.claude/swarm/` (in any repo) or the board's `hld/`, or a PR no story lists that touches anything but the board's epics and stories, gives `none`. Items under two HLDs give `none`. A grant other than `epics`, `stories`, `merge` or `release`, a `[` with no `]` on its line, or a `grants:` written as a YAML block list, stops it with the HLD's file and line. `/plan-epic` runs it before asking, and skips the question when it lists `stories`. |
+| `swarm.sh grants <story \| epic \| PR URL>` | Print the agreed HLD over a story or epic and its grants, one per line, or `none`. A story goes to its `epic:`, then each `parent:`, up to the first epic with `hld:`; a draft or superseded HLD, a missing one, a missing epic, a story with no epic and a `parent:` cycle all give `none`. A name that is no story or epic but an HLD in the board's `hld/` is that HLD: an agreed one prints itself and its grants, any other gives `none`; a story or epic of the same name wins. A story PR is its stories' (their `prs:` lines); a board PR is the epics and stories it touches, each as the board has it and as the PR's head has it, and a PR that touches `.claude/swarm/` (in any repo) or the board's `hld/`, or a PR no story lists that touches anything but the board's epics and stories, gives `none`. Items under two HLDs give `none`. A grant other than `epics`, `stories`, `merge` or `release`, a `[` with no `]` on its line, or a `grants:` written as a YAML block list, stops it with the HLD's file and line. `/plan-epic` runs it before asking, and skips the question when it lists `stories`. |
 | `swarm.sh plan-unasked [--declined] <epic>` | Record, in board state, that a `later` epic `next` offered (its dependencies done) has had its unasked plan. The lead runs it before that `/plan-epic`. `next` offers the epic no more. The gate lists it as planned unasked on that date: with no stories yet, run `/plan-epic <epic>` again if that plan stopped; with stories, set it `active` to start it. With `--declined`, the user declined the plan, and the gate says that instead. |
 | `swarm.sh log-finding [--declined <reason> \| --filed] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). `--filed` records that the lead filed a declined out-of-scope finding as a story, so `swarm.sh next` stops offering it; no report counts a filed row. The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic (the check on a large epic's split), or escaped for a defect found after its PR merged; a gap in a split that a later plan or build finds is logged `--reviewer escaped split-gap` against the split's board PR. |
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
@@ -1752,7 +1752,7 @@ code.
 ## Cleanup, escalation and session logs
 
 Every agent is a full Claude Code session, on a model chosen by its role, and planning one epic
-starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
+on the full path (not the small path, which starts none, nor a split, which starts a split-critic) starts four agents, plus up to five skeptics, one per `risk: high` story, and two more surveys for a multi-repo epic. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
 touch real cloud or credentials. By default no agent merges; with `merge = agent` only the conductor
 does.
 

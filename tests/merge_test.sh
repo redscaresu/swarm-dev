@@ -1050,7 +1050,7 @@ step() { awk -v from="$1" -v to="$2" 'index($0, to) { on = 0 } index($0, from) {
 check "plan-epic's small path names costs: money" grep -qF 'costs: money' <<< "$(step '**0. Size**' '**1. Survey**')"
 check "plan-epic's decompose brief names costs: money" grep -qF 'costs: money' <<< "$(step '**2. Decompose**' '**3. Verify**')"
 # shellcheck disable=SC2016 # the backticks are plan-epic's
-check "plan-epic's skeptic brief names costs: money" grep -qF 'costs: money' <<< "$(step 'skeptic-<slug>' 'one `codex`')"
+check "plan-epic's critic brief names costs: money" grep -qF 'costs: money' <<< "$(step 'one `critic`' '**Then report**')"
 
 # --- merge_admin = on: --admin on the pinned merge, only once every check has passed.
 fresh "merge_admin = on"; merge "${URL}"
