@@ -226,6 +226,21 @@ expect board-pr-other-board-file-none https://github.com/o/r/pull/16 none
 echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":2}" > "${FX}/pr.17"
 echo '[{"filename":"bin/x.sh"},{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_17_files_per_page=100"
 expect board-pr-code-file-none https://github.com/o/r/pull/17 none
+# expect_fail <name> <arg> — grants fails and prints no HLD.
+expect_fail() {
+  grants "$2"
+  if [[ ${rc} -ne 0 ]] && ! grep -q '/hld/' "${ROOT}/out"; then echo "ok   $1"
+  else echo "FAIL $1 (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
+}
+# Story s-null (under A) lists PR #57, which touches s-child.md; gh gives its head as null, then as no
+# SHA: grants fails rather than read the board at a head that is none and print A.
+item "${B}/stories/s-null.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/57"
+echo '[{"filename":"docs/stories/s-child.md"}]' > "${FX}/repos_o_r_pulls_57_files_per_page=100"
+echo '{"headRefOid":null,"changedFiles":1}' > "${FX}/pr.57"
+expect_fail null-head-fails https://github.com/o/r/pull/57
+echo '{"headRefOid":"None","changedFiles":1}' > "${FX}/pr.57"
+expect_fail no-sha-head-fails https://github.com/o/r/pull/57
+rm "${B}/stories/s-null.md"
 
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none
@@ -245,10 +260,10 @@ hld() {
 pr() {
   local n="$1" p l="" st; shift
   for p in "$@"; do st=added; [[ "${p}" != *hld/* ]] || st=modified; l+="${l:+,}{\"status\":\"${st}\",\"filename\":\"${p}\"}"; done   # loose-match: ok a path under hld/
-  echo "{\"headRefOid\":\"h${n}\",\"changedFiles\":$#}" > "${FX}/pr.${n}"
+  echo "{\"headRefOid\":\"$(printf '%040d' "${n}")\",\"changedFiles\":$#}" > "${FX}/pr.${n}"
   echo "[${l}]" > "${FX}/repos_o_r_pulls_${n}_files_per_page=100"
 }
-at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=h$1"; }   # at <n> <path> — <path>'s copy at #<n>'s head
+at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=$(printf '%040d' "$1")"; }   # at <n> <path> — <path>'s copy at #<n>'s head, <n> as 40 digits
 status() { sed -i.bak "s|\"status\":\"[a-z]*\",\"filename\":\"$2\"|\"status\":\"$3\",\"filename\":\"$2\"|" "${FX}/repos_o_r_pulls_$1_files_per_page=100"; }
 # planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics links
 # (${EPICS}, by default one list-item link each) at the head, and epics p-one and p-two added with

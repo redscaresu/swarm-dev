@@ -1547,8 +1547,13 @@ PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (
 the holds of `merge = agent` apply too, so a `costs: money` story's PR, and a board PR that changes a
 `costs:` line, still wait for you. Without it, `merge` refuses with
 `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`. When a board
-story or the PR's files cannot be read, so the HLD over it is unknown, it refuses with
-`cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. When the HLD's `grants:`
+story, the PR's files, or its head or base cannot be read, so the HLD over it is unknown, it refuses with
+`cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. `merge` reads the grant,
+and the PR's files, at the head and base branch it pinned. When the PR's head has moved off it,
+`merge` refuses with `the head of <PR URL> is <sha>, not <pinned sha>, so no grant covers it: review
+the new head`, and when the PR has been retargeted, with `the base of <PR URL> is <branch>, not
+<pinned branch>, so no grant covers it: review it against <branch>`. GitHub lists 300 files at most
+at a given head, so a PR that changes more gets `cannot tell which HLD`. When the HLD's `grants:`
 holds a value swarm.sh does not know, or is not a one-line `[..]` list, it prints the line naming the
 HLD's file and line, then refuses with
 `the grants: of <HLD file> cannot be read, so <PR URL> waits on the user's merge`. Under `merge = human`,

@@ -110,11 +110,13 @@ case "$1 $2" in
       */releases/tags/*) serve release ;;   # its GitHub release
       */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
-      # compare/<base>...<head>: compare.<base>, else compare, else for a commit base the head holds
-      # it (fix-main's compare of a red commit with a green one).
+      # compare/<base>...<head>: compare.<base>, else compare, else for a branch base the PR's files
+      # (the grant's read at the pinned head, failing as files does), else for a commit base the head
+      # holds it (fix-main's compare of a red commit with a green one).
       */compare/*) c="${path##*/compare/}"; c="${c%%...*}"
                    if [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
-                   elif [ -e "${FX}/compare" ] || [ "${#c}" != 40 ]; then serve compare
+                   elif [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then serve compare
+                   elif [ "${#c}" != 40 ]; then out="$(serve files)" || exit 1; echo "{\"files\":${out}}"
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
