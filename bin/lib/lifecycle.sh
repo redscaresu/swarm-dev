@@ -364,7 +364,9 @@ pull_board_repo() {
 # fails is reported and never stops the close: the session log itself is untouched.
 archive_session() {
   local name session src dir f
-  name="$(agent_name "$1")"
+  # agents.tsv holds names cut at 32 characters, so a longer name's session is not known: the newest
+  # line under its cut may be another agent's that shares it, still running.
+  name="$(agent_name "$1")"; [[ "${name}" == "$1" ]] || return 0
   [[ -f "${AGENTS_LOG}" ]] || return 0
   session="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { s = $7 } END { print s }' "${AGENTS_LOG}" 2>/dev/null || true)"
   [[ -n "${session}" && "${session}" != - ]] || return 0
@@ -392,14 +394,15 @@ CLOSE_DROP=""
 # remove its ZDOTDIR (clean_env's), unless its pane could not be closed (CLOSE_PANE_KEPT). close_agent
 # and step_up both end a builder this way, and each checks CLOSE_PANE_KEPT after.
 shut_agent() {
-  archive_session "$1"
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
   close_panes "$1"
-  # Kept while its pane is (close_pane could not close it): the agent may still be using it. Kept too
-  # when close took no pane (close_refused): the cut name's ZDOTDIR is the live agent's that holds it.
-  [[ -n "${CLOSE_PANE_KEPT}" || -n "${CLOSE_REFUSED}" ]] || rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
+  # Kept while its pane is (close_pane could not close it, or close refused it): the agent may still
+  # be using it, and the session and ZDOTDIR under the cut name may be another live agent's.
+  [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
+  archive_session "$1"
+  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
 }
 
 # NOT_CLOSED: what a close prints when the builder's pane could not be closed (<name> is the name).
@@ -428,7 +431,8 @@ keep_build() {
   shut_agent "$1"
   if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
     state_set "${f}" status ready prs "" held_by "" kept ""
-    echo "${NOT_CLOSED/<name>/$1}"; return 0
+    [[ -n "${CLOSE_REFUSED}" ]] || echo "${NOT_CLOSED/<name>/$1}"
+    return 0
   fi
   record_event kept "$1" "ok ($3${note:+; ${note}})"
   if [[ -n "${REVIEW_HELD}" ]]; then
@@ -474,10 +478,6 @@ close_agent() {
   # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${cause}" || "${CFG_goal}" == off || ! -f "${f}" || "$(fm "${f}" status)" != ready ]] \
     || die "close: with goal on, $1's story is still ready, so say why its builder stopped: swarm.sh close $1 <cause>, the cause one of ${CLOSE_CAUSES}"
-  # What close may take, decided before anything is read for the build or counted (close_check): a
-  # pane refused that may be live is a kept pane, so nothing is counted, cleared or kept.
-  close_check "$1"
-  if [[ -n "${CLOSE_LIVE}" ]]; then CLOSE_PANE_KEPT=1; CLOSE_CHECKED=""; return 0; fi
   if [[ "${cause}" == impossible ]] && why="$(impossible_refused "$1")"; then
     die "close: $1 cannot be closed impossible, because ${why}; nothing was closed"
   fi
@@ -517,7 +517,7 @@ close_agent() {
   # Its pane could not be closed (close_pane said why): the builder may still be working in its
   # worktree, so nothing is counted, held, handed on or cleared.
   if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
-    echo "${NOT_CLOSED/<name>/$1}"
+    [[ -n "${CLOSE_REFUSED}" ]] || echo "${NOT_CLOSED/<name>/$1}"   # a refusal said why (close_panes)
     return 0
   fi
   if [[ "${cause}" == impossible ]]; then
@@ -620,10 +620,10 @@ step_up() {
   # The old builder goes first: the new one takes its name, and start_rung reads the worktree for the
   # brief only once nothing writes to it.
   shut_agent "${slug}"
-  if [[ -n "${CLOSE_PANE_KEPT}" || -n "${CLOSE_REFUSED}" ]]; then
-    # Its pane could not be closed (close_pane said why), or close took none (close_refused): the old
-    # builder may still be working in the worktree, so no second one starts there. A refusal, not a
-    # failure partway: nothing changed.
+  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+    # Its pane could not be closed (close_pane said why), or close refused a live agent under its cut
+    # (close_panes said why): the old builder may still be working in the worktree, so no second one
+    # starts there. A refusal, not a failure partway: nothing changed.
     [[ -z "${STEP_UP_AUTO:-}" ]] || trap - EXIT
     rm -f "${b}.step-up" "${b}.findings.md"
     [[ -z "${CLOSE_REFUSED}" ]] || die "step-up: ${slug}'s builder pane was not closed (see above), so nothing was stepped up"
@@ -1039,8 +1039,7 @@ failed_build() {
   [[ "${st}" == ready || ( -n "${CLOSE_DROP}" && ( "${st}" == review || ( "${st}" == blocked && -n "$(get_fm "${f}" held_by)" ) ) ) ]] || return 1
   [[ "${st}" == ready ]] || need_open=1
   case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
-  # Refused (close_check): herdr's agent under the cut is another record's, never <slug>'s builder.
-  if [[ -n "${CLOSE_REFUSED}" || -z "$(agent_field "$(agent_name "${slug}")" pane_id)" ]]; then
+  if [[ -z "$(agent_field "$(agent_name "${slug}")" pane_id)" ]]; then
     [[ -n "${CLOSE_DROP}" ]] || return 1
     need_open=1
   fi
@@ -1102,75 +1101,43 @@ clear_build() {
   [[ -z "$(get_fm "${BOARD}/stories/$1.md" kept)" ]] || state_set "${BOARD}/stories/$1.md" kept ""
 }
 
-# close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. A
-# conductor's name closes its epic's tabs, with any story panes left in them, except a tab close_tabs
-# keeps for a live agent; the conductor's own pane (own_pane) then closes alone. A conductor whose
-# pane cannot be found while herdr gives no agent list, or could not be closed, is said, and fails;
-# a builder whose pane could not be closed is said, and CLOSE_PANE_KEPT is set (close_pane). With no
-# pane line of <name>'s, close_check decides what may be taken; when it refuses a pane that may be
-# live, CLOSE_PANE_KEPT is set too, and nothing closes.
-CLOSE_PANE_KEPT=""
+# close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. Only what
+# .swarm/state records under exactly <name> is taken: its pane line, its tab records, and for a
+# conductor its epic's (close_epic). A conductor's name closes its epic's tabs, with any story panes
+# left in them, except a tab close_tabs keeps for a live agent; the conductor's own pane (own_pane)
+# then closes alone. A conductor whose pane cannot be found while herdr gives no agent list, or could
+# not be closed, is said, and fails; a builder whose pane could not be closed is said, and
+# CLOSE_PANE_KEPT is set (close_pane). herdr's names stop at AGENT_NAME_MAX characters, so with
+# nothing recorded under a name that long, a live agent herdr lists under its cut (cut_live) may be
+# another's: nothing closes, CLOSE_REFUSED says why and CLOSE_PANE_KEPT is set, so nothing is counted,
+# cleared or kept. With nothing recorded and nothing live under the cut, nothing closes, as for a
+# pane closed by hand.
+CLOSE_PANE_KEPT=""; CLOSE_REFUSED=""
 close_panes() {
-  local line
-  CLOSE_PANE_KEPT=""
-  if line="$(pane_line "$1")"; then
-    CLOSE_READ=""; CLOSE_CHECKED=""; close_pane "${line%%$'\t'*}" "$1" "${line#*$'\t'}"; return
-  fi
-  # What close_check read (close_lists) lasts the close: it is read once.
-  close_check "$1"; CLOSE_CHECKED=""
-  if [[ -n "${CLOSE_REFUSED}" ]]; then [[ -z "${CLOSE_LIVE}" ]] || CLOSE_PANE_KEPT=1; return 0; fi
-  [[ -z "${CLOSE_LABEL}" ]] || close_tabs "${CLOSE_LABEL}" "${CLOSE_OWN}"
-  close_tabs "$1" "${CLOSE_OWN}"
-  [[ -z "${CLOSE_OWN}" ]] || close_pane "${CLOSE_OWN}" "$1" "" alone || true
-  [[ -z "${CLOSE_PANE_KEPT}" ]] || die "close: $1's pane ${CLOSE_OWN} could not be closed, so it is still open"
-  [[ -n "${CLOSE_OWN}" || -n "${CLOSE_AGENTS_OK}" || "$(agent_name "$1")" != conduct-* ]] \
-    || die "close: herdr gave no agent list and no tab record names $1's pane, so it could not be found and is still open"
-}
-
-# pane_line <name> — "<pane>\t<tab-record>": the first pane line .swarm/state has under exactly
-# <name>. Fails with none.
-pane_line() {
-  local state pane
+  local state pane own e="" live
+  CLOSE_READ=""; CLOSE_PANE_KEPT=""; CLOSE_REFUSED=""
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"
-    [[ -z "${pane}" ]] || { printf '%s\t%s\n' "${pane}" "${state}"; return 0; }
+    [[ -z "${pane}" ]] || { close_pane "${pane}" "$1" "${state}"; return; }
   done
-  return 1
-}
-
-# close_check <name> — what close may take for <name> with no pane line of its own, decided once per
-# name before anything is counted or closed (close_agent, close_panes): CLOSE_LABEL, a conductor's
-# epic tab label (conduct_label), and CLOSE_OWN, the pane herdr gives it (own_pane). A match on the
-# cut alone (the first AGENT_NAME_MAX characters, where herdr's names stop) is taken only when
-# nothing else has that cut; otherwise no pane is (close_refused), and CLOSE_LIVE marks a refused
-# pane that may be a live agent's, which every caller treats as a kept pane. A conductor with nothing
-# found is refused too. A name with no record and nothing sharing its cut (close_near) has nothing to
-# take by mistake, so it goes on with no pane, as for a pane closed by hand.
-CLOSE_CHECKED=""; CLOSE_LABEL=""; CLOSE_OWN=""; CLOSE_REFUSED=""; CLOSE_LIVE=""
-close_check() {
-  local near
-  [[ "${CLOSE_CHECKED}" != "$1" ]] || return 0
-  CLOSE_CHECKED="$1"; CLOSE_LABEL=""; CLOSE_OWN=""; CLOSE_REFUSED=""; CLOSE_LIVE=""
-  ! pane_line "$1" >/dev/null || return 0
-  CLOSE_READ=""; close_lists
-  if [[ "$(agent_name "$1")" == conduct-* ]]; then
-    conduct_label "$1"; [[ -z "${CLOSE_REFUSED}" ]] || return 0
+  close_lists
+  [[ "$(agent_name "$1")" != conduct-* ]] || e="$(close_epic "$1")"
+  if [[ ${#1} -ge ${AGENT_NAME_MAX} ]] && ! has_records "$1" && { [[ -z "${e}" ]] || ! has_records "${e}"; }; then
+    live="$(cut_live "$1")"
+    if [[ -n "${live}" ]]; then
+      CLOSE_REFUSED="close: nothing in .swarm/state is recorded as $1, and herdr lists $(agent_name "$1"), its first ${AGENT_NAME_MAX} characters, on pane ${live}, which may be another agent's that shares the cut, so nothing was closed, counted, cleared or kept: close by the full recorded name, or, if that pane is $1's, close it by hand (herdr pane close <pane>) and close $1 again"
+      echo "swarm: ${CLOSE_REFUSED}" >&2; CLOSE_PANE_KEPT=1; return 0
+    fi
   fi
-  own_pane "$1"; [[ -z "${CLOSE_REFUSED}${CLOSE_OWN}" ]] || return 0
-  near="$(close_near "$1")"
-  if [[ -n "${near}" ]]; then
-    close_refused "" "close: nothing in .swarm/state is recorded as $1, and ${near} share its first ${AGENT_NAME_MAX} characters, where herdr's agent names stop, so no pane was closed. close takes the full recorded name: give one of those to close it, or close them first to close $1"
-  elif [[ "$(agent_name "$1")" == conduct-* ]] && ! has_records "$1" && { [[ -z "${CLOSE_LABEL}" ]] || ! has_records "${CLOSE_LABEL}"; }; then
-    near="its epic"; [[ -z "${CLOSE_LABEL}" ]] || near="its epic ${CLOSE_LABEL}"
-    close_refused "" "close: no tab record in .swarm/state is ${near}'s or $1's, and herdr lists no pane under $1 on a pane recorded with no name, so no pane was found to close"
-  fi
+  own="$(own_pane "$1" "${e}")"
+  [[ -z "${e}" ]] || close_tabs "${e}" "${own}"
+  close_tabs "$1" "${own}"
+  [[ -z "${own}" ]] || close_pane "${own}" "$1" "" alone || true
+  [[ -z "${CLOSE_PANE_KEPT}" ]] || die "close: $1's pane ${own} could not be closed, so it is still open"
+  [[ -n "${own}" || -n "${CLOSE_AGENTS_OK}" || "$(agent_name "$1")" != conduct-* ]] \
+    || die "close: herdr gave no agent list and no tab record names $1's pane, so it could not be found and is still open"
 }
-
-# close_refused <live> <why> — take no pane: say <why> and keep it in CLOSE_REFUSED, with CLOSE_LIVE
-# set when <live> is (a refused pane may be a live agent's). Nothing fails here: close_agent, reconcile
-# and step_up each act on it, and the close command fails on it (swarm.sh's close).
-close_refused() { CLOSE_REFUSED="$2"; CLOSE_LIVE="$1"; echo "swarm: $2" >&2; }
 
 # has_records <label> — a tab record of <label>, or of its numbered overflow, is in .swarm/state.
 has_records() {
@@ -1181,105 +1148,49 @@ has_records() {
   return 1
 }
 
-# conduct_label <conductor> — set CLOSE_LABEL to the tab label of the conductor's epic: the epic of
-# the one brief (.swarm/briefs/conduct-<epic>.md) whose conductor_name is the conductor's, or, with
-# none, the epic its name gives (conduct_epic's) when that is a record's label. The backlog's tab is
-# its own name, so it sets none. Two such briefs, or with no brief a record of any other label with
-# that conductor name (its first characters alone match; a label's numbered overflow is one with it),
-# are refused (close_refused), as a pane either holds may be live.
-conduct_label() {
-  local want f l e="" n=0 found="" seen="" base
-  want="$(agent_name "$1")"
-  [[ "${want}" != "$(conductor_name backlog)" ]] || return 0
-  for f in "${PROJECT_DIR}/.swarm/briefs"/conduct-*.md; do
-    [[ -f "${f}" ]] || continue
-    l="$(basename "${f}" .md)"; l="${l#conduct-}"
-    [[ "$(conductor_name "${l}")" == "${want}" ]] || continue
-    e="${l}"; n=$((n + 1)); found+="${found:+, }${l}"
-  done
-  if [[ ${n} -gt 1 ]]; then
-    close_refused live "close: the briefs of ${found} all give the conductor name ${want}, so which epic's tabs are $1's is not known, and no pane was closed"
-    return 0
-  fi
-  [[ ${n} -eq 0 ]] || { CLOSE_LABEL="${e}"; return 0; }
-  e="${want#conduct-}"
-  for f in "${STATE_DIR}"/*; do
-    [[ -f "${f}" && "${f}" != *.tmp ]] || continue
-    ! label_record "${f}" "${e}" || continue
-    [[ "$(conductor_name "${f##*/}")" == "${want}" ]] || continue
-    base="${f##*/}"; [[ ! "${base}" =~ ^(.+)-[0-9]+$ ]] || base="${BASH_REMATCH[1]}"
-    [[ " ${seen} " == *" ${base} "* ]] || { seen+=" ${base}"; found+="${found:+, }${base}"; }
-  done
-  if [[ -n "${found}" ]]; then
-    close_refused live "close: no brief names $1's epic, and only the first ${AGENT_NAME_MAX} characters of its name match the tab records of ${found}, so no pane was closed: close those tabs by hand, or start the epic's conductor again from its brief"
-    return 0
-  fi
-  if has_records "${e}"; then CLOSE_LABEL="${e}"; fi
+# close_epic <conductor> — the label of its epic's tabs: the name without conduct- when that is the
+# full name (the brief start_conductor wrote, .swarm/briefs/<name>.md, has it, or the name is not
+# AGENT_NAME_MAX long, so not cut), else conduct_epic's, from the newest brief with that conductor name.
+close_epic() {
+  if [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"
+  else conduct_epic "$1"; fi
 }
 
-# close_near <name> — with no record of <name>'s in .swarm/state (a tab record of its label or its
-# numbered overflow's, or a pane line naming it), the tab records and pane lines that share its first
-# AGENT_NAME_MAX characters, comma-separated. Only tab-record lines are read (own_panes' filter), so
-# another file there (a brief, watch-seen) is never taken for a tab.
-close_near() {
-  local f files=()
-  # A .tmp is a record mid-rewrite (record_drop), as record_kept skips it.
-  for f in "${STATE_DIR}"/*; do [[ -f "${f}" && "${f}" != *.tmp ]] && files+=("${f}"); done
-  [[ ${#files[@]} -gt 0 ]] || return 0
-  awk -v name="$1" -v max="${AGENT_NAME_MAX}" '
-    FNR == 1 { tab = FILENAME; sub(/.*\//, "", tab) }
-    NF > 2 || $1 !~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { next }
-    { r = substr(tab, length(name) + 1) }
-    $2 == name || (index(tab, name) == 1 && (r == "" || r ~ /^-[0-9]+$/)) { own = 1 }
-    !(tab in seen) { seen[tab] = 1; if (substr(tab, 1, max) == substr(name, 1, max)) out = out ", tab " tab }
-    NF == 2 && substr($2, 1, max) == substr(name, 1, max) { out = out ", " $2 " (pane " $1 " in tab " tab ")" }
-    END { if (!own) print substr(out, 3) }' "${files[@]}"
+# cut_live <name> — the panes this project recorded where herdr lists an agent under <name>'s agent
+# name (CLOSE_AGENTS), comma-separated.
+cut_live() {
+  local p ours out=""
+  ours="$(own_panes)"
+  while read -r p; do
+    # A here-string, not a pipe: grep -q stops at its match, and under pipefail own_panes' SIGPIPE would fail it.
+    if [[ -n "${p}" ]] && grep -qxF -- "${p}" <<< "${ours}"; then out+="${out:+, }${p}"; fi
+  done < <(awk -v n="$(agent_name "$1")" '$3 == n { print $1 }' <<< "${CLOSE_AGENTS}")
+  printf '%s' "${out}"
 }
 
-# own_pane <name> — set CLOSE_OWN to the pane this project's agent <name> holds. A conductor's is the
-# line named conductor in its epic's tab records (CLOSE_LABEL's and their numbered overflow's) or its
-# own label's for the backlog, confirmed by herdr's pane list when herdr gave one, so a line a gone
-# pane left is passed over. Else it is herdr's agent under <name>'s agent name (CLOSE_AGENTS) on a pane
-# a tab record has with no name (an older record), never one recorded under a name. When that agent
-# name is the cut of a longer <name>, it is taken only when no record (close_near) and no other story
-# on the board has that cut. More than one such pane, or one whose cut is shared, is refused
-# (close_refused), as it may be the other's live agent.
+# own_pane <name> [epic] — the pane this project's agent <name> holds. A conductor's (with its epic)
+# is its tab records' line named conductor (<epic>'s and their numbered overflow's, or its own
+# label's for the backlog), confirmed by herdr's pane list when herdr gave one, so a line a gone pane
+# left is passed over. Else, for a name shorter than AGENT_NAME_MAX, it is herdr's (CLOSE_AGENTS)
+# under that name, on a pane a tab record has: herdr holds a longer name only cut, which never says
+# whose it is.
 own_pane() {
-  local want p n s ours recs cands="" k=0 near others
-  want="$(agent_name "$1")"
-  if [[ "${want}" == conduct-* ]]; then
-    recs=("${STATE_DIR}/$1")
-    [[ -z "${CLOSE_LABEL}" ]] || recs=("${STATE_DIR}/${CLOSE_LABEL}" "${STATE_DIR}/${CLOSE_LABEL}"-* "${recs[@]}")
-    for s in "${recs[@]}"; do
+  local p n s
+  if [[ -n "${2:-}" ]]; then
+    for s in "${STATE_DIR}/$2" "${STATE_DIR}/$2"-* "${STATE_DIR}/$1"; do
       [[ -f "${s}" ]] || continue
-      { [[ -n "${CLOSE_LABEL}" ]] && label_record "${s}" "${CLOSE_LABEL}"; } || [[ "${s##*/}" == "$1" ]] || continue
+      label_record "${s}" "$2" || [[ "${s##*/}" == "$1" ]] || continue
       while read -r p n; do
         [[ "${n}" == conductor ]] || continue
         [[ -z "${CLOSE_PANES}" ]] || awk -v p="${p}" '$1 == p { f = 1 } END { exit !f }' <<< "${CLOSE_PANES}" || continue
-        CLOSE_OWN="${p}"; return 0
+        echo "${p}"; return 0
       done < "${s}"
     done
   fi
-  ours="$(own_panes)"
-  while read -r p; do
-    [[ -n "${p}" && -z "$(record_name "${p}" "${CLOSE_RECORDS}")" ]] || continue
-    # A here-string, not a pipe: grep -q stops at its match, and under pipefail own_panes' SIGPIPE would fail it.
-    if grep -qxF -- "${p}" <<< "${ours}"; then cands+="${cands:+, }${p}"; k=$((k + 1)); fi
-  done < <(awk -v n="${want}" '$3 == n { print $1 }' <<< "${CLOSE_AGENTS}")
-  [[ ${k} -gt 0 ]] || return 0
-  if [[ ${k} -gt 1 ]]; then
-    close_refused live "close: herdr lists more than one agent as ${want} on panes .swarm/state records with no name (${cands}), and any may be $1's live agent, so none was closed and nothing was counted, cleared or kept: close the one that is $1's by hand (herdr pane close <pane>), then close $1 again"
-    return 0
-  fi
-  if [[ "${want}" != "$1" ]]; then
-    near="$(close_near "$1")"; close_stories
-    others="$(awk -v n="${want}" -v s="$1" '$1 == n && $2 != s { printf "%s%s", (o++ ? ", " : ""), $2 }' <<< "${CLOSE_STORIES}")"
-    if [[ -n "${near}${others}" ]]; then
-      close_refused live "close: herdr lists ${want}, the first ${AGENT_NAME_MAX} characters of $1, on pane ${cands}, which .swarm/state records with no name, and ${near}${near:+${others:+, }}${others:+the stories ${others}} share that cut, so the pane may be another's live agent: none was closed and nothing was counted, cleared or kept. Close it by hand (herdr pane close ${cands}) if it is $1's, then close $1 again"
-      return 0
-    fi
-  fi
-  CLOSE_OWN="${cands}"
+  [[ ${#1} -lt ${AGENT_NAME_MAX} ]] || return 0
+  p="$(awk -v n="$(agent_name "$1")" '$3 == n { print $1; exit }' <<< "${CLOSE_AGENTS}")"
+  # A here-string, not a pipe: grep -q stops at its match, and under pipefail own_panes' SIGPIPE would fail it.
+  if [[ -n "${p}" ]] && grep -qxF -- "${p}" <<< "$(own_panes)"; then echo "${p}"; fi
 }
 
 # close_pane <pane> <name> [tab-record] [alone] — close <pane> and drop it from its tab record (found

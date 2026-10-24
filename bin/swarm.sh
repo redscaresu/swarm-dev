@@ -458,9 +458,8 @@ dispatch() {
             if [[ "${*: -1}" == --drop ]]; then CLOSE_DROP=1; set -- "${@:1:$#-1}"; fi
             [[ "${1:-}" != -* && "${2:-}" != -* ]] || die "close: --drop and --all go last, in that order: swarm.sh close <name> [cause] [--drop] [--all]"
             close_agent "${1:?name}" "${2:-}"
-            # A pane close refused (said above) fails the close, unless it was a story's whose board work went on.
-            [[ -z "${CLOSE_REFUSED}" ]] || [[ -z "${CLOSE_LIVE}" && -f "${BOARD}/stories/$1.md" ]] \
-              || die "close: no pane was closed for $1 (see above)${CLOSE_LIVE:+, and nothing was counted, cleared or kept}" ;;
+            # A pane close refused (said above) fails the close: nothing was counted, cleared or kept.
+            [[ -z "${CLOSE_REFUSED}" ]] || die "close: no pane was closed for $1 (see above), and nothing was counted, cleared or kept" ;;
     # _step-up: ladder_step's, not logged, and a failure after the old builder closed exits STEP_UP_PARTWAY
     step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;

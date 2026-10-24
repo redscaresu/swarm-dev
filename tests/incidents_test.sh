@@ -38,7 +38,6 @@ sites() (
   herdr() { :; }
   archive_session() { :; }
   close_panes() { :; }
-  close_check() { :; }
   clear_build() { :; }
   held_story() { :; }
   escalate_story() { :; }
