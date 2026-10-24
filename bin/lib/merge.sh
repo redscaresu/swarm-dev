@@ -223,19 +223,6 @@ merge_pr() {
     done <<< "${info}"
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
   fi
-  # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
-  # then under merge = agent's holds. --release is release_check's.
-  if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
-    why="$(merge_grant "${url}")"
-    [[ -z "${why}" ]] || merge_fail "${why}"
-    merge_hold "${url}"
-  fi
-  if [[ "${only}" == --board ]]; then
-    # A board PR could lift a hold (costs: money to none, or a story deleted) before it merges.
-    info="$(gh pr diff "${n}" --repo "${repo}" --color never)" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"
-    p="$(costs_diff <<< "${info}")"
-    [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; the user merges it"
-  fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
   # then under merge = agent's holds. --release is release_check's. It runs after the head's CI check,
