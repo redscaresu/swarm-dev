@@ -292,7 +292,7 @@ Repeat until a step below says stop:
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
-     The lead sets a draft epic `active` itself only when no agreement is needed: it has a
+     The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
      `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or
      `lead_epics = on` in `.claude/swarm/config`. An `agreed:` already on a draft is stale (an epic
      set back to draft by hand) and does not count. Offer to follow `/epic <slug>` to resume it,
@@ -316,9 +316,9 @@ count it:
   swarm did (held stories or a slow CI run they found by asking).
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
-is `human` unless the user asks you to merge a PR, or `swarm.sh grants <PR URL>` lists `merge` for
-it, and then only with `swarm.sh merge <PR URL>` (not `gh pr merge`, not `gh api`, not the web
-page). A release PR is the user's too, unless `swarm.sh merge --release`'s release check finds that an
+is `human` unless `swarm.sh grants <PR URL>` lists `merge` for the PR, and then only with
+`swarm.sh merge <PR URL>` (not `gh pr merge`, not `gh api`, not the web page). Without that grant
+the user merges it, even when they ask you to, since `swarm.sh merge` refuses it. A release PR is the user's too, unless `swarm.sh merge --release`'s release check finds that an
 HLD granting `release` covers every story merged since the last tag. A `costs: money` PR, or one stacked on one,
 is the user's to merge whatever the grant says. Never give a `lead` story to an agent.
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.

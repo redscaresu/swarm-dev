@@ -30,7 +30,8 @@ agreed: <YYYY-MM-DD>      # set by /epic when the user agrees it
 **Your part:** the steps you or your own session will do (go-aheads, logins, hand steps), or none.
 ```
 
-A new or draft epic goes `active` only with `agreed:`, a `parent:`, an `hld:` whose agreed HLD grants `epics`, or `lead_epics = on`. A `later` epic needs none of these to go `active`.
+A new or draft epic goes `active` only with `agreed:`, a `parent:`, an `hld:` whose agreed HLD grants `epics`, or `lead_epics = on`. `agreed:` counts only when /epic writes it in the same edit that sets
+`status: active`; one left on a draft does not. A `later` epic needs none of these to go `active`.
 
 A story joins an epic with `epic: <epic-file-name-without-.md>` in its front matter. Scope a new
 epic with `/plan-epic <slug>` (swarm-dev `docs/reference.md` § Scoping an epic). In Obsidian,

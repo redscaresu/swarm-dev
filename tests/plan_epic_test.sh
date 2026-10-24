@@ -62,6 +62,17 @@ has survey-name 'named `survey`' "$flat"
 has small-worktree 'board-pr start scope-.*commit them there' "$flat"
 has small-open 'board-pr open scope-.*board-pr done scope-' "$flat"
 has skeptic-chain 'depends_on` chain through it more than 3 stories deep' "$flat"
+crit=$(printf '%s' "$step3" | awk '/one `critic`/{on=1} on' | tr '\n' ' ' | tr -s ' ')
+has skeptic-high 'one `skeptic-<slug>` per `risk: high` story' "$flat"
+has critic-risk 'should carry `risk: high`' "$crit"
+has critic-clash 'a `touches` clash inside a wave' "$crit"
+has critic-disjoint 'that its `needs` does not name' "$crit"
+has critic-kind 'a wrong `kind`' "$crit"
+has critic-graph 'given the `depends_on` graph and the waves' "$crit"
+has critic-needs-adds 'names nothing the dependency.s own scope adds' "$crit"
+has critic-shape 'Output `\{findings:\[...\], stories:\[\{slug, why\}\]\}`' "$crit"
+has resume-skeptic 'A resume also starts a skeptic for each story the critic.s file moves to `risk: high`' "$flat"
+has needs-schema 'done_when, needs, touches' "$flat"
 has declined-reasons '`out-of-scope`, `nit` or `wrong`' "$flat"
 has folded 'folded into'
 has log-skeptic 'log-finding --reviewer skeptic[|]codex[|]critic <kind> <board PR URL>' "$flat"
@@ -103,7 +114,7 @@ done
 for f in commands/swarm.md skills/swarm-dev/SKILL.md; do
   s=$(tr '\n' ' ' < "$ROOT/$f" | tr -s ' ')
   has "user-agrees-$f" 'nly the user agrees [^.]*through /epic, which writes `agreed:` as it sets `status: active`' "$s"
-  has "never-activate-$f" 'sets a draft epic `active` itself only when no agreement is needed: it has a `parent:`[^.]*`epics`[^.]*`lead_epics' "$s"
+  has "never-activate-$f" 'sets a new or draft epic `active` itself only when no agreement is needed: it has a `parent:`[^.]*`epics`[^.]*`lead_epics' "$s"
   has "stale-agreed-$f" 'An `agreed:` already on a draft is stale[^.]*does not count' "$s"
 done
 has epic-resume-stale-review 'on a resume, move it to `D/review-stale.md`' "$eflat"
