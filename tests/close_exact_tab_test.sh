@@ -40,28 +40,52 @@ closed() { echo "$(paste -sd' ' - < "${ROOT}/tabs-closed")|$(paste -sd' ' - < "$
 # fixture <state-file> <lines>... — a fresh .swarm/state with each named record; nothing closed yet.
 fixture() {
   rm -rf "${P}/.swarm/state"; mkdir -p "${P}/.swarm/state"
-  : > "${ROOT}/tabs-closed"; : > "${ROOT}/panes-closed"
+  : > "${ROOT}/tabs-closed"; : > "${ROOT}/panes-closed"; : > "${P}/.swarm/events.tsv"
   while [[ $# -gt 0 ]]; do printf '%b\n' "$2" > "${P}/.swarm/state/$1"; shift 2; done
 }
 
 fails=0
 is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi; }
 
+# refused <name> <found> — close <name> as a refusal reads: its exit, what it closed, a refusal
+# naming <found> as sharing its cut, any not closed: line, and main's log line for it (ok or the refusal).
+refused() {
+  local rc=0; close "$1" || rc=$?
+  echo "${rc}|$(closed)|$(grep -cF "swarm: close: nothing in .swarm/state is recorded as $1, and $2 share its first 32 characters" "${ROOT}/close.out")|$(grep -c '^not closed:' "${ROOT}/close.out")|$(grep -cF $'\tclose\t'"$1"$'\tw:me\tok' "${P}/.swarm/events.tsv")|$(grep -cF $'\tclose\t'"$1"$'\tw:me\tclose: nothing in' "${P}/.swarm/events.tsv")"
+}
+REFUSED="1|||1|0|0|1"
+
 # Two plan tabs for long HLD names: both labels cut to the same 32 characters.
 H=plan-2026-10-24-a-long-dated-hld; T1="${H}-one"; T2="${H}-two"
 is "${T1} and ${T2} share their agent name" "${H}|${H}" "$(name "${T1}")|$(name "${T2}")"
-printf '%s\n' "w:t1 ${T1}" "w:t2 ${T2}" "w:t3 e1" "w:t4 e2" > "${ROOT}/tabs"
+printf '%s\n' "w:t1 ${T1}" "w:t2 ${T2}" "w:t3 e1" "w:t4 e2" "w:t5 e3" > "${ROOT}/tabs"
 printf '%s\n' "critic w:p1" "skeptic w:p2" > "${ROOT}/agents"
-printf '%s\n' "w:p1 w:t1" "w:p2 w:t2" > "${ROOT}/panes"
+printf '%s\n' "w:p1 w:t1" "w:p2 w:t2" "w:p3 w:t5" > "${ROOT}/panes"
 fixture "${T1}" "w:p1 critic" "${T2}" "w:p2 skeptic"
 rc=0; close "${T2}" || rc=$?
 is "close ${T2} closes its own tab and leaves ${T1}'s tab and record" "0|w:t2||w:p1 critic" \
   "${rc}|$(closed)|$(cat "${P}/.swarm/state/${T1}" 2>/dev/null)"
 
+# herdr lists an agent under the cut both share, in T1's pane: it is never taken for T2's.
+printf '%s\n' "${H} w:p1" "skeptic w:p2" > "${ROOT}/agents"
 fixture "${T1}" "w:p1 critic" "${T2}" "w:p2 skeptic"
-close "${H}" || true
-is "close ${H}, the cut both share, closes nothing and names both tabs" "||1|1" \
-  "$(closed)|$(grep -c "no pane in .swarm/state is recorded as exactly ${H}, and tab ${T1}, tab ${T2} share its first 32 characters" "${ROOT}/close.out")|$(grep -c "^not closed: ${H}" "${ROOT}/close.out")"
+rc=0; close "${T2}" || rc=$?
+is "close ${T2}, herdr listing ${H} in ${T1}'s pane, leaves that pane and ${T1}'s record" "0|w:t2||w:p1 critic" \
+  "${rc}|$(closed)|$(cat "${P}/.swarm/state/${T1}" 2>/dev/null)"
+printf '%s\n' "critic w:p1" "skeptic w:p2" > "${ROOT}/agents"
+
+# T2's own tab record wins over a pane line elsewhere that shares the cut.
+fixture "${T1}" "w:p1 critic" "${T2}" "w:p2 skeptic" e3 "w:p3 ${H}-x"
+rc=0; close "${T2}" || rc=$?
+is "close ${T2}, a pane line ${H}-x in tab e3 sharing its cut, still closes its own tab" "0|w:t2||w:p1 critic|w:p3 ${H}-x" \
+  "${rc}|$(closed)|$(cat "${P}/.swarm/state/${T1}" 2>/dev/null)|$(cat "${P}/.swarm/state/e3" 2>/dev/null)"
+
+fixture "${T1}" "w:p1 critic" "${T2}" "w:p2 skeptic"
+is "close ${H}, the cut both share, fails, closes nothing, names both tabs, and main logs the refusal" "${REFUSED}" \
+  "$(refused "${H}" "tab ${T1}, tab ${T2}")"
+# The cut start_agent and herdr print is no record's name, even with one record to match it.
+fixture "${T1}" "w:p1 critic"
+is "close ${H}, with ${T1} the one record sharing it, is refused too" "${REFUSED}" "$(refused "${H}" "tab ${T1}")"
 
 # Two builders whose long slugs share their first 32 characters, in two epics' tabs; herdr knows
 # only one of them by the cut name, as it holds that name now.
@@ -78,9 +102,15 @@ is "close ${B} closes its pane and leaves ${A}'s open and recorded" "0||w:p21|w:
 # Its pane line gone (closed by hand): no exact record is left, so close refuses rather than take
 # the pane herdr gives for the cut name, which is the other builder's.
 fixture e1 "w:p10 conductor" e2 "w:p20 conductor\nw:p21 ${B}"
-close "${A}" || true
-is "close ${A}, with no record of its own, closes nothing and names ${B}" "||1|1" \
-  "$(closed)|$(grep -c "recorded as exactly ${A}, and ${B} (pane w:p21 in tab e2) share its first 32 characters" "${ROOT}/close.out")|$(grep -c "^not closed: ${A}" "${ROOT}/close.out")"
+is "close ${A}, with no record of its own, fails, closes nothing, names ${B}, and main logs the refusal" "${REFUSED}" \
+  "$(refused "${A}" "${B} (pane w:p21 in tab e2)")"
+
+# A file in .swarm/state that is no tab record (a brief) is never taken for one, cut or not.
+: > "${ROOT}/agents"
+fixture e1 "w:p10 conductor" "${S}-brief.md" "# The brief for ${S}-z\n\nRead the story first."
+rc=0; close "${S}-z" || rc=$?
+is "close ${S}-z, a brief ${S}-brief.md beside the records, is not refused and closes nothing" "0|||0" \
+  "${rc}|$(closed)|$(grep -c 'nothing in .swarm/state is recorded' "${ROOT}/close.out")"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
