@@ -680,14 +680,15 @@ hld_top() {
 # planned_lines <hld file> — its front matter's planned: lines, as they are.
 planned_lines() { awk '/^---$/ && ++n == 2 { exit } n == 1 && index($0, "planned:") == 1' "$1"; }
 
-# epic_links <epics dir> — true when every line of stdin is blank or exactly `- [<text>](../epics/<slug>.md)`,
-# <slug>.md a file in <epics dir>: the links a plan PR may write after the HLD's last ## Epics, and
-# nothing else, so no target, text or heading of its own gets into an agreed HLD under the grant.
+# epic_links <epics dir> — true when every line of stdin is blank or exactly `- [<slug>](../epics/<slug>.md)`,
+# the same slug both times and <slug>.md a file in <epics dir>: the links a plan PR may write after
+# the HLD's last ## Epics, and nothing else, so no text, target or heading of its own gets into an
+# agreed HLD under the grant.
 epic_links() {
-  local l re='^- \[[^]]*\]\(\.\./epics/([A-Za-z0-9._-]+)\.md\)$'
+  local l re='^- \[([A-Za-z0-9._-]+)\]\(\.\./epics/([A-Za-z0-9._-]+)\.md\)$'
   while IFS= read -r l || [[ -n "${l}" ]]; do
     [[ -z "${l//[[:blank:]]/}" ]] && continue
-    [[ "${l}" =~ ${re} && -f "$1/${BASH_REMATCH[1]}.md" ]] || return 1
+    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1
   done
 }
 
@@ -700,17 +701,16 @@ epics_last() {
 }
 
 # plan_head <hld file> <head copy> <epics dir> — true when <head copy> only plans <hld file>: one
-# planned: line, set as next reads it (hld_planned) and the same as the board's when the board is
-# planned (an empty planned: there is unplanned, as next reads it, and may be set), the board's
-# hld_top as its first lines, and after them only blank lines and links to epics in <epics dir>, the
-# board's with the PR's added ones over them (epic_links): the head adds links under the board's last
-# ## Epics and nothing else.
+# planned: line, exactly `planned: YYYY-MM-DD` (what /plan-hld writes, and planned as next reads it,
+# hld_planned) and the same as the board's when the board is planned (an empty planned: there is
+# unplanned, as next reads it, and may be set), the board's hld_top as its first lines, and after
+# them only blank lines and links to epics in <epics dir>, the board's with the PR's added ones over
+# them (epic_links): the head adds links under the board's last ## Epics and nothing else.
 plan_head() {
-  local h n
+  local h n re='^planned: [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   h="$(planned_lines "$2")"
-  [[ "${h}" != *$'\n'* ]] || return 1
+  [[ "${h}" =~ ${re} ]] || return 1
   ! hld_planned "$1" || [[ "$(planned_lines "$1")" == "${h}" ]] || return 1
-  hld_planned "$2" || return 1
   n=$(( $(hld_top "$1" | wc -l) ))
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links "$3"
 }
@@ -729,9 +729,10 @@ draft_epics() {
 
 # plan_hld <status lines> <prefix> — the agreed HLD in ${BOARD}/hld that a board PR plans into
 # epics, or a failure. <status lines> are the PR's files (ci_gate files-status), "<status> <path>" one
-# per line, each under the board's <prefix>: one hld/<H>.md and at least one epics/*.md, every epic
-# added (a modified, renamed or removed epic is no plan: the plan adds epics carrying hld: H), and the
-# HLD agreed with ## Epics as its last section (epics_last). It reads no gh; pr_hld then checks the
+# per line, each under the board's <prefix>: one hld/<H>.md, modified (an added, copied, renamed or
+# removed HLD is no plan), at least one epics/*.md, every epic added (a modified, renamed or removed
+# epic is no plan: the plan adds epics carrying hld: H), and the HLD agreed with ## Epics as its last
+# section (epics_last). It reads no gh; pr_hld then checks the
 # head (each file there, the HLD's copy plan_head's, each epic a draft without the epics grant:
 # draft_epics) and reads each epic through item_hld, so one_hld still has to agree on H. The HLD's
 # grants are the board's, so a PR cannot grant itself.
@@ -741,7 +742,7 @@ plan_hld() {
     st="${l%% *}"; p="${l#* }"
     [[ "${p}" == "$2"* ]] || return 1   # loose-match: ok <prefix> is empty or ends in /
     p="${p#"$2"}"
-    if [[ -z "${h}" && "${p}" =~ ^hld/([A-Za-z0-9._-]+)\.md$ ]]; then h="${BASH_REMATCH[1]}"
+    if [[ -z "${h}" && "${p}" =~ ^hld/([A-Za-z0-9._-]+)\.md$ && "${st}" == modified ]]; then h="${BASH_REMATCH[1]}"
     elif [[ "${p}" =~ ^epics/[^/]+\.md$ && "${st}" == added ]]; then e=$((e + 1))
     else return 1; fi
   done <<< "$1"
