@@ -234,15 +234,16 @@ pr() {
   echo "[${l}]" > "${FX}/repos_o_r_pulls_${n}_files_per_page=100"
 }
 at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=h$1"; }   # at <n> <path> — <path>'s copy at #<n>'s head
-# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics links at
-# the head, and epics p-one and p-two added with hld: <hld>, status: ${EPIC_STATUS} (draft).
+# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics links
+# (${EPICS}, by default one list-item link each) at the head, and epics p-one and p-two added with
+# hld: <hld>, status: ${EPIC_STATUS} (draft).
 planned() {
   local h="$2" g
   pr "$1" docs/epics/p-one.md docs/epics/p-two.md "docs/hld/$2.md"
   item "$(at "$1" docs/epics/p-one.md)" "status: ${EPIC_STATUS:-draft}" "hld: ${h}"
   item "$(at "$1" docs/epics/p-two.md)" "status: ${EPIC_STATUS:-draft}" "hld: ${3:-${h}}"
   g="$(get "${B}/hld/$2.md" grants)"
-  EPICS=$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n' \
+  EPICS="${EPICS-$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n'}" \
     hld "$(at "$1" "docs/hld/$2.md")" "title: Plan" "status: $(get "${B}/hld/$2.md" status)" "planned: 2026-10-24" ${g:+"grants: ${g}"}
 }
 get() { sed -n "s/^$2: //p" "$1" | head -1; }   # get <file> <key> — its first <key>: value
@@ -307,17 +308,17 @@ pr 48 docs/hld/plan.md
 unread finish-pr-none-head-unread https://github.com/o/r/pull/48
 unread story-pr-touching-hld-head-unread https://github.com/o/r/pull/4
 unread plan-pr-draft-hld-head-unread https://github.com/o/r/pull/32
-# Only lines after the board's last ## Epics may change. Each HLD hides a ## Epics line or a heading
-# in its Design (in <pre>, <details>, a code fence, a list item, indented, setext): #40 changes a line
-# there and is none; #41 changes only a line after the last ## Epics and is under the HLD, so a code
-# fence in Design no longer forces none.
+# Only lines after the board's last ## Epics may change, and only to blank lines and list-item links.
+# Each HLD hides a ## Epics line or a heading in its Design (in <pre>, <details>, a code fence, a list
+# item, indented, setext): #40 changes a line there and is none; #41 adds only the Epics links and is
+# under the HLD, so a code fence in Design no longer forces none.
 # bypass <name> <end of ## Design> — both PRs on plan-<name>, whose ## Design ends with the hidden line.
 bypass() {
   local h="plan-$1"
-  BEFORE="$2" AFTER=$'the note\n' hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
-  BEFORE="$2" AFTER=$'the note\n' planned 40 "${h}"; sed -i.bak 's/^hidden$/changed/' "$(at 40 "docs/hld/${h}.md")"
+  BEFORE="$2" hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
+  BEFORE="$2" planned 40 "${h}"; sed -i.bak 's/^hidden$/changed/' "$(at 40 "docs/hld/${h}.md")"
   expect "plan-pr-$1-before-last-epics-none" https://github.com/o/r/pull/40 none
-  BEFORE="$2" AFTER=$'the note\n' planned 41 "${h}"; sed -i.bak 's/^the note$/a new note/' "$(at 41 "docs/hld/${h}.md")"
+  BEFORE="$2" planned 41 "${h}"
   expect "plan-pr-$1-after-last-epics" https://github.com/o/r/pull/41 "$(printf '%s\nmerge' "${B}/hld/${h}.md")"
 }
 bypass pre $'<pre>\n## Epics\nhidden\n</pre>\n'
@@ -326,14 +327,26 @@ bypass fence $'```\n## Epics\nhidden\n```\n'
 bypass list $'- ## Epics\nhidden\n'
 bypass indented $'   ## Epics\nhidden\n'
 bypass setext $'Epics\n-----\nhidden\n'
-# A heading after the board's last ## Epics opens a section plan_head would leave unpinned: none, though
-# the PR changes only the Epics links.
-for c in 'h1:# Appendix' 'h3:### Sub' 'indented:   ## Risks' $'setext:Risks\n-----' 'list:- ## Risks' 'quoted:> # Note'; do
+# A line after the board's last ## Epics that is no blank line or list-item link (a heading in any
+# form, HTML, text, a link with no bullet) opens a section plan_head would leave unpinned: none, though
+# the PR adds only the Epics links (#60), and none when it drops that line and adds them (#65).
+for c in 'h1:# Appendix' 'h3:### Sub' 'indented:   ## Risks' $'setext:Risks\n-----' 'list:- ## Risks' 'quoted:> # Note' \
+  'html:<h2>Risks</h2>' 'text:the risk' 'bare-link:[p-x](../epics/p-x.md)'; do
   h="plan-after-${c%%:*}"
-  AFTER="${c#*:}"$'\nthe risk\n' hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
-  AFTER="${c#*:}"$'\nthe risk\n' planned 60 "${h}"
+  AFTER="${c#*:}"$'\n' hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
+  AFTER="${c#*:}"$'\n' planned 60 "${h}"
   expect "plan-pr-${c%%:*}-after-epics-none" https://github.com/o/r/pull/60 none
+  planned 65 "${h}"
+  expect "plan-pr-${c%%:*}-after-epics-dropped-none" https://github.com/o/r/pull/65 none
 done
+# The head may add nothing but links after the board's last ## Epics: a section appended there, or an
+# HTML heading, is none; links with any bullet and text after them are the HLD's.
+planned 70 plan; printf '\n## Decisions\nwe drop the design\n' >> "$(at 70 docs/hld/plan.md)"
+expect plan-pr-head-section-after-epics-none https://github.com/o/r/pull/70 none
+planned 71 plan; printf '<h2>Constraints</h2>\n' >> "$(at 71 docs/hld/plan.md)"
+expect plan-pr-head-html-after-epics-none https://github.com/o/r/pull/71 none
+EPICS=$'* [p-one](../epics/p-one.md): the first\n\n- [p-two](../epics/p-two.md) (later)\n' planned 72 plan
+expect plan-pr-head-links-with-text https://github.com/o/r/pull/72 "$(printf '%s\nmerge' "${B}/hld/plan.md")"
 # Without the epics grant, each epic the plan adds is a draft: active ones are none, under an HLD that
 # grants epics they are its. An epic on the board flipped from draft to active is none; one kept active
 # is the HLD's.
@@ -356,7 +369,7 @@ item "${B}/hld/plan-noepics.md" "title: Plan" "status: agreed" "grants: [merge]"
 planned 57 plan-noepics
 expect plan-pr-no-epics-heading-none https://github.com/o/r/pull/57 none
 # planned: on the head: two lines, a change to the board's, or the board's deleted is none; the
-# board's kept is plan-p.
+# board's kept is plan-p. (An empty planned: on the board, which next reads as unplanned, is #73.)
 hld "${B}/hld/plan-p.md" "title: Plan" "status: agreed" "planned: 2026-10-01" "grants: [merge]"
 planned 52 plan; sed -i.bak '/^planned:/p' "$(at 52 docs/hld/plan.md)"
 expect plan-pr-two-planned-lines-none https://github.com/o/r/pull/52 none
@@ -366,6 +379,10 @@ planned 54 plan-p; sed -i.bak '/^planned:/d' "$(at 54 docs/hld/plan-p.md)"
 expect plan-pr-deletes-planned-none https://github.com/o/r/pull/54 none
 planned 55 plan-p; sed -i.bak 's/^planned: .*/planned: 2026-10-01/' "$(at 55 docs/hld/plan-p.md)"
 expect plan-pr-keeps-planned https://github.com/o/r/pull/55 "$(printf '%s\nmerge' "${B}/hld/plan-p.md")"
+# An empty planned: on the board is unplanned, as next reads it: the head may set it.
+hld "${B}/hld/plan-pe.md" "title: Plan" "status: agreed" "planned:" "grants: [merge]"
+planned 73 plan-pe
+expect plan-pr-sets-empty-planned https://github.com/o/r/pull/73 "$(printf '%s\nmerge' "${B}/hld/plan-pe.md")"
 # A plan PR that adds epics but no planned:, or an empty one, leaves plan unplanned: none.
 planned 58 plan; sed -i.bak '/^planned:/d' "$(at 58 docs/hld/plan.md)"
 expect plan-pr-no-planned-none https://github.com/o/r/pull/58 none

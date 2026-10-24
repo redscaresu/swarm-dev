@@ -680,27 +680,31 @@ hld_top() {
 # planned_lines <hld file> — its front matter's planned: lines, as they are.
 planned_lines() { awk '/^---$/ && ++n == 2 { exit } n == 1 && index($0, "planned:") == 1' "$1"; }
 
-# plan_head <hld file> <head copy> — true when <head copy> only plans <hld file>: one planned: line,
-# set as next reads it (hld_planned) and the same as the board's when the board has one, and the
-# board's hld_top as its first lines, so only lines after the last ## Epics differ.
-plan_head() {
-  local b h n
-  b="$(planned_lines "$1")"; h="$(planned_lines "$2")"
-  [[ "${h}" != *$'\n'* && ( -z "${b}" || "${b}" == "${h}" ) ]] || return 1
-  hld_planned "$2" || return 1
-  n=$(( $(hld_top "$1" | wc -l) ))
-  cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}")
-}
+# epic_links — true when every line of stdin is blank or a list-item link, `- [text](target)` or
+# `* [text](target)`, with any text after the link: all a plan PR may write after the last ## Epics.
+epic_links() { ! grep -Evq '^[[:blank:]]*$|^[-*+][[:blank:]]+\[[^]]*\]\([^)]*\)'; }
 
 # epics_last <hld file> — true when ## Epics is the HLD's last section: its body has a line that is
-# exactly ## Epics, and no heading after the last one (a #-heading at any indent, quoted or in a list
-# item, or a setext underline under a line of text), whose section plan_head would leave open.
+# exactly ## Epics, and after the last one (hld_top) only blank lines and epic links (epic_links), so
+# no heading, HTML or text opens a section plan_head would leave open.
 epics_last() {
-  awk '/^---$/ && n < 2 { n++; next } n < 2 { next }
-    $0 == "## Epics" { e = 1; bad = 0; p = ""; next }
-    e && /^[ \t>]*([-*+][ \t]+|[0-9]+[.)][ \t]+)*#+([ \t]|$)/ { bad = 1 }
-    e && /^[ \t]*(=+|-+)[ \t]*$/ && p ~ /[^ \t]/ { bad = 1 }
-    { p = $0 } END { exit (!e || bad) }' "$1"
+  local n; n=$(( $(hld_top "$1" | wc -l) ))
+  [[ ${n} -gt 0 ]] && hld_lines "$1" | tail -n +$((n + 1)) | epic_links
+}
+
+# plan_head <hld file> <head copy> — true when <head copy> only plans <hld file>: one planned: line,
+# set as next reads it (hld_planned) and the same as the board's when the board is planned (an empty
+# planned: there is unplanned, as next reads it, and may be set), the board's hld_top as its first
+# lines, and after them only blank lines and epic links (epic_links): the head adds links under the
+# board's last ## Epics and nothing else.
+plan_head() {
+  local h n
+  h="$(planned_lines "$2")"
+  [[ "${h}" != *$'\n'* ]] || return 1
+  ! hld_planned "$1" || [[ "$(planned_lines "$1")" == "${h}" ]] || return 1
+  hld_planned "$2" || return 1
+  n=$(( $(hld_top "$1" | wc -l) ))
+  cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links
 }
 
 # draft_epics <files> <prefix> <view> — true when each epics/*.md in <files> (under the board's
