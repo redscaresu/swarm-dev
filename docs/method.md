@@ -16,7 +16,8 @@ each step is in [`reference.md`](reference.md).
    checked, non-goals and constraints. A reviewer attacks the draft, and it becomes `active` only
    when you agree it (reference.md § Writing an epic).
 3. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. A critic and
-   codex check for gaps and overlaps, and a skeptic checks each `risk: high` story (reference.md § Scoping an epic).
+   codex check for gaps and overlaps, and a skeptic checks each `risk: high` story (reference.md
+   § Scoping an epic).
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
@@ -62,8 +63,8 @@ Three parties do the work, and the plan decides which one does each step, not th
   before each `lead` story, and do its **You:** steps. The exception is an agreed HLD's `merge` and
   `release` grants: the lead then merges a story or board PR under it, or a release whose stories
   are all under HLDs that grant `release`, with `swarm.sh merge`. Its `epics` and `stories` grants
-  skip your agreement of an epic and your approval of its stories. You set `grants:` and no
-  agent does; a `costs: money` PR still waits for you.
+  skip your agreement of an epic and your approval of its stories. Only you set `grants:`, and a
+  `costs: money` PR still waits for you.
 - **The lead** is your Claude Code session, the one you run `/swarm-dev:swarm` in. It supervises, reviews
   and runs `lead` stories. If it stops while `next` names a step it has not started, a hook sends it back once.
 - **Agents** plan, conduct and build everything else, each in its own pane; builders also get

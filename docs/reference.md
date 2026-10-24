@@ -76,9 +76,10 @@ sits above the epic: HLD, then epics, then stories. It is optional; a single epi
    the `hld` role. `/hld` with no title resumes the one draft, asks which when there are several,
    and with none tells you where the chain stands.
 2. **Write it in the co-author's pane.** It reads the code and the ADRs, then asks you the questions
-   that decide the design and fills the ten sections, Problem through Open questions, leaving
-   Epics empty. It asks which `grants:` the HLD carries and writes only what you name.
-3. **Say it is ready.** A reviewer (the `hld-review` role) attacks the draft, its `grants:` first:
+   that decide the design and fills its sections, Problem through Open questions, and leaves Epics
+   empty until epics are planned from it. It asks which `grants:` the HLD carries and writes only
+   what you name.
+3. **Say it is ready.** A reviewer (the `hld-review` role) attacks the draft, its `grants:` included:
    each grant hands agents a step you take today, so it names what goes wrong if the grant is
    misused. Its findings arrive in the co-author's pane.
 4. **Agree it.** Your session sets `status: agreed`, opens a board PR with one codex pass, and
@@ -118,7 +119,8 @@ its `hld:` and no plan worktree. `/plan-hld <hld>` (the file name without `.md`)
 3. Writes one `epics/<slug>.md` per epic with `hld: <hld>`, sets the HLD's `planned: <today>` and
    fills its `## Epics` section with one link per epic. It changes nothing else.
 4. Opens the board PR (`board-pr open plan-<hld>`) after one codex pass, with each epic `active`
-   when the HLD grants `epics` and `draft` otherwise. Findings are logged against the PR as in § Scoping an epic.
+   when the HLD grants `epics`; without that grant each epic is `draft`, and it asks you first.
+   Findings are logged against the PR as in § Scoping an epic.
 
 `swarm.sh grants` accepts that PR as under the HLD only in this shape: one `planned:` line, the
 HLD changed after its last `## Epics` and nowhere else, and at least one epic added, with nothing
