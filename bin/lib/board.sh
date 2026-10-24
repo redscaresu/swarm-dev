@@ -614,14 +614,41 @@ item_hld() {
 # none), or nothing when there is none, an empty line, or two.
 one_hld() { local u; u="$(sort -u)"; [[ -z "${u}" || "${u}" == *$'\n'* ]] || echo "${u}"; }
 
+# hld_body <hld file> — the HLD less its front matter's planned: lines and the lines under its
+# ## Epics heading (to the next # or ## heading, or EOF): what the board PR that plans it leaves as it was.
+hld_body() {
+  awk '/^---$/ && n < 2 { n++ } n == 1 && index($0, "planned:") == 1 { next }
+    n == 2 && /^##? / { e = ($0 == "## Epics"); print; next } !e' "$1"
+}
+
+# plan_hld <files> <prefix> <view> — the agreed HLD in ${BOARD}/hld that a board PR plans into epics,
+# or a failure. <files> are the PR's, one per line, each under the board's <prefix>: one hld/<H>.md,
+# whose head copy in <view> differs from the board's only in hld_body, and epics/*.md the head has
+# (pr_hld reads each through item_hld, so one_hld still has to agree on H). The HLD's grants are the
+# board's, so a PR cannot grant itself.
+plan_hld() {
+  local p h="" f
+  while IFS= read -r p; do
+    [[ "${p}" == "$2"* ]] || return 1   # loose-match: ok <prefix> is empty or ends in /
+    p="${p#"$2"}"
+    if [[ -z "${h}" && "${p}" =~ ^hld/([A-Za-z0-9._-]+)\.md$ ]]; then h="${BASH_REMATCH[1]}"
+    else [[ "${p}" =~ ^epics/[^/]+\.md$ && -f "$3/${p}" ]] || return 1; fi
+  done <<< "$1"
+  f="${BOARD}/hld/${h}.md"
+  [[ -n "${h}" && -f "${f}" && -f "$3/hld/${h}.md" && "$(get_fm "${f}" status)" == agreed ]] || return 1
+  cmp -s <(hld_body "${f}") <(hld_body "$3/hld/${h}.md") || return 1
+  echo "${f}"
+}
+
 # pr_hld <pr-url> — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
 # lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
 # touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR that touches
-# .claude/swarm/ (in any repo), or the board's hld/, is under none: only the user changes those. A PR
-# no story lists that touches any file but the board's epics and stories is under none too.
+# .claude/swarm/ (in any repo), or the board's hld/, is under none: only the user changes those. The
+# one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story lists that
+# touches any file but the board's epics and stories is under none too.
 pr_hld() (
-  local s url repo n own="" info="" head="" pre p q view="" err
+  local s url repo n own="" info="" head="" pre p q view="" err plan=""
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
@@ -642,27 +669,27 @@ pr_hld() (
   head="${info% *}"
   info="$(ci_gate files "${repo}" "${n}" "${info#* }")" || die "grants: cannot list every file ${url} changes: ${info}"
   [[ $'\n'"${info}" != *$'\n.claude/swarm/'* ]] || return 0
-  if [[ "${repo}" == "${own}" ]]; then
-    [[ $'\n'"${info}" != *$'\n'"${pre}hld/"* ]] || return 0   # loose-match: ok a whole line's prefix, the board's hld/
-  else
-    head=""   # the board is not in its repo, so none of its files is a board file
-  fi
-  view="$(mktemp -d)"; mkdir "${view}/epics" "${view}/stories"
+  [[ "${repo}" == "${own}" ]] || head=""   # the board is not in its repo, so none of its files is a board file
+  view="$(mktemp -d)"; mkdir "${view}/epics" "${view}/stories" "${view}/hld"
   cp "${BOARD}/epics/"*.md "${view}/epics/" 2>/dev/null || true
   err="${view}/err"
   while [[ -n "${head}" ]] && IFS= read -r p; do
     [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
     p="${p#"${pre}"}"
-    [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
+    [[ "${p}" =~ ^(epics|stories|hld)/[^/]+\.md$ ]] || continue
     # Quoted, so a # or ? in a name is read as itself; a 404 is then a file the head does not have.
     q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "${pre}${p}")"
     if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
     grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
     rm -f "${view}/${p}"
   done <<< "${info}"
+  if [[ -n "${head}" && $'\n'"${info}" == *$'\n'"${pre}hld/"* ]]; then   # loose-match: ok a whole line's prefix, the board's hld/
+    plan="$(plan_hld "${info}" "${pre}" "${view}")" || return 0
+  fi
   {
     for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
     while [[ -n "${head}" ]] && IFS= read -r p; do
+      [[ "${p}" != "${pre}hld/"* ]] || { echo "${plan}"; continue; }   # loose-match: ok the one HLD plan_hld passed
       [[ "${p}" == "${pre}"* && "${p#"${pre}"}" =~ ^(epics|stories)/[^/]+\.md$ ]] || { [[ -n "${s}" ]] || echo; continue; }   # loose-match: ok pre is empty or ends in /
       p="${p#"${pre}"}"
       [[ ! -f "${BOARD}/${p}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${p}")"

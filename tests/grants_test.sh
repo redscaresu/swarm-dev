@@ -208,6 +208,71 @@ expect board-pr-code-file-none https://github.com/o/r/pull/17 none
 # a PR in another repo is under none.
 expect other-repo-none https://github.com/x/y/pull/7 none
 
+# /plan-hld's board PRs, each at head h<n>. A PR that sets plan's planned: and ## Epics links and adds
+# two epics with hld: plan is under plan; any other change to the HLD, a second HLD, deleting it, or an
+# epic under another HLD is under none.
+# hld <file> <front-matter line>... — an HLD whose ## Epics (holding ${EPICS}, then ${AFTER}) sits
+# between two sections.
+hld() {
+  local f="$1"; shift
+  { echo ---; printf '%s\n' "$@"; echo ---
+    printf '\n# Plan\n\n## Design\nthe design\n\n## Epics\n%s\n%s## Open questions\nnone\n' "${EPICS:-}" "${AFTER:-}"; } > "${f}"
+}
+# pr <n> <path>... — PR #<n>, at head h<n>, changes <path>s.
+pr() {
+  local n="$1" p l=""; shift
+  for p in "$@"; do l+="${l:+,}{\"filename\":\"${p}\"}"; done
+  echo "{\"headRefOid\":\"h${n}\",\"changedFiles\":$#}" > "${FX}/pr.${n}"
+  echo "[${l}]" > "${FX}/repos_o_r_pulls_${n}_files_per_page=100"
+}
+at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=h$1"; }   # at <n> <path> — <path>'s copy at #<n>'s head
+# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics at the
+# head, and epics p-one and p-two added with hld: <hld>.
+planned() {
+  local h="$2" g
+  pr "$1" docs/epics/p-one.md docs/epics/p-two.md "docs/hld/$2.md"
+  item "$(at "$1" docs/epics/p-one.md)" "status: active" "hld: ${h}"
+  item "$(at "$1" docs/epics/p-two.md)" "status: active" "hld: ${3:-${h}}"
+  g="$(get "${B}/hld/$2.md" grants)"
+  EPICS=$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n' \
+    hld "$(at "$1" "docs/hld/$2.md")" "title: Plan" "status: $(get "${B}/hld/$2.md" status)" "planned: 2026-10-24" ${g:+"grants: ${g}"}
+}
+get() { sed -n "s/^$2: //p" "$1" | head -1; }   # get <file> <key> — its first <key>: value
+hld "${B}/hld/plan.md" "title: Plan" "status: agreed" "grants: [merge]"
+hld "${B}/hld/plan-nm.md" "title: Plan" "status: agreed"
+hld "${B}/hld/plan-draft.md" "title: Plan" "status: draft" "grants: [merge]"
+
+# Both grant outputs: under merge = human the plan PR merges with grants: [merge] and waits without it.
+planned 30 plan; planned 31 plan-nm
+grants https://github.com/o/r/pull/30; a="$(cat "${ROOT}/out")"; r30=${rc}
+grants https://github.com/o/r/pull/31; b="$(cat "${ROOT}/out")"
+if [[ ${r30} -eq 0 && ${rc} -eq 0 && "${a}" == "$(printf '%s\nmerge' "${B}/hld/plan.md")" && "${b}" == "$(printf '%s\nnone' "${B}/hld/plan-nm.md")" ]]; then
+  echo "ok   plan-pr-merge-grant-or-none"
+else echo "FAIL plan-pr-merge-grant-or-none (exit ${r30}, ${rc}):"; printf '%s\n%s\n' "${a}" "${b}" | sed 's/^/     /'; fails=$((fails + 1)); fi
+planned 32 plan-draft
+expect plan-pr-draft-hld-none https://github.com/o/r/pull/32 none
+# The draft HLD alone, its epics untouched: none.
+pr 33 docs/hld/plan-draft.md; cp "$(at 32 docs/hld/plan-draft.md)" "$(at 33 docs/hld/plan-draft.md)"
+expect plan-pr-draft-hld-only-none https://github.com/o/r/pull/33 none
+planned 34 plan; sed -i.bak 's/^status: agreed$/status: superseded/' "$(at 34 docs/hld/plan.md)"
+expect plan-pr-status-change-none https://github.com/o/r/pull/34 none
+planned 35 plan; sed -i.bak 's/^grants: \[merge\]$/grants: [merge, release]/' "$(at 35 docs/hld/plan.md)"
+expect plan-pr-grants-change-none https://github.com/o/r/pull/35 none
+planned 36 plan; sed -i.bak 's/^the design$/another design/' "$(at 36 docs/hld/plan.md)"
+expect plan-pr-body-line-outside-epics-none https://github.com/o/r/pull/36 none
+# plan and plan-nm, each changed as a plan PR would.
+planned 37 plan; planned 99 plan-nm; cp "$(at 99 docs/hld/plan-nm.md)" "$(at 37 docs/hld/plan-nm.md)"
+pr 37 docs/epics/p-one.md docs/epics/p-two.md docs/hld/plan-nm.md docs/hld/plan.md
+expect plan-pr-second-hld-none https://github.com/o/r/pull/37 none
+planned 38 plan; rm "$(at 38 docs/hld/plan.md)"
+expect plan-pr-deleting-hld-none https://github.com/o/r/pull/38 none
+planned 39 plan 2026-01-01-b
+expect plan-pr-epic-under-other-hld-none https://github.com/o/r/pull/39 none
+# A # heading ends ## Epics too: a changed line under the # Appendix that follows it is none.
+AFTER=$'# Appendix\nthe appendix\n' hld "${B}/hld/plan-app.md" "title: Plan" "status: agreed" "grants: [merge]"
+AFTER=$'# Appendix\nthe appendix\n' planned 40 plan-app; sed -i.bak 's/^the appendix$/a new appendix/' "$(at 40 docs/hld/plan-app.md)"
+expect plan-pr-line-under-higher-heading-none https://github.com/o/r/pull/40 none
+
 # A board at the repo's root (board_dir = .): its hld/, epics/ and stories/ are the PR's paths as they are.
 R="${ROOT}/rootproj"; mkdir -p "${R}/.claude/swarm" "${R}/hld" "${R}/epics" "${R}/stories"
 git -C "${R}" init -q; git -C "${R}" remote add origin https://github.com/o/r.git
