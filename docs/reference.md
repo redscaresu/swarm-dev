@@ -1784,15 +1784,18 @@ whose story has an open PR, and it keeps one when it cannot read an agent's stat
 its PRs. It prints each of those agents as `kept`, and still closes the conductor's own pane.
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
 close takes the full recorded name. It closes only a pane or tab that `.swarm/state` records under
-exactly the name you give it. herdr and `swarm.sh` print agent names cut at 32 characters, so two
-long names can look the same, and a cut name matches no record. When nothing is recorded under the
-name and other records share its first 32 characters (even one), close closes no pane and names
-those records. Pass one of those names to close it, or close them first and then close the name you
-gave. It also closes no pane when herdr lists more than one agent under that cut on panes recorded
-with no name. A story's board work still goes on: the attempt is counted and the PR kept or the
-build cleared. A close of a name that has no story fails. A name with no record and nothing
-sharing its first 32 characters has nothing to close by mistake, so its close goes on, as it does
-for a pane closed by hand.
+exactly the name you give it. A conductor closes the tabs of the epic its brief names, or, with no
+brief, of a record of exactly the epic its name gives. herdr and `swarm.sh` print agent names cut
+at 32 characters, so two long names can look the same, and a cut name matches no record. When
+nothing is recorded under the name and other records share its first 32 characters (even one),
+close closes no pane and names those records. Pass one of those names to close it, or close them
+first and then close the name you gave. A story's board work then goes on as for a builder closed
+by hand, and a close of a name that has no story fails. When the pane close refuses may be a live
+agent's, close treats it as a pane it could not close: nothing is counted, cleared or kept, and the
+close fails. That happens when herdr lists the cut on more than one pane recorded with no name, or
+on one while another record or story shares the cut, and when only the cut matches a conductor's
+epic tabs. A name with no record and nothing sharing its first 32 characters has nothing to close
+by mistake, so its close goes on with no pane, as it does for a pane closed by hand.
 
 ## Releases
 
