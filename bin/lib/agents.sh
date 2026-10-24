@@ -1539,10 +1539,11 @@ tell_agent() {
   echo "told ${name}"
 }
 
-# findings_told <slug> — how many ok findings tells (a bare tell, from logs before kinds, too) <slug>
-# has had since its build started (build_started).
+# findings_told <slug> — how many findings tells (a bare tell, from logs before kinds, too) <slug>
+# has had since its build started (build_started): ok ones, and those herdr sent but deliver_prompt
+# did not see taken up ("herdr sent it the brief"); not one herdr never sent.
 findings_told() {
-  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && $5 == "ok" { n++ }
+  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
     END { print n + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
 }
 

@@ -1862,7 +1862,9 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
 - `wait --stall` steps up a builder it finds stalled, and prints `stepped up:` in place of
   `stalled:`.
 - `tell <slug> findings` steps up a builder on its third findings of the build or any after, and
-  does not send them: they go into the handover brief, and the tell fails, saying so. Instructions
+  does not send them: they go into the handover brief, and the tell fails, saying so. An earlier
+  tell counts when it went through, or when herdr sent the findings but the builder was not seen
+  taking them up; one herdr never sent does not count. Instructions
   that are not review findings, such as a stacked child's merge, go as `tell <slug> nudge`.
 - `watch --epic` or `--backlog` steps up a story of its own whose builder is open, once the PR has
   gone red on two heads of the build. Every head it sees goes into `.swarm/red-heads.tsv`, and each
