@@ -1060,7 +1060,8 @@ session log is gone starts at 00:00 local time on its agents.tsv day, converted 
 `swarm.sh close` keeps the Claude session log of each agent it closes (every agent in a tab it closes), because Claude Code deletes those after
 `cleanupPeriodDays` (30 by default) and they hold every tool call and the model of every turn. The log
 is copied, gzip'd, to `.swarm/sessions/<date>-<agent>-<session>.jsonl.gz`, once per session; a codex
-agent has none to keep. Nothing is redacted, because a list of what to scrub misses whatever it
+agent has none to keep, and neither has an agent whose name runs past 32 characters: `agents.tsv` keeps
+only the cut name, whose newest session may be another agent's that is still running. Nothing is redacted, because a list of what to scrub misses whatever it
 doesn't list, so the copy holds whatever the session held. The copy is readable by its owner only,
 and `.swarm/` is git-ignored: the archive stays on the machine, and is never committed or uploaded.
 Flow's `cost` section and `outcomes` read a session's live log while it exists and this copy once
@@ -1919,6 +1920,16 @@ first checks each tab's panes. It keeps a tab that holds an agent that is workin
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It prints each of those agents as `kept`, and still closes the conductor's own pane.
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
+close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
+name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or
+its full name gives. herdr and `swarm.sh` print agent names cut at 32 characters, so two long names
+can look the same, and a cut name matches no record. herdr's agent list stands in for a missing
+record only for a name shorter than 32 characters, which herdr holds exactly. When nothing is
+recorded under a longer name and herdr lists a live agent under its first 32 characters, that agent
+may be another's. close then closes, counts, clears and keeps nothing, and fails: close by the full
+recorded name, or close that pane by hand if it is the one you meant. With nothing recorded and
+nothing live under the cut, there is nothing to close by mistake, so the close goes on with no
+pane, as it does for a pane closed by hand.
 
 ## Releases
 
