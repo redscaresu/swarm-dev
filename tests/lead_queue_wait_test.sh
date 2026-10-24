@@ -118,7 +118,7 @@ check "with merge = agent only reviews that cost money count" "$(flow "${A}" --s
 
 # held_story, its board writes stubbed, logs the held line the section reads.
 held="$(
-  PROJECT_DIR="${ROOT}/held"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; mkdir -p "${PROJECT_DIR}"
+  PROJECT_DIR="${ROOT}/held"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_step_up_findings=3; CFG_top_rung_rounds=2; mkdir -p "${PROJECT_DIR}"
   # shellcheck source=bin/lib/agents.sh
   source "${REPO}/bin/lib/agents.sh"
   # shellcheck source=bin/lib/lifecycle.sh
