@@ -19,9 +19,10 @@ git -C "${P}" remote add origin https://github.com/o/r.git
 fails=0
 
 # gh: repo view names o/r (fails with ${FX}/repo-view.fail); pr view <n> answers ${FX}/pr.<n>; api
-# <path> answers ${FX}/<path with / and ? as _>, else a 404.
+# <path> answers ${FX}/<path with / and ? as _>, else a 404. Each call is a line in ${FX}/gh.log.
 printf '#!/usr/bin/env bash\nFX="%s"\n' "${FX}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
+echo "$*" >> "${FX}/gh.log"
 case "$1 $2" in
   "repo view") [ ! -e "${FX}/repo-view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"nameWithOwner":"O/R"}' ;;
   "pr view") cat "${FX}/pr.$3" ;;
@@ -219,11 +220,11 @@ expect other-repo-none https://github.com/x/y/pull/7 none
 # two epics with hld: plan is under plan; any other change to the HLD, a second HLD, deleting it, or an
 # epic under another HLD is under none.
 # hld <file> <front-matter line>... — an HLD whose ## Epics (holding ${EPICS}, then ${AFTER}) sits
-# between two sections.
+# between two sections, with ${BEFORE} at the end of the first.
 hld() {
   local f="$1"; shift
   { echo ---; printf '%s\n' "$@"; echo ---
-    printf '\n# Plan\n\n## Design\nthe design\n\n## Epics\n%s\n%s## Open questions\nnone\n' "${EPICS:-}" "${AFTER:-}"; } > "${f}"
+    printf '\n# Plan\n\n## Design\nthe design\n%s\n## Epics\n%s\n%s## Open questions\nnone\n' "${BEFORE:-}" "${EPICS:-}" "${AFTER:-}"; } > "${f}"
 }
 # pr <n> <path>... — PR #<n>, at head h<n>, changes <path>s.
 pr() {
@@ -279,6 +280,42 @@ expect plan-pr-epic-under-other-hld-none https://github.com/o/r/pull/39 none
 AFTER=$'# Appendix\nthe appendix\n' hld "${B}/hld/plan-app.md" "title: Plan" "status: agreed" "grants: [merge]"
 AFTER=$'# Appendix\nthe appendix\n' planned 40 plan-app; sed -i.bak 's/^the appendix$/a new appendix/' "$(at 40 docs/hld/plan-app.md)"
 expect plan-pr-line-under-higher-heading-none https://github.com/o/r/pull/40 none
+# A ## Epics line in a code fence is no heading: an HLD with a fence is none, so a changed line after
+# the fenced ## Epics is not let through.
+BEFORE=$'```\n## Epics\nfenced line\n```\n' hld "${B}/hld/plan-fence.md" "title: Plan" "status: agreed" "grants: [merge]"
+BEFORE=$'```\n## Epics\nfenced line\n```\n' planned 41 plan-fence; sed -i.bak 's/^fenced line$/a new fenced line/' "$(at 41 docs/hld/plan-fence.md)"
+expect plan-pr-fenced-epics-line-none https://github.com/o/r/pull/41 none
+# planned: and ## Epics set on agreed plan with no epic beside them: none.
+planned 42 plan; pr 42 docs/hld/plan.md
+expect plan-pr-agreed-hld-only-none https://github.com/o/r/pull/42 none
+# A story PR under A (s-hld43) that touches A's file and code, its head unread: none.
+item "${B}/stories/s-hld43.md" "status: review" "epic: child" "prs: https://github.com/o/r/pull/43"
+pr 43 bin/x.sh docs/hld/2026-01-01-a.md; echo '{"headRefOid":"","changedFiles":2}' > "${FX}/pr.43"
+expect story-pr-touching-hld-no-head-none https://github.com/o/r/pull/43 none
+# The plan PR also adds a story under p-one: none.
+planned 44 plan; pr 44 docs/epics/p-one.md docs/epics/p-two.md docs/hld/plan.md docs/stories/p-story.md
+item "$(at 44 docs/stories/p-story.md)" "status: ready" "epic: p-one"
+expect plan-pr-with-story-none https://github.com/o/r/pull/44 none
+# s-p45 (under plan, through p-board) lists a plan PR that also changes epics/stray.md outside the board: none.
+item "${B}/epics/p-board.md" "status: active" "hld: plan"
+item "${B}/stories/s-p45.md" "status: review" "epic: p-board" "prs: https://github.com/o/r/pull/45"
+planned 45 plan; pr 45 docs/epics/p-one.md docs/hld/plan.md epics/stray.md
+expect plan-pr-with-file-outside-board-none https://github.com/o/r/pull/45 none
+# The plan PR moves top-b, an epic under B on the board, to hld: plan: none.
+planned 46 plan; pr 46 docs/epics/top-b.md docs/hld/plan.md
+item "$(at 46 docs/epics/top-b.md)" "status: active" "hld: plan"
+expect plan-pr-rehoming-epic-none https://github.com/o/r/pull/46 none
+# unread <name> <pr> — swarm.sh grants <pr> prints none and reads no file at the PR's head.
+unread() {
+  : > "${FX}/gh.log"; grants "$2"
+  if [[ ${rc} -eq 0 && "$(cat "${ROOT}/out")" == none ]] && ! grep -q /contents/ "${FX}/gh.log"; then echo "ok   $1"
+  else echo "FAIL $1 (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out" "${FX}/gh.log"; fails=$((fails + 1)); fi
+}
+# The finish PR deletes plan; #4 touches A's file and code; #32 plans a draft HLD.
+pr 48 docs/hld/plan.md
+unread finish-pr-none-head-unread https://github.com/o/r/pull/48
+unread story-pr-touching-hld-head-unread https://github.com/o/r/pull/4
+unread plan-pr-draft-hld-head-unread https://github.com/o/r/pull/32
 
 # A board at the repo's root (board_dir = .): its hld/, epics/ and stories/ are the PR's paths as they are.
 R="${ROOT}/rootproj"; mkdir -p "${R}/.claude/swarm" "${R}/hld" "${R}/epics" "${R}/stories"
@@ -293,6 +330,10 @@ echo "{\"headRefOid\":\"${HEAD}\",\"changedFiles\":1}" > "${FX}/pr.22"
 echo '[{"filename":"stories/r-new.md"}]' > "${FX}/repos_o_r_pulls_22_files_per_page=100"
 item "${FX}/repos_o_r_contents_stories_r-new.md_ref=${HEAD}" "status: ready" "epic: child"
 PROJ="${R}" expect root-board-board-pr https://github.com/o/r/pull/22 "$(printf '%s\nmerge\nstories' "${R}/hld/2026-01-01-a.md")"
+# A plan PR on the root board: hld/plan.md (as #30 changes it) and epics/p-one.md under it.
+cp "${B}/hld/plan.md" "${R}/hld/"; pr 47 epics/p-one.md hld/plan.md
+item "$(at 47 epics/p-one.md)" "status: active" "hld: plan"; cp "$(at 30 docs/hld/plan.md)" "$(at 47 hld/plan.md)"
+PROJ="${R}" expect root-board-plan-pr https://github.com/o/r/pull/47 "$(printf '%s\nmerge' "${R}/hld/plan.md")"
 
 # A board outside the repo: story PR #18 changes .claude/swarm/brief.md, so none; #19 changes code only.
 O="${ROOT}/outproj"; OB="${ROOT}/outboard"; mkdir -p "${O}/.claude/swarm" "${OB}/hld" "${OB}/epics" "${OB}/stories"

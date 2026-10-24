@@ -621,22 +621,24 @@ hld_body() {
     n == 2 && /^##? / { e = ($0 == "## Epics"); print; next } !e' "$1"
 }
 
-# plan_hld <files> <prefix> <view> — the agreed HLD in ${BOARD}/hld that a board PR plans into epics,
-# or a failure. <files> are the PR's, one per line, each under the board's <prefix>: one hld/<H>.md,
-# whose head copy in <view> differs from the board's only in hld_body, and epics/*.md the head has
-# (pr_hld reads each through item_hld, so one_hld still has to agree on H). The HLD's grants are the
-# board's, so a PR cannot grant itself.
+# plan_hld <files> <prefix> — the agreed HLD in ${BOARD}/hld that a board PR plans into epics, or a
+# failure. <files> are the PR's, one per line, each under the board's <prefix>: one hld/<H>.md and at
+# least one epics/*.md. An HLD with a code fence or an HTML comment fails: a ## Epics line in one is
+# no heading, and hld_body cannot tell. It reads no gh; pr_hld then checks the head (each file there,
+# the HLD changed only in hld_body) and reads each epic through item_hld, so one_hld still has to
+# agree on H. The HLD's grants are the board's, so a PR cannot grant itself.
 plan_hld() {
-  local p h="" f
+  local p h="" e=0 f
   while IFS= read -r p; do
     [[ "${p}" == "$2"* ]] || return 1   # loose-match: ok <prefix> is empty or ends in /
     p="${p#"$2"}"
     if [[ -z "${h}" && "${p}" =~ ^hld/([A-Za-z0-9._-]+)\.md$ ]]; then h="${BASH_REMATCH[1]}"
-    else [[ "${p}" =~ ^epics/[^/]+\.md$ && -f "$3/${p}" ]] || return 1; fi
+    elif [[ "${p}" =~ ^epics/[^/]+\.md$ ]]; then e=$((e + 1))
+    else return 1; fi
   done <<< "$1"
   f="${BOARD}/hld/${h}.md"
-  [[ -n "${h}" && -f "${f}" && -f "$3/hld/${h}.md" && "$(get_fm "${f}" status)" == agreed ]] || return 1
-  cmp -s <(hld_body "${f}") <(hld_body "$3/hld/${h}.md") || return 1
+  [[ -n "${h}" && ${e} -gt 0 && -f "${f}" && "$(get_fm "${f}" status)" == agreed ]] || return 1
+  ! grep -qE '^ {0,3}(```|~~~)|<!--' "${f}" || return 1
   echo "${f}"
 }
 
@@ -669,7 +671,13 @@ pr_hld() (
   head="${info% *}"
   info="$(ci_gate files "${repo}" "${n}" "${info#* }")" || die "grants: cannot list every file ${url} changes: ${info}"
   [[ $'\n'"${info}" != *$'\n.claude/swarm/'* ]] || return 0
-  [[ "${repo}" == "${own}" ]] || head=""   # the board is not in its repo, so none of its files is a board file
+  if [[ "${repo}" != "${own}" ]]; then head=""   # the board is not in its repo, so none of its files is a board file
+  # A PR that touches the board's hld/ is under none, but for the board PR that plans an HLD, whose
+  # head can be read.
+  elif [[ $'\n'"${info}" == *$'\n'"${pre}hld/"* ]]; then   # loose-match: ok a whole line's prefix, the board's hld/
+    plan="$(plan_hld "${info}" "${pre}")" || return 0
+    [[ -n "${head}" ]] || return 0
+  fi
   view="$(mktemp -d)"; mkdir "${view}/epics" "${view}/stories" "${view}/hld"
   cp "${BOARD}/epics/"*.md "${view}/epics/" 2>/dev/null || true
   err="${view}/err"
@@ -681,11 +689,10 @@ pr_hld() (
     q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "${pre}${p}")"
     if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
     grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
+    [[ -z "${plan}" ]] || return 0   # the plan PR deletes its HLD or an epic: under none
     rm -f "${view}/${p}"
   done <<< "${info}"
-  if [[ -n "${head}" && $'\n'"${info}" == *$'\n'"${pre}hld/"* ]]; then   # loose-match: ok a whole line's prefix, the board's hld/
-    plan="$(plan_hld "${info}" "${pre}" "${view}")" || return 0
-  fi
+  [[ -z "${plan}" ]] || cmp -s <(hld_body "${plan}") <(hld_body "${view}/hld/${plan##*/}") || return 0
   {
     for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
     while [[ -n "${head}" ]] && IFS= read -r p; do
