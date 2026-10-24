@@ -3,7 +3,7 @@ kind: docs
 status: blocked
 epic: hld-docs
 depends_on: [plan-hld-command, plan-pr-grant, epic-guard-merge]
-touches: [docs/method.md, docs/reference.md, bin/lib/build.sh, bin/swarm.sh:skeptic policy comment, docs/features.tsv, tests/next_test.sh]
+touches: [docs/method.md, docs/reference.md, bin/lib/build.sh, bin/swarm.sh:skeptic policy comment and merge usage line, bin/lib/merge.sh:merge_pr header comment, docs/features.tsv, tests/next_test.sh]
 estimate_lines: 150
 easy: false
 ---
@@ -16,6 +16,7 @@ Needs, from each depends_on: the shipped `/hld`, `/plan-hld`, `finish <hld>`, `g
 - docs/reference.md gains § Writing an HLD and § Decomposing an HLD, and names `lead_epics` and the epic guard.
 - Each `hld/` remnant listed in board/epics/retro-and-shared-rules.md's Problem is now real or removed. docs/method.md:104, docs/reference.md:1355 and bin/lib/build.sh:871 stay, now true.
 - plan-epic-lean-verify (#432) moved the per-story checks from skeptics to the critic, and skeptics now run only on `risk: high` stories. Bring the places that still say otherwise into line (its conductor logged them as out of scope): docs/method.md:13, the skeptic policy comment at bin/swarm.sh:331, docs/features.tsv:3,46 and tests/next_test.sh:491.
+- The grant gates from merge-grant-gate (#426) and release-grant-gate (#428) are missing from swarm.sh's `merge` usage line, merge_pr's header comment (bin/lib/merge.sh, around :153) and docs/reference.md's `--release` row (around :1764): add them.
 - Prose goes through the humanizer.
 
 **Done when:**
