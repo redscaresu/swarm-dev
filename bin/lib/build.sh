@@ -54,8 +54,9 @@ Never wait for other PRs or reviews to gather first: run one review agent for ev
 once, with no cap below the number of green PRs. When \`swarm.sh watch\` prints, or the lead sends
 you, \`queued: <repo> #<n> <branch> green <m>m with no review on <sha>\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
 or has uncommitted changes: wait for the builder, then start it again. The review agent, review-<slug>, is read-only and runs in
-the story's worktree: it runs codex-review with the story's slug and, when the PR changes code (not
-only docs, board files or a dependency bump), \`/code-review <PR>\`, judges only the story's touches
+the story's worktree: it runs codex-review with the story's slug and, on the story's first round
+only, when the PR changes code (not only docs, board files or a dependency bump),
+\`/code-review <PR>\` (review-agent counts the rounds itself), judges only the story's touches
 and **Done when**, and writes ${PROJECT_DIR}/.swarm/reviews/<slug>.md: a \`head: <SHA>\` line
 naming the commit it reviewed, its findings, and an out-of-scope section. Wait on each with
 \`swarm.sh wait review-<slug>\` in the background, triage that story's file, then close the review
@@ -68,15 +69,15 @@ builder with \`${sw} tell <slug> findings <file>\` (a file holding the findings 
 decline). Log each item of the out-of-scope section with
 \`log-finding --declined out-of-scope --reviewer <who>\`, as below.
 When a review agent reports \`codex skipped: <why>\` (its file's second line says so too), read the diff yourself in codex's place.
-Wait for the builder, then start a new review agent on its new head. Stop at the first pass on the latest head
-with nothing substantive: one that finds only nits, edge cases outside the story, or points already
-declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason.
+Wait for the builder, then start a new review agent on its new head.
 A round is one review whose findings you sent to the builder (\`swarm.sh tell <slug> findings\`); a
 review started again (head moved, no \`## Findings\` section, a review agent that timed out or
-crashed) is not one. Review stops after round 3: from round 4 on, only a real bug (wrong behaviour,
-data loss, a security hole) sends the PR back. Decline anything
-smaller with a reason in the PR, and log it with \`log-finding --declined <reason> --reviewer <who>\`
-as below: nit for a nit or an edge case, out-of-scope or wrong where they apply.
+crashed) is not one. A review on the latest head whose findings you fix none of is a pass: one with
+no findings, or whose every finding you decline (a nit, low value, out of scope, wrong, or a point
+already declined). Never send such a review to the builder. Rebut each declined finding in the PR
+with a reason, log it with \`log-finding --declined <reason> --reviewer <who>\` as below: nit for
+a nit, an edge case or a low-value point, out-of-scope or wrong where they apply, and a point
+already declined with the reason it was first declined with.
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
@@ -112,8 +113,13 @@ finding_rule() {
   cat <<EOF
 Log each finding that was fixed, and each one declined (rebutted with a reason), from any directory, with:
 
-    SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> <kind> <PR URL> "<one line>"
-    SWARM_PROJECT=${proj} ${sw} log-finding --declined <reason> --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> --round <n> <kind> <PR URL> "<one line>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --declined <reason> --reviewer <who> --round <n> <kind> <PR URL> "<the finding, and why it was declined>"
+
+<n> is the review round the finding came from on a story PR: the n-th review of the PR is round n,
+the one that passes included, so a nit the passing review raised and you declined is logged under its
+own round. A review started again (head moved, no \`## Findings\` section, timed out or crashed) is
+no new round. <n> is 0 for a finding on a plan or a board PR.
 
 <reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
 it is real but not worth the change, and wrong when it is mistaken.
@@ -543,7 +549,7 @@ build_story() {
 # the conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
 # which review_on_head reads.
 review_agent() {
-  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at moved errf err
+  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at moved errf err round
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -571,7 +577,8 @@ review_agent() {
   base="$(base_for "${src}")"
   mkdir -p "${out%/*}"
   prompt="${PROJECT_DIR}/.swarm/briefs/review-${slug}.md"; mkdir -p "${prompt%/*}"
-  review_brief "${slug}" "${pr}" "${base}" "${out}" "${head}" > "${prompt}"
+  round="$(review_round "${slug}")"
+  review_brief "${slug}" "${pr}" "${base}" "${out}" "${head}" "${round}" > "${prompt}"
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
   # The last review's file is moved aside before the brief goes (a quick agent's new file must not be
@@ -591,6 +598,14 @@ review_agent() {
     review_start_failed "${slug}" "${moved}" "${err}"
   fi
   echo "${head}" > "${out%.md}.head"
+}
+
+# review_round <slug> — the review round a story's PR is on: one more than the findings told its builder
+# (tell's count) since the story's last build start (its `story` event). A step-up or a restarted
+# builder (escalate, agent) keeps the same PR, so neither starts the count again.
+review_round() {
+  awk -F'\t' -v s="$1" '$3 != s { next } $2 == "story" && $5 ~ /^ok/ { n = 0 }
+    ($2 == "tell" || $2 == "tell:findings") && $5 == "ok" { n++ } END { print n + 1 }' "${EVENTS_LOG}" 2>/dev/null || echo 1
 }
 
 # review_start_failed <slug> <moved> <err> — after review_agent's start of review-<slug> failed with
@@ -723,12 +738,16 @@ EOF
     "Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
 }
 
-# review_brief <slug> <PR URL> <base> <findings file> <head> — a review agent's brief: read-only, the
-# story's touches and Done when, codex-review with the slug, /code-review when the PR changes code, the
+# review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: read-only, the
+# story's touches and Done when, codex-review with the slug, /code-review on round 1 when the PR changes code, the
 # project's rules, and each finding written to the absolute <findings file> (the agent's cwd is the
 # worktree) under its head: line, with work outside the story listed apart for the conductor to decline.
 review_brief() {
-  local story="${BOARD}/stories/$1.md" rules
+  local story="${BOARD}/stories/$1.md" rules cr
+  cr="This is review round $6 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
+  [[ "$6" != 1 ]] || cr="This is review round 1 of the story. When the PR
+changes code (not only docs, board files or a dependency bump), state the touches and Done when
+above, then run \`/code-review $2\`."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. You are read-only: never edit,
 commit or push here, and never merge, by any route. The one file you write is ${4}.
@@ -746,13 +765,11 @@ Wait for it to exit, and act on what it prints last: a usage limit it prints ear
 a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
 again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. When it prints
 \`reviewed by fallback <model>: codex usage limit\`, a fallback agent reviewed in codex's place: report
-its findings as codex's, under that line. When the PR
-changes code (not only docs, board files or a dependency bump), state the touches and Done when
-above, then run \`/code-review $2\`.
+its findings as codex's, under that line. ${cr}
 
 $(review_checklist "${story}")
 
-When both are done, check that \`git rev-parse HEAD\` still prints $5 and \`git status --porcelain\`
+When the review is done, check that \`git rev-parse HEAD\` still prints $5 and \`git status --porcelain\`
 prints nothing. If not, the worktree moved under you: write ${4} with the Write tool holding two
 lines, \`head: $5\` and \`head moved: <what changed>\`, then stop.
 

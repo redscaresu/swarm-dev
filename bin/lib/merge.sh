@@ -124,8 +124,10 @@ merge_grant() {
 }
 
 # merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
-# branch or head SHA (merge_pr's locals base, head and repo), through gh's contents API as
-# release_check reads it; fails 1 on a 404 (absent) and 2 on any other failure.
+# branch or head SHA (merge_pr's locals base, head, repo and n), through gh's contents API as
+# release_check reads it; fails 1 when it is absent and 2 on any other failure. At the head a 404 is
+# absent only for a path the PR removes or renames away (merge_gone): one it keeps there means gh
+# cannot read the head (a fork's), where every epic would read as deleted.
 merge_read() {
   local ref="${head}" q err rc=0
   [[ "$1" == head ]] || ref="${base}"
@@ -134,17 +136,42 @@ merge_read() {
   # The file's bytes go to stdout (fd 3); gh's stderr into err, to tell a 404 from the rest.
   { err="$(gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${ref}" 2>&1 >&3)" || rc=$?; } 3>&1
   [[ ${rc} -ne 0 ]] || return 0
-  [[ "${err}" != *"HTTP 404"* ]] || return 1
-  return 2
+  [[ "${err}" == *"HTTP 404"* ]] || return 2
+  [[ "$1" == head ]] || return 1
+  err="$(merge_gone)" || return 2
+  grep -qxF -- "$2" <<< "${err}" || return 2
+  return 1
+}
+
+# merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_pr's
+# locals repo and n); fails when gh cannot list them.
+merge_gone() {
+  gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" \
+    | json "'\n'.join(p for page in d for f in page for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
 }
 
 # unticketed_why <line> — epic_unticketed's failure line as merge --board says it: a read error at the
-# base or head names the ref gh read there (merge_pr's locals base, head and url); any other line as it is.
+# base or head names the ref gh read there, the base branch or the head SHA (merge_pr's locals base
+# and head); any other line as it is.
 unticketed_why() {
   local re='^cannot read (.+) at the (base|head)$' ref="${base}"
   [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }
   [[ "${BASH_REMATCH[2]}" == base ]] || ref="${head:0:7}"
-  echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}, so whether ${url} sets an epic active with no ticket is unknown"
+  echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}"
+}
+
+# epic_guard — merge --board's refusal of a PR that sets an epic active with no ticket (merge_pr's
+# locals files and url): epic_unticketed on one changed path at a time, so a read error or a bad
+# grants: names the epic it was checking too. A failure that printed no reason refuses all the same.
+epic_guard() {
+  local p s why
+  while IFS= read -r p; do
+    s="$(basename "${p}" .md)"
+    # Outside the $(...), where a merge_fail would not stop this.
+    why="$(epic_unticketed merge_read "${p}")" \
+      || merge_fail "--board: $(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
+    [[ -z "${why}" ]] || merge_fail "--board: ${url} sets ${s} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
+  done <<< "${files}"
 }
 
 # merge_hold <pr-url> — stop merge when pr_held holds the PR for the user.
@@ -247,19 +274,16 @@ merge_pr() {
       fi
     done <<< "${info}"
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
-    if [[ "${only}" == --board ]]; then
-      # An epic set active with no ticket is the user's to agree under either merge mode, so this
-      # runs before merge_grant's refusal could hide it. Outside the $(...), where a merge_fail would
-      # not stop this.
-      p="$(epic_unticketed merge_read "${files}")" || merge_fail "--board: $(unticketed_why "${p}")"
-      p="${p%%$'\n'*}"
-      [[ -z "${p}" ]] || merge_fail "--board: ${url} sets ${p} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${p}"
-    fi
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  # An epic set active with no ticket is the user's to agree under either merge mode. After the head's
+  # CI check, as the grant below, so a red PR costs no contents reads; before the grant, so its
+  # refusal cannot hide this one.
+  [[ "${only}" != --board ]] || epic_guard
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
-  # then under merge = agent's holds. --release is release_check's. It runs after the head's CI check,
-  # which costs fewer gh calls: the grant reads the PR, its files and each board file it touches.
+  # then under merge = agent's holds. --release is release_check's. Like epic_guard, it runs after the
+  # head's CI check, which costs fewer gh calls: the grant reads the PR, its files and each board file
+  # it touches.
   if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
     why="$(merge_grant "${url}")"
     [[ -z "${why}" ]] || merge_fail "${why}"

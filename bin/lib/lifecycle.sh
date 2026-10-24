@@ -86,7 +86,12 @@ board_pr() {
       files="$(git -C "${wt}" -c core.quotepath=off diff --name-only --no-renames "$(git -C "${wt}" merge-base HEAD "origin/${base}")" \
         && git -C "${wt}" -c core.quotepath=off ls-files --others --exclude-standard)" || die "board-pr: cannot list the changes in ${wt}"
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
-      while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"   # loose-match: ok rel ends in /, so a path under the board
+      # git C-quotes a path holding a ", \, tab or newline, and a quoted path would slip past the prefix
+      # checks here and in epic_unticketed.
+      while IFS= read -r f; do
+        [[ "${f}" != \"* ]] || die "board-pr: ${f} has a quote, backslash, tab or newline in its name; rename it"
+        [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"   # loose-match: ok rel ends in /, so a path under the board
+      done <<< "${files}"
       # An epic that goes active with no ticket is refused before anything is pushed. Checked outside
       # the $(...), where a die would not stop this.
       f="$(epic_unticketed board_read "${files}")" || die "board-pr: ${f}"

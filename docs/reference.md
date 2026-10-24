@@ -31,10 +31,11 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   opens. Once it opens, `.swarm/<epic>/split-pr` records its day and URL for `flow`. A later
   `scope-<epic>` board PR on an epic the base already has split (a missed child, a split-gap fix)
   needs no critic and leaves that record alone.
-  `open` also refuses, before it commits or pushes, when an epic goes `active` (new, or `draft` at
-  the base) with no ticket: an `agreed:` date the base's draft did not already have, a `parent:`
-  that is on the base (another epic, not one the PR adds), or an `hld:` naming an HLD that is
-  `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
+  `open` also refuses, before it commits or pushes, when an epic goes `active` (new, or at the base
+  with any status but `active`, `later`, `review`, `split` or `done`, a missing one too) with no
+  ticket: an `agreed:` date the base's copy did not already have, a `parent:` naming another epic
+  that is `active` or `split` on the base (not a draft, and not one the PR adds), or an `hld:`
+  naming an HLD that is `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
   first, and a failed fetch or read refuses. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
   `swarm.sh merge --board` refuses the same PRs (§ Merging).
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
@@ -635,12 +636,15 @@ is doing.
 
 **Review before closing.** A PR that changes only board files (no code) gets one
 `swarm.sh codex-review` pass plus the lead's own reading, not repeated passes. A story is reviewed when its latest head has passed
-codex and, if it changes code, the `/code-review` skill. The moment a story's PR head is green and
+codex and, on its first round when it changes code, the `/code-review` skill. The moment a story's PR head is green and
 mergeable, the conductor starts a review agent for it with `swarm.sh review-agent <slug> <PR URL>`.
 It does not wait for other PRs or reviews, and runs one for every green PR at once, so PRs that land
 together are reviewed together. The command returns straight away, and records the head it reviews
 in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab. It
-runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/code-review <PR URL>`.
+runs `codex-review` with `SWARM_STORY=<slug>` and, on the story's first round when the PR changes
+code, `/code-review <PR URL>`. From round 2 on it runs codex alone. `review-agent` counts the round
+from the findings `tell` sent the builder since the story's last build started (a step-up or a
+restarted builder does not start it again).
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. One exception: a comment, doc or error-text line that the changed code no
@@ -689,10 +693,11 @@ again or reads the diff itself. It sends the real findings to the story's builde
 <file>`, and logs each out-of-scope item with `log-finding --declined out-of-scope --reviewer <who>`.
 It starts a new review agent on the builder's next head. A round is one review whose findings went
 to the builder; a review started again (head moved, no findings section, a review agent that timed
-out or crashed) is not one. Review stops after round 3: from round 4 on, only a real bug (wrong
-behaviour, data loss, a security hole) sends the PR back. Anything
-smaller is declined with a reason and logged with `log-finding --declined <reason> --reviewer <who>`:
-`nit` for a nit or an edge case, `out-of-scope` or `wrong` where they apply. Before a story merges or goes to review, it
+out or crashed) is not one. A review on the latest head whose findings are all declined is a pass,
+never sent to the builder. Each declined finding is rebutted in the PR with a
+reason and logged with `log-finding --declined <reason> --reviewer <who>`: `nit` for a nit, an edge
+case or a low-value point, `out-of-scope` or `wrong` where they apply, and a point already declined
+with the reason it was first declined with. Before a story merges or goes to review, it
 compares the file's `head:` line with the PR's head, and reviews the new head when they differ. Once
 a PR's latest head has passed, it merges it (or hands it over) at once, never holding the result
 while other reviews run. A PR whose head has been green and mergeable for `queue_minutes` with no
@@ -965,7 +970,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `epic_totals`, `features`, `gh_calls`, `idle_slots`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `gh_calls`, `holds`, `idle_slots`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing but its own gh calls' lines in `.swarm/gh-calls.tsv` and its cache (below), except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
@@ -1262,6 +1267,19 @@ from its last version in the board's git history once the child is gone). The re
 split's epic; for one with no record `gh` reads the PR's branch (`board/scope-<epic>`), and when gh
 fails a note says how many splits it could not place. The split critic's tokens have their own `split-critic` row in `cost`.
 
+Once a row in the window has a review round (`--round` on its findings), two more blocks follow the
+rounds. The first is TSV `round reviewer fixed declined nit out-of-scope wrong share_fixed`: per
+round, each reviewer and then `all`, the findings fixed, declined in all and by reason, and fixed
+over raised as a whole percent. Round `0` is a plan or board PR, and `unknown` holds the rows logged
+without a round. The second is TSV `story pr stopped_round why`, one row per story PR with a round
+of 1 or more: the round its review stopped in, and why. A final pass that finds nothing logs no
+row, so the stop is the review after the PR's last round of findings sent to its builder (the
+`tells_findings` of all its builds, whatever their date, plus one), or its last logged round when
+that is later. A PR is listed when the window has a row of it with a round, and where it stopped is
+read from all its rows, whatever their date. For a merged PR, `pass` means the stop round fixed nothing and `merged-after-fixes`
+that it fixed something. A PR that has not merged shows `unmerged`, since its review may still be
+going. `--epic` narrows both blocks as it does the others.
+
 ## The outer loop
 
 Each finding that review fixed is logged with
@@ -1269,7 +1287,9 @@ Each finding that review fixed is logged with
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage limit), `code-review`, `ci` (a
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR, and `split-critic` for the check on a large epic's split (commands/plan-epic.md step 0). A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
-`recurring` block counts the fixed and escaped ones, never the declined. When a conductor finishes,
+`recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
+review round a finding came from: the n-th review of a story PR is round n, the passing one included,
+and a plan or board PR is round 0. The conductor passes it on each finding it logs, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
 `/swarm-dev:swarm` files one story with `checks: <kind>` for each recurring kind that has no check
 yet, in a board PR named `check-<kind>` (written in place when the board is outside the repo, and
 noted in `.swarm/checks-filed.tsv` so the kind is filed once). The
@@ -1280,7 +1300,9 @@ check merges, `outcomes` shows whether the kind came back less often, and `/swar
 you when its fixes after the merge reach 3 PRs. The log is `.swarm/findings.tsv`, local to
 the machine: date, kind, PR, the line, its outcome (`fixed`, `declined` or `escaped`; rows written before the
 outcome column count as fixed) and the reviewer (`unknown` when a row was logged without `--reviewer`
-or before that column existed). Columns added later go on the end, so readers ignore any past the sixth.
+or before that column existed), then a declined row's reason and, with `--round`, the round (after an
+empty reason on a fixed row). A row with no round is round unknown. Columns added later go on the end,
+so readers ignore any they do not know.
 
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
@@ -1408,8 +1430,9 @@ unless the PR is open, its head is `<sha>` when `--head` names one, and a story 
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
 under the board instead. Under either merge mode, `--board` also refuses a PR that sets an epic
-`active` with no ticket, as `board-pr open` does (§ The lead). It reads each epic and HLD through
-gh at the base branch and at the head, and any read error other than a 404 refuses too. With
+`active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green, it reads each
+epic and HLD through gh at the PR's base branch and head SHA. Any read error refuses, as does a 404 at
+the head on a file the PR does not remove or rename away. With
 `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
@@ -1776,12 +1799,12 @@ code.
 | `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
 | `swarm.sh grants <story \| epic \| PR URL>` | Print the agreed HLD over a story or epic and its grants, one per line, or `none`. A story goes to its `epic:`, then each `parent:`, up to the first epic with `hld:`; a draft or superseded HLD, a missing one, a missing epic, a story with no epic and a `parent:` cycle all give `none`. A name that is no story or epic but an HLD in the board's `hld/` is that HLD: an agreed one prints itself and its grants, any other gives `none`; a story or epic of the same name wins. A story PR is its stories' (their `prs:` lines); a board PR is the epics and stories it touches, each as the board has it and as the PR's head has it, and a PR that touches `.claude/swarm/` (in any repo) or the board's `hld/`, or a PR no story lists that touches anything but the board's epics and stories, gives `none`. /plan-hld's board PR is the exception: a PR that sets or keeps one agreed HLD's single `planned:` line, changes the HLD otherwise only after its last `## Epics` line, and changes at least one epic and nothing else, each epic under that HLD at the PR's head, is under that HLD, with the grants of the board's copy. The HLD's last section must be `## Epics`, with no heading after it, and without the `epics` grant each epic must be a `draft` at the PR's head or keep its board status. Deleting the HLD, or any other change to it, gives `none`. Items under two HLDs give `none`. A grant other than `epics`, `stories`, `merge` or `release`, a `[` with no `]` on its line, or a `grants:` written as a YAML block list, stops it with the HLD's file and line. `/plan-epic` runs it before asking, and skips the question when it lists `stories`. |
 | `swarm.sh plan-unasked [--declined] <epic>` | Record, in board state, that a `later` epic `next` offered (its dependencies done) has had its unasked plan. The lead runs it before that `/plan-epic`. `next` offers the epic no more. The gate lists it as planned unasked on that date: with no stories yet, run `/plan-epic <epic>` again if that plan stopped; with stories, set it `active` to start it. With `--declined`, the user declined the plan, and the gate says that instead. |
-| `swarm.sh log-finding [--declined <reason> \| --filed] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). `--filed` records that the lead filed a declined out-of-scope finding as a story, so `swarm.sh next` stops offering it; no report counts a filed row. The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic (the check on a large epic's split), or escaped for a defect found after its PR merged; a gap in a split that a later plan or build finds is logged `--reviewer escaped split-gap` against the split's board PR. |
+| `swarm.sh log-finding [--declined <reason> \| --filed] [--reviewer <who>] [--round <n>] <kind> <PR URL> <text>` | Log a review finding by kind. `--round <n>` records the review round it came from (0 for a plan or board PR). `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). `--filed` records that the lead filed a declined out-of-scope finding as a story, so `swarm.sh next` stops offering it; no report counts a filed row. The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic (the check on a large epic's split), or escaped for a defect found after its PR merged; a gap in a split that a later plan or build finds is logged `--reviewer escaped split-gap` against the split's board PR. |
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
 | `swarm.sh hold <slug> <why>` | Log that a conductor held a ready story back this wave, and why: what it clashes with (a story or PR) and the shared files, or the other reason (the give-up rule, closed this wave, `not held:`). It writes one `hold` line, target the slug, outcome `ok (<why>)`. It dies, writing nothing, on a slug that is not a ready story on the board, and on one whose PR was closed unmerged (its last event is reconcile's reopen): that story is the lead's, and a `hold` line would drop the mark `unblock --startable` prints for it. The conductor runs it for each `startable:` story it does not start, other than a closed-unmerged one: at most once per wave for a story, and in a later wave only when the reason changed. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `idle_slots` (per epic, the minutes a story sat ready with no build and nothing it clashed with running, while its conductor ran and while none did, and the most ready at once), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `holds` (one row per hold of a ready story: its epic, the first hold's reason and the minutes until its next build started, or how it ended with no build (`dropped`, or `removed` once its story file left the board), or `open`; then the built holds' minutes per reason class, `clash` when the reason names a PR or a hyphenated story that had started by then, `other` for anything else, give-up, closed this wave and `not held:` included), `idle_slots` (per epic, the minutes a story sat ready with no build and nothing it clashed with running, while its conductor ran and while none did, and the most ready at once), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, review rounds per PR, and once findings carry `--round`, each round's yield and the round each story's review stopped in; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
 
 ## Cleanup, escalation and session logs
 

@@ -3,7 +3,7 @@ kind: docs
 status: blocked
 epic: hld-docs
 depends_on: [plan-hld-command, plan-pr-grant, epic-guard-merge]
-touches: [docs/method.md, docs/reference.md, bin/lib/build.sh, bin/swarm.sh:skeptic policy comment and merge usage line, bin/lib/merge.sh:merge_pr header comment, docs/features.tsv, tests/next_test.sh]
+touches: [docs/method.md:planning chain and who does what and the skeptic line near :13, docs/reference.md:new HLD sections and the lead_epics and epic guard lines and the --release row and the skeptic line near :240, bin/lib/build.sh:the hld/ remnant line near :871, bin/swarm.sh:skeptic policy comment and merge usage line, bin/lib/merge.sh:merge_pr header comment, docs/features.tsv:rows 3 and 46, tests/next_test.sh:the assertion near :491]
 estimate_lines: 150
 easy: false
 ---

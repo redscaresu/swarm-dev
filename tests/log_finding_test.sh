@@ -58,6 +58,20 @@ check "--declined with no reason and --reviewer escaped says escaped is never de
 check "--declined nit appends a 7-field row ending declined, codex, nit" "7|declined	codex	nit" \
   "$(sw log-finding --declined nit --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')|$(tail -1 "${F}" | cut -f5-)"
 check "a fixed row stays at 6 fields" "6" "$(sw log-finding --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')"
+# --round <n> is an 8th field, after the reason (empty on a fixed row); a row without it still reads,
+# as round unknown.
+check "--round 2 on a fixed row appends 8 fields: an empty reason, then 2" "8|fixed	codex		2" \
+  "$(sw log-finding --reviewer codex --round 2 k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')|$(tail -1 "${F}" | cut -f5-)"
+check "--round 1 after --declined nit keeps the reason in field 7" "declined	codex	nit	1" \
+  "$(sw log-finding --round 1 --declined nit --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | cut -f5-)"
+check "a row without --round and one with it both read, the first as round unknown" "('fixed', '')|('fixed', '2')" \
+  "$(SWARM_FINDING_REVIEWERS=codex python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from report import finding_rows
+print("|".join(str((f[4], f[7])) for f in finding_rows(sys.argv[2], width=8) if f[2] == "o/r#94" and f[4] == "fixed"))' \
+    "$(dirname "${SWARM}")/lib" "${F}")"
+for r in "" x -1 1.5 1000; do
+  check "--round '${r}' is refused" "refused" "$(refused --round "${r}" k o/r#94 t)"
+done
+check "the refusal says what a round is" "yes" "$(has "--round needs the review round" "$(sw log-finding --round x k o/r#94 t || true)")"
 REASONS="--declined needs a reason, one of: out-of-scope nit wrong"
 check "--declined with no reason is refused, naming the reasons" "refused|yes" \
   "$(refused --declined --reviewer codex k o/r#94 t)|$(has "${REASONS}" "$(sw log-finding --declined --reviewer codex k o/r#94 t || true)")"

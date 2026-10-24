@@ -74,7 +74,7 @@ Useful while it runs:
 - `swarm.sh step-up <slug> <trigger>`: hand a struggling build to the next model in `escalate_ladder` (off by default), on the same branch, without counting an attempt. With the ladder set, swarm.sh runs it itself on `no-pr`, `stalled`, `findings-3` and `ci-red-2`. `step-up --resume <slug>` starts a rung whose start failed.
 - `swarm.sh intervene lead-hand|user-caught "<one line>"`: log a time a person had to step in; `flow` and `dash` count them.
 - `swarm.sh dash --check`: compare each figure dash shows with the command that owns it.
-- `swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr> <text>`: the outer loop. Log findings by kind, with the reason for a declined one and who raised it (codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped). `outcomes`' recurring block lists kinds fixed on 3+ PRs, and `/swarm-dev:swarm` files a `checks:` story for each.
+- `swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] [--round <n>] <kind> <pr> <text>`: the outer loop. Log findings by kind, with the reason for a declined one, who raised it (codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped) and the review round (0 for a plan or board PR), which flow's `reviewers` section counts per round. `outcomes`' recurring block lists kinds fixed on 3+ PRs, and `/swarm-dev:swarm` files a `checks:` story for each.
 - `herdr agent read <name> --source recent-unwrapped`: what an agent is doing.
 
 **Rules that are not negotiable:**

@@ -358,6 +358,8 @@ on_main board/epics/flip.md '---\nstatus: draft\n---\n\n# flip\n'
 on_main board/epics/stale.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# stale\n'
 on_main board/epics/fresh.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# fresh\n'
 on_main board/epics/selfp.md '---\nstatus: draft\n---\n\n# selfp\n'
+on_main board/epics/pdraft.md '---\nstatus: draft\n---\n\n# pdraft\n'
+on_main board/epics/nostat.md '---\ndepends_on: []\n---\n\n# nostat\n'
 on_main board/epics/later.md '---\nstatus: later\n---\n\n# later\n'
 on_main board/epics/act.md '---\nstatus: active\n---\n\n# act\n'
 on_main board/epics/gone.md '---\nstatus: active\n---\n\n# gone\n'
@@ -365,6 +367,7 @@ on_main board/hld/h-draft.md '---\nstatus: draft\ngrants: [epics]\n---\n'
 on_main board/hld/h-ok.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/h-merge.md '---\nstatus: agreed\ngrants: [merge]\n---\n'
 on_main board/hld/h-move.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
+on_main board/hld/H.dot.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/h-bad.md '---\nstatus: agreed\ngrants: [bogus]\n---\n'
 git -C "${P}" fetch -q origin
 
@@ -383,6 +386,10 @@ bpr start pbog; ep pbog epics/e-pbog.md '---\nstatus: active\nparent: bogus\n---
 guard_refused pbog "parent: an epic the base does not have" "e-pbog ${NT} e-pbog"
 bpr start padd; ep padd epics/p-added.md '---\nstatus: draft\n---\n'; ep padd epics/e-padd.md '---\nstatus: active\nparent: p-added\n---\n'
 guard_refused padd "parent: an epic the same PR adds" "e-padd ${NT} e-padd"
+bpr start pdr; ep pdr epics/e-pdr.md '---\nstatus: active\nparent: pdraft\n---\n'
+guard_refused pdr "parent: a draft epic on main" "e-pdr ${NT} e-pdr"
+bpr start nst; ep nst epics/nostat.md '---\nstatus: active\ndepends_on: []\n---\n\n# nostat\n'
+guard_refused nst "an epic with no status: at the base, flipped to active" "nostat ${NT} nostat"
 # selfp is on the base, so only the own-slug rule refuses it.
 bpr start pself; ep pself epics/selfp.md '---\nstatus: active\nparent: selfp\n---\n\n# selfp\n'
 guard_refused pself "parent: the epic's own slug" "selfp ${NT} selfp"
@@ -425,6 +432,8 @@ bpr start hok; ep hok epics/e-hok.md '---\nstatus: active\nhld: h-ok\n---\n'
 guard_opens hok "hld: an HLD agreed with grants: [epics] at both ends"
 bpr start fresh; ep fresh epics/fresh.md '---\nstatus: active\nagreed: 2026-02-02\n---\n\n# fresh\n'
 guard_opens fresh "a draft flipped to active with a new agreed: date"
+bpr start hdot; ep hdot epics/e-hdot.md '---\nstatus: active\nhld: H.dot\n---\n'
+guard_opens hdot "hld: an HLD name item_hld takes (capitals and a dot)"
 bpr start later; ep later epics/later.md '---\nstatus: active\n---\n\n# later\n'
 guard_opens later "later to active"
 bpr start act; ep act epics/act.md '---\nstatus: active\n---\n\n# act, edited\n'
@@ -442,6 +451,9 @@ bpr start y; echo changed > "${ROOT}/proj-wt/_board-y/bin/tool"
 reset_log; bpr open y "Root board edit" "${ROOT}/body.md"
 is "board_dir = .: open exits 0" 0 "${rc}"
 is "board_dir = .: open prints the PR URL" "${URL}" "$(cat "${ROOT}/out")"
+# git C-quotes a path with a " in it ("epics/a\"b.md"), which would miss the epics/ prefix: refused.
+bpr start q; mkdir -p "${ROOT}/proj-wt/_board-q/epics"; printf -- '---\nstatus: active\n---\n' > "${ROOT}/proj-wt/_board-q/epics/a\"b.md"
+guard_refused q "board_dir = .: an active epic whose name holds a quote" 'board-pr: "epics/a\"b.md" has a quote, backslash, tab or newline in its name; rename it'
 
 # --- The docs send the lead's board edits through it.
 check "method.md § Who does what names swarm.sh board-pr" \
