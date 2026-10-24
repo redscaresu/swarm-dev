@@ -120,11 +120,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. Under `merge = human`, the lead merges a release only when every story merged since
   the last tag is under an agreed HLD that lists `release`.
-- Under either merge mode, `swarm.sh merge --board` refuses a board PR that sets an epic `active`
-  with no ticket: an `agreed:` date the base's draft did not already have, a `parent:` that is
-  on the base (another epic, not one the PR adds), or an `hld:` naming an HLD that is `agreed` and
-  grants `epics` at the base and at the head.
-  `swarm.sh board-pr open` refuses the same PRs; `lead_epics = on` lifts both.
+- Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
+  `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.

@@ -1409,8 +1409,9 @@ unless the PR is open, its head is `<sha>` when `--head` names one, and a story 
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
 under the board instead. Under either merge mode, `--board` also refuses a PR that sets an epic
-`active` with no ticket, as `board-pr open` does (§ The lead). It reads each epic and HLD through
-gh at the base branch and at the head, and any read error other than a 404 refuses too. With
+`active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green, it reads each
+epic and HLD through gh at the PR's base SHA and head SHA. Any read error refuses, as does a 404 at
+the head on a file the PR does not remove or rename away. With
 `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
