@@ -592,8 +592,10 @@ hld_grants() {
 
 # epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
 # line; README.md excepted) that goes active with no ticket, one per line: status: active at the head,
-# absent or draft at the base, and none of an agreed: date, a parent:, or an hld: naming an HLD that
-# is agreed and grants epics at both ends (hld_ticket). Nothing with lead_epics = on. <reader>
+# absent or draft at the base (status read as fm reads it, the first status: line anywhere, but from
+# the bytes, with no board-state override), and none of an agreed: date the base did not already
+# have (one left on a draft is stale), a parent:, or an hld: naming an HLD that is agreed and grants
+# epics at both ends (hld_ticket). Nothing with lead_epics = on. <reader>
 # base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
 # A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
@@ -610,11 +612,12 @@ epic_unticketed() (
     rc=0; now="$("${reader}" head "${p}")" || rc=$?
     [[ ${rc} -ne 1 ]] || continue
     [[ ${rc} -eq 0 ]] || { echo "cannot read ${p} at the head"; exit 1; }
-    [[ "$(slug_list "$(get_fm - status <<< "${now}")")" == active ]] || continue
+    [[ "$(slug_list "$(awk 'sub(/^status: */, "") { print; exit }' <<< "${now}")")" == active ]] || continue
     rc=0; was="$("${reader}" base "${p}")" || rc=$?
     [[ ${rc} -le 1 ]] || { echo "cannot read ${p} at the base"; exit 1; }
-    [[ ${rc} -eq 1 || "$(slug_list "$(get_fm - status <<< "${was}")")" == draft ]] || continue
-    [[ ! "$(slug_list "$(get_fm - agreed <<< "${now}")")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
+    [[ ${rc} -eq 1 || "$(slug_list "$(awk 'sub(/^status: */, "") { print; exit }' <<< "${was}")")" == draft ]] || continue
+    s="${s%.md}"; p="$(slug_list "$(get_fm - agreed <<< "${now}")")"
+    [[ ! "${p}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || "${p}" == "$(slug_list "$(get_fm - agreed <<< "${was}")")" ]] || continue
     [[ -z "$(slug_list "$(get_fm - parent <<< "${now}")")" ]] || continue
     p="$(slug_list "$(get_fm - hld <<< "${now}")")"
     if [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
@@ -622,7 +625,7 @@ epic_unticketed() (
       [[ ${rc} -ne 0 ]] || continue
       [[ ${rc} -eq 1 ]] || exit 1
     fi
-    out+="${s%.md}"$'\n'
+    out+="${s}"$'\n'
   done <<< "$2"
   printf '%s' "${out}"
 )

@@ -348,6 +348,8 @@ guard_refused() {
 }
 guard_opens() { reset_log; bpr open "$1" "Epic" "${ROOT}/body.md"; is "$2 opens" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"; }
 on_main board/epics/flip.md '---\nstatus: draft\n---\n\n# flip\n'
+on_main board/epics/stale.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# stale\n'
+on_main board/epics/fresh.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# fresh\n'
 on_main board/epics/later.md '---\nstatus: later\n---\n\n# later\n'
 on_main board/epics/act.md '---\nstatus: active\n---\n\n# act\n'
 on_main board/epics/gone.md '---\nstatus: active\n---\n\n# gone\n'
@@ -364,6 +366,10 @@ git -C "${ROOT}/proj-wt/_board-new" add -A && git -C "${ROOT}/proj-wt/_board-new
 guard_opens new "after the refusal, the same epic committed as status: draft"
 bpr start flip; ep flip epics/flip.md '---\nstatus: active\n---\n\n# flip\n'
 guard_refused flip "a draft-to-active flip with no ticket" "flip ${NT} flip"
+bpr start stale; ep stale epics/stale.md '---\nstatus: active\nagreed: 2026-01-01\n---\n\n# stale\n'
+guard_refused stale "a draft's stale agreed: left as it was on the flip to active" "stale ${NT} stale"
+bpr start body; ep body epics/e-body.md '---\ndepends_on: []\n---\n\n# e-body\nstatus: active\n'
+guard_refused body "an epic active by a body status: line, as fm reads it" "e-body ${NT} e-body"
 bpr start hd; ep hd hld/h-draft.md '---\nstatus: agreed\ngrants: [epics]\n---\n'; ep hd epics/e-hd.md '---\nstatus: active\nhld: h-draft\n---\n'
 guard_refused hd "hld: an HLD draft at the base, agreed in the worktree" "e-hd ${NT}"
 bpr start hn; ep hn hld/h-new.md '---\nstatus: agreed\ngrants: [epics]\n---\n'; ep hn epics/e-hn.md '---\nstatus: active\nhld: h-new\n---\n'
@@ -394,6 +400,8 @@ check "the unticketed one first: the refusal does not name the ticketed one" bas
 
 bpr start hok; ep hok epics/e-hok.md '---\nstatus: active\nhld: h-ok\n---\n'
 guard_opens hok "hld: an HLD agreed with grants: [epics] at both ends"
+bpr start fresh; ep fresh epics/fresh.md '---\nstatus: active\nagreed: 2026-02-02\n---\n\n# fresh\n'
+guard_opens fresh "a draft flipped to active with a new agreed: date"
 bpr start later; ep later epics/later.md '---\nstatus: active\n---\n\n# later\n'
 guard_opens later "later to active"
 bpr start act; ep act epics/act.md '---\nstatus: active\n---\n\n# act, edited\n'
