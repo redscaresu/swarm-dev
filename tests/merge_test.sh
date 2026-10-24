@@ -1778,8 +1778,8 @@ check "commands/swarm.md's release arm no longer runs merge --release only under
 check "commands/swarm.md's release arm names merge.sh's release-grant refusal" grep -qF "\"waits on the user's merge\"" <<< "${arm}"
 check "merge.sh refuses a release the grant does not cover with 'waits on the user's merge'" \
   grep -qF "waits on the user's merge (merge = human" "${REPO}/bin/lib/merge.sh"
-check "commands/swarm.md's release arm stops on any other refusal, with the PR waiting on the user" \
-  grep -qE 'Any other refusal\. Under .merge = human. that includes the release-grant refusal .* the PR waits on the user' <<< "${arm}"
+check "commands/swarm.md's release arm keys the outcome on merged:, and leaves a refused PR waiting on the user" \
+  grep -qE 'by whether merge printed .merged:.,.* Any other refusal: under .merge = human. the release-grant refusal .* Tell the user what the refusal printed and that the PR waits on their merge' <<< "${arm}"
 check "reference.md § Merging merges with swarm.sh merge" \
   bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
 
