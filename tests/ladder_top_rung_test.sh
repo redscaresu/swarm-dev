@@ -126,6 +126,11 @@ fresh fable 0; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a tell from before the step-up does not count, so the first since is sent" "yes|" \
   "$(grep -q 'told s1' <<< "${out}" && echo yes)|$(escalated)"
 
+fresh fable 1; echo "top_rung_rounds = 3" >> "${P}/.claude/swarm/config"; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable, top_rung_rounds = 3: the 2nd findings tell since the step-up is sent" "yes|" "$(grep -q 'told s1' <<< "${out}" && echo yes)|$(escalated)"
+fresh fable 2; echo "top_rung_rounds = 3" >> "${P}/.claude/swarm/config"; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+check "fable, top_rung_rounds = 3: the 3rd is held for the lead" "lead|ok (top-rung: findings round 3 on fable)" "$(kind)|$(escalated)"
+
 fresh opus 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "opus: the 2nd findings tell since the step-up is sent, as today" "yes|code|" \
   "$(grep -q 'told s1' <<< "${out}" && echo yes)|$(kind)|$(escalated)"
