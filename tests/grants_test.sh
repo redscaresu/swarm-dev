@@ -2,7 +2,9 @@
 # grants_test.sh — swarm.sh grants: the agreed HLD over a story, epic or PR and its grants, on a
 # fixture board. A story walks epic: then parent: up to an epic with hld:; a draft, superseded or
 # missing HLD, a story with no epic and a parent: cycle print none; a bad grant dies with the file and
-# line. gh is a stub on PATH answering a PR's files and head contents from ${FX}.
+# line. A name that is no story or epic but an HLD in hld/ is that HLD (an agreed one prints itself and
+# its grants, any other none); a story or epic of the same name wins; a path as the name dies with bad
+# slug. gh is a stub on PATH answering a PR's files and head contents from ${FX}.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -100,6 +102,11 @@ expect hld-arg-agreed 2026-01-01-a "$(printf '%s\nmerge\nstories' "${A}")"
 expect hld-arg-no-grants-none 2026-01-01-c "$(printf '%s\nnone' "${B}/hld/2026-01-01-c.md")"
 expect hld-arg-draft-none draft none
 expect hld-arg-superseded-none old none
+item "${B}/hld/2026-01-01-d.md" "title: D" "status: agreed" "grants: [epics, merge]"
+expect hld-arg-epics-and-merge 2026-01-01-d "$(printf '%s\nepics\nmerge' "${B}/hld/2026-01-01-d.md")"
+item "${B}/hld/clash-e.md" "title: Clash E" "status: agreed" "grants: [release]"
+item "${B}/epics/clash-e.md" "status: active" "parent: top"
+expect hld-arg-and-epic-same-name-epic-wins clash-e "$(printf '%s\nmerge\nstories' "${A}")"
 expect hld-arg-and-story-same-name-story-wins clash "$(printf '%s\nmerge\nstories' "${A}")"
 grants bad
 if [[ ${rc} -ne 0 ]] && grep -qF "${B}/hld/bad.md:4: grants must be epics, stories, merge or release" "${ROOT}/out"; then
