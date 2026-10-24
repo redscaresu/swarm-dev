@@ -32,8 +32,8 @@ item (the user sets it `ready` or `active` to start it). Only the user agrees a 
 /epic, which writes `agreed:` as it sets `status: active`. The lead sets a draft epic `active`
 itself only when no agreement is needed: it has a `parent:` (a split's child), an agreed HLD
 grants `epics` through its `hld:`, or `lead_epics = on`. An `agreed:` already on a draft is stale
-(an epic set back to draft by hand) and does not count, so the lead resumes it with `/epic <slug>`.
-After the user acts, run
+(an epic set back to draft by hand) and does not count, so the lead offers to resume it with
+`/epic <slug>`. After the user acts, run
 `/swarm-dev:swarm` again. A story that failed on Fable (`next` says `escalated <slug>`) is not a
 stop: the lead re-scopes it and runs `swarm.sh reset`, or runs `swarm.sh drop`, then tells the
 user why. The full table of stops and what to do is in README § When `/swarm-dev:swarm` stops for you.
