@@ -16,10 +16,12 @@
 # conductor from ${ROOT}/agents ("<name> <pane> <session>") and logs each agent prompt to
 # ${ROOT}/prompts.log; claude agents --json prints ${ROOT}/claude.json.
 # Last, a builder told findings while herdr's screen reads it idle for every settle read of the first
-# try and done only after them (plan-hld-command's tells, 2026-10-24): whether its session turns busy
-# by the second settle read ($F/takes says busy) or stays idle with the prompt in its log by then
-# (prompt: a short turn between two reads), it gets one prompt, logged ok. A prompt in a Task
-# subagent's log only (subagent) is no sign it took it: sent again.
+# try and done only after them (plan-hld-command's tells, 2026-10-24) gets one prompt, logged ok,
+# with no warning when its session shows it took it by the second settle read ($F/takes): it turns
+# busy, or its log gets the findings as a pasted prompt (a short turn between two reads). With only a
+# Task subagent's entry holding the text (sidechain), a tool result holding it (toolresult), or
+# another prompt (notice), past the findings already in its log from an earlier tell, it is not sent
+# again either: tell warns that herdr sent it the brief and did not show the turn start.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -50,10 +52,11 @@ case "$1 $2" in
   "agent get") n=$(($(cat "$F/gets" 2>/dev/null || echo 0) + 1)); echo "${n}" > "$F/gets"
     if [ "${n}" -eq 3 ]; then case "$(cat "$F/takes" 2>/dev/null)" in
       busy) echo '[{"sessionId": "sb", "status": "busy"}]' > "$F/claude.json" ;;
-      prompt) echo '{"type":"user","message":{"content":"From the conductor:"}}' >> "$F/claude-config/projects/p/sb.jsonl" ;;
-      subagent) mkdir -p "$F/claude-config/projects/p/sb/subagents"
-        echo '{"type":"user","message":{"content":"a task"}}' >> "$F/claude-config/projects/p/sb/subagents/a.jsonl" ;;
-    esac; fi
+      prompt) l='{"type":"user","message":{"content":"<pasted_content id=\"x\">\nFrom the conductor:\n\nstart s2 first\n</pasted_content>"}}' ;;
+      sidechain) l='{"type":"user","isSidechain":true,"message":{"content":"From the conductor:"}}' ;;
+      toolresult) l='{"type":"user","message":{"content":[{"type":"tool_result","content":"From the conductor:"}]}}' ;;
+      notice) l='{"type":"user","message":{"content":"<task-notification>done</task-notification>"}}' ;;
+    esac; [ -z "${l:-}" ] || printf '%s\n' "${l}" >> "$F/claude-config/projects/p/sb.jsonl"; fi
     if [ "${n}" -le 4 ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
     else echo '{"result":{"agent":{"agent_status":"done","completion_seq":9}}}'; fi ;;
 esac
@@ -178,15 +181,17 @@ check "a conductor replaced before the deferred check: the new one is" 1 "$(grep
 settle
 echo "w:9 b1" > "${p}/.swarm/state/b1"; echo "b1 w:9 sb" >> "${ROOT}/agents"
 printf '2026-10-24\tcode\tb1\tclaude\topus\thigh\tsb\n' >> "${p}/.swarm/agents.tsv"
-for how in busy:1 prompt:1 subagent:2; do
-  want="${how#*:}" how="${how%:*}"
-  echo "${how}" > "${ROOT}/takes"; rm -rf "${ROOT}/gets" "${CLAUDE_PROJECTS_DIR}/p/sb"; : > "${ROOT}/prompts.log"
-  echo '{"type":"user","message":{"content":"the brief"}}' > "${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # before the tell: not its prompt
+for how in busy:no prompt:no sidechain:yes toolresult:yes notice:yes; do
+  warned="${how#*:}" how="${how%:*}"
+  echo "${how}" > "${ROOT}/takes"; rm -f "${ROOT}/gets"; : > "${ROOT}/prompts.log"
+  echo '{"type":"user","message":{"content":"From the conductor:"}}' > "${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # an earlier tell's
   echo '[{"sessionId": "sb", "status": "idle"}]' > "${ROOT}/claude.json"
   out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 SWARM_SLEEP_SCALE=0.01 SWARM_PROMPT_TIMEOUT_MS=15000 PATH="${ROOT}/bin:${PATH}" \
     bash "${SWARM}" tell b1 findings "${ROOT}/note" 2>&1)" || true
-  check "findings to a builder (${how}) while herdr read it idle: told" "told b1" "${out}"
-  check "findings to a builder (${how}) while herdr read it idle: sent ${want} time(s)" "${want}" "$(grep -c 'agent prompt w:9' "${ROOT}/prompts.log" || true)"
+  check "findings to a builder (${how}) while herdr read it idle: told" yes "$(grep -qx "told b1" <<< "${out}" && echo yes || echo no)"
+  check "findings to a builder (${how}) while herdr read it idle: sent once" 1 "$(grep -c 'agent prompt w:9' "${ROOT}/prompts.log" || true)"
+  check "findings to a builder (${how}) while herdr read it idle: warned it did not show the turn start" "${warned}" \
+    "$(grep -q "warning: b1: herdr sent it the brief once, and herdr did not show the turn start" <<< "${out}" && echo yes || echo no)"
   check "findings to a builder (${how}) while herdr read it idle: the tell is logged ok" ok \
     "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5 } END { print o }' "${p}/.swarm/events.tsv")"
 done

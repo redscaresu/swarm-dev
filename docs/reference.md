@@ -667,7 +667,7 @@ head or has uncommitted changes, or when `review-<slug>` is still working or sti
 findings file (idle while its codex runs, not finished). It moves the last review's file aside
 before the new agent's brief goes, puts it back if herdr cannot start the agent, and deletes it once
 the agent has started. When the start fails, `review-agent` first reads the error. If herdr may
-have sent the brief (its reply could not be read, or the brief was sent and not taken up) and
+have sent the brief (its reply could not be read) and
 `review-<slug>`'s session reads busy or waiting (herdr's working or blocked for codex), it says the
 agent is running, records the head, keeps the file aside as `<slug>.md.prev` and exits 0; `wait
 review-<slug>` then waits for a new file. If herdr may have sent the brief to an agent that is not
@@ -700,7 +700,12 @@ review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <bra
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. To reach a busy conductor, the lead runs
+session is gone or unknown. Once herdr has sent a message or a brief (a `tell`, or a start's brief),
+it is never sent again. herdr can read a pane idle through a whole turn, so the agent's own Claude
+session counts as well: it reads busy or waiting, or its log has the message's first line as a new
+prompt. When neither herdr nor the session shows a turn, the command still succeeds and warns that
+herdr sent it the brief and did not show the turn start. Only a message whose herdr reply could not
+be read goes a second time, and only when the agent shows no turn. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
 `.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
 whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a
