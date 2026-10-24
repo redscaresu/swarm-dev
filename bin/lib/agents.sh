@@ -1570,7 +1570,6 @@ tell_agent() {
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
-  # shellcheck disable=SC2154 # assigned in another file
   if [[ "${kind}" == note ]] && (( CFG_conductor_lanes > 1 )) && [[ -z "$(conduct_lane "${name}")" ]]; then
     e="$(conduct_epic "${name}")"
     for ((k = 1; k <= CFG_conductor_lanes; k++)); do
