@@ -1189,7 +1189,7 @@ check "--board, hld: an HLD with a bad grant value: reads the HLD at main" hld_r
 epr "a-ok b-no"; fx_at a-ok.md "${H1}" "status: active" "agreed: 2026-01-01"; fx_at b-no.md "${H1}" "status: active"
 merge --board "${URL}"; guarded "--board, a ticketed and an unticketed active epic" b-no
 check "--board, a ticketed and an unticketed active epic: does not name the ticketed one" bash -c "! grep -qF a-ok '${ROOT}/out'"
-epr "a-no b-ok"; fx_at a-no.md "${H1}" "status: active"; fx_at b-ok.md "${H1}" "status: active" "parent: p"
+epr "a-no b-ok"; fx_at a-no.md "${H1}" "status: active"; fx_at b-ok.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"
 merge --board "${URL}"; guarded "--board, an unticketed and a ticketed active epic" a-no
 check "--board, an unticketed and a ticketed active epic: does not name the ticketed one" bash -c "! grep -qF b-ok '${ROOT}/out'"
 epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.${H1}.fail"; merge --board "${URL}"
@@ -1198,7 +1198,18 @@ epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.main"; : > "${
 refused "--board, a 502 on the epic's read at the base" "--board: gh cannot read docs/epics/e1.md at main, so whether ${URL} sets"
 epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: 2026-01-01"; merge --board "${URL}"
 board_merged "--board, an epic set active with agreed:"
-epr e1; fx_at e1.md "${H1}" "status: active" "parent: p"; merge --board "${URL}"; board_merged "--board, an epic set active with parent:"
+# A parent: is a ticket only when it names another epic the base has (its base read, wf.<parent>.md.main).
+parent_read() { grep -qF "repos/o/r/contents/docs/epics/$1.md?ref=main" "${ROOT}/gh.log"; }
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"; merge --board "${URL}"
+board_merged "--board, parent: an epic on main"
+check "--board, parent: an epic on main: reads it at main" parent_read old
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: bogus"; merge --board "${URL}"; guarded "--board, parent: an epic on no branch" e1
+check "--board, parent: an epic on no branch: reads it at main" parent_read bogus
+epr "e1 kid"; fx_at e1.md "${H1}" "status: active" "parent: kid"; fx_at kid.md "${H1}" "status: draft"; merge --board "${URL}"
+guarded "--board, parent: an epic the same PR adds" e1
+check "--board, parent: an epic the same PR adds: reads it at main" parent_read kid
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; : > "${FX}/wf.old.md.main"; : > "${FX}/wf.old.md.main.fail"; merge --board "${URL}"
+refused "--board, parent: a 502 on the parent's read at main" "--board: gh cannot read docs/epics/old.md at main, so whether ${URL} sets an epic active with no ticket is unknown"
 epr e1; fx_at hok.md main "status: agreed" "grants: [epics]"; fx_at hok.md "${H1}" "status: agreed" "grants: [epics]"
 fx_at e1.md "${H1}" "status: active" "hld: hok"; merge --board "${URL}"
 board_merged "--board, hld: an HLD agreed with grants: [epics] at both ends"
