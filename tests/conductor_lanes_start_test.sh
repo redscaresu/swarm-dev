@@ -20,7 +20,8 @@ check() { # <name> <want> <got>
 }
 
 # herdr: each new pane is w:<n>; agent start adds "<name> <pane>" to agents, which agent list reads
-# (a third column, when a case writes one, is its status); agent read prints screen.<pane>.
+# (a third column, when a case writes one, is its status), and fails while listfail exists; agent read
+# prints screen.<pane>.
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
@@ -35,7 +36,8 @@ case "$1 $2" in
   "agent prompt")     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent read")       cat "$H/screen.$3" 2>/dev/null ;;
-  "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent list")       [ ! -e "$H/listfail" ] || exit 1
+                      awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, ($3 == "" ? "working" : $3), $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
 esac
@@ -100,7 +102,7 @@ step() { swarm next | sed -n 1p; }
 # collected <conductor> — the lead collected it: an ok close in events.tsv, as swarm.sh close logs one.
 collected() { printf '%s\tclose\t%s\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${p}/.swarm/events.tsv"; }
 # hook — the lead's stop hook in the project: nothing when it allows the stop, else its block decision.
-hook() { (cd "${p}" && echo "{\"cwd\":\"${p}\"}" | env -u SWARM_PROJECT -u SWARM_AGENT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" \
+hook() { (cd "${p}" && echo "{\"cwd\":\"${p}\"}" | env -u SWARM_PROJECT -u SWARM_AGENT HERDR_ENV=1 HERDR_BIN_PATH="${ROOT}/bin/herdr" PATH="${ROOT}/bin:${PATH}" \
   bash "$(dirname "${SWARM}")/../hooks/lead-stop.sh" 2>/dev/null); }
 # lane_of <slug> <n> — the lane a slug with no lane: line hashes to.
 lane_of() { local c; c="$(printf '%s' "$1" | cksum)"; echo $(( ${c%% *} % $2 + 1 )); }
@@ -125,6 +127,10 @@ check "a board merge that readies a backlog story in each lane: starts no lane-l
 
 # --- next while one lane's conductor runs: the other lane's conduct step.
 check "next with both lanes running waits on one" "wait ${l1}" "$(step)"
+# Outside herdr next sees no running conductor, yet each lane's runs: it waits on one, never a lane-less step.
+check "next outside herdr with both lanes running waits on lane 1" "wait ${l1}" \
+  "$(cd "${p}" && env -u SWARM_PROJECT -u SWARM_AGENT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" _step 2>&1 | sed -n 1p)"
+
 lane2="$(grep "^${l2} " "${ROOT}/agents")"; grep -v "^${l2} " "${ROOT}/agents" > "${ROOT}/agents.1"; mv "${ROOT}/agents.1" "${ROOT}/agents"
 check "next with lane 1 running prints lane 2's conduct step" "conduct --backlog --lane 2" "$(step)"
 check "_step, which the lead's stop hook reads, prints the same" "conduct --backlog --lane 2" "$(swarm _step | sed -n 1p)"
@@ -198,6 +204,11 @@ check "next with lane 1's story readied by its state file alone: lane 1 may star
 check "the lead's stop hook keeps the lead going on that step" "yes" "$([[ -n "$(hook)" ]] && echo yes || echo no)"
 mv "${p}/docs/stories/${in2}.md.bak" "${p}/docs/stories/${in2}.md"; rm -f "${p}/.swarm/conduct-backlog.l1.report.md" "${p}/.swarm/board-state/stories/${in1}"
 
+# --- herdr cannot list its agents: no lane start, the step's why says so (conduct_ready starts none then).
+touch "${ROOT}/listfail"; out="$(swarm _step)"; rm -f "${ROOT}/listfail"
+check "next while herdr cannot list its agents names no lane start" "yes" \
+  "$(grep -qx "no conductor started: herdr cannot list its agents, so which conductors run is not known" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+
 # --- conductor_lanes = 1: the steps as before.
 config; : > "${ROOT}/agents"; : > "${ROOT}/herdr.log"
 check "with conductor_lanes = 1 and no conductor, next names the backlog story" "story $(printf '%s\n' "${in1}" "${in2}" | sort | sed -n 1p)" "$(step)"
@@ -210,6 +221,11 @@ b="$(swarm _conductor backlog)"
 check "with conductor_lanes = 1, a board merge starts the one backlog conductor" "yes|no" \
   "$(grep -qF "started: ${b} (swarm.sh conduct --backlog)" <<< "${out}" && echo yes || echo "no, got: ${out}")|$(grep -q "^agent start ${b}-l" "${ROOT}/herdr.log" && echo yes || echo no)"
 check "with conductor_lanes = 1 and the backlog conductor running, next waits on it" "wait ${b}" "$(step)"
+# Lane 1's conductor from conductor_lanes = 2 still runs: upgrade refuses, as conduct refuses a start beside it.
+echo "${lane1}" >> "${ROOT}/agents"
+out="$(swarm upgrade || echo "exit $?")"
+check "with a lane conductor from conductor_lanes = 2 running, upgrade refuses, naming it" "yes|yes" \
+  "$(grep -qF "upgrade: ${l1} runs under another conductor_lanes than 1; let it report and close it" <<< "${out}" && echo yes || echo "no, got: ${out}")|$(grep -q "^exit [1-9]" <<< "${out}" && echo yes || echo no)"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

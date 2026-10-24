@@ -162,8 +162,8 @@ epic_has_after() {
 #                     build (main_red, the newest such of any repo and base): start it before
 #                     anything else, a conductor's wait included
 #   collect <agent>   a conductor has written its report: read it, then close its tab. A lane
-#                     conductor only once every running lane of its epic or backlog has: the epic is
-#                     collected when all its lanes have reported (collect_pick)
+#                     conductor that reported while another lane of its epic or backlog works, once
+#                     its session is idle (collect_pick); the epic is collected when all its lanes have
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
 #                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads);
@@ -242,6 +242,9 @@ next_step() {
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
   if lane_conduct_step; then return; fi
+  # With lanes, lane_conduct_step names every lane's step: conduct refuses the lane-less ones below.
+  # shellcheck disable=SC2154 # assigned in another file
+  (( CFG_conductor_lanes == 1 )) || buildable=""
   while read -r story_epic slug; do
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
     one_off_started "${story_epic}" || continue
@@ -322,17 +325,18 @@ running_conductors() {
 # collected once every lane has reported.
 collect_pick() {
   local c d
-  while IFS= read -r c; do
+  # On fds 3 and 4, as conduct_ready reads its lists: herdr, python and claude must not read them.
+  while IFS= read -r c <&3; do
     [[ -n "${c}" ]] || continue
     if [[ -f "$(conductor_report "${c}")" && -n "$(conduct_lane "${c}")" && "$(session_state "${c}")" != idle ]]; then
-      while IFS= read -r d; do
+      while IFS= read -r d <&4; do
         [[ -n "${d}" && ! -f "$(conductor_report "${d}")" && -n "$(conduct_lane "${d}")" && "$(conduct_epic "${d}")" == "$(conduct_epic "${c}")" ]] || continue
         c=""; break
-      done <<< "$1"
+      done 4<<< "$1"
       [[ -n "${c}" ]] || continue
     fi
     echo "${c}"; return
-  done <<< "$1"
+  done 3<<< "$1"
 }
 
 # lane_conduct_step [running] — with conductor_lanes above 1, next_step's conduct step for the first
@@ -342,23 +346,33 @@ collect_pick() {
 # each other such lane. A lane whose own conductor runs is skipped. Any other lane conduct_why holds
 # back is skipped too; with no lane to start and no conductor working, the first such is the step, its
 # `no ... started:` line the why, for the lead to stop on. Like conduct_ready, it names none while a
-# working conductor is stopped on an expired login or an API error (conductor_stop). With running
+# working conductor is stopped on an expired login or an API error (conductor_stop), and while herdr
+# cannot list its agents, the first lane is the step with that as its `no conductor started:` why.
+# With no lane to start and none held, a lane whose own conductor runs (one next_step did not see:
+# outside herdr, say) is waited on, so no lane-less step follows. With running
 # (another conductor works), fix-main stories are left out, as conduct_ready leaves them: that
 # conductor was told to build it. Fails, printing nothing, when there is none or conductor_lanes is 1.
 lane_conduct_step() {
-  local ready c e k slugs arg why stop first="" also="" held=""
+  local ready c e k slugs arg why stop first="" also="" held="" waits=""
   # shellcheck disable=SC2154 # assigned in another file
   (( CFG_conductor_lanes > 1 )) || return 1
   ready="$(board_ready --started)"
   [[ -z "${1:-}" ]] || ready="$(awk '$1 !~ /^fix-main-/' <<< "${ready}")"
   [[ -n "${ready}" ]] || return 1
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
-    while IFS= read -r c; do
+    if ! herdr agent list >/dev/null 2>&1; then
+      e="$(sed -n '1s/.* //p' <<< "${ready}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
+      k="$(story_lane "${BOARD}/stories/$(sed -n '1s/ .*//p' <<< "${ready}").md")"
+      printf 'conduct %s --lane %s\nno conductor started: herdr cannot list its agents, so which conductors run is not known\n' "${arg}" "${k}"
+      return 0
+    fi
+    # On fd 3, as conduct_ready reads it: herdr and python must not read the list.
+    while IFS= read -r c <&3; do
       [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
       [[ -z "$(conductor_stop "${c}")" ]] || return 1
-    done <<< "$(running_conductors)"
+    done 3<<< "$(running_conductors)"
   fi
-  while read -r e; do
+  while read -r e <&3; do
     arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
     for ((k = 1; k <= CFG_conductor_lanes; k++)); do
       # shellcheck disable=SC2046 # slugs, [a-z0-9-]
@@ -366,6 +380,7 @@ lane_conduct_step() {
       [[ -n "${slugs}" ]] || continue
       # shellcheck disable=SC2086 # slugs, [a-z0-9-]
       if stop="$(conduct_why "${e}" "${k}" ${slugs})"; then
+        [[ -n "${stop}" || -n "${waits}" ]] || waits="$(group_conductor "${e}" "${k}")"
         [[ -z "${stop}" || -n "${held}" || -n "${1:-}" ]] || held="conduct ${arg} --lane ${k}"$'\n'"${stop}"
         continue
       fi
@@ -374,7 +389,10 @@ lane_conduct_step() {
       if [[ "${e}" == - ]]; then why="${slugs%%$'\n'*} is ready in lane ${k} of the backlog, which has no conductor running"
       else why="${slugs%%$'\n'*} is ready in lane ${k} of the active epic ${e}, which has no conductor running"; fi
     done
-  done < <(awk '!s[$2]++ { print $2 }' <<< "${ready}")
+  done 3< <(awk '!s[$2]++ { print $2 }' <<< "${ready}")
+  if [[ -z "${first}" && -z "${held}" && -n "${waits}" && -z "${1:-}" ]]; then
+    printf 'wait %s\nthe conductor %s is still working (it has not written its report)\n' "${waits}" "${waits}"; return 0
+  fi
   if [[ -z "${first}" ]]; then [[ -n "${held}" ]] || return 1; echo "${held}"; return 0; fi
   printf '%s\n%s%s\n' "${first}" "${why}" "${also}"
 }

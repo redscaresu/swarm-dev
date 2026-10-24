@@ -407,12 +407,14 @@ stories that a conductor may start for, by the same test those starts use, even 
 conductor works, and an `also: conduct ... --lane <k>` line after the why for each other such lane. A
 lane held back by that test is passed over. When no lane may start and no conductor works, the first
 held lane is the step, with its `no ... started:` line as the why, and the lead stops there. Like those
-starts, `next` names no lane while a working conductor is stopped on an expired login or an API error.
+starts, `next` names no lane while a working conductor is stopped on an expired login or an API error,
+and while herdr cannot list its agents its step says so in a `no conductor started:` why.
 A lane that has reported is collected (`collect <conductor>`) while other lanes still work once its
 session is idle, so a story readied in its lane need not wait for the slowest lane; the epic is
 collected once every lane has reported. `swarm.sh status`, `wait` and `wait --until-report` take a lane
-conductor's name like any other. `swarm.sh upgrade` pauses each lane's conductor for its own builders,
-and a lane conductor from a higher N for the stories that now fold onto its lane. With N = 1 nothing
+conductor's name like any other. `swarm.sh upgrade` pauses each lane's conductor for its own builders.
+It refuses to run while a conductor from another N runs (a lane-less one beside lanes, or a lane one
+with N = 1 or past N), naming it: let it report and close it first. With N = 1 nothing
 changes: no `--lane`, and the names above.
 
 Conductors also start on their own, the backlog's and an epic's alike: after `swarm.sh merge

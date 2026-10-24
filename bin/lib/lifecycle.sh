@@ -1974,6 +1974,7 @@ upgrade_agents() {
   [[ -z "${epic}" || "${epic}" == backlog || ( "${epic}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/epics/${epic}.md" ) ]] \
     || die "upgrade: no epic ${BOARD}/epics/${epic}.md (backlog moves the stories with no epic)"
   require_herdr_version
+  upgrade_lanes_check "${epic}"
   new="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")"
   log="${PROJECT_DIR}/.swarm/upgrade-${new}.log"
   upgrade_busy "${epic}" || rc=$?
@@ -2305,22 +2306,16 @@ upgrade_left() {
 # upgrade_epic <name> <role> — the epic whose conductor <name> answers to, kept for the run: a
 # conductor's own (conductor_key), a builder's or review agent's story's (backlog: none), - for one
 # with no story. With conductor_lanes above 1, a lane's: <epic>.l<k>, k the story's lane (story_lane).
-# A lane conductor's key folds as story_lane folds (lane-less with one lane), so a conductor that
-# outlived a higher conductor_lanes keys with the stories it now holds; conductor-<key> names it.
+# upgrade_lanes_check has refused a conductor from another conductor_lanes, so keys never fold.
 upgrade_epic() {
   local f="${UPGRADE_DIR}/epic-$1" s e=-
   [[ ! -s "${f}" ]] || { cat "${f}"; return; }
-  if [[ "$2" == conduct ]]; then
-    e="$(conductor_key "$1")"
-    if [[ "${e}" == *.l* ]]; then
-      # shellcheck disable=SC2154 # assigned in another file
-      if (( CFG_conductor_lanes == 1 )); then e="${e%.l*}"; else e="${e%.l*}.l$(fold_lane "${e##*.l}")"; fi
-    fi
-    echo "$1" > "${UPGRADE_DIR}/conductor-${e}"
+  if [[ "$2" == conduct ]]; then e="$(conductor_key "$1")"
   else
     while IFS= read -r s; do
       [[ "$(agent_name "$(basename "${s}" .md)")" == "$1" || "$(agent_name "review-$(basename "${s}" .md)")" == "$1" ]] || continue
       e="$(fm "${s}" epic)"; e="${e:-backlog}"
+      # shellcheck disable=SC2154 # assigned in another file
       (( CFG_conductor_lanes == 1 )) || e+=".l$(story_lane "${s}")"
       break
     done < <(board stories)
@@ -2330,14 +2325,27 @@ upgrade_epic() {
 }
 
 # key_conductor <epic> — the conductor of upgrade_epic's <epic>: <epic>.l<k> is lane k's.
-# The one upgrade_epic recorded for it (conductor-<epic>), else the name that key gives now.
-key_conductor() {
-  cat "${UPGRADE_DIR}/conductor-$1" 2>/dev/null && return
-  if [[ "$1" == *.l* ]]; then conductor_name "${1%.l*}" "${1##*.l}"; else conductor_name "$1"; fi
-}
+key_conductor() { if [[ "$1" == *.l* ]]; then conductor_name "${1%.l*}" "${1##*.l}"; else conductor_name "$1"; fi; }
 
-# fold_lane <k> — lane <k> as conductor_lanes reads it now: past N it folds onto (k - 1) mod N, plus 1.
-fold_lane() { echo $(( ($1 - 1) % CFG_conductor_lanes + 1 )); }
+# upgrade_lanes_check [<epic>|backlog] — die while a conductor (of <epic>, or any) from another
+# conductor_lanes runs: a lane-less one beside lanes, or a lane one with one lane or past N. Its builders
+# key by the lanes in force now, so upgrade could not tell which conductor to wait on; conduct refuses a
+# lane beside one the same way (conduct_clash). Only a conductor agents.tsv started can be one, so herdr
+# is asked only when one of those is from other lanes.
+upgrade_lanes_check() {
+  local c n bad=" "
+  while IFS= read -r c <&3; do
+    [[ -n "${c}" && ( -z "$1" || "$(conduct_epic "${c}")" == "$1" ) ]] || continue
+    n="$(conduct_lane "${c}")"
+    if (( CFG_conductor_lanes == 1 )); then [[ -n "${n}" ]] || continue
+    else [[ -z "${n}" ]] || (( n > CFG_conductor_lanes )) || continue; fi
+    bad+="${c} "
+  done 3< <(awk -F'\t' 'NF == 7 && $2 == "conduct" { print $3 }' "${AGENTS_LOG}" 2>/dev/null | sort -u)
+  [[ "${bad}" != " " ]] || return 0
+  while IFS= read -r c <&3; do
+    [[ -z "${c}" || "${bad}" != *" ${c} "* ]] || die "upgrade: ${c} runs under another conductor_lanes than ${CFG_conductor_lanes}; let it report and close it (swarm.sh close ${c}) first"   # loose-match: ok space-padded, so a whole name
+  done 3<<< "$(running_conductors)"
+}
 
 # upgrade_hold <epic> <list> — whether <epic>'s builders wait on its conductor: left when it was left
 # (or kept) with no handover, wait while it is in <list> (upgrade_list, not yet moved) and not idle with its
