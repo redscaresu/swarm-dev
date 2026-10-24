@@ -673,12 +673,36 @@ hld_body() {
     n == 2 && /^##? / { e = ($0 == "## Epics"); print; next } !e' "$1"
 }
 
+# hld_plain <hld file> — true when nothing in the HLD's body hides from hld_body where a # or ## heading
+# is: no code fence or HTML comment, no # or ## heading indented, quoted, followed by a tab or empty,
+# and no setext heading (a line of = or - under a line of text).
+hld_plain() {
+  awk '/^---$/ && n < 2 { n++; next } n < 2 { next }
+    /^ ? ? ?(```|~~~)/ || /<!--/ { bad = 1 }
+    /^[ \t>]*##?([ \t]|$)/ && !/^##? / { bad = 1 }
+    /^ ? ? ?(=+|-+)[ \t]*$/ && p ~ /[^ \t]/ { bad = 1 }
+    { p = $0 } END { exit bad }' "$1"
+}
+
+# planned_lines <hld file> — its front matter's planned: lines, as they are.
+planned_lines() { awk '/^---$/ && ++n == 2 { exit } n == 1 && index($0, "planned:") == 1' "$1"; }
+
+# plan_head <hld file> <head copy> — true when <head copy> only plans <hld file>: one planned: line at
+# most, the same as the board's when the board has one, nothing hld_plain refuses, and no change
+# outside ## Epics (hld_body).
+plan_head() {
+  local b h
+  b="$(planned_lines "$1")"; h="$(planned_lines "$2")"
+  [[ "${h}" != *$'\n'* && ( -z "${b}" || "${b}" == "${h}" ) ]] || return 1
+  hld_plain "$2" || return 1
+  cmp -s <(hld_body "$1") <(hld_body "$2")
+}
+
 # plan_hld <files> <prefix> — the agreed HLD in ${BOARD}/hld that a board PR plans into epics, or a
 # failure. <files> are the PR's, one per line, each under the board's <prefix>: one hld/<H>.md and at
-# least one epics/*.md. An HLD with a code fence or an HTML comment fails: a ## Epics line in one is
-# no heading, and hld_body cannot tell. It reads no gh; pr_hld then checks the head (each file there,
-# the HLD changed only in hld_body) and reads each epic through item_hld, so one_hld still has to
-# agree on H. The HLD's grants are the board's, so a PR cannot grant itself.
+# least one epics/*.md, and the HLD agreed and plain (hld_plain). It reads no gh; pr_hld then checks
+# the head (each file there, the HLD's copy plan_head's) and reads each epic through item_hld, so
+# one_hld still has to agree on H. The HLD's grants are the board's, so a PR cannot grant itself.
 plan_hld() {
   local p h="" e=0 f
   while IFS= read -r p; do
@@ -690,7 +714,7 @@ plan_hld() {
   done <<< "$1"
   f="${BOARD}/hld/${h}.md"
   [[ -n "${h}" && ${e} -gt 0 && -f "${f}" && "$(get_fm "${f}" status)" == agreed ]] || return 1
-  ! grep -qE '^ {0,3}(```|~~~)|<!--' "${f}" || return 1
+  hld_plain "${f}" || return 1
   echo "${f}"
 }
 
@@ -744,7 +768,7 @@ pr_hld() (
     [[ -z "${plan}" ]] || return 0   # the plan PR deletes its HLD or an epic: under none
     rm -f "${view}/${p}"
   done <<< "${info}"
-  [[ -z "${plan}" ]] || cmp -s <(hld_body "${plan}") <(hld_body "${view}/hld/${plan##*/}") || return 0
+  [[ -z "${plan}" ]] || plan_head "${plan}" "${view}/hld/${plan##*/}" || return 0
   {
     for p in ${s}; do printf '%s\n' "$(item_hld "${BOARD}/stories/${p}.md")"; done
     while [[ -n "${head}" ]] && IFS= read -r p; do
