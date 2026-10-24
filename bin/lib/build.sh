@@ -494,7 +494,7 @@ goal_preflight() {
 }
 
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names since lane lock=""
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names since
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -520,30 +520,18 @@ build_story() {
       || die "${slug} was held until its parents merged, and its build is kept in ${wt}: never start it again. Act on the Stacked line swarm.sh status prints for ${slug}, then review it again and run swarm.sh review ${slug} <PR URL>"
     die "${slug} has a build already (${branch} or ${wt} exists in ${src}): it has started, so wait on its builder, and to build it again from scratch remove that worktree and branch first"
   fi
-  # Its lane, kept from here on whatever conductor_lanes becomes (story_lane reads it back, folded): a
-  # lane: already there stays as written. A fix-main story is the lane conductor's that starts it.
+  # With conductor_lanes above 1 (a no-op at 1): its lane (lane_start), checked for a clash with another
+  # lane's started build and reserved under a short lock; written once the worktree exists.
   # shellcheck disable=SC2154 # assigned in another file
-  if (( CFG_conductor_lanes > 1 )) && [[ ! "$(get_fm "${story}" lane)" =~ ^[1-9][0-9]*$ ]]; then
-    lane=""
-    [[ "${slug}" != fix-main-* || "${SWARM_AGENT:-}" != conduct-* ]] || lane="$(conduct_lane "${SWARM_AGENT}")"
-    [[ -n "${lane}" ]] || lane="$(story_lane "${story}")"
-    set_fm "${story}" lane "${lane}"
-  fi
-  # A started build in another lane of its epic touching the same thing: --strict refuses, as
-  # touches_overlap does across epics. Checked here, not only in unblock's earlier list, under one
-  # lock held until the worktree exists, so two lanes' starts cannot both pass the check.
-  if (( CFG_conductor_lanes > 1 )); then
-    lock="${STATE_DIR}/lane-start.lock"; mkdir -p "${STATE_DIR}"; state_lock "${lock}"
-    # shellcheck disable=SC2064 # expand now; the path is this project's
-    trap "rmdir '${lock}' 2>/dev/null || true" EXIT
-    lane="$(lane_clash "${slug}" "$(story_lane "${story}")")"
-    [[ -z "${lane}" || -z "${strict}" ]] || die "${slug}: ${lane#held: }; start it once that build is gone"
-    [[ -z "${lane}" ]] || echo "warning: ${slug}: ${lane#held: }" >&2
-  fi
+  (( CFG_conductor_lanes == 1 )) || lane_start "${slug}" "${story}" "${strict}"
   parents="$(open_parents "${story}")"
   if [[ -n "${parents}" ]]; then stack_start "${story}" "${src}" "${wt}" "${parents}"
   else git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"; fi
-  [[ -z "${lock}" ]] || { rmdir "${lock}"; trap - EXIT; }
+  # The start has made its worktree: the lane is the story's from here on (a lane: there stays as written).
+  if [[ -n "${LANE_RESERVED}" ]]; then
+    [[ "$(get_fm "${story}" lane)" =~ ^[1-9][0-9]*$ ]] || set_fm "${story}" lane "${LANE_PICKED}"
+    rm -f "${LANE_RESERVED}"; trap - EXIT
+  fi
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
   story_brief "${slug}" "${src}" "${base}" > "${prompt}"
@@ -558,6 +546,31 @@ build_story() {
   # Once the brief is taken up: mid-turn the goal sets at once and costs one extra short turn; after a
   # short first turn that already ended, it starts a turn of its own.
   [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief "${since}"
+}
+
+# lane_start <slug> <story file> <strict> — a start's lane, with conductor_lanes above 1: its lane:
+# (folded, story_lane), else a fix-main story's starting lane conductor's, else story_lane's. Under
+# .swarm/state/lane-start.lock, held only for this check, a story of its epic in another lane whose build
+# has started or is starting (lane_clash) refuses it with --strict, else is warned of; then the start
+# is reserved (.swarm/state/lane-start/<slug>, its lane), which lane_clash counts as started, and removed
+# on exit unless build_story clears it. Sets LANE_PICKED and LANE_RESERVED.
+LANE_PICKED=""; LANE_RESERVED=""
+lane_start() {
+  local clash
+  LANE_PICKED=""
+  [[ "$(get_fm "$2" lane)" =~ ^[1-9][0-9]*$ || "$1" != fix-main-* || "${SWARM_AGENT:-}" != conduct-* ]] \
+    || LANE_PICKED="$(conduct_lane "${SWARM_AGENT}")"
+  [[ -n "${LANE_PICKED}" ]] || LANE_PICKED="$(story_lane "$2")"
+  mkdir -p "${STATE_DIR}/lane-start"
+  note_lock "${STATE_DIR}/lane-start" || die "$1: another story's start holds ${STATE_DIR}/lane-start.lock; retry in a moment"
+  clash="$(lane_clash "$1" "${LANE_PICKED}")"
+  if [[ -n "${clash}" && -n "$3" ]]; then rmdir "${STATE_DIR}/lane-start.lock"; die "$1: ${clash#held: }; start it once that build is gone"; fi
+  LANE_RESERVED="${STATE_DIR}/lane-start/$1"
+  echo "${LANE_PICKED}" > "${LANE_RESERVED}"
+  rmdir "${STATE_DIR}/lane-start.lock"
+  # shellcheck disable=SC2064 # expand now; the path is this project's
+  trap "rm -f '${LANE_RESERVED}'" EXIT
+  [[ -z "${clash}" ]] || echo "warning: $1: ${clash#held: }" >&2
 }
 
 # review_agent <slug> <PR URL> — start review-<slug> on a story's PR in the story's worktree and tab,
@@ -918,7 +931,7 @@ merge only your lane's stories: the ones \`swarm.sh unblock --startable ${arg} -
 the ones whose build started in your lane. A story's lane is the \`lane:\` line in its front matter or in
 ${BOARD_STATE_DIR}/stories/<slug>, written when its build starts; one above ${CFG_conductor_lanes} counts as
 (lane - 1) mod ${CFG_conductor_lanes} + 1. Watch with \`swarm.sh watch ${watch} --lane ${CONDUCT_LANE}\`, which reports
-only your lane's PRs. A \`startable:\` line that ends \`(held: clashes with <other> in lane <j> ...)\` touches
+only your lane's PRs. A \`startable:\` line whose note starts \`(held: clashes with <other> in lane <j>\` touches
 what another lane is building: do not start it; run \`swarm.sh hold <slug> '<why>'\` for it, and start it
 in a later wave, once that line is gone. Never start, tell, close, review or merge another lane's story
 or PR, even when \`swarm.sh status\` names it: its own conductor has it. Leave it, and wait on.
@@ -1291,9 +1304,16 @@ conductor_key() {
   # shellcheck disable=SC2012 # newest first; brief names are epic slugs, [a-z0-9-]
   while IFS= read -r f; do
     e="$(basename "${f}" .md)"; e="${e#conduct-}"
-    [[ "$(conductor_name "${e}")" == "${want}" ]] && { echo "${e}"; return; }
-    [[ "${e}" =~ ^(.+)\.l([1-9][0-9]*)$ && "$(conductor_name "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}")" == "${want}" ]] && { echo "${e}"; return; }
+    # A lane's brief only against its lane's name: a cut lane-less name can equal the brief's cut slug.
+    if [[ "${e}" =~ ^(.+)\.l([1-9][0-9]*)$ ]]; then
+      [[ "$(conductor_name "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}")" != "${want}" ]] || { echo "${e}"; return; }
+    elif [[ "$(conductor_name "${e}")" == "${want}" ]]; then echo "${e}"; return; fi
   done < <(ls -t "${PROJECT_DIR}/.swarm/briefs"/conduct-*.md 2>/dev/null)
+  # No brief: an epic on the board whose lane-less conductor has the name (one with only lane briefs).
+  while IFS= read -r f; do
+    e="$(basename "${f}" .md)"
+    [[ "$(conductor_name "${e}")" != "${want}" ]] || { echo "${e}"; return; }
+  done < <(ls "${BOARD}/epics"/*.md 2>/dev/null)
   echo "${want#conduct-}"
 }
 
@@ -1324,12 +1344,18 @@ epic_env() {
 }
 
 # conduct_clash <epic>|backlog <lane> — die, naming it, when a conductor of <epic> under another
-# conductor_lanes is running (a lane-less one beside lanes, or a lane past N), or when lane <lane>'s
-# name is another epic's lane-less conductor's (an epic named <epic>-l<lane>, or a cut at 32).
+# conductor_lanes is running (a lane-less one beside lanes, or a lane past N), when a running conductor
+# of another epic holds the name this one would take (lane 2 of foo, conduct-foo-l2, for a lane-less
+# conduct foo-l2), or when lane <lane>'s name is another epic's lane-less conductor's (an epic named
+# <epic>-l<lane>, or a cut at 32).
 conduct_clash() {
-  local c n e
+  local c n e want
+  want="$(conductor_name "$1" "$2")"
   while IFS= read -r c; do
-    [[ -n "${c}" && "$(conduct_epic "${c}")" == "$1" ]] || continue
+    [[ -n "${c}" ]] || continue
+    [[ "${c}" != "${want}" || "$(conduct_epic "${c}")" == "$1" ]] \
+      || die "conduct: ${want} is the name of $(conduct_epic "${c}")'s running conductor; let it report and close it first, or rename ${1}"
+    [[ "$(conduct_epic "${c}")" == "$1" ]] || continue
     n="$(conduct_lane "${c}")"
     if [[ -z "$2" && -n "${n}" ]] || [[ -n "$2" && ( -z "${n}" || ${n} -gt ${CFG_conductor_lanes} ) ]]; then
       die "conduct: ${c} runs for ${1} under another conductor_lanes; let it report and close it (swarm.sh close ${c}) first"

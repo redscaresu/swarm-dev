@@ -1482,10 +1482,8 @@ note_wake_now() {
   rmdir "$2.lock"
   [[ ${rc} -eq 0 ]] || return 0
   arg="$(conduct_epic "$1")"; [[ "${arg}" != backlog ]] || arg=--backlog
-  # A lane conductor that outlived a lower conductor_lanes reads its lane folded, as story_lane folds, or all with 1.
-  lane="$(conduct_lane "$1")"
-  # shellcheck disable=SC2154 # assigned in another file
-  [[ -z "${lane}" ]] || (( CFG_conductor_lanes == 1 )) || arg+=" --lane $(( (lane - 1) % CFG_conductor_lanes + 1 ))"
+  # A lane conductor's own lane (unblock folds one past a lowered conductor_lanes).
+  lane="$(conduct_lane "$1")"; arg+="${lane:+ --lane ${lane}}"
   if f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")"; then
     printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then run swarm.sh unblock --startable %s and start each story it prints as startable:, by the rule in your brief. Then end your turn, leaving any wait or watch you have running alone; start one only if none runs.\n' "$2.md" "$2.reading.md" "$2.reading.md" "${arg}" > "${f}"
     (deliver_prompt "$1" "${f}" "$3" once) 2>/dev/null || rc=$?
