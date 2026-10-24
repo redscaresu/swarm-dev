@@ -234,15 +234,15 @@ pr() {
   echo "[${l}]" > "${FX}/repos_o_r_pulls_${n}_files_per_page=100"
 }
 at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=h$1"; }   # at <n> <path> — <path>'s copy at #<n>'s head
-# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics (links
-# to the epics, then ${EXTRA}) at the head, and epics p-one and p-two added with hld: <hld>.
+# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics links at
+# the head, and epics p-one and p-two added with hld: <hld>.
 planned() {
   local h="$2" g
   pr "$1" docs/epics/p-one.md docs/epics/p-two.md "docs/hld/$2.md"
   item "$(at "$1" docs/epics/p-one.md)" "status: active" "hld: ${h}"
   item "$(at "$1" docs/epics/p-two.md)" "status: active" "hld: ${3:-${h}}"
   g="$(get "${B}/hld/$2.md" grants)"
-  EPICS=$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n'"${EXTRA:-}" \
+  EPICS=$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n' \
     hld "$(at "$1" "docs/hld/$2.md")" "title: Plan" "status: $(get "${B}/hld/$2.md" status)" "planned: 2026-10-24" ${g:+"grants: ${g}"}
 }
 get() { sed -n "s/^$2: //p" "$1" | head -1; }   # get <file> <key> — its first <key>: value
@@ -276,15 +276,6 @@ planned 38 plan; rm "$(at 38 docs/hld/plan.md)"
 expect plan-pr-deleting-hld-none https://github.com/o/r/pull/38 none
 planned 39 plan 2026-01-01-b
 expect plan-pr-epic-under-other-hld-none https://github.com/o/r/pull/39 none
-# A # heading ends ## Epics too: a changed line under the # Appendix that follows it is none.
-AFTER=$'# Appendix\nthe appendix\n' hld "${B}/hld/plan-app.md" "title: Plan" "status: agreed" "grants: [merge]"
-AFTER=$'# Appendix\nthe appendix\n' planned 40 plan-app; sed -i.bak 's/^the appendix$/a new appendix/' "$(at 40 docs/hld/plan-app.md)"
-expect plan-pr-line-under-higher-heading-none https://github.com/o/r/pull/40 none
-# A ## Epics line in a code fence is no heading: an HLD with a fence is none, so a changed line after
-# the fenced ## Epics is not let through.
-BEFORE=$'```\n## Epics\nfenced line\n```\n' hld "${B}/hld/plan-fence.md" "title: Plan" "status: agreed" "grants: [merge]"
-BEFORE=$'```\n## Epics\nfenced line\n```\n' planned 41 plan-fence; sed -i.bak 's/^fenced line$/a new fenced line/' "$(at 41 docs/hld/plan-fence.md)"
-expect plan-pr-fenced-epics-line-none https://github.com/o/r/pull/41 none
 # planned: and ## Epics set on agreed plan with no epic beside them: none.
 planned 42 plan; pr 42 docs/hld/plan.md
 expect plan-pr-agreed-hld-only-none https://github.com/o/r/pull/42 none
@@ -316,19 +307,31 @@ pr 48 docs/hld/plan.md
 unread finish-pr-none-head-unread https://github.com/o/r/pull/48
 unread story-pr-touching-hld-head-unread https://github.com/o/r/pull/4
 unread plan-pr-draft-hld-head-unread https://github.com/o/r/pull/32
-# A # or ## heading hld_body cannot see (indented, setext, after a tab) after ## Epics: none, so a
-# changed line under it is not let through.
-for c in "indented:   ## Risks" $'setext:Risks\n-----' $'tab:#\tRisks'; do
-  h="plan-${c%%:*}"
-  AFTER="${c#*:}"$'\nthe risk\n' hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
-  AFTER="${c#*:}"$'\nthe risk\n' planned 50 "${h}"; sed -i.bak 's/^the risk$/a new risk/' "$(at 50 "docs/hld/${h}.md")"
-  expect "plan-pr-${c%%:*}-heading-none" https://github.com/o/r/pull/50 none
-done
-# The head adds an open fence, an open HTML comment or a hidden heading among its ## Epics links: none.
-for c in 'fence:```' 'comment:<!--' 'heading:   ## Notes'; do
-  EXTRA="${c#*:}"$'\n' planned 51 plan
-  expect "plan-pr-head-adds-${c%%:*}-none" https://github.com/o/r/pull/51 none
-done
+# Only lines after the board's last ## Epics may change. Each HLD hides a ## Epics line or a heading
+# (in <pre>, <details>, a code fence, a list item, indented, setext): #40 changes a line before the
+# last ## Epics and is none; #41 changes only lines after it and is under the HLD, so a code fence in
+# Design no longer forces none.
+# bypass <name> <before ## Epics> <after its links> <line to change before it> — both PRs on plan-<name>.
+bypass() {
+  local h="plan-$1"
+  BEFORE="$2" AFTER="$3" hld "${B}/hld/${h}.md" "title: Plan" "status: agreed" "grants: [merge]"
+  BEFORE="$2" AFTER="$3" planned 40 "${h}"; sed -i.bak "s/^$4\$/changed/" "$(at 40 "docs/hld/${h}.md")"
+  expect "plan-pr-$1-before-last-epics-none" https://github.com/o/r/pull/40 none
+  BEFORE="$2" AFTER="$3" planned 41 "${h}"; sed -i.bak 's/^none$/still open/; s/^the risk$/a new risk/' "$(at 41 "docs/hld/${h}.md")"
+  expect "plan-pr-$1-after-last-epics" https://github.com/o/r/pull/41 "$(printf '%s\nmerge' "${B}/hld/${h}.md")"
+}
+bypass pre $'<pre>\n## Epics\nhidden\n</pre>\n' '' hidden
+bypass details $'<details>\n## Epics\nhidden\n</details>\n' '' hidden
+bypass fence $'```\n## Epics\nhidden\n```\n' '' hidden
+bypass list '' $'- ## Risks\nthe risk\n' 'the design'
+bypass indented $'   ## Epics\nhidden\n' $'   ## Risks\nthe risk\n' hidden
+bypass setext $'Epics\n-----\nhidden\n' $'Risks\n-----\nthe risk\n' hidden
+# A plan PR whose head cannot be read, and one on an HLD with no ## Epics line: none.
+planned 56 plan; echo '{"headRefOid":"","changedFiles":3}' > "${FX}/pr.56"
+expect plan-pr-no-head-none https://github.com/o/r/pull/56 none
+item "${B}/hld/plan-noepics.md" "title: Plan" "status: agreed" "grants: [merge]"
+planned 57 plan-noepics
+expect plan-pr-no-epics-heading-none https://github.com/o/r/pull/57 none
 # planned: on the head: two lines, a change to the board's, or the board's deleted is none; the
 # board's kept is plan-p.
 hld "${B}/hld/plan-p.md" "title: Plan" "status: agreed" "planned: 2026-10-01" "grants: [merge]"
