@@ -28,7 +28,8 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 1. **Write the work.** `/swarm-dev:epic <title>` opens a co-author agent in its own pane. Together
    you write the epic: the problem and its evidence, goals that can be checked (**Done when**), what
    is out of scope, and your part. A reviewer agent attacks the draft. Nothing is planned until you
-   agree it.
+   agree it. `swarm.sh board-pr` refuses a board PR that sets an epic `active` without your
+   agreement, a parent epic, an HLD that grants `epics`, or `lead_epics = on`.
 2. **Plan.** `/swarm-dev:swarm` splits the agreed epic into stories of one PR each. A survey agent
    reads the code, a lead agent writes the stories, and skeptic agents (on risky stories only), codex and a critic try to
    refute them. You approve the result, which is then written to the board. An epic too large for
@@ -98,7 +99,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, and how long ready work sat with no build while its conductor ran), how each model did, and which agents spend GitHub's API budget. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
+| `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, and how long ready work sat with no build while its conductor ran), how each model did, what each review round found, and which agents spend GitHub's API budget. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
 lists them all.
@@ -119,6 +120,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. Under `merge = human`, the lead merges a release only when every story merged since
   the last tag is under an agreed HLD that lists `release`.
+- Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
+  `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.
