@@ -187,3 +187,23 @@ red mains, flaky tests, stalls, leftover-process reaps, generic lead memories) a
 story; the generic rules moved into swarm-dev where each is enforced, with
 `swarm.sh rules --from-memory <dir>`; load reaping and a machine-wide CPU budget; and the
 follow-ups listed above fixed or dropped with a reason.
+
+### Test speed (added 2026-10-24, at the user's request)
+
+The user wants part of the first HLD spent on making the tests faster. Evidence from 2026-10-24:
+- A builder's full local `make test` took 20 to 55 minutes. Up to 8 suites ran at once at JOBS=3
+  or 4, with the load average at 45 to 83 on 10 CPUs. CI's sharded run takes about 3.8 minutes
+  (ci-three-minutes).
+- Every review round reruns the full suite locally, and CI runs it again on the same head.
+  plan-pr-grant took 9 rounds.
+- The user kept the full local suite for now (2026-10-22, and again on 2026-10-24) and asked for
+  data instead: test-run-log (#477) logs each run's duration, JOBS, load and concurrent runs, and
+  `flow`'s `test_runs` section groups them by concurrency.
+
+The question for the HLD is how much of the time is contention and how much is the suite itself.
+It should read a few days of `test_runs` data first, then set a target that can be checked (for
+example, p90 of a builder's run under 10 minutes). The options to weigh:
+- a machine-wide cap on concurrent suites;
+- a builder runs only the tests for what it touched, with CI's full run as the gate;
+- one full run per head, not both a local run and CI;
+- fixing the slowest test files (the story slow-test-files).
