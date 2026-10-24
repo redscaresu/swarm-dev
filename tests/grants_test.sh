@@ -2,7 +2,9 @@
 # grants_test.sh — swarm.sh grants: the agreed HLD over a story, epic or PR and its grants, on a
 # fixture board. A story walks epic: then parent: up to an epic with hld:; a draft, superseded or
 # missing HLD, a story with no epic and a parent: cycle print none; a bad grant dies with the file and
-# line. gh is a stub on PATH answering a PR's files and head contents from ${FX}.
+# line. A name that is no story or epic but an HLD in hld/ is that HLD (an agreed one prints itself and
+# its grants, any other none); a story or epic of the same name wins; a path as the name dies with bad
+# slug. gh is a stub on PATH answering a PR's files and head contents from ${FX}.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
