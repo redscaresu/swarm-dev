@@ -21,7 +21,7 @@ check() { # <name> <output> <exact expected output>
 # sites <case> — run one case in a fresh project, in a subshell with agents.sh and lifecycle.sh
 # sourced and their helpers stubbed, and print the incident lines' command, target and outcome.
 sites() (
-  PROJECT_DIR="${ROOT}/p-$1"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_goal=off
+  PROJECT_DIR="${ROOT}/p-$1"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_goal=off; CFG_step_up_findings=3; CFG_top_rung_rounds=2
   mkdir -p "${PROJECT_DIR}"
   # shellcheck source=bin/lib/agents.sh
   source "${REPO}/bin/lib/agents.sh"
@@ -83,7 +83,7 @@ check "a stalled incident between two waits does not end a login episode" "$(sit
   "$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tstalled: working 40 min; longest-running: pid 1, 40 min: sleep 9')"
 # With escalate_ladder set, a stall stepped up prints step-up's line, then the longest-running one.
 ladder() (
-  PROJECT_DIR="${ROOT}/p-ladder"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_goal=off
+  PROJECT_DIR="${ROOT}/p-ladder"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_goal=off; CFG_step_up_findings=3; CFG_top_rung_rounds=2
   mkdir -p "${PROJECT_DIR}"
   # shellcheck source=bin/lib/agents.sh
   source "${REPO}/bin/lib/agents.sh"
