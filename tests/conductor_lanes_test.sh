@@ -67,12 +67,13 @@ lane_of() { local c; c="$(printf '%s' "$1" | cksum)"; echo $(( ${c%% *} % $2 + 1
 startable() { run unblock --startable "$@" | sed -n 's/^startable: \([^ ]*\).*/\1/p' | sort | paste -sd' ' -; }
 
 # --- The config key: a whole number of 1 or more.
+got=""
 for bad in 0 -1 x 1.5 ""; do
   lanes "${bad}"
-  check "conductor_lanes = '${bad}' is refused" "yes" "$(has "conductor_lanes" "$(run config conductor_lanes || true)")"
   out="$(run config conductor_lanes || echo "exit $?")"
-  check "conductor_lanes = '${bad}' fails" "yes" "$(has "exit 1" "${out}")"
+  got+="$(grep -q "conductor_lanes must be" <<< "${out}" && grep -q "exit 1" <<< "${out}" && echo y || echo "n(${bad})")"
 done
+check "conductor_lanes of 0, -1, x, 1.5 or nothing is refused, naming the key" "yyyyy" "${got}"
 : > "${p}/.claude/swarm/config"
 check "conductor_lanes defaults to 1" "1" "$(run config conductor_lanes)"
 
@@ -119,6 +120,53 @@ check "with conductor_lanes = 2, the story started in lane 2 is in lane 2, not l
   "$(has "${mv}" "$(startable --backlog --lane 2)")|$(grep -qw "${mv}" <<< "$(startable --backlog --lane 1)" && echo yes || echo no)"
 check "with conductor_lanes = 2, the lane: 3 story folds onto lane 1, so it is not stranded" "yes" \
   "$(has "${pin}" "$(startable --backlog --lane 1)")"
+# Built while folded, the pinned story keeps lane: 3 as written: back at 3 lanes it is lane 3's again.
+run story "${pin}" >/dev/null 2>&1 || true
+check "story keeps a pinned lane: 3 as written when conductor_lanes is 2" "" \
+  "$(grep '^lane: [^3]' "${p}/.swarm/board-state/stories/${pin}" 2>/dev/null || true)"
+lanes 3
+g -C "${p}" worktree remove --force "${ROOT}/proj-wt/${pin}" 2>/dev/null; g -C "${p}" branch -qD "story/${pin}" 2>/dev/null || true
+check "back at conductor_lanes = 3, the pinned story built at 2 is in lane 3" "yes" "$(has "${pin}" "$(startable --backlog --lane 3)")"
+
+# --- Two backlog stories in lanes 1 and 2 touch one function: while lane 1's builds, lane 2 holds its.
+item "${b}" stories/cx.md "status: ready" "kind: code" "lane: 1" "touches: [bin/x.sh:f]"
+item "${b}" stories/cy.md "status: ready" "kind: code" "lane: 2" "touches: [bin/x.sh:f]"
+item "${b}" stories/cz.md "status: ready" "kind: code" "lane: 2" "touches: [bin/z.sh:g]"
+mkdir -p "${ROOT}/proj-wt/cx"
+out="$(run unblock --startable --backlog --lane 2)"
+check "unblock --startable --lane 2 holds a story that clashes with lane 1's running build, and only that one" "yes|yes" \
+  "$(has "startable: cy (held: clashes with cx in lane 1 on bin/x.sh:f)" "${out}")|$(has "startable: cz" "$(grep -v held <<< "${out}")")"
+out="$(run story --strict cy || true)"
+check "story --strict refuses lane 2's story while lane 1's clashing build runs, and makes no worktree" "yes|no" \
+  "$(has "cy: clashes with cx in lane 1 on bin/x.sh:f" "${out}")|$([[ -d "${ROOT}/proj-wt/cy" ]] && echo yes || echo no)"
+# Another lane's start holds the lane-start lock: this start waits on it, then stops with no worktree.
+mkdir -p "${p}/.swarm/state/lane-start.lock"
+out="$(SWARM_LOCK_WAIT=1 run story --strict cz || true)"
+check "while another lane's start holds the lane-start lock, story waits, then stops with no worktree" "yes|no" \
+  "$(has "lane-start is locked" "${out}")|$([[ -d "${ROOT}/proj-wt/cz" ]] && echo yes || echo no)"
+rmdir "${p}/.swarm/state/lane-start.lock"
+rmdir "${ROOT}/proj-wt/cx"
+check "once lane 1's build is gone, lane 2's story is startable again" "no" "$(grep -q 'cy (held' <<< "$(run unblock --startable --backlog --lane 2)" && echo yes || echo no)"
+rm "${b}/stories/cx.md" "${b}/stories/cy.md" "${b}/stories/cz.md"
+
+# --- watch --lane: only its lane's PRs, so one lane's watch never takes another lane's report.
+item "${b}" stories/wa.md "status: review" "kind: code" "lane: 1"
+item "${b}" stories/wb.md "status: review" "kind: code" "lane: 2"
+cat > "${ROOT}/bin/gh" <<'EOF'
+#!/bin/sh
+case "$*" in
+  "repo view"*) echo o/r ;;
+  "api --paginate repos/o/r/pulls"*) printf '2 bbbbbbbbbb story/wb 5\n1 aaaaaaaaaa story/wa 5\n' ;;
+  "api repos/o/r/pulls/"*) echo MERGEABLE ;;
+  *check-runs*) echo "1 0" ;;
+  *) echo "[]" ;;
+esac
+EOF
+check "watch --backlog --lane 1 reports lane 1's PR, passing lane 2's listed first" "o/r #1 story/wa checks finished on aaaaaaa" "$(run watch --backlog --lane 1)"
+check "then watch --backlog --lane 2 still reports lane 2's PR" "o/r #2 story/wb checks finished on bbbbbbb" "$(run watch --backlog --lane 2)"
+check "watch --lane with no --epic or --backlog is refused" "yes" "$(has "--lane goes after --epic <slug> or --backlog" "$(run watch --lane 1 || true)")"
+printf '#!/bin/sh\necho "[]"\n' > "${ROOT}/bin/gh"
+rm "${b}/stories/wa.md" "${b}/stories/wb.md"
 
 # --- Lane conductor names: distinct and at most 32 characters, epic and backlog alike.
 lanes 3
@@ -143,6 +191,11 @@ check "conduct --backlog --lane 2 starts the lane's conductor" "yes" "$(has "age
 check "the lane brief runs unblock --startable --backlog --lane 2, keeps to its lane, and has its own report and inbox" "yes|yes|yes|yes|yes" \
   "$(has 'swarm.sh unblock --startable --backlog --lane 2' "${brief}")|$(has "You are lane 2 of 3 conductors" "${brief}")|$(has "Never start, tell, close, review or
 merge another lane's story or PR" "${brief}")|$(has ".swarm/conduct-backlog.l2.report.md" "${brief}")|$(has ".swarm/inbox/${l2}.md" "${brief}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the lane brief watches its lane, folds a lane above 3, holds a cross-lane clash and scopes the Stacked rule" "yes|yes|yes|yes" \
+  "$(has 'swarm.sh watch --backlog --lane 2` in the background' "${brief}")|$(has '(lane - 1) mod 3 + 1' "${brief}")|$(has '(held: clashes with <other> in lane <j> ...)' "${brief}")|$(has 'Yours is a story with no `epic:` in your lane' "${brief}")"
+check "conduct --backlog --lane 2 logs its start as --backlog.l2" "1" \
+  "$(awk -F'\t' '$2 == "conduct" && $3 == "--backlog.l2" && $5 == "ok"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
 
 # --- A note to the lane-less name reaches every lane's inbox.
 run conduct --backlog --lane 1 >/dev/null
@@ -152,14 +205,24 @@ run tell "${bn}" note "${ROOT}/note" >/dev/null || true
 check "a note to the lane-less backlog conductor goes to each running lane's inbox" "yes|yes" \
   "$(has "hello lanes" "$(cat "${p}/.swarm/inbox/${l1}.md" 2>&1)")|$(has "hello lanes" "$(cat "${p}/.swarm/inbox/${l2}.md" 2>&1)")"
 
-# --- Epics foo and foo-l1: foo's lane 1 conductor (conduct-foo-l1) is still foo's lane 1, so a note to
-# it lands in its own inbox rather than fanning out to foo-l1's lanes.
+# --- Epics foo and foo-l1: foo's lane 1 conductor would take foo-l1's conductor's name, so it is refused.
 item "${b}" epics/foo.md "status: active"; item "${b}" epics/foo-l1.md "status: active"
-run conduct foo --lane 1 >/dev/null
-echo "for foo lane 1" > "${ROOT}/note2"
-run tell conduct-foo-l1 note "${ROOT}/note2" >/dev/null || true
-check "with an epic foo-l1 on the board, a note to foo's lane 1 conductor reaches its inbox" "yes" \
-  "$(has "for foo lane 1" "$(cat "${p}/.swarm/inbox/conduct-foo-l1.md" 2>&1)")"
+check "conduct foo --lane 1 is refused while an epic foo-l1 holds the name conduct-foo-l1" "yes|no" \
+  "$(has "the epic foo-l1's conductor's name" "$(run conduct foo --lane 1 || true)")|$(grep -q '^agent start conduct-foo-l1 ' "${ROOT}/herdr.log" && echo yes || echo no)"
+
+# --- An epic's lane brief watches with --epic <epic> --lane <k>.
+item "${b}" epics/w.md "status: active"
+run conduct w --lane 2 >/dev/null
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "an epic lane's brief watches with --epic w --lane 2, everywhere it names watch" "yes|no" \
+  "$(has 'Watch with `swarm.sh watch --epic w --lane 2`' "$(cat "${p}/.swarm/briefs/conduct-w.l2.md" 2>&1)")|$(grep -q 'swarm.sh watch w ' "${p}/.swarm/briefs/conduct-w.l2.md" 2>/dev/null && echo yes || echo no)"
+
+# --- A lane-less conductor of e from conductor_lanes = 1 still runs: no lane of e starts beside it.
+lanes 1
+run conduct e >/dev/null
+lanes 3
+check "with e's lane-less conductor running, conduct e --lane 1 is refused naming it" "yes|no" \
+  "$(has "conduct-e runs for e under another conductor_lanes" "$(run conduct e --lane 1 || true)")|$(grep -q '^agent start conduct-e-l1 ' "${ROOT}/herdr.log" && echo yes || echo no)"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

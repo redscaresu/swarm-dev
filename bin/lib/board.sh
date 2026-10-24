@@ -316,13 +316,15 @@ running_conductors() {
 }
 
 # collect_pick <conductors> — the conductor next_step looks at first, of <conductors> (running_conductors'
-# lines): the first, unless it has reported while a lane of its epic or backlog in <conductors> has
-# not; then the first that has not. An epic with lanes is collected once every lane has reported.
+# lines): the first, but a lane conductor that has reported while a lane of its epic or backlog in
+# <conductors> has not is passed over until its session is idle, so a reported lane is collected (and
+# can start again for stories readied since) without waiting for the slowest lane. Its epic is
+# collected once every lane has reported.
 collect_pick() {
   local c d
   while IFS= read -r c; do
     [[ -n "${c}" ]] || continue
-    if [[ -f "$(conductor_report "${c}")" && -n "$(conduct_lane "${c}")" ]]; then
+    if [[ -f "$(conductor_report "${c}")" && -n "$(conduct_lane "${c}")" && "$(session_state "${c}")" != idle ]]; then
       while IFS= read -r d; do
         [[ -n "${d}" && ! -f "$(conductor_report "${d}")" && -n "$(conduct_lane "${d}")" && "$(conduct_epic "${d}")" == "$(conduct_epic "${c}")" ]] || continue
         c=""; break
@@ -335,29 +337,36 @@ collect_pick() {
 
 # lane_conduct_step [running] — with conductor_lanes above 1, next_step's conduct step for the first
 # lane that has buildable stories (board_ready --started, as conduct_ready groups them: an active
-# epic's, or the backlog's) and no conductor running: `conduct <epic>|--backlog --lane <k>`, its why,
-# then `also: conduct <epic>|--backlog --lane <k>` for each other such lane. A lane conduct_stop stops
-# (its last report would stop a new one the same way) is skipped; with no other lane to start, and no
-# conductor working, the first such is the step, conduct_stop's line its why, for the lead to stop on.
-# With running (another conductor works), fix-main stories are left out, as conduct_ready leaves them:
-# that conductor was told to build it. Fails, printing nothing, when there is none or conductor_lanes is 1.
+# epic's, or the backlog's) and that a conductor may start for (conduct_why, conduct_ready's own test):
+# `conduct <epic>|--backlog --lane <k>`, its why, then `also: conduct <epic>|--backlog --lane <k>` for
+# each other such lane. A lane whose own conductor runs is skipped. Any other lane conduct_why holds
+# back is skipped too; with no lane to start and no conductor working, the first such is the step, its
+# `no ... started:` line the why, for the lead to stop on. Like conduct_ready, it names none while a
+# working conductor is stopped on an expired login or an API error (conductor_stop). With running
+# (another conductor works), fix-main stories are left out, as conduct_ready leaves them: that
+# conductor was told to build it. Fails, printing nothing, when there is none or conductor_lanes is 1.
 lane_conduct_step() {
-  local ready running e k slugs arg why stop first="" also="" held=""
+  local ready c e k slugs arg why stop first="" also="" held=""
   # shellcheck disable=SC2154 # assigned in another file
   (( CFG_conductor_lanes > 1 )) || return 1
   ready="$(board_ready --started)"
   [[ -z "${1:-}" ]] || ready="$(awk '$1 !~ /^fix-main-/' <<< "${ready}")"
   [[ -n "${ready}" ]] || return 1
-  running=" "; [[ "${HERDR_ENV:-}" != 1 ]] || running=" $(running_conductors | tr '\n' ' ') "
+  if [[ "${HERDR_ENV:-}" == 1 ]]; then
+    while IFS= read -r c; do
+      [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
+      [[ -z "$(conductor_stop "${c}")" ]] || return 1
+    done <<< "$(running_conductors)"
+  fi
   while read -r e; do
     arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
     for ((k = 1; k <= CFG_conductor_lanes; k++)); do
       # shellcheck disable=SC2046 # slugs, [a-z0-9-]
       slugs="$(lane_slugs "${k}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"))"
-      [[ -n "${slugs}" && "${running}" != *" $(group_conductor "${e}" "${k}") "* ]] || continue   # loose-match: ok space-padded, so a whole name
+      [[ -n "${slugs}" ]] || continue
       # shellcheck disable=SC2086 # slugs, [a-z0-9-]
-      if stop="$(conduct_stop "${e}" "${k}" ${slugs})"; then
-        [[ -n "${held}" || -n "${1:-}" ]] || held="conduct ${arg} --lane ${k}"$'\n'"${stop}"
+      if stop="$(conduct_why "${e}" "${k}" ${slugs})"; then
+        [[ -z "${stop}" || -n "${held}" || -n "${1:-}" ]] || held="conduct ${arg} --lane ${k}"$'\n'"${stop}"
         continue
       fi
       if [[ -n "${first}" ]]; then also+=$'\n'"also: conduct ${arg} --lane ${k}"; continue; fi
@@ -395,9 +404,12 @@ conductors_queued() {
 # or the backlog's), once per repo (watch_repos warn: one that cannot be resolved is warned of and
 # skipped). Nothing when the scope cannot be read (watch_scope dies): next goes on.
 queued_lines() {
-  local e scope r
-  e="$(conduct_epic "$1")"
+  local e scope r lane
+  e="$(conduct_epic "$1")"; lane="$(conduct_lane "$1")"
   if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
+  # A lane conductor's own lane only (with one lane now, or a lane past it, all of its epic).
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${lane}" ]] || (( CFG_conductor_lanes == 1 || lane > CFG_conductor_lanes )) || scope+=(--lane "${lane}")
   (
     watch_scope "${scope[@]}"; watch_repos warn
     # Guarded: bash 3.2's set -u calls an empty array unbound, and no repo may have resolved.
@@ -1186,9 +1198,11 @@ unblock() {
 # finished, so after unblock (its last merge may ready another epic's stories) nothing is startable. A
 # line ends (stacked on <parents>) while depends_on has open stories, as story stacks it, and (its PR
 # <url> was closed unmerged) when the story's last event is reconcile's reopen, for the lead. With
-# <lane>, only the stories in that conductor lane (story_lane).
+# <lane>, only the stories in that conductor lane (story_lane), and a line ends (held: clashes with
+# <other> in lane <j> on <entries>) while a story of the same epic in another lane whose build has
+# started (a worktree, or in review) touches what it touches (lane_clash).
 unblock_startable() {
-  local want="$1" lane="${2:-}" slug e f open why
+  local want="$1" lane="${2:-}" slug e f open why held=""
   unblock
   if [[ "${want}" == --backlog ]]; then want=-
   else [[ -f "${BOARD}/epics/${want}.md" ]] || return 0; fi
@@ -1201,8 +1215,25 @@ unblock_startable() {
     if [[ "$(last_event "${slug}")" == $'reconcile	ok (reopened)' ]]; then
       why="its PR$(fm "${f}" prs | sed 's/^./ &/') was closed unmerged"
     fi
+    [[ -z "${lane}" ]] || held="$(lane_clash "${slug}" "${lane}")"
+    [[ -z "${held}" ]] || why="${held}"
     echo "startable: ${slug}${why:+ (${why})}"
   done < <(board_ready)
+}
+
+# lane_clash <slug> <lane> — "held: clashes with <other> in lane <j> on <entries>" for the first story of
+# <slug>'s own epic (or the backlog) outside lane <lane> whose build has started (its worktree exists,
+# or it is in review) and whose touches overlap <slug>'s (touches_rows, same epic included), else nothing.
+lane_clash() {
+  local other epic status entry mine j
+  mine="$(fm "${BOARD}/stories/$1.md" epic)"
+  while IFS=$'\t' read -r other epic status entry; do
+    [[ -n "${other}" && "${epic}" == "${mine:-none}" ]] || continue
+    j="$(story_lane "${BOARD}/stories/${other}.md")"
+    [[ "${j}" != "$2" ]] || continue
+    [[ "${status}" == review || "${status}" == held ]] || one_off_started "${other}" || continue
+    echo "held: clashes with ${other} in lane ${j} on ${entry}"; return 0
+  done <<< "$(SWARM_SAME_EPIC=1 touches_rows "$1" 2>/dev/null)"
 }
 
 # last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated.

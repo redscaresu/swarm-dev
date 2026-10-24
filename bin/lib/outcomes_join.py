@@ -168,18 +168,17 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
     if e[1] == "unblock":
         ready_at[e[2]].append(t)
     elif e[1] == "conduct":
-        conducting[e[2]].append(t)
+        conducting[run_key(e[2])].append(t)
     elif e[1] == "report" and secs(e[4][len("ok ("):-1]) is not None:
-        reported["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
+        reported[run_key(e[2])].append(secs(e[4][len("ok ("):-1]))
     elif e[1].split(":")[0] == "close":
         closed[agent_name(e[2])].append(t)
 
-def run_ends(epic):
-    # The times a conductor run of the epic ("" for the backlog's) could have ended: its agent's ok
-    # closes and its reports' times.
-    names = [agent_name("conduct-" + epic)] if epic else ["conduct-backlog", os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")]
-    report = os.path.join(os.path.dirname(sys.argv[3]), f"conduct-{epic or 'backlog'}.report.md")
-    return ([t for n in names if n for t in closed[n]] + reported[epic or "--backlog"]
+def run_ends(key):
+    # The times a conductor run of key (an epic, --backlog, or a lane's .l<k>) could have ended: its
+    # agent's ok closes and its reports' times.
+    report = run_report(os.path.dirname(sys.argv[3]), key)
+    return ([t for n in run_names(key) for t in closed[n]] + reported[key]
             + ([os.path.getmtime(report)] if os.path.exists(report) else []))
 
 def ready_time(slug, s):
@@ -193,10 +192,13 @@ def held(slug, epic, start):
     ready = ready_time(slug, s) if s is not None else None
     if ready is None:
         return ""
-    run = max((t for t in conducting[epic or "--backlog"] if t <= s), default=None)
-    if run is None or any(run < t <= s for t in run_ends(epic)):
+    # The latest run still going at s, of the epic's conductor or any of its lanes'.
+    key = epic or "--backlog"
+    runs = [r for k in [key] + [k for k in list(conducting) if k.startswith(key + ".l")]
+            if (r := max((t for t in conducting[k] if t <= s), default=None)) is not None and not any(r < t <= s for t in run_ends(k))]
+    if not runs:
         return "0"
-    return str(round((s - max(ready, run)) / 60))
+    return str(round((s - max(ready, max(runs))) / 60))
 
 # ready_wait: the minutes from a story's ready time (as held reads it, unclipped by any conductor run)
 # to its first build's start; 0 when no ready signal came before the start (it was readied only after),

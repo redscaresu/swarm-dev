@@ -19,7 +19,8 @@ check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
 
-# herdr: each new pane is w:<n>; agent start adds "<name> <pane>" to agents, which agent list reads.
+# herdr: each new pane is w:<n>; agent start adds "<name> <pane>" to agents, which agent list reads
+# (a third column, when a case writes one, is its status); agent read prints screen.<pane>.
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
@@ -33,8 +34,9 @@ case "$1 $2" in
   "tab list")         echo '{"result":{"tabs":[]}}' ;;
   "agent prompt")     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
+  "agent read")       cat "$H/screen.$3" 2>/dev/null ;;
   "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                           { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+                           { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, ($3 == "" ? "working" : $3), $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
 esac
 EOF
@@ -95,6 +97,11 @@ land() {
 swarm() { (cd "${p}" && env -u SWARM_PROJECT -u SWARM_AGENT HERDR_ENV=1 HERDR_PANE_ID=w:lead HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" \
   SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 SWARM_MERGE_CI_SECONDS=5 bash "${SWARM}" "$@" 2>&1); }
 step() { swarm next | sed -n 1p; }
+# collected <conductor> — the lead collected it: an ok close in events.tsv, as swarm.sh close logs one.
+collected() { printf '%s\tclose\t%s\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${p}/.swarm/events.tsv"; }
+# hook — the lead's stop hook in the project: nothing when it allows the stop, else its block decision.
+hook() { (cd "${p}" && echo "{\"cwd\":\"${p}\"}" | env -u SWARM_PROJECT -u SWARM_AGENT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" \
+  bash "$(dirname "${SWARM}")/../hooks/lead-stop.sh" 2>/dev/null); }
 # lane_of <slug> <n> — the lane a slug with no lane: line hashes to.
 lane_of() { local c; c="$(printf '%s' "$1" | cksum)"; echo $(( ${c%% *} % $2 + 1 )); }
 # a story slug in each of two lanes
@@ -141,13 +148,55 @@ check "next with lane 1 reported and lane 2 working waits on lane 2" "wait ${l2}
 touch "${p}/.swarm/conduct-backlog.l2.report.md"
 check "next with every lane reported collects lane 1" "collect ${l1}" "$(step)"
 # Collected, their reports newer than every story: a new conductor would stop as the last did.
-lane1="$(grep "^${l1} " "${ROOT}/agents")"; : > "${ROOT}/agents"
+lane1="$(grep "^${l1} " "${ROOT}/agents")"; : > "${ROOT}/agents"; collected "${l1}"; collected "${l2}"
 out="$(swarm next)"
 check "next with both lanes collected and nothing changed: lane 1's step, its why the stop" "conduct --backlog --lane 1|yes" \
   "$(sed -n 1p <<< "${out}")|$(grep -qF "no backlog conductor of lane 1 started: no story or epic changed after" <<< "${out}" && echo yes || echo "no, got: ${out}")"
 echo "${lane1}" > "${ROOT}/agents"; rm -f "${p}/.swarm/conduct-backlog.l1.report.md"
 check "next with lane 1 working and lane 2 stopped waits on lane 1" "wait ${l1}" "$(step)"
 rm -f "${p}/.swarm/conduct-backlog.l1.report.md" "${p}/.swarm/conduct-backlog.l2.report.md"
+
+# --- A reported lane is collected while another lane works, once its session is idle.
+echo "${lane2}" >> "${ROOT}/agents"; touch "${p}/.swarm/conduct-backlog.l1.report.md"
+printf 't\tconduct\t%s\tclaude\t-\t-\tsess-l1\n' "${l1}" >> "${p}/.swarm/agents.tsv"
+echo '[{"sessionId":"sess-l1","status":"idle"}]' > "${ROOT}/claude.json"
+check "next with lane 1 reported and idle while lane 2 works collects lane 1" "collect ${l1}" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" step)"
+rm -f "${p}/.swarm/conduct-backlog.l1.report.md"
+
+# --- Any working conductor stopped on an API error: no lane is named, as conduct_ready starts none.
+grep -v "^${l2} " "${ROOT}/agents" > "${ROOT}/agents.1"; mv "${ROOT}/agents.1" "${ROOT}/agents"
+echo "conduct-e-l1 w:99 idle" >> "${ROOT}/agents"; echo "w:99 conduct-e-l1" > "${p}/.swarm/state/e"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${ROOT}/screen.w:99"
+# _step: next's queued: lines would look up the stub's epic e-l1, which has no file.
+check "next with another conductor stopped on an API error names no lane start" "wait ${l1}" "$(swarm _step | sed -n 1p)"
+rm -f "${ROOT}/screen.w:99" "${p}/.swarm/state/e"; echo "${lane1}" > "${ROOT}/agents"
+
+# --- A lane-3 conductor that outlived conductor_lanes = 3 holds the stories that fold onto lane 1: no lane starts beside it.
+l3="$(swarm _conductor backlog 3)"; echo "${l3} w:98" >> "${ROOT}/agents"; echo "w:98 ${l3}" > "${p}/.swarm/state/l3"; : > "${ROOT}/agents.l1"
+grep -v "^${l1} " "${ROOT}/agents" > "${ROOT}/agents.1"; mv "${ROOT}/agents.1" "${ROOT}/agents"
+check "next with lane 3's conductor left from conductor_lanes = 3 offers no lane start" "wait ${l3}" "$(step)"
+rm -f "${p}/.swarm/state/l3"; : > "${ROOT}/agents"
+
+# --- Lanes held back with no conductor at work: the step's why says why, and the lead's stop hook lets it stop.
+sed -i.bak 's/^status: ready/status: blocked/' "${p}/docs/stories/${in2}.md"
+touch "${p}/.swarm/conduct-backlog.l1.report.md"; sleep 1; touch "${p}/docs/stories/${in1}.md"
+out="$(swarm next)"
+check "next with lane 1 gone and its report uncollected: its why says so, never a start" "conduct --backlog --lane 1|yes" \
+  "$(sed -n 1p <<< "${out}")|$(grep -qF "no conductor started: ${l1} is gone, and nobody collected" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+check "the lead's stop hook lets the lead stop on that step" "" "$(hook)"
+collected "${l1}"; echo "not started: ${in1} (build died)" > "${p}/.swarm/conduct-backlog.l1.report.md"; mkdir -p "${ROOT}/proj-wt/${in1}"
+sleep 1; touch "${p}/docs/stories/${in1}.md"; collected "${l1}"
+out="$(swarm next)"
+check "next with lane 1's report naming a dead build: its why carries the lane" "yes" \
+  "$(grep -qF "no backlog conductor of lane 1 started: ${p}/.swarm/conduct-backlog.l1.report.md lists ${in1} under not started:" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+check "the lead's stop hook lets the lead stop on the dead build" "" "$(hook)"
+rm -rf "${ROOT}/proj-wt/${in1}"; echo "done" > "${p}/.swarm/conduct-backlog.l1.report.md"; touch -t 202001010000 "${p}/docs/stories/${in1}.md"
+mkdir -p "${p}/.swarm/board-state/stories"; sleep 1; printf 'status: ready\n' > "${p}/.swarm/board-state/stories/${in1}"; collected "${l1}"
+out="$(swarm next)"
+check "next with lane 1's story readied by its state file alone: lane 1 may start" "conduct --backlog --lane 1|no" \
+  "$(sed -n 1p <<< "${out}")|$(grep -q "^no .* started:" <<< "${out}" && echo yes || echo no)"
+check "the lead's stop hook keeps the lead going on that step" "yes" "$([[ -n "$(hook)" ]] && echo yes || echo no)"
+mv "${p}/docs/stories/${in2}.md.bak" "${p}/docs/stories/${in2}.md"; rm -f "${p}/.swarm/conduct-backlog.l1.report.md" "${p}/.swarm/board-state/stories/${in1}"
 
 # --- conductor_lanes = 1: the steps as before.
 config; : > "${ROOT}/agents"; : > "${ROOT}/herdr.log"

@@ -379,19 +379,34 @@ lane k's, named `conduct-<epic>-l<k>` (the backlog's `conduct-backlog-<dir>-<has
 name stays at most 32 characters). `conduct` without `--lane` is refused. Each lane has its own brief,
 report (`.swarm/conduct-<epic>.l<k>.report.md`), inbox and tab. A story's lane is the `lane:` line in
 its front matter, or else the `cksum` of its slug mod N, plus 1. `swarm.sh story` writes it to the
-story's board state when its build starts, so a started story never changes lanes, even when N
-changes. A lane past a lowered N folds onto lane (lane - 1) mod N + 1, so no story is left without a
-conductor. `unblock --startable <epic>|--backlog --lane <k>` prints only lane k's stories, and the
-lane's brief tells its conductor to build, review and merge only its own stories and never touch
-another lane's PR. A `swarm.sh tell <conductor> note` to the name without a lane goes to every running
-lane's inbox. Conductors that start on their own (below) start one per lane that has ready stories,
-and the notes after `merge --board` go to each lane with its own stories. `swarm.sh next` prints
-`conduct <epic> --lane <k>` (or `conduct --backlog --lane <k>`) for the first lane with ready stories
-and no conductor running, even while another conductor works, and an `also: conduct ... --lane <k>`
-line after the why for each other such lane. It names `collect <conductor>` for a lane that has
-reported only once every running lane of its epic or backlog has. `swarm.sh status`, `wait` and `wait --until-report` take a lane
-conductor's name like any other, and `swarm.sh upgrade` pauses each lane's conductor for its own
-builders. With N = 1 nothing changes: no `--lane`, and the names above.
+story's board state when its build starts (a `lane:` already there stays as written; a fix-main
+story takes the lane of the conductor that starts it), so a started story never changes lanes, even
+when N changes. A lane past a lowered N counts as lane (lane - 1) mod N + 1 wherever it is read, so no
+story is left without a conductor. `unblock --startable <epic>|--backlog --lane <k>` prints only lane
+k's stories, and ends a line `(held: clashes with <other> in lane <j> on <entries>)` while a story of
+the same epic in another lane, whose build has started, touches the same `file:symbol`; the lane holds
+it until that build is gone. `swarm.sh watch --epic <epic>|--backlog --lane <k>` reports only lane k's
+PRs, so one lane's watch never takes another lane's report, and `next`'s `queued:` lines name the
+owning lane's conductor. The lane's brief tells its conductor to build, review and merge only its own
+stories and never touch another lane's PR. A `swarm.sh tell <conductor> note` to a name without a lane
+that no pane holds goes to every running lane of that epic. A lane's `conduct` and `report` lines in
+`events.tsv` name it as `<epic>.l<k>` (`--backlog.l<k>`), which `outcomes`, `flow` and the login
+incident check match to its conductor. No lane starts while a conductor of the epic from another N
+runs (a lane-less one, or a lane past N), nor when its name is another epic's conductor's (an epic
+named `<epic>-l<k>`). Conductors that start on their own (below) start one per lane that has ready
+stories, and the notes after `merge --board` go to each lane with its own stories. `swarm.sh next`
+prints `conduct <epic> --lane <k>` (or `conduct --backlog --lane <k>`) for the first lane with ready
+stories that a conductor may start for, by the same test those starts use, even while another
+conductor works, and an `also: conduct ... --lane <k>` line after the why for each other such lane. A
+lane held back by that test is passed over. When no lane may start and no conductor works, the first
+held lane is the step, with its `no ... started:` line as the why, and the lead stops there. Like those
+starts, `next` names no lane while a working conductor is stopped on an expired login or an API error.
+A lane that has reported is collected (`collect <conductor>`) while other lanes still work once its
+session is idle, so a story readied in its lane need not wait for the slowest lane; the epic is
+collected once every lane has reported. `swarm.sh status`, `wait` and `wait --until-report` take a lane
+conductor's name like any other. `swarm.sh upgrade` pauses each lane's conductor for its own builders,
+and a lane conductor from a higher N for the stories that now fold onto its lane. With N = 1 nothing
+changes: no `--lane`, and the names above.
 
 Conductors also start on their own, the backlog's and an epic's alike: after `swarm.sh merge
 --board` lands, once it has sent its notes (a conductor's own board merge included), and from
@@ -1056,7 +1071,8 @@ session log is gone starts at 00:00 local time on its agents.tsv day, converted 
 `swarm.sh close` keeps the Claude session log of each agent it closes (every agent in a tab it closes), because Claude Code deletes those after
 `cleanupPeriodDays` (30 by default) and they hold every tool call and the model of every turn. The log
 is copied, gzip'd, to `.swarm/sessions/<date>-<agent>-<session>.jsonl.gz`, once per session; a codex
-agent has none to keep. Nothing is redacted, because a list of what to scrub misses whatever it
+agent has none to keep, and neither has an agent whose name runs past 32 characters: `agents.tsv` keeps
+only the cut name, whose newest session may be another agent's that is still running. Nothing is redacted, because a list of what to scrub misses whatever it
 doesn't list, so the copy holds whatever the session held. The copy is readable by its owner only,
 and `.swarm/` is git-ignored: the archive stays on the machine, and is never committed or uploaded.
 Flow's `cost` section and `outcomes` read a session's live log while it exists and this copy once
@@ -1915,6 +1931,16 @@ first checks each tab's panes. It keeps a tab that holds an agent that is workin
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It prints each of those agents as `kept`, and still closes the conductor's own pane.
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
+close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
+name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or
+its full name gives. herdr and `swarm.sh` print agent names cut at 32 characters, so two long names
+can look the same, and a cut name matches no record. herdr's agent list stands in for a missing
+record only for a name shorter than 32 characters, which herdr holds exactly. When nothing is
+recorded under a longer name and herdr lists a live agent under its first 32 characters, that agent
+may be another's. close then closes, counts, clears and keeps nothing, and fails: close by the full
+recorded name, or close that pane by hand if it is the one you meant. With nothing recorded and
+nothing live under the cut, there is nothing to close by mistake, so the close goes on with no
+pane, as it does for a pane closed by hand.
 
 ## Releases
 

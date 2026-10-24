@@ -469,7 +469,9 @@ dispatch() {
             if [[ "${*: -1}" == --all ]]; then CLOSE_ALL=1; set -- "${@:1:$#-1}"; fi
             if [[ "${*: -1}" == --drop ]]; then CLOSE_DROP=1; set -- "${@:1:$#-1}"; fi
             [[ "${1:-}" != -* && "${2:-}" != -* ]] || die "close: --drop and --all go last, in that order: swarm.sh close <name> [cause] [--drop] [--all]"
-            close_agent "${1:?name}" "${2:-}" ;;
+            close_agent "${1:?name}" "${2:-}"
+            # A pane close refused (said above) fails the close: nothing was counted, cleared or kept.
+            [[ -z "${CLOSE_REFUSED}" ]] || die "close: no pane was closed for $1 (see above), and nothing was counted, cleared or kept" ;;
     # _step-up: ladder_step's, not logged, and a failure after the old builder closed exits STEP_UP_PARTWAY
     step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
@@ -520,7 +522,6 @@ dispatch() {
     _conductor) conductor_name "${1:?epic or backlog}" "${2:-}"; echo ;;   # test hook: a conductor's agent name (of lane $2)
     _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
-    _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _archive) archive_session "${1:?name}" ;;                     # test hook: close's copy of an agent's session log
     _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
@@ -536,7 +537,7 @@ dispatch() {
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _label _trusted _pane _mtime _step-up _step"
+READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _step"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
@@ -888,6 +889,7 @@ main() {
     review) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
     board-pr) EV_TARGET="${3:-}"; case "${2:-}" in start|open|done) EV_CMD="board-pr:$2" ;; esac ;;
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
+    conduct) EV_TARGET="${2:-}"; [[ "${3:-}" != --lane ]] || EV_TARGET+=".l${4:-}" ;;   # a lane's: <epic>.l<k>, as conduct_group logs it
     step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     *) EV_TARGET="${2:-}" ;;
   esac

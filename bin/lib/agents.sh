@@ -1409,13 +1409,17 @@ wait_agent() {
 # incident in events.tsv (an api-error, auto-denied or stalled one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
 # or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
 # after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
-# --backlog through conductor_name (b).
+# through conductor_name (cn: --backlog's is b, and a lane's target <epic>.l<k> its lane's name).
 login_incident() {
   awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
+    function cn(t,   s) { s = ""
+      if (match(t, /\.l[0-9]+$/)) { s = "-l" substr(t, RSTART + 2); t = substr(t, 1, RSTART - 1) }
+      if (t == "--backlog") return s == "" ? b : substr(substr(b, 1, length(b) - 7), 1, 25 - length(s)) substr(b, length(b) - 6) s
+      return substr(an("conduct-" t), 1, 32 - length(s)) s }
     $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied|stalled):/ { login = $5 ~ /^login:/ }
     $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
-    $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
+    $5 == "ok" && ($2 == "conduct" ? cn($3) : $2 == "review-agent" ? an("review-" $3) : "") == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
     || record_event incident "$1" "login: Login expired"
 }
@@ -1561,26 +1565,25 @@ note_lock() {
 # (step_up_story), nothing is held and they are sent as usual.
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
-# is also prompted to read it now (note_wake). With conductor_lanes above 1, a note to the lane-less
-# name goes to every running lane conductor of that epic or backlog.
+# is also prompted to read it now (note_wake). A note to a lane-less name no pane holds goes to every
+# running lane conductor of that epic or backlog, whatever conductor_lanes is now.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n e k l sent=""
+  local kind="$2" f="$3" name msg state since inbox rc pane line n e l sent=""
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
-  if [[ "${kind}" == note ]] && (( CFG_conductor_lanes > 1 )) && [[ -z "$(conduct_lane "${name}")" ]]; then
-    e="$(conduct_epic "${name}")"
-    for ((k = 1; k <= CFG_conductor_lanes; k++)); do
-      l="$(conductor_name "${e}" "${k}")"
-      [[ -n "$(agent_field "${l}" pane_id)" ]] || continue
-      if (tell_agent "${l}" note "${f}"); then sent=1; fi
-    done
-    [[ -n "${sent}" ]] || die "could not reach any lane of ${name}: no lane conductor (conduct ... --lane <k>) this project started is running"
-    return
-  fi
   pane="$(agent_field "${name}" pane_id)"
+  if [[ "${kind}" == note && -z "${pane}" && -z "$(conduct_lane "${name}")" ]]; then
+    e="$(conduct_epic "${name}")"
+    # On fd 3: the tells must not read the list.
+    while IFS= read -r l <&3; do
+      [[ -n "${l}" && "$(conduct_epic "${l}")" == "${e}" && -n "$(conduct_lane "${l}")" ]] || continue
+      if (tell_agent "${l}" note "${f}"); then sent=1; fi
+    done 3<<< "$(running_conductors)"
+    [[ -z "${sent}" ]] || return 0
+  fi
   if [[ -z "${pane}" ]]; then
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
     die "could not reach ${name}: no agent this project started holds the name; is its pane still open?"
