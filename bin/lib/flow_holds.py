@@ -2,11 +2,11 @@
 # (`swarm.sh hold <slug> <why>`, an events.tsv hold line, outcome `ok (<why>)`): story, epic (outcomes'
 # rows, else its story file on the board or, once deleted, in the board's git history, else -), reason
 # (the first hold's), and held_min from that first hold line to the story's next build start (an ok
-# `story` line). A hold that ends with no build shows how instead: dropped, reset or closed (the
-# slug's next ok drop, reset or close line), or removed (the board commit that deleted its story
-# file); open while none of these followed. Later hold lines before its end are the same hold; one
-# after it starts a new one. A hold counts in the window when its first line's local day is in it;
-# --epic keeps that epic's. Then, after a blank line, the held minutes of the built holds per reason
+# `story` line). A hold that ends with no build shows how instead: dropped (the slug's next ok drop
+# line) or removed (the board commit that deleted its story file, as deleted dates it); open while
+# neither followed. A reset or close leaves the story ready, so it ends no hold. Later hold lines
+# before its end are the same hold; one after it starts a new one. A hold counts in the window when
+# its first line's local day is in it; --epic keeps that epic's. Then, after a blank line, the held minutes of the built holds per reason
 # class, fixed at the hold's own time: other when the reason is the conductor brief's give-up, closed
 # this wave or not held:; else clash when it names a PR (#<n> or a /pull/ URL) or, as a whole
 # hyphenated token, a story an ok story line in events.tsv started before the hold; else other.
@@ -17,7 +17,6 @@ from touches_rows import front_text
 PR = re.compile(r"#\d+|/pull/\d+")
 SLUG = re.compile(r"(?<![\w./-])[a-z0-9]+(?:-[a-z0-9]+)+(?![\w/-])")
 OTHER = re.compile(r"not held|give[- ]?up|gave up|closed (?:in )?this wave", re.I)
-ENDS = {"drop": "dropped", "reset": "reset", "close": "closed"}
 board = os.environ.get("SWARM_BOARD", "")
 
 def when(t):
@@ -32,10 +31,13 @@ def git(*a):
 
 @functools.lru_cache(maxsize=None)
 def deleted(slug):
-    # The board commit that deleted the story's file, and its time; ("", None) while the file is there or none did.
+    # The board commit that deleted the story's file, dated by the merge that brought it to the default branch
+    # (origin/HEAD, else HEAD; as flow_idle_slots' board_log); ("", None) while the file is there or none did.
     if os.path.isfile(os.path.join(board, "stories", slug + ".md")):
         return "", None
-    c, _, t = git("log", "--diff-filter=D", "-1", "--format=%H %cI", "--", f"./stories/{slug}.md").strip().partition(" ")
+    ref = next((r for r in ("origin/HEAD", "HEAD") if git("rev-parse", "-q", "--verify", r)), None)
+    c, _, t = git("log", ref, "-s", "--first-parent", "--diff-merges=first-parent", "--no-renames", "--diff-filter=D", "-1",
+                  "--format=%H %cI", "--", f"./stories/{slug}.md").strip().partition(" ") if ref else ("", "", "")
     return c, when(t) if t else None
 
 def epic_of(slug):
@@ -65,8 +67,8 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
         started.add(f[2])
         if f[2] in held:
             held.pop(f[2])[4] = t
-    elif cmd in ENDS and f[4].startswith("ok") and f[2] in held:
-        held.pop(f[2])[4:] = [t, ENDS[cmd]]
+    elif cmd == "drop" and f[4].startswith("ok") and f[2] in held:
+        held.pop(f[2])[4:] = [t, "dropped"]
 for h in held.values():
     gone = deleted(h[0])[1]
     if gone and gone >= h[1]:
