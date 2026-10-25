@@ -1451,7 +1451,7 @@ removed when the next run counts. A write that fails is skipped and never change
 status. A `TEST_RUNS_LOG` that is set names the file instead (empty logs nothing); test.sh sets it
 empty for its jobs, so a run a test starts itself logs nothing and is never counted as going.
 The section reads the full runs (`all`) whose start falls in the window, by local day, less those
-interrupted (a status of 128 or more). Each end line pairs with its start line (the same start time and PID), and a run's at_once
+interrupted (a status of 128 or more) and torn lines (one cut short). Each end line pairs with its start line (the same start time and PID), and a run's at_once
 is the larger of the two lines' other runs, plus the run itself. It prints TSV `at_once runs
 median_s p90_s median_load`: the runs by at_once (1, 2, 3-4 and 5+), each with its median and p90
 (nearest rank) seconds and the median load at the start (`-` with no run). After a blank line, TSV
