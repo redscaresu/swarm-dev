@@ -164,8 +164,11 @@ Constraints, and a **Your part** line. **Goals** are its **Done when**: checks t
 because the conductor stops when they hold. **Non-goals** keep the plan from growing.
 
 **Staged epics.** An epic in a staged HLD's Rollout carries `stage: v<x.y.0>`, the release that
-ships it. The lead sets such a draft `active` once the stage before it is tagged, so it skips
-steps 1 to 4. See [Releases](#releases) for when a stage's release is cut.
+ships it. This is the one exception to step 4: a draft epic with both `stage:` and `hld:`, under an
+HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`, once the tag of the
+previous minor, `v<x.(y-1).0>`, exists. The first stage of an HLD needs no earlier tag. A staged
+draft with no `hld:`, or under an HLD without the `epics` grant, still goes through `/epic`. See
+[Releases](#releases) for when a stage's release is cut.
 
 **Stopping and resuming.** The epic is a file, so nothing is lost if you stop: run `/epic` on its
 own (or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress

@@ -20,7 +20,7 @@ depends_on: [other-epic]
 parent: big-epic            # only on a child epic of a split one
 check: make test
 agreed: <YYYY-MM-DD>      # set by /epic when the user agrees it
-stage: v0.28.0            # only on an epic in a staged HLD's Rollout: the release that ships it
+stage: v<x.y.0>           # only on an epic in a staged HLD's Rollout: the release that ships it
 ---
 
 # <Goal, as a sentence>
@@ -34,10 +34,12 @@ stage: v0.28.0            # only on an epic in a staged HLD's Rollout: the relea
 A new or draft epic goes `active` only with `agreed:`, a `parent:`, an `hld:` whose agreed HLD grants `epics`, or `lead_epics = on`. `agreed:` counts only when /epic writes it in the same edit that sets
 `status: active`; one left on a draft does not. A `later` epic needs none of these to go `active`.
 
-An epic in a staged HLD's Rollout carries its stage in `stage: v<x.y.0>`. A draft epic with `stage:`
-and `hld:` is set `active` by the lead, under its HLD's `epics` grant, once the stage before it is
-tagged. It does not go through `/epic`. A stage's release waits until every epic of that stage has
-left the board.
+An epic in a staged HLD's Rollout carries its stage in `stage: v<x.y.0>`. A draft epic with both
+`stage:` and `hld:`, under an HLD that grants `epics`, is set `active` by the lead once the stage
+before it is tagged, meaning the tag of the previous minor, `v<x.(y-1).0>`. The first stage of an
+HLD needs no earlier tag. Such a draft does not go through `/epic`; a staged draft with no `hld:`,
+or under an HLD without the `epics` grant, still does. A stage's release waits until every epic of
+that stage has left the board.
 
 A story joins an epic with `epic: <epic-file-name-without-.md>` in its front matter. Scope a new
 epic with `/plan-epic <slug>` (swarm-dev `docs/reference.md` § Scoping an epic). In Obsidian,
