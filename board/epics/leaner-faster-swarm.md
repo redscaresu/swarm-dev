@@ -1,8 +1,10 @@
 ---
-status: active
+status: later
 ---
 
 # A leaner swarm that runs more builders at once and measures what it does
+
+**Parked (user, 2026-10-25):** set `later` so planning the 0.28 HLD comes first. Its remaining stories are all lead stories, parked with it, each with a note saying where it goes.
 
 The lead and a Fable review (2026-10-16) went through infrafactory's logs since 2026-10-09: $1195 at list prices, 131 builds, 487 PR findings. Builds averaged 1 to 2.5 running at once per epic (maximum 4), held there mostly by long `depends_on` chains. On the one fully logged day, 65% of PR findings were declined, many as out of the story's scope. 55% of story PRs needed main merged in. Several process decisions had no data behind them. The user approved this epic on 2026-10-16. infrafactory stays `merge = human`.
 

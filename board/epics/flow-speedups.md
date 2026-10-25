@@ -1,8 +1,10 @@
 ---
-status: active
+status: later
 ---
 
 # The swarm spends its time building, not waiting on the lead: a stuck review times out, a merge does not stall the other PRs, and the conductor carries a wave through to the end
+
+**Parked (user, 2026-10-25):** set `later` so planning the 0.28 HLD comes first. Its remaining stories are all lead stories, parked with it, each with a note saying where it goes.
 
 **Done when:**
 - Every codex call the swarm makes or tells an agent to make (`swarm.sh` briefs, conduct rules, commands/*.md) goes through one form with a time limit (default 10 minutes, a config key). A codex that runs past it is stopped, and the review counts as "codex unavailable": the lead or conductor reviews the diff and the PR says "codex skipped: timed out". A stub codex that sleeps past a short limit shows this in a test. The form never passes `--base` together with a prompt (codex refuses that).
