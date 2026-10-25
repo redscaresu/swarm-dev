@@ -21,6 +21,8 @@ A close line is the conductor's own act, as in the 2026-10-25 case. A round is u
 
 Read files only (build.sh:557-608). Do not use merge.sh:1478-1490's queued_line: it calls gh and stays for conductors. The line fires even when the builder is live. In 0.27.1 the builder sat idle while the conductor ran codex alone (HLD:156-159). Add a `no-review:` arm to commands/swarm.md's wait --lead handler, and add the kind to the handler test's list.
 
+Review fix (codex): review_agent can fail a preflight (reading the PR head, matching the worktree) before it writes `.swarm/briefs/review-<slug>.md`. Read the current PR from the story's `prs:` line or the failed attempt's event, not only from the brief.
+
 **Done when:**
 - Tests where it fires, each with the builder listed idle: a review-agent line that is not ok and no review-<slug> pane; an ok review-agent line and a .head, then no pane, no findings file for that head and no close line. Each prints the no-review line with the PR URL and the exit.
 - Silent tests: review-<slug> listed; a findings file that passes on its head (review_pass); a tell:findings ok line newer than the findings file; a `swarm.sh review-agent <slug>` process running; the 2026-10-25 `close review-config-keys-back` events replayed.
@@ -28,3 +30,4 @@ Read files only (build.sh:557-608). Do not use merge.sh:1478-1490's queued_line:
 - The call-count test with this case present still counts one herdr list, no herdr agent read and no gh call.
 - `no-review` is on tests/lead_handler_test.sh's kind list, and the test goes red when its arm is removed.
 - reference.md names the line and its exit. The humanizer ran over the changed reference.md and commands/swarm.md prose, and the PR says so.
+- A test: a review-agent start that fails its preflight before writing the brief, with the PR open and no round under way, fires `no-review:`.

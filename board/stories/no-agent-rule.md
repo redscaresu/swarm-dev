@@ -26,6 +26,8 @@ lead_queue appends no_agent_lines. lead_wake logs `lead-woken <slug>` with the k
 
 commands/swarm.md's wait --lead handler (:117-123) gets a `no-agent:` arm that runs the exit. A new tests/lead_handler_test.sh drives lead_queue to each kind on its kind list and fails when the handler has no arm for one. `kept` is on the list as the one known gap; kept-handler-arm closes it. tests/wait_lead_test.sh:340 ('it never asks herdr') becomes 'one herdr agent list per poll, no per-pane read', and keeps its guard that a running conductor cannot hide the queue. reference.md § The lead (:59-63) names the line, the population, the tell rule, the hold acknowledgement and the exits. liveness-signals' resend story reuses the list read, so keep it reachable from wait_lead.
 
+Review fix (codex): `swarm.sh hold` only logs an event and starts nothing, so a hold line must not silence the alert for good. A held story stays silent only while the hold's reason is current: the alert comes back once a builder or review agent is gone again after the hold, or on the next poll after the hold's own event if no agent was restored.
+
 **Done when:**
 - Tests where it fires: a ready story with a build record whose builder pane went after a close line (it wakes on the next poll); a pane gone with no close line (the poll that writes the `no-agent` events line does not wake, the next poll does); a review story under merge = agent with no agent and no merge or wait-pr process, whose exit names `swarm.sh merge --head`.
 - Tests where it stays silent: a ready story not started (queued on capacity, a clash or a depends_on); the CI window after a push (builder listed idle, review agent closed); the 2026-10-25 `close review-config-keys-back` events replayed with the builder listed; a review story waiting on the user whose head is still pending under merge = human; a held story; a kind: lead story; herdr's list failing; a review story with a `swarm.sh merge <url>` process running.
@@ -35,3 +37,4 @@ commands/swarm.md's wait --lead handler (:117-123) gets a `no-agent:` arm that r
 - Stub logs show each poll makes one `herdr agent list`, no `herdr agent read`, and no gh call from no_agent_lines. The rewritten wait_lead_test.sh:340 case fails if a second list call is added.
 - tests/lead_handler_test.sh goes red when the `no-agent:` arm is removed from commands/swarm.md.
 - reference.md names the line, the population, the tell rule and the exits. The humanizer ran over the changed reference.md and commands/swarm.md prose, and the PR says so.
+- A test: after `swarm.sh hold` on a started story whose builder is gone, the next poll with still no agent fires `no-agent:` again; a hold followed by a restored builder stays silent.

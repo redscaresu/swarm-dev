@@ -17,6 +17,8 @@ no_agent_lines reads `.swarm/briefs/<slug>.<kind>` markers with no herdr or gh c
 
 The conductor no longer lists a failed step-up. Rewrite these texts to say the lead is told through wait --lead and the story is left alone: conduct_brief's escalate_ladder paragraph (bin/lib/build.sh:954-955), step_up_failed (lifecycle.sh:794), close_agent (:514) and tell_agent (agents.sh:1630). Add a `step-up failed:` arm to commands/swarm.md's wait --lead handler, and add the kind to the handler test's list.
 
+Review fix (codex): a step-up killed after closing the builder but before writing `step-up:failed` leaves its `.step-up` marker and maybe its lock. Treat a marker with no live step-up process (its recorded pid gone) as actionable, whatever the failure line or the lock says.
+
 **Done when:**
 - Tests where it fires: a marker, a step-up:failed line and no builder. wait --lead prints the line within one poll. A fresh run with no .swarm/lead/seen prints it on its first read.
 - Silent tests: a step-up under way (the marker, no failure line, no builder listed, its step-up running), and the state after a resume that worked (marker gone).
@@ -25,3 +27,4 @@ The conductor no longer lists a failed step-up. Rewrite these texts to say the l
 - tests/epic_briefs_test.sh pins the new conduct_brief text and fails if it again says to list a failed step-up for the lead. tests/escalate_triggers_test.sh and tests/close_test.sh pin the new partway messages.
 - `step-up failed` is on tests/lead_handler_test.sh's kind list, and the test goes red when its arm is removed.
 - reference.md documents the marker format. The humanizer ran over the changed reference.md and commands/swarm.md prose, and the PR says so.
+- A test: a marker whose step-up pid is gone, with no failure line and the lock still present, fires within one poll; a marker whose step-up pid is alive stays silent.
