@@ -839,7 +839,11 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 Every codex review a builder, a conductor or the lead runs goes through `swarm.sh codex-review
 <base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still
 reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
-beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. With
+beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. A codex review only reads
+the diff. If codex runs the tests anyway, `scripts/test.sh` (and so `make test`) refuses: when `CODEX_SANDBOX`
+or `CODEX_THREAD_ID` is set, it prints one line and exits 1 before it runs a file or writes
+`.swarm/test-runs.tsv`. codex 0.164 sets both in the shell it runs commands in. The lead's shell and
+an agent's pane have neither. With
 `SWARM_STORY=<slug>` it passes a prompt in place of `--base`. The prompt asks codex to review the diff
 against `origin/<base>`, uncommitted changes and untracked files included, so a builder's review
 before its first commit sees its work. It lists the story's touches with its **Done when** and **From review** items,
