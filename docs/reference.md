@@ -453,17 +453,17 @@ session that starts the agent. A name that session does not have is skipped with
 same board still runs from a session without the provider. When the config loads, `swarm.sh` refuses
 a name that is not `[A-Z_][A-Z0-9_]*` or is reserved, by the same rules as `env:`, and names the line.
 
-A login read from the environment does not reach an agent either: `ANTHROPIC_API_KEY`,
+By default, a login read from the environment does not reach an agent either: `ANTHROPIC_API_KEY`,
 `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, or a `GH_TOKEN` for `gh`. A story can name
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GH_TOKEN` for its builder (never a `CLAUDE_CODE_*` one), but
-agents with no story of their own (planners and review agents, and conductors beyond their stories'
-names) never get it. If you log in that way, log in through each tool instead: `claude` then
-`/login`, `codex login`, and `gh auth login`. On Foundry, Bedrock or Vertex, the provider and model
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GH_TOKEN` for its builder (never a `CLAUDE_CODE_*` one).
+Agents with no story of their own (planners and review agents, and conductors beyond their stories'
+names) get one only when `agent_env` names it, and then every agent gets it. Otherwise, log in
+through each tool instead: `claude` then `/login`, `codex login`, and `gh auth login`. On Foundry, Bedrock or Vertex, the provider and model
 selection above passes from the session that runs swarm.sh, or can go under `env` in
 `~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
 provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
-`gcloud auth application-default login`), never from an exported secret such as
-`AWS_SECRET_ACCESS_KEY`.
+`gcloud auth application-default login`). An exported secret such as `AWS_SECRET_ACCESS_KEY` or
+Foundry's `ANTHROPIC_FOUNDRY_API_KEY` reaches agents only when `agent_env` names it.
 
 Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
 Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,
