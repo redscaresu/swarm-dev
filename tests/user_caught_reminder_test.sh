@@ -30,20 +30,27 @@ g init -q && g add -A && g commit -q -m init
 g worktree add -q "${root}/project-wt/story-a" -b story/story-a
 git -C "${other}" init -q
 
-# run <cwd> [<input>] — the hook on a UserPromptSubmit input naming <cwd>, run from <cwd>; its stdout
-# in out, its exit code in rc.
+# run <cwd> [<from>] [<input>] — the hook on a UserPromptSubmit input naming <cwd> (or on <input>),
+# run from <from> (<cwd> by default); its stdout in out, its exit code in rc.
 run() {
-  local input="${2:-{\"hook_event_name\":\"UserPromptSubmit\",\"cwd\":\"$1\",\"prompt\":\"you missed a red CI run\"\}}"
+  local input
+  input="$(printf '{"hook_event_name":"UserPromptSubmit","cwd":"%s","prompt":"you missed a red CI run"}' "$1")"
   rc=0
-  out="$(cd "$1" && printf '%s' "${input}" | "${HOOK}")" || rc=$?
+  out="$(cd "${2:-$1}" && printf '%s' "${3:-${input}}" | "${HOOK}")" || rc=$?
 }
 
 run "${project}"
 check "the lead's session in a swarm project gets the reminder" [ "${out}|${rc}" = "${REMINDER}|0" ]
 run "${project}/docs"
 check "and from a folder inside the project" [ "${out}|${rc}" = "${REMINDER}|0" ]
-run "${project}" 'not json'
+run "${project}" "${project}" 'not json'
 check "an input it cannot read falls back to the hook's cwd" [ "${out}|${rc}" = "${REMINDER}|0" ]
+run "${project}" "${other}"
+check "the input's cwd counts, not the hook's: the project's from elsewhere gets the reminder" [ "${out}|${rc}" = "${REMINDER}|0" ]
+run "${other}" "${project}"
+check "and a folder outside a swarm project, run from the project, gets nothing" [ "${out}|${rc}" = "|0" ]
+run "${root}/project-wt/story-a" "${project}"
+check "and a story worktree, run from the project, gets nothing" [ "${out}|${rc}" = "|0" ]
 
 SWARM_GH_CALLER=story-a run "${project}"
 check "an agent's session (SWARM_GH_CALLER) gets nothing" [ "${out}|${rc}" = "|0" ]
@@ -57,7 +64,8 @@ run "${other}"
 check "outside a swarm project it prints nothing" [ "${out}|${rc}" = "|0" ]
 
 # hooks.json's UserPromptSubmit commands, run as Claude Code would (through sh, under
-# CLAUDE_PLUGIN_ROOT), from the project: agent-state.sh prints nothing, so the reminder is all.
+# CLAUDE_PLUGIN_ROOT), on an input naming the project, from outside it: agent-state.sh prints
+# nothing, so the reminder is all.
 cmds="$(python3 -c '
 import json, sys
 for entry in json.load(open(sys.argv[1]))["hooks"]["UserPromptSubmit"]:
@@ -69,7 +77,7 @@ check "hooks.json runs it on UserPromptSubmit after agent-state.sh, each with a 
 "${CLAUDE_PLUGIN_ROOT}/hooks/user-caught-reminder.sh" 5' ]
 printed=""
 while IFS= read -r cmd; do
-  printed+="$(cd "${project}" && printf '{"cwd":"%s"}' "${project}" | CLAUDE_PLUGIN_ROOT="${REPO}" sh -c "${cmd% *}")"
+  printed+="$(cd "${other}" && printf '{"cwd":"%s"}' "${project}" | CLAUDE_PLUGIN_ROOT="${REPO}" sh -c "${cmd% *}")"
 done <<< "${cmds}"
 check "and the lead's prompt gets the reminder through them" [ "${printed}" = "${REMINDER}" ]
 
