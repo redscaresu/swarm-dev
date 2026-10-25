@@ -1253,7 +1253,7 @@ builder's own), and the subagents' share of it.
 
 The `predictions` section scores the planner's `easy` labels and `estimate_lines` against what the
 builds took. It reads `.swarm/dataset.jsonl`, which `swarm.sh dataset` writes, and counts the stories
-merged in the window. It prints TSV `planner_model stories easy_precision easy_recall estimated
+merged in the window. With `--epic`, it counts only the stories whose text has that `epic:`. It prints TSV `planner_model stories easy_precision easy_recall estimated
 est_err_median est_err_mean`, one row per planner model (`-` when `dataset` found none) and a last
 `all` row:
 
@@ -1263,8 +1263,10 @@ est_err_median est_err_mean`, one row per planner model (`-` when `dataset` foun
 - `est_err_median` and `est_err_mean`, the median and mean number of lines those stories' estimates were off by.
 
 Both shares print as `hits/total percent`, or `-` with none to count. A story whose `easy` or
-`was_easy` is unknown counts in neither. With no `.swarm/dataset.jsonl`, the section prints a line
-saying to run `swarm.sh dataset`. `--epic` does not narrow it.
+`was_easy` is unknown counts in neither. A window with no stories prints a line saying so in place of
+the table. A last line counts the file's lines the section could not score: lines that are not JSON,
+or that have no `inputs` and `results`. With no `.swarm/dataset.jsonl`, the section prints a line
+saying to run `swarm.sh dataset`.
 
 The `throughput` section prints one TSV
 row per epic and a last `all` row for the project, over the `outcomes` rows dated in the window and
