@@ -216,9 +216,9 @@ after a note woke you, unmarks it) and prints \`not done: ...\` while a story of
 failed twice with escalation off, is the lead's and does not count) or waiting
 on this epic's stories (a \`waiting:\` line ending \`the lead's: list it in your report\` does not count:
 a lead story, or one waiting on a lead story or another epic's), else \`other lanes running: <names>|none\`, the lanes neither done nor reported. While it
-prints names, begin your report with \`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end} If it
-prints \`lane ${CONDUCT_LANE} gone: conductor_lanes is <N>\`, the lanes were lowered under you: your stories and
-their PRs are the lane's it names now, so leave them to it, run it with \`--done\`, and report."
+prints names, begin your report with \`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end} If swarm.sh
+refuses with \`conductor_lanes is <N>, but these lane conductors started under another value\`, the lanes were
+changed under you: start nothing, write your report saying so, and end; the lead sets it back or closes you."
 }
 
 # startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story
@@ -551,6 +551,11 @@ build_story() {
       || die "${slug} was held until its parents merged, and its build is kept in ${wt}: never start it again. Act on the Stacked line swarm.sh status prints for ${slug}, then review it again and run swarm.sh review ${slug} <PR URL>"
     die "${slug} has a build already (${branch} or ${wt} exists in ${src}): it has started, so wait on its builder, and to build it again from scratch remove that worktree and branch first"
   fi
+  # First, whatever conductor_lanes is now: a lane conductor that started under another value and has not
+  # reported owns the story's epic still, so the start is refused (refuse_n_change). With no lane of the
+  # epic that may run (lane_briefs) nothing asks herdr, so a project without lanes pays nothing here.
+  epic="$(fm "${story}" epic)"
+  ! lane_briefs "${epic:-backlog}" || refuse_n_change story "${epic:-backlog}"
   # With conductor_lanes above 1 (a no-op at 1): its lane (lane_start), checked for a clash with another
   # lane's started build and reserved under a short lock; written once the worktree exists.
   # shellcheck disable=SC2154 # assigned in another file
@@ -580,19 +585,22 @@ build_story() {
 }
 
 # lane_start <slug> <story file> <strict> — a start's lane, with conductor_lanes above 1: its lane:
-# (folded, story_lane), else a fix-main story's starting lane conductor's, else story_lane's. Under
+# (folded, story_lane), else a fix-main story's starting lane conductor's, else story_lane's (build_story
+# has refused the start already while a lane conductor of the epic runs under another conductor_lanes).
+# Under
 # .swarm/lane-start.lock (LANE_START_DIR's, out of the tab records' STATE_DIR), held only for this check, a story of its epic in another lane whose build
 # has started or is starting (lane_clash) refuses it with --strict, else is warned of; then the start
 # is reserved (.swarm/lane-start/<slug>, its lane), which lane_clash counts as started, and removed
-# on exit unless build_story clears it. Sets LANE_PICKED and LANE_RESERVED.
+# on exit unless build_story clears it; a start that dies after reserving tells the other lanes the
+# build is gone (lane_finish_note), as a cleared build does, so a story held for a clash with it wakes.
+# Sets LANE_PICKED and LANE_RESERVED.
 LANE_PICKED=""; LANE_RESERVED=""; LANE_START_DIR="${PROJECT_DIR}/.swarm/lane-start"
 lane_start() {
-  local clash
+  local clash e
+  e="$(fm "$2" epic)"
   LANE_PICKED=""
   [[ "$(get_fm "$2" lane)" =~ ^[1-9][0-9]*$ || "$1" != fix-main-* || "${SWARM_AGENT:-}" != conduct-* ]] \
     || LANE_PICKED="$(conduct_lane "${SWARM_AGENT}")"
-  # Folded as story_lane and lane_flag fold: a lane past a lowered conductor_lanes.
-  [[ -z "${LANE_PICKED}" ]] || LANE_PICKED=$(( (LANE_PICKED - 1) % CFG_conductor_lanes + 1 ))
   [[ -n "${LANE_PICKED}" ]] || LANE_PICKED="$(story_lane "$2")"
   mkdir -p "${LANE_START_DIR}"
   note_lock "${LANE_START_DIR}" || die "$1: another story's start holds ${LANE_START_DIR}.lock; retry in a moment"
@@ -601,8 +609,8 @@ lane_start() {
   LANE_RESERVED="${LANE_START_DIR}/$1"
   echo "${LANE_PICKED}" > "${LANE_RESERVED}"
   rmdir "${LANE_START_DIR}.lock"
-  # shellcheck disable=SC2064 # expand now; the path is this project's
-  trap "rm -f '${LANE_RESERVED}'" EXIT
+  # shellcheck disable=SC2064 # expand now; the path and slug are this project's, [a-z0-9-]
+  trap "rm -f '${LANE_RESERVED}'; lane_finish_note '$1' '${e}'" EXIT
   [[ -z "${clash}" ]] || echo "warning: $1: ${clash#held: }" >&2
 }
 
@@ -1388,10 +1396,13 @@ epic_env() {
 # conductor_lanes is running (a lane-less one beside lanes, or a lane past N), when a running conductor
 # of another epic holds the name this one would take (lane 2 of foo, conduct-foo-l2, for a lane-less
 # conduct foo-l2), or when lane <lane>'s name is another epic's lane-less conductor's (an epic named
-# <epic>-l<lane>, or a cut at 32). <running> is running_conductors' list, read here when not given.
+# <epic>-l<lane>, or a cut at 32). A lane conductor of <epic> that started under another conductor_lanes
+# and has not reported refuses the start too (refuse_n_change), whatever its lane number: the new
+# conductor could not act anyway. <running> is running_conductors' list, read here when not given.
 conduct_clash() {
   local c n e want running="${3-$(running_conductors)}"
   want="$(conductor_name "$1" "$2")"
+  refuse_n_change conduct "$1"
   while IFS= read -r c; do
     [[ -n "${c}" ]] || continue
     read -r e n <<< "$(conduct_split "${c}")"
@@ -1445,6 +1456,9 @@ start_conductor() {
   [[ ! -f "${report}" ]] || record_event report "${key}" "ok ($(date -u -r "${report}" +%Y-%m-%dT%H:%M:%SZ))"
   rm -f "${report}"
   [[ -z "${lane}" ]] || rm -f "${PROJECT_DIR}/.swarm/lane-done/${key}"   # a fresh lane conductor is not done
+  # The conductor_lanes this lane runs under (refuse_n_change reads it); a lane-less conductor has none.
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${lane}" ]] || { mkdir -p "${LANE_N_DIR}" && echo "${CFG_conductor_lanes}" > "${LANE_N_DIR}/${key}"; } || die "conduct: cannot write ${LANE_N_DIR}/${key}"
   read -r ws placeholder <<< "$(epic_workspace "${label}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]

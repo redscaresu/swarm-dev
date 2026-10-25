@@ -125,9 +125,17 @@ def one_runs(key):
     starts = sorted(conducts[key])
     return [(s, min([t for t in ends + starts[i + 1:] if t > s] + [hi])) for i, s in enumerate(starts)]
 
-def conductor_runs(key):
-    # The runs of the epic's conductors (key --backlog for the backlog's), each lane's too.
-    return [r for k in [key] + sorted(k for k in list(conducts) if k.startswith(key + ".l")) for r in one_runs(k)]
+def conductor_runs(key, lane=None):
+    # The runs of the epic's conductors (key --backlog for the backlog's): its lane-less ones and, for a story
+    # whose lane is known (SWARM_STORY_LANES, the board's stories by story_lane), its own lane's; for one
+    # whose lane is not (a merged story), every lane's.
+    lanes = sorted(k for k in list(conducts) if k.startswith(key + ".l") and (lane is None or k == f"{key}.l{lane}"))
+    return [r for k in [key] + lanes for r in one_runs(k)]
+
+lane_of = dict(l.split("\t", 1) for l in os.environ.get("SWARM_STORY_LANES", "").splitlines() if "\t" in l)
+def run_key_of(s):
+    # A waiting story's conductor runs: (its epic's key, its lane or None).
+    return (epic_of[s] or "--backlog", lane_of.get(full_of.get(s, s)))
 
 # Stories are keyed by agent_name: a build with no session log has only agents.tsv's name, which
 # agent_name cuts to 32 characters. full_of gives a key's slug, for its story file.
@@ -214,7 +222,7 @@ def known(s):
 def clashes(a, b):
     return a != b and any(overlap(x, y) for x in known(a) for y in known(b)) and a not in needs[b] and b not in needs[a]
 
-runs = {k: conductor_runs(k) for k in {epic_of[s] or "--backlog" for s, _, _ in ready}}
+runs = {k: conductor_runs(*k) for k in {run_key_of(s) for s, _, _ in ready}}
 points = sorted({min(max(t, lo), hi) for _, s, e in ready + builds for t in (s, e)}
                 | {min(max(t, lo), hi) for rs in runs.values() for s, e in rs for t in (s, e)})
 idle, none, most, measured = collections.Counter(), collections.Counter(), collections.Counter(), set()
@@ -223,14 +231,18 @@ for a, b in zip(points, points[1:]):
     running = [s for s, b0, b1 in builds if b0 <= mid < b1]
     # Each story once (two spans can cover one wait); not while its own build runs (reopened during it).
     waiting = {s for s, r0, r1 in ready if r0 <= mid < r1 and s not in running}
-    # epic ("" for none) -> "idle" or "none": its stories share one conductor
-    hit = {epic_of[s]: "idle" if any(r0 <= mid < r1 for r0, r1 in runs[epic_of[s] or "--backlog"]) else "none"
-           for s in waiting if not any(clashes(s, o) for o in running)}
-    for g, kind in hit.items():
-        (idle if kind == "idle" else none)[g] += b - a
+    # epic ("" for none) -> the kinds among its waiting stories, "idle" (a conductor of the story's lane, or a
+    # lane-less one, runs) or "none"; with lanes both can hold at once, each counted once per slice.
+    hit = {}
+    for s in waiting:
+        if not any(clashes(s, o) for o in running):
+            hit.setdefault(epic_of[s], set()).add("idle" if any(r0 <= mid < r1 for r0, r1 in runs[run_key_of(s)]) else "none")
+    for g, kinds in hit.items():
+        for kind in kinds:
+            (idle if kind == "idle" else none)[g] += b - a
     # The project row apart, so an epic named all is still an epic.
-    idle[None] += (b - a) * ("idle" in hit.values())
-    none[None] += (b - a) * ("none" in hit.values())
+    idle[None] += (b - a) * any("idle" in kinds for kinds in hit.values())
+    none[None] += (b - a) * any("none" in kinds for kinds in hit.values())
     measured |= {epic_of[s] for s in waiting}   # epics a story waited in, for some minutes
     for g, n in collections.Counter(epic_of[s] for s in waiting).items():
         most[g] = max(most[g], n)

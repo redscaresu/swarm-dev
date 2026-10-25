@@ -582,7 +582,7 @@ live_at() {
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e of slugs note p was="" all d="" listed="" running="" c ce cl told left s
+  local url="$1" oid="$2" new rc why dief e of slugs note p was="" all d="" listed="" running="" c ce cl n told left s
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
@@ -634,8 +634,14 @@ ready_tell() {
       [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
       read -r ce cl <<< "$(conduct_split "${c}")"
       [[ "${ce}" == "${e/#-/backlog}" ]] || continue
-      # shellcheck disable=SC2154 # assigned in another file
-      [[ -z "${cl}" ]] || cl=$(( (cl - 1) % CFG_conductor_lanes + 1 ))
+      # A lane under another conductor_lanes gets no note: it is refused wherever it acts, and reports.
+      if [[ -n "${cl}" ]]; then
+        n="$(cat "${LANE_N_DIR}/${ce}.l${cl}" 2>/dev/null)" || n=""
+        # shellcheck disable=SC2154 # assigned in another file
+        if [[ -n "${n}" && "${n}" != "${CFG_conductor_lanes}" ]]; then
+          echo "no note to ${c}: it runs under conductor_lanes = ${n}, not ${CFG_conductor_lanes}; let it report, or close it, before changing conductor_lanes"; continue
+        fi
+      fi
       # shellcheck disable=SC2086 # slugs, [a-z0-9-]
       slugs="$(lane_slugs "${cl}" ${all} | paste -sd' ' -)"
       [[ -n "${slugs}" ]] || continue
@@ -1484,6 +1490,7 @@ watch_scope() {
     else shift; fi
     # shellcheck disable=SC2153 # LANE is lane_flag's
     if [[ "${1:-}" == --lane ]]; then lane_flag watch --lane "${2:-}"; lane="${LANE}"; shift 2; fi
+    [[ -z "${lane}" ]] || refuse_n_change watch "${epic:-backlog}"
     stories=(); WATCH_HEADS="-"
     for f in "${BOARD}"/stories/*.md; do
       [[ -f "${f}" && "$(basename "${f}")" != README.md ]] || continue

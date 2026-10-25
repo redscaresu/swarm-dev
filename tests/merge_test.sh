@@ -1871,6 +1871,15 @@ check "a board merge with conductor_lanes raised to 2 while the lane-less conduc
   grep -qF "these stories of epic e are ready now: r18." "${INBOX}"
 check "a board merge with conductor_lanes raised to 2 while the lane-less conduct-e runs: no ready-now line, no lane started beside it, and why" \
   bash -c "! grep -q 'ready now: r18' '${ROOT}/out' && ! grep -q '^agent start conduct-e-l' '${ROOT}/agents.log' && grep -qF 'no conductor started: conduct-e runs for e under another conductor_lanes' '${ROOT}/out'"
+# conduct-e-l1 started under conductor_lanes = 3 (its lane-n record) and runs on at 1: it is refused wherever it
+# acts, so the board merge sends it no note and says why.
+put docs/stories/r19.md "status: ready" "kind: code" "epic: e"; land
+bfresh; printf 'conduct-e-l1 w:c\nt w:b\n' > "${ROOT}/agents"; mkdir -p "${P}/.swarm/briefs" "${P}/.swarm/lane-n"
+: > "${P}/.swarm/briefs/conduct-e.l1.md"; echo 3 > "${P}/.swarm/lane-n/e.l1"; rm -f "${P}/.swarm/inbox/conduct-e-l1.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
+rm -f "${P}/.swarm/briefs/conduct-e.l1.md" "${P}/.swarm/lane-n/e.l1"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
+check "a board merge while lane 1's conductor runs under another conductor_lanes: no note to it, and why" \
+  bash -c "! grep -q r19 '${P}/.swarm/inbox/conduct-e-l1.md' 2>/dev/null && grep -qF 'no note to conduct-e-l1: it runs under conductor_lanes = 3, not 1; let it report, or close it, before changing conductor_lanes' '${ROOT}/out'"
 # A story merge by backlog lane 1 with conductor_lanes = 2: reconcile notes lane 2 that s merged (a story of
 # its lane held for a clash with s's build is startable now), and not the lane that merged it.
 bl1="$(cd "${P}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog 1)"; bl2="$(cd "${P}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog 2)"
@@ -1879,14 +1888,14 @@ mkdir -p "${P}/.swarm/briefs"; : > "${P}/.swarm/briefs/conduct-backlog.l1.md"; :
 merge SWARM_AGENT="${bl1}" HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"
 rm "${P}/.swarm/briefs/conduct-backlog.l1.md" "${P}/.swarm/briefs/conduct-backlog.l2.md"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 check "a story merge by backlog lane 1 with conductor_lanes = 2: notes lane 2 that s merged, and not lane 1" \
-  bash -c "grep -qF \"s's build is gone (merged or cleared). A story of your lane held for a clash with it is startable now\" '${P}/.swarm/inbox/${bl2}.md' && [ ! -e '${P}/.swarm/inbox/${bl1}.md' ]"
+  bash -c "grep -qF \"s's build is gone (merged, cleared, or its start failed). A story of your lane held for a clash with it is startable now\" '${P}/.swarm/inbox/${bl2}.md' && [ ! -e '${P}/.swarm/inbox/${bl1}.md' ]"
 # The same with conductor_lanes back at 1 while both backlog lanes still run: lane 2 is still noted.
 fresh; printf '%s w:c\n%s w:b\n' "${bl1}" "${bl2}" > "${ROOT}/agents"; rm -f "${P}/.swarm/inbox/${bl2}.md"
 : > "${P}/.swarm/briefs/conduct-backlog.l1.md"; : > "${P}/.swarm/briefs/conduct-backlog.l2.md"
 merge SWARM_AGENT="${bl1}" HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"
 rm "${P}/.swarm/briefs/conduct-backlog.l1.md" "${P}/.swarm/briefs/conduct-backlog.l2.md"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 check "a story merge by backlog lane 1 with conductor_lanes back at 1: still notes lane 2 that s merged" \
-  grep -qF "s's build is gone (merged or cleared). A story of your lane held for a clash with it is startable now" "${P}/.swarm/inbox/${bl2}.md"
+  grep -qF "s's build is gone (merged, cleared, or its start failed). A story of your lane held for a clash with it is startable now" "${P}/.swarm/inbox/${bl2}.md"
 # r15, ready in draft epic h, moves to epic e: it was not buildable before, so it is new.
 put docs/epics/h.md "status: draft"; put docs/stories/r15.md "status: ready" "kind: code" "epic: h"; land; pulled
 put docs/stories/r15.md "status: ready" "kind: code" "epic: e"; land

@@ -456,7 +456,7 @@ flow_report() {
 # SWARM_REPO_DIRS gives each windowed slug's repo, as repo_dir resolves its repo: (or `!<why>` when it
 # cannot), for merge_ins.
 flow_sections() {
-  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" stories="" repos="" dir slug text own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
+  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" stories="" repos="" lanes="" dir slug text f own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
   shift 5
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
@@ -467,8 +467,11 @@ flow_sections() {
     dir="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" || dir="!${dir}"
     repos+="${slug}"$'\t'"${dir//[$'\t\n']/ }"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
+  # Each board story's conductor lane (story_lane), for idle_slots: a story waits under a conductor only
+  # while one of its own lane, or a lane-less one, runs.
+  while IFS= read -r f; do lanes+="$(basename "${f}" .md)"$'\t'"$(story_lane "${f}")"$'\n'; done < <(board stories)
   # shellcheck disable=SC2154 # assigned in another file
-  SWARM_BOARD="${BOARD}" SWARM_RUN_NAMES="$(run_names_env)" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_LADDER="${CFG_escalate_ladder}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_BOARD="${BOARD}" SWARM_RUN_NAMES="$(run_names_env)" SWARM_STORY_LANES="${lanes}" SWARM_REPOS_DIR="${REPOS_DIR}" SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_LADDER="${CFG_escalate_ladder}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" SWARM_GH_FRESH="${GH_FRESH}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }

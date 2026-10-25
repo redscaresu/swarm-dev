@@ -626,12 +626,25 @@ printf '%s\n' $'2026-10-02T09:00:00Z\tconduct\t--backlog\tw:1\tok' $'2026-10-02T
 check "idle_slots: only the backlog's own conductor ends its run, and a merged story's bytes that are not UTF-8 still read" \
   "$(idle --since 2026-10-02 --until 2026-10-02)" "${IH}"$'\nall\t810\t0\t1'
 # On the 4th, the backlog's lane-less run over (closed on the 3rd), its lane 2 conductor runs 09:00 to
-# its own close at 12:00 (conductor_lanes): ik is idle those 180 minutes and without a conductor the rest.
+# its own close at 12:00 (conductor_lanes = 2, ik in lane 2: a story waits under a conductor only while a
+# run of its own lane, or a lane-less one, covers the slice): ik is idle those 180 minutes and without a
+# conductor the rest.
+mkdir -p "${I}/.claude/swarm"; echo "conductor_lanes = 2" > "${I}/.claude/swarm/config"
+printf -- '---\nkind: code\nstatus: ready\nlane: 2\ntouches: [src/k.sh]\n---\n' > "${I}/docs/stories/ik.md"
 bn="$(cd "${I}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog)"; bn2="$(cd "${I}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog 2)"
 printf '%s\t%s\t%s\tw:1\tok\n' 2026-10-03T12:00:00Z close "${bn}" 2026-10-04T09:00:00Z conduct --backlog.l2 \
   2026-10-04T12:00:00Z close "${bn2}" >> "${I}/.swarm/events.tsv"
 check "idle_slots: a lane conductor's run ends at its own close, under the backlog's row" \
   "$(idle --since 2026-10-04 --until 2026-10-04)" "${IH}"$'\nall\t180\t1260\t1'
+# On the 5th, still at conductor_lanes = 2: ik moves to lane 1 and il is lane 2's (their lane: lines); only
+# lane 1's conductor runs, 09:00 to 12:00. ik is idle those 180 minutes; il, with no conductor of its lane,
+# is not, so the project row has no conductor for a waiting story all day.
+printf -- '---\nkind: code\nstatus: ready\nlane: 1\ntouches: [src/k.sh]\n---\n' > "${I}/docs/stories/ik.md"
+printf -- '---\nkind: code\nstatus: ready\nlane: 2\ntouches: [src/l.sh]\n---\n' > "${I}/docs/stories/il.md"
+printf '%s\t%s\t%s\tw:1\tok\n' 2026-10-05T08:00:00Z unblock il 2026-10-05T09:00:00Z conduct --backlog.l1 2026-10-05T12:00:00Z close "$(cd "${I}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog 1)" >> "${I}/.swarm/events.tsv"
+check "idle_slots: a story waits under a conductor only while its own lane's (or a lane-less one) runs" \
+  "$(idle --since 2026-10-05 --until 2026-10-05)" "${IH}"$'\nall\t180\t1440\t2'
+: > "${I}/.claude/swarm/config"
 
 # A git that refuses show: im's text is lost, so it clashes with nothing (14 hours idle), and idle_slots says so once.
 mkdir -p "${dir}/gitfail"

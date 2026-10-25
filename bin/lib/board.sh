@@ -1137,24 +1137,66 @@ lane_briefs() {
 # lane_ready_note <slug> <story file> — tell each running lane conductor of the story's epic (or the
 # backlog's) whose lane, folded onto conductor_lanes, is the story's (story_lane), this agent and reported
 # ones aside, that unblock readied the story: a lane waiting on another lane's merge is woken by it
-# (lane_end_rule). Sent whatever conductor_lanes is now, so lanes outliving a drop to 1 still hear, once
-# a lane of the epic has run (lane_briefs). Never fails unblock.
+# (lane_end_rule), while a lane of the epic may run (lane_briefs). With no conductor of the story's lane
+# running (this agent counts as one), the lane's conductor is started, as a board merge starts the
+# conductors ready work lacks (conduct_group): a lane nobody runs must not stall the merge that readied
+# its story. Under reconcile's lock the start is queued like a note (LANE_NOTES_FILE: start, the epic's
+# board_ready column, the lane) and runs once the lock is free. Never fails unblock.
 lane_ready_note() {
-  local e l c cl f
+  local e l c cl f present="" running
   e="$(fm "$2" epic)"; l="$(story_lane "$2")"
   lane_briefs "${e:-backlog}" || return 0
+  running="$(epic_lanes "$(conductor_name "${e:-backlog}")" "${e:-backlog}")"
   # On fd 3: the tells must not read the list.
   while IFS= read -r c <&3; do
-    [[ -n "${c}" && "${c}" != "${SWARM_AGENT:-}" && ! -f "$(conductor_report "${c}")" ]] || continue
+    [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
     read -r _ cl <<< "$(conduct_split "${c}")"
-    # shellcheck disable=SC2154 # assigned in another file
-    [[ -n "${cl}" && $(( (cl - 1) % CFG_conductor_lanes + 1 )) -eq ${l} ]] || continue
+    [[ -n "${cl}" && ${cl} -eq ${l} ]] || continue
+    present=1
+    [[ "${c}" != "${SWARM_AGENT:-}" ]] || continue
     f="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || return 0
     printf 'From swarm: unblock readied %s, a story of your lane. Run swarm.sh unblock --startable %s --lane %s and start it as your brief says.\n' \
       "$1" "${e:---backlog}" "${cl}" > "${f}"
     (tell_agent "${c}" note "${f}") >/dev/null 2>&1 </dev/null || echo "warning: could not note ${c} that $1 is ready; it finds it on its next pass" >&2
     rm -f "${f}"
-  done 3<<< "$(epic_lanes "$(conductor_name "${e:-backlog}")" "${e:-backlog}")"
+  done 3<<< "${running}"
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -n "${present}" ]] || (( CFG_conductor_lanes == 1 )) || lane_start_conductor "${e:--}" "${l}"
+}
+
+# lane_start_conductor <epic|-> <lane> — start lane <lane>'s conductor for ready work (conduct_group), now,
+# or queued in LANE_NOTES_FILE under reconcile's lock. Never fails its caller.
+lane_start_conductor() {
+  if [[ -n "${LANE_NOTES_FILE:-}" ]]; then printf 'start\t%s\t%s\n' "$1" "$2" >> "${LANE_NOTES_FILE}"; return 0; fi
+  conduct_group "$1" "$2" "$(board_ready --started | awk '$1 !~ /^fix-main-/')" "$(running_conductors)" || true
+}
+
+# LANE_N_DIR: where a lane conductor's start records the conductor_lanes it ran under, as <epic>.l<k>
+# (the backlog's backlog.l<k>), the key its brief and report carry.
+LANE_N_DIR="${PROJECT_DIR}/.swarm/lane-n"
+
+# lanes_under_other_n <epic>|backlog — the running lane conductors of it (epic_lanes) that started under a
+# conductor_lanes other than the one set now, each with that value, one a line. One with no record
+# (started before the record was kept) counts as the value set now, and one that has reported has
+# finished, whatever it started under: the lead collects and closes it.
+lanes_under_other_n() {
+  local c n
+  while IFS= read -r c; do
+    [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
+    n="$(cat "${LANE_N_DIR}/$(conductor_key "${c}")" 2>/dev/null)" || n=""
+    # shellcheck disable=SC2154 # assigned in another file
+    [[ -z "${n}" || "${n}" == "${CFG_conductor_lanes}" ]] || echo "${c} (conductor_lanes = ${n})"
+  done <<< "$(epic_lanes "$(conductor_name "$1")" "$1")"
+}
+
+# refuse_n_change <command> <epic>|backlog — die, naming them, while a lane conductor of it runs under
+# another conductor_lanes (lanes_under_other_n): no lane of the epic acts until they have reported or been
+# closed, so no two conductors ever own one story. conduct, unblock --startable --lane, watch --lane and
+# story's lane start (lane_start) all refuse so.
+refuse_n_change() {
+  local list
+  list="$(lanes_under_other_n "$2")"
+  [[ -z "${list}" ]] || die "$1: conductor_lanes is ${CFG_conductor_lanes}, but these lane conductors started under another value: $(paste -sd ',' - <<< "${list}" | sed 's/,/, /g'); let them report, or close them (swarm.sh close <name>), before changing conductor_lanes"
 }
 
 # unblock_startable <epic>|--backlog — unblock, then a startable: line per story of that epic (--backlog:
@@ -1179,23 +1221,17 @@ lane_ready_note() {
 # 0, which the give-up rule leaves to the lead) or a waiting: line that is a lane's
 # (an agent-built story whose open parents are this epic's agent-built stories), it is not done (said), and
 # any call without --done unmarks it (a note woke
-# it to work). The marker is the lane's own, <raw lane> as --lane gave it, not the fold, so lanes that
-# share a fold after a drop of conductor_lanes never mark each other. A conductor's start unmarks its
-# lane. An epic whose file is gone has nothing startable, and its lanes still get the tail. A lane past
-# conductor_lanes (<raw lane> above it: N was lowered while its conductor ran) owns nothing: no story is
-# its, its stories and their PRs are the fold's lane's, it is told so (lane <k> gone: ...) and --done
-# marks it done, so it reports and the lane it folds onto is the one conductor of those stories.
+# it to work). A conductor's start unmarks its lane. An epic whose file is gone has nothing startable,
+# and its lanes still get the tail. While a lane conductor of the epic runs under another conductor_lanes
+# the call is refused (refuse_n_change).
 LANE_DONE_DIR="${PROJECT_DIR}/.swarm/lane-done"
 unblock_startable() {
-  local want="$1" lane="${2:-}" slug e f open why held="" c k others="" work="" key locked="" lead gone="" running=""
+  local want="$1" lane="${2:-}" slug e f open why held="" c k others="" work="" key locked="" lead running=""
+  [[ -z "${lane}" ]] || refuse_n_change unblock "${1/#--backlog/backlog}"
   unblock
-  # shellcheck disable=SC2154 # assigned in another file
-  [[ -z "${4:-}" || ${4} -le ${CFG_conductor_lanes} ]] || gone=1
   if [[ "${want}" == --backlog ]]; then want=-
   elif [[ ! -f "${BOARD}/epics/${want}.md" ]]; then [[ -n "${lane}" ]] || return 0; want=""; fi
-  [[ -z "${gone}" ]] || echo "lane $4 gone: conductor_lanes is ${CFG_conductor_lanes}, so your stories and their PRs are lane ${lane}'s now; leave them to it, run this with --done, and report"
   while read -r slug e; do
-    [[ -z "${gone}" ]] || break
     [[ "${e}" == "${want}" ]] || continue
     f="${BOARD}/stories/${slug}.md"; why=""
     [[ -z "${lane}" || "$(story_lane "${f}")" == "${lane}" ]] || continue
@@ -1214,7 +1250,6 @@ unblock_startable() {
   [[ -n "${lane}" ]] || return 0
   [[ -n "${want}" ]] || want="$1"
   while IFS= read -r f; do
-    [[ -z "${gone}" ]] || break
     [[ "$(fm "${f}" status)" == blocked ]] || continue
     e="$(fm "${f}" epic)"; [[ "${e:--}" == "${want}" && "$(story_lane "${f}")" == "${lane}" ]] || continue
     open="$(open_deps "$(story_deps "${f}")")"
@@ -1226,12 +1261,12 @@ unblock_startable() {
     if [[ -z "${lead}" ]]; then echo "waiting: $(basename "${f}" .md) (blocked on ${open})"; work=1
     else echo "waiting: $(basename "${f}" .md) (blocked on ${open}; the lead's: list it in your report)"; fi
   done < <(board stories)
-  key="${1/#--backlog/backlog}.l${4:-${lane}}"; mkdir -p "${LANE_DONE_DIR}"
+  key="${1/#--backlog/backlog}.l${lane}"; mkdir -p "${LANE_DONE_DIR}"
   # The other lanes, with their keys, before the lock: herdr's list and conductor_key take their time.
   while IFS= read -r c; do
     [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
     running+="${c}"$'\t'"$(conductor_key "${c}")"$'\n'
-  done <<< "$(epic_lanes "$(conductor_name "${1/#--backlog/backlog}" "${4:-${lane}}")" "${1/#--backlog/backlog}")"
+  done <<< "$(epic_lanes "$(conductor_name "${1/#--backlog/backlog}" "${lane}")" "${1/#--backlog/backlog}")"
   # Under the lock only the marker section: this lane's marker written (or removed), the others' read.
   # note_lock waits 5 s and clears a lock over a minute old, which no marker section can still hold.
   if [[ "${3:-}" == --done && -z "${work}" ]]; then
@@ -1239,7 +1274,7 @@ unblock_startable() {
     locked=1; : > "${LANE_DONE_DIR}/${key}"
   else
     # A done lane asking again has work (a note woke it): said, so the unmarking is seen.
-    [[ ! -e "${LANE_DONE_DIR}/${key}" ]] || { rm -f "${LANE_DONE_DIR}/${key}"; echo "lane ${4:-${lane}} no longer done"; }
+    [[ ! -e "${LANE_DONE_DIR}/${key}" ]] || { rm -f "${LANE_DONE_DIR}/${key}"; echo "lane ${lane} no longer done"; }
     [[ "${3:-}" != --done ]] || echo "not done: lane ${lane} still has a story to start or to wait on (above)"
   fi
   while IFS=$'\t' read -r c k; do
@@ -1267,13 +1302,25 @@ lead_story() {
   (( CFG_escalate_after == 0 )) && [[ "${attempts}" =~ ^[0-9]+$ ]] && (( attempts >= 2 ))
 }
 
-# lane_parent <slug> <epic|-> — true when <slug> is a story of that epic (- for none) that an agent
-# builds and the lead does not have (lead_story): a parent whose merge a lane can wait for. A lead
-# story's, another epic's, an epic's, or one the lead has is the lead's.
+# lane_parent <slug> <epic|-> [depth] — true when <slug> is a story of that epic (- for none) that a lane
+# can still advance: one an agent builds, the lead does not have (lead_story), and that is ready, in
+# review, or blocked on open parents a lane can advance too, down the chain. A chain that ends in a lead
+# story, an outside story, an epic, a story in another status (later, done), or one blocked with no
+# open parent (a hand step, which no merge clears), or that runs past 20 deep, is the lead's.
 lane_parent() {
-  local f="${BOARD}/stories/$1.md" e
-  [[ -f "${f}" ]] || return 1
-  e="$(fm "${f}" epic)"; [[ "${e:--}" == "$2" ]] && agent_kind "$(fm "${f}" kind)" && ! lead_story "${f}"
+  local f="${BOARD}/stories/$1.md" e p open depth="${3:-0}"
+  [[ -f "${f}" && ${depth} -lt 20 ]] || return 1
+  e="$(fm "${f}" epic)"
+  [[ "${e:--}" == "$2" ]] && agent_kind "$(fm "${f}" kind)" && ! lead_story "${f}" || return 1
+  case "$(fm "${f}" status)" in
+    ready|review) return 0 ;;
+    blocked) ;;
+    *) return 1 ;;
+  esac
+  open="$(open_deps "$(story_deps "${f}")")"
+  [[ -n "${open}" ]] || return 1
+  for p in ${open}; do lane_parent "${p}" "$2" $((depth + 1)) || return 1; done
+  return 0
 }
 
 # lane_finish_note <slug> <epic> — tell each running lane conductor of <epic> (the backlog's with none),
@@ -1289,12 +1336,15 @@ lane_finish_note() {
   lane_finish_note_now "$1" "$2"
 }
 
-# lane_notes_flush <file> — send each note lane_finish_note queued in <file> (slug, tab, epic), then
-# remove it.
+# lane_notes_flush <file> — send each note lane_finish_note queued in <file> (slug, tab, epic), and run
+# each conductor start lane_ready_note queued there (start, tab, epic column, tab, lane), then remove it.
 lane_notes_flush() {
-  local slug epic
+  local a b c
   [[ -s "$1" ]] || { rm -f "$1"; return 0; }
-  while IFS=$'\t' read -r slug epic <&3; do [[ -z "${slug}" ]] || lane_finish_note_now "${slug}" "${epic}"; done 3< "$1"
+  while IFS=$'\t' read -r a b c <&3; do
+    [[ -n "${a}" ]] || continue
+    if [[ -n "${c}" ]]; then lane_start_conductor "${b}" "${c}"; else lane_finish_note_now "${a}" "${b}"; fi
+  done 3< "$1"
   rm -f "$1"
 }
 
@@ -1305,7 +1355,7 @@ lane_finish_note_now() {
   while IFS= read -r c <&3; do
     [[ -n "${c}" && "${c}" != "${SWARM_AGENT:-}" && ! -f "$(conductor_report "${c}")" ]] || continue
     f="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || return 0
-    printf "From swarm: %s's build is gone (merged or cleared). A story of your lane held for a clash with it is startable now: run swarm.sh unblock --startable %s --lane %s and start what it prints as your brief says.\n" \
+    printf "From swarm: %s's build is gone (merged, cleared, or its start failed). A story of your lane held for a clash with it is startable now: run swarm.sh unblock --startable %s --lane %s and start what it prints as your brief says.\n" \
       "$1" "${2:---backlog}" "$(conduct_lane "${c}")" > "${f}"
     (tell_agent "${c}" note "${f}") >/dev/null 2>&1 </dev/null || echo "warning: could not note ${c} that $1's build is gone; it sees it on its next pass" >&2
     rm -f "${f}"
@@ -1746,21 +1796,18 @@ RECONCILE_LOCK_WAIT=300
 # EXIT trap removes it, so a die inside still frees it; the subshell is the logged level when its
 # caller was, so that die is still the command's outcome.
 reconcile() {
-  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" level="${DIE_LEVEL}" rc=0 notes
+  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" level="${DIE_LEVEL}" notes
   mkdir -p "${PROJECT_DIR}/.swarm" || die "reconcile: cannot create ${PROJECT_DIR}/.swarm"
   SWARM_LOCK_WAIT="${SWARM_RECONCILE_WAIT:-${RECONCILE_LOCK_WAIT}}" state_lock "${lock}"
-  # The lane notes reconcile_board queues (lane_finish_note) go out below, once the lock is free. The
-  # subshell is a plain statement, not one side of a ||, which would turn errexit off inside it: under a
-  # caller's set -e a failed reconcile still ends there, as it did, and the queued notes go unsent.
+  # The lane notes reconcile_board queues (lane_finish_note) go out from the subshell's EXIT trap, right
+  # after it has given the lock up, whether reconcile_board finished or died: none is lost, and the queue
+  # file never outlives the run. The subshell is a plain statement, so errexit holds inside it.
   notes="$(mktemp "${TMPDIR:-/tmp}/swarm-lane-notes.XXXXXX")" || notes=""
   LANE_NOTES_FILE="${notes}"
-  # shellcheck disable=SC2064 # the path is fixed now
+  # shellcheck disable=SC2064 # the paths are fixed now
   ( [[ $((BASH_SUBSHELL - 1)) != "${level}" ]] || DIE_LEVEL="${BASH_SUBSHELL}"
-    trap "rmdir '${lock}' 2>/dev/null || true" EXIT   # a failed rmdir must not fail a finished reconcile
-    reconcile_board ); rc=$?
-  LANE_NOTES_FILE=""
-  [[ -z "${notes}" ]] || lane_notes_flush "${notes}"
-  return "${rc}"
+    trap "rmdir '${lock}' 2>/dev/null || true; LANE_NOTES_FILE=''; lane_notes_flush '${notes}'" EXIT   # a failed rmdir must not fail a finished reconcile
+    reconcile_board )
 }
 
 # drop_gone_state — state_drop each story and epic, by its board-state or escalated file, whose file a

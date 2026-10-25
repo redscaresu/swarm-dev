@@ -154,7 +154,7 @@ item "${b}" epics/e4.md "status: review" "prs: ${U}/1"
 : > "${ROOT}/herdr.log"
 run reconcile >/dev/null
 check "a PR closed unmerged tells the backlog's lanes its build is gone, and a finished epic tells none" "yes|no" \
-  "$(has "c3's build is gone (merged or cleared)" "$(cat "${p}/.swarm/inbox/${bl2}.md" 2>&1)")|$(grep -q "e4's build is gone" "${p}/.swarm/inbox/${bl2}.md" 2>/dev/null && echo yes || echo no)"
+  "$(has "c3's build is gone (merged, cleared, or its start failed)" "$(cat "${p}/.swarm/inbox/${bl2}.md" 2>&1)")|$(grep -q "e4's build is gone" "${p}/.swarm/inbox/${bl2}.md" 2>/dev/null && echo yes || echo no)"
 check "the lanes are listed and told only once reconcile's lock is free" "yes|no" \
   "$(grep -q '^agent list' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -q 'agent list under reconcile.lock' "${ROOT}/herdr.log" && echo yes || echo no)"
 # Both lanes have reported: nothing can be waiting, so a story's reopen asks herdr nothing.
@@ -163,6 +163,16 @@ item "${b}" stories/c4.md "status: review" "kind: code" "prs: ${U}/2"
 : > "${ROOT}/herdr.log"; run reconcile >/dev/null
 check "with every lane reported and conductor_lanes back at 1, a PR closed unmerged makes no herdr call" "no" \
   "$(grep -q 'agent list' "${ROOT}/herdr.log" && echo yes || echo no)"
+# A reconcile that dies after it queued a note (the board state cannot be written) still sends it once its
+# lock is free, and leaves no queue file behind.
+echo "conductor_lanes = 2" > "${p}/.claude/swarm/config"; rm -f "${p}/.swarm/conduct-backlog.l1.report.md" "${p}/.swarm/conduct-backlog.l2.report.md" "${p}/.swarm/inbox/${bl2}.md"
+item "${b}" stories/c5.md "status: review" "kind: code" "prs: ${U}/2"
+chmod 555 "${p}/.swarm/board-state/stories"
+rc=0; run reconcile >/dev/null 2>&1 || rc=$?
+chmod 755 "${p}/.swarm/board-state/stories"
+check "a reconcile that dies after queuing a lane note still sends it once its lock is free, and leaves no queue file" "no|yes|0" \
+  "$([[ ${rc} -eq 0 ]] && echo yes || echo no)|$(has "c5's build is gone" "$(cat "${p}/.swarm/inbox/${bl2}.md" 2>&1)")|$(set -- "${TMPDIR:-/tmp}"/swarm-lane-notes.*; [[ -e "$1" ]] && echo "$#" || echo 0)"
+rm -f "${b}/stories/c5.md"
 rm -f "${ROOT}/agents.json" "${p}/.swarm/briefs/conduct-backlog.l1.md" "${p}/.swarm/briefs/conduct-backlog.l2.md" "${p}/.swarm/state/${bl1}" "${p}/.swarm/state/${bl2}" "${b}/stories/c3.md" "${b}/stories/c4.md" "${p}/.swarm/conduct-backlog.l1.report.md" "${p}/.swarm/conduct-backlog.l2.report.md"
 rm -rf "${p}/.swarm/inbox"; : > "${p}/.claude/swarm/config"
 check "its dependent unblocks once it is finished" "ready: n" "$(run unblock)"
