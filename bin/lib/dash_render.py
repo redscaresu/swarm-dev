@@ -376,6 +376,14 @@ for l in lines("DASH_WAITING"):
             green += st[0] == "done"
             add(rows, bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")], item)
         continue
+    # A story a close kept (its PR not reviewed) is the lead's to review or drop, never one to merge,
+    # with keep_build's two exits.
+    m = re.match(r"kept: (\S+) (.*?) ?\(not reviewed\)$", l)
+    if m:
+        slug, prs = m.group(1), m.group(2).strip() or "<PR URL>"
+        add(lq, bang + [(f"review kept story {slug}{story_title(slug)}: ", ""),
+                        (f"swarm.sh review {slug} {prs} or swarm.sh close {slug} --drop", "dim")], ("stories", slug))
+        continue
     m = re.match(r"(\S+): (\S+)$", l)
     if m:
         slug = m.group(2)

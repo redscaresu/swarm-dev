@@ -10,6 +10,9 @@
 # entered in the same second both count. With merge = agent (board_dir under ~, with a space), only a
 # review of a story whose costs: is not none (any case, brackets or quotes, a block list, or a deleted
 # story's last version, or HEAD's; an unreadable story is money, an epic never) counts. held_story logs the held line.
+# A kept line opens a kept item, which the close that kept it does not end: it is open while its story
+# is in review with kept:, and a later review (which opens a merge item) ends it, as does a close --drop
+# once a new build or the story no longer kept shows it dropped the build.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -87,6 +90,47 @@ check "with --until, an open item counts to the midnight after it" "$(flow "${P}
   $'2026-10-03\t2\t365\t720\tmerge:g'
 check "with --until, an item that left after it is open there" "$(flow "${P}" --since 2026-10-01 --until 2026-10-01 | tail -1)" \
   $'2026-10-01\t5\t40\t120\tmerge:k'
+
+# 2026-10-04, kept items (keep_build logs kept inside the close that kept it, so that close ends
+# nothing): kk is in review with kept: in board-state, so open to the midnight after --until (840);
+# kr's review closes it (30) and enters merge:kr, open while kr is in review (750); kd's close --drop
+# closes it (20), as kd is no longer kept; kn's close dropped nothing (gh could not list its PRs), so
+# its review closes it (50); kb's close --drop closes it (15), as its next build started before the
+# review of that build. kh's close paused --drop logs held before its close: the kept wait ends there
+# (25) and held:kh opens, open while kh is held (455).
+ev 2026-10-04T10:00:00Z kept kk "ok (https://github.com/o/r/pull/1; not reviewed)"
+ev 2026-10-04T10:00:00Z close kk
+ev 2026-10-04T11:00:00Z kept kr "ok (https://github.com/o/r/pull/2; not green, not reviewed)"
+ev 2026-10-04T11:00:00Z close:stalled kr
+ev 2026-10-04T11:30:00Z review kr "ok (https://github.com/o/r/pull/2)"
+ev 2026-10-04T12:00:00Z kept kd "ok (https://github.com/o/r/pull/3; not reviewed)"
+ev 2026-10-04T12:00:00Z close kd
+ev 2026-10-04T12:20:00Z close kd
+ev 2026-10-04T13:00:00Z kept kn "ok (https://github.com/o/r/pull/4; not reviewed)"
+ev 2026-10-04T13:00:00Z close kn
+ev 2026-10-04T13:10:00Z close kn
+ev 2026-10-04T13:50:00Z review kn "ok (https://github.com/o/r/pull/4)"
+ev 2026-10-04T14:00:00Z kept kb "ok (https://github.com/o/r/pull/5; not reviewed)"
+ev 2026-10-04T14:00:00Z close kb
+ev 2026-10-04T14:15:00Z close kb
+ev 2026-10-04T14:40:00Z story kb
+ev 2026-10-04T15:30:00Z review kb "ok (https://github.com/o/r/pull/6)"
+ev 2026-10-04T16:00:00Z kept kh "ok (https://github.com/o/r/pull/7; not reviewed)"
+ev 2026-10-04T16:00:00Z close kh
+ev 2026-10-04T16:25:00Z held kh "ok (paused)"
+ev 2026-10-04T16:25:00Z close:paused kh
+story "${P}/docs" kk "status: ready"; story "${P}/docs" kr "status: review"; story "${P}/docs" kh "status: ready" "held_for: paused"
+printf 'status: review\nstatus@base: ready\nkept: 2026-10-04 close (not reviewed)\n' > "${P}/.swarm/board-state/stories/kk"
+check "a kept story in review is open as kept:, and a later review or close --drop ends a kept item" \
+  "$(flow "${P}" --since 2026-10-04 --until 2026-10-04 | tail -1)" $'2026-10-04\t8\t40\t840\theld:kh,kept:kk,merge:kr'
+# 2026-10-05: kq's first close --drop could not list its PRs (dropped nothing); the second dropped the
+# build, so the kept wait ends there (20).
+ev 2026-10-05T10:00:00Z kept kq "ok (https://github.com/o/r/pull/8; not reviewed)"
+ev 2026-10-05T10:00:00Z close kq
+ev 2026-10-05T10:10:00Z close kq
+ev 2026-10-05T10:20:00Z close kq
+check "a kept wait ends at the last close --drop, not one that dropped nothing" \
+  "$(flow "${P}" --since 2026-10-05 --until 2026-10-05 | tail -1)" $'2026-10-05\t1\t20\t20\t-'
 
 # merge = agent, the board at "~/my board": m (costs: [Money]) 30, o (deleted, a block list of money) 20,
 # held q 50, u (in neither the board nor git, so money) 10; n (costs: "None"), p (no costs:), r (gone
