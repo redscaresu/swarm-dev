@@ -14,9 +14,13 @@
 set -euo pipefail
 TESTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 grep -qx 'fails=0' "${TESTS}/dataset_test.sh" || { echo "FAIL dataset_test.sh has no fails=0 line to end its fixture at"; exit 1; }
-# dataset_test.sh's setup: dir (removed on exit), P, SWARM, the gh stub in ${dir}/bin. eval, as bash 3.2's
-# source reads nothing from a <(...).
+root="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "${root}"' EXIT
+export CLAUDE_CONFIG_DIR="${root}/claude-config" TMPDIR="${root}"   # the fixture's own mktemp lands under root
+# dataset_test.sh's setup: dir, P, SWARM, the gh stub in ${dir}/bin. eval, as bash 3.2's source reads
+# nothing from a <(...). Its trap removes dir alone, so root's goes back on after it.
 eval "$(sed '/^fails=0$/q' "${TESTS}/dataset_test.sh")"
+trap 'rm -rf "${root}"' EXIT
 printf '%s\n' '{"slug": "by-sonnet", "inputs": {"easy": false, "estimate_lines": 50, "planner_model": "sonnet"}, "results": {"diff_lines": 80, "merged_at": "2026-08-03T00:00:00Z"}, "was_easy": true}' \
   >> "${P}/.swarm/dataset.jsonl"
 
