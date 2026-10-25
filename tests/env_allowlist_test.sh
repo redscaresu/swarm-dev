@@ -81,7 +81,7 @@ for f in bashrc bash_profile; do echo "export BASH_LEAK=${f}" > "${TEST_HOME}/.$
 run() {
   (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
     XDG_CONFIG_HOME="${ROOT}/xdg" GH_CONFIG_DIR="${ROOT}/gh" GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" \
-    "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET \
+    "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET PROVIDER_KEY=provider-key \
     SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
 }
 # agent_env <agent> — its recorded environment, one NAME=value per line, into the array a.
@@ -168,6 +168,8 @@ check "its SHELL is the agent shell, not the lead's bash" "/bin/sh" "$(var condu
 check "a login shell the agent starts from SHELL sees no secret exported in HOME's .bashrc or .bash_profile" "none" \
   "$(env -i "${a[@]}" /bin/sh -c '"$SHELL" -lic "echo \${BASH_LEAK:-none}"' 2>/dev/null </dev/null | tail -1)"
 check "a stray AGENT_ENV_NAMES in swarm.sh's environment adds nothing" "" "$(var conduct-plain FAKE_SECRET)"
+# agent_env adds names only when the config sets it (the Foundry case below): without it, nothing extra leaks.
+check "with no agent_env, PROVIDER_KEY from the lead does not reach it" "" "$(var conduct-plain PROVIDER_KEY)"
 
 # --- A story's env: reaches its conductor, then the builder that conductor starts, with the lead's value.
 check "conduct e starts, though a done story of its epic names a bad env:" "0" "$(set +e; run conduct e >/dev/null; echo $?)"
@@ -254,6 +256,37 @@ check "and so is one whose env: line has a comment" "${REFUSED}" \
 check "and one with its items at column 0" "${REFUSED}" "$(refused "env:" "- FAKE_SECRET" "env: is not a one-line list; write it as env: [NAME, ...]")"
 check "and a list over several lines" "${REFUSED}" "$(refused "env: [" "  FAKE_SECRET," "]" "env: is not a one-line list; write it as env: [NAME, ...]")"
 check "and a bare name" "${REFUSED}" "$(refused "env: FAKE_SECRET" "env: is not a one-line list; write it as env: [NAME, ...]")"
+
+# --- agent_env: names every agent of every role gets, set once in the config. Last, since it changes the config.
+# Why agent_env exists: agents on Azure Foundry (or another provider) need its endpoint, key and
+# model names (ANTHROPIC_FOUNDRY_RESOURCE, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_DEFAULT_*_MODEL) in
+# every pane, not only builders'; without them every agent stops at its start. Boards outside
+# swarm-dev and infrafactory set it, so finding it unset in those two configs is no reason to remove it.
+# Each check below guards one part of that: a non-builder and a builder both get the names, a restart
+# keeps them, a session without the provider still starts agents, and a bad name stops at config load.
+rm -f "${b}/stories/bad.md"
+printf 'agent_env = PROVIDER_KEY UNSET_HERE\n' > "${p}/.claude/swarm/config"
+o="$(run agent t5 co-author "${p}" hld "${ROOT}/brief.md")"
+check "a name in agent_env reaches an agent that builds nothing (role hld), with the lead's value" "provider-key" "$(var co-author PROVIDER_KEY)"
+check "one the lead's session does not have is skipped with a warning, and the agent still starts" "yes|1" \
+  "$(has "swarm: warning: agent_env: UNSET_HERE is not set here, so the agent starts without it" "${o}")|$(var co-author HERDR_ENV)"
+run story p1 >/dev/null
+check "and it reaches a builder whose story names no env:" "provider-key" "$(var p1 PROVIDER_KEY)"
+session="$(awk -F'\t' '$3 == "co-author" { s = $7 } END { print s }' "${p}/.swarm/agents.tsv")"
+check "its restart wrapper keeps it from the restored pane, and still drops a name nothing gave it" "PROVIDER_KEY=restored|" \
+  "$(env -i PATH=/usr/bin:/bin PROVIDER_KEY=restored FAKE_SECRET=restored python3 -I "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/${session}.py" env | grep -E '^(PROVIDER_KEY|FAKE_SECRET)=' | paste -sd'|' -)|"
+# config_refused <agent_env value> <the refusal's text> — the config stops swarm.sh, naming its line, before any pane opens.
+config_refused() {
+  local n o
+  printf 'agent_env = %s\n' "$1" > "${p}/.claude/swarm/config"
+  n="$(started)"
+  o="$(set +e; run agent t6 refused "${p}" hld "${ROOT}/brief.md"; echo "rc=$?")"
+  printf '%s|%s|%s\n' "$(has "rc=1" "${o}")" "$(has ".claude/swarm/config:1: agent_env: $2" "${o}")" "$(( $(started) - n ))"
+}
+check "a malformed name in agent_env is refused at config load" "yes|yes|0" "$(config_refused "PROVIDER_KEY bad-name" "'bad-name' is not a variable name")"
+check "so is a reserved one: PATH, which every agent gets already" "yes|yes|0" "$(config_refused "PATH" "PATH is reserved")"
+check "and HERDR_PANE_ID, which would replace the agent's own pane" "yes|yes|0" "$(config_refused "PROVIDER_KEY HERDR_PANE_ID" "HERDR_PANE_ID is reserved")"
+: > "${p}/.claude/swarm/config"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

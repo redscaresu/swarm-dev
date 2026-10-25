@@ -62,6 +62,8 @@ printf -- '---\nstatus: active\n---\n\n# e\n' > "${P}/docs/epics/e.md"
 for s in b1 b2; do printf -- '---\nkind: code\nstatus: ready\nepic: e\n---\n\n# %s\n' "${s}" > "${P}/docs/stories/${s}.md"; done
 printf -- '---\nkind: code\nstatus: ready\nepic: other\n---\n\n# x1\n' > "${P}/docs/stories/x1.md"
 "${GIT[@]}" -C "${P}" add -A && "${GIT[@]}" -C "${P}" commit -qm init
+# Untracked, as a project's config is: every restarted agent gets PROVIDER_KEY (agent_env).
+mkdir -p "${P}/.claude/swarm"; echo "agent_env = PROVIDER_KEY" > "${P}/.claude/swarm/config"
 
 # b1's worktree, with a commit, an uncommitted change and an untracked file.
 WT="${P}-wt/b1"
@@ -139,7 +141,7 @@ claude_list() { printf '[{"sessionId":"sc","status":"%s"},{"sessionId":"s1","sta
 claude_list idle idle idle
 
 mkdir -p "${H}/tmp"
-ENVV=(TMPDIR="${H}/tmp" SWARM_PROJECT="${P}" HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_SLEEP_SCALE=0.01 PATH="${H}/bin:${H}/old/0.21.0/bin:${H}/shared:${PATH}")
+ENVV=(TMPDIR="${H}/tmp" SWARM_PROJECT="${P}" PROVIDER_KEY=provider-key HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_SLEEP_SCALE=0.01 PATH="${H}/bin:${H}/old/0.21.0/bin:${H}/shared:${PATH}")
 upgrade() { # [epic] — run upgrade --foreground from the project, its output in ${H}/out and exit code in rc
   : > "${LOG}"; rc=0; rm -f "${H}/claude.count" "${P}/.swarm/inbox/conduct-e.md"
   (cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_GRACE_MS="${GRACE_MS:-200}" SWARM_UPGRADE_WAIT_MS="${WAIT_MS:-60000}" \
@@ -179,6 +181,13 @@ check "herdr gets each restarted agent's resume command, as at its start" "yes" 
 check "and that command resumes its session with its flags" "yes" \
   "$(has "--agent-session-id s1 -- python3 -I ${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.py claude --resume s1 --model sonnet" "$(calls 'pane report-agent w:b1')")"
 check "each restarted agent is told its background commands, subagents and monitors were stopped" "3" "$(calls 'agent prompt' | grep -c 'stopped any background command, subagent or monitor')"
+# Why agent_env exists: agents on Azure Foundry (or another provider) need its endpoint, key and
+# model names (ANTHROPIC_FOUNDRY_RESOURCE, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_DEFAULT_*_MODEL) in
+# every pane, not only builders'; without them every agent stops at its start. Boards outside
+# swarm-dev and infrafactory set it, so finding it unset in those two configs is no reason to remove it.
+# An upgrade restart must keep them, or a Foundry agent stops when swarm.sh upgrade restarts it.
+check "agent_env's names reach the restarted agent, and its restart wrapper keeps them" "yes|yes" \
+  "$(has "export PROVIDER_KEY=provider-key" "$(cat "${H}/launch-w:b1")")|$(has "'PROVIDER_KEY'" "$(cat "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.py")")"
 check "SWARM_RESUME reaches the restarted agent" "yes" "$(has "export SWARM_RESUME=$(printf %q "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.argv")" "$(cat "${H}/launch-w:b1")")"
 check "it prints each agent's old and new version" "b1: 0.21.0 -> ${NEW}|b2: 0.21.0 -> ${NEW}|conduct-e: 0.21.0 -> ${NEW}" \
   "$(grep -- ' -> ' "${H}/out" | paste -sd'|' -)"

@@ -304,6 +304,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `merge_admin` (default `off`): `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, so it merges in a repo whose ruleset requires an approving review, which no agent can give. It does so only after the checks it always makes: the head is green, no `costs: money` hold applies, the `--board` or `--release` scope holds, and the head is the one `--head` names. `--admin` skips every rule on the base, not only the review, so `swarm.sh merge` first reads the base's rulesets and branch protection itself. It refuses while a status check they require is absent from the head, while they require the branch up to date (strict) and the head is behind the base, and whenever they hold a rule besides the review, the status checks and rules about pushes (deletion, force pushes, creation): a merge queue, required workflows, signatures, linear history, conversation resolution, deployments, code scanning or push restrictions. That includes the review rule's own thread resolution, and merge methods that leave out the one `swarm.sh merge` picks from the repo's settings. A classic protection field outside the few known to be safe is refused whatever its name, and a 404 from branch protection counts as unprotected only when GitHub says `Branch not protected`, since a token that cannot read protection gets a 404 too. The refusal names the rule. A red head, a held PR or a moved head is still refused before `gh pr merge` runs. Off, `swarm.sh merge` never passes `--admin` and reads none of these
 - `lead_epics` (default `off`): `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through the user or a grant. Any other value stops `swarm.sh` with the file and line
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
+- `agent_env` (default empty): variable names, separated by spaces, that every agent gets with the values of the session that starts it, such as a provider's key (§ Building, **The agents' environment.**)
 - `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines. A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set
 
 ## Scoping an epic
@@ -439,17 +440,30 @@ into what the agent runs (`BASH_ENV`, `ENV`, `DYLD_*`, `LD_*`). No value goes th
 swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's shell runs and which
 deletes itself, so the pane's scrollback shows the launch line with no value in it.
 
-A login read from the environment does not reach an agent either: `ANTHROPIC_API_KEY`,
+`agent_env = NAME ...` in `.claude/swarm/config` adds names for every agent of every role: the HLD
+and epic co-authors, planners, conductors, builders and review agents. A restart keeps the names.
+`swarm.sh upgrade` gives them the values of the session that runs it. When herdr restores a pane, the
+values come from that pane's new shell, since swarm.sh never writes a value to disk. So a key you
+export only in the session that started the agent is gone after a herdr restore; export it from your
+shell's startup files to keep it there. This is how a provider's key
+reaches agents. On Azure Foundry, for example, Claude Code needs `ANTHROPIC_FOUNDRY_RESOURCE` and
+`ANTHROPIC_FOUNDRY_API_KEY`, and the `ANTHROPIC_DEFAULT_*_MODEL` names if your deployments are named
+differently from the models. Without them every agent stops at its start. Each value comes from the
+session that starts the agent. A name that session does not have is skipped with a warning, so the
+same board still runs from a session without the provider. When the config loads, `swarm.sh` refuses
+a name that is not `[A-Z_][A-Z0-9_]*` or is reserved, by the same rules as `env:`, and names the line.
+
+By default, a login read from the environment does not reach an agent either: `ANTHROPIC_API_KEY`,
 `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, or a `GH_TOKEN` for `gh`. A story can name
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GH_TOKEN` for its builder (never a `CLAUDE_CODE_*` one), but
-agents with no story of their own (planners and review agents, and conductors beyond their stories'
-names) never get it. If you log in that way, log in through each tool instead: `claude` then
-`/login`, `codex login`, and `gh auth login`. On Foundry, Bedrock or Vertex, the provider and model
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GH_TOKEN` for its builder (never a `CLAUDE_CODE_*` one).
+Agents with no story of their own (planners and review agents, and conductors beyond their stories'
+names) get one only when `agent_env` names it, and then every agent gets it. Otherwise, log in
+through each tool instead: `claude` then `/login`, `codex login`, and `gh auth login`. On Foundry, Bedrock or Vertex, the provider and model
 selection above passes from the session that runs swarm.sh, or can go under `env` in
 `~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
 provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
-`gcloud auth application-default login`), never from an exported secret such as
-`AWS_SECRET_ACCESS_KEY`.
+`gcloud auth application-default login`). An exported secret such as `AWS_SECRET_ACCESS_KEY` or
+Foundry's `ANTHROPIC_FOUNDRY_API_KEY` reaches agents only when `agent_env` names it.
 
 Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
 Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,

@@ -2520,13 +2520,15 @@ UPGRADE_HINT=""
 # upgrade_one <name> <pane> <env-names> <version> <end-ms> — once <name> is idle (upgrade_idle, by
 # <end-ms>), write this version's resume command (resume_file), send ctrl+c twice at once (claude
 # exits only on a second within a moment) until claude has left its pane, then start it there again,
-# through clean_env with this version's bin first on PATH: --resume of herdr's session for the pane,
+# through clean_env with this version's bin first on PATH and <env-names> and agent_env's names
+# (agent_env_names): --resume of herdr's session for the pane,
 # with the flags its claude ran with (herdr pane process-info). Any failure once claude has exited
 # keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
 # stops only this agent.
 upgrade_one() {
-  local name="$1" pane="$2" old session a out cwd why rc flags=() resume=() try
+  local name="$1" pane="$2" old session a out cwd why rc flags=() resume=() try names
   old="$(agent_version "${name}")"
+  names="$(agent_env_names)"; names="${names}${names:+ }$3"   # as start_agent gives every agent
   upgrade_idle "${name}" "${pane}" "$5" && rc=0 || rc=$?
   [[ ${rc} -ne 2 ]] || die "${name}: its Claude session is gone, so it is not restarted; left on ${old}"
   if [[ ${rc} -ne 0 ]]; then
@@ -2543,7 +2545,7 @@ upgrade_one() {
   if [[ -n "${out}" ]]; then while IFS= read -r a; do flags+=("${a}"); done <<< "${out}"; fi
   resume=(python3 -I "${RESUME_DIR}/${session}.py" claude --resume "${session}" ${flags[@]+"${flags[@]}"})
   why="$(resume_refusal "${resume[@]}")" && die "${name}: herdr would refuse its resume command (${why}), left on ${old}"
-  resume_file "${name}" "${session}" "$3" "${resume[@]}"
+  resume_file "${name}" "${session}" "${names}" "${resume[@]}"
   a="$(upgrade_path)"
   # Before the first ctrl+c, so a claude that exits late, or a read that fails, still says how to resume it.
   UPGRADE_HINT="${name}: not started again; if pane ${pane} shows a shell, claude --resume ${session}, run in ${cwd}, brings the session back"
@@ -2559,7 +2561,7 @@ upgrade_one() {
     [[ ${try} -lt 3 ]] || die "${name}: claude did not exit on ctrl+c, left on ${old}"
   done
   local -x SWARM_RESUME="${RESUME_DIR}/${session}.argv"
-  PATH="${a}" clean_env "${pane}" "${name}" "$3" keep   # the agent's PATH; herdr below still runs from the lead's
+  PATH="${a}" clean_env "${pane}" "${name}" "${names}" keep   # the agent's PATH; herdr below still runs from the lead's
   out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${session}" ${flags[@]+"${flags[@]}"} 2>&1)" \
     || die "${name}: herdr could not start it again (${out})"
   trap - EXIT
