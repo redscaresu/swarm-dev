@@ -27,6 +27,9 @@ if [[ -n "${found}" ]]; then
   echo "FAIL a removed name is back:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   no removed name in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh but REMOVED_KEYS"; fi
 
+# Why: an older board's config still sets these keys, and swarm.sh must keep running there. Boards
+# outside swarm-dev and infrafactory set them, so checking those two configs is not enough to make
+# them die again.
 # A config that sets a removed key still loads: the key is ignored, with a warning on stderr naming it
 # and its line. Any other unknown key still stops the script.
 proj="$(cd "${iso}" && pwd -P)/proj"; mkdir -p "${proj}/.claude/swarm"

@@ -176,6 +176,9 @@ check "with commit_trailers set, a builder's brief names each trailer for every 
   $'End every commit message with these trailers, one per line:\nCo-Authored-By: Ann <a@x.io>\nSigned-off-by: Bo <b@x.io>' \
   "$(grep -A2 '^End every commit message' "${p}/.swarm/briefs/t1.md")"
 check "without commit_trailers, a brief names none" "no" "$(grep -q '^End every commit message' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
+# Why: an org that requires every commit and merge GPG-signed sets sign_commits = true.
+# Boards outside swarm-dev and infrafactory set this key, so checking those two configs is not
+# enough to remove it.
 # sign_commits = true: the builder's and the conductor's brief each carry the sign rule; unset, neither does.
 SIGN="Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."
 printf '%s\n' "sign_commits = true" > "${p}/.claude/swarm/config"

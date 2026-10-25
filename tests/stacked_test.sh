@@ -149,6 +149,9 @@ check "the worktree contains both parents' heads" "yes|yes" \
 rc=0; out="$(run story two)" || rc=$?
 check "story refuses a story whose build exists, saying so, and starts no second builder" "fail|yes|1" \
   "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "two has a build already" "${out}")|$(grep -c '^agent start two ' "${ROOT}/herdr.log")"
+# Why: an org that requires every commit and merge GPG-signed sets sign_commits = true.
+# Boards outside swarm-dev and infrafactory set this key, so checking those two configs is not
+# enough to remove it.
 # sign_commits = true: the merge of the second parent passes -S. git signs with a throwaway SSH key
 # here and commit.gpgsign is unset, so only -S can sign it; two's merge above, made with it off, is not signed.
 ssh-keygen -q -t ed25519 -N '' -C stacked-test -f "${ROOT}/signkey"
