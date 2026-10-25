@@ -256,5 +256,10 @@ out="$(swarm upgrade || echo "exit $?")"
 check "with a lane conductor from conductor_lanes = 2 running, upgrade refuses, naming it" "yes|yes" \
   "$(grep -qF "upgrade: ${l1} runs under another conductor_lanes than 1; let it report and close it" <<< "${out}" && echo yes || echo "no, got: ${out}")|$(grep -q "^exit [1-9]" <<< "${out}" && echo yes || echo no)"
 
+# --- commands/swarm.md's collect arm names a lane conductor's report, which next's collect <conductor>-l<k> step has the lead read.
+collect="$(sed -n '/collect <agent>/,/^   - /p' "$(dirname "${SWARM}")/../commands/swarm.md")"
+check "commands/swarm.md's collect arm names the lane report paths" "yes|yes" \
+  "$(grep -qF '.swarm/conduct-<epic>.l<k>.report.md' <<< "${collect}" && echo yes || echo no)|$(grep -qF '.swarm/conduct-backlog.l<k>.report.md' <<< "${collect}" && echo yes || echo no)"
+
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

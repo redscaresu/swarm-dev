@@ -177,8 +177,10 @@ Repeat until a step below says stop:
      reach 3 PRs: while the check is under 30 days old that is `since_30d`'s `<n>` (it reads
      `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
      so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
-     (`.swarm/conduct-<epic>.report.md`), relay what merged, what
-     is left and what waits on the user, then `swarm.sh close <agent>`.
+     (`.swarm/conduct-<epic>.report.md`, the backlog's `.swarm/conduct-backlog.report.md`; a lane
+     conductor, `conduct-<epic>-l<k>` or the backlog's `...-l<k>` name `swarm.sh status` lists, writes
+     `.swarm/conduct-<epic>.l<k>.report.md` or `.swarm/conduct-backlog.l<k>.report.md`), relay what
+     merged, what is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. With
      `conductor_lanes` above 1 the step is `conduct <epic> --lane <k>` (or `conduct --backlog --lane
      <k>`), for a lane with ready stories and no conductor, even while another conductor works: the
