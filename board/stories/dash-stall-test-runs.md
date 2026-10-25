@@ -19,4 +19,4 @@ Review fix (critic): dash.sh does every herdr read today (bin/lib/dash.sh:535-53
 - tests/dash_stalls_test.sh: s-three, 2 hours with no sign of life, shows `working` and no `look at s-three` when the herdr and ps stubs put `make test` under its pane shell, and still shows `stalled 1(19|20|21)m` and `look at s-three` without it; a conductor past the threshold does the same.
 - A working agent under stall_minutes gets no herdr pane process-info call during dash (the herdr stub's log shows none).
 - With process-info failing, the existing stalled assertions pass unchanged.
-- dash_render.py makes no herdr call (the herdr stub's log shows calls only from dash.sh).
+- dash_render.py makes no `herdr pane process-info` call (the herdr stub's log shows process-info calls only from dash.sh); its existing `herdr agent read` through shown_state is unchanged.
