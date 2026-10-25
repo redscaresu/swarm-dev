@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# lead_stop_test.sh — hooks/lead-stop.sh against stubs. The hook is copied beside a bin/swarm.sh stub
-# that prints $STUB_NEXT for _step (next's step) and $STUB_BOARD for config (_step sleeps $STUB_SLEEP
-# first, or exits 1 after with STUB_FAIL; config sleeps $STUB_CONFIG_SLEEP, or fails with STUB_CONFIG_FAIL), and a
+# lead_stop_test.sh — hooks/lead-stop.sh against stubs. The hook (and lead-session.sh, which it
+# sources) is copied beside a bin/swarm.sh stub that prints $STUB_NEXT for _step (next's step) and
+# $STUB_BOARD for config (_step sleeps $STUB_SLEEP first, or exits 1 after with STUB_FAIL; config sleeps $STUB_CONFIG_SLEEP, or fails with STUB_CONFIG_FAIL), and a
 # herdr stub (HERDR_BIN_PATH) whose agent list is $STUB_AGENTS. `agents` writes the project's
 # .swarm/state panes and STUB_AGENTS together. Each stub records the command it ran; every case
 # checks the hook's stdout and, in run, the events.tsv line it left.
@@ -15,7 +15,7 @@ export CLAUDE_CONFIG_DIR="${root}/claude-config"   # under its own root, so para
 project="${root}/project"
 mkdir -p "${root}/plugin/hooks" "${root}/plugin/bin" "${project}/.claude/swarm" "${project}/docs/stories" "${project}/docs/epics"
 : > "${project}/.claude/swarm/config"
-cp "${HOOK}" "${root}/plugin/hooks/lead-stop.sh"
+cp "${HOOK}" "$(dirname "${HOOK}")/lead-session.sh" "${root}/plugin/hooks/"
 cat > "${root}/plugin/bin/swarm.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "$1" >> "${STUB_RAN}"; echo "${SWARM_PROJECT}" > "${STUB_RAN}.project"
@@ -37,7 +37,7 @@ EOF
 chmod +x "${root}/plugin/bin/swarm.sh" "${root}/plugin/herdr"
 # A total deadline of 45 x 0.05 = 2.25 seconds.
 export STUB_RAN="${root}/ran" STUB_BOARD="${project}/docs" SWARM_SLEEP_SCALE=0.05 HERDR_ENV=1 HERDR_BIN_PATH="${root}/plugin/herdr"
-unset SWARM_AGENT SWARM_PROJECT
+unset SWARM_AGENT SWARM_GH_CALLER SWARM_PROJECT
 fails=0 cases=0
 
 check() { # <name> <test...>
@@ -265,6 +265,8 @@ check "stop_hook_active runs nothing" [ -z "${ran}" ]
 STUB_NEXT="plan-epic X" SWARM_AGENT=builder run ""
 check "SWARM_AGENT allows" [ -z "${out}" ]
 check "SWARM_AGENT runs no next" [ -z "${ran}" ]
+STUB_NEXT="plan-epic X" SWARM_GH_CALLER=builder run ""
+check "SWARM_GH_CALLER (any agent's) allows and runs no next" [ -z "${out}${ran}" ]
 
 start=$(date +%s)
 STUB_NEXT="plan-epic X" STUB_SLEEP=30 run "lead-stop - allowed"

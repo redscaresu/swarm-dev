@@ -65,6 +65,17 @@ The lead handles each line at once and starts it again. It keeps what it last sa
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
 
+**The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
+`swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
+missed. That rule lives only in the lead's prompt, and the lead forgot it: on 2026-10-25 the user
+caught three problems and none was logged until they asked how such things reach the retro. So a
+UserPromptSubmit hook (`hooks/user-caught-reminder.sh`) adds this line of context to each of your
+messages to the lead: `If this message points out a problem the swarm or the lead missed, log it
+first: swarm.sh intervene user-caught "<what they found>".` It runs only in the lead's session,
+found as the lead's Stop hook finds it (`hooks/lead-session.sh`): no `SWARM_AGENT` or
+`SWARM_GH_CALLER` in its environment (every agent has one), a cwd outside any worktree, and a swarm
+project. Anywhere else it prints nothing. It never blocks a message.
+
 ## Writing an HLD
 
 An HLD is a design for a release's worth of work, agreed with you before any epic is written. It

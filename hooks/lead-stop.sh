@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # lead-stop.sh — the plugin's Stop hook for the lead (hooks/hooks.json). A Claude Code session acts
 # only when a message or a notification wakes it, so a lead that ends its turn promising the step
-# `next` names leaves that step waiting until the user asks. It runs in the lead's session alone:
-# SWARM_AGENT unset, a cwd outside any worktree (the user's own worktree sessions and an agent's
-# nested `claude -p` are not the lead), and a swarm project ($SWARM_PROJECT, else the nearest folder
-# at or above the cwd with .claude/swarm/config, as find_project looks). It reads next's step with
-# `swarm.sh _step`, next_step alone: next adds gh calls (conductors_queued) for lines past the first.
+# `next` names leaves that step waiting until the user asks. It runs in the lead's session alone,
+# as lead-session.sh's lead_project finds it: no agent, a cwd outside any worktree, and a swarm
+# project. It reads next's step with `swarm.sh _step`, next_step alone: next adds gh calls
+# (conductors_queued) for lines past the first.
 # When the step is plan-epic, plan-hld, hld, story, resume, collect or conduct and has not started,
 # it prints a block decision naming the line; any other step allows the stop. collect is the lead's
 # own step, so it always blocks. hld has started once its finish board-PR worktree,
@@ -29,7 +28,8 @@ set -uo pipefail
 LEAD_STOP_SECONDS=45
 
 input="$(cat)"
-[[ -z "${SWARM_AGENT:-}" ]] || exit 0
+# shellcheck source=hooks/lead-session.sh
+. "$(dirname "$0")/lead-session.sh" || exit 0
 command -v python3 >/dev/null || exit 0
 out="$(printf '%s' "${input}" | python3 -I -c '
 import json, sys
@@ -45,19 +45,10 @@ print(c if isinstance(c, str) and "\n" not in c else "")' 2>/dev/null)" || exit 
 ${out}
 EOF
 [[ -z "${active}" ]] || exit 0
+project="$(lead_project "${cwd:-${PWD}}")" || exit 0
 deadline="$(perl -MTime::HiRes=time -e 'my $s = shift() * shift(); printf "%.3f", time + ($s < 1 ? 1 : $s)' \
   "${LEAD_STOP_SECONDS}" "${SWARM_SLEEP_SCALE:-1}")" || exit 0
 
-d="${cwd:-${PWD}}"
-# A worktree's git dir is not the common one: the session is not the lead.
-dirs="$(git -C "${d}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" \
-  && [[ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ]] && exit 0
-if [[ -n "${SWARM_PROJECT:-}" ]]; then project="${SWARM_PROJECT}"
-else
-  project="$(cd "${d}" 2>/dev/null && pwd -P)" || exit 0
-  while [[ "${project}" != / && ! -f "${project}/.claude/swarm/config" ]]; do project="$(dirname "${project}")"; done
-fi
-[[ -f "${project}/.claude/swarm/config" ]] || exit 0
 sw="$(cd "$(dirname "$0")/.." && pwd)/bin/swarm.sh"
 [[ -x "${sw}" ]] || exit 0
 
