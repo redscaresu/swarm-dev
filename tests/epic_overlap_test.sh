@@ -175,9 +175,18 @@ check "a shorthand inherits the previous entry's repo with its file" \
   "warning: xb (epic e2) is open and touches src/a.go:y; start xn after it merges" "$(warns xn)"
 other "status: review" "epic: e2" "touches: [other: docs/y.md]"; subject xf "[docs/y.md]"
 check "the same file in another repo does not overlap" "none" "$(warns xf)"
-other "status: review" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; subject xg "[bin/swarm.sh]"
-check "a file-only entry overlaps any function in that file" \
-  "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xg after it merges" "$(warns xg)"
+# Parts: a bare file clashes only with the bare file; two parts clash when their first words match.
+check "a bare file does not clash with a part of it, nor one part with another" "none|none" \
+  "$(other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xg "[bin/swarm.sh]"; warns xg)|$(
+  other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xg2 "[bin/swarm.sh:main]"; warns xg2)"
+check "a bare file clashes with the bare file, and a part with one that starts with the same word" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh; start xg3 after it merges|warning: xb (epic e2) is open and touches bin/swarm.sh:load_config; start xg4 after it merges" \
+  "$(other "status: review" "epic: e2" "touches: [bin/swarm.sh]"; subject xg3 "[bin/swarm.sh]"; warns xg3)|$(
+  other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xg4 "[bin/swarm.sh:load_config and the dispatch]"; warns xg4)"
+other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xs1 "[bin/swarm.sh]"; subject xs2 "[bin/swarm.sh:load_config (CFG)]"
+rc1=0; run story --strict xs1 >/dev/null || rc1=$?; rc2=0; out="$(run story --strict xs2)" || rc2=$?
+check "story --strict across epics starts a story whose bare file another epic's open story names a part of, and refuses one naming the same part" \
+  "0|fail|yes" "${rc1}|$([[ ${rc2} -ne 0 ]] && echo fail || echo ok)|$(has "xs2: xb (epic e2) is open and touches bin/swarm.sh:load_config" "${out}")"
 # xb's builder open: built in e2 (its own warnings about e1's open builders are not this check's).
 other "status: ready" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; run story xb >/dev/null; subject xh "[bin/swarm.sh:tell_agent]"
 check "a ready story whose builder herdr lists open warns" \

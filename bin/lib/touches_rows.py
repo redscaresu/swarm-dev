@@ -62,8 +62,11 @@ def entries(fm, project_dir, repos_dir):
         out.append(("" if r == project else r, f.strip(), fn.strip()))
     return out
 
+# overlap(a, b) — two (repo, file, part) entries clash: the same repo and file, and either both parts
+# empty or the parts' first words (a function or section name) the same. A bare file never clashes
+# with a part of it.
 def overlap(a, b):
-    return a[:2] == b[:2] and (not a[2] or not b[2] or a[2] == b[2])
+    return a[:2] == b[:2] and a[2].split()[:1] == b[2].split()[:1]
 
 def deps(fm):
     return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))
