@@ -16,6 +16,7 @@ No release without a retro: merge --release refuses a minor bump unless a done r
 - commands/swarm.md's collect arm keeps the report, relay and close steps (commands/swarm.md:160-180; board.sh:213 still emits collect; merge.sh:494 counts the close) and loses only the checks:-filing paragraph, which the retro's recurring-kinds list replaces; tests/removed_test.sh:19 is updated in the same story; commands/swarm.md's release arm names the retro step.
 - The gate is recorded as the 'ship switched off' exception in docs/reference.md:328-333's terms (every plugin board with a v<version> tag gains it on upgrade, by this HLD's Goal 1) and the v0.31.0 release PR lists it as a behaviour change every project gets.
 - docs/reference.md, README.md, AGENTS.md and commands/swarm.md's release arm describe the retro step and the gate; docs/features.tsv has a retro row with metric `flow: releases cut with a done retro, share` and baseline 0 of 4 stage releases; doc_check passes.
+- commands/swarm.md has an arm for the `retro v<next>` step: it opens and completes the retro's lead story, after which `next` reaches `release`; the same test as stage-gating's fails if `next` prints a step with no arm.
 
 **Out of scope:**
 The retro command, the file format and the retro run (retro-report); handover and usage (handover-usage); a retro on patches; a registry of boards.
