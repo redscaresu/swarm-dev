@@ -284,7 +284,10 @@ reserved_env() {
 
 # agent_env_names — agent_env's names that this session has, for every agent of every role. load_config
 # and reserved_env have checked them. One it lacks is skipped with a warning, not refused, so a board
-# set up for a provider (Foundry's key, say) still runs from a session without it.
+# set up for a provider (Foundry's key, say) still runs from a session without it. With
+# CLAUDE_CODE_USE_FOUNDRY on (1 or true), the session's ANTHROPIC_FOUNDRY_* and ANTHROPIC_DEFAULT_*_MODEL
+# names are added unasked: Foundry's endpoint and key live only in the environment, so without them
+# every agent stops at its first request, and the session has already chosen to use them.
 agent_env_names() {
   local n exported out=""
   exported=" $(compgen -e | tr '\n' ' ') "   # the environment only, never swarm.sh's own variables
@@ -292,6 +295,12 @@ agent_env_names() {
   for n in ${CFG_agent_env}; do
     if [[ "${exported}" == *" ${n} "* ]]; then out+=" ${n}"; else echo "swarm: warning: agent_env: ${n} is not set here, so the agent starts without it" >&2; fi
   done
+  if [[ "${CLAUDE_CODE_USE_FOUNDRY:-}" == 1 || "${CLAUDE_CODE_USE_FOUNDRY:-}" == true ]]; then
+    for n in ${exported}; do
+      [[ "${n}" =~ ^ANTHROPIC_FOUNDRY_[A-Z0-9_]+$ || "${n}" =~ ^ANTHROPIC_DEFAULT_[A-Z0-9]+_MODEL$ ]] || continue
+      [[ "${out} " == *" ${n} "* ]] || out+=" ${n}"
+    done
+  fi
   printf '%s' "${out# }"
 }
 
