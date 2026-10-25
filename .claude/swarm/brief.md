@@ -11,7 +11,8 @@
 - GitHub: `gh`'s own login (`gh auth`). Run `unset GITHUB_TOKEN` before any `gh` call, so a stray
   token never shadows it.
 - Claude: Azure Foundry, from the session environment. swarm.sh passes the `ANTHROPIC_FOUNDRY_*` and
-  `ANTHROPIC_DEFAULT_*_MODEL` variables to every agent; never print their values.
+  `ANTHROPIC_DEFAULT_*_MODEL` variables to every agent.
+- Never print a secret, in output, a log or anywhere else.
 - codex: its own login (`codex login`).
 - No secret ever goes in code, a commit, a PR body, a log or a comment.
 
@@ -21,8 +22,9 @@
   `--force-with-lease`, naming the branch).
 - `git checkout -- <file>`, `git restore`, `git reset --hard`, `git stash` or `git clean` on
   uncommitted work. To undo a temporary edit, copy the file aside and copy it back.
-- Anything that reads a private key or credential file (`*.pem`, `~/.ssh`, `~/.aws/credentials`):
-  not with cat, grep or any tool.
+- Anything that reads a private key or credential file (`*.pem`, `.env`, `~/.ssh`,
+  `~/.aws/credentials`): not with cat, grep or any tool.
 - An install of a package version reported as malicious, even to check it. Check with metadata only
   (`npm view <pkg>@<ver> version`).
-- Anything that creates, changes or deletes cloud resources.
+- Anything that creates, changes or deletes cloud resources. That work is a `kind: lead` story,
+  which the lead runs: stop and report it instead.
