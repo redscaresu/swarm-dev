@@ -162,8 +162,9 @@ epic_has_after() {
 #                     build (main_red, the newest such of any repo and base): start it before
 #                     anything else, a conductor's wait included
 #   collect <agent>   a conductor has written its report: read it, then close its tab. A lane
-#                     conductor that reported while another lane of its epic or backlog works, once
-#                     its session is idle (collect_pick); the epic is collected when all its lanes have
+#                     conductor that reported while another lane of its epic or backlog works too,
+#                     whatever its session's state (collect_pick); the epic is collected when all its
+#                     lanes have
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
 #                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads);
@@ -321,36 +322,18 @@ running_conductors() {
 }
 
 # collect_pick <conductors> — the conductor next_step looks at first, of <conductors> (running_conductors'
-# lines): a lane that has reported, whatever order herdr lists them in, unless a lane of its epic or
-# backlog in <conductors> has not and its session still works (lane_held); else the first of the rest.
-# So a reported lane is collected (and can start again for stories readied since) without waiting for
-# the slowest lane, and its epic is collected once every lane has reported.
+# lines): a lane that has reported, whatever order herdr lists them in and whatever its session's state
+# (as a lane-less conductor with a report is collected), else the first. So a reported lane is collected
+# (and can start again for stories readied since) without waiting for the slowest lane, and its epic is
+# collected once every lane has reported.
 collect_pick() {
   local c
-  # On fd 3, as conduct_ready reads its lists: herdr, python and claude must not read them.
+  # On fd 3, as conduct_ready reads its lists: herdr and python must not read the list.
   while IFS= read -r c <&3; do
     [[ -n "${c}" && -n "$(conduct_lane "${c}")" && -f "$(conductor_report "${c}")" ]] || continue
-    lane_held "${c}" "$1" || { echo "${c}"; return; }
-  done 3<<< "$1"
-  while IFS= read -r c <&3; do
-    [[ -n "${c}" ]] || continue
-    [[ -z "$(conduct_lane "${c}")" || ! -f "$(conductor_report "${c}")" ]] || continue   # a reported lane held above
     echo "${c}"; return
   done 3<<< "$1"
-}
-
-# lane_held <lane conductor> <conductors> — whether the reported <lane conductor> waits to be collected:
-# its session still works (busy, or waiting on a prompt; herdr's word for one with no session, as close
-# reads it: an idle, gone or unknown one is collected, as a lane-less conductor's is) and a lane of its
-# epic or backlog in <conductors> has not reported.
-lane_held() {
-  local d
-  case "$(read_state "$1")" in busy|waiting*|herdr:working|herdr:blocked) ;; *) return 1 ;; esac
-  while IFS= read -r d <&4; do
-    [[ -n "${d}" && ! -f "$(conductor_report "${d}")" && -n "$(conduct_lane "${d}")" && "$(conduct_epic "${d}")" == "$(conduct_epic "$1")" ]] || continue
-    return 0
-  done 4<<< "$2"
-  return 1
+  sed -n '/./{p;q;}' <<< "$1"
 }
 
 # lane_conduct_step [<conductor>] — with conductor_lanes above 1, next_step's conduct step for the first
@@ -362,7 +345,8 @@ lane_held() {
 # back is skipped too; with no lane to start and no conductor working, the first such is the step, its
 # `no ... started:` line the why, for the lead to stop on. Like conduct_ready, it names none while a
 # working conductor is stopped on an expired login or an API error (conductor_stop), and while herdr
-# cannot list its agents, the first lane is the step with that as its `no conductor started:` why.
+# cannot list its agents, the first lane in that order is the step with that as its `no conductor
+# started:` why.
 # With no lane to start, a lane whose own conductor runs (one next_step did not see: outside herdr,
 # say) is waited on, before a held lane's stop, so no lane-less step follows. With <conductor> (the
 # working conductor next_step saw), the why adds that it is still working and to start
@@ -371,17 +355,19 @@ lane_held() {
 # it fails, so next_step keeps its wait on <conductor>. Fails, printing nothing, when there is none or
 # conductor_lanes is 1.
 lane_conduct_step() {
-  local ready c e k slugs arg why stop first="" also="" held="" waits=""
+  local ready groups c e k slugs arg why stop first="" also="" held="" waits=""
   # shellcheck disable=SC2154 # assigned in another file
   (( CFG_conductor_lanes > 1 )) || return 1
   ready="$(board_ready --started)"
   [[ -z "${1:-}" ]] || ready="$(awk '$1 !~ /^fix-main-/' <<< "${ready}")"
   [[ -n "${ready}" ]] || return 1
+  # The groups, an active epic's before the backlog's (-), as the lane-less arms put an active epic first.
+  groups="$(awk '!s[$2]++ { if ($2 == "-") b = 1; else print $2 } END { if (b) print "-" }' <<< "${ready}")"
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     if ! herdr agent list >/dev/null 2>&1; then
       [[ -z "${1:-}" ]] || return 1
-      e="$(sed -n '1s/.* //p' <<< "${ready}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
-      k="$(story_lane "${BOARD}/stories/$(sed -n '1s/ .*//p' <<< "${ready}").md")"
+      e="${groups%%$'\n'*}"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
+      k="$(story_lane "${BOARD}/stories/$(awk -v e="${e}" '$2 == e { print $1; exit }' <<< "${ready}").md")"
       printf 'conduct %s --lane %s\nno conductor started: herdr cannot list its agents, so which conductors run is not known\n' "${arg}" "${k}"
       return 0
     fi
@@ -409,7 +395,7 @@ lane_conduct_step() {
       else why="${slugs%%$'\n'*} is ready in lane ${k} of the active epic ${e}, which has no conductor running"; fi
       [[ -z "${1:-}" ]] || why+=", and the conductor ${1} is still working: start swarm.sh wait --until-report ${1} in the background, then run the step"
     done
-  done 3< <(awk '!s[$2]++ { if ($2 == "-") b = 1; else print $2 } END { if (b) print "-" }' <<< "${ready}")
+  done 3<<< "${groups}"
   if [[ -z "${first}" ]]; then
     if [[ -n "${waits}" && -z "${1:-}" ]]; then
       printf 'wait %s\nthe conductor %s is still working (it has not written its report)\n' "${waits}" "${waits}"; return 0
