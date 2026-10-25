@@ -210,8 +210,10 @@ prints \`waiting: <slug> (blocked on <parents>)\` for each). Such a story readie
 and the merge's reconcile sends you a note, which wakes you: with nothing of yours running, write no
 report, start no wait, and end your turn; when the note comes, act on your inbox as this brief says and
 start the story. Once nothing of your lane can still need you, run \`swarm.sh unblock --startable ${arg}
---lane ${CONDUCT_LANE}\` once more. While it prints \`other lanes running: <names>\`, begin your report with
-\`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end}"
+--lane ${CONDUCT_LANE} --done\`: it marks your lane done (a later \`unblock --startable\` without \`--done\`,
+after a note woke you, unmarks it) and prints \`not done: ...\` while a story of yours is still startable
+or waiting, else \`other lanes running: <names>|none\`, the lanes neither done nor reported. While it
+prints names, begin your report with \`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end}"
 }
 
 # startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story
@@ -963,7 +965,9 @@ ${BOARD_STATE_DIR}/stories/<slug>, written when its build starts; one above ${CF
 (lane - 1) mod ${CFG_conductor_lanes} + 1. Watch with \`swarm.sh watch ${watch} --lane ${CONDUCT_LANE}\`, which reports
 only your lane's PRs. A \`startable:\` line whose note starts \`(held: clashes with <other> in lane <j>\` touches
 what another lane is building: do not start it; run \`swarm.sh hold <slug> '<why>'\` for it, and start it
-in a later wave, once that line is gone. Never start, tell, close, review or merge another lane's story
+in a later wave, once that line is gone. It is still yours: with nothing of yours running, end your turn
+with no report and no wait; the merge that clears the clash sends you a note, and you run \`swarm.sh
+unblock --startable ${arg} --lane ${CONDUCT_LANE}\` again then. Never start, tell, close, review or merge another lane's story
 or PR, even when \`swarm.sh status\` names it: its own conductor has it. Leave it, and wait on.${exception}
 EOF
 }
@@ -1433,6 +1437,7 @@ start_conductor() {
   # events.tsv first: outcomes' held_min ends the run there.
   [[ ! -f "${report}" ]] || record_event report "${key}" "ok ($(date -u -r "${report}" +%Y-%m-%dT%H:%M:%SZ))"
   rm -f "${report}"
+  [[ -z "${lane}" ]] || rm -f "${PROJECT_DIR}/.swarm/lane-done/${key}"   # a fresh lane conductor is not done
   read -r ws placeholder <<< "$(epic_workspace "${label}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]

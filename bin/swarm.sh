@@ -488,8 +488,9 @@ dispatch() {
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) if [[ "${1:-}" == --startable ]]; then
-               [[ ( $# -eq 2 || ( $# -eq 4 && "$3" == --lane ) ) && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
-               lane_flag unblock "${@:3}"; unblock_startable "$2" "${LANE}"
+               [[ ( $# -eq 2 || ( ( $# -eq 4 || ( $# -eq 5 && "$5" == --done ) ) && "$3" == --lane ) ) && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] \
+                 || die "unblock: --startable takes <epic> or --backlog, then --lane <k> [--done]"
+               lane_flag unblock "${@:3:2}"; unblock_startable "$2" "${LANE}" "${5:-}"
              else [[ -z "${1:-}" ]] || die "unblock: unknown argument '$1'"; unblock; fi ;;
     next)   next_report ;;
     status) status_report "${1:-}" ;;

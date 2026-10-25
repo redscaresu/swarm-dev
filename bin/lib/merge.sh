@@ -572,16 +572,17 @@ live_at() {
 # stories buildable now (board_ready) that <before> (its --review lines before the merge) does not list and
 # whose file, or whose epic's, is among <files>, the paths <url> changes, and <url> made live (live_at):
 # not at <prev>, the board <url> merged onto, but at <oid>, its own merge commit (not a queue batch's tip): not one reconcile sent back to ready, a
-# fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
-# backlog's, for stories with no epic) one note naming them, to start them now; with none running,
-# say so; a lane-less name no pane holds while that epic's lane conductors still run (conductor_lanes
-# lowered to 1) is told, and tell_agent sends the note to each lane (epic_lanes). Then conduct_ready
+# fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send each running
+# conductor of it (the backlog's, for stories with no epic) that has not reported one note naming its
+# own: a lane-less conductor's are all of them, a lane conductor's those of its lane folded onto
+# conductor_lanes, whatever N it started under (so a change of N while it runs loses no note); the
+# stories no running conductor owns are said to have none yet. Then conduct_ready
 # starts the conductors ready work lacks. With no upstream nothing is
 # pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one), a
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" all k lane d="" listed=""
+  local url="$1" oid="$2" new rc why dief e of slugs note p was="" all d="" listed="" running="" c ce cl told left s
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
@@ -613,33 +614,40 @@ ready_tell() {
         if (index(f, d) == 1 && kv[2] != 1) ch[substr(f, length(d) + 1)] = 1
         if (index(f, ed) == 1 && kv[2] != 1) ep[substr(f, length(ed) + 1)] = 1 } }
     $1 in ch || $2 in ep')"
-  # Once, not once per lane: whether herdr lists its agents does not change between them.
-  [[ -z "${new}" ]] || herdr agent list >/dev/null 2>&1 || listed=no
+  # Listed once, for every epic: whether herdr lists its agents, and the conductors running now.
+  if [[ -n "${new}" ]]; then
+    if herdr agent list >/dev/null 2>&1; then running="$(running_conductors)"; else listed=no; fi
+  fi
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
     all="$(awk -v e="${e}" '$2 == e { print $1 }' <<< "${new}")"
-    # Each lane's conductor is told of its own stories (conductor_lanes above 1).
-    for ((k = 1; k <= CFG_conductor_lanes; k++)); do
-      lane=""; (( CFG_conductor_lanes == 1 )) || lane="${k}"
+    of="of epic ${e}"; [[ "${e}" != - ]] || of="with no epic"
+    if [[ "${listed}" == no ]]; then
+      echo "warning: herdr cannot list its agents, so $(group_conductor "${e}" "") was not told that $(paste -sd' ' - <<< "${all}") are ready"; continue
+    fi
+    # Each running conductor of the epic that has not reported (one that has is finished, as
+    # conductors_queued reads it) is told of its own stories: a lane-less one of every story, a lane's of
+    # its lane's, the lane folded onto conductor_lanes. On fd 4: the tell must not read the list.
+    told=""
+    while IFS= read -r c <&4; do
+      [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
+      read -r ce cl <<< "$(conduct_split "${c}")"
+      [[ "${ce}" == "${e/#-/backlog}" ]] || continue
+      # shellcheck disable=SC2154 # assigned in another file
+      [[ -z "${cl}" ]] || cl=$(( (cl - 1) % CFG_conductor_lanes + 1 ))
       # shellcheck disable=SC2086 # slugs, [a-z0-9-]
-      slugs="$(lane_slugs "${lane}" ${all} | paste -sd' ' -)"
+      slugs="$(lane_slugs "${cl}" ${all} | paste -sd' ' -)"
       [[ -n "${slugs}" ]] || continue
-      name="$(group_conductor "${e}" "${lane}")"; of="of epic ${e}"; [[ "${e}" != - ]] || of="with no epic"
-      if [[ "${listed}" == no ]]; then
-        echo "warning: herdr cannot list its agents, so ${name} was not told that ${slugs} are ready"; continue
-      fi
-      # One that has written its report has finished (conductors_queued): nobody reads its inbox.
-      if [[ -f "$(conductor_report "${name}")" ]] || { [[ -z "$(agent_field "${name}" pane_id)" && -z "$(epic_lanes "${name}")" ]]; }; then
-        echo "ready now: ${slugs} (${of}); no conductor runs for it yet"; continue
-      fi
       note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
       printf 'The board PR %s just merged, and these stories %s are ready now: %s. Start them now, within your builder limits, rather than on your next pass.\n' \
         "${url}" "${of}" "${slugs}" > "${note}"
-      ( set -e; tell_agent "${name}" note "${note}" ) &
-      wait $! || echo "warning: could not note ${name} that ${slugs} are ready (exit $?); it finds them on its next pass"
-      rm -f "${note}"
-    done
+      ( set -e; tell_agent "${c}" note "${note}" ) &
+      wait $! || echo "warning: could not note ${c} that ${slugs} are ready (exit $?); it finds them on its next pass"
+      rm -f "${note}"; told+=" ${slugs}"
+    done 4<<< "${running}"
+    left=""; for s in ${all}; do [[ " ${told} " == *" ${s} "* ]] || left+="${left:+ }${s}"; done
+    [[ -z "${left}" ]] || echo "ready now: ${left} (${of}); no conductor runs for it yet"
   done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
   conduct_ready || true   # a failed start has printed its warning
 }

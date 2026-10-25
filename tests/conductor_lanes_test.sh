@@ -290,6 +290,10 @@ check "once lane 3 has reported, lane 2 sees no other lane running: it is the la
 rm "${p}/.swarm/conduct-w.l3.report.md"
 check "with conductor_lanes = 1, unblock --startable prints no waiting: or other lanes line" "" \
   "$(lanes 1; run unblock --startable w | grep -E '^(waiting|other lanes running):'; lanes 3)"
+# --- The final check, --done: a lane with a story to wait on is not done, and is not marked.
+out="$(run unblock --startable w --lane 2 --done)"
+check "unblock --startable w --lane 2 --done with a waiting story says not done, names lane 3, and marks nothing" "yes|other lanes running: conduct-w-l3|no" \
+  "$(has 'not done: lane 2 still has a story to start or to wait on' "${out}")|$(grep '^other lanes running:' <<< "${out}")|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)"
 
 # --- The parent merges (its file goes): unblock readies wc and wd, and notes lane 3's conductor of wd, not
 # the lane 2 conductor that ran it of its own wc.
@@ -297,6 +301,20 @@ rm "${b}/stories/wp.md"
 SWARM_AGENT=conduct-w-l2 run unblock --startable w --lane 2 >/dev/null
 check "unblock run by lane 2 notes lane 3's conductor of the story it readied in lane 3, and not lane 2 of its own" "yes|no" \
   "$(has 'unblock readied wd, a story of your lane' "$(cat "${p}/.swarm/inbox/conduct-w-l3.md" 2>&1)")|$(grep -q 'readied wc' "${p}/.swarm/inbox/conduct-w-l2.md" 2>/dev/null && echo yes || echo no)"
+
+# --- The election: with nothing left in lanes 2 and 3, the first --done sees the other, the second sees none;
+# a lane with a new story unmarks itself on its next unblock, and the other lane sees it running again.
+rm "${b}/stories/wc.md" "${b}/stories/wd.md" "${b}/stories/wn.md"
+check "lane 2's --done with nothing left marks it done and still names lane 3" "other lanes running: conduct-w-l3|yes" \
+  "$(run unblock --startable w --lane 2 --done | grep '^other lanes running:')|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)"
+check "then lane 3's --done sees no other lane: it is the last" "other lanes running: none" \
+  "$(run unblock --startable w --lane 3 --done | grep '^other lanes running:')"
+item "${b}" stories/wz.md "status: ready" "kind: code" "epic: w" "lane: 2"
+check "a lane woken to a new story unmarks itself on its next unblock without --done, and lane 3 sees it running" "startable: wz|no|other lanes running: conduct-w-l2" \
+  "$(run unblock --startable w --lane 2 | grep '^startable:')|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)|$(run unblock --startable w --lane 3 --done | grep '^other lanes running:')"
+check "--done with a startable story of its own is refused as not done" "yes" \
+  "$(has 'not done: lane 2' "$(run unblock --startable w --lane 2 --done)")"
+rm "${b}/stories/wz.md" "${p}/.swarm/lane-done/w.l3"
 
 # --- Closing a lane conductor, even with --all, closes its own pane alone while another lane of its epic
 # runs: never the epic's tab with another lane's builder in it. The last lane's close takes the epic's tab.
