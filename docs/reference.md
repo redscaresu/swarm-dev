@@ -400,18 +400,21 @@ owning lane's conductor. The lane's brief tells its conductor to build, review a
 stories and never touch another lane's PR. A lane's run ends only when no story of its lane can still need it. `unblock --startable
 <epic>|--backlog --lane <k>` ends with a `waiting: <slug> (blocked on <parents>)` line per blocked
 story of the lane whose parents are still open, and the lane waits for them. A `waiting:` line for a
-lead story, or for one whose parents are not all this epic's agent-built stories, ends `the lead's:
-list it in your report`: that wait is not the lane's. Two notes wake an idle lane, whatever N is now, so lanes outliving a
+lead story, or for one whose parents are not all this epic's agent-built stories that a lane may
+still start (not ones the lead has: closed unmerged, left ready by a `not held:` close, or failed
+twice with `escalate_after = 0`), ends `the lead's: list it in your report`: that wait is not the
+lane's. Two notes wake an idle lane, whatever N is now, so lanes outliving a
 drop to 1 still hear: `unblock` tells the lane conductors whose lane is a story's when it readies it
-(unless that conductor ran the unblock), and reconcile tells every other lane of the epic when a story
-merges, since a story held for a clash with its build is startable then. The tail's last line, `other
+(unless that conductor ran the unblock), and every other lane of the epic hears when a story's build
+goes, merged (reconcile) or cleared by a close, since a story held for a clash with it is startable
+then. The tail's last line, `other
 lanes running: <names>|none`, names the epic's other lane conductors neither done nor reported, with
 the epic's file gone too. A lane's final check adds `--done` after `--lane <k>`. Under
 `.swarm/lane-done.lock` it marks the lane done (`.swarm/lane-done/<epic>.l<k>`, k as given, never the
 fold) before it lists the others, so of two lanes that finish together exactly one sees `none`. With a
-`startable:` line the lane may start (not one closed unmerged, one a `not held:` close left ready, or
-one failed twice with `escalate_after = 0`, which the give-up rule leaves to the lead) or a `waiting:`
-line that is this epic's, it prints `not done:` instead, and a call without `--done`,
+`startable:` line the lane may start (not one closed unmerged, one held because the touches cannot be
+read, one a `not held:` close left ready, or one failed twice with `escalate_after = 0`, which the
+give-up rule leaves to the lead) or a `waiting:` line that is this epic's, it prints `not done:` instead, and a call without `--done`,
 or the lane's next conductor start, unmarks the lane. A lane that sees names reports `lane <k> done;
 <names> still run`. The lane that sees `none` is the last, so it ends the epic as a single conductor
 does (`swarm.sh review <epic> <PRs>` with `merge = human`, `swarm.sh finish <epic>` with `merge =

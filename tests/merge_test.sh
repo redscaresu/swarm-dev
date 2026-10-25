@@ -1879,14 +1879,14 @@ mkdir -p "${P}/.swarm/briefs"; : > "${P}/.swarm/briefs/conduct-backlog.l1.md"; :
 merge SWARM_AGENT="${bl1}" HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"
 rm "${P}/.swarm/briefs/conduct-backlog.l1.md" "${P}/.swarm/briefs/conduct-backlog.l2.md"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 check "a story merge by backlog lane 1 with conductor_lanes = 2: notes lane 2 that s merged, and not lane 1" \
-  bash -c "grep -qF 's merged. A story of your lane held for a clash with its build is startable now' '${P}/.swarm/inbox/${bl2}.md' && [ ! -e '${P}/.swarm/inbox/${bl1}.md' ]"
+  bash -c "grep -qF \"s's build is gone (merged or cleared). A story of your lane held for a clash with it is startable now\" '${P}/.swarm/inbox/${bl2}.md' && [ ! -e '${P}/.swarm/inbox/${bl1}.md' ]"
 # The same with conductor_lanes back at 1 while both backlog lanes still run: lane 2 is still noted.
 fresh; printf '%s w:c\n%s w:b\n' "${bl1}" "${bl2}" > "${ROOT}/agents"; rm -f "${P}/.swarm/inbox/${bl2}.md"
 : > "${P}/.swarm/briefs/conduct-backlog.l1.md"; : > "${P}/.swarm/briefs/conduct-backlog.l2.md"
 merge SWARM_AGENT="${bl1}" HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"
 rm "${P}/.swarm/briefs/conduct-backlog.l1.md" "${P}/.swarm/briefs/conduct-backlog.l2.md"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 check "a story merge by backlog lane 1 with conductor_lanes back at 1: still notes lane 2 that s merged" \
-  grep -qF 's merged. A story of your lane held for a clash with its build is startable now' "${P}/.swarm/inbox/${bl2}.md"
+  grep -qF "s's build is gone (merged or cleared). A story of your lane held for a clash with it is startable now" "${P}/.swarm/inbox/${bl2}.md"
 # r15, ready in draft epic h, moves to epic e: it was not buildable before, so it is new.
 put docs/epics/h.md "status: draft"; put docs/stories/r15.md "status: ready" "kind: code" "epic: h"; land; pulled
 put docs/stories/r15.md "status: ready" "kind: code" "epic: e"; land

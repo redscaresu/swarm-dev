@@ -1178,8 +1178,12 @@ failed_build() {
 # is said on stderr, and the rest still run. A held child (held_by:) loses the hold and its prs: line,
 # so it no longer counts as open in touches_rows.
 clear_build() {
-  local slug="$1" b="story/$1" src wt url head sha
+  local slug="$1" b="story/$1" src wt url head sha st
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
+  # A cleared build ends a cross-lane clash on it: the other lanes hear (lane_finish_note). A merged story's
+  # (in review or done) is reconcile's to tell, once it has finished the story.
+  st="$(fm "${BOARD}/stories/$1.md" status)"
+  [[ "${st}" == review || "${st}" == "done" ]] || lane_finish_note "${slug}" "$(fm "${BOARD}/stories/$1.md" epic)"
   wt="$(worktree_for "${src}" "${slug}")"
   if [[ -e "${wt}" ]]; then
     git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2

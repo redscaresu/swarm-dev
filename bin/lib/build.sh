@@ -212,8 +212,8 @@ report, start no wait, and end your turn; when the note comes, act on your inbox
 start the story. Once nothing of your lane can still need you, run \`swarm.sh unblock --startable ${arg}
 --lane ${CONDUCT_LANE} --done\`: it marks your lane done (a later \`unblock --startable\` without \`--done\`,
 after a note woke you, unmarks it) and prints \`not done: ...\` while a story of yours is still startable
-(one closed unmerged, left ready by a \`not held:\` close, or failed twice with escalation off, is the
-lead's and does not count) or waiting
+(one closed unmerged, held because the touches cannot be read, left ready by a \`not held:\` close, or
+failed twice with escalation off, is the lead's and does not count) or waiting
 on this epic's stories (a \`waiting:\` line ending \`the lead's: list it in your report\` does not count:
 a lead story, or one waiting on a lead story or another epic's), else \`other lanes running: <names>|none\`, the lanes neither done nor reported. While it
 prints names, begin your report with \`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end}"
@@ -966,12 +966,13 @@ merge only your lane's stories: the ones \`swarm.sh unblock --startable ${arg} -
 the ones whose build started in your lane. A story's lane is the \`lane:\` line in its front matter or in
 ${BOARD_STATE_DIR}/stories/<slug>, written when its build starts; one above ${CFG_conductor_lanes} counts as
 (lane - 1) mod ${CFG_conductor_lanes} + 1. Watch with \`swarm.sh watch ${watch} --lane ${CONDUCT_LANE}\`, which reports
-only your lane's PRs. A \`startable:\` line whose note starts \`(held:\` touches what another lane is building
-(\`clashes with <other> in lane <j>\`), or that cannot be told (\`cannot read the board's touches\`): do not
-start it; run \`swarm.sh hold <slug> '<why>'\` for it, and start it in a later wave, once that line is
-gone. It is still yours: with nothing of yours running, end your turn
-with no report and no wait; the merge that clears the clash sends you a note, and you run \`swarm.sh
-unblock --startable ${arg} --lane ${CONDUCT_LANE}\` again then. Never start, tell, close, review or merge another lane's story
+only your lane's PRs. A \`startable:\` line whose note starts \`(held: clashes with <other> in lane <j>\`
+touches what another lane is building: do not start it; run \`swarm.sh hold <slug> '<why>'\` for it, and
+start it in a later wave, once that line is gone. It is still yours: with nothing of yours running, end
+your turn with no report and no wait; the merge or close that clears the clash sends you a note, and you
+run \`swarm.sh unblock --startable ${arg} --lane ${CONDUCT_LANE}\` again then. One whose note starts \`(held:
+cannot read the board's touches\` is the lead's: do not start it, list it in your report, and do not
+wait on it. Never start, tell, close, review or merge another lane's story
 or PR, even when \`swarm.sh status\` names it: its own conductor has it. Leave it, and wait on.${exception}
 EOF
 }

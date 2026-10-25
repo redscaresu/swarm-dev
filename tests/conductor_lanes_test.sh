@@ -226,7 +226,7 @@ check "the lane brief runs unblock --startable --backlog --lane 2, keeps to its 
 merge another lane's story or PR" "${brief}")|$(has ".swarm/conduct-backlog.l2.report.md" "${brief}")|$(has ".swarm/inbox/${l2}.md" "${brief}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "the lane brief watches its lane, folds a lane above 3, holds a cross-lane clash and scopes the Stacked rule" "yes|yes|yes|yes" \
-  "$(has 'swarm.sh watch --backlog --lane 2` in the background' "${brief}")|$(has '(lane - 1) mod 3 + 1' "${brief}")|$(has 'whose note starts `(held:` touches what another lane is building' "${brief}")|$(has 'Yours is a story with no `epic:` in your lane' "${brief}")"
+  "$(has 'swarm.sh watch --backlog --lane 2` in the background' "${brief}")|$(has '(lane - 1) mod 3 + 1' "${brief}")|$(has 'whose note starts `(held: clashes with <other> in lane <j>`' "${brief}")|$(has 'Yours is a story with no `epic:` in your lane' "${brief}")"
 check "conduct --backlog --lane 2 logs its start as --backlog.l2" "1" \
   "$(awk -F'\t' '$2 == "conduct" && $3 == "--backlog.l2" && $5 == "ok"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
 
@@ -350,7 +350,17 @@ check "--done with a story that failed twice and escalate_after = 0: it is the l
   "$(has 'startable: wt' "${out}")|$(grep -q '^not done' <<< "${out}" && echo yes || echo no)|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)"
 lanes 3
 check "with escalate_after on, the same story is the lane's next build: not done" "yes" "$(has 'not done: lane 2' "$(run unblock --startable w --lane 2 --done)")"
-rm "${b}/stories/wt.md" "${p}/.swarm/board-state/stories/wt"; rm -f "${p}/.swarm/lane-done/w.l2"
+# A child blocked on that parent waits on a merge no lane will make with escalation off: the lead's; with it
+# on, the parent is a lane's build, so the wait is the child's lane's.
+item "${b}" stories/wt2.md "status: blocked" "kind: code" "epic: w" "lane: 2" "depends_on: [wt]"
+printf 'conductor_lanes = 3\nescalate_after = 0\n' > "${p}/.claude/swarm/config"
+out="$(run unblock --startable w --lane 2 --done)"
+check "a wait on a parent that failed twice with escalate_after = 0 is the lead's: said so, and the lane is done" "yes|no" \
+  "$(has "waiting: wt2 (blocked on wt; the lead's: list it in your report)" "${out}")|$(grep -q '^not done' <<< "${out}" && echo yes || echo no)"
+lanes 3
+check "with escalate_after on, the same wait is the lane's: not done" "yes|yes" \
+  "$(out="$(run unblock --startable w --lane 2 --done)"; has 'waiting: wt2 (blocked on wt)' "${out}")|$(has 'not done: lane 2' "$(run unblock --startable w --lane 2 --done)")"
+rm "${b}/stories/wt.md" "${b}/stories/wt2.md" "${p}/.swarm/board-state/stories/wt"; rm -f "${p}/.swarm/lane-done/w.l2"
 
 # --- The done marker is the lane's own: under conductor_lanes = 2, --lane 3 folds to lane 1 for its stories
 # and marks w.l3, never w.l1.
@@ -374,7 +384,16 @@ item "${b}" stories/wk.md "status: ready" "kind: code" "epic: w" "lane: 2" "touc
 out="$(run unblock --startable w --lane 2)"
 check "when the touches cannot be read, a lane's startable line is held saying it cannot tell, and --strict refuses the start" "yes|yes|no" \
   "$(has "startable: wk (held: cannot read the board's touches" "${out}")|$(has "cannot read the board's touches" "$(run story --strict wk || true)")|$([[ -d "${ROOT}/proj-wt/wk" ]] && echo yes || echo no)"
-rmdir "${b}/stories/broken.md"; rm "${b}/stories/wk.md"
+check "a story held because the touches cannot be read is the lead's: --done is done" "no|yes" \
+  "$(run unblock --startable w --lane 2 --done | grep -q '^not done' && echo yes || echo no)|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)"
+rmdir "${b}/stories/broken.md"; rm "${b}/stories/wk.md"; rm -f "${p}/.swarm/lane-done/w.l2"
+
+# --- A build cleared by a close ends a clash too: the other lanes hear, as after a merge.
+item "${b}" stories/wa1.md "status: ready" "kind: code" "epic: w" "lane: 1" "touches: [bin/a.sh]"
+run story wa1 >/dev/null 2>&1 || true
+SWARM_AGENT=conduct-w-l2 run close wa1 impossible --drop >/dev/null 2>&1 || true
+check "a close that clears lane 1's build notes lane 3 that the build is gone, not lane 2, which closed it" "yes|no" \
+  "$(has "wa1's build is gone (merged or cleared)" "$(cat "${p}/.swarm/inbox/conduct-w-l3.md" 2>&1)")|$(grep -q "wa1's build is gone" "${p}/.swarm/inbox/conduct-w-l2.md" 2>/dev/null && echo yes || echo no)"
 
 # --- Lanes outliving a drop to conductor_lanes = 1 still hear: a story readied by lane 2 is noted to lane 3.
 lanes 1
