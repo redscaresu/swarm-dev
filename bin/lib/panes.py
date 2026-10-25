@@ -146,3 +146,32 @@ def session_state(log, name, listing):
         why = " ".join(str(e.get("waitingFor") or "").split())
         return st, why if len(why) <= WHY_MAX else why[:WHY_MAX - 1] + "…"
     return (st, "") if st in ("busy", "idle") else ("unknown", "")
+# TEST_RUN: a command line that runs a test suite: make with a test or check argument, a shell running
+# scripts/test.sh, or the script run as itself. A word that only names one (grep scripts/test.sh, cat
+# test) is none.
+TEST_RUN = re.compile(r"(\S*/)?g?make(\s+\S+)*?\s+(test|check)(\s|$)"
+                      r"|(\S*/)?(ba|z|da|k)?sh(\s+-\S+)*\s+(\S*/)?scripts/test\.sh(\s|$)"
+                      r"|(\S*/)?scripts/test\.sh(\s|$)")
+def test_running(info):
+    try:
+        shell = int(json.loads(info)["result"]["process_info"]["shell_pid"])
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="], capture_output=True, text=True, timeout=10)
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+        return False
+    if out.returncode != 0:
+        return False
+    parent, runs = {}, set()
+    for l in out.stdout.splitlines():
+        f = l.split(None, 2)
+        if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
+            parent[int(f[0])] = int(f[1])
+            if TEST_RUN.match(f[2].strip()):
+                runs.add(int(f[0]))
+    for p in runs:
+        for _ in parent:   # up to the pane's shell; a cycle or a process with no parent listed ends the walk
+            p = parent.get(p)
+            if p is None or p == shell:
+                break
+        if p == shell:
+            return True
+    return False

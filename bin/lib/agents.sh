@@ -30,6 +30,11 @@
 #     <task-id> carrying a <status> since: the session
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
+#   test_running(info) -> True when, in one `ps -A -o pid=,ppid=,command=` read, a process under the
+#     pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk) runs a test suite
+#     (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh, or the script
+#     itself): the agent is working, however quiet. Never prints a command. Info or ps that cannot be
+#     read is no run.
 #   usage_limit(text) -> ("dialog", <option>) when the pane text, after its last reply (⏺ or ●), ends on
 #     Claude Code's live usage-limit dialog: its option lines ("Stop and wait for limit to reset" /
 #     "<option>. Wait here, then continue automatically") among the last USAGE_TAIL non-empty lines,
@@ -1042,6 +1047,15 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
+# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite
+# (panes.py's test_running, over herdr's process info for the pane and one ps read).
+test_running() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
+sys.exit(0 if test_running(sys.argv[1]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)"
+}
+
 # usage_state <target> — print `dialog <option>` or `waiting` and succeed when the agent's pane is on
 # Claude Code's usage limit (panes.py's usage_limit); fail otherwise.
 usage_state() {
@@ -1068,8 +1082,8 @@ is_builder() {
 }
 
 # pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
-# old and the agent runs no background task (bg_running), setting the caller's state to `stuck: no
-# output for <N>m (<target>)`. An empty read says nothing.
+# old, the agent runs no background task (bg_running) and its pane runs no test suite (test_running),
+# setting the caller's state to `stuck: no output for <N>m (<target>)`. An empty read says nothing.
 pane_quiet() {
   local min
   [[ -n "${pane_at}" ]] || return 1
@@ -1077,6 +1091,7 @@ pane_quiet() {
   # shellcheck disable=SC2154 # assigned in another file
   [[ ${min} -ge ${CFG_stall_minutes} ]] || return 1
   ! bg_running "$1" || return 1
+  ! test_running "$2" || return 1
   state="stuck: no output for ${min}m ($2)"
 }
 
@@ -1152,12 +1167,12 @@ longest_child() {
   echo "${out:-longest-running: none named (its processes could not be read)}"
 }
 
-# agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
-# stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last commit
-# or edit (story_work_time) and its newest own work across its session log and its subagents' logs
-# (session_mtime) as signs, print how many
-# minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
-# stalled, so gh is rarely called.
+# agent_stalled <name> <since> <target> — when <name> is a story's builder that has shown no sign of
+# life for stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last
+# commit or edit (story_work_time) and its newest own work across its session log and its subagents'
+# logs (session_mtime) as signs, print how many minutes and succeed. Its PRs are asked for their
+# updatedAt only once the rest already looks stalled, so gh is rarely called, and a test suite
+# running in pane <target> (test_running) is work, asked only after that, so it is no stall.
 agent_stalled() {
   local slug url age ct sl prs=()
   slug="$(stall_py story "$1")"
@@ -1171,6 +1186,7 @@ agent_stalled() {
   done
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
+  ! test_running "$3" || return 1
   echo "${age}"
 }
 
@@ -1231,7 +1247,7 @@ herdr_wait() {
     [[ ${rc} -ne 0 ]] || { rm -f "${err}"; return 0; }
     [[ ${rc} -eq 1 ]] || { why="$(cat "${err}")"; left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
-    if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
+    if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; return
     fi
     pane_check "${name}" "${target}"
@@ -1300,7 +1316,7 @@ settle() {
     if [[ "${state}" == busy ]] && lim="$(usage_state "${target}")"; then state="usage-limit ${lim}"; break; fi
     [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
     if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
-    if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
+    if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
       state="stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; break
     fi
     if [[ "${state}" == busy ]] && pane_quiet "${name}" "${target}"; then break; fi

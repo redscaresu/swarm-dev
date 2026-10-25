@@ -195,43 +195,50 @@ check "flow counts api-error and auto-denied per epic" test "$(sed -n '/^epic	ki
 # (herdr's shell_pid 100) and the agent (200). Under the agent: an MCP server (250) and its worker,
 # caffeinate (270), a hook-started MCP server under sh -c (280), and two Bash tool shells: 330, a
 # run_in_background server started 90 minutes ago, and the newer 300, the foreground call, whose
-# make test (given a token) runs scripts/test.sh, which runs the hung sleep (400). Another pane's
-# tool shell runs an older sleep (590).
+# make lint (given a token) runs scripts/lint.sh, which runs the hung sleep (400): no test run, so
+# it can stall. Another pane's tool shell runs an older sleep (590). A conductor, conduct-e1, has its
+# own pane (w:8, shell 800).
 H="${ROOT}/hung"; HB="${ROOT}/hung-bin"; mkdir -p "${H}/.swarm/state" "${H}/docs/stories" "${HB}" "${ROOT}/projects/p"
 touch "${H}/docs/stories/README.md"; git -C "${H}" init -q
 printf -- '---\nstatus: ready\nkind: code\n---\n\n# s-hung\n' > "${H}/docs/stories/s-hung.md"
-printf 'w:7 s-hung\n' > "${H}/.swarm/state/s-hung"
-printf '2026-10-22\tcode\ts-hung\tclaude\topus\thigh\tsess-hung\n' > "${H}/.swarm/agents.tsv"
+printf 'w:7 s-hung\n' > "${H}/.swarm/state/s-hung"; printf 'w:8 conduct-e1\n' > "${H}/.swarm/state/conduct-e1"
+printf '2026-10-22\tcode\ts-hung\tclaude\topus\thigh\tsess-hung\n2026-10-22\tconduct\tconduct-e1\tclaude\topus\thigh\tsess-cond\n' > "${H}/.swarm/agents.tsv"
 ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"; }
 printf '%s\tstory\ts-hung\tw:me\tok\n' "$(ago 120 | cut -c1-19)Z" > "${H}/.swarm/events.tsv"
-printf '[{"sessionId":"sess-hung","status":"busy"}]' > "${ROOT}/hung.json"
+printf '[{"sessionId":"sess-hung","status":"busy"},{"sessionId":"sess-cond","status":"busy"}]' > "${ROOT}/hung.json"
 cp "${HERE}/claude_stub.sh" "${HB}/claude"
-# herdr's wait times out with HUNG_WAIT=timeout (a codex agent's wait goes through herdr alone).
+# herdr's wait times out with HUNG_WAIT=timeout (a codex agent's wait goes through herdr alone);
+# its process-info prints nothing with HUNG_PI=none.
 cat > "${HB}/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"s-hung","agent_status":"working","pane_id":"w:7"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w:7"}]}}' ;;
-  "pane process-info") [ "$4" = w:7 ] && echo '{"result":{"process_info":{"pane_id":"w:7","shell_pid":100}}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"s-hung","agent_status":"working","pane_id":"w:7"},{"name":"conduct-e1","agent_status":"working","pane_id":"w:8"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w:7"},{"pane_id":"w:8"}]}}' ;;
+  "pane process-info") [ "${HUNG_PI:-}" = none ] && exit 0
+    [ "$4" = w:7 ] && echo '{"result":{"process_info":{"pane_id":"w:7","shell_pid":100}}}'
+    [ "$4" = w:8 ] && echo '{"result":{"process_info":{"pane_id":"w:8","shell_pid":800}}}' ;;
   "agent read") echo '⏺ Running the tests.' ;;
   "agent wait") [ "${HUNG_WAIT:-}" = timeout ] && { echo '{"error":{"code":"timeout"}}' >&2; exit 1; }
     echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
   *) exit 1 ;;
 esac
 STUB
-# ps -o pid=,comm= prints ${PS_TREE}.comm when the test wrote one, else each command's first word.
+# ps -o pid=,comm= prints ${PS_TREE}.comm when the test wrote one, else each command's first word;
+# a format with no etime= leaves that column out. With PS_FAIL set it prints nothing and fails.
 cat > "${HB}/ps" <<'STUB'
 #!/bin/sh
+[ -z "${PS_FAIL:-}" ] || exit 1
 case "$*" in
   *comm=*) if [ -f "${PS_TREE}.comm" ]; then cat "${PS_TREE}.comm"; else awk '{ print $1, $4 }' "${PS_TREE}"; fi ;;
-  *) cat "${PS_TREE}" ;;
+  *etime=*) cat "${PS_TREE}" ;;
+  *) sed -E 's/^( *[0-9]+ +[0-9]+) +[0-9:-]+/\1/' "${PS_TREE}" ;;
 esac
 STUB
 snap='/bin/zsh -c source /Users/u/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && eval'
 tree=('  100     1  02:00:00 -zsh' '  200   100  02:00:00 claude --session-id sess-hung'
   '  250   200  01:59:30 node mcp-server.js' '  260   250  01:50:00 node worker.js' '  270   200     02:00 caffeinate -i -t 300'
   '  280   200  01:59:50 sh -c start-mcp.sh' '  281   280  01:59:49 node mcp2.js'
-  "  300   200     45:03 ${snap} 'make test GH_TOKEN=SEKRIT'" '  310   300     45:02 make test GH_TOKEN=SEKRIT' '  320   310     45:01 bash scripts/test.sh'
+  "  300   200     45:03 ${snap} 'make lint GH_TOKEN=SEKRIT'" '  310   300     45:02 make lint GH_TOKEN=SEKRIT' '  320   310     45:01 bash scripts/lint.sh'
   '  400   320     45:00 sleep 2700' "  330   200  01:30:00 ${snap} 'node server.js'" '  331   330  01:29:59 node server.js'
   "  590   999  1-03:00:01 ${snap} 'sleep 9999'" '  591   590  1-03:00:00 sleep 9999')
 export PS_TREE="${ROOT}/ps.tree"; printf '%s\n' "${tree[@]}" > "${PS_TREE}"
@@ -242,8 +249,11 @@ idle=("{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"timestamp\":\"$(a
   "{\"type\":\"user\",\"isCompactSummary\":true,\"timestamp\":\"$(ago 11)\",\"message\":{\"role\":\"user\",\"content\":\"This session is being continued.\"}}"
   "{\"type\":\"user\",\"timestamp\":\"$(ago 2)\",\"message\":{\"role\":\"user\",\"content\":\"<task-notification><task-id>b1</task-id></task-notification>\"}}"
   '{"type":"summary","summary":"Compacted while idle","leafUuid":"x"}')
-hung_wait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
-  CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait --stall s-hung 3000 2>&1); }
+# swait <args...> — swarm.sh wait <args...> in the project, its wait begun 2 hours ago; hung_wait is
+# wait --stall on s-hung.
+swait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
+  CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
+hung_wait() { swait --stall s-hung 3000; }
 # Its last own work, a tool call 40 minutes ago, came after every tool shell started: none is the
 # foreground call, so the builder is hung outside Bash (an MCP call, a subagent, the API) and the old
 # background server is not named.
@@ -280,6 +290,45 @@ printf '%s\n' "${tree[@]:0:1}" '  200   100  02:00:00 node /opt/homebrew/bin/cod
 printf '2026-10-22\tcode\ts-hung\tcodex\tgpt\thigh\t-\n' >> "${H}/.swarm/agents.tsv"
 check "a codex builder's stalled line says it names no command" grep -qE '; longest-running: none named \(a codex builder\)$' <<< "$(HUNG_WAIT=timeout hung_wait)"
 printf '2026-10-22\tcode\ts-hung\tclaude\topus\thigh\tsess-hung\n' >> "${H}/.swarm/agents.tsv"
+printf '%s\n' "${tree[@]}" > "${PS_TREE}"
+# A test suite running in the builder's pane is work: past stall_minutes with no other sign of life,
+# wait --stall finds no stall while a process under its pane's shell runs make test, make check or
+# scripts/test.sh, and runs on to its timeout (1:busy). The same tree with the run removed stalls
+# (exit 3). A word that only names one (grep scripts/test.sh, cat test), or a run in another pane's
+# tree, is no run. With herdr's process info empty, or ps failing, a run cannot be seen: it stalls.
+log "$(tool 46)" "${idle[@]}"; rm -f "${H}/.swarm/panes/s-hung"
+cond=('  800     1  02:00:00 -zsh' '  810   800  02:00:00 claude --session-id sess-cond'
+  "  820   810     40:00 ${snap} 'swarm.sh watch --epic e1'" '  821   820     40:00 bash swarm.sh watch --epic e1')
+ran() { printf '%s\n' "${tree[@]}" "${cond[@]}" "$@" > "${PS_TREE}"; }
+bg="  340   200     10:00 ${snap} 'make test'"
+stalls() { local out rc; if out="$("$@")"; then rc=0; else rc=$?; fi; [[ ${rc} == 3 ]] && grep -q '^stalled: working' <<< "${out}"; }
+works() { local out rc; if out="$("$@")"; then rc=0; else rc=$?; fi; [[ "${rc}:${out}" == "1:busy" ]]; }
+ran "${bg}" '  341   340     10:00 make test GH_TOKEN=SEKRIT' '  342   341     10:00 bash scripts/test.sh'
+check "a builder with make test in its pane tree is not stalled" works hung_wait
+ran "${bg}" '  342   340     10:00 bash scripts/test.sh'
+check "a builder with only bash scripts/test.sh in its pane tree is not stalled" works hung_wait
+ran "${bg}" '  341   340     10:00 make check'
+check "a builder with make check in its pane tree is not stalled" works hung_wait
+ran
+check "the same tree with the run removed is stalled, exit 3" stalls hung_wait
+ran "${bg}" '  341   340     10:00 grep scripts/test.sh' '  342   340     10:00 cat test'
+check "test.sh or test only as an argument (grep scripts/test.sh, cat test) is no run: it stalls" stalls hung_wait
+ran '  592   590     10:00 make test'
+check "make test in another pane's tree is no run in this one: it stalls" stalls hung_wait
+ran "${bg}" '  341   340     10:00 make test'
+no_info() { HUNG_PI=none hung_wait; }; no_ps() { PS_FAIL=1 hung_wait; }
+check "with herdr's process info printing nothing, a builder with a test run stalls" stalls no_info
+check "with ps failing, a builder with a test run stalls" stalls no_ps
+# A busy agent whose pane has not changed for stall_minutes is stuck (exit 4), unless a test suite
+# runs in its pane: s-hung without --stall, and conduct-e1, which agent_stalled never reads.
+quiet() { local out rc; if out="$(swait "$1" 3000)"; then rc=0; else rc=$?; fi; [[ ${rc} == 4 ]] && grep -qE "^stuck: no output for [0-9]+m \($2\)$" <<< "${out}"; }
+ran
+check "a builder whose pane has not changed for stall_minutes, with no test run, is stuck: no output" quiet s-hung w:7
+check "a conductor whose pane has not changed for stall_minutes, with no test run, is stuck: no output" quiet conduct-e1 w:8
+ran "${bg}" '  341   340     10:00 make test'
+check "a builder with make test in its pane tree is not stuck" works swait s-hung 3000
+ran '  830   820     10:00 make test'
+check "a conductor with make test under its pane shell is not stuck" works swait conduct-e1 3000
 printf '%s\n' "${tree[@]}" > "${PS_TREE}"
 # Its pane changed a minute ago (the record's checksum is not the pane's now), so it is not stuck either.
 log "$(tool 40)" "${idle[@]}" "$(tool 5)"
