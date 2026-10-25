@@ -3,14 +3,18 @@ kind: lead
 status: blocked
 depends_on: [conductor-lanes-start, release-027]
 touches: [.claude/swarm/config]
-estimate_lines: 2
+estimate_lines: 3
 easy: true
 ---
 
-# swarm-dev runs three conductor lanes
+# swarm-dev runs three conductor lanes and steps up on the 2nd findings round
 
-Once conductor-lanes and conductor-lanes-start ship, the lead sets `conductor_lanes = 3` in swarm-dev's own .claude/swarm/config, in a PR of its own, so that merging the code changes nothing until this lands. The user asked for several conductors on 2026-10-24, so the lead merges it (merge = agent). After one epic, the lead posts flow's review_loops and holds figures before and after, in this file.
+Once 0.27 ships, the lead changes two settings in swarm-dev's own .claude/swarm/config, in one PR of their own. Merging the code changed nothing until this lands. The lead merges it (merge = agent).
+- `conductor_lanes = 3`. The user asked for several conductors on 2026-10-24.
+- `step_up_findings = 2`. The user decided on 2026-10-25 that if a 2nd review still finds things worth fixing, the build moves up the ladder at once instead of getting a 3rd round. `top_rung_rounds` stays at 2: a 2nd round of real findings on fable goes to the lead. A round with nothing fixed is still a pass.
+
+After one epic, the lead posts flow's review_loops and holds figures, before and after, in this file.
 
 **Done when:**
-- `swarm.sh config conductor_lanes` prints 3 on main.
-- After the next epic, its lane conductors and the flow figures are posted here.
+- On main, `swarm.sh config conductor_lanes` prints 3 and `swarm.sh config step_up_findings` prints 2.
+- After the next epic, its lane conductors, its step-ups and the flow figures are posted here.
