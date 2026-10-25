@@ -79,5 +79,10 @@ W="$(sw board-pr start scope-med)"
 mkdir -p "${W}/docs/stories"; printf -- '---\nkind: code\nstatus: ready\nepic: med\n---\n\n# med-a\n' > "${W}/docs/stories/med-a.md"
 is "a medium epic's board PR opens" "${URL}" "$(sw board-pr open scope-med "Plan med" "${ROOT}/body.md")"
 
+# The critic's brief comes from commands/plan-epic.md, which the stubs above do not read: pin its line.
+split_line="$(tr '\n' ' ' < "$(dirname "${BASH_SOURCE[0]}")/../commands/plan-epic.md" | tr -s ' ')"
+# shellcheck disable=SC2016 # the pattern holds literal backticks
+is "the split critic flags a child's bare-file touches" yes "$(grep -qE "no child's text names a bare file in .touches. where one function or section is meant \(the finding names the .file:part. to write instead\)" <<< "${split_line}" && echo yes || echo no)"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
