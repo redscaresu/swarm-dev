@@ -411,7 +411,8 @@ lane. It does so even while another conductor works: the why then says to start 
 conductor runs is waited on before a held lane's stop. When no lane may start and no conductor works,
 the first held lane is the step, with its `no ... started:` line as the why, and the lead stops there.
 Like those starts, `next` names no lane while a working conductor is stopped on an expired login or an
-API error. While herdr cannot list its agents, its step (the first lane in that same order) says so in
+API error; a lane so stopped is the step itself (`wait <conductor>`, with the `auth:` or `stuck:` why a
+lane-less conductor gets), before a healthy lane's wait, so it is not hidden until that lane reports. While herdr cannot list its agents, its step (the first lane in that same order) says so in
 a `no conductor started:` why, or keeps the wait on a conductor it knows to be working.
 A lane that has reported is collected (`collect <conductor>`) while other lanes still work, whatever
 its session's state, as a lane-less conductor with a report is, so a story readied in its lane need

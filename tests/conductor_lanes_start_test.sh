@@ -206,6 +206,14 @@ printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${ROOT}/screen
 # _step: next's queued: lines would look up the stub's epic e-l1, which has no file.
 check "next with another conductor stopped on an API error names no lane start" "wait ${l1}" "$(swarm _step | sed -n 1p)"
 rm -f "${ROOT}/screen.w:99" "${p}/.swarm/state/e"; echo "${lane1}" > "${ROOT}/agents"
+# Lane 2 itself stopped on an API error while lane 1 works and is listed first: the stuck step names lane 2,
+# where a wait on lane 1 would hide it until lane 1 reported.
+echo "${lane2} idle" >> "${ROOT}/agents"; pane2="${lane2#* }"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${ROOT}/screen.${pane2}"
+out="$(swarm _step)"
+check "next with lane 1 working and listed first while lane 2 is stopped on an API error names lane 2's stuck step" "wait ${l2}|yes" \
+  "$(sed -n 1p <<< "${out}")|$(grep -q "^stuck: the conductor ${l2} stopped on an API error" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+rm -f "${ROOT}/screen.${pane2}"; echo "${lane1}" > "${ROOT}/agents"
 
 # --- A lane-3 conductor that outlived conductor_lanes = 3 holds the stories that fold onto lane 1: no lane starts beside it.
 l3="$(swarm _conductor backlog 3)"; echo "${l3} w:98" >> "${ROOT}/agents"; echo "w:98 ${l3}" > "${p}/.swarm/state/l3"; : > "${ROOT}/agents.l1"

@@ -166,7 +166,8 @@ epic_has_after() {
 #                     whatever its session's state (collect_pick); the epic is collected when all its
 #                     lanes have
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
-#                     why starts `auth:` when its login expired (wait then prints auth at once);
+#                     a lane stopped on an expired login or an API error is looked at before a healthy
+#                     lane (collect_pick); why starts `auth:` when its login expired (wait then prints auth at once);
 #                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads);
 #                     next_report puts every working conductor's `queued:` lines before them
 #   conduct <epic>    an active epic has a story an agent can build. With conductor_lanes above 1,
@@ -323,14 +324,20 @@ running_conductors() {
 
 # collect_pick <conductors> — the conductor next_step looks at first, of <conductors> (running_conductors'
 # lines): a lane that has reported, whatever order herdr lists them in and whatever its session's state
-# (as a lane-less conductor with a report is collected), else the first. So a reported lane is collected
-# (and can start again for stories readied since) without waiting for the slowest lane, and its epic is
-# collected once every lane has reported.
+# (as a lane-less conductor with a report is collected); then a lane stopped on an expired login or an
+# API error (conductor_stop), so next_step's auth and stuck arms name it; else the first. So a reported
+# lane is collected (and can start again for stories readied since) without waiting for the slowest
+# lane, its epic is collected once every lane has reported, and a healthy lane's wait hides no stopped
+# lane until it reports.
 collect_pick() {
   local c
-  # On fd 3, as conduct_ready reads its lists: herdr and python must not read the list.
+  # On fd 3, as conduct_ready reads its lists: herdr, python and claude must not read the list.
   while IFS= read -r c <&3; do
     [[ -n "${c}" && -n "$(conduct_lane "${c}")" && -f "$(conductor_report "${c}")" ]] || continue
+    echo "${c}"; return
+  done 3<<< "$1"
+  while IFS= read -r c <&3; do
+    [[ -n "${c}" && -n "$(conduct_lane "${c}")" && -n "$(conductor_stop "${c}")" ]] || continue
     echo "${c}"; return
   done 3<<< "$1"
   sed -n '/./{p;q;}' <<< "$1"
