@@ -407,13 +407,15 @@ twice with `escalate_after = 0`), ends `the lead's: list it in your report`: tha
 lane's. Two notes wake an idle lane, whatever N is now, so lanes outliving a
 drop to 1 still hear: `unblock` tells the lane conductors whose lane is a story's when it readies it
 (unless that conductor ran the unblock), and every other lane of the epic hears when a story's build
-goes, merged or its PR closed unmerged (reconcile) or cleared by a close (after the worktree and branch
-are gone), since a story held for a clash with it is startable then; an epic file's finish tells no
-lane. The tail's last line, `other
+goes, merged or its PR closed unmerged (reconcile, once it has released its lock) or cleared by a close
+(after the worktree and branch are gone), since a story held for a clash with it is startable then; an
+epic file's finish tells no lane, and nothing asks herdr once every lane of the epic has reported. The tail's last line, `other
 lanes running: <names>|none`, names the epic's other lane conductors neither done nor reported, with
-the epic's file gone too. A lane's final check adds `--done` after `--lane <k>`. Under
-`.swarm/lane-done.lock` it marks the lane done (`.swarm/lane-done/<epic>.l<k>`, k as given, never the
-fold) before it lists the others, so of two lanes that finish together exactly one sees `none`. With a
+the epic's file gone too. A lane's final check adds `--done` after `--lane <k>`. It lists the running
+lanes first, then under `.swarm/lane-done.lock`, held only for the markers, it marks the lane done
+(`.swarm/lane-done/<epic>.l<k>`, k as given, never the fold) and reads the others' markers, so of two
+lanes that finish together exactly one sees `none`; a lock another lane holds is waited for, then said
+(`retry in a moment`), with no marker written. With a
 `startable:` line the lane may start (not one closed unmerged, one held because the touches cannot be
 read, one a `not held:` close left ready, or one failed twice with `escalate_after = 0`, which the
 give-up rule leaves to the lead) or a `waiting:` line that is this epic's, it prints `not done:` instead, and a call without `--done`,

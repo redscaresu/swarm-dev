@@ -78,10 +78,11 @@ esac
 EOF
 cat > "${ROOT}/bin/herdr" <<EOF
 #!/bin/sh
-echo "\$*" >> "${ROOT}/herdr.log"
+ROOT_LOG="${ROOT}/herdr.log"
+echo "\$*" >> "\$ROOT_LOG"
 EOF
 cat >> "${ROOT}/bin/herdr" <<EOF
-A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"; N="${ROOT}/rename-noop"; L="${ROOT}/list-fails"
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"; N="${ROOT}/rename-noop"; L="${ROOT}/list-fails"; R="${ROOT}/proj/.swarm/reconcile.lock"
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
@@ -89,7 +90,8 @@ case "$1 $2" in
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") if [ -f "$I" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
-  "agent list")   if [ -f "$L" ]; then exit 1; fi; if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
+  "agent list")   [ ! -d "$R" ] || echo "agent list under reconcile.lock" >> "$ROOT_LOG"
+                  if [ -f "$L" ]; then exit 1; fi; if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
   "agent rename") if [ -f "$A" ] && [ ! -f "$N" ]; then sed -i.bak "s/\"name\":\"[a-z0-9-]*\",\"agent_status\":\"\([a-z]*\)\",\"pane_id\":\"$3\"/\"name\":\"$4\",\"agent_status\":\"\1\",\"pane_id\":\"$3\"/" "$A"; fi ;;
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
@@ -149,10 +151,19 @@ printf 'w:7 conductor\n' > "${p}/.swarm/state/${bl1}"; printf 'w:8 conductor\n' 
 printf '{"result":{"agents":[{"name":"%s","agent_status":"working","pane_id":"w:7"},{"name":"%s","agent_status":"working","pane_id":"w:8"}]}}\n' "${bl1}" "${bl2}" > "${ROOT}/agents.json"
 item "${b}" stories/c3.md "status: review" "kind: code" "prs: ${U}/2"
 item "${b}" epics/e4.md "status: review" "prs: ${U}/1"
+: > "${ROOT}/herdr.log"
 run reconcile >/dev/null
 check "a PR closed unmerged tells the backlog's lanes its build is gone, and a finished epic tells none" "yes|no" \
   "$(has "c3's build is gone (merged or cleared)" "$(cat "${p}/.swarm/inbox/${bl2}.md" 2>&1)")|$(grep -q "e4's build is gone" "${p}/.swarm/inbox/${bl2}.md" 2>/dev/null && echo yes || echo no)"
-rm -f "${ROOT}/agents.json" "${p}/.swarm/briefs/conduct-backlog.l1.md" "${p}/.swarm/briefs/conduct-backlog.l2.md" "${p}/.swarm/state/${bl1}" "${p}/.swarm/state/${bl2}" "${b}/stories/c3.md"
+check "the lanes are listed and told only once reconcile's lock is free" "yes|no" \
+  "$(grep -q '^agent list' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -q 'agent list under reconcile.lock' "${ROOT}/herdr.log" && echo yes || echo no)"
+# Both lanes have reported: nothing can be waiting, so a story's reopen asks herdr nothing.
+: > "${p}/.swarm/conduct-backlog.l1.report.md"; : > "${p}/.swarm/conduct-backlog.l2.report.md"; : > "${p}/.claude/swarm/config"
+item "${b}" stories/c4.md "status: review" "kind: code" "prs: ${U}/2"
+: > "${ROOT}/herdr.log"; run reconcile >/dev/null
+check "with every lane reported and conductor_lanes back at 1, a PR closed unmerged makes no herdr call" "no" \
+  "$(grep -q 'agent list' "${ROOT}/herdr.log" && echo yes || echo no)"
+rm -f "${ROOT}/agents.json" "${p}/.swarm/briefs/conduct-backlog.l1.md" "${p}/.swarm/briefs/conduct-backlog.l2.md" "${p}/.swarm/state/${bl1}" "${p}/.swarm/state/${bl2}" "${b}/stories/c3.md" "${b}/stories/c4.md" "${p}/.swarm/conduct-backlog.l1.report.md" "${p}/.swarm/conduct-backlog.l2.report.md"
 rm -rf "${p}/.swarm/inbox"; : > "${p}/.claude/swarm/config"
 check "its dependent unblocks once it is finished" "ready: n" "$(run unblock)"
 

@@ -311,11 +311,27 @@ check "lane 2's --done with nothing left marks it done and still names lane 3" "
 check "then lane 3's --done sees no other lane: it is the last" "other lanes running: none" \
   "$(run unblock --startable w --lane 3 --done | grep '^other lanes running:')"
 item "${b}" stories/wz.md "status: ready" "kind: code" "epic: w" "lane: 2"
-check "a lane woken to a new story unmarks itself on its next unblock without --done, and lane 3 sees it running" "startable: wz|no|other lanes running: conduct-w-l2" \
-  "$(run unblock --startable w --lane 2 | grep '^startable:')|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)|$(run unblock --startable w --lane 3 --done | grep '^other lanes running:')"
+out="$(run unblock --startable w --lane 2)"
+check "a lane woken to a new story unmarks itself on its next unblock without --done, says so, and lane 3 sees it running" "startable: wz|yes|no|other lanes running: conduct-w-l2" \
+  "$(grep '^startable:' <<< "${out}")|$(has 'lane 2 no longer done' "${out}")|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)|$(run unblock --startable w --lane 3 --done | grep '^other lanes running:')"
 check "--done with a startable story of its own is refused as not done" "yes" \
   "$(has 'not done: lane 2' "$(run unblock --startable w --lane 2 --done)")"
 rm "${b}/stories/wz.md" "${p}/.swarm/lane-done/w.l3"
+
+# --- Two lanes finish together: their --done checks run at once, and exactly one sees none (the marker
+# section is under a lock, taken only once the running lanes are listed).
+rm -f "${p}/.swarm/lane-done/w.l2" "${p}/.swarm/lane-done/w.l3"
+run unblock --startable w --lane 2 --done > "${ROOT}/done2.out" 2>&1 &
+run unblock --startable w --lane 3 --done > "${ROOT}/done3.out" 2>&1 &
+wait
+check "two lanes' --done at once: exactly one sees no other lane, the other sees it running, and neither is told to retry" "1|1|no" \
+  "$(cat "${ROOT}/done2.out" "${ROOT}/done3.out" | grep -c '^other lanes running: none$')|$(cat "${ROOT}/done2.out" "${ROOT}/done3.out" | grep -c '^other lanes running: conduct-w-l[23]$')|$(grep -q 'retry in a moment' "${ROOT}/done2.out" "${ROOT}/done3.out" && echo yes || echo no)"
+rm -f "${p}/.swarm/lane-done/w.l2" "${p}/.swarm/lane-done/w.l3"
+# A lock another lane holds now is waited for, then said: no marker is written, and the lock is left.
+mkdir "${p}/.swarm/lane-done.lock"
+check "--done while another lane holds the lane-done lock says to retry, writes no marker, and leaves the lock" "yes|no|yes" \
+  "$(has 'retry in a moment' "$(run unblock --startable w --lane 2 --done || true)")|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)|$([[ -d "${p}/.swarm/lane-done.lock" ]] && echo yes || echo no)"
+rmdir "${p}/.swarm/lane-done.lock"
 
 # --- What --done counts as the lane's: not a story the lead has (closed unmerged, or left ready by a not held:
 # close, which the lane's hold follows), not a wait on a lead story or another epic's, but a wait on this
