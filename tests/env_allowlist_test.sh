@@ -288,5 +288,21 @@ check "so is a reserved one: PATH, which every agent gets already" "yes|yes|0" "
 check "and HERDR_PANE_ID, which would replace the agent's own pane" "yes|yes|0" "$(config_refused "PROVIDER_KEY HERDR_PANE_ID" "HERDR_PANE_ID is reserved")"
 : > "${p}/.claude/swarm/config"
 
+# --- Foundry on: its settings reach every agent with no agent_env line.
+# Why: a session on Azure Foundry keeps its endpoint, key and model names only in the environment,
+# so an agent without them stops at its first request ("Must provide one of the baseURL or resource
+# arguments"). The lead already chose Foundry, so swarm.sh passes them on without a config line.
+FOUNDRY=(ANTHROPIC_FOUNDRY_RESOURCE=res-1 ANTHROPIC_FOUNDRY_API_KEY=fkey ANTHROPIC_DEFAULT_OPUS_MODEL=opus-x)
+SAVED=("${PROVIDER[@]}")
+PROVIDER=("${SAVED[@]}" "${FOUNDRY[@]}")
+run agent t7 foundry-off "${p}" hld "${ROOT}/brief.md" >/dev/null
+check "with CLAUDE_CODE_USE_FOUNDRY=0, the Foundry settings stay out" "||" \
+  "$(var foundry-off ANTHROPIC_FOUNDRY_RESOURCE)|$(var foundry-off ANTHROPIC_FOUNDRY_API_KEY)|$(var foundry-off ANTHROPIC_DEFAULT_OPUS_MODEL)"
+PROVIDER=("${SAVED[@]}" "${FOUNDRY[@]}" CLAUDE_CODE_USE_FOUNDRY=1)
+run agent t7 foundry-on "${p}" hld "${ROOT}/brief.md" >/dev/null
+check "with it on, an agent that builds nothing gets the endpoint, key and model names" "res-1|fkey|opus-x|" \
+  "$(var foundry-on ANTHROPIC_FOUNDRY_RESOURCE)|$(var foundry-on ANTHROPIC_FOUNDRY_API_KEY)|$(var foundry-on ANTHROPIC_DEFAULT_OPUS_MODEL)|$(var foundry-on PROVIDER_KEY)"
+PROVIDER=("${SAVED[@]}")
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

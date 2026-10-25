@@ -462,8 +462,10 @@ through each tool instead: `claude` then `/login`, `codex login`, and `gh auth l
 selection above passes from the session that runs swarm.sh, or can go under `env` in
 `~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
 provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
-`gcloud auth application-default login`). An exported secret such as `AWS_SECRET_ACCESS_KEY` or
-Foundry's `ANTHROPIC_FOUNDRY_API_KEY` reaches agents only when `agent_env` names it.
+`gcloud auth application-default login`). An exported secret such as `AWS_SECRET_ACCESS_KEY`
+reaches agents only when `agent_env` names it. Foundry is the exception: its endpoint and key exist
+only in the environment, so when `CLAUDE_CODE_USE_FOUNDRY` is `1` or `true`, every agent also gets
+the session's `ANTHROPIC_FOUNDRY_*` and `ANTHROPIC_DEFAULT_*_MODEL` variables, with no `agent_env` line.
 
 Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
 Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,
