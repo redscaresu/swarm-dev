@@ -4,6 +4,8 @@
 # verify only as git's --verify, or in the one LEGACY_BUILDER_ROLES line that keeps past verify
 # builds counted. cost, features and review-yield, folded into flow, each print the flow section that
 # holds their numbers and exit 0.
+# A config that sets a removed key (pr_per, finished, review_bot, keep_panes) loads with a warning;
+# a made-up key still stops the script.
 # lessons, its rule PRs and its rules check stay gone from bin/ and commands/, whose collect step
 # files a checks: story instead.
 set -euo pipefail
@@ -14,21 +16,43 @@ export CLAUDE_CONFIG_DIR="${iso}/claude-config"   # under its own root, so paral
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="${REPO}/tests/$(basename "${BASH_SOURCE[0]}")"
-GONE='pr_per|CFG_finished|sign_commits|sign_rule|review_bot|keep_panes|base_branches|bump_rule|epic_branch|conduct_epic_mode|decisions_report|export_report|features_report|review_yield_report|cost_report\.py'
+GONE='pr_per|CFG_finished|review_bot|keep_panes|bump_rule|epic_branch|conduct_epic_mode|decisions_report|export_report|features_report|review_yield_report|cost_report\.py'
 fails=0
 
 files=("${REPO}/bin/swarm.sh" "${REPO}"/bin/lib/*.sh "${REPO}"/bin/lib/*.py)
 for f in "${REPO}"/tests/*.sh; do [[ "${f}" == "${SELF}" ]] || files+=("${f}"); done
-if found="$(grep -nE "${GONE}" "${files[@]}")"; then
+# bin/swarm.sh's REMOVED_KEYS line names the removed keys a config may still set, to warn on them.
+found="$(grep -nE "${GONE}" "${files[@]}" | grep -vE '^[^:]*/bin/swarm\.sh:[0-9]+:REMOVED_KEYS="' || true)"
+if [[ -n "${found}" ]]; then
   echo "FAIL a removed name is back:"; echo "${found}"; fails=$((fails + 1))
-else echo "ok   no removed name in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh"; fi
+else echo "ok   no removed name in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh but REMOVED_KEYS"; fi
+
+# Why: an older board's config still sets these keys, and swarm.sh must keep running there. Boards
+# outside swarm-dev and infrafactory set them, so checking those two configs is not enough to make
+# them die again.
+# A config that sets a removed key still loads: the key is ignored, with a warning on stderr naming it
+# and its line. Any other unknown key still stops the script.
+proj="$(cd "${iso}" && pwd -P)/proj"; mkdir -p "${proj}/.claude/swarm"
+for key in pr_per finished review_bot keep_panes; do
+  printf 'merge = agent\n%s = anything\n' "${key}" > "${proj}/.claude/swarm/config"
+  out="$(cd "${proj}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${REPO}/bin/swarm.sh" config merge 2>"${iso}/err")" && code=0 || code=$?
+  err="$(cat "${iso}/err")"
+  if [[ ${code} -eq 0 && "${out}" == agent && "${err}" == "swarm: warning: ${proj}/.claude/swarm/config:2: ${key} was removed and is ignored; delete the line" ]]; then
+    echo "ok   ${key} warns on stderr that it was removed, and the config loads"
+  else echo "FAIL ${key}: exit ${code}, stdout '${out}', stderr '${err}'"; fails=$((fails + 1)); fi
+done
+printf 'made_up = 1\n' > "${proj}/.claude/swarm/config"
+out="$(cd "${proj}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${REPO}/bin/swarm.sh" config merge 2>&1)" && code=0 || code=$?
+if [[ ${code} -ne 0 && "${out}" == *"config:1: unknown key 'made_up'"* ]]; then
+  echo "ok   a made-up key still stops the script"
+else echo "FAIL a made-up key: exit ${code}, output '${out}'"; fails=$((fails + 1)); fi
 
 if found="$(grep -hn '' "${REPO}/bin/swarm.sh" "${REPO}"/bin/lib/*.sh "${REPO}"/bin/lib/*.py | sed -e '/^[0-9]*:LEGACY_BUILDER_ROLES=/d' -e 's/--verify//g' | grep -w verify)"; then
   echo "FAIL bin/swarm.sh or bin/lib says verify other than as git --verify:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   bin/swarm.sh and bin/lib say verify only as git --verify and in LEGACY_BUILDER_ROLES"; fi
 
 # review.md is narrowed to docs/review.md: commands/epic.md still writes the epic reviewer's D/review.md.
-DOCS_GONE='pr_per|finished = mark|keep_panes|sign_commits|review_bot|base_branches|release story|swarm.sh decisions|swarm.sh export|docs/review\.md|kind: verify|verify story|swarm\.sh cost'
+DOCS_GONE='pr_per|finished = mark|keep_panes|review_bot|release story|swarm.sh decisions|swarm.sh export|docs/review\.md|kind: verify|verify story|swarm\.sh cost'
 if found="$(grep -rnE "${DOCS_GONE}" "${REPO}/docs" "${REPO}/commands" "${REPO}/templates" "${REPO}/skills")"; then
   echo "FAIL docs, commands, templates or skills mention something removed:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   docs, commands, templates and skills mention nothing removed"; fi

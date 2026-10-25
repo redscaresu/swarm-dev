@@ -176,8 +176,21 @@ check "with commit_trailers set, a builder's brief names each trailer for every 
   $'End every commit message with these trailers, one per line:\nCo-Authored-By: Ann <a@x.io>\nSigned-off-by: Bo <b@x.io>' \
   "$(grep -A2 '^End every commit message' "${p}/.swarm/briefs/t1.md")"
 check "without commit_trailers, a brief names none" "no" "$(grep -q '^End every commit message' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
+# Why: an org that requires every commit and merge GPG-signed sets sign_commits = true.
+# Boards outside swarm-dev and infrafactory set this key, so checking those two configs is not
+# enough to remove it.
+# sign_commits = true: the builder's and the conductor's brief each carry the sign rule; unset, neither does.
+SIGN="Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."
+printf '%s\n' "sign_commits = true" > "${p}/.claude/swarm/config"
+item "${b}" stories/s1.md "status: ready" "kind: code" "repo: svc"
+run story s1 >/dev/null
+run conduct f >/dev/null || true
+check "with sign_commits = true, a builder's and a conductor's brief carry the sign rule" "yes|yes" \
+  "$(has "${SIGN}" "$(cat "${p}/.swarm/briefs/s1.md")")|$(has "${SIGN}" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 : > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
+check "without sign_commits, neither a builder's nor a conductor's brief says to sign" "no|no" \
+  "$(grep -qF -- "-S" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)|$(grep -qF -- "-S" "${p}/.swarm/briefs/conduct-f.md" && echo yes || echo no)"
 check "both briefs say what to do on wait-pr's other exit 2s, ending with a report, never a loop" "yes|yes|yes|yes" \
   "$(has "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again. If it ends the same way twice, stop and" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "If it ends the same way twice, stop and say so in your reply." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "Its other exit 2s print why:" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "If it ends the same way twice, stop and report it to the lead." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 check "the conductor sends a red check or a conflict to the builder as a nudge, not findings" "yes" \

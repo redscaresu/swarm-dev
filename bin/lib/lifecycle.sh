@@ -51,7 +51,7 @@ board_read() {
 # no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why split=""
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why split="" sign=()
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -128,7 +128,9 @@ board_pr() {
       git -C "${wt}" add -A
       if ! git -C "${wt}" diff --cached --quiet; then
         msg="$3"; f="$(brief_trailers)"; [[ -z "${f}" ]] || msg+=$'\n\n'"${f}"
-        git -C "${wt}" commit -q -m "${msg}" || die "board-pr: the commit failed in ${wt}"
+        # shellcheck disable=SC2154 # assigned in another file
+        [[ "${CFG_sign_commits}" != true ]] || sign=(-S)
+        git -C "${wt}" commit -q ${sign[@]+"${sign[@]}"} -m "${msg}" || die "board-pr: the commit failed in ${wt}"
       fi
       git -C "${wt}" push -q -u origin "${b}" || die "board-pr: cannot push ${b}"
       [[ -n "${url}" ]] || url="$(gh pr create -R "$(git -C "${PROJECT_DIR}" remote get-url origin)" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" \

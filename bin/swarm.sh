@@ -181,6 +181,8 @@ fi
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
 CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
+CFG_base_branches=""    # empty: origin's default branch; else branches to try in order, such as dev main
+CFG_sign_commits=false  # true: every commit and merge is signed (swarm.sh's own and each agent's), or the agent stops
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?; a busy one whose pane has not changed, stuck
 CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next)
@@ -198,8 +200,10 @@ CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once
 # shellcheck disable=SC2034 # nothing reads it yet; epic-guard-board-pr does
 CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
-CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin lead_epics commit_trailers"
+CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin lead_epics commit_trailers"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
+# Keys an older swarm-dev read: a config that sets one still loads, with a warning, whatever its value.
+REMOVED_KEYS="pr_per finished review_bot keep_panes"
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
 # code; a `$` or backtick is refused so nobody expects it to expand. Any bad line stops the script.
@@ -214,6 +218,9 @@ load_config() {
       || die "${where}: expected 'key = value'"
     key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
     [[ "${key}" != lessons_file ]] || continue   # removed with lessons; an old config still loads, whatever its value
+    if [[ " ${REMOVED_KEYS} " == *" ${key} "* ]]; then
+      echo "swarm: warning: ${where}: ${key} was removed and is ignored; delete the line" >&2; continue
+    fi
     [[ "${value}" != *'$'* && "${value}" != *'`'* ]] || die "${where}: ${key}: \$ and backticks are not expanded; write the value out"
     case "${key}" in
       board_dir|repos_dir)
@@ -222,6 +229,10 @@ load_config() {
         [[ "${key}" != board_dir || "${value}" != *[\"\\]* ]] || die "${where}: board_dir: \" and \\ are refused; name a plain path"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
+      base_branches)
+        [[ "${value}" =~ ^[A-Za-z0-9._/[:space:]-]*$ ]] || die "${where}: base_branches must be branch names separated by spaces, such as dev main, not '${value}'" ;;
+      sign_commits)
+        [[ "${value}" == true || "${value}" == false ]] || die "${where}: sign_commits must be true or false, not '${value}'" ;;
       merge)
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
       stall_minutes|queue_minutes|codex_minutes|step_up_findings)
@@ -307,11 +318,23 @@ repo_dir() {
 # worktree_for <repo-dir> <slug> — where a story's worktree goes: beside its repo, in <repo>-wt/.
 worktree_for() { echo "$(dirname "$1")/$(basename "$1")-wt/$2"; }
 
-# base_for <repo-dir> — the branch a story starts from and merges into, fetched: origin's default
-# branch, asked of origin itself, not the clone's cached refs, which a changed default would get
-# wrong. Never a guess.
+# base_for <repo-dir> — the branch a story starts from and merges into, fetched: the first
+# base_branches entry origin has, or origin's default branch when the list is empty. Each is asked
+# of origin itself, not the clone's cached refs, which a single-branch clone or a changed default
+# would get wrong. A listed branch origin has but that will not fetch stops it, never falling back
+# to the next. Never a guess.
 base_for() {
-  local src="$1" b head
+  local src="$1" b head branches heads
+  if [[ -n "${CFG_base_branches// /}" ]]; then
+    heads="$(git -C "${src}" ls-remote --heads origin)" || die "${src}: cannot list origin's branches"
+    read -r -a branches <<< "${CFG_base_branches}"
+    for b in "${branches[@]}"; do
+      awk -v r="refs/heads/${b}" '$2 == r { f = 1 } END { exit !f }' <<< "${heads}" || continue
+      git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" || die "${src}: cannot fetch ${b}"
+      echo "${b}"; return
+    done
+    die "${src}: origin has none of base_branches (${CFG_base_branches})"
+  fi
   if ! git -C "${src}" remote set-head origin --auto >/dev/null 2>&1 \
      || ! head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD)"; then
     die "${src}: cannot tell origin's default branch"

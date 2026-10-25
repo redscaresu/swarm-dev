@@ -385,6 +385,13 @@ send_goal() {
   esac
 }
 
+# sign_rule — with sign_commits = true, the rule every builder's and conductor's brief gives; nothing
+# when it is off. swarm.sh's own commits and merges (board-pr, a stacked start) pass -S then too.
+sign_rule() {
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ "${CFG_sign_commits}" != true ]] || echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."
+}
+
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
   local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules trailers
@@ -421,6 +428,7 @@ EOF
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
   trailers="$(config_trailers)"
   [[ -z "${trailers}" ]] || printf '%s\n%s\n' "End every commit message with these trailers, one per line:" "${trailers}"
+  sign_rule
   rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
 }
@@ -792,7 +800,9 @@ EOF
 # branch, and names the two branches that conflict and their files (merge_clash). Sets STACK_PRS to the
 # parents' PR URLs, for the brief.
 stack_start() {
-  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why merged
+  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why merged sign=()
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ "${CFG_sign_commits}" != true ]] || sign=(-S)
   slug="$(basename "${story}" .md)"; STACK_PRS=""
   for p in $4; do
     if ! git -C "${src}" fetch -q origin "+refs/heads/story/${p}:refs/remotes/origin/story/${p}" 2>/dev/null \
@@ -806,7 +816,7 @@ stack_start() {
   git -C "${src}" worktree add -q --no-track -b "story/${slug}" "${wt}" "origin/story/${first}"
   merged="origin/story/${first}"
   for p in ${4#"${first}"}; do
-    if why="$(git -C "${wt}" merge -q --no-edit "origin/story/${p}" 2>&1)"; then merged+=" origin/story/${p}"; continue; fi
+    if why="$(git -C "${wt}" merge -q --no-edit ${sign[@]+"${sign[@]}"} "origin/story/${p}" 2>&1)"; then merged+=" origin/story/${p}"; continue; fi
     why="$(merge_clash "${wt}" "origin/story/${p}" "${merged}" "${why##*$'\n'}")"
     git -C "${src}" worktree remove --force "${wt}"; git -C "${src}" branch -q -D "story/${slug}"
     die "${slug}: ${why}; no worktree or branch was made"
@@ -944,7 +954,9 @@ stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${ST
 tell that story for it; wait on its builder again. A \`step-up failed: <slug>\` line means the
 step-up stopped after closing the builder: leave that story alone and list it for the lead.
 EOF
-  local rules; rules="$(project_rules)"
+  local rules sign; sign="$(sign_rule)"
+  [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"
+  rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
   cat <<EOF
 
