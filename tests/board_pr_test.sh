@@ -455,6 +455,9 @@ is "board_dir = .: open prints the PR URL" "${URL}" "$(cat "${ROOT}/out")"
 bpr start q; mkdir -p "${ROOT}/proj-wt/_board-q/epics"; printf -- '---\nstatus: active\n---\n' > "${ROOT}/proj-wt/_board-q/epics/a\"b.md"
 guard_refused q "board_dir = .: an active epic whose name holds a quote" 'board-pr: "epics/a\"b.md" has a quote, backslash, tab or newline in its name; rename it'
 
+# Why: an org that requires every commit and merge GPG-signed sets sign_commits = true.
+# Boards outside swarm-dev and infrafactory set this key, so checking those two configs is not
+# enough to remove it.
 # --- sign_commits = true: open's commit passes -S. git signs with a throwaway SSH key here, and
 # commit.gpgsign is off, so only -S can sign it; with sign_commits off the same commit is unsigned.
 ssh-keygen -q -t ed25519 -N '' -C board-pr-test -f "${ROOT}/signkey"

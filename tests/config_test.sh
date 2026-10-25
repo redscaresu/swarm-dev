@@ -65,7 +65,9 @@ project "${p}" "# a comment" "boardd = x"
 check "unknown key names its line" "yes" "$(fails_with 'config:2: unknown key' run "${p}" config)"
 project "${p}" "merge = maybe"
 check "bad value names its line" "yes" "$(fails_with 'config:1: merge must be' run "${p}" config)"
-# The keys an older swarm-dev read warn and load: removed_test.sh checks them, since it alone may name them.
+# Why: an org that requires every commit and merge GPG-signed sets sign_commits = true.
+# Boards outside swarm-dev and infrafactory set this key, so checking those two configs is not
+# enough to remove it.
 check "sign_commits is false by default" "false" "$(project "${p}"; run "${p}" config sign_commits)"
 project "${p}" "sign_commits = true"
 check "sign_commits = true is read" "true" "$(run "${p}" config sign_commits)"
@@ -290,6 +292,10 @@ check "a changed default on origin is seen, not the cached one" "main" "$(base t
 remote "${ROOT}/dev-default.git" dev main dev
 "${GIT[@]}" clone -q --single-branch --branch dev "${ROOT}/dev-default.git" "${ROOT}/repos/single"
 check "a single-branch clone of origin's default, dev, finds dev" "dev" "$(base single)"
+# Why: a board whose repos branch from and open PRs into dev where it exists, else main, while their
+# GitHub default branch is main (the user's own board, a vault folder for repos under ~/Work).
+# Boards outside swarm-dev and infrafactory set this key, so checking those two configs is not
+# enough to remove it.
 # base_branches = dev main: dev where origin has it, though origin's default is main; else main.
 remote "${ROOT}/main-dev.git" main main dev
 "${GIT[@]}" clone -q --single-branch --branch main "${ROOT}/main-dev.git" "${ROOT}/repos/main-dev"
