@@ -11,3 +11,5 @@ sonnet_share = 4
 fallback_reviewer = sonnet
 # step-up hands a build to the next model on findings-3, ci-red-2, stalled or no-pr. The user agreed the Fable rung on 2026-10-21.
 escalate_ladder = sonnet,opus,fable
+# The lead runs on Azure Foundry: every agent pane needs its endpoint, key and model names (user, 2026-10-25).
+agent_env = ANTHROPIC_FOUNDRY_RESOURCE ANTHROPIC_FOUNDRY_API_KEY ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
