@@ -45,8 +45,7 @@ only once every epic it `depends_on` is done or has only stories in `review` lef
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
 When `next` says to wait on a conductor, it also lists each ready `lead` story that a blocked story
-depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no
-conductor will build them.
+depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no conductor will build them.
 
 ## Who does what
 
@@ -138,6 +137,7 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference.md § Settings) |
 | `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: a new or draft epic goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
+| `agent_env` | empty | variable names, separated by spaces, that every agent of every role gets with your session's values, such as a provider's key and endpoint (reference.md § Settings) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up with `.claude/swarm/config`,
 else the git repo you are in; a worktree resolves to its main checkout. It need not be a git repo: a

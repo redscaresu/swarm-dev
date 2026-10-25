@@ -200,7 +200,8 @@ CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once
 # shellcheck disable=SC2034 # nothing reads it yet; epic-guard-board-pr does
 CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
-CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin lead_epics commit_trailers"
+CFG_agent_env=""        # empty: none; else variable names every agent gets with the session's values, such as a provider's key
+CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin lead_epics commit_trailers agent_env"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 # Keys an older swarm-dev read: a config that sets one still loads, with a warning, whatever its value.
 REMOVED_KEYS="pr_per finished review_bot keep_panes"
@@ -208,7 +209,7 @@ REMOVED_KEYS="pr_per finished review_bot keep_panes"
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
 # code; a `$` or backtick is refused so nobody expects it to expand. Any bad line stops the script.
 load_config() {
-  local n=0 line key value where trailer='[A-Za-z][A-Za-z0-9-]*: [^;]*[^;[:space:]]'
+  local n=0 line key value where words w trailer='[A-Za-z][A-Za-z0-9-]*: [^;]*[^;[:space:]]'
   [[ -f "${CONFIG_FILE}" ]] || return 0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     n=$((n + 1)); where="${CONFIG_FILE}:${n}"
@@ -259,6 +260,12 @@ load_config() {
       commit_trailers)
         [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
           || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;
+      agent_env)
+        # Reserved names are refused once agents.sh, which defines them, is loaded (reserved_env).
+        read -r -a words <<< "${value}"   # read, not a bare word list, so a * is never globbed
+        for w in ${words[@]+"${words[@]}"}; do
+          [[ "${w}" =~ ^[A-Z_][A-Z0-9_]*$ ]] || die "${where}: agent_env: '${w}' is not a variable name ([A-Z_][A-Z0-9_]*)"
+        done ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
@@ -440,6 +447,12 @@ source "${SWARM_HOME}/bin/lib/merge.sh"
 source "${SWARM_HOME}/bin/lib/lifecycle.sh"
 # shellcheck source=bin/lib/dash.sh
 source "${SWARM_HOME}/bin/lib/dash.sh"
+# agent_env's names, each checked for its form by load_config, which runs before agents.sh is loaded.
+for _key in ${CFG_agent_env}; do
+  # shellcheck disable=SC2154 # load_config assigns it with printf -v
+  ! reserved_env "${_key}" \
+    || die "${SRC_agent_env}: agent_env: ${_key} is reserved: every agent gets it already, herdr or the lead's own session sets it, or it loads code"
+done
 # INTERVENE_KINDS: the times a person stepped in that intervene logs, and the kinds dash's speedometer
 # counts (dash passes them as DASH_INTERVENE_KINDS).
 INTERVENE_KINDS="lead-hand user-caught"

@@ -226,7 +226,7 @@ next_pane() {
 # proxy or an intercepting CA reaches GitHub; and which provider and model Claude Code uses (Bedrock,
 # Vertex, Foundry), whose credentials come from the provider's own login or profile files. Settings
 # and paths, not secrets (a proxy URL with a password in it passes too). Any other variable reaches
-# an agent only by name, through a story's env: (story_env). AGENT_SET are the ones swarm.sh sets for
+# an agent only by name, through a story's env: (story_env) or agent_env (agent_env_names). AGENT_SET are the ones swarm.sh sets for
 # every agent itself (launch_file).
 AGENT_ENV="PATH HOME TERM USER LOGNAME TMPDIR LANG CLAUDE_CONFIG_DIR CLAUDE_PROJECTS_DIR CODEX_HOME GH_CONFIG_DIR GIT_CONFIG_GLOBAL GNUPGHOME DBUS_SESSION_BUS_ADDRESS SSH_AUTH_SOCK GIT_SSH_COMMAND HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy SSL_CERT_FILE NODE_EXTRA_CA_CERTS CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL AWS_REGION AWS_PROFILE CLOUD_ML_REGION ANTHROPIC_VERTEX_PROJECT_ID"
 AGENT_PREFIXES="LC_ SWARM_ XDG_"
@@ -280,6 +280,19 @@ reserved_env() {
   for p in ${AGENT_PREFIXES}; do [[ "$1" != "${p}"* ]] || return 0; done   # loose-match: ok AGENT_PREFIXES are prefixes by design
   case "$1" in HERDR_*|CLAUDECODE|CLAUDE_CODE_*|CLAUDE_PID|BASH_ENV|ENV|DYLD_*|LD_*) return 0 ;; esac
   return 1
+}
+
+# agent_env_names — agent_env's names that this session has, for every agent of every role. load_config
+# and reserved_env have checked them. One it lacks is skipped with a warning, not refused, so a board
+# set up for a provider (Foundry's key, say) still runs from a session without it.
+agent_env_names() {
+  local n exported out=""
+  exported=" $(compgen -e | tr '\n' ' ') "   # the environment only, never swarm.sh's own variables
+  # shellcheck disable=SC2154 # assigned in another file
+  for n in ${CFG_agent_env}; do
+    if [[ "${exported}" == *" ${n} "* ]]; then out+=" ${n}"; else echo "swarm: warning: agent_env: ${n} is not set here, so the agent starts without it" >&2; fi
+  done
+  printf '%s' "${out# }"
 }
 
 # launch_file <file> <names> <marker> <zdotdir> — write clean_env's wrapper: it deletes itself,
@@ -458,7 +471,8 @@ agent_cmd() {
 
 # start_agent <tab> <name> <cwd> <role> <prompt-file> [pane-name] [env-names] [model] — an agent in a
 # fresh pane with a clean environment (clean_env), plus the variables <env-names> names, which its
-# caller has checked with story_env. Never read from the environment, where any value could stand in.
+# caller has checked with story_env, and agent_env's (agent_env_names), which its restart wrapper keeps
+# too (resume_file). Never read from the environment, where any value could stand in.
 # [model] runs <role> on another model than its policy's, at its policy's effort (step_up's rung).
 start_agent() {
   local tab="$1" name cwd="$3" role="$4" prompt_file="$5" pane_name="${6:-$2}" names="${7:-}" kind model effort pane
@@ -466,6 +480,7 @@ start_agent() {
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
   model="${8:-${model}}"   # a step-up's rung: the role's family on another model
+  local extra; extra="$(agent_env_names)"; names="${extra}${extra:+ }${names}"
   # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
   # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
   local session=- flags=() resume=()
