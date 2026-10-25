@@ -3,7 +3,7 @@ kind: code
 status: blocked
 depends_on: [conductor-lanes]
 needs: "conductor-lanes: conduct --lane, lane conductor names and the story's lane (bin/lib/build.sh, bin/lib/board.sh)"
-touches: [bin/lib/board.sh:next_step conductor arms, bin/lib/merge.sh:the start of conductors after a board merge, bin/lib/agents.sh:status and wait for lane names, bin/lib/lifecycle.sh:upgrade rounds, tests/conductor_lanes_start_test.sh (new), docs/reference.md:next and status entries]
+touches: [bin/lib/board.sh:next_step conductor arms, bin/lib/merge.sh:the start of conductors after a board merge, bin/lib/agents.sh:status and wait for lane names, bin/lib/lifecycle.sh:upgrade rounds, tests/conductor_lanes_start_test.sh (new), docs/reference.md:next and status entries, hooks/lead-stop.sh:started's conduct arm and the step and why it reads, commands/swarm.md:the conduct step]
 estimate_lines: 150
 easy: false
 ---
