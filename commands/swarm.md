@@ -181,7 +181,9 @@ Repeat until a step below says stop:
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. With
      `conductor_lanes` above 1 the step is `conduct <epic> --lane <k>` (or `conduct --backlog --lane
-     <k>`), for a lane with ready stories and no conductor, even while another conductor works. Run
+     <k>`), for a lane with ready stories and no conductor, even while another conductor works: the
+     why then says to start `swarm.sh wait --until-report` on that conductor in the background first,
+     and any `also: lead <slug> blocks <slugs>` lines follow, as they do under `wait`. Run
      it as written, and do the same for each `also: conduct ... --lane <k>` line after the why. Then
      handle each as `wait` on the conductor it started: `conduct-<epic>-l<k>`, or for the backlog
      the `conduct-backlog-...-l<k>` name `swarm.sh status` lists. When the why is a `no ...

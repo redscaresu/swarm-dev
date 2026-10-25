@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # conductor_lanes_start_test.sh — the swarm starts and watches every lane's conductor: a board merge
 # that readies backlog stories in two lanes starts both lane conductors, next names the conduct step of
-# a lane with ready stories and no conductor while another lane's works, collect waits until every
-# lane has reported, and with conductor_lanes = 1 the steps are as before. gh, herdr and claude are
+# a lane with ready stories and no conductor while another lane's works, a reported lane is collected
+# unless its session still works while a sibling lane does, and with conductor_lanes = 1 the steps are
+# as before. gh, herdr and claude are
 # stubs on PATH.
 set -euo pipefail
 
@@ -20,8 +21,8 @@ check() { # <name> <want> <got>
 }
 
 # herdr: each new pane is w:<n>; agent start adds "<name> <pane>" to agents, which agent list reads
-# (a third column, when a case writes one, is its status), and fails while listfail exists; agent read
-# prints screen.<pane>.
+# (a third column, when a case writes one, is its status), and fails while listfail exists, or once
+# herdr.log counts more agent list calls than listfail-after holds; agent read prints screen.<pane>.
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
@@ -37,6 +38,7 @@ case "$1 $2" in
   "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent read")       cat "$H/screen.$3" 2>/dev/null ;;
   "agent list")       [ ! -e "$H/listfail" ] || exit 1
+                      [ ! -e "$H/listfail-after" ] || [ "$(grep -c '^agent list' "$H/herdr.log")" -le "$(cat "$H/listfail-after")" ] || exit 1
                       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, ($3 == "" ? "working" : $3), $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
@@ -134,23 +136,38 @@ check "next outside herdr with both lanes running waits on lane 1" "wait ${l1}" 
 lane2="$(grep "^${l2} " "${ROOT}/agents")"; grep -v "^${l2} " "${ROOT}/agents" > "${ROOT}/agents.1"; mv "${ROOT}/agents.1" "${ROOT}/agents"
 check "next with lane 1 running prints lane 2's conduct step" "conduct --backlog --lane 2" "$(step)"
 check "_step, which the lead's stop hook reads, prints the same" "conduct --backlog --lane 2" "$(swarm _step | sed -n 1p)"
-# An active epic e with a story in each lane and no conductor: lane 1's step, lane 2's on an also: line.
+# The step keeps what the wait on lane 1 would say: start wait --until-report on it in the background, and the also: lead lines.
+printf -- '---\nstatus: ready\nkind: lead\n---\n' > "${p}/docs/stories/lead1.md"
+printf -- '---\nstatus: blocked\nkind: code\ndepends_on: [lead1]\n---\n' > "${p}/docs/stories/blk1.md"
+out="$(swarm next)"
+check "next with lane 1 running: lane 2's why says to start wait --until-report on lane 1 in the background" "yes" \
+  "$(grep -qF "the conductor ${l1} is still working: start swarm.sh wait --until-report ${l1} in the background" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+check "next with lane 1 running: lane 2's step keeps the also: lead line" "yes" "$(grep -qx "also: lead lead1 blocks blk1" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+rm -f "${p}/docs/stories/lead1.md" "${p}/docs/stories/blk1.md"
+# herdr's list fails after next saw lane 1 (a transient): the wait on lane 1 stays, never a step the lead would stop on.
+: > "${ROOT}/herdr.log"; echo 1 > "${ROOT}/listfail-after"
+check "next with lane 1 running, then herdr's list failing, keeps the wait on lane 1" "wait ${l1}" "$(swarm _step | sed -n 1p)"
+rm -f "${ROOT}/listfail-after"
+# An active epic e with a story in each lane and no conductor, its files sorted after the backlog's: epic e's
+# lane 1 is the step (an active epic first, as the lane-less arms put it), its lane 2 and the backlog's lane 2 on also: lines.
+for s in z1 z2 z3 z4 z5 z6 z7 z8; do
+  if [[ "$(lane_of "${s}" 2)" == 1 ]]; then ze1="${ze1:-${s}}"; else ze2="${ze2:-${s}}"; fi
+done
+check "the fixture has an epic slug in each of two lanes" "yes" "$([[ -n "${ze1:-}" && -n "${ze2:-}" ]] && echo yes || echo no)"
 mkdir -p "${p}/docs/epics"; printf -- '---\nstatus: active\n---\n' > "${p}/docs/epics/e.md"
-for s in "${in1}" "${in2}"; do printf -- '---\nstatus: ready\nkind: code\nepic: e\n---\n' > "${p}/docs/stories/e${s}.md"; done
-e1=""; e2=""; for s in "${in1}" "${in2}"; do [[ "$(lane_of "e${s}" 2)" == 1 ]] && e1=1 || e2=1; done
-if [[ -n "${e1}" && -n "${e2}" ]]; then
-  out="$(swarm next)"
-  check "next with epic e's lanes both empty: lane 1's conduct step, lane 2's on an also: line" "conduct e --lane 1|yes" \
-    "$(sed -n 1p <<< "${out}")|$(grep -qx "also: conduct e --lane 2" <<< "${out}" && echo yes || echo "no, got: ${out}")"
-else
-  check "next with epic e's stories in one lane: that lane's conduct step" "yes" "$([[ "$(step)" == "conduct e --lane "[12] ]] && echo yes || echo "no, got: $(step)")"
-fi
-rm -f "${p}/docs/epics/e.md" "${p}/docs/stories/e${in1}.md" "${p}/docs/stories/e${in2}.md"
+for s in "${ze1}" "${ze2}"; do printf -- '---\nstatus: ready\nkind: code\nepic: e\n---\n' > "${p}/docs/stories/${s}.md"; done
+out="$(swarm next)"
+check "next with epic e's lanes both empty, its stories after the backlog's: epic e's lane 1 is the step" "conduct e --lane 1" "$(sed -n 1p <<< "${out}")"
+check "next with epic e's lanes both empty: its lane 2 and the backlog's lane 2 on also: lines" "yes|yes" \
+  "$(grep -qx "also: conduct e --lane 2" <<< "${out}" && echo yes || echo no)|$(grep -qx "also: conduct --backlog --lane 2" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+rm -f "${p}/docs/epics/e.md" "${p}/docs/stories/${ze1}.md" "${p}/docs/stories/${ze2}.md"
 
-# --- collect: a lane that has reported waits while another lane of the backlog works.
+# --- collect: a lane that has reported waits while its session is still busy and another lane of the backlog works.
 echo "${lane2}" >> "${ROOT}/agents"
 touch "${p}/.swarm/conduct-backlog.l1.report.md"
-check "next with lane 1 reported and lane 2 working waits on lane 2" "wait ${l2}" "$(step)"
+sid="$(awk -F'\t' -v n="${l1}" 'NF == 7 && $3 == n && $4 == "claude" { s = $7 } END { print s }' "${p}/.swarm/agents.tsv")"
+printf '[{"sessionId":"%s","status":"busy"}]\n' "${sid}" > "${ROOT}/claude.json"
+check "next with lane 1 reported but busy while lane 2 works waits on lane 2" "wait ${l2}" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" step)"
 touch "${p}/.swarm/conduct-backlog.l2.report.md"
 check "next with every lane reported collects lane 1" "collect ${l1}" "$(step)"
 # Collected, their reports newer than every story: a new conductor would stop as the last did.
@@ -160,6 +177,8 @@ check "next with both lanes collected and nothing changed: lane 1's step, its wh
   "$(sed -n 1p <<< "${out}")|$(grep -qF "no backlog conductor of lane 1 started: no story or epic changed after" <<< "${out}" && echo yes || echo "no, got: ${out}")"
 echo "${lane1}" > "${ROOT}/agents"; rm -f "${p}/.swarm/conduct-backlog.l1.report.md"
 check "next with lane 1 working and lane 2 stopped waits on lane 1" "wait ${l1}" "$(step)"
+check "next outside herdr with lane 1 working and lane 2 stopped waits on lane 1, never lane 2's stop" "wait ${l1}" \
+  "$(cd "${p}" && env -u SWARM_PROJECT -u SWARM_AGENT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" _step 2>&1 | sed -n 1p)"
 rm -f "${p}/.swarm/conduct-backlog.l1.report.md" "${p}/.swarm/conduct-backlog.l2.report.md"
 
 # --- A reported lane is collected while another lane works, once its session is idle.
@@ -174,6 +193,10 @@ printf 't\tconduct\t%s\tclaude\t-\t-\tsess-l2\n' "${l2}" >> "${p}/.swarm/agents.
 echo '[{"sessionId":"sess-l2","status":"idle"}]' > "${ROOT}/claude.json"
 check "next with lane 1 working and listed first while lane 2 is reported and idle collects lane 2" "collect ${l2}" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" step)"
 rm -f "${p}/.swarm/conduct-backlog.l2.report.md"
+# A session Claude Code no longer lists (gone) collects too, as a lane-less conductor's would.
+touch "${p}/.swarm/conduct-backlog.l1.report.md"
+check "next with lane 1 reported and its session gone while lane 2 works collects lane 1" "collect ${l1}" "$(step)"
+rm -f "${p}/.swarm/conduct-backlog.l1.report.md"
 
 # --- Any working conductor stopped on an API error: no lane is named, as conduct_ready starts none.
 grep -v "^${l2} " "${ROOT}/agents" > "${ROOT}/agents.1"; mv "${ROOT}/agents.1" "${ROOT}/agents"

@@ -170,9 +170,11 @@ epic_has_after() {
 #                     next_report puts every working conductor's `queued:` lines before them
 #   conduct <epic>    an active epic has a story an agent can build. With conductor_lanes above 1,
 #                     conduct <epic>|--backlog --lane <k> instead (lane_conduct_step), for the first lane
-#                     with buildable stories and no conductor running, an `also: conduct ...` line after
-#                     the why for each other such lane; also while another conductor works, before its
-#                     wait, and in place of the resume and story steps below
+#                     with buildable stories and no conductor running, an active epic's before the
+#                     backlog's, an `also: conduct ...` line after the why for each other such lane; also
+#                     while another conductor works, before its wait (the why then says to start
+#                     wait --until-report on it in the background, and the wait's also: lead lines
+#                     follow), and in place of the resume and story steps below
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
@@ -222,7 +224,7 @@ next_step() {
         echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm-dev:swarm tells it to resume"
       elif [[ "${stop}" == stuck ]]; then
         echo "wait ${slug}"; echo "stuck: the conductor ${slug} stopped on an API error; swarm.sh wait --until-report ${slug} resumes it"
-      elif lane_conduct_step running; then :
+      elif lane_conduct_step "${slug}"; then blocking_leads
       elif epic="$(plannable_epic)" && [[ -n "${epic}" ]]; then
         echo "plan-epic ${epic}"
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
@@ -320,7 +322,7 @@ running_conductors() {
 
 # collect_pick <conductors> — the conductor next_step looks at first, of <conductors> (running_conductors'
 # lines): a lane that has reported, whatever order herdr lists them in, unless a lane of its epic or
-# backlog in <conductors> has not and its session is not idle (lane_held); else the first of the rest.
+# backlog in <conductors> has not and its session still works (lane_held); else the first of the rest.
 # So a reported lane is collected (and can start again for stories readied since) without waiting for
 # the slowest lane, and its epic is collected once every lane has reported.
 collect_pick() {
@@ -338,10 +340,12 @@ collect_pick() {
 }
 
 # lane_held <lane conductor> <conductors> — whether the reported <lane conductor> waits to be collected:
-# its session is not idle and a lane of its epic or backlog in <conductors> has not reported.
+# its session still works (busy, or waiting on a prompt; herdr's word for one with no session, as close
+# reads it: an idle, gone or unknown one is collected, as a lane-less conductor's is) and a lane of its
+# epic or backlog in <conductors> has not reported.
 lane_held() {
   local d
-  [[ "$(session_state "$1")" != idle ]] || return 1
+  case "$(read_state "$1")" in busy|waiting*|herdr:working|herdr:blocked) ;; *) return 1 ;; esac
   while IFS= read -r d <&4; do
     [[ -n "${d}" && ! -f "$(conductor_report "${d}")" && -n "$(conduct_lane "${d}")" && "$(conduct_epic "${d}")" == "$(conduct_epic "$1")" ]] || continue
     return 0
@@ -349,19 +353,23 @@ lane_held() {
   return 1
 }
 
-# lane_conduct_step [running] — with conductor_lanes above 1, next_step's conduct step for the first
+# lane_conduct_step [<conductor>] — with conductor_lanes above 1, next_step's conduct step for the first
 # lane that has buildable stories (board_ready --started, as conduct_ready groups them: an active
-# epic's, or the backlog's) and that a conductor may start for (conduct_why, conduct_ready's own test):
+# epic's, or the backlog's; an epic's lanes before the backlog's, as the lane-less arms put an active
+# epic first) and that a conductor may start for (conduct_why, conduct_ready's own test):
 # `conduct <epic>|--backlog --lane <k>`, its why, then `also: conduct <epic>|--backlog --lane <k>` for
 # each other such lane. A lane whose own conductor runs is skipped. Any other lane conduct_why holds
 # back is skipped too; with no lane to start and no conductor working, the first such is the step, its
 # `no ... started:` line the why, for the lead to stop on. Like conduct_ready, it names none while a
 # working conductor is stopped on an expired login or an API error (conductor_stop), and while herdr
 # cannot list its agents, the first lane is the step with that as its `no conductor started:` why.
-# With no lane to start and none held, a lane whose own conductor runs (one next_step did not see:
-# outside herdr, say) is waited on, so no lane-less step follows. With running
-# (another conductor works), fix-main stories are left out, as conduct_ready leaves them: that
-# conductor was told to build it. Fails, printing nothing, when there is none or conductor_lanes is 1.
+# With no lane to start, a lane whose own conductor runs (one next_step did not see: outside herdr,
+# say) is waited on, before a held lane's stop, so no lane-less step follows. With <conductor> (the
+# working conductor next_step saw), the why adds that it is still working and to start
+# wait --until-report on it in the background; fix-main stories are left out, as conduct_ready leaves
+# them (that conductor was told to build it); no lane is held; and while herdr cannot list its agents
+# it fails, so next_step keeps its wait on <conductor>. Fails, printing nothing, when there is none or
+# conductor_lanes is 1.
 lane_conduct_step() {
   local ready c e k slugs arg why stop first="" also="" held="" waits=""
   # shellcheck disable=SC2154 # assigned in another file
@@ -371,6 +379,7 @@ lane_conduct_step() {
   [[ -n "${ready}" ]] || return 1
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     if ! herdr agent list >/dev/null 2>&1; then
+      [[ -z "${1:-}" ]] || return 1
       e="$(sed -n '1s/.* //p' <<< "${ready}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
       k="$(story_lane "${BOARD}/stories/$(sed -n '1s/ .*//p' <<< "${ready}").md")"
       printf 'conduct %s --lane %s\nno conductor started: herdr cannot list its agents, so which conductors run is not known\n' "${arg}" "${k}"
@@ -398,12 +407,16 @@ lane_conduct_step() {
       first="conduct ${arg} --lane ${k}"
       if [[ "${e}" == - ]]; then why="${slugs%%$'\n'*} is ready in lane ${k} of the backlog, which has no conductor running"
       else why="${slugs%%$'\n'*} is ready in lane ${k} of the active epic ${e}, which has no conductor running"; fi
+      [[ -z "${1:-}" ]] || why+=", and the conductor ${1} is still working: start swarm.sh wait --until-report ${1} in the background, then run the step"
     done
-  done 3< <(awk '!s[$2]++ { print $2 }' <<< "${ready}")
-  if [[ -z "${first}" && -z "${held}" && -n "${waits}" && -z "${1:-}" ]]; then
-    printf 'wait %s\nthe conductor %s is still working (it has not written its report)\n' "${waits}" "${waits}"; return 0
+  done 3< <(awk '!s[$2]++ { if ($2 == "-") b = 1; else print $2 } END { if (b) print "-" }' <<< "${ready}")
+  if [[ -z "${first}" ]]; then
+    if [[ -n "${waits}" && -z "${1:-}" ]]; then
+      printf 'wait %s\nthe conductor %s is still working (it has not written its report)\n' "${waits}" "${waits}"; return 0
+    fi
+    [[ -n "${held}" ]] || return 1
+    echo "${held}"; return 0
   fi
-  if [[ -z "${first}" ]]; then [[ -n "${held}" ]] || return 1; echo "${held}"; return 0; fi
   printf '%s\n%s%s\n' "${first}" "${why}" "${also}"
 }
 
