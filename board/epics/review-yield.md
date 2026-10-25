@@ -1,8 +1,10 @@
 ---
-status: active
+status: later
 ---
 
 # Reviews spend their rounds on findings that get fixed: we can see which reviewer and which kinds are declined, and the noisy ones are cut
+
+**Parked (user, 2026-10-25):** set `later` so planning the 0.28 HLD comes first. Its remaining stories are all lead stories, parked with it, each with a note saying where it goes.
 
 **Done when:**
 - Every logged finding records which reviewer raised it (codex, code-review, conductor, lead, or unknown for old lines): `swarm.sh log-finding` takes it, the briefs and conduct rules pass it, and old lines without it still read.

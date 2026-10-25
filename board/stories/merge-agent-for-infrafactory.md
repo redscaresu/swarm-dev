@@ -1,6 +1,6 @@
 ---
 kind: lead
-status: ready
+status: later
 epic: leaner-faster-swarm
 after: leaner-faster-swarm
 depends_on: [merge-holds-costs-money, release-this-epic]
@@ -8,6 +8,8 @@ touches: [infrafactory: .claude/swarm/config, infrafactory: docs/stories/*.md (c
 ---
 
 # infrafactory runs merge = agent, with every money-costing story held for the user
+
+**Parked (2026-10-25):** the 0.28 HLD rules infrafactory out. Start it again after 0.28.
 
 The user approved it on 2026-10-16 ("sounds good", after the lead showed that it had merged every
 infrafactory PR that day under merge = human, none of them costing money), on condition that

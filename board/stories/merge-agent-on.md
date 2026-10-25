@@ -1,6 +1,6 @@
 ---
 kind: lead
-status: ready
+status: later
 epic: flow-speedups
 after: flow-speedups
 depends_on: [flow-speedups-release]
@@ -9,6 +9,8 @@ risk: high
 ---
 
 # Turn on merge = agent for swarm-dev; infrafactory stays human
+
+**Parked (2026-10-25):** the config part is done (#189: swarm-dev has `merge = agent`). One check in Done when is still unshown: a conductor starting a story that unblock readied in the same run. The 0.28 retro checks it or drops it.
 
 After the release is published, the lead runs `claude plugin update swarm-dev@swarm-dev` and adds `merge = agent` to swarm-dev's .claude/swarm/config in its own PR, which the lead merges (the user approved the switch on 2026-10-15). The lead checks `swarm.sh config merge` in both projects, without editing infrafactory, then runs the next epic and checks that the conductor merged, reconciled and started newly ready stories itself.
 

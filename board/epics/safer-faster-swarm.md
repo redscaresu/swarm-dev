@@ -1,8 +1,10 @@
 ---
-status: active
+status: later
 ---
 
 # Merges that need no hand cleanup, agents that cannot leak secrets, and builds that wait less
+
+**Parked (user, 2026-10-25):** set `later` so planning the 0.28 HLD comes first. Its one code story, prediction-scores, moved out as a one-off for v0.28.0; its lead stories are parked with it, each with a note saying where it goes.
 
 swarm-dev is now the user's main way of building software (2026-10-17), and the user approved this epic that day. It comes from what the lead saw on 2026-10-16 across infrafactory and swarm-dev:
 - Conductors' uncommitted status edits in the main checkout broke the post-merge pull (infrafactory #597). The hand stash-and-pull routine deleted a live story earlier the same day.

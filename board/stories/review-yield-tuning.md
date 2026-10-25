@@ -1,6 +1,6 @@
 ---
 kind: lead
-status: ready
+status: later
 epic: review-yield
 after: review-yield
 depends_on: [review-yield-baseline]
@@ -8,6 +8,8 @@ touches: [board/stories/review-yield-tuning.md, board/stories/<tuning story>.md 
 ---
 
 # After one epic's findings with reviewers, the lead tunes the reviewer or kind that gets declined most and checks the decline rate fell
+
+**Parked (2026-10-25):** tuning reviewers from findings is the 0.28 retro's job; the retro takes this over.
 
 After one epic built wholly on v0.19.0 or later (which carries the reviewer column and review-yield) has merged, run `swarm.sh flow --since <that epic's first merge date>` (its reviewer section) and post it here beside the Baseline. Pick the change it shows. (a) For a (reviewer, kind) declined most, a line naming that kind in finding_rule or the conductor rules, or in the /code-review call: codex takes no prompt (board/stories/codex-bump-not-a-finding.md:12), so the line steers whoever reads its output. (b) Skipping /code-review on docs, chore and board-only PRs: review_rule (bin/swarm.sh:1509) and epic mode (:2062) already say so, so choose (b) only if code-review rows land on such PRs. File each change as its own story (kind code, no epic, so it bumps plugin.json itself) whose body carries the before numbers. After it ships and one more epic merges, run `swarm.sh flow --since` its merge date (reviewer section) and record whether the tuned row's rate fell; if not, file a revert story and say so here. No the lead step.
 

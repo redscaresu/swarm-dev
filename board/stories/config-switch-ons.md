@@ -1,6 +1,6 @@
 ---
 kind: lead
-status: ready
+status: later
 epic: safer-faster-swarm
 depends_on: []
 touches: [.claude/swarm/config]
@@ -10,6 +10,8 @@ estimate_lines: 5
 ---
 
 # After the release, the lead makes every .claude/swarm/config change in one PR, held for the user
+
+**Parked (2026-10-25):** tied to the old release's config changes. The 0.28 retro decides whether any switch is still wanted.
 
 after: safer-faster-swarm. The only story that edits swarm-dev's .claude/swarm/config, a file only the lead edits. After the release: drop lessons_file, set `fallback_reviewer = <model>` (sonnet unless the model-fit table says otherwise), and set `escalate_ladder = sonnet,opus,fable`, all in one PR. The user agreed to the Fable rung's usage on 2026-10-21 (costs: money is for cloud resources only), so the lead merges it. The lead then runs one epic and posts each escalate event with its trigger beside the model-fit table's rows, and links a PR reviewed under a codex limit with its fallback line.
 
