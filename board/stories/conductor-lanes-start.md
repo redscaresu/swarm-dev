@@ -1,6 +1,6 @@
 ---
 kind: code
-status: blocked
+status: later
 depends_on: [conductor-lanes]
 needs: "conductor-lanes: conduct --lane, lane conductor names and the story's lane (bin/lib/build.sh, bin/lib/board.sh)"
 touches: [bin/lib/board.sh:next_step conductor arms, bin/lib/merge.sh:the start of conductors after a board merge, bin/lib/agents.sh:status and wait for lane names, bin/lib/lifecycle.sh:upgrade rounds, tests/conductor_lanes_start_test.sh (new), docs/reference.md:next and status entries, hooks/lead-stop.sh:started's conduct arm and the step and why it reads, commands/swarm.md:the conduct step]
@@ -9,6 +9,9 @@ easy: false
 ---
 
 # The swarm starts and watches every lane's conductor
+
+**Out of 0.27 (user, 2026-10-25):** conductor lanes go to the 0.28 HLD as a design question. #480 drew real multi-lane gaps in five review rounds on fable without converging. Branches kept: story/conductor-lanes (#480, draft, 6caca7f) and story/conductor-lanes-start (#482, draft, a228cab, reviewed clean on 2026-10-25 03:22). Re-plan from the HLD; do not restart these builds as they stand.
+
 
 Needs, from conductor-lanes: `conduct --lane`, the lane names and each story's lane.
 

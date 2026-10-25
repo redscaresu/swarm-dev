@@ -1,6 +1,6 @@
 ---
 kind: code
-status: ready
+status: later
 depends_on: []
 touches: [bin/swarm.sh:CFG defaults and CONFIG_KEYS and the conduct and unblock dispatch, bin/lib/build.sh:conductor_name and conduct_backlog_mode and the conductor brief, bin/lib/board.sh:unblock_startable, tests/conductor_lanes_test.sh (new), docs/reference.md:conduct entry and Settings]
 estimate_lines: 220
@@ -8,6 +8,9 @@ easy: false
 ---
 
 # An epic or the backlog can have several conductors, each owning its own stories
+
+**Out of 0.27 (user, 2026-10-25):** conductor lanes go to the 0.28 HLD as a design question. #480 drew real multi-lane gaps in five review rounds on fable without converging. Branches kept: story/conductor-lanes (#480, draft, 6caca7f) and story/conductor-lanes-start (#482, draft, a228cab, reviewed clean on 2026-10-25 03:22). Re-plan from the HLD; do not restart these builds as they stand.
+
 
 At 15:29 on 2026-10-24, seven green backlog PRs waited on one backlog conductor. It triages each review, sends findings and merges in turn, so review agents and builders sat idle in parallel. The user asked for several conductors doing this, as part of swarm-dev.
 
