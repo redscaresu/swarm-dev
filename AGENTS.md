@@ -102,8 +102,8 @@ Useful while it runs:
   `pkill`, `killall` and `gh pr checks` loops (reference.md § Merging).
 - Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
   agent. List them for the user.
-- One conductor per epic. Two stories clash only when their `touches` name the same file and the same first
-  word of a part, or both name the bare file; clashing stories in two epics get a `depends_on`. Only the lead
+- One conductor per epic. Two stories clash only when their `touches` name the same file in the same repo and
+  the same first word of a part, or both name the bare file; clashing stories in two epics get a `depends_on`. Only the lead
   edits the shared files the project's `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
 

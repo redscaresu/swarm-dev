@@ -20,8 +20,8 @@ each step is in [`reference.md`](reference.md).
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
    one at a time. Two stories clash only when their `touches` name the same file in the
-   same repo and the same first word of a part, or when both name the bare file; otherwise both
-   build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
+   same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
+   file does not clash with a part of it. Otherwise both build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
    code. A review on the latest head whose findings are all declined is a pass: the conductor
