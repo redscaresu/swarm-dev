@@ -397,10 +397,18 @@ under `.swarm/lane-start.lock` for a moment; a start that finds the lock still h
 seconds stops and says to retry. With N = 1 a start takes no lock. `swarm.sh watch --epic <epic>|--backlog --lane <k>` reports only lane k's
 PRs, so one lane's watch never takes another lane's report, and `next`'s `queued:` lines name the
 owning lane's conductor. The lane's brief tells its conductor to build, review and merge only its own
-stories and never touch another lane's PR. A lane conductor never ends the epic (no `swarm.sh review
-<epic> ...`, no `swarm.sh finish <epic>`): its report begins `lane <k> done; the epic ends once every
-lane has reported`, and the lead ends the epic once every lane has. Closing a lane conductor closes
-its own pane and tab only, never the epic's tab, which every lane's builders share. A `swarm.sh tell <conductor> note` to a name without a lane
+stories and never touch another lane's PR. A lane's run ends only when no story of its lane can
+still need it: `unblock --startable <epic>|--backlog --lane <k>` ends with a `waiting: <slug>
+(blocked on <parents>)` line per blocked story of the lane whose parents are still open, and the lane
+waits for them; `unblock` sends the lane's conductor a note when it readies one (unless that
+conductor ran the unblock), which wakes an idle lane. Its last line, `other lanes running:
+<names>|none`, names the epic's other lane conductors that have not reported: a lane that sees names
+reports `lane <k> done; <names> still run`, and the lane that sees `none` is the last, so it ends the
+epic as a single conductor does (`swarm.sh review <epic> <PRs>` with `merge = human`, `swarm.sh
+finish <epic>` with `merge = agent`), over every lane's PRs. Two lanes that finish in the same moment
+can each see the other running; then the epic stays active until the lead ends it. Closing a lane
+conductor closes its own pane and tab while another lane of its epic runs; the last lane's close takes
+the epic's tab too, as a single conductor's does. A `swarm.sh tell <conductor> note` to a name without a lane
 that no pane holds goes to every running lane of that epic, and so does the note `merge --board` sends
 for the stories it made ready. A lane's `conduct` and `report` lines in
 `events.tsv` name it as `<epic>.l<k>` (`--backlog.l<k>`), which `outcomes`, `flow` and the login

@@ -29,6 +29,7 @@ item() { # <board> <path> <front-matter line>...
 }
 
 # herdr: logs every call; each new pane is w:<n>, each tab t<n>; agent start and list track agents.
+# gh: [] for every call but pr list, which finds no PR: a blocked story stacks only on a parent with an open PR.
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
@@ -52,7 +53,8 @@ case "$1 $2" in
                       [ -e "$H/agents" ] && awk -v p="$p" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
 esac
 EOF
-printf '#!/bin/sh\necho "[]"\n' > "${ROOT}/bin/gh"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase "$1 $2" in "pr list") ;; *) echo "[]" ;; esac\n' > "${ROOT}/bin/gh"
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh"
 
 # The project: a git repo with a bare origin, so story can make a worktree from origin/main.
@@ -195,7 +197,8 @@ lanes 2; rm -f "${p}/.swarm/state/watch-seen"
 check "with conductor_lanes = 2, watch --backlog --lane 3 folds onto lane 1 and reports its PR" "o/r #1 story/wa checks finished on aaaaaaa" \
   "$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 60; exec @ARGV' bash "${SWARM}" watch --backlog --lane 3 2>&1)"
 lanes 3
-printf '#!/bin/sh\necho "[]"\n' > "${ROOT}/bin/gh"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase "$1 $2" in "pr list") ;; *) echo "[]" ;; esac\n' > "${ROOT}/bin/gh"
 rm "${b}/stories/wa.md" "${b}/stories/wb.md"
 
 # --- Lane conductor names: distinct and at most 32 characters, epic and backlog alike.
@@ -257,23 +260,54 @@ run tell "$(run _conductor "${long26}")" note "${ROOT}/note3" >/dev/null || true
 check "a note to a long epic's lane-less name reaches its lane 2 conductor's inbox" "yes" \
   "$(has "for the long epic" "$(cat "${p}/.swarm/inbox/$(run _conductor "${long26}" 2).md" 2>&1)")"
 
-# --- A lane conductor never ends the epic, with either merge mode: the lead does, once every lane reported.
+# --- A lane's run ends only when nothing of its lane can still need it, and the last lane ends the epic,
+# in either merge mode; the backlog's lanes have no epic to end.
 w2="$(cat "${p}/.swarm/briefs/conduct-w.l2.md" 2>&1)"
 printf 'conductor_lanes = 3\nmerge = agent\n' > "${p}/.claude/swarm/config"
 run conduct w --lane 3 >/dev/null
 w3="$(cat "${p}/.swarm/briefs/conduct-w.l3.md" 2>&1)"
 lanes 3
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "a lane brief never ends the epic and reports its lane done, with merge = human and = agent" "yes|no|yes|no|no" \
-  "$(has 'lane 2 done; the epic ends once every lane has reported' "${w2}")|$(grep -q 'swarm.sh review <epic> <every PR URL still waiting>' <<< "${w2}" && echo yes || echo no)|$(has 'lane 3 done; the epic ends once every lane has reported' "${w3}")|$(grep -qF 'swarm.sh finish <epic>` only' <<< "${w3}" && echo yes || echo no)|$(grep -q 'swarm.sh review <epic> <every PR URL still waiting>' <<< "${w3}" && echo yes || echo no)"
+check "a lane brief waits on a blocked story, reports its lane done while others run, and ends the epic as the last lane, with merge = human and = agent" "yes|yes|yes|yes|yes|yes|yes" \
+  "$(has 'waiting: <slug> (blocked on <parents>)' "${w2}")|$(has 'lane 2 done; <names> still run' "${w2}")|$(has "you are the epic's last lane" "${w2}")|$(has 'swarm.sh review <epic> <every PR URL still waiting>' "${w2}")|$(has "you are the epic's last lane" "${w3}")|$(has 'swarm.sh finish <epic>` only' "${w3}")|$(has "over every lane's PRs" "${w3}")"
+check "the backlog's lane brief reports its lane done while others run, and has no epic to end" "yes|no" \
+  "$(has 'lane 2 done; <names> still run' "${brief}")|$(grep -q "last lane" <<< "${brief}" && echo yes || echo no)"
 
-# --- Closing a lane conductor, even with --all, closes its own pane alone: never the epic's tab with
-# another lane's builder in it.
+# --- unblock --startable --lane: the lane's blocked stories with an open parent wait, and the other lanes
+# that have not reported are named; the lane that sees none is the last.
+item "${b}" stories/wp.md "status: ready" "kind: code" "epic: w" "lane: 1"
+item "${b}" stories/wc.md "status: blocked" "kind: code" "epic: w" "lane: 2" "depends_on: [wp]"
+item "${b}" stories/wd.md "status: blocked" "kind: code" "epic: w" "lane: 3" "depends_on: [wp]"
+item "${b}" stories/wn.md "status: blocked" "kind: code" "epic: w" "lane: 2"
+out="$(run unblock --startable w --lane 2)"
+check "unblock --startable w --lane 2 prints waiting: for its story blocked on an open parent, not for one blocked with no depends_on, and names the other lane that has not reported" "yes|no|other lanes running: conduct-w-l3" \
+  "$(has 'waiting: wc (blocked on wp)' "${out}")|$(grep -q 'waiting: wn' <<< "${out}" && echo yes || echo no)|$(grep '^other lanes running:' <<< "${out}")"
+check "unblock --startable w --lane 1, with no conductor of lane 1, names lanes 2 and 3" "other lanes running: conduct-w-l2 conduct-w-l3" \
+  "$(run unblock --startable w --lane 1 | grep '^other lanes running:')"
+touch "${p}/.swarm/conduct-w.l3.report.md"
+check "once lane 3 has reported, lane 2 sees no other lane running: it is the last" "other lanes running: none" \
+  "$(run unblock --startable w --lane 2 | grep '^other lanes running:')"
+rm "${p}/.swarm/conduct-w.l3.report.md"
+check "with conductor_lanes = 1, unblock --startable prints no waiting: or other lanes line" "" \
+  "$(lanes 1; run unblock --startable w | grep -E '^(waiting|other lanes running):'; lanes 3)"
+
+# --- The parent merges (its file goes): unblock readies wc and wd, and notes lane 3's conductor of wd, not
+# the lane 2 conductor that ran it of its own wc.
+rm "${b}/stories/wp.md"
+SWARM_AGENT=conduct-w-l2 run unblock --startable w --lane 2 >/dev/null
+check "unblock run by lane 2 notes lane 3's conductor of the story it readied in lane 3, and not lane 2 of its own" "yes|no" \
+  "$(has 'unblock readied wd, a story of your lane' "$(cat "${p}/.swarm/inbox/conduct-w-l3.md" 2>&1)")|$(grep -q 'readied wc' "${p}/.swarm/inbox/conduct-w-l2.md" 2>/dev/null && echo yes || echo no)"
+
+# --- Closing a lane conductor, even with --all, closes its own pane alone while another lane of its epic
+# runs: never the epic's tab with another lane's builder in it. The last lane's close takes the epic's tab.
 item "${b}" stories/ws.md "status: ready" "kind: code" "epic: w"
 run story ws >/dev/null 2>&1 || true
 run close conduct-w-l2 --all >/dev/null 2>&1 || true
 check "close conduct-w-l2 --all closes its own pane and leaves the builder in the epic's tab" "no|yes" \
   "$(awk '$1 == "conduct-w-l2"' "${ROOT}/agents" | grep -q . && echo yes || echo no)|$(awk '$1 == "ws"' "${ROOT}/agents" | grep -q . && echo yes || echo no)"
+run close conduct-w-l3 --all >/dev/null 2>&1 || true
+check "close conduct-w-l3 --all, the last lane of w, closes the epic's tab and the builder in it too" "no|no" \
+  "$(awk '$1 == "conduct-w-l3"' "${ROOT}/agents" | grep -q . && echo yes || echo no)|$(awk '$1 == "ws"' "${ROOT}/agents" | grep -q . && echo yes || echo no)"
 
 # --- A lane-less conductor of e from conductor_lanes = 1 still runs: no lane of e starts beside it.
 lanes 1

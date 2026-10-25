@@ -1244,7 +1244,7 @@ close_panes() {
     fi
   fi
   own="$(own_pane "$1" "${e}")"
-  [[ -z "${e}" ]] || close_tabs "${e}" "${own}"
+  [[ -z "${e}" || "${e}" == "$1" ]] || close_tabs "${e}" "${own}"
   close_tabs "$1" "${own}"
   [[ -z "${own}" ]] || close_pane "${own}" "$1" "" alone || true
   [[ -z "${CLOSE_PANE_KEPT}" ]] || die "close: $1's pane ${own} could not be closed, so it is still open"
@@ -1264,10 +1264,12 @@ has_records() {
 # close_epic <conductor> — the label of its epic's tabs: the name without conduct- when that is the
 # full name (the brief start_conductor wrote, .swarm/briefs/<name>.md, has it, or the name is not
 # AGENT_NAME_MAX long, so not cut), else conduct_epic's, from the newest brief with that conductor name.
-# A lane conductor's (conductor_lanes) is its own tab's, its name: closing it never takes the epic's
-# tab, which every lane's builders share.
+# A lane conductor's (conductor_lanes) is its own tab's, its name, while another lane conductor of its
+# epic runs (epic_lanes): closing it never takes the epic's tab, which every lane's builders share. The
+# last lane's close takes the epic's tab too, as a single conductor's (its lane-less name's) does.
 close_epic() {
-  if [[ -n "$(conduct_lane "$1")" ]]; then echo "$1"
+  if [[ -n "$(conduct_lane "$1")" ]]; then
+    if [[ -n "$(epic_lanes "$1")" ]]; then echo "$1"; else close_epic "$(conductor_name "$(conduct_epic "$1")")"; fi
   elif [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"
   else conduct_epic "$1"; fi
 }

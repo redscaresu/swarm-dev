@@ -575,7 +575,7 @@ live_at() {
 # fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,
 # say so; a lane-less name no pane holds while that epic's lane conductors still run (conductor_lanes
-# lowered to 1) is told, and tell_agent sends the note to each lane (note_lanes). Then conduct_ready
+# lowered to 1) is told, and tell_agent sends the note to each lane (epic_lanes). Then conduct_ready
 # starts the conductors ready work lacks. With no upstream nothing is
 # pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one), a
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
@@ -630,7 +630,7 @@ ready_tell() {
         echo "warning: herdr cannot list its agents, so ${name} was not told that ${slugs} are ready"; continue
       fi
       # One that has written its report has finished (conductors_queued): nobody reads its inbox.
-      if [[ -f "$(conductor_report "${name}")" ]] || { [[ -z "$(agent_field "${name}" pane_id)" && -z "$(note_lanes "${name}")" ]]; }; then
+      if [[ -f "$(conductor_report "${name}")" ]] || { [[ -z "$(agent_field "${name}" pane_id)" && -z "$(epic_lanes "${name}")" ]]; }; then
         echo "ready now: ${slugs} (${of}); no conductor runs for it yet"; continue
       fi
       note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"

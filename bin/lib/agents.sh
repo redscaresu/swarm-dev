@@ -1547,15 +1547,16 @@ note_lock() {
   return 1
 }
 
-# note_lanes <name> — the running lane conductors of the epic (or backlog) a lane-less conductor name is
-# for, one a line: where a note to that name goes while no pane holds it (conductor_lanes lowered to 1
-# with its lanes still running; tell_agent, ready_tell). Nothing for a lane's own name.
-note_lanes() {
+# epic_lanes <name> [epic] — the running lane conductors of the epic (or backlog) a conductor name is for
+# (<epic>, given when the name may never have run: a lane with no brief resolves to no epic), <name>
+# itself aside, one a line: where a note to a lane-less name goes while no pane holds it (conductor_lanes
+# lowered to 1 with its lanes still running; tell_agent, ready_tell), the other lanes a lane conductor's
+# close and unblock --startable --lane look for (close_epic, unblock_startable).
+epic_lanes() {
   local e l le ll
-  [[ -z "$(conduct_lane "$1")" ]] || return 0
-  e="$(conduct_epic "$1")"
+  e="${2:-$(conduct_epic "$1")}"
   while IFS= read -r l; do
-    [[ -n "${l}" ]] || continue
+    [[ -n "${l}" && "${l}" != "$1" ]] || continue
     read -r le ll <<< "$(conduct_split "${l}")"
     [[ "${le}" != "${e}" || -z "${ll}" ]] || echo "${l}"
   done <<< "$(running_conductors)"
@@ -1578,7 +1579,7 @@ note_lanes() {
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake). A note to a lane-less name no pane holds goes to every
-# running lane conductor of that epic or backlog (note_lanes), whatever conductor_lanes is now.
+# running lane conductor of that epic or backlog (epic_lanes), whatever conductor_lanes is now.
 tell_agent() {
   local kind="$2" f="$3" name msg state since inbox rc pane line n l sent=""
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
@@ -1587,11 +1588,11 @@ tell_agent() {
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
   pane="$(agent_field "${name}" pane_id)"
-  if [[ "${kind}" == note && -z "${pane}" ]]; then
+  if [[ "${kind}" == note && -z "${pane}" && -z "$(conduct_lane "${name}")" ]]; then
     # On fd 3: the tells must not read the list.
     while IFS= read -r l <&3; do
       [[ -z "${l}" ]] || { if (tell_agent "${l}" note "${f}"); then sent=1; fi; }
-    done 3<<< "$(note_lanes "${name}")"
+    done 3<<< "$(epic_lanes "${name}")"
     [[ -z "${sent}" ]] || return 0
   fi
   if [[ -z "${pane}" ]]; then

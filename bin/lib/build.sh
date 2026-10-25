@@ -140,17 +140,14 @@ EOF
 conduct_merge_rule() {
   local scope="of this epic" epic_end="" backlog=""
   [[ "$1" != backlog ]] || { backlog=1; scope="with no epic"; }
-  # A lane conductor never ends the epic: the lead does, once every lane has reported.
-  [[ -n "${backlog}" || -z "${CONDUCT_LANE:-}" ]] || epic_end=" You are one of the epic's lane
-conductors, so never end the epic yourself: no \`swarm.sh review <epic> ...\` and no \`swarm.sh finish
-<epic>\`. Once no story of your lane is left to start, review or merge, begin your report with the line
-\`lane ${CONDUCT_LANE} done; the epic ends once every lane has reported\`: the lead ends the epic then."
   if [[ "${CFG_merge}" == human ]]; then
-    [[ -n "${backlog}" || -n "${CONDUCT_LANE:-}" ]] || epic_end=" When every story left
+    [[ -n "${backlog}" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
 \`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge.
 A story \`swarm.sh status\` lists as \`kept:\` is not in review for this: a close kept its PR unreviewed,
 so review it (and run \`swarm.sh review <slug> <PR URL>\` once it passes) first."
+    # A lane's: its own end-of-run rule, then the epic's end for the last lane (lane_end_rule).
+    [[ -z "${CONDUCT_LANE:-}" ]] || epic_end="$(lane_end_rule "$1")${epic_end}"
     cat <<EOF
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
 When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
@@ -161,7 +158,7 @@ to merge\`), the story is blocked again with its build kept: close its builder w
 $(held_ready_rule)${epic_end}
 EOF
   else
-    [[ -n "${backlog}" || -n "${CONDUCT_LANE:-}" ]] || epic_end=" On a board in the project's repo,
+    [[ -n "${backlog}" ]] || epic_end=" On a board in the project's repo,
 the epic leaves the board with its last story's PR, whose brief deletes the epic file. Run
 \`swarm.sh finish <epic>\` only on a board outside the repo, or when the epic file is still there after
 the last story merged and the epic's **Done when** holds; on a board in the repo it opens a board PR,
@@ -170,6 +167,7 @@ of it is still in review (a \`costs: money\` one waits for the user's merge): on
 hold when they merge, run \`swarm.sh review <epic> <every PR URL still waiting>\` instead, and the
 epic leaves the board once they all merge. A story \`swarm.sh status\` lists as \`kept:\` does not count
 as in review: a close kept its PR unreviewed, so review it first."
+    [[ -z "${CONDUCT_LANE:-}" ]] || epic_end="$(lane_end_rule "$1")${epic_end}"
     cat <<EOF
 A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge,
 as with merge = human. When its PR is green and reviewed,
@@ -193,6 +191,27 @@ cleared-on-error close or a give-up, start nothing more in this wave. Write your
 story ${scope} that is yours to start is ready and none is running $(fix_running), or $(base_stop).${epic_end}
 EOF
   fi
+}
+
+# lane_end_rule <epic>|backlog — when a lane conductor's (CONDUCT_LANE) run ends: not while a story of its
+# lane can still need it, one blocked on an open story of any lane included (unblock --startable --lane's
+# waiting: lines; the merge that readies it sends the lane a note, lane_ready_note), and the last lane of
+# an epic (unblock's other lanes running: none) ends the epic as a single conductor does: the mode's epic
+# end follows this text. The backlog has no epic to end.
+lane_end_rule() {
+  local arg="$1" last="" end=""
+  [[ "$1" != backlog ]] || arg=--backlog
+  [[ "$1" == backlog ]] || { last=": the last of them ends the epic"; end=" When it prints \`other lanes
+running: none\`, you are the epic's last lane, so end the epic as a single conductor does:"; }
+  printf '%s' " You are one of the lane conductors for this work, so your run ends only when no story of
+your lane can still need you: none is startable or running, none is in review waiting on you, and none
+is \`blocked\` on a story still open in any lane (\`swarm.sh unblock --startable ${arg} --lane ${CONDUCT_LANE}\`
+prints \`waiting: <slug> (blocked on <parents>)\` for each). Such a story readies when its parents merge,
+and the merge's reconcile sends you a note, which wakes you: with nothing of yours running, write no
+report, start no wait, and end your turn; when the note comes, act on your inbox as this brief says and
+start the story. Once nothing of your lane can still need you, run \`swarm.sh unblock --startable ${arg}
+--lane ${CONDUCT_LANE}\` once more. While it prints \`other lanes running: <names>\`, begin your report with
+\`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end}"
 }
 
 # startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story
@@ -930,7 +949,11 @@ board_pr_merge_rule() {
 # lane_rule <epic>|backlog — a lane conductor's (CONDUCT_LANE) bounds: its own stories, never another lane's PR.
 lane_rule() {
   [[ -n "${CONDUCT_LANE:-}" ]] || return 0
-  local arg="$1" watch="--epic $1"; [[ "$1" != backlog ]] || { arg=--backlog; watch=--backlog; }
+  local arg="$1" watch="--epic $1" exception=""; [[ "$1" != backlog ]] || { arg=--backlog; watch=--backlog; }
+  # The backlog has no epic to end.
+  [[ "$1" == backlog ]] || exception=" The one
+exception is the epic's end: its last lane runs \`swarm.sh review <epic> ...\` or \`swarm.sh finish <epic>\`
+over every lane's PRs, as the merge rule below says."
   cat <<EOF
 
 You are lane ${CONDUCT_LANE} of ${CFG_conductor_lanes} conductors for this work (conductor_lanes). Build, review and
@@ -941,7 +964,7 @@ ${BOARD_STATE_DIR}/stories/<slug>, written when its build starts; one above ${CF
 only your lane's PRs. A \`startable:\` line whose note starts \`(held: clashes with <other> in lane <j>\` touches
 what another lane is building: do not start it; run \`swarm.sh hold <slug> '<why>'\` for it, and start it
 in a later wave, once that line is gone. Never start, tell, close, review or merge another lane's story
-or PR, even when \`swarm.sh status\` names it: its own conductor has it. Leave it, and wait on.
+or PR, even when \`swarm.sh status\` names it: its own conductor has it. Leave it, and wait on.${exception}
 EOF
 }
 
