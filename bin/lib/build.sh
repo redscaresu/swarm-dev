@@ -216,7 +216,9 @@ after a note woke you, unmarks it) and prints \`not done: ...\` while a story of
 failed twice with escalation off, is the lead's and does not count) or waiting
 on this epic's stories (a \`waiting:\` line ending \`the lead's: list it in your report\` does not count:
 a lead story, or one waiting on a lead story or another epic's), else \`other lanes running: <names>|none\`, the lanes neither done nor reported. While it
-prints names, begin your report with \`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end}"
+prints names, begin your report with \`lane ${CONDUCT_LANE} done; <names> still run\` and end${last}.${end} If it
+prints \`lane ${CONDUCT_LANE} gone: conductor_lanes is <N>\`, the lanes were lowered under you: your stories and
+their PRs are the lane's it names now, so leave them to it, run it with \`--done\`, and report."
 }
 
 # startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story

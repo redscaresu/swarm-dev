@@ -191,7 +191,8 @@ Repeat until a step below says stop:
      the build's work is discarded: from the repo, `git worktree remove --force ../<repo>-wt/<slug>`,
      `git worktree prune` and `git branch -D story/<slug>`, and `git push origin --delete
      story/<slug>` if it was pushed; then delete `.swarm/conduct-backlog.report.md`. Then stop.
-     Otherwise handle it as `story <slug>`, which runs `swarm.sh conduct --backlog`: the backlog
+     Otherwise handle it as `story <slug>`, which runs `swarm.sh conduct --backlog` (with
+     `conductor_lanes` above 1, `swarm.sh conduct --backlog --lane <k>` for each lane k): the backlog
      conductor waits on a story whose worktree exists, and never starts it again.
    - `story <slug>`: a one-off (a ready story with no `epic:`). The backlog conductor builds every
      one-off as a conductor builds an epic: it reviews each PR, and hands it to the user or merges
@@ -206,7 +207,8 @@ Repeat until a step below says stop:
      stop: a story or epic added, changed or removed (a merge removes one), or, for a fix that
      touches neither (a code PR that turns CI on the base green), deleting
      `.swarm/conduct-backlog.report.md` once the cause is fixed. Then stop. Otherwise run
-     `swarm.sh conduct --backlog`, then handle it as `wait` on the conductor it started
+     `swarm.sh conduct --backlog` (with `conductor_lanes` above 1, `swarm.sh conduct --backlog --lane
+     <k>` for each lane k), then handle it as `wait` on the conductor it started
      (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.

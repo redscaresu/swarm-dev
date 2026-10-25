@@ -139,6 +139,21 @@ check "an epic with one of two PRs merged stays in review" "review" "$(sed -n 's
 check "an epic with both PRs merged is finished, and a story with its slug stays" "gone|there" \
   "$([[ -e "${b}/epics/e3.md" ]] && echo there || echo gone)|$([[ -e "${b}/stories/e3.md" ]] && echo there || echo gone)"
 rm "${b}/stories/e3.md"
+# With conductor_lanes = 2 and the backlog's two lane conductors running (their briefs, panes this project
+# recorded, herdr's list): a story whose PR closed unmerged tells them its build is gone, so a story held
+# for a clash with it is startable; an epic's finish tells no lane.
+bl1="$(run _conductor backlog 1)"; bl2="$(run _conductor backlog 2)"
+echo "conductor_lanes = 2" > "${p}/.claude/swarm/config"
+mkdir -p "${p}/.swarm/briefs" "${p}/.swarm/state"; : > "${p}/.swarm/briefs/conduct-backlog.l1.md"; : > "${p}/.swarm/briefs/conduct-backlog.l2.md"
+printf 'w:7 conductor\n' > "${p}/.swarm/state/${bl1}"; printf 'w:8 conductor\n' > "${p}/.swarm/state/${bl2}"
+printf '{"result":{"agents":[{"name":"%s","agent_status":"working","pane_id":"w:7"},{"name":"%s","agent_status":"working","pane_id":"w:8"}]}}\n' "${bl1}" "${bl2}" > "${ROOT}/agents.json"
+item "${b}" stories/c3.md "status: review" "kind: code" "prs: ${U}/2"
+item "${b}" epics/e4.md "status: review" "prs: ${U}/1"
+run reconcile >/dev/null
+check "a PR closed unmerged tells the backlog's lanes its build is gone, and a finished epic tells none" "yes|no" \
+  "$(has "c3's build is gone (merged or cleared)" "$(cat "${p}/.swarm/inbox/${bl2}.md" 2>&1)")|$(grep -q "e4's build is gone" "${p}/.swarm/inbox/${bl2}.md" 2>/dev/null && echo yes || echo no)"
+rm -f "${ROOT}/agents.json" "${p}/.swarm/briefs/conduct-backlog.l1.md" "${p}/.swarm/briefs/conduct-backlog.l2.md" "${p}/.swarm/state/${bl1}" "${p}/.swarm/state/${bl2}" "${b}/stories/c3.md"
+rm -rf "${p}/.swarm/inbox"; : > "${p}/.claude/swarm/config"
 check "its dependent unblocks once it is finished" "ready: n" "$(run unblock)"
 
 # --- A board in the project repo: the merged PR took r off the board and left s on it. A pull that

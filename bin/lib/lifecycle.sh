@@ -1180,10 +1180,7 @@ failed_build() {
 clear_build() {
   local slug="$1" b="story/$1" src wt url head sha st
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
-  # A cleared build ends a cross-lane clash on it: the other lanes hear (lane_finish_note). A merged story's
-  # (in review or done) is reconcile's to tell, once it has finished the story.
   st="$(fm "${BOARD}/stories/$1.md" status)"
-  [[ "${st}" == review || "${st}" == "done" ]] || lane_finish_note "${slug}" "$(fm "${BOARD}/stories/$1.md" epic)"
   wt="$(worktree_for "${src}" "${slug}")"
   if [[ -e "${wt}" ]]; then
     git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2
@@ -1216,6 +1213,10 @@ clear_build() {
     state_set "${BOARD}/stories/$1.md" held_by "" prs ""
   fi
   [[ -z "$(get_fm "${BOARD}/stories/$1.md" kept)" ]] || state_set "${BOARD}/stories/$1.md" kept ""
+  # A cleared build ends a cross-lane clash on it: the other lanes hear (lane_finish_note), after the cleanup
+  # above, so a lane woken by it never finds the worktree still there and holds the story again. A story in
+  # review or done is reconcile's to tell, once it has finished or reopened it.
+  [[ "${st}" == review || "${st}" == "done" ]] || lane_finish_note "${slug}" "$(fm "${BOARD}/stories/$1.md" epic)"
 }
 
 # close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. Only what

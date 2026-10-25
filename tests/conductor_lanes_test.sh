@@ -46,7 +46,8 @@ case "$1 $2" in
                            END { print "]}}" }' "$H/tabs" 2>/dev/null || echo '{"result":{"tabs":[]}}' ;;
   "agent prompt")     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
-  "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent list")       grep -qs "wa1's build is gone" "$H/proj/.swarm/inbox/conduct-w-l3.md" || echo "pre-note worktrees: $(ls "$H/proj-wt" 2>/dev/null | tr '\n' ' ')" >> "$H/herdr.log"
+                      awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
   "pane close"|"tab close") p=$3; [ "$1" = tab ] && p="w:${3#t}"
@@ -93,8 +94,8 @@ all="$(printf '%s\n' ${slugs} "${pin}" | sort | paste -sd' ' -)"
 
 # --- conductor_lanes = 1: nothing changes.
 check "with conductor_lanes = 1, unblock --startable --backlog prints every ready backlog story" "${all}" "$(startable --backlog)"
-check "with conductor_lanes = 1, unblock --startable --lane 1 or --lane 2 prints every ready backlog story, as without it" "${all}|${all}" \
-  "$(startable --backlog --lane 1)|$(startable --backlog --lane 2)"
+check "with conductor_lanes = 1, unblock --startable --lane 1 prints every ready backlog story, as without it, and --lane 2 is a gone lane" "${all}||yes" \
+  "$(startable --backlog --lane 1)|$(startable --backlog --lane 2)|$(has 'lane 2 gone: conductor_lanes is 1' "$(run unblock --startable --backlog --lane 2)")"
 # A start with one lane takes no lane-start lock: one held does not stop it, and it writes no lane.
 mkdir -p "${p}/.swarm/lane-start.lock"
 run story --strict a1 >/dev/null 2>&1 || true
@@ -116,8 +117,8 @@ check "a story with lane: 3 in its front matter is in lane 3 alone" "yes|no" \
   "$(has "${pin}" "$(startable --backlog --lane 3)")|$(grep -qw "${pin}" <<< "$(startable --backlog --lane 1) $(startable --backlog --lane 2)" && echo yes || echo no)"
 check "unblock --startable <epic> --lane takes the epic's stories in that lane" "inep" \
   "$(startable e --lane "$(lane_of inep 3)")"
-check "--lane 0 and x are refused, and --lane 4 of 3 folds onto lane 1" "yes|yes|$(startable --backlog --lane 1)" \
-  "$(has "--lane takes a whole number of 1 or more" "$(run unblock --startable --backlog --lane 0 || true)")|$(has "--lane takes a whole number of 1 or more" "$(run unblock --startable --backlog --lane x || true)")|$(startable --backlog --lane 4)"
+check "--lane 0 and x are refused, and --lane 4 of 3 is a gone lane that owns nothing" "yes|yes||yes" \
+  "$(has "--lane takes a whole number of 1 or more" "$(run unblock --startable --backlog --lane 0 || true)")|$(has "--lane takes a whole number of 1 or more" "$(run unblock --startable --backlog --lane x || true)")|$(startable --backlog --lane 4)|$(has 'lane 4 gone: conductor_lanes is 3' "$(run unblock --startable --backlog --lane 4)")"
 
 # --- A story whose build started in lane 2 stays there when conductor_lanes becomes 2.
 mv=""; for s in ${slugs}; do [[ "$(lane_of "${s}" 3)" == 2 && "$(lane_of "${s}" 2)" == 1 ]] && { mv="${s}"; break; }; done
@@ -394,6 +395,17 @@ run story wa1 >/dev/null 2>&1 || true
 SWARM_AGENT=conduct-w-l2 run close wa1 impossible --drop >/dev/null 2>&1 || true
 check "a close that clears lane 1's build notes lane 3 that the build is gone, not lane 2, which closed it" "yes|no" \
   "$(has "wa1's build is gone (merged or cleared)" "$(cat "${p}/.swarm/inbox/conduct-w-l3.md" 2>&1)")|$(grep -q "wa1's build is gone" "${p}/.swarm/inbox/conduct-w-l2.md" 2>/dev/null && echo yes || echo no)"
+check "the note goes after the cleanup: when the lanes are listed for it, wa1's worktree is gone already" "no" \
+  "$(grep '^pre-note worktrees:' "${ROOT}/herdr.log" | tail -1 | grep -qw wa1 && echo yes || echo no)"
+
+# --- A lane past conductor_lanes owns nothing: told it is gone, it starts nothing and --done marks it done.
+lanes 2
+item "${b}" stories/wg.md "status: ready" "kind: code" "epic: w" "lane: 1"
+out="$(run unblock --startable w --lane 3)"
+check "after conductor_lanes drops to 2, lane 3 is told it is gone, sees no startable story, and --done marks it done" "yes|no|no|yes" \
+  "$(has "lane 3 gone: conductor_lanes is 2, so your stories and their PRs are lane 1's now" "${out}")|$(grep -q '^startable:' <<< "${out}" && echo yes || echo no)|$(run unblock --startable w --lane 3 --done | grep -q '^not done' && echo yes || echo no)|$([[ -e "${p}/.swarm/lane-done/w.l3" ]] && echo yes || echo no)"
+check "lane 1 itself still sees the story startable" "startable: wg" "$(run unblock --startable w --lane 1 | grep '^startable:')"
+rm "${b}/stories/wg.md" "${p}/.swarm/lane-done/w.l3"; lanes 3
 
 # --- Lanes outliving a drop to conductor_lanes = 1 still hear: a story readied by lane 2 is noted to lane 3.
 lanes 1

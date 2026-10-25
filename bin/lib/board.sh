@@ -1172,14 +1172,21 @@ lane_ready_note() {
 # any call without --done unmarks it (a note woke
 # it to work). The marker is the lane's own, <raw lane> as --lane gave it, not the fold, so lanes that
 # share a fold after a drop of conductor_lanes never mark each other. A conductor's start unmarks its
-# lane. An epic whose file is gone has nothing startable, and its lanes still get the tail.
+# lane. An epic whose file is gone has nothing startable, and its lanes still get the tail. A lane past
+# conductor_lanes (<raw lane> above it: N was lowered while its conductor ran) owns nothing: no story is
+# its, its stories and their PRs are the fold's lane's, it is told so (lane <k> gone: ...) and --done
+# marks it done, so it reports and the lane it folds onto is the one conductor of those stories.
 LANE_DONE_DIR="${PROJECT_DIR}/.swarm/lane-done"
 unblock_startable() {
-  local want="$1" lane="${2:-}" slug e f open why held="" c others="" work="" key locked="" lead
+  local want="$1" lane="${2:-}" slug e f open why held="" c others="" work="" key locked="" lead gone=""
   unblock
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${4:-}" || ${4} -le ${CFG_conductor_lanes} ]] || gone=1
   if [[ "${want}" == --backlog ]]; then want=-
   elif [[ ! -f "${BOARD}/epics/${want}.md" ]]; then [[ -n "${lane}" ]] || return 0; want=""; fi
+  [[ -z "${gone}" ]] || echo "lane $4 gone: conductor_lanes is ${CFG_conductor_lanes}, so your stories and their PRs are lane ${lane}'s now; leave them to it, run this with --done, and report"
   while read -r slug e; do
+    [[ -z "${gone}" ]] || break
     [[ "${e}" == "${want}" ]] || continue
     f="${BOARD}/stories/${slug}.md"; why=""
     [[ -z "${lane}" || "$(story_lane "${f}")" == "${lane}" ]] || continue
@@ -1198,6 +1205,7 @@ unblock_startable() {
   [[ -n "${lane}" ]] || return 0
   [[ -n "${want}" ]] || want="$1"
   while IFS= read -r f; do
+    [[ -z "${gone}" ]] || break
     [[ "$(fm "${f}" status)" == blocked ]] || continue
     e="$(fm "${f}" epic)"; [[ "${e:--}" == "${want}" && "$(story_lane "${f}")" == "${lane}" ]] || continue
     open="$(open_deps "$(story_deps "${f}")")"
@@ -1624,7 +1632,9 @@ reconcile_board() {
     if [[ -n "${closed}" ]]; then
       if [[ "${f}" == "${BOARD}/stories/"* ]]; then
         case "$(builder_state "${slug}")" in
-          none) clear_build "${slug}" "the PR of ${slug} closed unmerged" "[]" </dev/null ;;
+          none) clear_build "${slug}" "the PR of ${slug} closed unmerged" "[]" </dev/null
+                # clear_build skips the note while the story is in review: the clash on its build is gone.
+                lane_finish_note "${slug}" "$(fm "${f}" epic)" ;;
           open) echo "build kept: ${slug}'s builder is still open, so its worktree and story/${slug} stay" ;;
           *) echo "build kept: ${slug}'s builder may be open (herdr cannot list its agents), so its worktree and story/${slug} stay" ;;
         esac
@@ -1682,8 +1692,10 @@ reconcile_board() {
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
   done
-  # Guarded: bash 3.2's set -u calls an empty array unbound.
-  for ((i = 0; i < ${#merged[@]}; i++)); do lane_finish_note "${merged[i]}" "${merged_epics[i]}"; done
+  # Guarded: bash 3.2's set -u calls an empty array unbound. Stories only: an epic file has no lanes.
+  for ((i = 0; i < ${#merged[@]}; i++)); do
+    [[ "${merged_files[i]}" != "${BOARD}/stories/"* ]] || lane_finish_note "${merged[i]}" "${merged_epics[i]}"
+  done
   # Clearing a red main never fails reconcile: in the background, as merge runs reconcile, so set -e
   # holds inside it, a failed step or a die there is said and reconcile goes on.
   ( set -e; green_mains ) &

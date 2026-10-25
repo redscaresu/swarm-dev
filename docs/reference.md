@@ -386,9 +386,10 @@ fix-main story takes the lane of the conductor that starts it; a refused or fail
 nothing), so a started story never changes lanes, even when N changes. A lane past a lowered N counts
 as lane (lane - 1) mod N + 1 wherever it is read, `--lane` on `watch` and `unblock --startable`
 included, so a lane conductor that outlived the change keeps working its folded lane and no story is
-left without a conductor; with N = 1 such a `--lane` is a no-op. Lower N only once the lanes past
-the new N have reported and closed: until then a surviving lane shares its folded lane with the lane it
-folds onto (a story's second start is still refused, its worktree being there). `unblock --startable <epic>|--backlog --lane <k>` prints only lane
+left without a conductor. A lane conductor past the new N owns
+nothing: `unblock --startable ... --lane <k>` tells it `lane <k> gone: conductor_lanes is <N>`, its
+stories and their PRs are the fold's lane's, and `--done` marks it done, so it reports and the lead
+closes it; the lane it folds onto is the one conductor of those stories. `unblock --startable <epic>|--backlog --lane <k>` prints only lane
 k's stories, and ends a line `(held: clashes with <other> in lane <j> on <entries>)` while a story of
 the same epic in another lane, whose build has started or is starting, touches the same `file:symbol`
 (any other note follows it after a `;`); the lane holds it until that build is gone, and `story
@@ -406,8 +407,9 @@ twice with `escalate_after = 0`), ends `the lead's: list it in your report`: tha
 lane's. Two notes wake an idle lane, whatever N is now, so lanes outliving a
 drop to 1 still hear: `unblock` tells the lane conductors whose lane is a story's when it readies it
 (unless that conductor ran the unblock), and every other lane of the epic hears when a story's build
-goes, merged (reconcile) or cleared by a close, since a story held for a clash with it is startable
-then. The tail's last line, `other
+goes, merged or its PR closed unmerged (reconcile) or cleared by a close (after the worktree and branch
+are gone), since a story held for a clash with it is startable then; an epic file's finish tells no
+lane. The tail's last line, `other
 lanes running: <names>|none`, names the epic's other lane conductors neither done nor reported, with
 the epic's file gone too. A lane's final check adds `--done` after `--lane <k>`. Under
 `.swarm/lane-done.lock` it marks the lane done (`.swarm/lane-done/<epic>.l<k>`, k as given, never the
