@@ -1,7 +1,7 @@
 ---
 kind: lead
 status: blocked
-depends_on: [close-exact-tab, conductor-lanes, conductor-lanes-start, findings-told-sent, grant-pinned-head, grant-protected-paths, hld-docs-method-reference, hld-docs-readme-agents, ladder-top-rung-to-lead, release-base-pin, review-loop-knobs, step-up-slow-start, tell-false-not-taken-up, test-run-log]
+depends_on: [close-exact-tab, findings-told-sent, grant-pinned-head, grant-protected-paths, hld-docs-method-reference, hld-docs-readme-agents, ladder-top-rung-to-lead, release-base-pin, review-loop-knobs, step-up-slow-start, tell-false-not-taken-up, test-run-log]
 touches: [board/stories]
 estimate_lines: 0
 easy: false
@@ -17,7 +17,8 @@ Every release starts with a retro (user, 2026-10-23). The lead brings the list b
 - A 50-minute hold went unrecorded (fixed by hold-event and flow-holds).
 - Review loops ran to rounds 7 to 9. The ladder was off for days, held behind a stale story, and was blind to misreported tells.
 - Test contention: up to 8 full suites at once, load 45 to 83 on 10 CPUs, suites taking 40 to 55 minutes. The user chose to track it (test-run-log), not cap it. Decide from the test_runs data.
-- One backlog conductor worked through 7 green PRs one at a time (fixed by conductor lanes).
+- One backlog conductor worked through 7 green PRs one at a time. Conductor lanes (#480, #482) were built to fix it but taken out of 0.27 after five rounds on fable kept finding real multi-lane gaps; they go to the 0.28 HLD.
+- The conductor kept running /code-review after round 1 despite the codex-only note (the 0.26 brief); a top-rung build ran all night (four rounds, about 6% of the week's usage).
 - Codex usage limit, with the sonnet fallback failing to start.
 
 **Follow-ups from conductor reports (scratchpad conduct-*.report.md)**

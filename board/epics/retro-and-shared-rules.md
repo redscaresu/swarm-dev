@@ -207,3 +207,7 @@ example, p90 of a builder's run under 10 minutes). The options to weigh:
 - a builder runs only the tests for what it touched, with CI's full run as the gate;
 - one full run per head, not both a local run and CI;
 - fixing the slowest test files (the story slow-test-files).
+
+### Conductor lanes (added 2026-10-25)
+
+One backlog conductor serialised seven green PRs on 2026-10-24, so the user asked for several conductors per epic or backlog. conductor-lanes (#480) and conductor-lanes-start (#482) were built for 0.27, but #480 drew real multi-lane gaps in each of five review rounds on fable: stories blocked on another lane stranded, no one ending the epic after the last lane, lane tabs left open, notes and watches folded wrongly when the lane count drops, lane reservations racing a failed start, idle-slot metrics merging lanes. Each fix added machinery, and the machinery added gaps. The user took lanes out of 0.27 (2026-10-25) for the HLD to design first. The branches are kept: story/conductor-lanes (6caca7f) and story/conductor-lanes-start (a228cab), both draft PRs. Options to weigh: lanes as designed; a per-PR review owner (the review agent carries its PR to merge) instead of more conductors; or making the single conductor never block on one PR's review.
