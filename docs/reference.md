@@ -441,8 +441,11 @@ swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's she
 deletes itself, so the pane's scrollback shows the launch line with no value in it.
 
 `agent_env = NAME ...` in `.claude/swarm/config` adds names for every agent of every role: the HLD
-and epic co-authors, planners, conductors, builders and review agents. A restart keeps them, whether
-herdr restores the pane or `swarm.sh upgrade` restarts the agent. This is how a provider's key
+and epic co-authors, planners, conductors, builders and review agents. A restart keeps the names.
+`swarm.sh upgrade` gives them the values of the session that runs it. When herdr restores a pane, the
+values come from that pane's new shell, since swarm.sh never writes a value to disk. So a key you
+export only in the session that started the agent is gone after a herdr restore; export it from your
+shell's startup files to keep it there. This is how a provider's key
 reaches agents. On Azure Foundry, for example, Claude Code needs `ANTHROPIC_FOUNDRY_RESOURCE` and
 `ANTHROPIC_FOUNDRY_API_KEY`, and the `ANTHROPIC_DEFAULT_*_MODEL` names if your deployments are named
 differently from the models. Without them every agent stops at its start. Each value comes from the

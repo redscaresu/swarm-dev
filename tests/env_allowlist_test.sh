@@ -168,6 +168,7 @@ check "its SHELL is the agent shell, not the lead's bash" "/bin/sh" "$(var condu
 check "a login shell the agent starts from SHELL sees no secret exported in HOME's .bashrc or .bash_profile" "none" \
   "$(env -i "${a[@]}" /bin/sh -c '"$SHELL" -lic "echo \${BASH_LEAK:-none}"' 2>/dev/null </dev/null | tail -1)"
 check "a stray AGENT_ENV_NAMES in swarm.sh's environment adds nothing" "" "$(var conduct-plain FAKE_SECRET)"
+# agent_env adds names only when the config sets it (the Foundry case below): without it, nothing extra leaks.
 check "with no agent_env, PROVIDER_KEY from the lead does not reach it" "" "$(var conduct-plain PROVIDER_KEY)"
 
 # --- A story's env: reaches its conductor, then the builder that conductor starts, with the lead's value.
@@ -257,6 +258,12 @@ check "and a list over several lines" "${REFUSED}" "$(refused "env: [" "  FAKE_S
 check "and a bare name" "${REFUSED}" "$(refused "env: FAKE_SECRET" "env: is not a one-line list; write it as env: [NAME, ...]")"
 
 # --- agent_env: names every agent of every role gets, set once in the config. Last, since it changes the config.
+# Why agent_env exists: agents on Azure Foundry (or another provider) need its endpoint, key and
+# model names (ANTHROPIC_FOUNDRY_RESOURCE, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_DEFAULT_*_MODEL) in
+# every pane, not only builders'; without them every agent stops at its start. Boards outside
+# swarm-dev and infrafactory set it, so finding it unset in those two configs is no reason to remove it.
+# Each check below guards one part of that: a non-builder and a builder both get the names, a restart
+# keeps them, a session without the provider still starts agents, and a bad name stops at config load.
 rm -f "${b}/stories/bad.md"
 printf 'agent_env = PROVIDER_KEY UNSET_HERE\n' > "${p}/.claude/swarm/config"
 o="$(run agent t5 co-author "${p}" hld "${ROOT}/brief.md")"

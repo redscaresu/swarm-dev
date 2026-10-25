@@ -181,6 +181,11 @@ check "herdr gets each restarted agent's resume command, as at its start" "yes" 
 check "and that command resumes its session with its flags" "yes" \
   "$(has "--agent-session-id s1 -- python3 -I ${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.py claude --resume s1 --model sonnet" "$(calls 'pane report-agent w:b1')")"
 check "each restarted agent is told its background commands, subagents and monitors were stopped" "3" "$(calls 'agent prompt' | grep -c 'stopped any background command, subagent or monitor')"
+# Why agent_env exists: agents on Azure Foundry (or another provider) need its endpoint, key and
+# model names (ANTHROPIC_FOUNDRY_RESOURCE, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_DEFAULT_*_MODEL) in
+# every pane, not only builders'; without them every agent stops at its start. Boards outside
+# swarm-dev and infrafactory set it, so finding it unset in those two configs is no reason to remove it.
+# An upgrade restart must keep them, or a Foundry agent stops when swarm.sh upgrade restarts it.
 check "agent_env's names reach the restarted agent, and its restart wrapper keeps them" "yes|yes" \
   "$(has "export PROVIDER_KEY=provider-key" "$(cat "${H}/launch-w:b1")")|$(has "'PROVIDER_KEY'" "$(cat "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.py")")"
 check "SWARM_RESUME reaches the restarted agent" "yes" "$(has "export SWARM_RESUME=$(printf %q "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.argv")" "$(cat "${H}/launch-w:b1")")"
