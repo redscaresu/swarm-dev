@@ -397,20 +397,26 @@ under `.swarm/lane-start.lock` for a moment; a start that finds the lock still h
 seconds stops and says to retry. With N = 1 a start takes no lock. `swarm.sh watch --epic <epic>|--backlog --lane <k>` reports only lane k's
 PRs, so one lane's watch never takes another lane's report, and `next`'s `queued:` lines name the
 owning lane's conductor. The lane's brief tells its conductor to build, review and merge only its own
-stories and never touch another lane's PR. A lane's run ends only when no story of its lane can
-still need it: `unblock --startable <epic>|--backlog --lane <k>` ends with a `waiting: <slug>
-(blocked on <parents>)` line per blocked story of the lane whose parents are still open, and the lane
-waits for them; `unblock` sends the lane's conductor a note when it readies one (unless that
-conductor ran the unblock), and reconcile sends every other lane of the epic a note when a story
-merges (a story held for a clash with its build is startable then); a note wakes an idle lane. Its
-last line, `other lanes running: <names>|none`, names the epic's other lane conductors neither done nor
-reported. A lane's final check is `--done` after `--lane <k>`: under `.swarm/lane-done.lock` it is
-marked done (`.swarm/lane-done/<epic>.l<k>`) before the others are listed, so of two lanes that finish
-together exactly one sees `none`; with a `startable:` or `waiting:` line of its own it prints `not
-done:` instead, and a call without `--done`, or the lane's next conductor start, unmarks it. A lane that
-sees names reports `lane <k> done; <names> still run`; the lane that sees `none` is the last, so it ends
-the epic as a single conductor does (`swarm.sh review <epic> <PRs>` with `merge = human`, `swarm.sh
-finish <epic>` with `merge = agent`), over every lane's PRs. Closing a lane
+stories and never touch another lane's PR. A lane's run ends only when no story of its lane can still need it. `unblock --startable
+<epic>|--backlog --lane <k>` ends with a `waiting: <slug> (blocked on <parents>)` line per blocked
+story of the lane whose parents are still open, and the lane waits for them. A `waiting:` line for a
+lead story, or for one whose parents are not all this epic's agent-built stories, ends `the lead's:
+list it in your report`: that wait is not the lane's. Two notes wake an idle lane, whatever N is now, so lanes outliving a
+drop to 1 still hear: `unblock` tells the lane conductors whose lane is a story's when it readies it
+(unless that conductor ran the unblock), and reconcile tells every other lane of the epic when a story
+merges, since a story held for a clash with its build is startable then. The tail's last line, `other
+lanes running: <names>|none`, names the epic's other lane conductors neither done nor reported, with
+the epic's file gone too. A lane's final check adds `--done` after `--lane <k>`. Under
+`.swarm/lane-done.lock` it marks the lane done (`.swarm/lane-done/<epic>.l<k>`, k as given, never the
+fold) before it lists the others, so of two lanes that finish together exactly one sees `none`. With a
+`startable:` line the lane may start (not one closed unmerged, one a `not held:` close left ready, or
+one failed twice with `escalate_after = 0`, which the give-up rule leaves to the lead) or a `waiting:`
+line that is this epic's, it prints `not done:` instead, and a call without `--done`,
+or the lane's next conductor start, unmarks the lane. A lane that sees names reports `lane <k> done;
+<names> still run`. The lane that sees `none` is the last, so it ends the epic as a single conductor
+does (`swarm.sh review <epic> <PRs>` with `merge = human`, `swarm.sh finish <epic>` with `merge =
+agent`), over every lane's PRs. A `startable:` line's hold reads `(held: cannot read the board's
+touches ...)` when the touches cannot be read, and `story --strict` refuses it then. Closing a lane
 conductor closes its own pane and tab while another lane of its epic runs; the last lane's close takes
 the epic's tab too, as a single conductor's does. A `swarm.sh tell <conductor> note` to a name without a lane
 that no pane holds goes to every running lane of that epic. The note `merge --board` sends for the

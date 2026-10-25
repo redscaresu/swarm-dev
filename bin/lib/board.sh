@@ -1093,7 +1093,8 @@ open_pr() {
 # blocked_by line stays; nothing reads it. Prints each story it flips.
 unblock() {
   local story slug deps open on why src rc drop
-  while IFS= read -r story; do
+  # On fd 3: lane_ready_note's herdr and tell must not read the list.
+  while IFS= read -r story <&3; do
     [[ "$(fm "${story}" status)" == blocked ]] || continue
     drop=()
     slug="$(basename "${story}" .md)"
@@ -1116,23 +1117,29 @@ unblock() {
     record_event unblock "${slug}"
     echo "ready: ${slug}${why:+ (${why})}"
     lane_ready_note "${slug}" "${story}"
-  done < <(board stories)
+  done 3< <(board stories)
 }
 
-# lane_ready_note <slug> <story file> — with conductor_lanes above 1: tell the running conductor of the
-# story's lane (its epic's, or the backlog's), unless it is this agent or has reported, that unblock readied
-# the story. A lane waiting on another lane's merge is woken by it (lane_end_rule). Never fails unblock.
+# lane_ready_note <slug> <story file> — tell each running lane conductor of the story's epic (or the
+# backlog's) whose lane, folded onto conductor_lanes, is the story's (story_lane), this agent and reported
+# ones aside, that unblock readied the story: a lane waiting on another lane's merge is woken by it
+# (lane_end_rule). Sent whatever conductor_lanes is now, so lanes outliving a drop to 1 still hear.
+# Never fails unblock.
 lane_ready_note() {
-  local e name f
-  # shellcheck disable=SC2154 # assigned in another file
-  (( CFG_conductor_lanes > 1 )) || return 0
-  e="$(fm "$2" epic)"; name="$(conductor_name "${e:-backlog}" "$(story_lane "$2")")"
-  [[ "${name}" != "${SWARM_AGENT:-}" && -n "$(agent_field "${name}" pane_id)" && ! -f "$(conductor_report "${name}")" ]] || return 0
-  f="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || return 0
-  printf 'From swarm: unblock readied %s, a story of your lane. Run swarm.sh unblock --startable %s --lane %s and start it as your brief says.\n' \
-    "$1" "${e:---backlog}" "$(story_lane "$2")" > "${f}"
-  (tell_agent "${name}" note "${f}") >/dev/null 2>&1 || echo "warning: could not note ${name} that $1 is ready; it finds it on its next pass" >&2
-  rm -f "${f}"
+  local e l c cl f
+  e="$(fm "$2" epic)"; l="$(story_lane "$2")"
+  # On fd 3: the tells must not read the list.
+  while IFS= read -r c <&3; do
+    [[ -n "${c}" && "${c}" != "${SWARM_AGENT:-}" && ! -f "$(conductor_report "${c}")" ]] || continue
+    read -r _ cl <<< "$(conduct_split "${c}")"
+    # shellcheck disable=SC2154 # assigned in another file
+    [[ -n "${cl}" && $(( (cl - 1) % CFG_conductor_lanes + 1 )) -eq ${l} ]] || continue
+    f="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || return 0
+    printf 'From swarm: unblock readied %s, a story of your lane. Run swarm.sh unblock --startable %s --lane %s and start it as your brief says.\n' \
+      "$1" "${e:---backlog}" "${cl}" > "${f}"
+    (tell_agent "${c}" note "${f}") >/dev/null 2>&1 </dev/null || echo "warning: could not note ${c} that $1 is ready; it finds it on its next pass" >&2
+    rm -f "${f}"
+  done 3<<< "$(epic_lanes "$(conductor_name "${e:-backlog}")" "${e:-backlog}")"
 }
 
 # unblock_startable <epic>|--backlog — unblock, then a startable: line per story of that epic (--backlog:
@@ -1146,19 +1153,26 @@ lane_ready_note() {
 # with <other> in lane <j> on <entries> (before any other reason, kept after a ;) while a story of the
 # same epic in another lane whose build has started touches what it touches (lane_clash). With <lane>,
 # after them: waiting: <slug> (blocked on <parents>) for each blocked story of the lane whose
-# depends_on has open stories (a merge readies it, so its lane conductor waits on), and other lanes
+# depends_on has open stories (a merge readies it, so its lane conductor waits on; one that is the
+# lead's, a lead story's or one waiting on a lead story's or another epic's, says so), and other lanes
 # running: <names>|none, the epic's (or backlog's) other lane conductors that have neither reported nor
 # been marked done (epic_lanes): the lane that sees none is the last, and ends the epic (lane_end_rule).
 # With --done, the lane's final check: under .swarm/lane-done.lock, held until the list is read, it is
 # marked done (.swarm/lane-done/<epic>.l<k>) before the others are listed, so of two lanes that finish
-# together exactly one sees none; with a startable: or waiting: line of its own it is not done (said),
-# and any call without --done unmarks it (a note woke it to work). A conductor's start unmarks its lane.
+# together exactly one sees none; with a startable: line it may start (not one closed unmerged, one a not
+# held: close left ready, whose last event but a hold is that close, or one failed twice with escalate_after
+# 0, which the give-up rule leaves to the lead) or a waiting: line that is a lane's
+# (an agent-built story whose open parents are this epic's agent-built stories), it is not done (said), and
+# any call without --done unmarks it (a note woke
+# it to work). The marker is the lane's own, <raw lane> as --lane gave it, not the fold, so lanes that
+# share a fold after a drop of conductor_lanes never mark each other. A conductor's start unmarks its
+# lane. An epic whose file is gone has nothing startable, and its lanes still get the tail.
 LANE_DONE_DIR="${PROJECT_DIR}/.swarm/lane-done"
 unblock_startable() {
-  local want="$1" lane="${2:-}" slug e f open why held="" c others="" work="" key locked=""
+  local want="$1" lane="${2:-}" slug e f open why held="" c others="" work="" key locked="" lead last attempts
   unblock
   if [[ "${want}" == --backlog ]]; then want=-
-  else [[ -f "${BOARD}/epics/${want}.md" ]] || return 0; fi
+  elif [[ ! -f "${BOARD}/epics/${want}.md" ]]; then [[ -n "${lane}" ]] || return 0; want=""; fi
   while read -r slug e; do
     [[ "${e}" == "${want}" ]] || continue
     f="${BOARD}/stories/${slug}.md"; why=""
@@ -1170,16 +1184,29 @@ unblock_startable() {
     fi
     [[ -z "${lane}" ]] || held="$(lane_clash "${slug}" "${lane}")"
     [[ -z "${held}" ]] || why="${held}${why:+; ${why}}"
-    echo "startable: ${slug}${why:+ (${why})}"; work=1
+    echo "startable: ${slug}${why:+ (${why})}"
+    # The lane's to start, unless the lead's: closed unmerged, left ready by a not held: close, or failed
+    # twice with escalation off (give_up_rule: with it on, lead_block takes such a story off the board's ready).
+    last="$(last_event_but_hold "${slug}")"; attempts="$(get_fm "${f}" attempts)"
+    # shellcheck disable=SC2154 # assigned in another file
+    [[ "${why}" == *"was closed unmerged"* || ( "${last%%$'\t'*}" =~ ^close:(paused|cleared-on-error)$ && "${last#*$'\t'}" == ok ) ]] \
+      || { (( CFG_escalate_after == 0 )) && [[ "${attempts}" =~ ^[0-9]+$ ]] && (( attempts >= 2 )); } || work=1
   done < <(board_ready)
   [[ -n "${lane}" ]] || return 0
+  [[ -n "${want}" ]] || want="$1"
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == blocked ]] || continue
     e="$(fm "${f}" epic)"; [[ "${e:--}" == "${want}" && "$(story_lane "${f}")" == "${lane}" ]] || continue
     open="$(open_deps "$(story_deps "${f}")")"
-    [[ -z "${open}" ]] || { echo "waiting: $(basename "${f}" .md) (blocked on ${open})"; work=1; }
+    [[ -n "${open}" ]] || continue
+    # A wait is the lane's only while the story is one an agent builds and every open parent is a story
+    # of this epic that an agent builds; else it is the lead's.
+    lead=""; agent_kind "$(fm "${f}" kind)" || lead=1
+    for slug in ${open}; do lane_parent "${slug}" "${want}" || lead=1; done
+    if [[ -z "${lead}" ]]; then echo "waiting: $(basename "${f}" .md) (blocked on ${open})"; work=1
+    else echo "waiting: $(basename "${f}" .md) (blocked on ${open}; the lead's: list it in your report)"; fi
   done < <(board stories)
-  key="${1/#--backlog/backlog}.l${lane}"; mkdir -p "${LANE_DONE_DIR}"
+  key="${1/#--backlog/backlog}.l${4:-${lane}}"; mkdir -p "${LANE_DONE_DIR}"
   if [[ "${3:-}" == --done && -z "${work}" ]]; then
     note_lock "${LANE_DONE_DIR}" || die "unblock: another lane's check holds ${LANE_DONE_DIR}.lock; retry in a moment"
     locked=1; : > "${LANE_DONE_DIR}/${key}"
@@ -1190,25 +1217,37 @@ unblock_startable() {
   while IFS= read -r c; do
     [[ -n "${c}" && ! -f "$(conductor_report "${c}")" && ! -f "${LANE_DONE_DIR}/$(conductor_key "${c}")" ]] || continue
     others+="${others:+ }${c}"
-  done <<< "$(epic_lanes "$(conductor_name "${1/#--backlog/backlog}" "${lane}")" "${1/#--backlog/backlog}")"
+  done <<< "$(epic_lanes "$(conductor_name "${1/#--backlog/backlog}" "${4:-${lane}}")" "${1/#--backlog/backlog}")"
   [[ -z "${locked}" ]] || rmdir "${LANE_DONE_DIR}.lock"
   echo "other lanes running: ${others:-none}"
 }
 
-# lane_finish_note <slug> <epic> — with conductor_lanes above 1: tell each running lane conductor of <epic>
-# (the backlog's with none), this agent and reported ones aside, that <slug> merged: a story of its lane
-# held for a clash with <slug>'s build is startable now (lane_rule). Never fails reconcile.
+# last_event_but_hold <slug> — last_event's line for the slug's last event that is not a hold (a lane's
+# hold follows the close or reopen that made the story the lead's).
+last_event_but_hold() { awk -F'\t' -v s="$1" '$3 == s && $2 != "hold" { last = $2 "\t" $5 } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
+
+# lane_parent <slug> <epic|-> — true when <slug> is a story of that epic (- for none) that an agent
+# builds: a parent whose merge a lane can wait for. A lead story's, another epic's or an epic's is the lead's.
+lane_parent() {
+  local f="${BOARD}/stories/$1.md" e
+  [[ -f "${f}" ]] || return 1
+  e="$(fm "${f}" epic)"; [[ "${e:--}" == "$2" ]] && agent_kind "$(fm "${f}" kind)"
+}
+
+# lane_finish_note <slug> <epic> — tell each running lane conductor of <epic> (the backlog's with none),
+# this agent and reported ones aside, that <slug> merged: a story of its lane held for a clash with
+# <slug>'s build is startable now (lane_rule). Sent whatever conductor_lanes is now. Never fails reconcile.
 lane_finish_note() {
   local c f
-  (( CFG_conductor_lanes > 1 )) || return 0
-  while IFS= read -r c; do
+  # On fd 3: the tells must not read the list.
+  while IFS= read -r c <&3; do
     [[ -n "${c}" && "${c}" != "${SWARM_AGENT:-}" && ! -f "$(conductor_report "${c}")" ]] || continue
     f="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || return 0
     printf 'From swarm: %s merged. A story of your lane held for a clash with its build is startable now: run swarm.sh unblock --startable %s --lane %s and start what it prints as your brief says.\n' \
       "$1" "${2:---backlog}" "$(conduct_lane "${c}")" > "${f}"
-    (tell_agent "${c}" note "${f}") >/dev/null 2>&1 || echo "warning: could not note ${c} that $1 merged; it sees it on its next pass" >&2
+    (tell_agent "${c}" note "${f}") >/dev/null 2>&1 </dev/null || echo "warning: could not note ${c} that $1 merged; it sees it on its next pass" >&2
     rm -f "${f}"
-  done <<< "$(epic_lanes "$(conductor_name "${2:-backlog}")" "${2:-backlog}")"
+  done 3<<< "$(epic_lanes "$(conductor_name "${2:-backlog}")" "${2:-backlog}")"
 }
 
 # lane_clash <slug> <lane> — "held: clashes with <other> in lane <j> on <entries>" for the first story of
@@ -1216,8 +1255,11 @@ lane_finish_note() {
 # or it is in review) or is starting (lane_start's reservation, under 10 minutes old, which holds its
 # lane), and whose touches overlap <slug>'s (touches_rows, same epic included), else nothing.
 lane_clash() {
-  local other epic status entry mine j r
+  local other epic status entry mine j r rows
   mine="$(fm "${BOARD}/stories/$1.md" epic)"
+  # Fails closed, as touches_overlap does: a touches read that fails is a hold saying it cannot tell.
+  rows="$(SWARM_SAME_EPIC=1 touches_rows "$1" 2>/dev/null)" \
+    || { echo "held: cannot read the board's touches, so cannot tell whether $1 clashes with another lane's build; retry once they can be read"; return 0; }
   while IFS=$'\t' read -r other epic status entry; do
     [[ -n "${other}" && "${epic}" == "${mine:-none}" ]] || continue
     r="${LANE_START_DIR}/${other}"
@@ -1226,7 +1268,7 @@ lane_clash() {
     [[ "${j}" != "$2" ]] || continue
     [[ -n "${r}" || "${status}" == review || "${status}" == held ]] || one_off_started "${other}" || continue
     echo "held: clashes with ${other} in lane ${j} on ${entry}"; return 0
-  done <<< "$(SWARM_SAME_EPIC=1 touches_rows "$1" 2>/dev/null)"
+  done <<< "${rows}"
 }
 
 # last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated.

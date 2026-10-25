@@ -226,7 +226,7 @@ check "the lane brief runs unblock --startable --backlog --lane 2, keeps to its 
 merge another lane's story or PR" "${brief}")|$(has ".swarm/conduct-backlog.l2.report.md" "${brief}")|$(has ".swarm/inbox/${l2}.md" "${brief}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "the lane brief watches its lane, folds a lane above 3, holds a cross-lane clash and scopes the Stacked rule" "yes|yes|yes|yes" \
-  "$(has 'swarm.sh watch --backlog --lane 2` in the background' "${brief}")|$(has '(lane - 1) mod 3 + 1' "${brief}")|$(has 'whose note starts `(held: clashes with <other> in lane <j>`' "${brief}")|$(has 'Yours is a story with no `epic:` in your lane' "${brief}")"
+  "$(has 'swarm.sh watch --backlog --lane 2` in the background' "${brief}")|$(has '(lane - 1) mod 3 + 1' "${brief}")|$(has 'whose note starts `(held:` touches what another lane is building' "${brief}")|$(has 'Yours is a story with no `epic:` in your lane' "${brief}")"
 check "conduct --backlog --lane 2 logs its start as --backlog.l2" "1" \
   "$(awk -F'\t' '$2 == "conduct" && $3 == "--backlog.l2" && $5 == "ok"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
 
@@ -316,6 +316,76 @@ check "--done with a startable story of its own is refused as not done" "yes" \
   "$(has 'not done: lane 2' "$(run unblock --startable w --lane 2 --done)")"
 rm "${b}/stories/wz.md" "${p}/.swarm/lane-done/w.l3"
 
+# --- What --done counts as the lane's: not a story the lead has (closed unmerged, or left ready by a not held:
+# close, which the lane's hold follows), not a wait on a lead story or another epic's, but a wait on this
+# epic's agent-built story.
+item "${b}" stories/wu.md "status: ready" "kind: code" "epic: w" "lane: 2"
+printf '2026-10-25T10:00:00Z\treconcile\twu\t-\tok (reopened)\n' >> "${p}/.swarm/events.tsv"
+item "${b}" stories/wv.md "status: ready" "kind: code" "epic: w" "lane: 2"
+printf '2026-10-25T10:01:00Z\tclose:paused\twv\tw:1\tok\n2026-10-25T10:02:00Z\thold\twv\tw:1\tok (not held)\n' >> "${p}/.swarm/events.tsv"
+out="$(run unblock --startable w --lane 2 --done)"
+check "--done with only a closed-unmerged story and a not-held one left ready: prints them, is done, and marks the lane" "yes|yes|no|yes" \
+  "$(has 'startable: wu (its PR' "${out}")|$(has 'startable: wv' "${out}")|$(grep -q '^not done' <<< "${out}" && echo yes || echo no)|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)"
+item "${b}" stories/wl.md "status: ready" "kind: lead" "epic: w"
+item "${b}" stories/wm.md "status: blocked" "kind: code" "epic: w" "lane: 2" "depends_on: [wl]"
+item "${b}" epics/x.md "status: active"; item "${b}" stories/xq.md "status: ready" "kind: code" "epic: x"
+item "${b}" stories/wo.md "status: blocked" "kind: code" "epic: w" "lane: 2" "depends_on: [xq]"
+item "${b}" stories/wq.md "status: ready" "kind: code" "epic: w" "lane: 1"
+item "${b}" stories/wj.md "status: blocked" "kind: lead" "epic: w" "lane: 2" "depends_on: [wq]"
+out="$(run unblock --startable w --lane 2 --done)"
+check "a wait on a lead story or on another epic's story, or a lead story's own wait, is the lead's: said so, and the lane is done" "yes|yes|yes|no" \
+  "$(has "waiting: wm (blocked on wl; the lead's: list it in your report)" "${out}")|$(has "waiting: wo (blocked on xq; the lead's" "${out}")|$(has "waiting: wj (blocked on wq; the lead's" "${out}")|$(grep -q '^not done' <<< "${out}" && echo yes || echo no)"
+item "${b}" stories/wr.md "status: blocked" "kind: code" "epic: w" "lane: 2" "depends_on: [wq]"
+out="$(run unblock --startable w --lane 2 --done)"
+check "a wait on this epic's agent-built story is the lane's: not done" "yes|yes" \
+  "$(has 'waiting: wr (blocked on wq)' "${out}")|$(has 'not done: lane 2' "${out}")"
+rm "${b}"/stories/{wu,wv,wl,wm,wo,wj,wq,wr,xq}.md "${b}/epics/x.md"; rm -f "${p}/.swarm/lane-done/w.l2"
+# A story that failed twice is the lead's with escalation off (the give-up rule), and the lane's build on
+# Fable with it on.
+item "${b}" stories/wt.md "status: ready" "kind: code" "epic: w" "lane: 2"
+mkdir -p "${p}/.swarm/board-state/stories"; printf 'attempts: 2\n' > "${p}/.swarm/board-state/stories/wt"
+printf 'conductor_lanes = 3\nescalate_after = 0\n' > "${p}/.claude/swarm/config"
+out="$(run unblock --startable w --lane 2 --done)"
+check "--done with a story that failed twice and escalate_after = 0: it is the lead's, and the lane is done" "yes|no|yes" \
+  "$(has 'startable: wt' "${out}")|$(grep -q '^not done' <<< "${out}" && echo yes || echo no)|$([[ -e "${p}/.swarm/lane-done/w.l2" ]] && echo yes || echo no)"
+lanes 3
+check "with escalate_after on, the same story is the lane's next build: not done" "yes" "$(has 'not done: lane 2' "$(run unblock --startable w --lane 2 --done)")"
+rm "${b}/stories/wt.md" "${p}/.swarm/board-state/stories/wt"; rm -f "${p}/.swarm/lane-done/w.l2"
+
+# --- The done marker is the lane's own: under conductor_lanes = 2, --lane 3 folds to lane 1 for its stories
+# and marks w.l3, never w.l1.
+lanes 2
+check "after conductor_lanes drops to 2, lane 3's unblock leaves itself out of the other lanes, not the folded lane 1's conductor" "other lanes running: conduct-w-l2" \
+  "$(run unblock --startable w --lane 3 | grep '^other lanes running:')"
+run unblock --startable w --lane 3 --done >/dev/null
+check "after conductor_lanes drops to 2, lane 3's --done marks w.l3, not the folded w.l1" "yes|no" \
+  "$([[ -e "${p}/.swarm/lane-done/w.l3" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/lane-done/w.l1" ]] && echo yes || echo no)"
+lanes 3; rm -f "${p}/.swarm/lane-done/w.l3"
+
+# --- With the epic's file gone (its last story's PR took it), a lane's --done still answers.
+mv "${b}/epics/w.md" "${ROOT}/w.md.away"
+check "with epic w's file gone, unblock --startable w --lane 2 --done still names the other lanes" "other lanes running: conduct-w-l3" \
+  "$(run unblock --startable w --lane 2 --done | grep '^other lanes running:')"
+mv "${ROOT}/w.md.away" "${b}/epics/w.md"; rm -f "${p}/.swarm/lane-done/w.l2"
+
+# --- A touches read that fails holds the start, saying it cannot tell, and story --strict refuses it.
+mkdir "${b}/stories/broken.md"
+item "${b}" stories/wk.md "status: ready" "kind: code" "epic: w" "lane: 2" "touches: [bin/k.sh]"
+out="$(run unblock --startable w --lane 2)"
+check "when the touches cannot be read, a lane's startable line is held saying it cannot tell, and --strict refuses the start" "yes|yes|no" \
+  "$(has "startable: wk (held: cannot read the board's touches" "${out}")|$(has "cannot read the board's touches" "$(run story --strict wk || true)")|$([[ -d "${ROOT}/proj-wt/wk" ]] && echo yes || echo no)"
+rmdir "${b}/stories/broken.md"; rm "${b}/stories/wk.md"
+
+# --- Lanes outliving a drop to conductor_lanes = 1 still hear: a story readied by lane 2 is noted to lane 3.
+lanes 1
+item "${b}" stories/wx.md "status: ready" "kind: code" "epic: w"
+item "${b}" stories/wy.md "status: blocked" "kind: code" "epic: w" "depends_on: [wx]"
+rm "${b}/stories/wx.md"
+SWARM_AGENT=conduct-w-l2 run unblock --startable w --lane 2 >/dev/null
+check "with conductor_lanes back at 1, unblock run by lane 2 still notes lane 3 of the story it readied" "yes" \
+  "$(has 'unblock readied wy, a story of your lane' "$(cat "${p}/.swarm/inbox/conduct-w-l3.md" 2>&1)")"
+lanes 3; rm "${b}/stories/wy.md"
+
 # --- Closing a lane conductor, even with --all, closes its own pane alone while another lane of its epic
 # runs: never the epic's tab with another lane's builder in it. The last lane's close takes the epic's tab.
 item "${b}" stories/ws.md "status: ready" "kind: code" "epic: w"
@@ -326,6 +396,16 @@ check "close conduct-w-l2 --all closes its own pane and leaves the builder in th
 run close conduct-w-l3 --all >/dev/null 2>&1 || true
 check "close conduct-w-l3 --all, the last lane of w, closes the epic's tab and the builder in it too" "no|no" \
   "$(awk '$1 == "conduct-w-l3"' "${ROOT}/agents" | grep -q . && echo yes || echo no)|$(awk '$1 == "ws"' "${ROOT}/agents" | grep -q . && echo yes || echo no)"
+
+# --- The last lane's close of a long epic whose file is gone, and whose lane-less name cuts at 32: the epic
+# comes from the lane's own brief, so the epic's tab still goes with its builder.
+l26="$(run _conductor "${long26}" 2)"
+item "${b}" stories/lw.md "status: ready" "kind: code" "epic: ${long26}"
+run story lw >/dev/null 2>&1 || true
+rm "${b}/epics/${long26}.md"
+run close "${l26}" --all >/dev/null 2>&1 || true
+check "the last lane's close of a long epic whose file is gone still closes the epic's tab and its builder" "no|no" \
+  "$(awk -v n="${l26}" '$1 == n' "${ROOT}/agents" | grep -q . && echo yes || echo no)|$(awk '$1 == "lw"' "${ROOT}/agents" | grep -q . && echo yes || echo no)"
 
 # --- A lane-less conductor of e from conductor_lanes = 1 still runs: no lane of e starts beside it.
 lanes 1

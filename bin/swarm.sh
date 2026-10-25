@@ -452,10 +452,11 @@ hold() {
 # the change keeps working (with one lane, every story).
 lane_flag() {
   local cmd="$1"; shift
-  LANE=""
+  LANE=""; LANE_RAW=""
   [[ $# -gt 0 ]] || return 0
   [[ $# -eq 2 && "$1" == --lane ]] || die "${cmd}: unknown argument '$1'"
   [[ "$2" =~ ^[1-9][0-9]{0,5}$ ]] || die "${cmd}: --lane takes a whole number of 1 or more, not '$2'"
+  LANE_RAW="$2"   # as given: a lane conductor's own lane, whatever conductor_lanes is now
   if [[ "${cmd}" != conduct ]]; then LANE=$(( ($2 - 1) % CFG_conductor_lanes + 1 )); return 0; fi
   (( CFG_conductor_lanes > 1 )) || die "conduct: --lane needs conductor_lanes above 1 (it is 1)"
   (( $2 <= CFG_conductor_lanes )) || die "conduct: --lane takes 1 to ${CFG_conductor_lanes} (conductor_lanes), not '$2'"
@@ -490,7 +491,7 @@ dispatch() {
     unblock) if [[ "${1:-}" == --startable ]]; then
                [[ ( $# -eq 2 || ( ( $# -eq 4 || ( $# -eq 5 && "$5" == --done ) ) && "$3" == --lane ) ) && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] \
                  || die "unblock: --startable takes <epic> or --backlog, then --lane <k> [--done]"
-               lane_flag unblock "${@:3:2}"; unblock_startable "$2" "${LANE}" "${5:-}"
+               lane_flag unblock "${@:3:2}"; unblock_startable "$2" "${LANE}" "${5:-}" "${LANE_RAW}"
              else [[ -z "${1:-}" ]] || die "unblock: unknown argument '$1'"; unblock; fi ;;
     next)   next_report ;;
     status) status_report "${1:-}" ;;
