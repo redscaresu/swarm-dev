@@ -54,8 +54,8 @@ case "$1 $2" in
     [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
     # --auto enqueues (with ${FX}/auto-fails, then fails with a 5xx): the queue fixture
     # (serve queue) says what happens next.
-    # With ${FX}/auto-sleeps the enqueue takes 5 s, for a signal to land during it.
-    case " $* " in *" --auto "*) [ ! -e "${FX}/auto-sleeps" ] || sleep 5
+    # With ${FX}/auto-sleeps the enqueue lasts until term_merge has sent its TERM (${FX}/termed), 5 s at most.
+    case " $* " in *" --auto "*) [ ! -e "${FX}/auto-sleeps" ] || for _ in $(seq 50); do [ ! -e "${FX}/termed" ] || break; sleep 0.1; done
       [ ! -e "${FX}/auto-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }; exit 0 ;; esac
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
     [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "$(cat "${FX}/oid" 2>/dev/null || echo "${M}")" > "${FX}/mergecommit"
@@ -428,7 +428,8 @@ racer() { # <fixtures> <url> <out>
 }
 mkdir "${P}/.swarm/fix-main.o-r-main.lock"
 racer "${FX}" "${URL}" "${ROOT}/outa"; pa=$!; racer "${ROOT}/fxb" "${URL2}" "${ROOT}/outb"; pb=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do grep -qs "run view\|check-runs.*${M3}" "${ROOT}/gh.log" && grep -qs "check-runs.*${M}" "${ROOT}/gh.log" && break; sleep 1; done; sleep 2
+# Both have read CI on their merge commits (gh.log names the SHA before /check-runs), then 2 s for either to log a main-red.
+for _ in $(seq 100); do grep -qs "${M3}/check-runs" "${ROOT}/gh.log" && grep -qs "${M}/check-runs" "${ROOT}/gh.log" && break; sleep 0.1; done; sleep 2
 check "two red merges racing on one key: neither logs main-red while the key's lock is held" bash -c "! grep -q main-red '${P}/.swarm/events.tsv'"
 rmdir "${P}/.swarm/fix-main.o-r-main.lock"; wait "${pa}" "${pb}" || true
 last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
@@ -442,7 +443,8 @@ for x in b:${M3} c:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; do d="${ROOT}/fx${x
   cp "${FX}/${M}.checks" "${d}/${o}.checks"; statuses "${d}/${o}.status"; wfruns "${d}/${o}.runs" "$(run ci completed success "${o}")"; done
 mkdir "${P}/.swarm/fix-main.o-r-main.lock"
 racer "${FX}" "${URL}" "${ROOT}/outa"; pa=$!; racer "${ROOT}/fxb" "${URL2}" "${ROOT}/outb"; pb=$!; racer "${ROOT}/fxc" https://github.com/o/r/pull/9 "${ROOT}/outc"; pc=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ "$(grep -c 'check-runs' "${ROOT}/gh.log")" -ge 3 ] && break; sleep 1; done; sleep 2
+# All three have read CI on their merge commits, each red at its first read.
+for _ in $(seq 100); do [ "$(grep -cE "(${M}|${M3}|e{40})/check-runs" "${ROOT}/gh.log")" -ge 3 ] && break; sleep 0.1; done; sleep 2
 rmdir "${P}/.swarm/fix-main.o-r-main.lock"; wait "${pa}" "${pb}" "${pc}" || true
 last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
 check "three red merges in a row on one key: all print fix-main:, one story is left, the one logged last, and no lock" \
@@ -508,7 +510,7 @@ job() { printf '{"name":"%s","status":"%s","conclusion":"%s","html_url":"https:/
 # warning once test passes.
 required_test; checks "${FX}/${M}.checks"
 wfruns "${FX}/${M}.runs" "$(run ci in_progress '' "${M}")" "$(run scorecard completed startup_failure "${M}")"
-merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.5 SWARM_MERGE_POLL=0.25 "${URL}"
 check "a required check with no run yet: a red workflow run is held until the wait runs out, which names test, no fix-main" \
   and_logged "^main-ci s timeout .*scorecard (startup_failure).*held until every required check has a run.*test (required, no run on ${M:0:7})" \
   bash -c "[ ${rc} = 1 ] && [ ! -e '${FM}' ]"
@@ -528,7 +530,7 @@ done
 # A check named test from another app than the one the rule binds it to is not test: held, not red.
 required_test; echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}}]' > "${FX}/rules"
 checks "${FX}/${M}.checks" '{"name":"test","status":"completed","conclusion":"failure","html_url":"https://ci.example/1","app":{"id":999}}'
-wfruns "${FX}/${M}.runs" "$(run ci in_progress '' "${M}")"; merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+wfruns "${FX}/${M}.runs" "$(run ci in_progress '' "${M}")"; merge SWARM_MERGE_CI_SECONDS=0.5 SWARM_MERGE_POLL=0.25 "${URL}"
 check "a red test from an app the rule does not bind: held, the wait times out naming test, no fix-main" \
   and_logged "^main-ci s timeout .*test (failure).*held until.*test (required, no run on ${M:0:7})" bash -c "[ ${rc} = 1 ] && [ ! -e '${FM}' ]"
 required_test; checks "${FX}/${M}.checks.1" "$(run scorecard completed startup_failure)"; wfruns "${FX}/${M}.runs.1" "$(run ci in_progress '' "${M}")"
@@ -541,7 +543,7 @@ check "a red main cleared by a merge whose only red check is not required" logge
 # A red test whose run still runs when the wait runs out is red: no rerun, fix-main written.
 required_test; checks "${FX}/${M}.checks" "$(job test completed failure 99/job/5)"
 wfruns "${FX}/${M}.runs" "{\"id\":99,\"run_attempt\":1,\"name\":\"ci\",\"status\":\"in_progress\",\"path\":\".github/workflows/ci.yml\",\"head_sha\":\"${M}\"}"
-merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.5 SWARM_MERGE_POLL=0.25 "${URL}"
 check "a red test whose run outlasts the wait: red, fix-main, no rerun" \
   and_logged '^main-ci s red test (failure)' bash -c "[ ${rc} = 1 ] && [ -e '${FM}' ] && ! grep -q '^run rerun' '${ROOT}/gh.log'"
 # A refused rerun (run 99, no rerun.99) and one under way (run 98) are said, in the story too.
@@ -628,10 +630,10 @@ check "a 5xx on a rerun: tried again, green, flaky, no fix-main" \
 red_test success
 echo "printf '{\"total_count\":1,\"check_runs\":[%s]}' '$(job test queued '' 99/job/6)' > '${FX}/${M}.checks'
 printf '{\"total_count\":1,\"workflow_runs\":[{\"id\":99,\"run_attempt\":2,\"name\":\"ci\",\"status\":\"in_progress\",\"path\":\".github/workflows/ci.yml\",\"head_sha\":\"${M}\"}]}' > '${FX}/${M}.runs'" > "${FX}/rerun.99"
-merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.5 SWARM_MERGE_POLL=0.25 "${URL}"
 check "a rerun still running when the wait runs out: red, naming the rerun under way, fix-main" \
   and_logged '^main-ci s red test (failure)' bash -c "[ ${rc} = 1 ] && grep -qF \"note: A rerun of run 99's failed jobs is under way\" '${FM}'"
-red_test success; : > "${FX}/rerun-502.keep"; merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=2 "${URL}"
+red_test success; : > "${FX}/rerun-502.keep"; merge SWARM_MERGE_CI_SECONDS=0.5 SWARM_MERGE_POLL=1 "${URL}"
 check "a rerun that only meets 5xx until the wait runs out: red, fix-main" \
   and_logged '^main-ci s red test (failure)' bash -c "[ ${rc} = 1 ] && [ -e '${FM}' ]"
 # Each run gets its own rerun: lint (run 98) goes red only after test's run 99 was rerun.
@@ -645,15 +647,15 @@ check "a second run red after the first was rerun: each run rerun once, each fla
   bash -c "grep -qx 'run rerun 99 --failed --repo o/r' '${ROOT}/gh.log' && grep -qx 'run rerun 98 --failed --repo o/r' '${ROOT}/gh.log' \
     && [ \"\$(grep -c '^run rerun' '${ROOT}/gh.log')\" = 2 ] && grep -q '^flaky: test ' '${ROOT}/out' && grep -q '^flaky: lint ' '${ROOT}/out'"
 fresh; checks "${FX}/${M}.checks" "$(run test in_progress)"; start=${SECONDS}
-merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.5 SWARM_MERGE_POLL=0.25 "${URL}"
 is "pending main: exits non-zero" 1 "${rc}"
 check "pending main: within 10 s" test $((SECONDS - start)) -lt 10
 check "pending main: main-ci s timeout" logged '^main-ci s timeout'
 is "pending main: one merge line" 1 "$(merge_lines)"
-fresh; wfruns "${FX}/${M}.runs"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+fresh; wfruns "${FX}/${M}.runs"; merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
 is "a workflow with no run on the merge commit: exits non-zero" 1 "${rc}"
 check "a workflow with no run on the merge commit: main-ci timeout naming it" logged '^main-ci s timeout (.github/workflows/ci.yml (no run'
-fresh; wfruns "${FX}/${M}.runs" "$(run ci completed success "${H2}")"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+fresh; wfruns "${FX}/${M}.runs" "$(run ci completed success "${H2}")"; merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
 check "a green run on another SHA does not count: main-ci timeout" logged '^main-ci s timeout'
 # A fast workflow is green before a slower one has a run; the slow one then fails.
 fresh; workflows ci slow; wfruns "${FX}/${M}.runs.1" "$(run ci completed success)"
@@ -670,9 +672,9 @@ fresh; paths code paths 'bin/**'; merge "${URL}"
 is "a workflow whose paths the PR misses is not waited for" 0 "${rc}"
 fresh; paths nodocs paths-ignore 'docs/**'; merge "${URL}"
 is "a workflow whose paths-ignore covers every file the PR changes is not waited for" 0 "${rc}"
-fresh; paths docs paths "'docs/**'"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+fresh; paths docs paths "'docs/**'"; merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
 check "a workflow whose paths the PR touches is waited for: main-ci timeout" logged '^main-ci s timeout (.github/workflows/docs.yml (no run'
-fresh; paths go paths "'**/*.go'"; echo '[{"filename":"main.go"}]' > "${FX}/files"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+fresh; paths go paths "'**/*.go'"; echo '[{"filename":"main.go"}]' > "${FX}/files"; merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
 check "**/ matches a file at the root: main-ci timeout" logged '^main-ci s timeout (.github/workflows/go.yml (no run'
 fresh; workflows ci multi; printf 'on:\n  push:\n    branches: [\n      main ]\n' > "${FX}/wf.multi.yml"; merge "${URL}"
 check "a [list] over several lines is not skipped: main-ci error naming it" logged '^main-ci s error .github/workflows/multi.yml'
@@ -680,7 +682,7 @@ fresh; workflows ci multi; printf 'on: [pull_request,\n  push]\n' > "${FX}/wf.mu
 check "an on: [list] over several lines is not skipped: main-ci error naming it" logged '^main-ci s error .github/workflows/multi.yml'
 fresh; paths flat paths "'docs/*'"; merge "${URL}"
 is "* stops at /: docs/* does not cover docs/stories/s.md" 0 "${rc}"
-fresh; paths code paths 'bin/**'; echo 101 > "${FX}/nfiles"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+fresh; paths code paths 'bin/**'; echo 101 > "${FX}/nfiles"; merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
 check "with not every file listed, a path-filtered workflow is waited for" logged '^main-ci s timeout (.github/workflows/code.yml (no run'
 fresh; touch "${FX}/no-merge-commit"; merge "${URL}"
 is "no merge commit: exits non-zero" 1 "${rc}"
@@ -725,7 +727,7 @@ for v in "*branches" "[main, *other]" "&b [main]"; do
 done
 fresh; workflows ci alias; printf 'on:\n  push:\n    branches:\n      - *b\n' > "${FX}/wf.alias.yml"; merge "${URL}"
 check "an alias in a block list is not read as a glob: main-ci error naming it" logged '^main-ci s error .github/workflows/alias.yml'
-fresh; workflows ci star; printf "on:\n  push:\n    branches: ['*']\n" > "${FX}/wf.star.yml"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+fresh; workflows ci star; printf "on:\n  push:\n    branches: ['*']\n" > "${FX}/wf.star.yml"; merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
 check "a quoted '*' is a glob, not an alias: the workflow is waited for" logged '^main-ci s timeout (.github/workflows/star.yml (no run'
 
 # --- What is merged, and how.
@@ -1010,7 +1012,7 @@ own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; merge --
 check "--release whose tag is on a later commit: updates the plugin" grep -q "plugin update" "${ROOT}/claude.log"
 own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; echo '{"status":"ahead"}' > "${FX}/compare.main"; merge --release "${OWN}"
 check "--release whose tag is on a branch cut after the merge: warns, and no plugin update" bash -c "grep -q 'no tag v1.3.0 on the base at or after aaaaaaa' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
-own_release; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge --release "${OWN}"
+own_release; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge SWARM_MERGE_CI_SECONDS=0.5 --release "${OWN}"
 check "--release whose base CI is not green: warns that the plugin was not updated, naming the new version's upgrade" said "warning: CI on the base is not green, so the plugin was not updated: once v1.3.0 is published, run swarm.sh update, then ${NEW} upgrade"
 check "--release whose base CI is not green: no plugin update" test ! -e "${ROOT}/claude.log"
 own_release; printf '{"object":{"sha":"%s"}}' "${H2}" > "${FX}/tagref"; echo '{"status":"diverged"}' > "${FX}/compare.${M}"; merge --release "${OWN}"
@@ -1037,7 +1039,7 @@ check "--release whose merge commit's parent is not the base it checked: no plug
 check "--release whose merge commit's parent is not the base it checked: logs the refusal" logged "merge ${OWN} unchecked: aaaaaaa's first parent is ${late:0:7}, not ${was:0:7}"
 # reported <target> — the warning that the merge commit's parent is H2, its events.tsv line, and no plugin advice.
 reported() { said "warning: aaaaaaa's first parent is 2222222, not " && logged "merge $1 unchecked: aaaaaaa's first parent is 2222222, not " && ! said "refused:"; }
-own_release; parent "${H2}"; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge --release "${OWN}"
+own_release; parent "${H2}"; checks "${FX}/${M}.checks" "$(run test in_progress)"; wfruns "${FX}/${M}.runs" "$(run ci in_progress "" "${M}")"; merge SWARM_MERGE_CI_SECONDS=0.5 --release "${OWN}"
 check "--release with base CI not green and another parent: reports and logs the unchecked commits, with no plugin advice" reported "${OWN}"
 own_release; rm "${FX}/commit.${M}"; merge --release "${OWN}"
 check "--release whose merge commit's parent gh cannot read: warns, and no plugin update" bash -c "grep -qF 'warning: gh cannot read the first parent of aaaaaaa' '${ROOT}/out' && grep -qF 'refused: the release ships commits no release check read' '${ROOT}/out' && [ ! -e '${ROOT}/claude.log' ]"
@@ -1503,21 +1505,21 @@ is "out of the queue for one read before it reads merged: not a dequeue" "0|merg
 qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - -
 qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
 is "merged before its merge commit shows: reads again, merge ok, then reconcile" "0|merge s ok|main-ci s ok|reconcile s ok (finished)" "${rc}|$(events | paste -sd'|' -)"
-# Waiting its turn is not CI time: four reads queued behind others, past a 2 s CI deadline, then its
+# Waiting its turn is not CI time: four reads queued behind others, past a 1 s CI deadline, then its
 # own group runs and merges. Waiting has the queue's own bound, six deadlines.
 qfresh; for i in 1 2 3 4; do QSTATE=QUEUED qread "${FX}/queue.${i}" OPEN true null - -; done
 qread "${FX}/queue.5" OPEN true null "${G}" -; qread "${FX}/queue.6" MERGED false null - "${M}"
-merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=0.5 "${URL}"
 is "waiting its turn past the CI deadline: still merges, nothing dequeued" "0|merge s ok|no" \
   "${rc}|$(events | head -1)|$(grep -q 'mutation(' "${ROOT}/gh.log" && echo yes || echo no)"
 # A group taken apart (a PR ahead failed) after the turn bound has passed: it waits its turn afresh.
-# Seven reads, each a rebuilt group (its 1 s deadline restarts), take it past the 6 s bound.
+# Seven reads, each a rebuilt group (its 0.3 s deadline restarts), take it past the 1.8 s bound.
 qfresh; for i in 1 2 3 4 5 6 7; do qread "${FX}/queue.${i}" OPEN true null "c$(printf '%039d' "${i}")" -; done
 QSTATE=QUEUED qread "${FX}/queue.8" OPEN true null - -; qread "${FX}/queue.9" MERGED false null - "${M}"
-merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.3 SWARM_MERGE_POLL=0.4 "${URL}"
 is "a group taken apart after the turn bound passed: waits its turn afresh, and merges" "0|merge s ok" "${rc}|$(events | head -1)"
 qfresh; QSTATE=QUEUED qread "${FX}/queue" OPEN true "${WAITING}" - -
-merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.3 SWARM_MERGE_POLL=0.3 "${URL}"
 check "waiting its turn past the queue's own bound: a timeout, out of the queue" \
   logged "^merge s unconfirmed (timeout (waiting its turn in the merge queue)): #7 did not merge; auto-merge is off and it is out of the merge queue$"
 # A first read that lags the enqueue is not a dequeue; READ_TRIES reads never queued are.
@@ -1551,23 +1553,24 @@ check "a merge of another head: says so" said "merge: #7 merged at head 2222222,
 check "a merge of another head: no auto-merge or dequeue call" bash -c "! grep -qE 'mutation\(|--disable-auto' '${ROOT}/gh.log'"
 # A timeout: auto-merge off and out of the queue, as the last read showed them.
 qfresh; qread "${FX}/queue" OPEN true "${WAITING}" "${G}" -
-merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.3 SWARM_MERGE_POLL=0.3 "${URL}"
 is "a queue that never merges: exits non-zero" 1 "${rc}"
 check "a queue that never merges: unconfirmed, auto-merge off and out of the queue" \
   logged "^merge s unconfirmed (timeout (in the merge queue)): #7 did not merge; auto-merge is off and it is out of the merge queue$"
 check "a queue that never merges: both calls made" bash -c "grep -q disablePullRequestAutoMerge '${ROOT}/gh.log' && grep -q dequeuePullRequest '${ROOT}/gh.log'"
 qfresh; touch "${FX}/mutation.fail"; qread "${FX}/queue" OPEN true null "${G}" -
-merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+merge SWARM_MERGE_CI_SECONDS=0.3 SWARM_MERGE_POLL=0.3 "${URL}"
 check "a timeout whose dequeue fails: names it, and says to do it by hand" \
   bash -c "grep -qF 'dequeuePullRequest failed (gh api graphql' '${ROOT}/out' && grep -qF 'take it out of the merge queue and turn auto-merge off by hand' '${ROOT}/out'"
-# term_merge <text> — merge in the background, TERM it once gh.log holds <text>, and wait for it.
+# term_merge <text> — merge in the background, TERM it once gh.log holds <text> (then mark it sent,
+# ${FX}/termed), and wait for it.
 term_merge() {
   local mpid
   (cd "${P}" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=1 \
     SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_SECONDS=60 bash "${SWARM}" merge "${URL}" > "${ROOT}/out" 2>&1) &
   mpid=$!
   for _ in $(seq 100); do grep -qF -- "$1" "${ROOT}/gh.log" && break; sleep 0.1; done
-  kill -TERM "${mpid}"; rc=0; wait "${mpid}" || rc=$?
+  kill -TERM "${mpid}"; : > "${FX}/termed"; rc=0; wait "${mpid}" || rc=$?
 }
 # Three failed reads after one that showed auto-merge only: both undone, as GitHub may have queued it since.
 qfresh; qread "${FX}/queue.1" OPEN false "${WAITING}" - -; touch "${FX}/queue.2.fail" "${FX}/queue.3.fail" "${FX}/queue.4.fail"
