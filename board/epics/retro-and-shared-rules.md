@@ -211,3 +211,13 @@ example, p90 of a builder's run under 10 minutes). The options to weigh:
 ### Conductor lanes (added 2026-10-25)
 
 One backlog conductor serialised seven green PRs on 2026-10-24, so the user asked for several conductors per epic or backlog. conductor-lanes (#480) and conductor-lanes-start (#482) were built for 0.27, but #480 drew real multi-lane gaps in each of five review rounds on fable: stories blocked on another lane stranded, no one ending the epic after the last lane, lane tabs left open, notes and watches folded wrongly when the lane count drops, lane reservations racing a failed start, idle-slot metrics merging lanes. Each fix added machinery, and the machinery added gaps. The user took lanes out of 0.27 (2026-10-25) for the HLD to design first. The branches are kept: story/conductor-lanes (6caca7f) and story/conductor-lanes-start (a228cab), both draft PRs. Options to weigh: lanes as designed; a per-PR review owner (the review agent carries its PR to merge) instead of more conductors; or making the single conductor never block on one PR's review.
+
+### The 0.27 retro's design topics (2026-10-25)
+
+The user approved these 0.27 retro outcomes as HLD topics, alongside test speed and conductor lanes above:
+- The retro gate: `merge --release` refuses a release with no retro.
+- The outer loop and memory extraction, including the 40 recurring kinds with no check.
+- The ladder threshold: should `step_up_findings` be 2 instead of 3? The user asked for 2 on 2026-10-25, then left it for this HLD. Decide from flow's review_loops data.
+- Whole-file `touches` caused at least four false clash holds on 2026-10-24. Should /plan-epic write touches as file:part, or should the clash check compare only parts?
+- Silent failures that must reach the lead: a step-up that fails partway (findings-told-sent sat 3.5 hours with no builder), a brief left unsent in the input box (3h42m), and `wait --stall` reading a long `make test` under load as a stall.
+- Cost: one night on the top rung (#480, four rounds at xhigh) used about 6% of the week, and Fable went from 20% to 35% of its own limit. The ladder and top_rung_rounds should weigh that cost.
