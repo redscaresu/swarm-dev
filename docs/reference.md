@@ -163,6 +163,10 @@ and line of code after it is for, so you write it with a co-author.
 Constraints, and a **Your part** line. **Goals** are its **Done when**: checks that could fail,
 because the conductor stops when they hold. **Non-goals** keep the plan from growing.
 
+**Staged epics.** An epic in a staged HLD's Rollout carries `stage: v<x.y.0>`, the release that
+ships it. The lead sets such a draft `active` once the stage before it is tagged, so it skips
+steps 1 to 4. See [Releases](#releases) for when a stage's release is cut.
+
 **Stopping and resuming.** The epic is a file, so nothing is lost if you stop: run `/epic` on its
 own (or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress
 from the file; if there are several, it asks which. With no draft at all, it tells you where the

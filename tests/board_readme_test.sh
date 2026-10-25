@@ -28,4 +28,10 @@ for kind in stories epics hld; do
   fi
   echo "ok   ${board} matches ${template}"
 done
+# The epics README's front-matter block must show stage:, or a staged HLD's epics have no documented field.
+# Goes red if someone drops the stage: line from the block.
+if ! awk '/^```$/{n++} n==1 && /^stage:/{f=1} END{exit !f}' board/epics/README.md; then
+  echo "FAIL board/epics/README.md front-matter block has no stage: line"; exit 1
+fi
+echo "ok   board/epics/README.md documents stage:"
 echo "all passed"
