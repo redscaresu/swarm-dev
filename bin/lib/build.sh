@@ -1115,11 +1115,12 @@ EOF
 }
 
 # clash_rule — when two stories may build at once, and what a conflict with the base costs. Git merges
-# edits to different parts of one file, so only a shared symbol or a bare file holds a story back.
+# edits to different parts of one file, so only the same part (by its first word) or two bare files hold a
+# story back; a bare file does not clash with a part of it.
 clash_rule() {
   cat <<EOF
-Two stories clash only when their \`touches\` name the same \`file:symbol\` in the same repo, or
-when either names the bare file (no \`:symbol\`) of a file the other also names in the same repo.
+Two stories clash only when their \`touches\` name the same file in the same repo and the same first
+word of a part (\`file:part\`), or when both name the bare file (no \`:part\`). A bare file does not clash with a part of it.
 Otherwise both build at once, even in the same file. A builder whose PR conflicts with its base
 merges the base in, resolves it, re-runs the tests and pushes. A conflict never sends a story back
 to \`ready\`: never close a builder over one. When \`swarm.sh watch\` says a PR CONFLICTS, write a
