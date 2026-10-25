@@ -5,6 +5,7 @@ depends_on: []
 touches: [bin/swarm.sh:load_config, bin/swarm.sh:base_for, bin/lib/build.sh:story_brief, bin/lib/build.sh:conduct_brief, bin/lib/build.sh:stack_start, bin/lib/lifecycle.sh:board_pr, tests/removed_test.sh, docs/method.md]
 estimate_lines: 200
 easy: false
+env: [ANTHROPIC_FOUNDRY_RESOURCE, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_DEFAULT_FABLE_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL]  # Foundry until agent_env ships
 ---
 
 # Bring back base_branches and sign_commits; warn on removed keys

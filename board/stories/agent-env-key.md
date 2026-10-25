@@ -5,6 +5,7 @@ depends_on: [config-keys-back]
 touches: [bin/swarm.sh:load_config, bin/lib/agents.sh:reserved_env, bin/lib/agents.sh:agent_cmd, bin/lib/agents.sh:start_agent, bin/lib/agents.sh:resume_agent, docs/reference.md]
 estimate_lines: 200
 easy: false
+env: [ANTHROPIC_FOUNDRY_RESOURCE, ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_DEFAULT_FABLE_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL]  # Foundry until agent_env ships
 ---
 
 # agent_env: names every agent gets, set once per board
