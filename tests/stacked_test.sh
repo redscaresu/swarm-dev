@@ -149,6 +149,19 @@ check "the worktree contains both parents' heads" "yes|yes" \
 rc=0; out="$(run story two)" || rc=$?
 check "story refuses a story whose build exists, saying so, and starts no second builder" "fail|yes|1" \
   "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "two has a build already" "${out}")|$(grep -c '^agent start two ' "${ROOT}/herdr.log")"
+# sign_commits = true: the merge of the second parent passes -S. git signs with a throwaway SSH key
+# here and commit.gpgsign is unset, so only -S can sign it; two's merge above, made with it off, is not signed.
+ssh-keygen -q -t ed25519 -N '' -C stacked-test -f "${ROOT}/signkey"
+merge_signed() { git -C "${ROOT}/svc-wt/$1" cat-file commit HEAD | grep -q '^gpgsig ' && echo signed || echo unsigned; }
+item "${b}" stories/two-signed.md "status: blocked" "kind: code" "repo: svc" "depends_on: [p, q]"
+run unblock >/dev/null || true
+printf '%s\n' "sign_commits = true" > "${p}/.claude/swarm/config"
+GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=gpg.format GIT_CONFIG_VALUE_0=ssh GIT_CONFIG_KEY_1=user.signingkey \
+  GIT_CONFIG_VALUE_1="${ROOT}/signkey" run story two-signed >/dev/null || true
+: > "${p}/.claude/swarm/config"
+check "a stacked start merges its second parent with -S only with sign_commits = true" "merge|signed|merge|unsigned" \
+  "$(git -C "${ROOT}/svc-wt/two-signed" rev-parse -q --verify HEAD^2 >/dev/null && echo merge || echo "no merge")|$(merge_signed two-signed)|$(
+  git -C "${ROOT}/svc-wt/two" rev-parse -q --verify HEAD^2 >/dev/null && echo merge || echo "no merge")|$(merge_signed two)"
 # Three parents, the last conflicting with the second (not the first, which the worktree starts on).
 for s in r3 r1 r2; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "repo: svc"; done
 item "${b}" stories/clash.md "status: blocked" "kind: code" "repo: svc" "depends_on: [r3, r1, r2]"

@@ -65,12 +65,13 @@ project "${p}" "# a comment" "boardd = x"
 check "unknown key names its line" "yes" "$(fails_with 'config:2: unknown key' run "${p}" config)"
 project "${p}" "merge = maybe"
 check "bad value names its line" "yes" "$(fails_with 'config:1: merge must be' run "${p}" config)"
-# Switches that are gone: a line naming one is an unknown key. Each name is split with '' so
-# removed_test.sh, which greps tests/ for them, finds none here.
-for k in pr''_per base''_branches sign''_commits review''_bot keep''_panes finished; do
-  project "${p}" "${k} = true"
-  check "${k} is an unknown key" "yes" "$(fails_with "config:1: unknown key '${k}'" run "${p}" config)"
-done
+# The keys an older swarm-dev read warn and load: removed_test.sh checks them, since it alone may name them.
+check "sign_commits is false by default" "false" "$(project "${p}"; run "${p}" config sign_commits)"
+project "${p}" "sign_commits = true"
+check "sign_commits = true is read" "true" "$(run "${p}" config sign_commits)"
+project "${p}" "sign_commits = yes"
+check "sign_commits refuses anything but true or false" "yes" \
+  "$(fails_with "config:1: sign_commits must be true or false, not 'yes'" run "${p}" config)"
 # lessons_file went with lessons: an old config that sets it still loads, with no error or output.
 project "${p}" "lessons_file = AGENTS.md" "stall_minutes = 45"
 check "a config with lessons_file loads silently" "45" "$(run "${p}" config stall_minutes)"
@@ -289,6 +290,24 @@ check "a changed default on origin is seen, not the cached one" "main" "$(base t
 remote "${ROOT}/dev-default.git" dev main dev
 "${GIT[@]}" clone -q --single-branch --branch dev "${ROOT}/dev-default.git" "${ROOT}/repos/single"
 check "a single-branch clone of origin's default, dev, finds dev" "dev" "$(base single)"
+# base_branches = dev main: dev where origin has it, though origin's default is main; else main.
+remote "${ROOT}/main-dev.git" main main dev
+"${GIT[@]}" clone -q --single-branch --branch main "${ROOT}/main-dev.git" "${ROOT}/repos/main-dev"
+project "${ROOT}/cfg" "base_branches = dev main"
+check "base_branches = dev main picks dev on a repo whose default is main, even from a main-only clone" "dev" "$(base main-dev)"
+check "base_branches = dev main picks main on a repo with no dev" "main" "$(base trunk)"
+# origin has dev, but a stale origin/dev/x ref in the clone stops its fetch: base_for stops, never falling back to main.
+git -C "${ROOT}/repos/main-dev" update-ref -d refs/remotes/origin/dev
+git -C "${ROOT}/repos/main-dev" update-ref refs/remotes/origin/dev/x "$(git -C "${ROOT}/repos/main-dev" rev-parse origin/main)"
+check "a listed branch origin has that will not fetch stops, never taking the next" "yes" \
+  "$(fails_with 'cannot fetch dev' base main-dev)"
+project "${ROOT}/cfg" "base_branches = nope"
+check "a repo with none of base_branches stops, naming the list" "yes" \
+  "$(fails_with 'origin has none of base_branches (nope)' base trunk)"
+project "${ROOT}/cfg" 'base_branches = dev;main'
+check "base_branches refuses what is not branch names" "yes" \
+  "$(fails_with "config:1: base_branches must be branch names" base trunk)"
+project "${ROOT}/cfg"
 
 # --- unblock and finish: a done item counts as finished, and finish deletes the file.
 p="${ROOT}/marked"; b="${p}/docs"

@@ -455,6 +455,26 @@ is "board_dir = .: open prints the PR URL" "${URL}" "$(cat "${ROOT}/out")"
 bpr start q; mkdir -p "${ROOT}/proj-wt/_board-q/epics"; printf -- '---\nstatus: active\n---\n' > "${ROOT}/proj-wt/_board-q/epics/a\"b.md"
 guard_refused q "board_dir = .: an active epic whose name holds a quote" 'board-pr: "epics/a\"b.md" has a quote, backslash, tab or newline in its name; rename it'
 
+# --- sign_commits = true: open's commit passes -S. git signs with a throwaway SSH key here, and
+# commit.gpgsign is off, so only -S can sign it; with sign_commits off the same commit is unsigned.
+ssh-keygen -q -t ed25519 -N '' -C board-pr-test -f "${ROOT}/signkey"
+signed() { git -C "$1" cat-file commit HEAD | grep -q '^gpgsig '; }
+# sign_open <name> — start <name>, change a board file and open it, with signing set up for git.
+sign_open() {
+  rm -f "${ROOT}/prs"; bpr start "$1"; echo "$1" > "${ROOT}/proj-wt/_board-$1/board/stories/a.md"
+  reset_log
+  GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=gpg.format GIT_CONFIG_VALUE_0=ssh GIT_CONFIG_KEY_1=user.signingkey \
+    GIT_CONFIG_VALUE_1="${ROOT}/signkey" GIT_CONFIG_KEY_2=commit.gpgsign GIT_CONFIG_VALUE_2=false bpr open "$1" "Signed edit" "${ROOT}/body.md"
+}
+printf 'board_dir = board\nsign_commits = true\n' > "${P}/.claude/swarm/config"
+sign_open sig
+is "sign_commits = true: open exits 0" 0 "${rc}"
+check "sign_commits = true: open's commit is signed" signed "${ROOT}/proj-wt/_board-sig"
+printf 'board_dir = board\n' > "${P}/.claude/swarm/config"
+sign_open unsig
+is "sign_commits off: open exits 0" 0 "${rc}"
+check "sign_commits off: open's commit is not signed" bash -c "! git -C '${ROOT}/proj-wt/_board-unsig' cat-file commit HEAD | grep -q '^gpgsig '"
+
 # --- The docs send the lead's board edits through it.
 check "method.md § Who does what names swarm.sh board-pr" \
   bash -c "sed -n '/^## Who does what/,/^## /p' '${REPO}/docs/method.md' | grep -q 'swarm.sh board-pr'"

@@ -120,6 +120,8 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 |---|---|---|
 | `board_dir` | `docs` | where the board is, relative to the project unless absolute; a `"` or `\` in it is refused, since init writes it into quoted strings |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
+| `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main`. A repo that has none of them stops the command |
+| `sign_commits` | `false` | `true`: every builder's and conductor's brief tells it to sign each commit and merge with `-S`, and to stop if it cannot; `swarm.sh board-pr`'s commit and a stacked start's merge pass `-S` too |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task (reference.md § Building) |
 | `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building) |
@@ -137,14 +139,12 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: a new or draft epic goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
 
-The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
-`.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
-project need not be a git repo: a board kept in a notes vault works, as long as every story names
-its `repo:`. When the board is not in the story's repo, the builder leaves the story file alone and
-the lead runs `swarm.sh finish <slug>` once the PR merges.
+The project is `$SWARM_PROJECT` if set, else the nearest directory up with `.claude/swarm/config`,
+else the git repo you are in; a worktree resolves to its main checkout. It need not be a git repo: a
+board in a notes vault works if every story names its `repo:`. When the board is not in the story's
+repo, the builder leaves the story file alone and the lead runs `swarm.sh finish <slug>` on merge.
 
 ## Where the rest is
 
-[`reference.md`](reference.md) holds the lead's board PRs and wake, writing an epic, model and effort,
-settings, scoping an epic, building, logs and outcomes, flow and features, the outer loop, merging
-and releases.
+[`reference.md`](reference.md) holds the lead's board PRs and wake, epics, model and effort, settings,
+scoping, building, logs and outcomes, flow and features, the outer loop, merging and releases.
