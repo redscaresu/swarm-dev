@@ -2,6 +2,7 @@
 kind: lead
 status: blocked
 epic: liveness-signals
+after: liveness-signals
 depends_on: [unsent-brief-resend]
 needs: [unsent-brief-resend: the resend pass in bin/lib/lifecycle.sh:wait_lead]
 touches: []

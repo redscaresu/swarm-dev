@@ -16,7 +16,7 @@ Merge after no-agent-alert's core story, which adds one herdr agent list read pe
 Review fixes (critic, codex): runs off no-agent-rule's one herdr list read per poll. An unreadable pane is not a clear input box: retry it on the next poll, and never mark the event checked on a failed read. Submit only when the latest brief was not taken up (no turn started since it was delivered), so an unrelated paste after a finished brief is left alone. Run the humanizer over the prose this story changes.
 
 **Done when:**
-- tests/unsent_brief_test.sh: herdr lists s1 idle, its agent read shows `[Pasted text #1 +40 lines]` in the input box, events.tsv has `story s1`: one wait --lead poll sends exactly one send-keys to s1's pane (stub log) and logs one `resend s1`; the next poll, with no new start or tell line, reads no pane and sends nothing.
+- tests/unsent_brief_test.sh: herdr lists s1 idle, its agent read shows `[Pasted text #1 +40 lines]` in the input box, events.tsv has `story s1`: one wait --lead poll sends exactly one send-keys to s1's pane (stub log) and logs one `resend s1`; the next poll, with no new start or tell line, sends nothing (it may read the pane once, which unsent-brief-marker needs to decide whether to write `.unsent`).
 - False case: s1 idle with an empty box and `> [Pasted text #1 +40 lines]` submitted above it gets no send-keys and no resend line.
 - An agent the list shows working, with the paste in its box, gets no agent read (stub log).
 - After a `tell:findings` line for s1 and a resend, events.tsv still has one tell:findings line for s1, and stall.py's sign_time returns None for the resend line.
