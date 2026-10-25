@@ -164,9 +164,9 @@ Constraints, and a **Your part** line. **Goals** are its **Done when**: checks t
 because the conductor stops when they hold. **Non-goals** keep the plan from growing.
 
 **Staged epics.** An epic in a staged HLD's Rollout carries `stage: v<x.y.0>`, the release that
-ships it. This is the one exception to step 4: a draft epic with both `stage:` and `hld:`, under an
+ships it. This is an exception to step 4: a draft epic with both `stage:` and `hld:`, under an
 HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`, once the tag of the
-previous minor, `v<x.(y-1).0>`, exists. The first stage of an HLD needs no earlier tag. A staged
+previous minor, `v<x.(y-1).0>`, exists. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. A staged
 draft with no `hld:`, or under an HLD without the `epics` grant, still goes through `/epic`. See
 [Releases](#releases) for when a stage's release is cut.
 

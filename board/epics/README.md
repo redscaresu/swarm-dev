@@ -36,8 +36,7 @@ A new or draft epic goes `active` only with `agreed:`, a `parent:`, an `hld:` wh
 
 An epic in a staged HLD's Rollout carries its stage in `stage: v<x.y.0>`. A draft epic with both
 `stage:` and `hld:`, under an HLD that grants `epics`, is set `active` by the lead once the stage
-before it is tagged, meaning the tag of the previous minor, `v<x.(y-1).0>`. The first stage of an
-HLD needs no earlier tag. Such a draft does not go through `/epic`; a staged draft with no `hld:`,
+before it is tagged, meaning the tag of the previous minor, `v<x.(y-1).0>`. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. Such a draft does not go through `/epic`; a staged draft with no `hld:`,
 or under an HLD without the `epics` grant, still does. A stage's release waits until every epic of
 that stage has left the board.
 
