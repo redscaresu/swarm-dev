@@ -172,7 +172,7 @@ by hand.
 - `make test` and `scripts/test.sh` refuse to run under codex, where `CODEX_SANDBOX` or
   `CODEX_THREAD_ID` is set.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
-- To cap how many `make test` runs go at once on your machine, across all projects, write a whole number to `~/.swarm/test-cap`. There is no cap by default: no file, an empty file and 0 all mean none. A run past the cap prints that it is waiting and the PIDs of the runs that hold the slots, then starts when one of them ends. Each run holds a slot in `~/.swarm/test-slots/` while it goes. A `make test` that a test starts inside another run takes no slot.
+- To cap how many `make test` runs go at once on your machine, across all projects, write a whole number to `~/.swarm/test-cap`. There is no cap by default: no file, an empty file and 0 all mean none. Each run holds a slot in `~/.swarm/test-slots/` while it goes. A run past the cap prints that it is waiting, with the PID and slot of each run ahead of it, and starts when one of them ends. The wait has no time limit: a run that is stopped (Ctrl-Z) or hung keeps its slot. To free a slot by hand, `rm -r` the slot path the message names. A `make test` that a test starts inside another run takes no slot.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
   see [reference.md § Building](docs/reference.md#building).
 

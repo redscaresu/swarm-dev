@@ -145,10 +145,26 @@ if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --path-format=absolu
   runs_log="$(dirname "${common}")/.swarm/test-runs.tsv"
 fi
 export TEST_RUNS_LOG=""
-# A nested run, one a test started: TEST_SH_PID, which each run exports for its jobs, names a live run.
-nested=""
-[[ -n "${TEST_SH_PID:-}" ]] && kill -0 "${TEST_SH_PID}" 2>/dev/null && nested=1
-export TEST_SH_PID=$$
+# ps_words <pid> <field>... — ps's fields for that process, one space between words, the same
+# whatever the caller's TZ; started <pid> — when it started.
+ps_words() {
+  local p="$1" f
+  local -a w
+  shift
+  f="$(IFS=,; echo "$*")"
+  read -r -a w <<< "$(TZ=UTC LC_ALL=C ps -ww -o "${f}" -p "${p}" 2>/dev/null)"
+  echo "${w[*]+"${w[*]}"}"
+}
+started() { ps_words "$1" lstart=; }
+# A nested run, one a test started: TEST_SH_RUN, which each run exports for its jobs as its PID and
+# start time, names a run still going: alive, no zombie, and started then, so neither a gone run nor
+# its PID taken since makes a run nested.
+nested="" me="$(started $$)"
+if [[ "${TEST_SH_RUN:-}" == [0-9]*" "* ]]; then
+  outer="$(ps_words "${TEST_SH_RUN%% *}" stat= lstart=)"
+  [[ -n "${outer}" && "${outer}" != Z* && "${outer#* }" == "${TEST_SH_RUN#* }" ]] && nested=1
+fi
+export TEST_SH_RUN="$$ ${me}"
 marks="$(dirname "${runs_log:-.}")/test-runs.d"
 if [[ "$(printf '%s\n' "${files[@]+"${files[@]}"}" | LC_ALL=C sort)" == "$(printf '%s\n' tests/*_test.sh | LC_ALL=C sort)" ]]; then
   filter=all
@@ -163,18 +179,23 @@ trap 'exit 143' TERM
 
 # The cap: ~/.swarm/test-cap, a whole number N above 0, lets at most N runs go at once on this
 # machine, whatever their project; absent, empty or 0, there is no cap and nothing is made under
-# ~/.swarm, and anything else stops the run. A run takes one of the slots ~/.swarm/test-slots/1 to
-# N: a directory holding one file, named by the run's PID and holding the run's start time, built
-# aside as .new.<pid> and renamed into place. The rename fails while the slot holds anything, so no
-# two runs hold one slot and no slot is ever seen without its PID. A slot is held while its PID is
-# alive and started then; a PID that has gone, or that another process has taken since, holds
-# nothing, and what such a slot holds (hidden files too) is removed by name, so a run that looked
-# late never removes a slot another run took since. Only then does a run start perl for the rename. While every slot is held the run
-# waits, polling, and names the holders and their slots whenever they change. A slot that is no
-# directory this run can read and write, or that it cannot clear, stops the run. A nested run takes no slot: a test that runs make test would
+# ~/.swarm, and anything else, or a cap file it cannot read, stops the run. A run takes one of the
+# slots ~/.swarm/test-slots/1 to N: a directory holding one file, named by the run's PID and holding
+# the run's start time, built aside as .new.<pid> and renamed into place. The rename fails while the
+# slot holds anything, so no two runs hold one slot and no slot is ever seen without its PID. A slot
+# is held while its PID is alive and started then; a PID that has gone (or is a zombie), or that
+# another process has taken since, holds nothing, and what such a slot holds (hidden files too) is removed by name, so a
+# run that looked late never removes a slot another run took since. Only then does a run start perl
+# for the rename. While every slot is held the run waits, polling, and names the holders and their
+# slots whenever they change. The wait has no time limit: a holder that is stopped (Ctrl-Z) or hung
+# keeps its slot until it ends or someone removes the slot by hand (rm -r <slot>, the path the
+# message names). A slot that is no directory this run can read and write, or that it cannot clear,
+# stops the run; so does a take with no perl to run, or no ps to read start times with. A take that keeps failing with a slot free says
+# once what fails, then keeps trying. A nested run takes no slot: a test that runs make test would
 # wait on the run it is part of. cleanup frees the slot.
 cap_file="${HOME:-}/.swarm/test-cap" slots="${HOME:-}/.swarm/test-slots" cap="" held=0 holders=""
 CAP_POLL=1   # seconds between looks at the slots while every one is held
+CAP_STUCK=5  # passes in a row that fail with a slot free before the run says what fails
 # free_slot — remove this run's PID from whatever slot holds it, and the slot it built aside.
 # shellcheck disable=SC2317,SC2329 # invoked by the traps
 free_slot() {
@@ -185,24 +206,27 @@ free_slot() {
   done
   rm -rf "${slots}/.new.$$"
 }
-# started <pid> — when that process started, as ps prints it, the same whatever the caller's TZ.
-started() { TZ=UTC LC_ALL=C ps -ww -o lstart= -p "$1" 2>/dev/null; }
 # holder <entry> — 0 when a slot entry names the run that holds the slot: a file named by a live PID
 # (not this run's: it holds no slot yet) and holding that process's start time, as the run wrote it
-# when it took the slot. A PID another process has taken since started later, and holds nothing.
+# when it took the slot. A PID another process has taken since started later, and holds nothing; nor
+# does a run that has died and not been reaped (a zombie, state Z). A live PID whose start time this
+# run cannot read, from the file or from ps, still holds, so a failed read never frees a slot; once
+# that PID is gone, kill -0 frees it.
 holder() {
-  local p="${1##*/}" want
+  local p="${1##*/}" want now
   [[ "${p}" =~ ^[0-9]+$ && "${p}" != "$$" && -f "$1" ]] && kill -0 "${p}" 2>/dev/null || return 1
-  want="$(cat "$1" 2>/dev/null)"
-  [[ -n "${want}" && "${want}" == "$(started "${p}")" ]]
+  if ! want="$(cat "$1" 2>/dev/null)" || [[ -z "${want}" ]]; then return 0; fi
+  now="$(ps_words "${p}" stat= lstart=)"
+  [[ -n "${now}" ]] || return 0
+  [[ "${now}" != Z* && "${now#* }" == "${want}" ]]
 }
 # take_slot — move this run's slot, built aside, into the first slot no live run holds, once what a
 # gone run left there is removed; else fail, held and holders saying how many runs hold the slots,
-# and which.
+# and which, and failed the last slot it could not take and why.
 take_slot() {
   local i s e live new="${slots}/.new.$$"
   local -a gone
-  held=0 holders=""
+  held=0 holders="" failed=""
   for ((i = 1; i <= cap; i++)); do
     s="${slots}/${i}"
     if [[ -L "${s}" ]] || [[ -e "${s}" && ! ( -d "${s}" && -r "${s}" && -w "${s}" && -x "${s}" ) ]]; then
@@ -221,16 +245,23 @@ take_slot() {
       exit 1
     }
     rename_dir "${new}" "${s}" && return 0
+    (($? != 127)) || { echo "test.sh: the cap needs perl to take a slot: ${take_err}" >&2; exit 1; }
+    failed="${s}: ${take_err:-the rename failed}"
   done
   return 1
 }
-# rename_dir <dir> <slot> — rename(2), which takes <slot>'s place only while it is gone or empty;
-# mv would move <dir> into a <slot> that is there.
-rename_dir() { perl -e 'rename($ARGV[0], $ARGV[1]) or exit 1' "$1" "$2" 2>/dev/null; }
-[[ -n "${nested}" || -z "${HOME:-}" || ! -e "${cap_file}" ]] || cap="$(< "${cap_file}")" || exit 1
+# rename_dir <dir> <slot> — rename(2), which takes <slot>'s place only while it is gone or empty
+# (mv would move <dir> into a <slot> that is there); take_err holds what failed, if it did.
+rename_dir() { take_err="$(perl -e 'rename($ARGV[0], $ARGV[1]) or die "$!\n"' "$1" "$2" 2>&1)"; }
+if [[ -z "${nested}" && -n "${HOME:-}" ]] && [[ -e "${cap_file}" || -L "${cap_file}" ]]; then
+  if ! [[ -f "${cap_file}" && -r "${cap_file}" ]] || ! cap="$(cat "${cap_file}" 2>/dev/null)"; then
+    echo "test.sh: cannot read ${cap_file}, which must be a file holding a whole number of runs; fix it or remove it" >&2
+    exit 1
+  fi
+fi
 # A number past bash's integers wraps, so it must come back from arithmetic as written.
 if ! [[ "${cap}" =~ ^(0|[1-9][0-9]*)?$ ]] || [[ -n "${cap}" && "$((cap))" != "${cap}" ]]; then
-  echo "test.sh: ${cap_file} holds '${cap}', not a whole number of runs (0 or empty for no cap)" >&2
+  echo "test.sh: ${cap_file} holds '${cap}', not a whole number of runs (0 or empty for no cap); fix it or remove it" >&2
   exit 1
 fi
 if [[ "${cap:-0}" -gt 0 ]]; then
@@ -240,14 +271,19 @@ if [[ "${cap:-0}" -gt 0 ]]; then
     p="${e##*/.new.}"
     [[ -e "${e}" && "${p}" != "$$" ]] && ! kill -0 "${p}" 2>/dev/null && rm -rf "${e}"
   done
-  mkdir -p "${slots}/.new.$$" && started $$ > "${slots}/.new.$$/$$" || exit 1
-  # A pass that fails with fewer than cap slots held lost a race to a run taking or freeing one: the
-  # next pass looks again, and says nothing.
-  said=""
+  [[ -n "${me}" ]] || { echo "test.sh: the cap needs ps to tell runs apart, and ps gave no start time for this run" >&2; exit 1; }
+  mkdir -p "${slots}/.new.$$" && echo "${me}" > "${slots}/.new.$$/$$" || exit 1
+  # A pass that fails with fewer than cap slots held most often lost a race to a run taking or
+  # freeing one, and the next pass looks again. CAP_STUCK of them in a row are more likely a slot that
+  # will not take: the run says once what fails, and keeps trying, as a race is still possible.
+  said="" short=0
   until take_slot; do
-    if ((held == cap)) && [[ "${holders}" != "${said}" ]]; then
-      echo "test.sh: waiting for a slot, as ${cap_file} allows ${cap} run(s) at once: ${holders}. A slot frees when its run ends; to free one by hand, rm -r it." >&2
+    if ((held == cap)); then
+      short=0
+      [[ "${holders}" == "${said}" ]] || echo "test.sh: waiting for a slot, as ${cap_file} allows ${cap} run(s) at once: ${holders}. A slot frees when its run ends; the wait has no time limit, so to free one by hand, rm -r it." >&2
       said="${holders}"
+    elif ((++short == CAP_STUCK)); then
+      echo "test.sh: cannot take a slot though live runs hold only ${held} of ${cap}: ${failed}. Still trying; if it does not clear, remove that slot by hand: rm -r it." >&2
     fi
     sleep "${CAP_POLL}"
   done
