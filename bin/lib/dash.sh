@@ -199,7 +199,8 @@ dash_day() {
 # `status` lists as working; the cost against flow's cost section since today with no calling
 # session (dash leaves it out), read just before and just after the frame, so spend in between
 # agrees; every item flow's lead_queue holds open, named in needs you or the lead's queue (an
-# escalated or held story only with lead = session, the only time dash draws it); the PRs, the
+# escalated or held story only with lead = session, the only time dash draws it; a no-agent item only
+# when status read herdr's agent list); the PRs, the
 # stories only you or the lead can run (+N more counted) and the agents waiting on a prompt that
 # status lists, in needs you and the lead's queue; next against `next`; the epics waiting on their
 # depends_on against epic_holding_deps, the rule next plans by (next prints one step, so it cannot
@@ -253,9 +254,13 @@ dash_check() {
 
   # A section that fails is reported, never read as an empty one.
   x="$(flow_sections 0000-00-00 9999-12-30 "" "" "" lead_queue 2>/dev/null)" || dash_unread "lead's queue" "flow's lead_queue"
+  # Both of its tables: the queue's (5 fields) and the no-agent items' (6), each a day's row with its
+  # open items last. A no-agent item only when status read herdr's agent list: dash draws no-agent rows
+  # from that list, so without one it has none to show.
+  v=""; [[ -z "${st}" || "${st}" == "Agents: not inside herdr"* || "${st}" == *"(herdr gave no agent list)"* ]] || v=1
   # shellcheck disable=SC2154 # assigned in another file
-  want="$(awk -F'\t' -v lead="${CFG_lead}" 'NR > 2 && NF == 5 && $5 != "-" {
-      n = split($5, a, ","); for (i = 1; i <= n; i++) if (lead == "session" || a[i] !~ /^(escalated|held):/) print a[i] }' <<< "${x}" | dash_words)"
+  want="$(awk -F'\t' -v lead="${CFG_lead}" -v herdr="${v}" '$1 ~ /^[0-9]/ && (NF == 5 || NF == 6) && $NF != "-" {
+      n = split($NF, a, ","); for (i = 1; i <= n; i++) if ((lead == "session" || a[i] !~ /^(escalated|held):/) && (herdr || NF == 5)) print a[i] }' <<< "${x}" | dash_words)"
   need="$(dash_box "needs you" "${frame}")"
   boxes="${need}"$'\n'"$(dash_box "lead's queue" "${frame}")"
   # The PRs the merge rows show, as <repo>#<n>: by that ref, or by URL when gh did not answer. A held PR
@@ -264,11 +269,15 @@ dash_check() {
   drawn="$( { sed -n 's/^│ [^ ]* merge \([^ ]*#[0-9][0-9]*\) .*/\1/p' <<< "${x}"; dash_prs <<< "${x}"; } | dash_words)"
   got=""
   for x in ${want}; do
-    # Each kind has its own row: merge, review for a kept story, or decide for an escalated or held
-    # story, which dash draws as a merge row once it is in review. A merge item counts by its slug or by
-    # any PR status lists for it.
-    case "${x%%:*}" in merge) v=merge ;; kept) v="review kept story" ;; *) v="(merge|decide escalated story)" ;; esac
-    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: a row's verb or an alternation
+    # Each kind has its own row: merge, review for a kept story, no agent on story for a no-agent item,
+    # the wait --lead line as it is for a failed step-up (its slug before a comma), or decide for an
+    # escalated or held story, which dash draws as a merge row once it is in review. A merge item counts
+    # by its slug or by any PR status lists for it.
+    case "${x%%:*}" in
+      merge) v=merge ;; kept) v="review kept story" ;; no-agent) v="no agent on story" ;;
+      step-up-failed) v="step-up failed:" ;; *) v="(merge|decide escalated story)" ;;
+    esac
+    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" | tr ',' ' ' || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: a row's verb or an alternation
     [[ "${x%%:*}" == merge ]] || continue
     for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do
       if [[ " ${drawn} " == *" ${f} "* ]]; then got+=" ${x}"; break; fi

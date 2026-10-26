@@ -6,9 +6,9 @@
 # epic's conductor working. Then each of dash-three-defects' fixes reverted in a copy of bin/ (the
 # working count, the failed workspace list, the calling pane's cost, the waiting epic), a status that
 # lists one more working agent, a next that fails, a merge row gone while an answer row names its
-# story, a kept story's row gone, and flow's cost unreadable, each make --check exit 1 naming the
-# field; a frame dash cannot draw is a frame line for each project. --check refuses --watch, and tells
-# two projects with one basename apart.
+# story, a kept story's row gone, a no-agent story's row gone, and flow's cost unreadable, each make
+# --check exit 1 naming the field; a frame dash cannot draw is a frame line for each project. --check
+# refuses --watch, and tells two projects with one basename apart.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -104,9 +104,14 @@ item "${B}" stories/b-kept.md "Kept" "status: review" "kind: code" "kept: 2026-1
   printf '%s\tescalated\tb-esc2\tw2:p1\tok\n' "$(at 38)"; printf '%s\treview\tb-esc2\tw2:p1\tok\n' "$(at 37)"
   printf '%s\tkept\tb-kept\tw2:p1\tok (https://github.com/o/bravo/pull/94; not reviewed)\n' "$(at 36)"
   printf '%s\tclose\tb-kept\tw2:p1\tok\n' "$(at 36)"; } >> "${B}/.swarm/events.tsv"
+# A started story whose builder pane went with no close line: the poll's no-agent line (no wake yet)
+# puts no-agent:b-gone in lead_queue's no-agent table, which dash draws as a no agent on story row.
+item "${B}" stories/b-gone.md "Gone" "status: ready" "kind: code"
+{ printf '%s\tstory\tb-gone\tw2:p1\tok\n' "$(at 35)"; printf '%s\tno-agent\tb-gone\tw2:p1\tok\n' "$(at 34)"; } >> "${B}/.swarm/events.tsv"
 q="$(sw "${B}" flow | sed -n '/^## lead_queue$/,/^## /p')"
-queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "escalated:b-esc2" "${q}" && has "kept:b-kept" "${q}"; }
-check "bravo: lead_queue holds the held story and its epic, b-esc2 as escalated and b-kept as kept" queued
+queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "escalated:b-esc2" "${q}" && has "kept:b-kept" "${q}" \
+  && grep -qE $'^[0-9-]+\t1\t.*\tno-agent:b-gone$' <<< "${q}"; }
+check "bravo: lead_queue holds the held story and its epic, b-esc2 as escalated, b-kept as kept and b-gone as no-agent" queued
 fb="$(DASH_W=100 sw "${B}" dash)"
 check "bravo: the lead story's row says waits on" has "deploy waits on DNS" "${fb}"
 check "bravo: the after-only epic waits on the lead" grep -qE 'bravo-after .*after: b-after waits on the lead' <<< "${fb}"
@@ -117,8 +122,9 @@ check "bravo: dash cuts the long epic's name" grep -qE '⏸ bravo-an-epic-name-t
 check "bravo: dash shows b-new's merge by its URL" has "merge b-new: https://github.com/o/bravo/pull/99" "${fb}"
 check "bravo: dash shows b-fix's prompt with no reason" has "answer b-fix: " "${fb}"
 check "bravo: b-kept has a review row" grep -qE '! review kept story b-kept: ' <<< "${fb}"
+check "bravo: b-gone has a no agent on story row" grep -qE '! no agent on story b-gone' <<< "${fb}"
 out="$(sw "${B}" dash --check)" && rc=0 || rc=$?
-check "with a cut epic name, PRs by URL, held or wrapped, no prompt reason and a kept story, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+check "with a cut epic name, PRs by URL, held or wrapped, no prompt reason, a kept story and an open no-agent item, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
 
 # With lead = off, an escalated lead story is in flow's lead_queue but dash draws no row for it, as
 # it draws none for status.
@@ -226,6 +232,9 @@ check "with b-fix's merge row gone but its answer row kept, --check names the le
   env SWARM_PROJECT="${B}" "${M}" dash --check
 check "mutant: a kept story's row is never drawn" mutant keptrow lib/dash_render.py 's/add(lq, bang + \[(f"review kept story /add([], bang + [(f"review kept story /'
 check "with b-kept's row gone, --check names the lead's queue" names "${B}" "lead's queue" \
+  env SWARM_PROJECT="${B}" "${M}" dash --check
+check "mutant: a no-agent story's row is never drawn" mutant noagentrow lib/dash_render.py 's/add(lq, bang + \[(f"no agent on story /add([], bang + [(f"no agent on story /'
+check "with b-gone's row gone, --check names the lead's queue" names "${B}" "lead's queue" \
   env SWARM_PROJECT="${B}" "${M}" dash --check
 check "mutant: dash_render raises" mutant raise lib/dash_render.py '1s/^/raise RuntimeError("boom"); /'
 out="$(cd / && "${M}" dash --check --project "${A}" --project "${B}")" && rc=0 || rc=$?
