@@ -275,7 +275,9 @@ Repeat until a step below says stop:
      Then go back to 1.
    - `release`: the base has changes since the last release tag (`next`'s why names both), so cut
      a release. A stage release is a minor: cut it only when `next` prints `release v<S>`, and make
-     `<new>` that number without the `v` (`release v0.28.0` gives 0.28.0). While `next` prints a
+     `<new>` that number without the `v` (`release v0.28.0` gives 0.28.0). For
+     `release v<x.y.z+1> (patch)`, `<new>` is likewise the number alone, without the `v` and without
+     ` (patch)` (0.28.1, never `v0.28.1 (patch)`). While `next` prints a
      `release-held:` line, cut no minor: cut only the patch `next` names, if it names one. `merge --release` does not read the hold, so only this step keeps
      it. If a PR from a `release/v<new>` branch is open, use it. Otherwise, ship the docs
      first: list the behaviour changes since the tag (`git log v<version>..origin/<base>`), and unless docs

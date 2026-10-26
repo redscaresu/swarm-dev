@@ -1947,7 +1947,11 @@ check "commands/swarm.md's release arm sets <new> from the version next named, w
   grep -qF 'make `<new>` that number without the `v`' <<< "${arm}"
 # shellcheck disable=SC2016 # the backticks are markdown
 check "commands/swarm.md's release arm bumps to the version next named, a minor only on a bare release" \
-  grep -qF 'to `<new>`: the version `next` named, either the stage' <<< "${arm}"
+  bash -c 'grep -qF "to \`<new>\`: the version \`next\` named, either the stage" <<< "$1" &&
+    grep -qF "Only when \`next\` printed a bare \`release\`, bump to the next minor version" <<< "$1"' _ "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm makes <new> the number alone for a patch step too" \
+  grep -qF 'without the `v` and without ` (patch)`' <<< "${arm}"
 # shellcheck disable=SC2016 # the backticks are markdown
 check "commands/swarm.md's release arm cuts only on release v<S>" \
   grep -qF 'cut it only when `next` prints `release v<S>`' <<< "${arm}"
