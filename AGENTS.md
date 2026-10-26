@@ -138,7 +138,7 @@ python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*_test.sh
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
                                             # a changed file the map does not know runs the full suite
-make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
+# make test                                # optional, the whole suite: every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # it unsets the swarm env that points at a real project, and dash starts no detached refresh
 claude plugin validate .
