@@ -91,6 +91,7 @@ build_on() {
   rm -f "${P}/.swarm/events.tsv" "${P}/.swarm/briefs/s1.step-up"; : > "${ROOT}/herdr.log"
 }
 marker() { if [[ -e "${P}/.swarm/briefs/s1.step-up" ]]; then echo kept; else echo gone; fi; }
+failed_lines() { awk -F'\t' '$2 == "step-up:failed" { print $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null | paste -sd, -; }
 newest() { awk -F'\t' '$3 == "s1" { l = $2 " " $5 } END { print l }' "${P}/.swarm/agents.tsv"; }
 # reread_at — the clock when rung_late looked the new builder up (the first list after a prompt).
 reread_at() { awk '/^agent prompt/ { p = 1 } p && /^list at / { print $3; exit }' "${ROOT}/herdr.log"; }
@@ -128,12 +129,14 @@ out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
 check "a rung blocked on a question before its brief went is closed at once, never read again" \
   "1|yes|no||2|kept|code opus" \
   "${rc}|$(has "(agent_blocked)" "${out}")|$(grep -qF "${SAID}" <<< "${out}" && echo yes || echo no)|$(escalate)|$(closes)|$(marker)|$(newest)"
+check "and logs an ok step-up:failed line for the start that failed" "s1 ok (start failed)" "$(failed_lines)"
 
 build_on opus never hiccup
 out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
 check "a rung herdr gives no status for during the re-read keeps its pane and agents.tsv line, and says to look before resuming" \
   "1|yes|yes|yes||1|kept|escalate fable" \
   "${rc}|$(has "s1's fable builder: herdr gave no status for it" "${out}")|$(has "its pane is kept: look at it (herdr agent read" "${out}")|$(has "step-up --resume s1" "${out}")|$(escalate)|$(closes)|$(marker)|$(newest)"
+check "and logs an ok step-up:failed line for a start herdr could not confirm" "s1 ok (start unclear)" "$(failed_lines)"
 
 build_on opus never
 out="$(run step-up s1 stalled)" && rc=0 || rc=$?

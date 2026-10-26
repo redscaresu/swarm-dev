@@ -106,6 +106,8 @@ findings_tells() { printf '2026-10-18T10:0%s:00Z\ttell:findings\ts1\tw:1\tok\n' 
 heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
 attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
 escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+# failed_lines — the outcomes of s1's step-up:failed events.tsv lines, comma-separated.
+failed_lines() { awk -F'\t' '$2 == "step-up:failed" && $3 == "s1" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 
 for ladder in sonnet,opus,fable ""; do
   want="ok (no-pr: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""
@@ -231,6 +233,9 @@ for ladder in sonnet,opus,fable ""; do
     fresh "${ladder}" idle; touch "${ROOT}/startfail"; out="$(run close s1)" && rc=0 || rc=$?
     check "a step-up whose start fails stops the close, counting and clearing nothing" "1|yes|yes||yes|" \
       "${rc}|$(grep -q '^step-up failed: s1' <<< "${out}" && echo yes)|$([[ -f "${P}/.swarm/briefs/s1.step-up" ]] && echo yes)|$(attempts)|$([[ -d "${WT}" ]] && echo yes)|$(escalates)"
+    check "it logs one ok step-up:failed line, naming the failed start, for the lead's queue and flow" "ok (start failed)" "$(failed_lines)"
+    check "it says wait --lead tells the lead and to leave s1 alone, and the close says the same" "yes|yes|no" \
+      "$(grep -qxF "step-up failed: s1 stopped after its builder was closed. wait --lead tells the lead, whose exit is swarm.sh step-up --resume s1 once the cause is fixed; leave s1 alone: do not close, retry, tell or list it" <<< "${out}" && echo yes)|$(grep -qF "close: s1's step-up failed partway, after its builder was closed, so nothing more was closed or counted; wait --lead tells the lead, so leave s1 alone" <<< "${out}" && echo yes)|$(grep -qF 'list it for the lead' <<< "${out}" && echo yes || echo no)"
     rm -f "${ROOT}/startfail"
     # That build is not tried again: with its builder back, its third findings are sent as usual.
     echo "s1 w:1" > "${ROOT}/agents"; echo "w:1 s1" > "${P}/.swarm/state/s1"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
@@ -253,11 +258,23 @@ for ladder in sonnet,opus,fable ""; do
     fresh "${ladder}" idle; touch "${ROOT}/startfail"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
     check "a tell whose step-up fails partway is not sent, and says so" "1|yes|no" \
       "${rc}|$(grep -q 'its step-up failed partway' <<< "${out}" && echo yes)|$(grep -q 'told s1' <<< "${out}" && echo yes || echo no)"
+    check "the tell says wait --lead tells the lead, and to leave s1 alone" "yes" \
+      "$(grep -qF "tell: s1 was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone" <<< "${out}" && echo yes)"
     rm -f "${ROOT}/startfail"
     # Its resume writes the brief again with the tell's findings, though the tell's file is gone.
     mv "${ROOT}/f.md" "${ROOT}/f.keep"; out="$(run step-up --resume s1)" || true; mv "${ROOT}/f.keep" "${ROOT}/f.md"
     check "a resumed step-up of a tell still pastes its findings" "ok (findings-3: sonnet -> opus)|yes|no" \
       "$(escalates)|$(grep -qx 'fix it' "${P}/.swarm/briefs/s1.md" && echo yes)|$([[ -e "${P}/.swarm/briefs/s1.findings.md" ]] && echo yes || echo no)"
+    # Any other stop after the builder closed (here the brief cannot be written: a directory holds its
+    # path) is logged by step_up_failed itself, with the exit status.
+    fresh "${ladder}" idle; mkdir -p "${P}/.swarm/briefs/s1.md"; out="$(run close s1)" && rc=0 || rc=$?
+    check "a step-up that stops after the close for any other reason logs its ok step-up:failed line too" "1|yes|ok (exit 1)|yes" \
+      "${rc}|$(grep -q '^step-up failed: s1' <<< "${out}" && echo yes)|$(failed_lines)|$([[ -f "${P}/.swarm/briefs/s1.step-up" ]] && echo yes)"
+    # So is one run by hand, and its resume: each logs its line and keeps its own exit status.
+    fresh "${ladder}" idle; mkdir -p "${P}/.swarm/briefs/s1.md"; out="$(run step-up s1 stalled)" && rc=0 || rc=$?
+    out2="$(run step-up --resume s1)" && rc2=0 || rc2=$?
+    check "a step-up or resume run by hand that stops after the close for any other reason logs its line too" "1|1|ok (exit 1),ok (exit 1)|no" \
+      "${rc}|${rc2}|$(failed_lines)|$(grep -q '^step-up failed:' <<< "${out}${out2}" && echo yes || echo no)"
     # A step-up that fails before it closes anything, with a status of its own (here git exits 128: the
     # worktree is no longer a git checkout), is a refusal: the close goes on and counts the attempt.
     fresh "${ladder}" idle; rm -f "${WT}/.git"

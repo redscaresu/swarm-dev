@@ -125,7 +125,11 @@ Repeat until a step below says stop:
      `merge = agent`. Before that merge, run `swarm.sh wait-pr <PR URL>` in the background and
      merge only once it exits 0; while it waits, the line stays quiet, and it comes back if the
      checks go red. A hold only answers the line; if no agent is back by the next poll, it
-     comes back. Then start
+     comes back. A `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a
+     step-up closed the story's builder and then could not start the next model's. Its conductor
+     leaves the story alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says
+     why. Fix that cause, then run the exit. With no such line, the step-up was killed partway:
+     run the exit. If you cannot fix the cause, tell the user. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs

@@ -96,7 +96,9 @@ add() { printf '2026-10-01\tcode\tother-epic\tclaude\topus\thigh\tsess-other\n' 
 if mkdir "$log.lock" 2>/dev/null; then add; exit 0; fi
 ( i=0; until mkdir "$log.lock" 2>/dev/null; do i=$((i + 1)); [ "$i" -lt 100 ] || exit 1; sleep 0.1; done; add ) </dev/null >/dev/null 2>&1 &
 EOF
-chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh" "${STUB_BIN}/awk"
+# mktemp: the real one, except that a bare mktemp (start_rung's) fails while ${ROOT}/mktempfail exists.
+printf '#!/bin/sh\n[ $# -gt 0 ] || [ ! -e "%s/mktempfail" ] || exit 1\nexec %s "$@"\n' "${ROOT}" "$(command -v mktemp)" > "${STUB_BIN}/mktemp"
+chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh" "${STUB_BIN}/awk" "${STUB_BIN}/mktemp"
 
 # A project whose board is in its repo, with story s1 stacked on p1 (whose PR is open) and started
 # on sonnet: its worktree holds a commit (with a Markdown file holding a ``` fence), an untracked
@@ -130,6 +132,8 @@ run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH
 escalates() { grep -c $'\tescalate\t' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 starts() { grep -c '^agent start' "${ROOT}/herdr.log" 2>/dev/null || true; }
 newest() { awk -F'\t' -v n="$1" '$3 == n { l = $2 " " $5 " " $6 } END { print l }' "${P}/.swarm/agents.tsv"; }
+# failed_lines <slug> — the outcomes of <slug>'s step-up:failed events.tsv lines, comma-separated.
+failed_lines() { awk -F'\t' -v s="$1" '$2 == "step-up:failed" && $3 == s { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 # attempts — s1's attempts: as swarm.sh reads it (board.sh's get_fm: its state file, then its file).
 # shellcheck source=/dev/null
 attempts() { (export BOARD="${P}/docs" PROJECT_DIR="${P}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${BOARD}/stories/s1.md" attempts) 2>/dev/null || true; }
@@ -179,6 +183,10 @@ brief="$(cat "${P}/.swarm/briefs/s1.md")"
 check "a start that fails stops at the failing step, logs no escalation and names step-up --resume" "1|yes|yes|1" \
   "${rc}|$(has "herdr could not open a pane" "${out}")|$(has "the fable builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume s1" "${out}")|$(escalates)"
 check "and never carries on to a later step with no pane" "yes" "$(lacks "did not take the agent's environment" "${out}")"
+check "it logs an ok step-up:failed line naming the failed start" "ok (start failed)" "$(failed_lines s1)"
+mpid="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"
+check "its marker keeps the rung on its first line, and the pid of the step-up, now gone, on a pid line" "ci-red-2 opus fable escalate|gone" \
+  "$(head -1 "${P}/.swarm/briefs/s1.step-up")|$([[ "${mpid}" =~ ^[0-9]+$ ]] && ! kill -0 "${mpid}" 2>/dev/null && echo gone)"
 check "a story whose parents' PRs are no longer open has a diff from its merge-base with origin/main, though a stale origin/story/p1 still resolves" "yes|yes|yes" \
   "$(has "+PARENT-WORK" "${brief}")|$(lacks MAIN-ONLY "${brief}")|$(lacks "Merge after" "${brief}")"
 check "findings of an older head are not pasted as open, and the brief says why" "yes|yes" \
@@ -186,11 +194,16 @@ check "findings of an older head are not pasted as open, and the brief says why"
 sed -i.bak 's/^kind: code$/kind: lead/' "${P}/docs/stories/s1.md"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume of a story made kind: lead since refuses, starting nothing" "1|yes|1" "${rc}|$(has "s1 is kind: lead, which no agent builds" "${out}")|$(escalates)"
+check "a resume writes its own pid on the marker before its checks, so the lead's poll reads it as under way" "yes" \
+  "$(m="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"; [[ "${m}" =~ ^[0-9]+$ && "${m}" != "${mpid}" ]] && echo yes)"
 mv "${P}/docs/stories/s1.md.bak" "${P}/docs/stories/s1.md"
 rm "${ROOT}/tabfail"; touch "${ROOT}/promptfail" "${ROOT}/startghost"
 out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume whose agent is gone before its brief is taken up keeps the rung to resume again, and takes back the agents.tsv line it wrote" "1|yes|1|code opus high" \
   "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(escalates)|$(newest s1)"
+check "each resume writes its own pid on the marker and logs its own step-up:failed line, a refused one with the refusal" \
+  "yes|ok (start failed),ok (step-up: s1 is kind: lead, which no agent builds; nothing was closed),ok (start failed)" \
+  "$(m="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"; [[ "${m}" =~ ^[0-9]+$ && "${m}" != "${mpid}" ]] && echo yes)|$(failed_lines s1)"
 rm "${ROOT}/startghost"
 c="$(grep -c '^tab close' "${ROOT}/herdr.log")"
 echo "${P}/.swarm/agents.tsv" > "${ROOT}/race"
@@ -266,6 +279,18 @@ out="$(run step-up --resume w1)" && rc=0 || rc=$?
 check "an origin whose default branch cannot be read stops it too, with the rung kept to resume" "1|yes|${n}|kept" \
   "${rc}|$(has "origin's default branch could not be read (see above); once it can, run swarm.sh step-up --resume w1" "${out}")|$(starts)|$([[ -e "${P}/.swarm/briefs/w1.step-up" ]] && echo kept)"
 mv "${ROOT}/origin.gone" "${ROOT}/origin.git"
+# A worktree git cannot read, and no temp file for the start's output, stop it too, once the builder
+# is closed.
+mv "${ROOT}/proj-wt/w1/.git" "${ROOT}/w1.git"; out="$(run step-up --resume w1)" && rc=0 || rc=$?
+check "a worktree git cannot read stops the resume, with the rung kept" "1|yes|kept" \
+  "${rc}|$(has "step-up: w1: git cannot read the worktree ${ROOT}/proj-wt/w1; once that is fixed, run swarm.sh step-up --resume w1" "${out}")|$([[ -e "${P}/.swarm/briefs/w1.step-up" ]] && echo kept)"
+mv "${ROOT}/w1.git" "${ROOT}/proj-wt/w1/.git"; touch "${ROOT}/mktempfail"
+out="$(run step-up --resume w1)" && rc=0 || rc=$?
+check "a temp file that cannot be made stops it, with the rung kept" "1|yes|${n}|kept" \
+  "${rc}|$(has "w1's sonnet builder is closed, but mktemp failed, so no opus builder was started; run swarm.sh step-up --resume w1" "${out}")|$(starts)|$([[ -e "${P}/.swarm/briefs/w1.step-up" ]] && echo kept)"
+rm "${ROOT}/mktempfail"
+check "each of those stops logged its own ok step-up:failed line, saying why" \
+  "ok (git step unfinished: index.lock),ok (git step unfinished: MERGE_HEAD),ok (default branch unread),ok (worktree unreadable),ok (mktemp failed)" "$(failed_lines w1)"
 out="$(run step-up --resume w1)" && rc=0 || rc=$?
 # w1 is untracked here, so its brief names it by its full path (story_path); either form names w1.
 check "once cleared, --resume writes the brief and starts the rung" "0|yes|code opus high" "${rc}|$(has "stories/w1.md (this worktree is proj)" "$(cat "${P}/.swarm/briefs/w1.md" 2>/dev/null)")|$(newest w1)"

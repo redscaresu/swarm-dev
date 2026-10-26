@@ -511,7 +511,7 @@ close_agent() {
       # main logs no close then (stepped_up_since): the escalate line ends the stepped-up build.
       rc=0; ladder_step "$1" no-pr || rc=$?
       [[ ${rc} != 0 ]] || return 0
-      [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
+      [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted; wait --lead tells the lead, so leave $1 alone"
       [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "close: another step-up of $1 is running and may be starting its next builder, so nothing was closed or counted: wait on $1, then close it if it still needs closing"
     fi
   fi
@@ -619,13 +619,15 @@ step_up() {
   names="$(story_env "${f}")" || die "${names}"
   require_trusted "${wt}"; goal_preflight "${slug}" "${src}"; git -C "${wt}" rev-parse --git-dir >/dev/null
   b="${PROJECT_DIR}/.swarm/briefs/${slug}"; mkdir -p "${b%/*}"
-  printf '%s %s %s %s\n' "${trigger}" "${from}" "${to}" "${role}" > "${b}.step-up"
-  # [findings] kept beside the marker, so start_rung's brief (and a resume's) pastes them.
+  # [findings] kept beside the marker, so start_rung's brief (and a resume's) pastes them. Copied
+  # first: a marker is left only by a step-up that got as far as closing the builder.
   rm -f "${b}.findings.md"; [[ -z "${3:-}" ]] || cp "$3" "${b}.findings.md"
-  # From here a failure is not a refusal: the old builder is closed. ladder_step's _step-up
-  # (STEP_UP_AUTO) says so and exits STEP_UP_PARTWAY (step_up_failed).
+  # The marker (step_up_marker): while this swarm.sh runs, the lead's poll reads it as a step-up under way.
+  step_up_marker "${b}.step-up" "${trigger} ${from} ${to} ${role}"
+  # From here a failure is not a refusal: the old builder is closed. step_up_failed logs it, and
+  # ladder_step's _step-up (STEP_UP_AUTO) says so and exits STEP_UP_PARTWAY.
   # shellcheck disable=SC2064 # expand now: the slug is local
-  [[ -z "${STEP_UP_AUTO:-}" ]] || trap "step_up_failed '${slug}'" EXIT
+  trap "step_up_failed '${slug}'" EXIT
   # The old builder goes first: the new one takes its name, and start_rung reads the worktree for the
   # brief only once nothing writes to it.
   shut_agent "${slug}"
@@ -633,7 +635,7 @@ step_up() {
     # Its pane could not be closed (close_pane said why), or close refused a live agent under its cut
     # (close_panes said why): the old builder may still be working in the worktree, so no second one
     # starts there. A refusal, not a failure partway: nothing changed.
-    [[ -z "${STEP_UP_AUTO:-}" ]] || trap - EXIT
+    trap - EXIT
     rm -f "${b}.step-up" "${b}.findings.md"
     [[ -z "${CLOSE_REFUSED}" ]] || die "step-up: ${slug}'s builder pane was not closed (see above), so nothing was stepped up"
     die "step-up: ${slug}'s builder pane could not be closed, so it may still be working in its worktree; nothing was stepped up"
@@ -674,9 +676,31 @@ step_up_resume() {
   local slug="$1"
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]] \
     || die "step-up --resume: no step-up of '${slug}' waits to start (no .swarm/briefs/${slug}.step-up)"
+  # Its own pid first, so the lead's poll reads the resume as under way from here, and from here a
+  # refusal is a failed resume too: the lead is told again, with its cause.
+  step_up_marker "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" "$(head -1 "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up")"
+  # shellcheck disable=SC2064 # expand now: the slug is local
+  trap "step_up_failed '${slug}'" EXIT
   step_up_story "${slug}"
   require_trusted "$(worktree_for "${STEP_SRC}" "${slug}")"; goal_preflight "${slug}" "${STEP_SRC}"
   start_rung "${slug}"
+}
+
+# step_up_marker <file> <first line> — write a .step-up marker: <first line> (<trigger> <from> <to>
+# <role>, which start_rung reads), then `pid <n>`, this swarm.sh's pid. While that process runs, the
+# step-up is under way; once it is gone and the marker is still there, the step-up failed
+# (no_agent_lines prints `step-up failed:`).
+step_up_marker() {
+  printf '%s\npid %s\n' "$2" "$$" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
+# step_up_die <slug> <why> <message> — a step-up of <slug> stopped after its builder was closed: log
+# `step-up:failed <slug> ok (<why>)`, the line flow reads, then die with <message>. Its .step-up marker
+# stays for step-up --resume, and wait --lead tells the lead.
+STEP_UP_LOGGED=""
+step_up_die() {
+  STEP_UP_LOGGED=1; record_event step-up:failed "$1" "ok ($2)"
+  die "$3"
 }
 
 # start_rung <slug> — start the rung <slug>'s .step-up marker names (<trigger> <from> <to> <role>),
@@ -695,20 +719,20 @@ start_rung() {
   names="$(story_env "${f}")" || die "${names}"
   epic="$(fm "${f}" epic)"
   wt="$(worktree_for "${src}" "${slug}")"
-  gd="$(git -C "${wt}" rev-parse --absolute-git-dir)" || die "step-up: ${slug}: git cannot read the worktree ${wt}; once that is fixed, run swarm.sh step-up --resume ${slug}"
+  gd="$(git -C "${wt}" rev-parse --absolute-git-dir)" || step_up_die "${slug}" "worktree unreadable" "step-up: ${slug}: git cannot read the worktree ${wt}; once that is fixed, run swarm.sh step-up --resume ${slug}"
   for p in index.lock MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD; do
     [[ ! -e "${gd}/${p}" ]] \
-      || die "step-up: ${slug}'s ${from} builder is closed, but its worktree ${wt} holds ${gd}/${p}, a git step left unfinished: finish or abort it there, then run swarm.sh step-up --resume ${slug}"
+      || step_up_die "${slug}" "git step unfinished: ${p}" "step-up: ${slug}'s ${from} builder is closed, but its worktree ${wt} holds ${gd}/${p}, a git step left unfinished: finish or abort it there, then run swarm.sh step-up --resume ${slug}"
   done
   base="$(base_for "${src}")" \
-    || die "step-up: ${slug}'s ${from} builder is closed, but origin's default branch could not be read (see above); once it can, run swarm.sh step-up --resume ${slug}"
+    || step_up_die "${slug}" "default branch unread" "step-up: ${slug}'s ${from} builder is closed, but origin's default branch could not be read (see above); once it can, run swarm.sh step-up --resume ${slug}"
   handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" \
     "$( [[ ! -f "${prompt%.md}.findings.md" ]] || echo "${prompt%.md}.findings.md")" > "${prompt}"
   n="$(wc -l < "${AGENTS_LOG}")"; n=$((n)); since="$(date +%s)"   # before the brief, for send_goal
   # start_agent's stderr goes out as it comes, and a copy tells rung_late whether the brief may have
   # gone out. The copy is read and removed at once, and on a signal before that (step_up's EXIT trap
   # still runs on that exit, 128 + the signal's number).
-  errf="$(mktemp)" || die "step-up: ${slug}'s ${from} builder is closed, but mktemp failed, so no ${to} builder was started; run swarm.sh step-up --resume ${slug}"
+  errf="$(mktemp)" || step_up_die "${slug}" "mktemp failed" "step-up: ${slug}'s ${from} builder is closed, but mktemp failed, so no ${to} builder was started; run swarm.sh step-up --resume ${slug}"
   # shellcheck disable=SC2064 # expand now: errf is local
   { trap "rm -f '${errf}'; exit 129" HUP; trap "rm -f '${errf}'; exit 130" INT; trap "rm -f '${errf}'; exit 143" TERM; }
   set +e
@@ -726,7 +750,7 @@ start_rung() {
       rc=0
       echo "step-up: ${slug}'s ${to} builder took up its brief after all"
     elif [[ ${late} -eq 2 ]]; then
-      die "step-up: ${slug}'s ${from} builder is closed, and herdr could not say whether the ${to} builder took up its brief; its pane is kept: look at it (herdr agent read $(agent_name "${slug}")) before resuming with swarm.sh step-up --resume ${slug}"
+      step_up_die "${slug}" "start unclear" "step-up: ${slug}'s ${from} builder is closed, and herdr could not say whether the ${to} builder took up its brief; its pane is kept: look at it (herdr agent read $(agent_name "${slug}")) before resuming with swarm.sh step-up --resume ${slug}"
     else
       # Its brief was not taken up: closed (it would sit idle with no brief), and not on record
       # until a resume starts it. A pane already gone is no reason to stop.
@@ -742,7 +766,7 @@ start_rung() {
     fi
   fi
   [[ ${rc} -eq 0 ]] \
-    || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
+    || step_up_die "${slug}" "start failed" "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
   # The rung runs: from here nothing is a failed step-up (step_up_failed's trap).
   trap - EXIT
   rm -f "${prompt%.md}.step-up" "${prompt%.md}.findings.md"
@@ -785,13 +809,18 @@ rung_late() {
   return 2
 }
 
-# step_up_failed <slug> — step_up's exit trap once the old builder is closed: on a failure (start_rung
-# said why, and kept the .step-up marker for step-up --resume, which also keeps step_due from trying
-# this build again), say so and exit STEP_UP_PARTWAY.
+# step_up_failed <slug> — the exit trap of step_up once the old builder is closed, and of step_up_resume
+# once it rewrote the marker: on a failure (the .step-up marker kept for step-up --resume, which also
+# keeps step_due from trying this build again), log its step-up:failed line unless step_up_die did, the
+# why being the die's message (DIE_FILE, set for a logged command) or the exit status. A _step-up
+# (STEP_UP_AUTO) then says so and exits STEP_UP_PARTWAY; any other keeps its status.
 step_up_failed() {
-  local rc=$?
+  local rc=$? why=""
   [[ ${rc} != 0 ]] || return 0
-  echo "step-up failed: $1 stopped after its builder was closed: list it for the lead (swarm.sh step-up --resume $1 starts the rung once the cause is fixed); do not close, retry or tell it"
+  [[ -z "${DIE_FILE}" ]] || read -r why 2>/dev/null < "${DIE_FILE}" || true
+  [[ -n "${STEP_UP_LOGGED}" ]] || record_event step-up:failed "$1" "ok (${why:-exit ${rc}})"
+  [[ -n "${STEP_UP_AUTO:-}" ]] || return 0
+  echo "step-up failed: $1 stopped after its builder was closed. wait --lead tells the lead, whose exit is swarm.sh step-up --resume $1 once the cause is fixed; leave $1 alone: do not close, retry, tell or list it"
   exit "${STEP_UP_PARTWAY}"
 }
 
@@ -1888,7 +1917,8 @@ no_agent_events() {
     }
     NF == 5 && ($3 in own) {
       s = own[$3]; c = $2; sub(/:.*/, "", c); ok = $5 ~ /^ok/
-      if (index(starts, " " c " ")) {
+      if ($2 == "step-up:failed") ev[s] = $1
+      else if (index(starts, " " c " ")) {
         if (!ok) ev[s] = $1
         else { ev[s] = ""; reo[s] = 0; if (c != "review-agent" && !($3 in rev)) build[s] = 1 }
       } else if (c == "close") {
@@ -1934,14 +1964,16 @@ no_agent_exit() {
 # of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money (waiting_on_user
 # hands those to the user); with a build record (an ok builder start no close ended, or its worktree or
 # story/<slug> branch, build_exists); no pane this project opened (own_panes) listed under its builder's
-# or review-<slug>'s name; no tell pending and no wait-pr or merge on its PR (no_agent_busy); and no
-# .swarm/briefs/<slug>.step-up marker. It prints one only when an event explains the agent's absence
+# or review-<slug>'s name; no tell pending and no wait-pr or merge on its PR (no_agent_busy); and, for a
+# ready story, no .swarm/briefs/<slug>.step-up marker. It prints one only when an event explains the agent's absence
 # (no_agent_events); with record set, a story with none gets a `no-agent <slug>` events.tsv line, so the
 # next poll prints it. A hold line answers the alert until a new event: the next poll writes one.
+# A ready story with a .step-up marker gets `step-up failed: <slug>, exit: swarm.sh step-up --resume
+# <slug>` instead, unless its step-up still runs (step_up_running) or its builder is still listed.
 # Reads the poll's herdr list (lead_agents, read here when the poll has none), one ps and files; no gh.
 # Prints nothing outside herdr or when herdr's list or ps fails.
 no_agent_lines() {
-  local live f slug st rows="" built="" urls u build ev src name rname
+  local live f slug st rows="" built="" marked="" urls u build ev src name rname
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
   while IFS= read -r f; do
@@ -1955,13 +1987,14 @@ no_agent_lines() {
     # Not kind: lead, which every escalated story is (lead_block), and a held one too.
     agent_kind "$(fm "${f}" kind)" || continue
     [[ -z "$(get_fm "${f}" held_for)" ]] || continue
-    [[ ! -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]] || continue
+    # A step-up runs only on a ready story, so only a ready one's marker is a failed step-up.
+    if [[ "${st}" == ready && -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]]; then marked+=" ${slug}"; continue; fi
     no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"
     rows+=" ${slug} ${name} ${rname}"
   done < <(board stories)
-  [[ -n "${rows}" ]] || return 0
+  [[ -n "${rows}${marked}" ]] || return 0
   # shellcheck disable=SC2086 # rows: space-separated triples
-  while read -r slug build ev name rname; do
+  [[ -z "${rows}" ]] || while read -r slug build ev name rname; do
     [[ -n "${slug}" ]] || continue
     if [[ "${build}" != 1 ]]; then
       src="$(repo_dir "$(fm "${BOARD}/stories/${slug}.md" repo)")" || continue
@@ -1969,12 +2002,20 @@ no_agent_lines() {
     fi
     built+="${slug} ${ev} ${name} ${rname}"$'\n'
   done < <(no_agent_events ${rows})
-  # The list and ps are read only for a started story, so a poll with none costs no more than before.
-  [[ -n "${built}" ]] || return 0
-  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  # The list and ps are read only for a started story or a marker, so a poll with neither costs no more
+  # than before.
+  [[ -n "${built}${marked}" ]] || return 0
   # -ww: the whole command line, never cut at a width. With no process list a pending tell, wait-pr or
-  # merge cannot be ruled out, so nothing is printed, as for herdr's list.
-  NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || return 0
+  # merge, or a running step-up, cannot be ruled out, so nothing is printed, as for herdr's list.
+  NO_AGENT_PS="$(ps -A -ww -o pid=,command= 2>/dev/null)" || return 0
+  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  for slug in ${marked}; do
+    # A builder still listed: the step-up stopped before it closed it, so a resume would start a second one.
+    no_agent_name name "${slug}"
+    ! grep -qxF -e "${name}" <<< "${live}" || continue
+    step_up_running "${slug}" || echo "step-up failed: ${slug}, exit: swarm.sh step-up --resume ${slug}"
+  done
+  [[ -n "${built}" ]] || return 0
   while read -r slug ev name rname; do
     [[ -n "${slug}" ]] || continue
     ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
@@ -1988,16 +2029,29 @@ no_agent_lines() {
   done <<< "${built}"
 }
 
+# step_up_running <slug> — true while the process <slug>'s .step-up marker names on its `pid <n>` line
+# (step_up_marker) is in NO_AGENT_PS as a swarm.sh step-up or _step-up naming <slug>. A marker with no
+# pid line, or whose process is gone (a step-up that failed, or was killed before it could log that), is not running,
+# whatever events.tsv or its lock says.
+step_up_running() {
+  local k v pid=""
+  while read -r k v; do [[ "${k}" != pid ]] || pid="${v}"; done 2>/dev/null < "${PROJECT_DIR}/.swarm/briefs/$1.step-up" || true
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  awk -v pid="${pid}" -v s="$1" '$1 == pid { for (i = 2; i < NF; i++) if ($i ~ /(^|\/)swarm\.sh$/ && ($(i + 1) == "step-up" || $(i + 1) == "_step-up"))
+      for (j = i + 2; j <= NF; j++) if ($j == s) { f = 1; exit } }
+    END { exit !f }' <<< "${NO_AGENT_PS}"
+}
+
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents),
 # and save it as LEAD_SEEN. Print each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
-# no-agent: items and saves the rest.
+# alerts, the lines that name their exit (`no-agent:`, `step-up failed:`), and saves the rest.
 lead_wake() {
   local now line new="" slug
   lead_agents
   now="$(lead_queue)"
   while IFS= read -r line; do
-    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || [[ -n "${1:-}" && "${line}" != "no-agent: "* ]] || new+="${line}"$'\n'
+    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || [[ -n "${1:-}" && "${line}" != *", exit: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
@@ -2057,8 +2111,8 @@ lead_lock() {
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
 # (lead_wake). The first read of a run reports what landed since the last run; with no LEAD_SEEN yet
-# it notes the queue and reports only no-agent: items. At the timeout (default an hour) it fails with
-# nothing printed. It nudges no one and edits no board file.
+# it notes the queue and reports only the alerts (no-agent:, step-up failed:). At the timeout
+# (default an hour) it fails with nothing printed. It nudges no one and edits no board file.
 wait_lead() {
   local timeout="${1:-3600000}" start left
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"

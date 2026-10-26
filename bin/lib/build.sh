@@ -952,7 +952,8 @@ stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${ST
 \`--backlog\`). That command then prints \`stepped up: <slug>\` (wait prints it in place of
 \`stalled:\`): the next model carries on in the same worktree and branch. Do not close, retry or
 tell that story for it; wait on its builder again. A \`step-up failed: <slug>\` line means the
-step-up stopped after closing the builder: leave that story alone and list it for the lead.
+step-up stopped after closing the builder. Leave that story alone: \`wait --lead\` tells the lead,
+so it does not go in your report.
 EOF
   local rules sign; sign="$(sign_rule)"
   [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"

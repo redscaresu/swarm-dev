@@ -80,7 +80,8 @@ counts a story only when all of these hold:
   `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
 - No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
   the slug, its answer is still on the way: each writes its own events.tsv line when it exits.
-- It has no `.swarm/briefs/<slug>.step-up` marker. A failed step-up is reported apart.
+- A ready story has no `.swarm/briefs/<slug>.step-up` marker. A failed step-up has a line of its own
+  (below).
 
 Something must explain why no agent is there: an ok close of the builder or the review agent, or a
 failed start, with no later start, ok tell or hold. A story reconcile reopened (its PR closed
@@ -95,7 +96,35 @@ review the exit is `swarm.sh merge --head <sha> <PR URL>`, with the `head:` line
 lead runs `swarm.sh wait-pr <PR URL>` first and merges once it exits 0: while it runs, the line is
 quiet, and if the checks go red it comes back. Each poll reads `herdr agent list` once, and `ps` once when a started story needs checking, and makes no gh
 call for these lines. Outside herdr, or when herdr's list or `ps` fails, it prints none. A run with no
-`.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
+`.swarm/lead/seen` yet notes everything else and prints only these lines and `step-up failed:` lines
+on its first read.
+
+**A failed step-up wakes the lead too, through a marker file.** A marker is
+`.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
+`<kind>` says what it marks. Its first line holds the marker's own fields. A `pid <n>` line names the
+swarm.sh process that wrote it. `wait --lead` reads markers from files and one `ps`, with no herdr or
+gh call, and prints `<what>: <stem>, exit: <exit>`. The `.step-up` marker works like this:
+
+- Path: `.swarm/briefs/<slug>.step-up`. A step-up writes it just before it closes the builder.
+  A resume writes it again with its own pid. It goes once the next model's builder has started.
+- First line: `<trigger> <from> <to> <role>`, which `step-up --resume` reads to start the rung.
+- Failure line: each point where a step-up stops after closing the builder logs
+  `step-up:failed <slug>` with `ok (<why>)` in events.tsv. Those are an unreadable worktree, a git
+  step left unfinished in it, an unread default branch, a failed `mktemp`, and a start that failed
+  or that herdr could not confirm. Any other failure after the close, or of a resume once it starts,
+  logs it too, with the error's first line or the exit status. `flow` reads it as an ok line.
+- Lead line: `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`. It is printed for a
+  story whose marker's pid is no longer a running `swarm.sh step-up` or `_step-up`, whatever the
+  failure line or the `.swarm/locks/step-up-<slug>` lock says, so a step-up killed before it could
+  log its failure line counts too. The process must name the slug, so a pid reused by another
+  story's step-up does not count. While that process runs, the step-up is under way and the line
+  stays quiet. It stays quiet too while herdr still lists the builder: a step-up stopped before it
+  closed it, and a resume would start a second one. The story must be ready, since only a ready
+  story steps up, and pass the `no-agent:` filters on kind and `held_for:`. A story in review keeps
+  to the `no-agent:` line, marker or not.
+- Exit: fix the cause the failure line names, then run `swarm.sh step-up --resume <slug>`. With no
+  failure line, the step-up was killed partway, and the lead runs the exit. The conductor leaves
+  the story alone and does not list it in its report.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
@@ -2197,7 +2226,8 @@ logs nothing (a refusal is no sign of life), and leaves the command to carry on 
 does not try it again on the same head. A step-up whose new builder does not start, after the old one
 closed, prints `step-up failed: <slug>` and stops the command that ran it: a close counts nothing
 and clears nothing. The story is then the lead's to resume (`step-up --resume`), and no trigger tries
-that build again meanwhile.
+that build again meanwhile. `wait --lead` tells the lead within one poll (§ The lead), so the
+conductor leaves the story alone.
 
 A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the
 escalate role's model starts an escalate build, so `outcomes` pairs only those (and build_story's
