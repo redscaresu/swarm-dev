@@ -63,7 +63,7 @@ printf '#!/usr/bin/env bash\nenv | grep "^SWARM_" | sort > "%s/env.seen"\n' "${R
 SWARM_PROJECT=/real SWARM_AGENT=builder SWARM_GH_LOG=/real/.swarm/gh-calls.tsv SWARM_NO_CI_REFRESH='' SWARM_ANY_NEW=x SWARM_SLEEP_SCALE=0.01 \
   bash "${REPO}/scripts/test.sh" "${ROOT}/env_test.sh" > /dev/null 2>&1
 check "no SWARM_* the caller set reaches a test but SWARM_SLEEP_SCALE; SWARM_NO_CI_REFRESH is 1, SWARM_PROJECT the job's pane stand-in, SWARM_FORBID_PROJECT the checkout" \
-  "$(sed -E -e 's#^SWARM_PROJECT=/.*/tmp\.[A-Za-z0-9]+/pane$#SWARM_PROJECT=<TMPDIR>/pane#' -e "s#^SWARM_FORBID_PROJECT=$(git -C "${REPO}" rev-parse --path-format=absolute --git-common-dir | sed 's#/\.git$##; s#/[^/]*$##')\$#SWARM_FORBID_PROJECT=<checkout>#" "${ROOT}/env.seen")" \
+  "$(sed -E -e 's#^SWARM_PROJECT=/.*/tmp\.[A-Za-z0-9]+/pane$#SWARM_PROJECT=<TMPDIR>/pane#' -e "s#^SWARM_FORBID_PROJECT=$(dirname "$(git -C "${REPO}" rev-parse --path-format=absolute --git-common-dir)")\$#SWARM_FORBID_PROJECT=<checkout>#" "${ROOT}/env.seen")" \
   "SWARM_FORBID_PROJECT=<checkout>
 SWARM_NO_CI_REFRESH=1
 SWARM_PROJECT=<TMPDIR>/pane
