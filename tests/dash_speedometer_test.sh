@@ -76,6 +76,12 @@ recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
 check "recent: three identical lines in a row are one row, ×3" test "$(grep -c 'tell:nudge q-rev' <<< "${recent}")" -eq 1
 check "recent: the collapsed row says ×3" has "tell:nudge q-rev ×3" "${recent}"
 check "recent: a findings row cut to width keeps its (#PR)" has "… (#42)" "${recent}"
+# A story a close kept 5 hours ago, its file committed just now: it waits from its kept line, not the commit.
+sitem stories/q-kept.md 'status: review' 'prs: https://github.com/o/q/pull/51' 'kept: 2026-10-26 close (not reviewed)'
+"${GSP[@]}" add docs && "${GSP[@]}" commit -qm "kept"
+printf '%s\tkept\tq-kept\tw5:p1\tok (https://github.com/o/q/pull/51; not reviewed)\n%s\tclose\tq-kept\tw5:p1\tok\n' "$(ago 300)" "$(ago 300)" >> "${SPD}/.swarm/events.tsv"
+check "speedometer: a kept story waits from its kept line, 3 items, oldest 5h" \
+  grep -qE '! 3 waiting on you or the lead, oldest 5h0[01]m' <<< "$(sed -n 2p <<< "$(spdash)")"
 # One escaped finding 2 days old lights the second light; one 9 days old does not count.
 printf '%s\tmissed\thttps://github.com/o/q/pull/3\tescaped %s\tescaped\tescaped\n' \
   "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=2))')" two \
