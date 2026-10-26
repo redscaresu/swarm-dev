@@ -1,4 +1,4 @@
-.PHONY: hooks test check
+.PHONY: hooks test check lint
 
 # Install the gitleaks pre-commit hook into .git/hooks.
 hooks:
@@ -28,6 +28,12 @@ JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
 test:
 	@JOBS="$(JOBS)" SERIAL="$(SERIAL)" SLOW="$(SLOW)" bash scripts/test.sh $(TESTS)
+
+SHELLCHECK_FILES ?= bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commit scripts/demo-dash.sh \
+  scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
+# Run shellcheck over SHELLCHECK_FILES, the files CI's shellcheck step covers.
+lint:
+	@shellcheck $(SHELLCHECK_FILES)
 
 # Run scripts/lint over LINT_FILES (every tests/*_test.sh): it prints file:line: for each finding and
 # fails if there is one. CI runs it beside shellcheck.
