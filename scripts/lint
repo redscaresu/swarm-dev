@@ -4,16 +4,16 @@ check runs it. It prints file:line: and the problem for each finding, and exits 
 
 vacuous-test: JSON a test feeds to a hook or helper must parse, or the code it meant to exercise never
 runs and the test passes anyway (#515: a stray \\} in a hook input). Each quoted shell word and each
-heredoc body is decoded the way bash would: adjacent quoted parts joined, \\" and \\$ unescaped in
-double quotes, a printf format's %s and escapes applied, and each ${x:-default} read once as its
-default. One that then starts like JSON ({" {} [{ [ { [" [] [1 [true) must parse with each $var,
-${...}, $(...), `...` and %s read as 0, or else with each read as nothing (an optional field): whole,
-or one value per line (JSON Lines). A value that only ends early (a fragment a later command
-completes) passes unless the word is a command's argument (a hook's, a helper's) or reaches its
-reader whole: a heredoc, a here-string, a variable's value, or a printf format or echo's one word in a
-command that pipes or redirects. A list's comma-joined items pass too, unless the word reaches its
-reader whole. A word that is not JSON on purpose (bad input a test feeds to see it refused, or
-the tail of a list) says so in a comment on its line (or the heredoc's <<), e.g.
+heredoc body is decoded the way bash would ($'...' words are skipped, not checked): adjacent quoted
+parts joined, \\" and \\$ unescaped in double quotes, a printf format's %s and escapes applied, and
+each ${x:-default} read once as its default. One that then starts like JSON ({" {} [{ [ { [" [] [1
+[true) must parse with each $var, ${...}, $(...), `...` and %s read as 0, or else with each read as
+nothing (an optional field): whole, or one value per line (JSON Lines). A value that only ends early
+(a fragment a later command completes) passes unless the word is a command's argument (a hook's, a
+helper's) or reaches its reader whole: a heredoc, a here-string, a variable's value, or a printf
+format or echo's one word in a command that pipes or redirects. A list's comma-joined items pass too,
+unless the word reaches its reader whole. A word that is not JSON on purpose (bad input a test feeds
+to see it refused, or the tail of a list) says so in a comment on its line (or the heredoc's <<), e.g.
 "# vacuous-test: ok, bad JSON on purpose"."""
 import glob
 import json
