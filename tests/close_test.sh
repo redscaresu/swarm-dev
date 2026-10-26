@@ -9,6 +9,8 @@
 # --state open the heads of its open PRs that name one, as close_heads' --jq asks, and pr view <url>
 # from ${ROOT}/pr-states ("<url> <state>" lines).
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

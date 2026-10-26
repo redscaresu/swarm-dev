@@ -9,6 +9,8 @@
 # is typed, and whether the file the line names is left once it has run. With a number N in runfail,
 # the next N pane runs fail before typing anything; in runtypedfail, they fail after it.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

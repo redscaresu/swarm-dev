@@ -14,6 +14,8 @@
 # blocked gives no reply to the first prompt, answers the second agent_blocked, and reads blocked from then on;
 # hiccup gives no status once an `agent list` follows a prompt (rung_late's re-read).
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

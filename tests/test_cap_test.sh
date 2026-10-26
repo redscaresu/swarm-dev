@@ -18,6 +18,8 @@
 # starts a top-level run (TEST_RUNS_LOG unset or set to a file, or TEST_SH_RUN unset) exports HOME
 # under its own mktemp root, so a cap in the real HOME never gates it.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

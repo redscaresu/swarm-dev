@@ -4,6 +4,8 @@
 # run it, and its events.tsv lines. gh and herdr are stubs on PATH: gh logs every call to gh.log and
 # answers from ${FX} (see serve); herdr lists the agents in ${ROOT}/agents ("<name> <pane>" lines).
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 REPO="$(dirname "${SWARM}")/.."

@@ -38,10 +38,10 @@ jobs:
       - name: Run shellcheck
         if: steps.gate.outputs.board_only != 'true'
         # shellcheck is preinstalled on GitHub's ubuntu runners.
-        run: shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
-      - name: Compile bin/lib/*.py
+        run: shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
+      - name: Compile bin/lib/*.py and scripts/select_tests.py
         if: steps.gate.outputs.board_only != 'true'
-        run: python3 -m py_compile bin/lib/*.py
+        run: python3 -m py_compile bin/lib/*.py scripts/select_tests.py
       - name: Lint the tests (make check)
         if: steps.gate.outputs.board_only != 'true'
         run: make check
