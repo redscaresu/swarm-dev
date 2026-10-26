@@ -264,9 +264,10 @@ dash_check() {
   drawn="$( { sed -n 's/^│ [^ ]* merge \([^ ]*#[0-9][0-9]*\) .*/\1/p' <<< "${x}"; dash_prs <<< "${x}"; } | dash_words)"
   got=""
   for x in ${want}; do
-    # Each kind has its own row: merge, or decide for an escalated or held story, which dash draws as a
-    # merge row once it is in review. A merge item counts by its slug or by any PR status lists for it.
-    v=merge; [[ "${x%%:*}" == merge ]] || v="(merge|decide escalated story)"
+    # Each kind has its own row: merge, review for a kept story, or decide for an escalated or held
+    # story, which dash draws as a merge row once it is in review. A merge item counts by its slug or by
+    # any PR status lists for it.
+    case "${x%%:*}" in merge) v=merge ;; kept) v="review kept story" ;; *) v="(merge|decide escalated story)" ;; esac
     if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: merge or an alternation
     [[ "${x%%:*}" == merge ]] || continue
     for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do

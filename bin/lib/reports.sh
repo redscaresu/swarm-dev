@@ -347,12 +347,16 @@ dataset_report() {
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
-#     (an ok held, escalated, close:impossible or review line in events.tsv; with merge = agent, a
-#     review only of a story whose costs: is not none, or that cannot be read) the minutes until its
-#     slug's next ok finish, reset, drop or reconcile (finished or reopened), stopping at the local
-#     midnight after --until (or now), where an item still waiting is listed under open as kind:slug. One with no
-#     leaving line counts only while its story or epic is on the board in review, held or escalated.
-#     --epic does not narrow it.
+#     (an ok held, escalated, close:impossible, kept or review line in events.tsv; with merge = agent, a
+#     review only of a story whose costs: is not none, or that cannot be read; a kept line ends any item
+#     waiting for its slug, and counts nothing for a child held by an open parent, held now, unblocked
+#     since or blocked at the end) the minutes until its
+#     slug's next ok finish, reset, drop or reconcile (finished or reopened). A kept item also ends on a
+#     review, held, escalated or close:impossible line, or on a close --drop once a new build, a leaving
+#     line other than a finish, or the story no longer kept shows it dropped the build. Waits stop at
+#     the local midnight after --until (or now), where an item still waiting is listed under open as
+#     kind:slug. One with no leaving line counts only while its story or epic is on the board in review
+#     (a kept one only with kept: set), held or escalated. --epic does not narrow it.
 #   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their
 #     base in (without --since, the 30 days up to --until or today): each merge-in (a PR commit gh's
 #     REST API lists whose headline merges the base in, by outcomes' main_merges rule) re-merged from

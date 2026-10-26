@@ -1,17 +1,30 @@
 # Lead queue, a flow section (flow_report.py gives its globals): how long items wait on the lead, from
 # events.tsv's ok lines. An item enters on a held line (held_story), an escalated line or an impossible
-# close, or a review (handed over to merge; with merge = agent only a story whose costs: is not none,
-# read as costs_value reads it, from the board, its last version in the board's git history or HEAD's,
-# and money when none of them has it; never an epic), and leaves on its slug's next finish, reset,
-# reset:held, drop or reconcile (finished once every PR merged, or reopened when one closed unmerged); a merge line is one PR's, so it does not
-# end the wait. Waits stop at local midnight after --until (or now): an item that left later is open
-# there. One with no leaving line is open only while its story or epic is on the board in review, held
-# or escalated (read with board-state as fm reads it); any other is dropped, its end unknown. Per local
-# day it entered: items, the median and maximum minutes waited, and open, the kind:slug of each item
-# open. --epic does not narrow it.
+# close, a kept line (keep_build: a give-up's PR in review, not reviewed, which wait --lead wakes the
+# lead for whatever merge is), or a review (handed over to merge; with merge = agent only a story whose
+# costs: is not none, read as costs_value reads it, from the board, its last version in the board's git
+# history or HEAD's, and money when none of them has it; never an epic), and leaves on its slug's next
+# finish, reset, reset:held, drop or reconcile (finished once every PR merged, or reopened when one
+# closed unmerged); a merge line is one PR's, so it does not end the wait. A kept line ends whatever
+# item waits for its slug and opens a kept one, except for a child held by an open parent (blocked with
+# held_by: on the board now), which status and wait --lead list as blocked, never kept: its kept line
+# opens and ends nothing. Such a child may be unblocked since: unblock frees only a blocked story, and a
+# kept story in review is never blocked, so an unblock line on a kept item, or its story blocked at the
+# end, shows it was such a child, and the item is dropped, never counted. A kept item also leaves on a review (which then enters it as merge), a held
+# or escalated line or an impossible close, each at its own time. keep_build logs its kept line inside
+# a close, so the slug's next close line, whatever its outcome, is that keeping close's own. A later
+# close (close --drop, which sends the story back to ready) logs ok even when it drops nothing, so the
+# wait ends at the last such close only once something shows it dropped the build: a new build (story),
+# a leaving line other than a finish (finish, or reconcile finished, whose merged PR shows the close
+# dropped nothing, and which ends the wait at its own time), or the story no longer kept at the end.
+# Waits stop at local midnight after --until (or now): an item that left later is open there. One with
+# no leaving line is open only while its story or epic is on the board in review (a kept one only with
+# kept: set), held or escalated (read with board-state as fm reads it); any other is dropped, its end
+# unknown. Per local day it entered: items, the median and maximum minutes waited, and open, the
+# kind:slug of each item open. --epic does not narrow it.
 import datetime, functools, os, re, statistics, subprocess, time
 
-ENTER = {"held": "held", "escalated": "escalated", "close:impossible": "escalated", "review": "merge"}
+ENTER = {"held": "held", "escalated": "escalated", "close:impossible": "escalated", "kept": "kept", "review": "merge"}
 LEAVE = {"finish", "reset", "reset:held", "drop", "reconcile"}
 
 project = os.path.dirname(os.path.dirname(os.path.abspath(events)))
@@ -47,12 +60,18 @@ def fm(f, state, key):
     v, base = (re.search(rf"^{k}: *(.*)$", s, re.M) for k in (key, re.escape(key + "@base")))
     return v.group(1) if v and (not base or base.group(1) == own) else own
 
-def still_waiting(slug):
+def still_waiting(slug, what):
     found = item(slug)
     if not found:
         return False
-    status, kind, held, esc = (fm(*found, k) for k in ("status", "kind", "held_for", "escalated_from"))
+    status, kind, held, esc, kept = (fm(*found, k) for k in ("status", "kind", "held_for", "escalated_from", "kept"))
+    if what == "kept":
+        return status == "review" and bool(kept)
     return status == "review" or bool(held) or (status == "ready" and kind == "lead" and bool(esc))
+
+def blocked_now(slug, held_by=False):
+    found = item(slug)
+    return bool(found) and fm(*found, "status") == "blocked" and (not held_by or bool(fm(*found, "held_by")))
 
 def git(*a):
     r = subprocess.run(["git", "-C", board, *a], capture_output=True, text=True)
@@ -91,23 +110,58 @@ def costs_money(slug):
     return re.sub(r"[][\s\"',-]", "", v or "").lower() not in ("", "none")
 
 stop = min(time.time(), (datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).timestamp())
-waiting, done = {}, []
+# keeping: slugs whose keeping close is still to come; dropped: a kept item's slug, and when the last
+# close since may have dropped its build.
+waiting, done, keeping, dropped = {}, [], set(), {}
+
+def leave(slug, end):
+    kind, start = waiting.pop(slug)
+    dropped.pop(slug, None)
+    done.append((start, end, f"{kind}:{slug}"))
+
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
-    if len(f) != 5 or not f[4].startswith("ok"):
+    if len(f) != 5:
+        continue
+    cmd, slug = f[1], f[2]
+    if slug in keeping and cmd.split(":")[0] == "close":
+        keeping.discard(slug)
+        continue
+    if not f[4].startswith("ok"):
         continue
     try:
         at = datetime.datetime.fromisoformat(f[0].replace("Z", "+00:00")).timestamp()
     except ValueError:
         continue
-    cmd, slug = f[1], f[2]
+    kept = slug in waiting and waiting[slug][0] == "kept"
+    if cmd == "kept":
+        keeping.add(slug)
+        if blocked_now(slug, held_by=True):
+            continue
+        if slug in waiting:
+            leave(slug, at)
+        waiting[slug] = ("kept", at)
+        continue
+    if kept and cmd == "unblock":
+        waiting.pop(slug)
+        dropped.pop(slug, None)
+        continue
+    if kept and cmd.split(":")[0] == "close" and cmd != "close:impossible":
+        dropped[slug] = at   # the last close: one that drops nothing (gh down) may come before it
+        continue
+    if kept and slug in dropped and cmd == "story":
+        leave(slug, dropped[slug])
+    elif slug in waiting and (cmd in LEAVE or (kept and cmd in ENTER)):
+        finished = cmd == "finish" or (cmd == "reconcile" and f[4].startswith("ok (finished"))
+        leave(slug, dropped[slug] if cmd in LEAVE and slug in dropped and not finished else at)
     if cmd in ENTER and slug not in waiting:
         if cmd != "review" or cfg.get("merge") != "agent" or costs_money(slug):
             waiting[slug] = (ENTER[cmd], at)
-    elif slug in waiting and cmd in LEAVE:
-        kind, start = waiting.pop(slug)
-        done.append((start, at, f"{kind}:{slug}"))
-done += [(start, None, f"{kind}:{slug}") for slug, (kind, start) in waiting.items() if still_waiting(slug)]
+for slug, (kind, start) in waiting.items():
+    if still_waiting(slug, kind):
+        done.append((start, None, f"{kind}:{slug}"))
+    elif slug in dropped and not blocked_now(slug):
+        done.append((start, dropped[slug], f"{kind}:{slug}"))
 
 days = {}
 for start, end, name in done:
