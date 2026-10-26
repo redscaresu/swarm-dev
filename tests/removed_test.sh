@@ -73,9 +73,11 @@ if [[ -z "${missing}" ]]; then echo "ok   the collect step reads outcomes --sinc
 else echo "FAIL the collect step is missing: ${missing}"; fails=$((fails + 1)); fi
 
 W="[--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+# In a bare project of its own: a test runs from its TMPDIR, outside any project, and never against the checkout.
+bare="${iso}/bare"; mkdir -p "${bare}/.claude/swarm"; : > "${bare}/.claude/swarm/config"
 for moved in "cost:cost:${W}" "features:features:${W}" "review-yield:reviewers:${W} [--epic <slug>]"; do
   cmd="${moved%%:*}"; rest="${moved#*:}"; section="${rest%%:*}"
-  out="$(env -u HERDR_ENV bash "${REPO}/bin/swarm.sh" "${cmd}" --since 2026-01-01 2>&1)" && code=0 || code=$?
+  out="$(cd "${bare}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${REPO}/bin/swarm.sh" "${cmd}" --since 2026-01-01 2>&1)" && code=0 || code=$?
   want="swarm.sh ${cmd} is now flow's ${section} section: swarm.sh flow ${rest#*:}"
   if [[ ${code} -eq 0 && "${out}" == "${want}" ]]; then echo "ok   ${cmd} names flow's ${section} section and the flags it reads, and exits 0"
   else echo "FAIL ${cmd} exited ${code}, printing: ${out}"; fails=$((fails + 1)); fi
