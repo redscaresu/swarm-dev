@@ -182,10 +182,9 @@ for day, items in sorted(days.items()):
     print(f"{day}\t{len(items)}\t{statistics.median(mins):.0f}\t{max(mins):.0f}\t{still}")
 
 # No-agent items: a started story no agent works on, a failed step-up and a review agent that never
-# started, named no-agent, step-up-failed and no-review after wait --lead's no-agent: and step-up
-# failed: lines and the no-review: line story no-agent-review-gone adds. Until it lands, nothing wakes
-# the lead as ok (no-review): a failed review-agent start is woken as ok (no-agent) and filed under
-# no-agent, so no-review wakes come only from fixture lines, and a no-review item is only ever open. An
+# started, named no-agent, step-up-failed and no-review after wait --lead's no-agent:, step-up failed:
+# and no-review: lines. A failed review-agent start wakes the lead as ok (no-review) while its builder
+# is listed, and as ok (no-agent) when the builder is gone too: that poll prints the no-agent: line. An
 # item's clock starts at the events that explain the missing agent, as no_agent_events reads them, and
 # runs to its lead-woken line, whose outcome names the kind; a wake with nothing waiting measures
 # nothing. Each ok close of the builder or review agent starts it afresh (the newest close, as the poll

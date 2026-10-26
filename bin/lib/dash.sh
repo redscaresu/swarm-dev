@@ -270,9 +270,9 @@ dash_check() {
   got=""
   for x in ${want}; do
     # Each kind has its own row: merge, review for a kept story, no agent on story for a no-agent item,
-    # the wait --lead line as it is for a failed step-up (its exit names the slug), no agent on story for
-    # a no-review item too (the poll prints a failed review-agent start as no-agent: until
-    # no-agent-review-gone adds no-review:), or decide for an escalated or held story, which dash draws
+    # the wait --lead line as it is for a failed step-up (its exit names the slug) and for a no-review
+    # item, or no agent on story for one whose builder was gone too (that poll prints its no-agent: line
+    # instead), or decide for an escalated or held story, which dash draws
     # as a merge row once it is in review. A merge item counts by its slug or by any PR status lists for it.
     case "${x%%:*}" in
       merge) v=merge ;; kept) v="review kept story" ;; no-agent) v="no agent on story" ;;
