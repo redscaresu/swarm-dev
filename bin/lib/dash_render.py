@@ -137,7 +137,8 @@ def pr_ref(m):
     return f"{m.group(2)}#{m.group(3)}"
 
 # Agents: this project's panes (its tab records). A working agent shows how long since its last sign
-# of life (STALL_PY's stall_age); past stall_minutes it is stalled, and needs you. A story's builder
+# of life (STALL_PY's stall_age); past stall_minutes it is stalled, and needs you, unless its pane runs a
+# test suite (TESTING): then it is working. A story's builder
 # counts its worktree's commits and PR updates; an agent with no story (a conductor or planner)
 # its own events.tsv lines: by target, and once it has a start line, by the pane that ran them.
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
@@ -168,7 +169,10 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     m = STEP_UP.fullmatch(f[4])
     if t > escalated_at.get(f[2], (0,))[0]:
         escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {f[4][len('ok (attempt '):-1]}")
-recs, stalled = [], []
+recs, stalled, stalled_panes = [], [], []
+# The panes of agents past stall_minutes that run a test suite (dash.sh's test_running, from its first
+# pass's stalled panes): working, not stalled.
+TESTING = set(E.get("DASH_TESTING", "").split())
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
@@ -275,9 +279,10 @@ if agents is not None:
                     age, lack = stall_age(seen, slug, base, signs, NOW), "no commit, edit, session-log write or PR update"
                 else:
                     age, lack = stall_age(seen, epic_of.get(base), base, ([since, ran.get(pane)] if since else []) + [logged], NOW), "no swarm action"
-                if age is not None and age >= int(E["DASH_STALL_MIN"]):
+                if age is not None and age >= int(E["DASH_STALL_MIN"]) and pane not in TESTING:
                     st, look, words = "stalled", True, f"stalled {age}m"
                     stalled.append((name, age, lack))
+                    stalled_panes.append(pane)
                 elif age is not None:
                     words = f"working {age}m"
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
@@ -975,4 +980,6 @@ if FIT and H:
 out += foot
 if FIT and H:
     out = out[:H]
+if E.get("DASH_LIST_STALLED"):   # dash.sh's first pass: the stalled agents' panes on a line ahead of the frame
+    print(" ".join(stalled_panes))
 print("\n".join(l.rstrip() for l in out))

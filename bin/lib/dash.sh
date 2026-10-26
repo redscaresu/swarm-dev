@@ -532,6 +532,7 @@ dash_fields() {
 # session is unknown.
 dash_render() {
   local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" f d r x
+  local out testing="" stalled=() p next waiting own
   if command -v herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
@@ -594,12 +595,26 @@ for a in agents:
   fi
   # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
   # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
+  next="$(next_step | sed -n 1p)"; waiting="$(waiting_on_user)"; own="$(own_panes)"
+  # The first pass names the stalled agents' panes on a line ahead of its frame. A test suite running
+  # under one of them (test_running: herdr's process info, read here and never in the render, and one
+  # ps read) is work, so the frame is drawn again with those panes working. An agent under
+  # stall_minutes is never read; a read that fails leaves the agent stalled.
+  out="$(DASH_LIST_STALLED=1 DASH_TESTING="" dash_draw && echo .)" || return 1
+  read -r -a stalled <<< "${out%%$'\n'*}"
+  for p in "${stalled[@]+"${stalled[@]}"}"; do ! test_running "${p}" || testing+=" ${p}"; done
+  if [[ -n "${testing}" ]]; then DASH_LIST_STALLED="" DASH_TESTING="${testing}" dash_draw; return; fi
+  out="${out#*$'\n'}"; printf '%s' "${out%.}"
+}
+
+# dash_draw — dash_render's layout: dash_render.py over what dash_render gathered (its locals).
+dash_draw() {
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
-  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
-  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
+  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${next}" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
+  DASH_WAITING="${waiting}" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
-  SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
+  SWARM_OWN="${own}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" DASH_CI="${DASH_CI:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" DASH_SESSIONS="${sessions}" \
