@@ -107,7 +107,7 @@ check "a ready story whose builder is listed, idle, is silent" silent
 check "and gets no no-agent events line" test "$(last_event)" == "story na-a ok"
 listed; ev close na-a
 poll
-check "its builder gone after a close line wakes the next poll, naming the hold exit" fires na-a "swarm.sh hold na-a <reason>"
+check "its builder gone after a close line wakes the next poll, naming the hold exit" fires na-a "swarm.sh restart na-a, or swarm.sh hold na-a <reason>"
 check "it logs lead-woken <slug> with the kind in the outcome" test "$(last_event)" == "lead-woken na-a ok (no-agent)"
 poll
 check "the same no-agent line does not wake it twice" silent
@@ -117,7 +117,7 @@ poll
 check "a pane gone with no close line: the poll that sees it does not wake" silent
 check "that poll writes the no-agent events line" test "$(last_event)" == "no-agent na-b ok"
 poll
-check "the next poll wakes on it" fires na-b "swarm.sh hold na-b <reason>"
+check "the next poll wakes on it" fires na-b "swarm.sh restart na-b, or swarm.sh hold na-b <reason>"
 
 fresh "merge = agent"; story na-r "kind: code" "status: review" "prs: ${URL}"; ev story na-r; built na-r
 ev review-agent na-r; ev close review-na-r
@@ -142,7 +142,7 @@ fresh; story na-o "kind: code" "status: ready"; ev story na-o; ev reconcile na-o
 check "a story reconcile reopened is silent, its worktree kept or not" never_woke na-o
 check "and its last events line is still the reopen" test "$(last_event)" == "reconcile na-o ok (reopened)"
 ev story na-o; ev close na-o; poll
-check "once a new build starts and its builder goes, it fires again" fires na-o "swarm.sh hold na-o <reason>"
+check "once a new build starts and its builder goes, it fires again" fires na-o "swarm.sh restart na-o, or swarm.sh hold na-o <reason>"
 
 fresh; story na-c "kind: code" "status: ready"; ev story na-c; built na-c; listed na-c
 ev review-agent na-c; ev close review-na-c
@@ -222,12 +222,12 @@ listed
 poll
 check "the builder's pane gone after the answer: the first poll writes the no-agent line" test "$(out)|$(last_event)" == "|no-agent na-t ok"
 poll
-check "and the next one fires" fires na-t "swarm.sh hold na-t <reason>"
+check "and the next one fires" fires na-t "swarm.sh restart na-t, or swarm.sh hold na-t <reason>"
 
 # --- the lead's hold.
 fresh; story na-k "kind: code" "status: ready"; ev story na-k; built na-k; ev close na-k
 poll
-check "the alert fires before the hold" fires na-k "swarm.sh hold na-k <reason>"
+check "the alert fires before the hold" fires na-k "swarm.sh restart na-k, or swarm.sh hold na-k <reason>"
 hold_x na-k "waiting on the CI fix"
 check "swarm.sh hold logs its line" test "$(last_event)" == "hold na-k ok (waiting on the CI fix)"
 poll
@@ -235,7 +235,7 @@ check "a hold after the alert silences the next poll" silent
 check "that poll's queue no longer lists the line" test -z "$(grep '^no-agent: na-k' "${P}/.swarm/lead/seen")"
 check "that poll writes a new no-agent event for the slug" test "$(last_event)" == "no-agent na-k ok"
 poll
-check "with still no agent after the hold, the poll after that new event fires no-agent: again" fires na-k "swarm.sh hold na-k <reason>"
+check "with still no agent after the hold, the poll after that new event fires no-agent: again" fires na-k "swarm.sh restart na-k, or swarm.sh hold na-k <reason>"
 
 fresh; story na-g "kind: code" "status: ready"; ev story na-g; built na-g; ev close na-g
 poll; hold_x na-g "restarting it"; ev story na-g; listed na-g
@@ -243,10 +243,21 @@ poll; poll
 check "a hold followed by a restored builder stays silent" silent
 check "and no poll woke on it after the hold" never_woke na-g "hold na-g"
 
+# --- the lead's restart: its exit comes first for a ready story. Stubbed: the restart line and the builder
+# listed again, as swarm.sh restart leaves them (restart_test.sh runs the command itself).
+fresh; story na-x "kind: code" "status: ready"; ev story na-x; built na-x; ev close na-x
+poll
+check "a ready story's exit names swarm.sh restart <slug>" fires na-x "swarm.sh restart na-x, or swarm.sh hold na-x <reason>"
+ev restart na-x "ok (resumed session s-1)"; listed na-x
+poll
+check "after a restart the next poll is silent" silent
+check "and that poll's queue no longer lists the line" test -z "$(grep '^no-agent: na-x' "${P}/.swarm/lead/seen")"
+check "and no poll woke on it after the restart" never_woke na-x "restart na-x"
+
 # --- a fresh run, with no seen file.
 fresh; rm -f "${P}/.swarm/lead/seen"; story na-n "kind: code" "status: ready"; ev story na-n; built na-n; ev close na-n
 poll
-check "a fresh run with no .swarm/lead/seen prints the line on its first read" fires na-n "swarm.sh hold na-n <reason>"
+check "a fresh run with no .swarm/lead/seen prints the line on its first read" fires na-n "swarm.sh restart na-n, or swarm.sh hold na-n <reason>"
 
 # --- the cost of a poll: one herdr list, no per-pane read, no gh call, with a ready and a review case live.
 fresh "merge = agent"; story na-a "kind: code" "status: ready"; ev story na-a; built na-a; ev close na-a

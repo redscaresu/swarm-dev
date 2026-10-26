@@ -120,9 +120,10 @@ Repeat until a step below says stop:
      `next` names the running conductor first and would not get to it. For a
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
-     and no tell on the way. Run the exit it names: `swarm.sh hold <slug> <reason>` for a ready
-     story, saying why it waits, or the `swarm.sh merge` for a story in review under
-     `merge = agent`. Before that merge, run `swarm.sh wait-pr <PR URL>` in the background and
+     and no tell on the way. Run the exit it names. For a ready story that is
+     `swarm.sh restart <slug>`, which starts its builder again in its worktree, or
+     `swarm.sh hold <slug> <reason>` when it should wait, saying why. For a story in review under
+     `merge = agent` it is `swarm.sh merge`. Before that merge, run `swarm.sh wait-pr <PR URL>` in the background and
      merge only once it exits 0; while it waits, the line stays quiet, and it comes back if the
      checks go red. A hold only answers the line; if no agent is back by the next poll, it
      comes back. Then start

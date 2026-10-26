@@ -11,6 +11,7 @@
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell and watch run it themselves
 #   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
+#   swarm.sh restart <slug>                                start a started story's builder again once herdr no longer lists it, in its worktree, branch and tab: it reopens the builder's last Claude session when it has a resume command, else starts a fresh builder on the last model with a handover brief; refused while the builder is listed, with no worktree or one off story/<slug>, for a story not ready, kind: lead, held or escalated, with a PR merged or set to auto-merge, or with a step-up waiting (step-up --resume)
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not, and prompt one whose turn has ended to read it (once a minute at most, the rest a minute later)
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
@@ -506,6 +507,7 @@ dispatch() {
     step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
+    restart) require_herdr; [[ $# -eq 1 ]] || die "restart: takes one slug (swarm.sh restart <slug>)"; restart_build "$1" ;;
     unblock) if [[ "${1:-}" == --startable ]]; then
                [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
                unblock_startable "$2"
@@ -939,6 +941,8 @@ main() {
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
   elif [[ "${EV_CMD}" == close* ]] && stepped_up_since "${EV_TARGET}" "${EV_START}"; then
     :   # a step-up took the close's place (close_agent): its escalate line ends that build
+  elif [[ "${EV_CMD}" == restart ]]; then
+    :   # restart_build logged its own ok line, naming how it started the builder
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
   fi
