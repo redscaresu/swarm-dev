@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # lint_test.sh — scripts/lint's vacuous-test check on a fixture test file that feeds a hook JSON in
-# each shape the tests use (a ${2:-default}, a heredoc, a printf format, a word quoted in pieces, an
+# each shape the tests use: a ${2:-default}, a heredoc, a printf format, a word quoted in pieces, an
 # optional field, a list's items, a fragment a later command or the same printf completes, a list of
 # numbers, a variable, a printf in a $(...), a printf repeated into sed, a JSON heredoc whose string
-# holds what is not JSON, a printf '%s' of one word): it passes the file as written, and flags each feeding line, by file and line,
-# once that line's JSON is broken (a value cut off and piped straight in or kept in a variable too, and
-# a list's items piped with no brackets); #515's stray \} as well, and in a printf format. A line that says "# vacuous-test: ok" is let through. make check runs it over LINT_FILES.
+# holds what is not JSON, a printf '%s' of one word, a helper's argument, a list's items as one. It
+# passes the file as written, and flags each feeding line, by file and line, once that line's JSON is
+# broken: a value cut off and piped straight in, kept in a variable or given to a helper too, a
+# list's items piped with no brackets, and lines after a $(...) whose heredoc or comment holds a '.
+# #515's stray \} is flagged too, and in a printf format. A line that says "# vacuous-test: ok" is
+# let through. make check runs it over LINT_FILES and fails on a finding.
 # The fixture holds only JSON that parses, so this file passes the lint too; sed breaks the copies.
 set -euo pipefail
 
@@ -53,6 +56,17 @@ cat <<'JSON' | "${HOOK}"
 JSON
 echo '[ 1, 2 ]' | "${HOOK}"
 printf '%s\n' '{"cwd":"x"}' | "${HOOK}"
+run "${dir}" '{"hook_event_name":"Stop","cwd":"x"}'
+dlog a 1 '{"a":1},{"b":2}'
+out="$(cat <<'EOF'
+it's a body
+EOF
+)"
+echo '{"b":1}' | "${HOOK}"
+out="$(
+  # it's a comment
+  date)"
+echo '{"a":1}' | "${HOOK}"
 FIXTURE
 
 lint "${good}"
@@ -83,6 +97,9 @@ break_line 9 "s/%s}'/%s\\\\}'/" "printf format with a stray \\}"
 break_line 18 "s/\"%s\"}'/'/" "printf in a \$(...) cut off in a variable"
 break_line 23 's/ 2 ]/ 2, ]/' "list of numbers spaced in its [ ]"
 break_line 24 's/"x"}/"x",/' "printf '%s' word cut off"
+break_line 25 "s/\"x\"}'/\"x\"'/" "hook input cut off in a helper's argument"
+break_line 31 "s/1}'/1,}'/" "line after a \$(...) heredoc with a ' in its body"
+break_line 35 "s/1}'/1,}'/" "line after a \$(...) comment with a '"
 
 bad515="${tmp}/bad515_test.sh"
 sed '3s/\\"}}"/\\"\\}}"/' "${good}" > "${bad515}"
@@ -93,8 +110,10 @@ sed '3s/$/ # vacuous-test: ok, bad JSON on purpose/' "${bad515}" > "${tmp}/marke
 lint "${tmp}/marked_test.sh"
 check "a line that says vacuous-test: ok is let through" [ "${rc}|${out}" = "0|" ]
 
+# make_flags — make check failed, and printed the finding.
+make_flags() { [ "${rc}" != 0 ] && grep -q "^${bad515}:3: vacuous-test" <<< "${out}"; }
 rc=0; out="$(make -s -C "${REPO}" check LINT_FILES="${bad515}" 2>&1)" || rc=$?
-check "make check runs the lint over LINT_FILES, and fails on a finding" grep -q "^${bad515}:3: vacuous-test" <<< "${out}"
+check "make check runs the lint over LINT_FILES, and fails on a finding" make_flags
 rc=0; make -s -C "${REPO}" check LINT_FILES="${good}" > /dev/null 2>&1 || rc=$?
 check "and passes when there is none" [ "${rc}" = 0 ]
 

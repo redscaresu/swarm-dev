@@ -9,9 +9,10 @@ double quotes, a printf format's %s and escapes applied, and each ${x:-default} 
 default. One that then starts like JSON ({" {} [{ [ { [" [] [1 [true) must parse with each $var,
 ${...}, $(...), `...` and %s read as 0, or else with each read as nothing (an optional field): whole,
 or one value per line (JSON Lines). A value that only ends early (a fragment a later command
-completes) passes, and so do a list's comma-joined items, unless the word reaches its reader whole: a
-heredoc, a here-string, a variable's value, or a printf format or echo's one word in a command that
-pipes or redirects. A word that is not JSON on purpose (bad input a test feeds to see it refused, or
+completes) passes unless the word is a command's argument (a hook's, a helper's) or reaches its
+reader whole: a heredoc, a here-string, a variable's value, or a printf format or echo's one word in a
+command that pipes or redirects. A list's comma-joined items pass too, unless the word reaches its
+reader whole. A word that is not JSON on purpose (bad input a test feeds to see it refused, or
 the tail of a list) says so in a comment on its line (or the heredoc's <<), e.g.
 "# vacuous-test: ok, bad JSON on purpose"."""
 import glob
@@ -36,6 +37,8 @@ FORMAT_SPEC = re.compile(r'%%|%[-+ #0-9.]*[sdiuxXfgc]')
 IN_DOUBLE = '$`"\\\n'    # what a backslash escapes in double quotes
 IN_HEREDOC = '$`\\\n'    # and in an unquoted heredoc
 WORD_END = " \t\n;|&()<>"
+ARGUMENT = "argument"   # sent_as_is: a command's argument, never cut off, but maybe a list's items
+SHELL_KEYWORDS = ("if", "then", "else", "elif", "do", "while", "until", "!", "time", "exec", "command", "builtin")
 MARK = "\x00"   # where an expansion was; values() tries it as 0, then as nothing
 SHOWN = 60   # characters of a bad value a finding shows
 
@@ -84,18 +87,31 @@ def scan(text, first_line, found, whole=False):
 
 
 def sent_as_is(before, command, whole):
-    """Whether a word reaches its reader whole: a here-string, a variable's value (a later line
-    sends it), or a printf format or the one word of an echo or a printf '%s', in a command that pipes
-    or redirects or,
-    with whole, in an unpiped $(...) whose output reaches its reader whole. A printf's other words,
-    or one of several words an echo joins, are pieces of what it prints."""
+    """Whether a word reaches its reader whole (True): a here-string, a variable's value (a later
+    line sends it), or a printf format or the one word of an echo or a printf '%s', in a command that
+    pipes or redirects or, with whole, in an unpiped $(...) whose output reaches its reader whole.
+    ARGUMENT for a word given to any other command (a hook, a helper, a check, a for list): it gets
+    the word whole, though it may join items into a list. False for a printf's other words, or one
+    of several words an echo joins: pieces of what it prints."""
     if before.rstrip().endswith("<<<") or ASSIGNED.search(before):
         return True
+    name = command_name(before)
+    if name and name not in ("printf", "echo"):
+        return ARGUMENT
     to = SENT.search(command)
     if not to and not (whole and "|" not in command):
         return False
     words = command[:to.start() if to else len(command)].strip()
     return bool(PRINTF_BEFORE.search(before)) or (bool(ECHO_BEFORE.search(before)) and not words)
+
+
+def command_name(before):
+    """The command a word on a line belongs to, from the text before it on its line: the first word
+    of its command, past if, then, ! and the like and any VAR=value; "" when the word starts it."""
+    words = re.split(r'[;|&({`]', before)[-1].split()
+    while words and (words[0] in SHELL_KEYWORDS or "=" in words[0]):
+        words.pop(0)
+    return words[0] if words else ""
 
 
 def read_word(t, i):
@@ -150,10 +166,11 @@ def skip_double(t, i, subs=None):
 
 def skip_group(t, i, subs=None):
     """The index past the bracket that closes the $( or ${ whose bracket is at i, quotes inside it
-    skipped; a $(...)'s body goes to subs. As in bash, a { nests only as ${: "${2:-{\"a\":1}}" is the default {"a":1 and a }."""
+    skipped, and in a $( any heredoc body or comment too; a $(...)'s body goes to subs. As in bash, a
+    { nests only as ${: "${2:-{\"a\":1}}" is the default {"a":1 and a }."""
     opening, start = t[i], i
     close = ")" if opening == "(" else "}"
-    depth = 0
+    depth, pending = 0, []
     while i < len(t):
         c = t[i]
         if c == "\\":
@@ -161,6 +178,16 @@ def skip_group(t, i, subs=None):
             continue
         if c == '"':
             i = skip_double(t, i + 1)
+        elif close == ")" and c == "\n" and pending:   # a heredoc's body: its ' and ) are text
+            i = read_heredocs(t, i + 1, pending, lambda pos: 0, []) - 1
+            pending = []
+        elif close == ")" and t.startswith("<<", i) and not t.startswith("<<<", i) and HEREDOC.match(t, i):
+            m = HEREDOC.match(t, i)
+            pending.append((m.group(1) == "-", bool(m.group(2)), m.group(3), 0))
+            i = m.end() - 1
+        elif close == ")" and c == "#" and t[i - 1] in " \t\n;|&(":   # a comment: it's is not a quote
+            end = t.find("\n", i)
+            i = len(t) if end < 0 else end - 1
         elif c == "'" and close == ")":
             end = t.find("'", i + 1)
             i = len(t) if end < 0 else end
@@ -263,8 +290,8 @@ def judge(value, sent):
 
 
 def problem(text, sent):
-    """None when text is JSON, JSON Lines or, unless sent, a list's items or a fragment that only
-    ends early; else (line within text, json's message)."""
+    """None when text is JSON, JSON Lines, a list's items unless sent whole (True), or a fragment
+    that only ends early unless sent at all; else (line within text, json's message)."""
     try:
         json.loads(text)
         return None
@@ -273,7 +300,7 @@ def problem(text, sent):
             return None
         whole = (e.lineno, e.msg)
     try:
-        if not sent:   # a list's items, which a later command or a printf format encloses
+        if sent is not True:   # a list's items, which a helper, a later command or a printf encloses
             json.loads("[" + text.rstrip().rstrip(",") + "]")
             return None
     except ValueError:
