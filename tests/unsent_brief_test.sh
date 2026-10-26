@@ -240,6 +240,21 @@ t0=${SECONDS}; poll
 check "a hung pane read is cut off, and the poll still returns on the held story" \
   test "$(cat "${ROOT}/out")|$(cat "${ROOT}/rc")|$(enters)|$(( SECONDS - t0 < 40 ))" == "held: ubr-h1 (needs a key)|0|0|1"
 
+# Hung reads in many panes: no read starts 20 s into the pass, so at most three of these five start.
+fresh; listed ubr-s1:idle ubr-s2:idle ubr-s3:idle ubr-s4:idle ubr-s5:idle; touch "${FX}/read.hang"
+for i in 1 2 3 4 5; do pane "w:p${i}" unsent; ev story "ubr-s${i}"; done
+printf -- '---\nkind: code\nstatus: ready\nheld_for: needs a key\n---\n\n# ubr-h1\n' > "${B}/ubr-h1.md"
+poll
+check "hung reads in five panes start at most three, and the poll still returns on the held story" \
+  test "$(cat "${ROOT}/out")|$(cat "${ROOT}/rc")|$(( $(reads) <= 3 ))" == "held: ubr-h1 (needs a key)|0|1"
+
+# The record goes in before the Enter: a delivery it cannot record gets none.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; mkdir "${P}/.swarm/lead/resend"
+poll
+check "a delivery whose record cannot be written gets no Enter" test "$(enters)|$(resends)" == "0|0"
+rmdir "${P}/.swarm/lead/resend"; poll
+check "once it can be, the next poll resends" test "$(enters)|$(resends)" == "1|1"
+
 # --- a tell's brief, and what the resend line is not.
 # The builder's last turn, a short one, started ten minutes before the findings tell and ended (a tool
 # result and its reply) 80 seconds before it.
