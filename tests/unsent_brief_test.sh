@@ -261,6 +261,11 @@ poll
 check "a delivery whose record cannot be written gets no Enter" test "$(enters)|$(resends)" == "0|0"
 rmdir "${P}/.swarm/lead/resend"; poll
 check "once it can be, the next poll resends" test "$(enters)|$(resends)" == "1|1"
+# A run stopped between its pending line and its Enter (a new wait --lead took over).
+fresh; listed ubr-s1:idle; pane w:p1 unsent; t="$(ago 120)"; ev story ubr-s1 "${t}"; session ubr-s1
+printf 'ubr-s1\t%s\tstory\t1\tpending\n' "${t}" > "${P}/.swarm/lead/resend"
+poll
+check "a delivery left pending by a stopped run is resent by the next" test "$(enters)|$(resends)" == "1|1"
 
 # --- a tell's brief, and what the resend line is not.
 # The builder's last turn, a short one, started ten minutes before the findings tell and ended (a tool

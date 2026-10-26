@@ -91,17 +91,18 @@ with `goal` on the findings' `/goal` can wait two more. So a tell sent within 7 
 start is left alone: the log cannot tell that turn from one the tell started. An agent that took the
 brief has had a turn, so a later, unrelated paste is left alone. A paste in a prompt already
 submitted above the box does not count either. Each line it is done with goes in
-`.swarm/lead/resend`, and the pane is not read again until a newer line comes. The line goes in
-before the Enter, and a line it cannot write gets no Enter, so a brief is never submitted twice. A
-failed read, a check that fails unexpectedly, or an Enter herdr could not send (its line comes out
-again), notes nothing, so the next read tries again; the failed Enter is logged as the `resend`
-line's outcome. A working agent's pane is never read. Nor is the pane of an agent that a `swarm.sh`
-command is still delivering to: a `story`, `tell`, `review-agent`, `conduct`, `step-up` or `agent`
-naming it, and for a conductor any `next` or `merge`, which start conductors. That command's new
-line is not written yet, and an Enter could submit the brief it is sending. While an upgrade runs,
-which restarts agents, no pane is read at all. It never resends through `tell`, which would log a
-second `tell:findings` line and count a review round twice. The resend prints nothing and wakes no
-one. The stall rule skips `resend` lines.
+`.swarm/lead/resend`, and the pane is not read again until a newer line comes. Before the Enter the
+line goes in marked `pending`, which does not count as done, and a line it cannot write gets no
+Enter. A run stopped before its Enter is tried again by the next read, which reads the box first, so
+a brief that did go is not sent twice. A failed read, a check that fails unexpectedly, or an Enter
+herdr could not send (its line stays `pending`), notes nothing, so the next read tries again; the
+failed Enter is logged as the `resend` line's outcome. A working agent's pane is never read. Nor is
+the pane of an agent that a `swarm.sh` command is still delivering to: a `story`, `tell`,
+`review-agent`, `conduct`, `step-up` or `agent` naming it, and for a conductor any `next` or
+`merge`, which start conductors. That command's new line is not written yet, and an Enter could
+submit the brief it is sending. While an upgrade runs, which restarts agents, no pane is read at
+all. It never resends through `tell`, which would log a second `tell:findings` line and count a
+review round twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines.
 
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
