@@ -143,6 +143,13 @@ attempts() { (export BOARD="${P}/docs" PROJECT_DIR="${P}"; . "${SWARM%/*}/lib/bo
 touch "${ROOT}/closefail"; out="$(run step-up s1 findings-3)" && rc=0 || rc=$?; rm "${ROOT}/closefail"
 check "with s1's pane failing to close, step-up refuses: no rung started, no escalation, no marker, and it says so" "1|0|0|none|yes" \
   "${rc}|$(starts)|$(escalates)|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] && echo kept || echo none)|$(has "s1's builder pane could not be closed, so it may still be working in its worktree; nothing was stepped up" "${out}")"
+# With the pane recorded under another name, close finds it through herdr and dies when it cannot close
+# it: still a refusal, so no marker is left and no failure is logged.
+cp "${P}/.swarm/state/s1" "${ROOT}/s1.state"; echo "w:1 renamed" > "${P}/.swarm/state/s1"; touch "${ROOT}/closefail"
+out="$(run step-up s1 findings-3)" && rc=0 || rc=$?
+rm "${ROOT}/closefail"; mv "${ROOT}/s1.state" "${P}/.swarm/state/s1"
+check "a step-up whose close dies (the pane found through herdr, not closed) leaves no marker and logs no failure" "1|yes|none|" \
+  "${rc}|$(has "could not be closed, so it is still open" "${out}")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] && echo kept || echo none)|$(failed_lines s1)"
 : > "${ROOT}/herdr.log"
 echo "${WT}" > "${ROOT}/late"
 out="$(GIT_TRACE="${ROOT}/git.trace" run step-up s1 findings-3)" || true
@@ -196,6 +203,13 @@ out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume of a story made kind: lead since refuses, starting nothing" "1|yes|1" "${rc}|$(has "s1 is kind: lead, which no agent builds" "${out}")|$(escalates)"
 check "a resume writes its own pid on the marker before its checks, so the lead's poll reads it as under way" "yes" \
   "$(m="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"; [[ "${m}" =~ ^[0-9]+$ && "${m}" != "${mpid}" ]] && echo yes)"
+# Another step-up holds the lock (a live pid): the resume is refused, and the marker keeps its pid.
+mpid="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"; nf="$(failed_lines s1)"
+mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
+out="$(run step-up --resume s1)" && rc=0 || rc=$?
+check "a resume refused by another step-up's lock leaves the marker's pid and logs no failure" "1|yes|${mpid}|${nf}" \
+  "${rc}|$(has "another step-up of s1 is running" "${out}")|$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")|$(failed_lines s1)"
+rm -rf "${P}/.swarm/locks/step-up-s1"
 mv "${P}/docs/stories/s1.md.bak" "${P}/docs/stories/s1.md"
 rm "${ROOT}/tabfail"; touch "${ROOT}/promptfail" "${ROOT}/startghost"
 out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?

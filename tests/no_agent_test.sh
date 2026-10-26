@@ -40,8 +40,11 @@ case "$*" in
   *) exit 1 ;;
 esac
 STUB
-# ps: the real one, except that a process list (-A) fails while ${FX}/ps.fail exists.
-printf '#!/bin/sh\ncase " $* " in *" -A "*) [ ! -e "%s/ps.fail" ] || exit 1 ;; esac\nexec %s "$@"\n' "${FX}" "$(command -v ps)" > "${ROOT}/bin/ps"
+# ps: the real one, except that a process list (-A) fails while ${FX}/ps.fail exists, removes the file
+# ${FX}/ps.rm names first (a rung starting between the board read and the process list), and leaves out
+# the pid ${FX}/ps.hide holds (a process started after the list was read).
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase " $* " in *" -A "*) [ ! -e "%s/ps.fail" ] || exit 1\n  [ ! -e "%s/ps.rm" ] || rm -f "$(cat "%s/ps.rm")" ;; esac\n%s "$@" | awk -v h="$(cat "%s/ps.hide" 2>/dev/null)" '"'"'h == "" || $1 != h'"'"'\n' "${FX}" "${FX}" "${FX}" "$(command -v ps)" "${FX}" > "${ROOT}/bin/ps"
 chmod +x "${ROOT}/bin/ps"
 # git: the real one, logging each show-ref (a build read from git).
 printf '#!/bin/sh\ncase " $* " in *" show-ref "*) echo "$*" >> "%s" ;; esac\nexec %s "$@"\n' "${ROOT}/git.log" "$(command -v git)" > "${ROOT}/bin/git"
@@ -77,7 +80,7 @@ unbusy() { [[ -z "${busy_pid}" ]] || { kill "${busy_pid}" 2>/dev/null || true; w
 fresh() {
   unbusy
   rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
-    "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${P}/.swarm/upgrade.pid" "${ROOT}"/*.log
+    "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${FX}/ps.rm" "${FX}/ps.hide" "${P}/.swarm/upgrade.pid" "${ROOT}"/*.log
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   listed
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
@@ -271,14 +274,22 @@ fresh; rm -f "${P}/.swarm/lead/seen"; story na-s "kind: code" "status: ready"; e
 marker na-s "${DEAD}"; ev step-up:failed na-s "ok (start failed)"
 poll
 check "a fresh run with no .swarm/lead/seen prints the step-up failed line on its first read" step_fires na-s
+# Only those two kinds: a held line whose cause holds ", exit: " is noted, not printed.
+fresh; rm -f "${P}/.swarm/lead/seen"; story na-h "kind: lead" "status: ready" "escalated_from: code" "held_for: paused, exit: none"
+poll
+check "a fresh run does not print a held line whose cause holds ', exit: '" silent
 
 # A step-up under way: its marker, no failure line, no builder listed, and its swarm.sh _step-up (the pid
 # on the marker) running, its lock held.
 fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s
 busy _step-up na-s stalled; marker na-s "${busy_pid}"; mkdir -p "${P}/.swarm/locks/step-up-na-s"
-poll; poll
+poll
 check "a step-up under way (its process alive) is silent" silent
+poll
 check "and no poll woke on it" never_woke na-s
+# A resume that rewrote the marker after the poll read ps: its pid is missing from that list but alive.
+echo "${busy_pid}" > "${FX}/ps.hide"; poll; rm -f "${FX}/ps.hide"
+check "a marker pid missing from the poll's ps but alive now (a resume just started) is silent" silent
 # Killed after closing the builder, before it could log step-up:failed: its pid is gone, its lock left.
 unbusy
 poll
@@ -300,12 +311,26 @@ unbusy
 fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}"; listed na-s
 poll; poll
 check "a marker whose step-up is gone but whose builder is still listed is silent" never_woke na-s
+# A pane under the builder's name after start_rung logged its failure is the new rung's, kept: it fires.
+ev step-up:failed na-s "ok (start unclear)"
+poll
+check "a marker whose new rung's pane was kept (start unclear) fires, the pane listed" step_fires na-s
+# A resume that then fails in its checks (a generic failure line) leaves the kept pane the new rung's.
+ev step-up:failed na-s "ok (step-up: could not list the PRs on story/na-s (git or gh), so nothing was closed)"; rm -f "${P}/.swarm/lead/seen"
+poll
+check "a later resume failing in its checks still leaves the kept pane the new rung's: it fires" step_fires na-s
+# The rung started between the board read and the pid read (start_rung removed the marker): no alert.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev close na-s; marker na-s "${DEAD}"
+echo "${P}/.swarm/briefs/na-s.step-up" > "${FX}/ps.rm"
+poll
+check "a marker gone by the time its pid is read is a rung that started: silent" silent
 
 # After a resume that worked: the marker gone, the step-up logged, the new builder listed.
 fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev close na-s
 ev step-up:failed na-s "ok (start failed)"; ev escalate na-s "ok (stalled: opus -> fable)"; ev step-up:resume na-s; listed na-s
-poll; poll
+poll
 check "after a resume that worked (no marker, its builder listed) it is silent" silent
+poll
 check "and no poll woke on it" never_woke na-s
 fresh; story na-s "kind: lead" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}"
 poll
@@ -364,6 +389,11 @@ busy upgrade e1; echo "${busy_pid} e1 /tmp/upgrade.log" > "${P}/.swarm/upgrade.p
 poll
 check "a story outside the upgrade's epic still fires" fires na-w "swarm.sh hold na-w <reason>"
 unbusy
+fresh; story na-u2 "kind: code" "status: ready" "epic: e1"; ev story na-u2; built na-u2; ev close na-u2; marker na-u2 "${DEAD}"
+busy upgrade e1; echo "${busy_pid} e1 /tmp/upgrade.log" > "${P}/.swarm/upgrade.pid"
+poll
+check "a failed step-up in a running upgrade's epic still fires" step_fires na-u2
+unbusy; rm -f "${P}/.swarm/upgrade.pid"
 
 # --- the cost of a poll: one herdr list, no per-pane read, no gh call, with a ready and a review case
 # live and a failed step-up's marker.

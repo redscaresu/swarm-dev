@@ -120,21 +120,31 @@ lines on its first read.
 swarm.sh process that wrote it. `wait --lead` reads markers from files and one `ps`, with no herdr or
 gh call, and prints `<what>: <stem>, exit: <exit>`. The `.step-up` marker works like this:
 
-- Path: `.swarm/briefs/<slug>.step-up`. A step-up writes it just before it closes the builder.
-  A resume writes it again with its own pid. It goes once the next model's builder has started.
+- Path: `.swarm/briefs/<slug>.step-up`. A step-up writes it just before it closes the builder,
+  and removes it again if the close fails, since the builder may still be open.
+  A resume takes `.swarm/locks/step-up-<slug>` first, then writes it again with its own pid; a
+  resume refused because another step-up holds the lock leaves it as it is. It goes once the next
+  model's builder has started.
 - First line: `<trigger> <from> <to> <role>`, which `step-up --resume` reads to start the rung.
 - Failure line: each point where a step-up stops after closing the builder logs
   `step-up:failed <slug>` with `ok (<why>)` in events.tsv. Those are an unreadable worktree, a git
   step left unfinished in it, an unread default branch, a failed `mktemp`, and a start that failed
-  or that herdr could not confirm. Any other failure after the close, or of a resume once it starts,
-  logs it too, with the error's first line or the exit status. `flow` reads it as an ok line.
+  or that herdr could not confirm. Any other failure after the close, or of a resume once it holds
+  the lock, logs it too, with the error's first line. A step-up that swarm.sh ran itself (from
+  `close`, `tell`, `wait --stall` or `watch`) has no error line to log, so its other failures log
+  only `ok (exit <n>)`, and the cause is in the output of the command that ran it. `flow` reads the
+  line as an ok line.
 - Lead line: `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`. It is printed for a
   story whose marker's pid is no longer a running `swarm.sh step-up` or `_step-up`, whatever the
   failure line or the `.swarm/locks/step-up-<slug>` lock says, so a step-up killed before it could
   log its failure line counts too. The process must name the slug, so a pid reused by another
   story's step-up does not count. While that process runs, the step-up is under way and the line
-  stays quiet. It stays quiet too while herdr still lists the builder: a step-up stopped before it
-  closed it, and a resume would start a second one. The story must be ready, since only a ready
+  stays quiet. It stays quiet too while herdr still lists a pane under the builder's name, which
+  is the old builder when the step-up stopped before it closed it: a resume would start a second
+  one. When a failure from one of the points listed above, which all come after the close, is logged
+  after the story's newest ok `escalate` or ok `story` line, that pane is the new rung's, kept, and
+  the line is printed. A later resume that fails in its checks does not change that. A marker gone by the time its pid is read is a rung that
+  started, not a failure. The story must be ready, since only a ready
   story steps up, and pass the `no-agent:` filters on kind and `held_for:`. A story in review keeps
   to the `no-agent:` line, marker or not.
 - Exit: fix the cause the failure line names, then run `swarm.sh step-up --resume <slug>`. With no
