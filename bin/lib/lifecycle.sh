@@ -2113,7 +2113,7 @@ step_up_running() {
 step_up_closed() {
   awk -F'\t' -v s="$1" -v re="^ok [(](${STEP_UP_CLOSED_WHYS})[)]$" '$3 != s { next }
     ($2 == "escalate" || $2 == "story") && $5 ~ /^ok/ { l = 0 }
-    $2 == "step-up:failed" && $5 ~ re { l = 1 }
+    $2 == "step-up:failed" && $5 ~ re { l = 1 }   # loose-match: ok re is anchored, built from STEP_UP_CLOSED_WHYS
     END { exit !l }' "${EVENTS_LOG}" 2>/dev/null
 }
 
