@@ -402,6 +402,8 @@ EXPANSION = re.compile(r"(\$\{[^}]*\}|\$\w+)")
 CALL = re.compile(CMD_AT + r"\"?([\w-]+)")
 # A name the path to swarm.sh is put in, and a function that runs one with "$@".
 HANDLE = re.compile(r"(\w+)\s*=[^\n]*" + SWARM_PATH)
+# $0 and a variable with SWARM in its name: swarm.sh, which sources bin/lib, or a path set elsewhere.
+SELF = r"(?<![\w`$-])\$\{?(?:0|\w*SWARM\w*)\}?(?![\w-])"
 FORWARDER = r"([\w-]+)\(\)\s*[{(][^\n]*(?:NAMES)[^\n]*\"\$@\""
 # A case pattern that opens a line: the words in it are matched, not called.
 CASE_PATTERN = re.compile(r"^\s*\(?[^\s()|;]+(?:\s*\|\s*[^\s()|;]+)*\)(?=\s|\Z)")
@@ -508,17 +510,20 @@ def built_call(line, run_vars):
     return out
 
 
-# swarm_runs(text, arms, arm_re) — the commands a unit's text runs swarm.sh with: each arm's command
-# that follows its quoted path, or a name for it (HANDLE, FORWARDER) not in `prose`. One followed by an
-# expansion ("$@"), but in a FORWARDER, runs each arm the text names, every arm when it names none.
-def swarm_runs(text, arms, arm_re):
-    if not re.search(SWARM_PATH, text):
-        return set()
-    names = {m.group(1) for m in HANDLE.finditer(text)}
-    ran = "|".join([SWARM_PATH] + [r"(?<![\w-])" + re.escape(n) + r"(?![\w-])" for n in names])
-    names |= {m.group(1) for m in re.finditer(FORWARDER.replace("NAMES", ran), text)}
+# swarm_runs(text, arms, arm_re, scope=None) — the commands a unit's text runs swarm.sh with: each
+# arm's command that follows its path, $0, a variable with SWARM in its name (as runs_swarm takes), or
+# a name scope (the unit's whole file, else its text) gives the path (HANDLE, FORWARDER), not in
+# `prose`. One followed by an expansion ("$@"), but in a FORWARDER, runs each arm the text names, every
+# arm when it names none.
+def swarm_runs(text, arms, arm_re, scope=None):
+    scope = text if scope is None else scope
+    names = {m.group(1) for m in HANDLE.finditer(scope)}
+    ran = "|".join([SWARM_PATH, SELF] + [r"(?<![\w-])" + re.escape(n) + r"(?![\w-])" for n in names])
+    names |= {m.group(1) for m in re.finditer(FORWARDER.replace("NAMES", ran), scope)}
     names = "|".join(map(re.escape, names or ["(?!)"]))
-    handle = r"(?:" + SWARM_PATH + r"[\"']?|(?<![\w`${-])\$?\{?(?:" + names + r")\}?(?![\w-]))"
+    handle = r"(?:" + SWARM_PATH + r"[\"']?|" + SELF + r"|(?<![\w`${-])\$?\{?(?:" + names + r")\}?(?![\w-]))"
+    if not re.search(handle, text):
+        return set()
     got, unsure = set(), False
     for m in re.finditer(handle + r"[\"']?,?[ \t]+[\"']?(\$\S*|[\w-]+)", text):
         if m.group(1) in arms:
@@ -538,9 +543,9 @@ def swarm_runs(text, arms, arm_re):
 # (and each .py that imports one), the arms it calls.
 # gone: names to find callers of beyond the functions defined now (a deleted one, whose callers break).
 def call_graph(root, gone=()):
-    units, fns, g = {}, set(), {"callers": {}, "top": {}, "dynamic": [], "wrappers": {}}
+    units, fns, texts, g = {}, set(), {}, {"callers": {}, "top": {}, "dynamic": [], "wrappers": {}}
     for sh in in_tree(root, SHELL_FILES):
-        text = read(root, sh)
+        text = texts[sh] = read(root, sh)
         run_vars = set(RUN_VAR.findall(text))
         for n, (line, code, labels) in enumerate(zip(text.split("\n"), shell_code(text), owners(sh, text)), 1):
             m = DEF.match(line)
@@ -550,13 +555,14 @@ def call_graph(root, gone=()):
     g["arms"] = arms = sorted({c[4:] for labels in units for c in labels if c.startswith("arm ")} - {"*"})
     fn_re, arm_re = words_re(fns | set(gone), r"(?![\w.-])"), words_re(arms)   # a function is never named as board.sh is
 
-    def arms_run(text):
-        return {"arm " + a for a in swarm_runs(text, arms, arm_re)}
+    def arms_run(text, scope=None):
+        return {"arm " + a for a in swarm_runs(text, arms, arm_re, scope)}
 
     for labels, lines in units.items():
         for c in labels if labels[0].startswith("arm ") else ():
             g["callers"].setdefault(c, set()).update(labels)   # one arm's commands reach each other
-        ran = arms_run("\n".join(line for _, line, _, _ in lines)) if FULL not in labels else set()
+        scope = texts[lines[0][0].rsplit(":", 1)[0]]   # a unit's lines are all in one file
+        ran = arms_run("\n".join(line for _, line, _, _ in lines), scope) if FULL not in labels else set()
         for where, line, code, run_vars in lines:
             if FULL in labels:
                 named = {w for w in CALL.findall(code) if w in fns}
@@ -565,7 +571,7 @@ def call_graph(root, gone=()):
             if code.strip() or line.lstrip()[:1] in "\"'":   # not a heredoc's or a long string's line
                 g["dynamic"] += [(rx, where) for rx in built_call(line, run_vars)]
             named |= {m.group(2) for m in ASSIGNED.finditer(line) if m.group(1) in run_vars and m.group(2) in fns | set(gone)}
-            for c in named | (arms_run(line) if FULL in labels else ran):
+            for c in named | (arms_run(line, scope) if FULL in labels else ran):
                 if FULL in labels:
                     g["top"].setdefault(c, where)
                 else:

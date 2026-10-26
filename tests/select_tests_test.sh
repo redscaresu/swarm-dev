@@ -122,6 +122,19 @@ by_var() {
   "$fn"
 }
 EOF
+cat > "${G}/bin/lib/handle.sh" <<'EOF'
+# handle.sh — functions that run the go arm through a name set outside them.
+SW="bin/swarm.sh"
+by_file_name() {
+  "$SW" go
+}
+by_self() {
+  "$0" go
+}
+by_swarm_var() {
+  "$SWARM" go
+}
+EOF
 cat > "${G}/bin/lib/top.sh" <<'EOF'
 # top.sh — the fixture's calls at a file's top level, inside "$(...)".
 top_dir() { echo d; }
@@ -133,7 +146,8 @@ EOF
 # whose path to swarm.sh is unquoted, by a hook that runs it through PATH, by a hook whose function
 # passes "$@" on, by a hook that passes "$@" on and names go, by a .py a function runs and the test
 # runs itself), run only the stop arm, source the lib to call step_one's caller (by name, or by a
-# quoted name in a variable), call step_one itself, read x.sh as text, and call top.sh's functions.
+# quoted name in a variable), call step_one itself, read x.sh as text, call top.sh's functions, and
+# call handle.sh's, which run the go arm through a file-level name, $0 or $SWARM.
 # shellcheck disable=SC2016 # the hook's text, expanded when it runs
 printf '#!/usr/bin/env bash\n"$(dirname "$0")/../bin/swarm.sh" go\n' > "${G}/hooks/runs-go.sh"
 echo 'bash bin/swarm.sh go' > "${G}/tests/runs_go_test.sh"
@@ -155,6 +169,7 @@ printf 'source bin/lib/x.sh\nuses_step\n' > "${G}/tests/sources_lib_test.sh"
 # shellcheck disable=SC2016 # fixture text, expanded when it runs
 printf 'for f in bin/lib/*.sh; do source "$f"; done\nby_var\n' > "${G}/tests/by_var_test.sh"
 echo 'wc -l bin/lib/x.sh' > "${G}/tests/reads_x_test.sh"
+for f in by_file_name by_self by_swarm_var; do printf 'source bin/lib/handle.sh\n%s\n' "${f}" > "${G}/tests/${f}_test.sh"; done
 printf 'source bin/lib/top.sh\ntop_dir\ntop_abs x\n' > "${G}/tests/top_test.sh"
 printf 'import subprocess\nsubprocess.run(["bash", "bin/swarm.sh", "go"])\n' > "${G}/bin/lib/runs_go.py"
 echo 'python3 bin/lib/runs_go.py' > "${G}/tests/py_go_test.sh"
@@ -216,9 +231,9 @@ check "an empty selection says so on stderr" "$(cd "${G}" && bash "${SEL}" 2>&1 
 
 # reach: the bin/ row, by function.
 GO=(tests/runs_go_test.sh tests/wrapper_test.sh tests/hook_test.sh tests/script_test.sh tests/bare_hook_test.sh
-  tests/fn_fwd_test.sh tests/fwd_test.sh tests/py_go_test.sh)
+  tests/fn_fwd_test.sh tests/fwd_test.sh tests/py_go_test.sh tests/by_file_name_test.sh tests/by_self_test.sh tests/by_swarm_var_test.sh)
 X_NAMERS=(tests/sources_lib_test.sh tests/names_step_test.sh tests/reads_x_test.sh)   # source or read x.sh
-check "a function the go arm reaches selects the go tests, its callers' (by_var's through a quoted name), x.sh's namers and the bin floor, not the stop test" \
+check "a function the go arm reaches selects the go tests (handle.sh's through a file-level name, \$0 and \$SWARM), its callers' (by_var's through a quoted name), x.sh's namers and the bin floor, not the stop test" \
   "$(sel "perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; ${commit}")" "$(lines "${GO[@]}" "${X_NAMERS[@]}" tests/by_var_test.sh "${BIN_FLOOR[@]}")"
 check "a deleted function still selects the tests of its callers" \
   "$(sel "perl -0pi -e 's/step_one\\(\\) \\{\\n  echo one\\n\\}\\n//' bin/lib/x.sh; ${commit}")" \
