@@ -2195,7 +2195,12 @@ nothing else. It lands it with `swarm.sh merge --board` when `merge = agent` or 
 While that PR's worktree (`<repo>-wt/_board-stage-v<x-y-z>`) exists, `next` goes on to the steps
 after `stage`, and the gate, `status` and `dash` list `stage PR awaiting merge: v<T>`, whether its
 epics are still drafts or the merge has made them active. The lead removes the worktree with
-`swarm.sh board-pr done stage-v<x-y-z>` once the PR has merged or closed. `hooks/lead-stop.sh` does not
+`swarm.sh board-pr done stage-v<x-y-z>` once the PR has merged or closed. Under `merge = agent` or a
+`merge` grant, the lead waits for an open stage PR's checks from that row and lands it once they are
+green. Under `merge = human` with no `merge` grant, you say not yet by leaving the PR unmerged:
+`next` names no new stage PR while it is open. Closing it unmerged is not a no: the lead removes its
+worktree, `next` names the stage again and a new PR opens. To take an epic out of its stage, drop
+its `stage:` or `hld:`; it is then a plain draft, agreed through `/epic`. `hooks/lead-stop.sh` does not
 know the `stage` step, so it allows the lead's stop on it, as on any step it does not list.
 
 Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30
