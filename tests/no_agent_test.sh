@@ -274,7 +274,8 @@ mkdir -p "${P}/.swarm/reviews"; printf 'head: %s\n' "${H}" > "${P}/.swarm/review
 check "a findings file with a head: line but no review is no pass: the exit is review-agent" \
   fires na-i "swarm.sh review-agent na-i ${URL}"
 fresh "merge = agent"; story na-x "kind: code" "status: review"; ev story na-x; built na-x; ev close na-x; poll
-check "with no PR URL, the exit is the hold" fires na-x "swarm.sh hold na-x <reason>"
+check "a review story with no PR URL is never offered hold, which refuses it: find its PR, then review-agent" \
+  fires na-x "gh pr list --head story/na-x, then swarm.sh review-agent na-x <PR URL>"
 
 # --- a hung herdr: the list is killed after SWARM_LEAD_LIST_WAIT, and the other lines still wake.
 fresh; story na-z "kind: lead" "status: ready" "escalated_from: code" "held_for: paused"
