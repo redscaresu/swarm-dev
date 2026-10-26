@@ -62,11 +62,23 @@ def entries(fm, project_dir, repos_dir):
         out.append(("" if r == project else r, f.strip(), fn.strip()))
     return out
 
+# A part's leading words that name no function or section: a section marker and the articles,
+# compared in lower case (doc headings start with "The ...").
+SKIP_WORDS = {"§", "#", "the", "a", "an"}
+
+# first_word(part) — a part's first word past SKIP_WORDS (a function or section name); an empty
+# list for a bare file, and the last word when the part has nothing past them (a section named A).
+def first_word(part):
+    words = part.split()
+    for w in words:
+        if w.lower() not in SKIP_WORDS:
+            return [w]
+    return words[-1:]
+
 # overlap(a, b) — two (repo, file, part) entries clash: the same repo and file, and either both parts
-# empty or the parts' first words (a function or section name) the same. A bare file never clashes
-# with a part of it.
+# empty or the parts' first words the same. A bare file never clashes with a part of it.
 def overlap(a, b):
-    return a[:2] == b[:2] and a[2].split()[:1] == b[2].split()[:1]
+    return a[:2] == b[:2] and first_word(a[2]) == first_word(b[2])
 
 def deps(fm):
     return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))

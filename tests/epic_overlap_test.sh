@@ -183,6 +183,13 @@ check "a bare file clashes with the bare file, and a part with one that starts w
   "warning: xb (epic e2) is open and touches bin/swarm.sh; start xg3 after it merges|warning: xb (epic e2) is open and touches bin/swarm.sh:load_config; start xg4 after it merges" \
   "$(other "status: review" "epic: e2" "touches: [bin/swarm.sh]"; subject xg3 "[bin/swarm.sh]"; warns xg3)|$(
   other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xg4 "[bin/swarm.sh:load_config and the dispatch]"; warns xg4)"
+check "a part's first word skips a leading section marker or article, in either case" "none|none|none" \
+  "$(other "status: review" "epic: e2" "touches: [docs/x.md:§ The audit log]"; subject xu1 "[docs/x.md:§ The lead]"; warns xu1)|$(
+  other "status: review" "epic: e2" "touches: [docs/x.md:the clash rule]"; subject xu2 "[docs/x.md:the merge table]"; warns xu2)|$(
+  other "status: review" "epic: e2" "touches: [docs/x.md:§ A]"; subject xu3 "[docs/x.md:§ B]"; warns xu3)"
+check "and two parts whose first word past them is the same still clash" \
+  "warning: xb (epic e2) is open and touches docs/x.md:§ The lead wakeups paragraph; start xu4 after it merges" \
+  "$(other "status: review" "epic: e2" "touches: [docs/x.md:§ The lead wakeups paragraph]"; subject xu4 "[docs/x.md:§ The lead kinds paragraph]"; warns xu4)"
 other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xs1 "[bin/swarm.sh]"; subject xs2 "[bin/swarm.sh:load_config (CFG)]"
 rc1=0; run story --strict xs1 >/dev/null || rc1=$?; rc2=0; out="$(run story --strict xs2)" || rc2=$?
 check "story --strict across epics starts a story whose bare file another epic's open story names a part of, and refuses one naming the same part" \
