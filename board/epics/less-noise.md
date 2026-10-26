@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 hld: 2026-10-25-swarm-dev-0-28
 stage: v0.29.0
 depends_on: [stage-gating, test-speed, clash-by-part, no-agent-alert, liveness-signals]
@@ -23,7 +23,7 @@ Less work and noise per story: board-only PRs of three kinds skip codex, no inci
   - dash, status and a new `swarm.sh where <agent>` print each agent's workspace label and tab, not only its pane id; `swarm.sh dash --all` (or `swarms`) lists every swarm running on the machine: each project with a lead, and its conductors and agents.
   - A test per rule, with herdr stubbed, two projects in one fixture; the labels are documented in docs/reference.md and README.md.
 - A merge = agent project is set up before its first conductor runs (v0.28.0 lesson: conductors were refused every merge as 'Merge Without Review', and the user merged 8 approved PRs by hand). `swarm.sh init` adds, or checks and names the user step for, an allow rule for `swarm.sh merge` in the user's Claude Code settings, and a preflight in `conduct` refuses to start with a clear message when the rule is missing under merge = agent. A test with the rule present and absent.
-- Agents are not frozen by Claude Code's own UI (v0.28.0 lesson: the 'Teach auto mode' dialog and permission prompts froze at least six builder panes for hours, and answering one left a pane in manual mode). `init` tells the user to run auto mode's environment setup once and checks it was done; builders are told the command forms that need no approval (no unquoted globs in Bash). This epic adopts the story stuck-work-watch, which makes wait --lead alert on prompts, dialogs, manual mode and API-error stops, approved PRs left unmerged, and conflicts.
+- Agents are not frozen by Claude Code's own UI (v0.28.0 lesson: the 'Teach auto mode' dialog and permission prompts froze at least six builder panes for hours, and answering one left a pane in manual mode). `init` tells the user to run auto mode's environment setup once and checks it was done; builders are told the command forms that need no approval (no unquoted globs in Bash). This epic adopts the stories stuck-work-watch and concurrency-check (after each merge the lead hears what else can run now; user, 2026-10-26), which makes wait --lead alert on prompts, dialogs, manual mode and API-error stops, approved PRs left unmerged, and conflicts.
 - The builder brief says to run only the selected tests (`scripts/select-tests.sh --run`) after review fixes and let CI run the full suite (v0.28.0 lesson: full local runs cost 30 to 60 minutes per round; #560 spent over an hour on two), and never to poll with a `pgrep -f` pattern that matches its own command line (v0.28.0: two such loops never ended). The brief test pins both lines.
 - `rules-unchecked` does not flag checks that were moved between files rather than added (v0.28.0 retro: 44 fixed and 158 declined on a single PR, #524, most of them moved checks).
 - status, next and dash finish within a time limit under load, and flow reports their run times (v0.28.0 retro: each took 1 to 3 minutes at load 14 to 18, the lead's 2-minute checks timed out, and dash --watch sat blank for about a minute).
