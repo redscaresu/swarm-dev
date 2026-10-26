@@ -5,8 +5,11 @@
 # test, a test selects itself, board/ nothing, and a rename both paths' tests; committed, staged,
 # unstaged and untracked changes all count. Any doubt selects every test: a path no row matches, a
 # `named` path no test names, no origin/main. --run hands the list to a stub make with JOBS=4, or
-# runs nothing. Last, --check-map: it names each unmapped path under bin/, scripts/, commands/,
-# hooks/ and docs/, refuses a map that lists a missing test, and passes the real repo's ls-files.
+# runs nothing. --functions names the bin/ functions and dispatch arms a change reaches, from both
+# sides of the diff, and the functions that run a changed .py; a line in no function, or a .py no
+# function runs, gives full. Last, --check-map: it names each unmapped path under bin/, scripts/,
+# commands/, hooks/ and docs/, refuses a map that lists a missing test, and passes the real repo's
+# ls-files.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,6 +41,48 @@ echo 'cp scripts/board-only.sh .' > "${G}/tests/names_gate_test.sh"
 echo 'bin/gh-shim/gh api' > "${G}/tests/names_shim_test.sh"
 echo 'cat commands/renamed.md' > "${G}/tests/names_renamed_test.sh"
 echo 'echo plan-swarm.md old-board-only.sh merge-guard.shx' > "${G}/tests/x_test.sh"   # near misses
+# --functions' fixture: a dispatch case in bin/swarm.sh, and functions of both forms in bin/lib/x.sh,
+# one of which runs named.py, which imports helper.py, which imports util.py; lone.py is named only
+# in a comment.
+cat > "${G}/bin/swarm.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# go_to — what the go arm runs.
+go_to() {
+  echo go
+}
+
+dispatch() {
+  cmd="${1:-}"; shift || true
+  case "${cmd}" in
+    go) go_to ;;
+    # halt: stop's old name
+    stop|halt) echo stop
+               echo stopped ;;
+    *) exit 2 ;;
+  esac
+}
+
+dispatch "$@"
+EOF
+cat > "${G}/bin/lib/x.sh" <<'EOF'
+# x.sh — the fixture's helpers; it names named.py, and lone.py only here.
+LIB_SETTING=1
+
+run_named() {
+  python3 bin/lib/named.py
+}
+
+sub_two() (
+  echo two
+)
+gone() { echo gone; }
+EOF
+printf 'import helper\nprint(helper.X)\n' > "${G}/bin/lib/named.py"
+printf 'import util\nX = util.Y\n' > "${G}/bin/lib/helper.py"
+echo 'Y = 1' > "${G}/bin/lib/util.py"
+echo 'print(1)' > "${G}/bin/lib/lone.py"
 git -C "${G}" add -A; git -C "${G}" commit -qm base
 git -C "${G}" update-ref refs/remotes/origin/main HEAD
 BASE="$(git -C "${G}" rev-parse HEAD)"
@@ -74,6 +119,39 @@ git -C "${G}" update-ref refs/remotes/origin/main "${BASE}"
 sel 'echo 1 > notes.txt' > /dev/null
 check "it says why it selects every test" "$(cd "${G}" && bash "${SEL}" 2>&1 >/dev/null)" \
   "select-tests: every test: notes.txt: no row in scripts/test-map.tsv matches it"
+
+# --functions, on the bin/ fixture above.
+fn() { sel "$1" --functions; }
+check "an edit inside a function gives that function" \
+  "$(fn "perl -pi -e 's/echo two/echo 2/' bin/lib/x.sh; ${commit}")" bin/lib/x.sh:sub_two
+check "edits to a dispatch arm's line and its next line give each arm's commands" \
+  "$(fn "perl -pi -e 's/go_to ;;/go_to \"\\\$@\" ;;/; s/echo stopped/echo halted/' bin/swarm.sh")" \
+  "$(lines 'bin/swarm.sh:arm go' 'bin/swarm.sh:arm halt' 'bin/swarm.sh:arm stop')"
+check "an edit to the comment above an arm gives that arm" \
+  "$(fn "perl -pi -e 's/old name/former name/' bin/swarm.sh")" "$(lines 'bin/swarm.sh:arm halt' 'bin/swarm.sh:arm stop')"
+check "an edit to a function's doc comment gives that function" \
+  "$(fn "perl -pi -e 's/what the go arm runs/the go arm/' bin/swarm.sh; ${commit}")" bin/swarm.sh:go_to
+check "a deleted function gives its name from the base" \
+  "$(fn "perl -ni -e 'print unless /^gone\\(\\)/' bin/lib/x.sh; ${commit}")" bin/lib/x.sh:gone
+check "an edit at file top level gives full" "$(fn "perl -pi -e 's/LIB_SETTING=1/LIB_SETTING=2/' bin/lib/x.sh; ${commit}")" full
+check "--functions says why it gives full" "$(cd "${G}" && bash "${SEL}" --functions 2>&1 >/dev/null)" \
+  "select-tests: full: bin/lib/x.sh:2 at the base is in no function"
+check "a new function with its doc comment gives that function alone" \
+  "$(fn "printf '\\n# added — new\\nadded() {\\n  :\\n}\\n' >> bin/lib/x.sh; ${commit}")" bin/lib/x.sh:added
+check "a new untracked .sh gives its functions" \
+  "$(fn "printf '# new.sh\\nNEW=1\\nnew_one() {\\n  :\\n}\\nnew_two() { :; }\\n' > bin/lib/new.sh")" \
+  "$(lines bin/lib/new.sh:new_one bin/lib/new.sh:new_two)"
+check "a mode change to a bin file gives full" "$(fn "chmod +x bin/lib/x.sh; ${commit}")" full
+check "an edit to a .py gives the shell functions whose bodies name it" "$(fn 'echo 1 >> bin/lib/named.py')" bin/lib/x.sh:run_named
+check "an edit to a .py two imports away gives the functions that run the first" \
+  "$(fn "echo 'Z = 2' >> bin/lib/util.py; ${commit}")" bin/lib/x.sh:run_named
+check "a .py no function names gives full" "$(fn "echo 1 >> bin/lib/lone.py; ${commit}")" full
+check "a .py a script runs gives full" \
+  "$(fn "echo 'python3 bin/lib/named.py' >> scripts/board-only.sh; echo 1 >> bin/lib/named.py")" full
+check "a change outside bin/ gives no function" "$(fn "echo 1 >> docs/method.md; ${commit}")" ""
+check "no origin/main gives full" \
+  "$(fn "echo 1 >> bin/lib/named.py; git update-ref -d refs/remotes/origin/main")" full
+git -C "${G}" update-ref refs/remotes/origin/main "${BASE}"
 
 # --run: a stub make records its arguments and any SHARD it was left.
 mkdir -p "${tmp}/bin"

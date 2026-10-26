@@ -4,6 +4,8 @@
 # --run runs them all through make test, 4 at a time, or says there is none to run.
 # select-tests.sh --check-map < <paths> — names each path under bin/, scripts/, commands/, hooks/ or
 # docs/ that the map leaves out, and fails when there is one.
+# select-tests.sh --functions — the bin/ functions this branch's changes reach, one per line
+# (<file>:<function>, or bin/swarm.sh:arm <cmd> for an arm of its dispatch case), or `full`.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
