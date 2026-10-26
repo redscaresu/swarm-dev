@@ -60,10 +60,61 @@ lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seco
 (`SWARM_LEAD_POLL`) it reads the board, and it returns as soon as a new item appears: a held story
 (`held_for:`), an escalated one, or a story or epic in review whose PR heads are all green and that
 waits on the lead's user: every one with `merge = human`, and with `merge = agent` only a PR
-`swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv.
+`swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv,
+with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
 The lead handles each line at once and starts it again. It keeps what it last saw in
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
+
+**A started story with no agent wakes the lead too.** `wait --lead` also prints
+`no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
+counts a story only when all of these hold:
+
+- It is ready, or in review under `merge = agent`. A story waiting on the user is left out:
+  awaiting their merge under `merge = human`, `costs: money` or `kept:`, green or not.
+- It is of a kind an agent builds. That rules out `kind: lead`, and so every held or escalated
+  story. A blocked story is never counted.
+- It has a build record: an ok builder start that no close ended or, for a story with any start
+  line, its worktree or `story/<slug>` branch.
+- No `swarm.sh upgrade` runs in this project for its epic, its backlog or every agent: an upgrade
+  stops agents and starts them again. Its ok events line counts as a start, except for a story
+  reconcile reopened: an upgrade restarts only running agents, so that story stays left out.
+- herdr lists no pane this project opened under its builder's name or `review-<slug>`. No
+  `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
+- No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
+  the slug, its answer is still on the way: each writes its own events.tsv line when it exits.
+- It has no `.swarm/briefs/<slug>.step-up` marker. A failed step-up is reported apart.
+
+Something must explain why no agent is there: an ok close of the builder or the review agent, or a
+failed start, with no later start, ok tell or hold. A story reconcile reopened (its PR closed
+unmerged) is left out until a new start: `unblock --startable` already names it for the lead, from
+the reopen being its last events line, which a line written here would hide. When a pane went with
+no such event, the poll that first sees it writes a `no-agent <slug>` events.tsv line and stays
+silent, and the next poll wakes the lead. The exit for a ready story is
+`swarm.sh hold <slug> <reason>`. A hold answers the alert but starts nothing, so if no agent is back
+by the next poll, that poll writes a new `no-agent` line and the alert comes back. For a story in
+review the exit is never an unpinned merge. With one PR and a findings file
+`.swarm/reviews/<slug>.md` that passes on its 40-hex `head:` line, it is
+`swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since. With several PRs, or
+no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
+each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
+compares the head wait-pr printed with the exit's `<sha>`: the same, it merges; different, the PR was
+pushed after its review, so it runs `swarm.sh review-agent <slug> <PR URL>` instead, since merge
+refuses the old pin and the line, already seen, would not come back. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
+checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
+story. On 2 it reads why: on a conflict with the base, a builder in the story's worktree merges the
+base in and pushes; on a gh error or the timeout, it runs wait-pr once more, and if it ends the same
+way, lists the story in its report with the reason. A story in review with no PR URL gets the exit
+`gh pr list -R <the story's repo's origin> --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
+while wait-pr runs and may come back once after it ends.
+
+Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
+hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
+events.tsv are read every poll; git only for a story with a start line and no current builder; herdr's
+JSON and `ps` once, whenever a story with a build record is left after those reads, before the
+listing is checked. No gh call is made for these lines. Outside
+herdr, or when herdr's list or `ps` fails, it prints none. A run with no
+`.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
@@ -2055,7 +2106,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, or a green PR in review that waits on you, and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, or a started story with no live agent (`no-agent: <slug>, exit: <exit>`), and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
