@@ -125,7 +125,7 @@ run() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH
 # events.tsv lives here.
 mkdir -p "${p}/.swarm"
 
-# --- story warns when an open story of another epic touches the same function or file; --strict refuses.
+# --- story warns when an open story of another epic touches the same part of a file or both name the bare file; --strict refuses.
 # subject <slug> <touches> — a ready story of e1 in svc; other <front-matter line>... — xb, in svc unless
 # a line says otherwise; warns <slug> — story's warning lines, or none.
 subject() { item "${b}" "stories/$1.md" "status: ready" "kind: code" "epic: e1" "repo: svc" "touches: $2"; }

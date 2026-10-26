@@ -928,7 +928,8 @@ starts from origin's base, so it reads the old story text until that PR merges: 
 start again, a story whose edit is still in a board PR.
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
-of another epic (in review, or with its builder open) touches the same function or file. On a refusal
+of another epic (in review, or with its builder open) touches the same part (by its first word) of a
+file, or both name the bare file. On a refusal
 that says the named story \`is open\`, start yours in a later wave, after the named story merges.$(costs_wait_rule) On
 one that says it \`cannot tell\` (herdr could not list its agents, or the board's touches could not
 be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only

@@ -206,6 +206,8 @@ clash_brief() {
 }
 check "with merge = human, the conductor builds stories that share a file but no symbol at once, has a conflicted PR's builder merge the base in, and passes a review with nothing fixed" \
   "yes|yes|yes|yes|yes|yes|gone" "$(clash_brief "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "the conductor brief's story --strict rule says the same part or the bare file, never the same function or file" "yes|gone" \
+  "$(has "touches the same part (by its first word) of a file, or both name the bare file. On a refusal" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(grep -qF "the same function or file" "${p}/.swarm/briefs/conduct-f.md" && echo old || echo gone)"
 # startable_brief <brief> — the startable rule after a merge, after each wait (its inbox pass first) and
 # after the last inbox pass (three times), the last pass's go-back, and no wording that starts only what unblock readied.
 startable_brief() {
