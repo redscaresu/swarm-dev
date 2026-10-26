@@ -110,13 +110,16 @@ item "${B}" stories/b-kept.md "Kept" "status: review" "kind: code" "kept: 2026-1
 item "${B}" stories/b-gone.md "Gone" "status: ready" "kind: code"
 { printf '%s\tstory\tb-gone\tw2:p1\tok\n' "$(at 35)"; printf '%s\tno-agent\tb-gone\tw2:p1\tok\n' "$(at 34)"; } >> "${B}/.swarm/events.tsv"
 # A step-up that failed after closing b-stepped's builder (its .step-up marker says closed): an open
-# step-up-failed:b-stepped, drawn as wait --lead's step-up failed: line. b-norev's review agent failed to
-# start: an open no-review:b-norev, which the poll prints, and dash draws, as no agent on story.
+# step-up-failed:b-stepped, drawn as wait --lead's step-up failed: line. b-norev's builder closed with
+# its build kept (story/b-norev stays), then its review agent failed to start: an open no-review:b-norev,
+# which the poll prints, and dash draws, as no agent on story.
 item "${B}" stories/b-stepped.md "Stepped" "status: ready" "kind: code"
 item "${B}" stories/b-norev.md "No review" "status: ready" "kind: code"
 mkdir -p "${B}/.swarm/briefs"; echo closed > "${B}/.swarm/briefs/b-stepped.step-up"
+git -C "${B}" branch story/b-norev
 { printf '%s\tstory\tb-stepped\tw2:p1\tok\n' "$(at 33)"; printf '%s\tstep-up:failed\tb-stepped\tw2:p1\tok (exit 1)\n' "$(at 32)"
-  printf '%s\tstory\tb-norev\tw2:p1\tok\n' "$(at 31)"; printf '%s\treview-agent\tb-norev\tw2:p1\tfailed (exit 1)\n' "$(at 30)"; } >> "${B}/.swarm/events.tsv"
+  printf '%s\tstory\tb-norev\tw2:p1\tok\n' "$(at 31)"; printf '%s\tclose\tb-norev\tw2:p1\tok\n' "$(at 30)"
+  printf '%s\treview-agent\tb-norev\tw2:p1\tfailed (exit 1)\n' "$(at 29)"; } >> "${B}/.swarm/events.tsv"
 q="$(sw "${B}" flow | sed -n '/^## lead_queue$/,/^## /p')"
 queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "escalated:b-esc2" "${q}" && has "kept:b-kept" "${q}" \
   && grep -qE $'^[0-9-]+\t3\t.*\tno-agent:b-gone,no-review:b-norev,step-up-failed:b-stepped$' <<< "${q}"; }

@@ -21,6 +21,8 @@
 # is open while the story is ready, and a no-agent wake while a builder was started and not closed
 # counts as woken while working (a step-up:failed line closes the builder). A refused step-up opens
 # nothing; an upgrade of a story's epic ends its wait, and a reopening reconcile ends it until the next start.
+# A later close ends an open item; a failed start while the builder runs opens none; a wait runs from
+# the newest close, and a review line restarts it.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -281,7 +283,9 @@ check "a no-agent wake while its builder was started and not closed counts as wo
   "$(flow "${P}" --since 2026-10-11 --until 2026-10-13 | tail -3 | cut -f1,5)" $'2026-10-11\t0\n2026-10-12\t0\n2026-10-13\t1'
 # 2026-10-14: rs's step-up was refused before it closed its builder (a failed step-up line, no
 # step-up:failed): no item. ug and ug2 each had a close and a no-agent line, then an upgrade of ug's
-# epic restarted ug's agents: only ug2 (another epic) is open, from its close at 10:00 to midnight (840).
+# epic restarted ug's agents: ug2 (another epic) is open, from its close at 10:00 to midnight (840).
+# sk's step-up failed at 10:00 in ug's epic, and the upgrade does not end it, as the poll reports its
+# marker whatever an upgrade restarts: open too (840).
 ev 2026-10-14T09:00:00Z story rs
 ev 2026-10-14T09:30:00Z step-up rs "failed (exit 1)"
 ev 2026-10-14T09:00:00Z story ug
@@ -290,10 +294,13 @@ ev 2026-10-14T10:00:00Z close ug
 ev 2026-10-14T10:00:00Z close ug2
 ev 2026-10-14T10:01:00Z no-agent ug
 ev 2026-10-14T10:01:00Z no-agent ug2
+ev 2026-10-14T09:00:00Z story sk
+ev 2026-10-14T10:00:00Z step-up:failed sk "ok (exit 1)"
 ev 2026-10-14T10:30:00Z upgrade e1
 story "${P}/docs" rs "status: ready"; story "${P}/docs" ug "status: ready" "epic: e1"; story "${P}/docs" ug2 "status: ready" "epic: e2"
-check "a refused step-up opens nothing, and an upgrade of its epic ends a no-agent wait" \
-  "$(flow "${P}" --since 2026-10-14 --until 2026-10-14 | tail -1)" $'2026-10-14\t1\t840\t840\t0\tno-agent:ug2'
+story "${P}/docs" sk "status: ready" "epic: e1"
+check "a refused step-up opens nothing, and an upgrade of its epic ends a no-agent wait but not a failed step-up's" \
+  "$(flow "${P}" --since 2026-10-14 --until 2026-10-14 | tail -1)" $'2026-10-14\t2\t840\t840\t0\tno-agent:ug2,step-up-failed:sk'
 # 2026-10-15: sc's builder closed at 10:45 with no wake, then its step-up logged step-up:failed at
 # 11:00; woken 11:20: 20 minutes from the step-up:failed line, not 35 from the close.
 ev 2026-10-15T09:00:00Z story sc
@@ -322,6 +329,46 @@ ev 2026-10-16T13:01:00Z no-agent ro3
 story "${P}/docs" ro "status: ready"; story "${P}/docs" ro2 "status: ready"; story "${P}/docs" ro3 "status: ready"
 check "a reopening reconcile ends a wait unmeasured until the next ok start" \
   "$(flow "${P}" --since 2026-10-16 --until 2026-10-16 | tail -1)" $'2026-10-16\t2\t750\t840\t0\tno-agent:ro3,no-review:ro2'
+# 2026-10-17: cl's pane died (a no-agent line), then a close cleared its build: not open, as the poll
+# would need the build. br's review agent failed to start while its builder ran: no item, as the poll
+# stays quiet while herdr lists the builder. bc's builder closed at 11:00 and its review agent failed to
+# start at 11:30: open as no-review from 11:30 (750).
+ev 2026-10-17T09:00:00Z story cl
+ev 2026-10-17T09:10:00Z no-agent cl
+ev 2026-10-17T09:30:00Z close cl
+ev 2026-10-17T10:00:00Z story br
+ev 2026-10-17T10:30:00Z review-agent br "failed (exit 1)"
+ev 2026-10-17T10:00:00Z story bc
+ev 2026-10-17T11:00:00Z close bc
+ev 2026-10-17T11:30:00Z review-agent bc "failed (exit 1)"
+story "${P}/docs" cl "status: ready"; story "${P}/docs" br "status: ready"; story "${P}/docs" bc "status: ready"
+check "a later close ends an open item, and a failed start while the builder runs opens none" \
+  "$(flow "${P}" --since 2026-10-17 --until 2026-10-17 | tail -1)" $'2026-10-17\t1\t750\t750\t0\tno-review:bc'
+# 2026-10-20 and 21: ra's builder closed at its review handover (10-20 10:01); a close the next day at
+# 10:00 sent it back to ready, and the lead was woken 30 s later: 0.5 minutes from that newest close
+# (0 as the section rounds), on 10-21, not 1440 from the handover. rb's builder closed at 09:00 before
+# its review at 10:00, which restarts the clock: woken at 10:05, 5 minutes. Median 2.75, shown as 3.
+ev 2026-10-20T09:00:00Z story ra
+ev 2026-10-20T10:00:00Z review ra "ok (https://github.com/o/r/pull/30)"
+ev 2026-10-20T10:01:00Z close ra
+ev 2026-10-21T10:00:00Z close ra "ok (dropped)"
+ev 2026-10-21T10:00:30Z lead-woken ra "ok (no-agent)"
+ev 2026-10-21T08:00:00Z story rb
+ev 2026-10-21T09:00:00Z close rb
+ev 2026-10-21T10:00:00Z review rb "ok (https://github.com/o/r/pull/31)"
+ev 2026-10-21T10:05:00Z lead-woken rb "ok (no-agent)"
+story "${P}/docs" ra "status: ready"; story "${P}/docs" rb "status: review"
+check "a wait runs from the newest close, and a review line restarts it" \
+  "$(flow "${P}" --since 2026-10-20 --until 2026-10-21 | tail -2)" "${nohead}"$'\n2026-10-21\t2\t3\t5\t0\t-'
+# 2026-10-22: fr's builder pane went with no close line, then its restart failed at 10:00 and the lead
+# was woken at 10:10: 10 minutes from the failed start, and a wake while a builder had started and not
+# closed.
+ev 2026-10-22T09:00:00Z story fr
+ev 2026-10-22T10:00:00Z restart fr "failed (exit 1)"
+ev 2026-10-22T10:10:00Z lead-woken fr "ok (no-agent)"
+story "${P}/docs" fr "status: ready"
+check "a failed start while a builder had started times its wake" \
+  "$(flow "${P}" --since 2026-10-22 --until 2026-10-22 | tail -1)" $'2026-10-22\t1\t10\t10\t1\t-'
 
 # merge = agent, the board at "~/my board": m (costs: [Money]) 30, o (deleted, a block list of money) 20,
 # held q 50, u (in neither the board nor git, so money) 10; n (costs: "None"), p (no costs:), r (gone
