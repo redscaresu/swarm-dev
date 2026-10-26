@@ -240,7 +240,7 @@ Repeat until a step below says stop:
      `.swarm/conduct-backlog.report.md` once the cause is fixed. Then stop. Otherwise run
      `swarm.sh conduct --backlog`, then handle it as `wait` on the conductor it started
      (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
-   - `stage v<S>`: the tag of the minor before v<S> is on the base, and the draft epics `next`'s why
+   - `stage v<S>`: a tag at or above the minor before v<S> is on the base, and the draft epics `next`'s why
      names carry `stage: v<S>` and an `hld:` naming an agreed HLD that grants `epics`, so they go
      active with no agreement from the user. Open a board PR named `stage-v<S>` with the dots as
      dashes (v0.30.0 gives `stage-v0-30-0`): `swarm.sh board-pr start <name>`, set each named epic's
@@ -249,13 +249,16 @@ Repeat until a step below says stop:
      background and wait for it; if it does not exit 0, tell the user what it printed and stop.
      Land it with `swarm.sh merge --board <url>` when `swarm.sh config merge` prints `agent` or
      `swarm.sh grants <url>` lists `merge`. Otherwise hand the PR to the user: the `epics` grant
-     lets you set the epics active, not merge the PR. If merge refuses, stop and tell the user what it printed. While the PR is open, `next`
-     goes on to the steps after this one and the gate lists `stage PR awaiting merge: v<S>`: read the
-     PR (`gh pr list --head board/<name> --state all --json url,state`). Once it has merged or
-     closed, run `swarm.sh board-pr done <name>`. When that lists none (`board-pr open` failed), run
-     the `board-pr open` line again, which opens it, and go on as above; if it says the worktree
-     changes nothing, run `swarm.sh board-pr done <name>`, so `next` names the stage step again.
-     Then go back to 1.
+     lets you set the epics active, not merge the PR. If merge refuses, stop and tell the user what it printed. For as long as the PR's
+     worktree exists, `next` goes on to the steps after this one, and the gate, `status` and `dash`
+     list `stage PR awaiting merge: v<S>`, whether its epics are still drafts or the merge has made
+     them active. On that line, read the PR (`gh pr list --head board/<name> --state all --json
+     url,state`). Once it has merged or closed, run `swarm.sh board-pr done <name>`, so a later
+     draft of the same stage is not held behind the worktree. While it is open, it is the user's
+     under `merge = human` with no `merge` grant. When that lists none (`board-pr open` failed), run
+     the `board-pr open` line once more, which opens it, and go on as above. If it fails again, stop
+     and tell the user what it printed; if it says the worktree changes nothing, run `swarm.sh
+     board-pr done <name>` instead, so `next` names the stage step again. Then go back to 1.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
      When its why says a `later` epic's dependencies are done (offered before the gate), run it
@@ -398,7 +401,7 @@ Repeat until a step below says stop:
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. A staged epic
      (`staged epic: <slug>, stage v<T>, after v<P>`) needs nothing from the user: `next` names
-     `stage v<T>` once v<P> is tagged on the base, and you set it active then. A `stage PR awaiting
+     `stage v<T>` once the base has a tag at or above v<P>, and you set it active then. A `stage PR awaiting
      merge: v<T>` line is the stage arm's PR: handle it as that arm says. Stop.
    - `done`: say so and stop. If this finds no file (`find <board>/epics <board>/stories
      -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in

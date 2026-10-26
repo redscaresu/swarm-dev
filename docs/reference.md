@@ -328,11 +328,11 @@ because the conductor stops when they hold. **Non-goals** keep the plan from gro
 
 **Staged epics.** An epic in a staged HLD's Rollout carries `stage: v<x.y.0>`, the release that
 ships it. This is an exception to step 4: a draft epic with both `stage:` and `hld:`, under an
-HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`, once the tag of the
-previous minor, `v<x.(y-1).0>`, exists. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. A staged
+HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`, once the base has a
+tag at or above the previous minor, `v<x.(y-1).0>`. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. A staged
 draft with no `hld:`, or under an HLD without the `epics` grant, or on a board outside the project's
 repo, still goes through `/epic`. Until
-that tag exists, the gate, `status` and `dash` list it as `staged epic: <slug>, stage v<x.y.0>, after
+then, the gate, `status` and `dash` list it as `staged epic: <slug>, stage v<x.y.0>, after
 v<x.(y-1).0>`, which needs nothing from you. See [Releases](#releases) for the step that sets it
 active and for when a stage's release is cut.
 
@@ -2179,15 +2179,17 @@ releases as before, with a plain `release`. So does a board outside the project'
 can't list its deleted epics.
 
 Staged draft epics wait for the stage before theirs. Take T, the lowest stage among them, and P, the
-minor before it (v0.30.0 gives v0.29.0). Once the tag `v<P>` is on `origin/<base>` (local refs, as
-for `release`), `next` prints `stage v<T>`, with the why `set <slugs> active (board PR under the
+minor before it (v0.30.0 gives v0.29.0). Once the newest `v<x.y.z>` tag on `origin/<base>` is at or
+above `v<P>` (local refs, as for `release`), `next` prints `stage v<T>`, with the why `set <slugs> active (board PR under the
 epics grant)`. It comes after a ready one-off story and before an active epic's `plan-epic`. While
 a conductor works, `next` prints its `wait` instead. The lead opens a
 board PR named `stage-v<T>` with the dots as dashes, which sets those epics `active` and changes
 nothing else. It lands it with `swarm.sh merge --board` when `merge = agent` or the HLD grants
 `merge`. Otherwise you merge it: the `epics` grant covers setting the epics active, not the merge.
 While that PR's worktree (`<repo>-wt/_board-stage-v<x-y-z>`) exists, `next` goes on to the steps
-after `stage`, and the gate lists `stage PR awaiting merge: v<T>`. `hooks/lead-stop.sh` does not
+after `stage`, and the gate, `status` and `dash` list `stage PR awaiting merge: v<T>`, whether its
+epics are still drafts or the merge has made them active. The lead removes the worktree with
+`swarm.sh board-pr done stage-v<x-y-z>` once the PR has merged or closed. `hooks/lead-stop.sh` does not
 know the `stage` step, so it allows the lead's stop on it, as on any step it does not list.
 
 Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30

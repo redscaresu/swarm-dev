@@ -169,10 +169,10 @@ epic_has_after() {
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
-#   stage v<T>        staged drafts (staged_draft) of the lowest stage T, once the tag of the minor
-#                     before T is on origin/<base> and no stage-v<T> board PR's worktree is open
+#   stage v<T>        staged drafts (staged_draft) of the lowest stage T, once origin/<base> has a tag
+#                     at or above the minor before T and no stage-v<T> board PR's worktree is open
 #                     (stage_due): the lead sets them active in a board PR under the epics grant;
-#                     with one open, this falls through and the gate lists it (stage PR awaiting merge)
+#                     while any such worktree exists, the gate lists it (stage PR awaiting merge)
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this (then unblocked_epic's, below) comes before its wait
@@ -262,7 +262,7 @@ next_step() {
   read -r stage when base slug <<< "$(stage_due)"
   if [[ -n "${stage}" ]]; then
     echo "stage v${stage}"
-    echo "v${when} is on origin/${base}, so stage v${stage} opens: set ${slug} active (board PR under the epics grant)"; return
+    echo "origin/${base} has a tag at or above v${when}, so stage v${stage} opens: set ${slug} active (board PR under the epics grant)"; return
   fi
   epic="$(plannable_epic)"
   if [[ -n "${epic}" ]]; then echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return; fi
@@ -736,11 +736,11 @@ staged_draft() {
 stage_pr_open() { [[ -e "$(worktree_for "${PROJECT_DIR}" "_board-stage-v${1//./-}")" ]]; }
 
 # stage_due — "<T> <P> <base> <slug>..." when the staged drafts' (staged_draft) lowest stage T is due:
-# the local origin/HEAD names <base>, the tag v<P> of the minor before T is on origin/<base>
-# (release_due's ancestor check, local refs) and no stage_pr_open for T; the slugs are T's drafts.
+# the local origin/HEAD names <base>, the newest v<x.y.z> tag on origin/<base> (newest_tag, local
+# refs) is at or above v<P>, the minor before T, and no stage_pr_open for T; the slugs are T's drafts.
 # Else nothing. Reads no git while no draft is staged: dash runs next every frame.
 stage_due() {
-  local f s p t="" tp="" slugs="" base
+  local f s p t="" tp="" slugs="" base n
   while IFS= read -r f; do
     s=""; read -r s p <<< "$(staged_draft "${f}")"
     [[ -n "${s}" ]] || continue
@@ -750,8 +750,32 @@ stage_due() {
   [[ -n "${t}" ]] && ! stage_pr_open "${t}" || return 0
   base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
   base="${base#origin/}"
-  git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${tp}" "origin/${base}" 2>/dev/null || return 0
+  n="$(newest_tag "origin/${base}")"
+  [[ -n "${n}" ]] && ! version_gt "${tp}" "${n}" || return 0
   echo "${t} ${tp} ${base}${slugs}"
+}
+
+# newest_tag <ref> — the highest x.y.z (version_gt) among the v<x.y.z> tags here that <ref> contains,
+# or nothing. One git call.
+newest_tag() {
+  local t n=""
+  while IFS= read -r t; do
+    [[ "${t}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || continue
+    if [[ -z "${n}" ]] || version_gt "${BASH_REMATCH[1]}" "${n}"; then n="${BASH_REMATCH[1]}"; fi
+  done < <(git -C "${PROJECT_DIR}" tag --merged "$1" --list 'v[0-9]*' 2>/dev/null)
+  printf '%s' "${n}"
+}
+
+# stage_worktrees — the stage of each stage board PR's worktree (stage_pr_open's), x.y.z a line:
+# what waiting_on_user lists until board-pr done removes it, whatever its epics' status now.
+stage_worktrees() {
+  local d v
+  for d in "$(worktree_for "${PROJECT_DIR}" "_board-stage-v")"*; do
+    [[ -e "${d}" ]] || continue
+    v="${d##*/_board-stage-v}"
+    [[ "${v}" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]] && echo "${v//-/.}"
+  done
+  return 0
 }
 
 # is_escalated <story-file> — true for a story lead_block handed on: ready, kind: lead, with
@@ -1171,10 +1195,10 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 # one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
 # next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too. A
 # staged draft (staged_draft) is listed as `staged epic: <slug>, stage v<T>, after v<P>`, never with
-# /epic: it waits on the tag v<P>, then on next's stage step; its stage's open board PR (stage_pr_open)
-# is a `stage PR awaiting merge: v<T>` line.
+# /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
+# (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
-  local f kind slug when stage prev open="" waiting=""
+  local f kind slug when stage prev waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -1198,13 +1222,15 @@ waiting_on_user() {
       # A staged draft is the lead's to set active once the stage before it is tagged (next's stage).
       draft) slug=$(basename "${f}" .md); stage=""; read -r stage prev <<< "$(staged_draft "${f}")"
         if [[ -z "${stage}" ]]; then waiting+="  draft epic: ${slug}, run /epic ${slug}"$'\n'
-        else waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'
-          ! stage_pr_open "${stage}" || [[ " ${open} " == *" ${stage} "* ]] || open+=" ${stage}"
-        fi ;;
+        else waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'; fi ;;
       review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board epics)
-  for stage in ${open}; do waiting+="  stage PR awaiting merge: v${stage}"$'\n'; done
+  # Every stage PR's worktree, its epics drafts or not: once the PR merges they are active, and the
+  # row is what leads the lead to board-pr done.
+  while IFS= read -r stage; do
+    [[ -z "${stage}" ]] || waiting+="  stage PR awaiting merge: v${stage}"$'\n'
+  done <<< "$(stage_worktrees)"
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
     # The directory test first: hld_due reads every epic, and dash runs this several times a frame.
