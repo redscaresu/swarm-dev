@@ -133,10 +133,12 @@ gh call, and prints `<what>: <stem>, exit: <exit>`. The `.step-up` marker works 
   `step-up:failed <slug>` with `ok (<why>)` in events.tsv. Those are an unreadable worktree, a git
   step left unfinished in it, an unread default branch, a failed `mktemp`, and a start that failed
   or that herdr could not confirm. Any other failure after the close, or of a resume once it holds
-  the lock, logs it too, with the error's first line. A step-up that swarm.sh ran itself (from
-  `close`, `tell`, `wait --stall` or `watch`) has no error line to log, so its other failures log
-  only `ok (exit <n>)`, and the cause is in the output of the command that ran it. `flow` reads the
-  line as an ok line.
+  the lock, logs it too. A failure with a die message logs that message's first line. One with no
+  message logs only `ok (exit <n>)`, whoever ran the step-up: a `set -e` failure, or any failure of
+  a step-up swarm.sh ran itself (from `close`, `tell`, `wait --stall` or `watch`), which has no
+  message to log. Its error is in the output of whatever ran the step-up: the conductor's pane for
+  one swarm.sh ran itself, the command's own output for one run by hand. `flow` reads the line as
+  an ok line.
 - Lead line: `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`. It is printed for a
   story whose marker's pid is no longer a running `swarm.sh step-up` or `_step-up`, whatever the
   failure line or the `.swarm/locks/step-up-<slug>` lock says, so a step-up killed before it could

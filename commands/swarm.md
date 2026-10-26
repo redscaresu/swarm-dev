@@ -139,8 +139,10 @@ Repeat until a step below says stop:
      `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a step-up closed
      the story's builder and then could not start the next model's. Its conductor leaves the story
      alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says why: fix that
-     cause, then run the exit. Three cases differ. `ok (exit <n>)` came from a step-up swarm.sh ran
-     itself, and the error is in the conductor's pane (`herdr agent read conduct-<epic>`).
+     cause, then run the exit. Three cases differ. `ok (exit <n>)` is a failure with no error
+     message. The error is in the output of whatever ran the step-up: the conductor's pane
+     (`herdr agent read conduct-<epic>`) for one swarm.sh ran itself, the command's own output for
+     one run by hand.
      `ok (start unclear)` kept the new builder's pane: read it first (`herdr agent read <slug>`).
      If it took up its brief it is working, so do not resume: tell the user, since no swarm.sh
      command records that rung. With no such line, the step-up was killed partway: run the exit.
