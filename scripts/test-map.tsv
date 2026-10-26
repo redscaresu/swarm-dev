@@ -1,0 +1,25 @@
+# test-map.tsv — scripts/select-tests.sh's map from a changed path to the tests/*_test.sh files to run.
+# A row is <glob>[ <glob>...]<TAB><target>[ <target>...], and a path takes the first row with a glob
+# that matches it: ** spans directories, * and ? do not. A target is a test file, or one of:
+#   named  every test whose text names the path's basename, read at run time
+#   self   the path itself, a test file
+#   all    every test (alone)
+#   none   no test (alone)
+# A path no row matches selects every test, and so does a `named` that finds none. tests/
+# select_tests_test.sh fails on a tracked file under bin/, scripts/, commands/, hooks/ or docs/ that
+# no row matches.
+
+# Every test that runs swarm.sh sources every bin/lib/*.sh: all, until select-tests-by-reach narrows it.
+bin/swarm.sh bin/lib/*.sh bin/lib/*.py	all
+bin/gh-shim/gh	named
+# test.sh sets every test's environment, and the Makefile runs it.
+scripts/test.sh Makefile	all
+scripts/*	named
+commands/*.md	named
+hooks/*	named
+# The docs: the tests that name the file, and always the ones that check or read the real docs.
+README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh tests/llms_test.sh tests/config_test.sh tests/epic_codex_test.sh tests/board_pr_test.sh tests/merge_test.sh tests/skill_test.sh tests/removed_test.sh tests/flow_sections_test.sh
+tests/*_test.sh	self
+tests/**	named
+# CI's board-only gate skips a PR that changes only these (scripts/board-only.sh).
+board/**	none

@@ -164,6 +164,9 @@ by hand.
 - `make test` stops a test file that runs past `TEST_FILE_TIMEOUT` seconds (600 unless set, three times that for the files in `SLOW`) and fails it as
   `TIMEOUT <file> after <n>s`, with the file's last 20 lines of output.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
+- `scripts/select-tests.sh` prints the test files that cover this branch's changes against `origin/main`,
+  using `scripts/test-map.tsv`. When a changed file has no row in the map, or its row finds no test, it
+  prints every test file. `--run` runs the list through `make test`, four files at a time.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
   see [reference.md § Building](docs/reference.md#building).
 
