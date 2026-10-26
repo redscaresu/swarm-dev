@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 hld: 2026-10-25-swarm-dev-0-28
 stage: v0.29.0
 depends_on: [stage-gating, test-speed, clash-by-part, no-agent-alert, liveness-signals]
