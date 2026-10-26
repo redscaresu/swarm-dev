@@ -6,7 +6,8 @@
 #   all    every test (alone)
 #   none   no test (alone)
 #   reach  the tests that reach the bin/ functions the change touches: each function's callers up to
-#          bin/swarm.sh's dispatch arms, and the tests that name one of them or a reached arm's command
+#          bin/swarm.sh's dispatch arms, and the tests that name one of them or a reached arm's command;
+#          and, as named, the tests that name the changed file
 # A row with `named` and test files selects both: the files are its floor, the tests that read every
 # file the row covers through a glob, which name none of them. A path no row matches selects every
 # test, and so does a `named` that finds none. tests/select_tests_test.sh fails on a tracked file

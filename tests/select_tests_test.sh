@@ -67,7 +67,7 @@ set -euo pipefail
 
 # go_to — what the go arm runs.
 go_to() {
-  echo go
+  echo go $(( 1 << 2 ))
   uses_step
 }
 
@@ -116,12 +116,24 @@ uses_step() {
 run_go_py() {
   python3 bin/lib/runs_go.py
 }
+
+by_var() {
+  local fn="step_one"
+  "$fn"
+}
+EOF
+cat > "${G}/bin/lib/top.sh" <<'EOF'
+# top.sh — the fixture's calls at a file's top level, inside "$(...)".
+top_dir() { echo d; }
+top_abs() { echo "$1"; }
+TOP_DIR="$(top_dir)"
+TOP_ABS="$(top_abs "${TOP_DIR}")"
 EOF
 # reach's fixture: tests that run the go arm (directly, by a wrapper function, by a hook, by a script
 # whose path to swarm.sh is unquoted, by a hook that runs it through PATH, by a hook whose function
 # passes "$@" on, by a hook that passes "$@" on and names go, by a .py a function runs and the test
-# runs itself), run only the stop arm,
-# source the lib to call step_one's caller, and call step_one itself.
+# runs itself), run only the stop arm, source the lib to call step_one's caller (by name, or by a
+# quoted name in a variable), call step_one itself, read x.sh as text, and call top.sh's functions.
 # shellcheck disable=SC2016 # the hook's text, expanded when it runs
 printf '#!/usr/bin/env bash\n"$(dirname "$0")/../bin/swarm.sh" go\n' > "${G}/hooks/runs-go.sh"
 echo 'bash bin/swarm.sh go' > "${G}/tests/runs_go_test.sh"
@@ -140,6 +152,10 @@ echo 'bash hooks/fwd.sh "$1"' > "${G}/tests/fwd_test.sh"
 printf 'f() { bash bin/swarm.sh "$@"; }\nf go\n' > "${G}/hooks/fn-fwd.sh"
 echo 'bash hooks/fn-fwd.sh' > "${G}/tests/fn_fwd_test.sh"
 printf 'source bin/lib/x.sh\nuses_step\n' > "${G}/tests/sources_lib_test.sh"
+# shellcheck disable=SC2016 # fixture text, expanded when it runs
+printf 'for f in bin/lib/*.sh; do source "$f"; done\nby_var\n' > "${G}/tests/by_var_test.sh"
+echo 'wc -l bin/lib/x.sh' > "${G}/tests/reads_x_test.sh"
+printf 'source bin/lib/top.sh\ntop_dir\ntop_abs x\n' > "${G}/tests/top_test.sh"
 printf 'import subprocess\nsubprocess.run(["bash", "bin/swarm.sh", "go"])\n' > "${G}/bin/lib/runs_go.py"
 echo 'python3 bin/lib/runs_go.py' > "${G}/tests/py_go_test.sh"
 printf '"""Prints helper.X; aside.py is only mentioned here."""\nimport helper  # solo.py is only mentioned here\nprint(helper.X)\n' \
@@ -201,15 +217,25 @@ check "an empty selection says so on stderr" "$(cd "${G}" && bash "${SEL}" 2>&1 
 # reach: the bin/ row, by function.
 GO=(tests/runs_go_test.sh tests/wrapper_test.sh tests/hook_test.sh tests/script_test.sh tests/bare_hook_test.sh
   tests/fn_fwd_test.sh tests/fwd_test.sh tests/py_go_test.sh)
-check "a function the go arm reaches selects the go tests, the lib caller's and the bin floor, not the stop test" \
-  "$(sel "perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; ${commit}")" "$(lines "${GO[@]}" tests/sources_lib_test.sh tests/names_step_test.sh "${BIN_FLOOR[@]}")"
+X_NAMERS=(tests/sources_lib_test.sh tests/names_step_test.sh tests/reads_x_test.sh)   # source or read x.sh
+check "a function the go arm reaches selects the go tests, its callers' (by_var's through a quoted name), x.sh's namers and the bin floor, not the stop test" \
+  "$(sel "perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; ${commit}")" "$(lines "${GO[@]}" "${X_NAMERS[@]}" tests/by_var_test.sh "${BIN_FLOOR[@]}")"
 check "a deleted function still selects the tests of its callers" \
   "$(sel "perl -0pi -e 's/step_one\\(\\) \\{\\n  echo one\\n\\}\\n//' bin/lib/x.sh; ${commit}")" \
-  "$(lines "${GO[@]}" tests/sources_lib_test.sh tests/names_step_test.sh "${BIN_FLOOR[@]}")"
-check "the stop arm (and its other name, halt) selects the test that runs it and the bin floor, no other" \
-  "$(sel "perl -pi -e 's/echo stop/echo stopping/' bin/swarm.sh")" "$(lines tests/runs_stop_test.sh "${BIN_FLOOR[@]}")"
+  "$(lines "${GO[@]}" "${X_NAMERS[@]}" tests/by_var_test.sh "${BIN_FLOOR[@]}")"
+check "the stop arm (and its other name, halt) selects the test that runs it, swarm.sh's namers and the bin floor, no other" \
+  "$(sel "perl -pi -e 's/echo stop/echo stopping/' bin/swarm.sh")" \
+  "$(lines tests/runs_stop_test.sh tests/runs_go_test.sh tests/wrapper_test.sh "${BIN_FLOOR[@]}")"
+check "a call after an arithmetic shift (\$(( 1 << 2 ))) still reaches its arm" \
+  "$(sel "perl -pi -e 's/^  step_one\\b/  step_one; :/' bin/lib/x.sh; ${commit}")" "$(lines "${GO[@]}" "${X_NAMERS[@]}" "${BIN_FLOOR[@]}")"
 # why — what select-tests.sh says on stderr in the fixture as the last case left it.
 why() { (cd "${G}" && { bash "${SEL}" > /dev/null; } 2>&1); }
+check "a function a top-level line calls in \"\$(...)\" selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo d;/echo e;/' bin/lib/top.sh; ${commit}")|$(why)" \
+  "${ALL}|select-tests: every test: bin/lib/top.sh:top_dir: top_dir runs outside any function, at bin/lib/top.sh:4"
+check "a function a top-level line calls in \"\$(... args)\" selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo \"\\\$1\";/echo \"\\\$1\/\";/' bin/lib/top.sh; ${commit}")|$(why)" \
+  "${ALL}|select-tests: every test: bin/lib/top.sh:top_abs: top_abs runs outside any function, at bin/lib/top.sh:5"
 check "a call by a built name that may be the function selects every test, and says so" \
   "$(sel "perl -pi -e 's/echo one/echo 1/; s/^  step_one\\b/  \"step_\\\${1:-one}\"/' bin/lib/x.sh; ${commit}")|$(why)" \
   "${ALL}|select-tests: every test: bin/lib/x.sh:step_one: bin/lib/x.sh:26 calls a function by a name it builds, which may be step_one"

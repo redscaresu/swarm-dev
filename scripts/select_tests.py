@@ -9,7 +9,7 @@
 # function and arm --functions gives, its callers in a static call graph of bin's shell up to the
 # dispatch arms (a function's code that names another calls it; code that runs swarm.sh calls the arm
 # its command names), and the tests that name a function on that chain or a reached arm's command, or
-# a hook or script that runs that arm. It selects every test for --functions' full, a caller at a
+# a hook or script that runs that arm, and the tests that name the changed file. It selects every test for --functions' full, a caller at a
 # file's top level, the catch-all arm, a call by a name built at run time ("cmd_${x}", eval), a test
 # that runs swarm.sh and names no arm's command, or a function no test reaches.
 # select_tests.py --check-map reads paths from stdin (`git ls-files`) and names each one under bin/,
@@ -119,7 +119,7 @@ def naming(root, tests, path):
 
 
 # select(root, rows, paths, base) — (the tests to run, None) or (None, why) for every test. The paths a
-# `reach` row takes go to reaching() together, after the rest.
+# `reach` row select the tests that name them, and go to reaching() together, after the rest.
 def select(root, rows, paths, base):
     tests, picked, reach = all_tests(root), set(), []
     for path in paths:
@@ -141,6 +141,7 @@ def select(root, rows, paths, base):
                 picked.add(path)
             elif t == "reach":
                 reach.append(path)
+                picked.update(naming(root, tests, path))   # a test that reads the file as text
             elif t != "none":
                 picked.add(t)
     if reach:
@@ -390,10 +391,10 @@ SWARM_PATH = r"(?:[/\"']swarm\.sh[\"']|/swarm\.sh(?=[ \t])|(?m:(?:^|[;&|(]|\$\(|
 # A command word: at a line's start, or after ; & | ( ) ! $( or a keyword that starts a command, or a
 # { that does not open an expansion.
 CMD_AT = r"(?:^|[;&|()!]|(?<!\$)\{|\b(?:then|do|else|if|while|until)\s)\s*"
-BUILT = r"\"?((?:[\w-]|\$\{[^}]*\}|\$\w+)+)\"?"
+BUILT = r"[\"']?((?:[\w-]|\$\{[^}]*\}|\$\w+)+)[\"']?"
 CMD_WORD = re.compile(CMD_AT + BUILT)
-# A variable set to a built name, and one run as a command ("$fn"), which calls what it holds: a
-# literal name, which the line that sets it names, or a built one.
+# A variable set to a name, and one run as a command ("$fn"), which calls what it holds: a literal
+# name, quoted or not, which call_graph counts as a call by the line that sets it, or a built one.
 ASSIGNED = re.compile(r"(?<![\w$-])(\w+)=" + BUILT)
 RUN_VAR = re.compile(CMD_AT + r"\"?\$\{?(\w+)\}?\"?(?=[\s;)]|\Z)", re.MULTILINE)
 EVAL = re.compile(CMD_AT + r"eval" + AFTER)
@@ -420,8 +421,8 @@ def words_re(words, after=AFTER):
 
 
 # shell_code(text) — per line of a shell file, the code that names what it calls: comments, quoted text
-# and heredoc bodies blanked, but a $( ) inside double quotes or an unquoted heredoc kept, and a trap's
-# or a -c's quoted text kept whole.
+# and heredoc bodies blanked, but a $( ) inside double quotes (with its $( and )) or an unquoted heredoc
+# kept, and a trap's or a -c's quoted text kept whole. A << inside (( )) is a shift, not a heredoc.
 def shell_code(text):
     buf, stack, docs, i, n = [], [], [], 0, len(text)   # stack: '"' per double quote, a paren count per $( in one
     while i < n:
@@ -442,7 +443,7 @@ def shell_code(text):
                 stack.pop()
             elif sub:
                 stack.append(1)
-            buf.append("  " if sub else blank(ch))
+            buf.append("$(" if sub else blank(ch))
             i += 2 if sub else 1
             continue
         whole = re.search(r"(?:\btrap|\s-c)\s+\Z", text[text.rfind("\n", 0, i) + 1:i])
@@ -452,7 +453,8 @@ def shell_code(text):
             i = m.end()
             continue
         doc = re.compile(r"<<(-?)[ \t]*(['\"]?)([\w-]+)\2").match(text, i)
-        if doc and not text.startswith("<<<", i):
+        before = text[text.rfind("\n", 0, i) + 1:i]
+        if doc and not text.startswith("<<<", i) and before.count("((") <= before.count("))"):
             docs.append((doc.group(3), bool(doc.group(2)), bool(doc.group(1))))
         if ch == '"':
             stack.append('"')
@@ -461,7 +463,6 @@ def shell_code(text):
             stack[-1] += 1 if ch == "(" else -1
             if not stack[-1]:
                 stack.pop()
-                ch = " "
         buf.append(ch)
         i += 1
     return "".join(buf).split("\n")
@@ -563,6 +564,7 @@ def call_graph(root, gone=()):
                 named = set(fn_re.findall(CASE_PATTERN.sub("", code, count=1)))
             if code.strip() or line.lstrip()[:1] in "\"'":   # not a heredoc's or a long string's line
                 g["dynamic"] += [(rx, where) for rx in built_call(line, run_vars)]
+            named |= {m.group(2) for m in ASSIGNED.finditer(line) if m.group(1) in run_vars and m.group(2) in fns | set(gone)}
             for c in named | (arms_run(line) if FULL in labels else ran):
                 if FULL in labels:
                     g["top"].setdefault(c, where)

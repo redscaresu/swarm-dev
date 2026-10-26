@@ -168,7 +168,7 @@ by hand.
   using `scripts/test-map.tsv`. When a changed file has no row in the map, or its row finds no test, it
   prints every test file. A change under `bin/` selects by function: the tests that name a changed
   function, one of its callers up to `bin/swarm.sh`'s dispatch arms, or the command of an arm on that
-  path, plus the tests that read `bin/`'s code as text. When it cannot follow the calls (a change
+  path, plus the tests that name the changed file or read all of `bin/`'s code as text. When it cannot follow the calls (a change
   outside any function, a call by a name built at run time, or a test that runs `swarm.sh` with no
   command in its text), it prints every test file. `--run` runs the list through `make test`, four files at a time.
   `--functions` prints, instead, the functions the branch changed in `bin/swarm.sh` and `bin/lib/*.sh`:
