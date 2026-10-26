@@ -212,6 +212,19 @@ out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume refused by another step-up's lock leaves the marker's pid and logs no failure" "1|yes|${mpid}|${nf}" \
   "${rc}|$(has "another step-up of s1 is running" "${out}")|$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")|$(failed_lines s1)"
 rm -rf "${P}/.swarm/locks/step-up-s1"
+# The marker goes as the lock is taken: a resume that ran between the existence check and the lock
+# started the rung and freed the lock. step_lock's mkdir of the lock dir is the one step between the
+# two, so a stub mkdir on PATH removes the marker there and then runs the real one; the marker is put
+# back after, for the resumes below.
+cp "${P}/.swarm/briefs/s1.step-up" "${ROOT}/marker.bak"; nf="$(failed_lines s1)"; st="$(starts)"
+# shellcheck disable=SC2016 # the stub's own "$@", expanded when it runs
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" != "%s" ] || rm -f "%s"; done\nexec /bin/mkdir "$@"\n' \
+  "${P}/.swarm/locks/step-up-s1" "${P}/.swarm/briefs/s1.step-up" > "${STUB_BIN}/mkdir"; chmod +x "${STUB_BIN}/mkdir"
+out="$(run step-up --resume s1)" && rc=0 || rc=$?
+rm -f "${STUB_BIN}/mkdir"
+check "a resume whose marker is gone once it holds the lock starts nothing, writes no marker, frees the lock and logs no step-up:failed line" "1|yes|${st}|none|gone|${nf}" \
+  "${rc}|$(has "nothing was started" "${out}")|$(starts)|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] && echo kept || echo none)|$([[ -d "${P}/.swarm/locks/step-up-s1" ]] && echo held || echo gone)|$(failed_lines s1)"
+cp "${ROOT}/marker.bak" "${P}/.swarm/briefs/s1.step-up"
 mv "${P}/docs/stories/s1.md.bak" "${P}/docs/stories/s1.md"
 rm "${ROOT}/tabfail"; touch "${ROOT}/promptfail" "${ROOT}/startghost"
 out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
