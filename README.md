@@ -166,7 +166,7 @@ by hand.
 - `make test` and `scripts/test.sh` refuse to run under codex, where `CODEX_SANDBOX` or
   `CODEX_THREAD_ID` is set.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
-- `make test` runs each test file from its own `TMPDIR` with `SWARM_PROJECT` naming a stand-in project, and fails a file whose `swarm.sh` reaches it: one that does not source `tests/test_helpers.sh` first, and run on its own from a pane would reach the lead's real project. `swarm.sh` also refuses to act on the checkout the tests run from while `SWARM_FORBID_PROJECT` names it, which the runner and the prelude set.
+- `make test` runs each test file from its own `TMPDIR` with `SWARM_PROJECT` naming a stand-in project, and fails a file whose `swarm.sh` reaches it: one that does not source `tests/test_helpers.sh` first, and run on its own from a pane would reach the lead's real project. `swarm.sh` also refuses to act on the checkout the tests run from, or a worktree of it, while `SWARM_FORBID_PROJECT` names it, which the runner and the prelude set.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
   see [reference.md § Building](docs/reference.md#building).
 

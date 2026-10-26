@@ -52,7 +52,7 @@
 # The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
 # .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
 # of the git repo you are in. With SWARM_FORBID_PROJECT naming a directory (the test runner and
-# tests/test_helpers.sh name the checkout the tests run from), that project is refused.
+# tests/test_helpers.sh name the checkout the tests run from), that project and its worktrees are refused.
 # Settings live in .claude/swarm/config (see config below). Must run
 # inside herdr (HERDR_ENV=1). An epic gets a tab named for it: the conductor's pane, then a pane per
 # story, each named. A story outside any epic gets its own tab. Tabs hold at most four panes (a 2x2
@@ -163,10 +163,18 @@ else
   PROJECT_DIR="$(find_project)"
 fi
 # A test names the checkout it runs from in SWARM_FORBID_PROJECT (scripts/test.sh and tests/test_helpers.sh
-# set it to the main checkout): swarm.sh refuses to act on that project, so no test reaches its live
-# .swarm, whether it cd's into the checkout, names it in SWARM_PROJECT, or runs from a worktree of it.
-if [[ -n "${SWARM_FORBID_PROJECT:-}" && "$(cd "${PROJECT_DIR}" 2>/dev/null && pwd -P)" == "$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" ]]; then
-  die "SWARM_FORBID_PROJECT: ${PROJECT_DIR} is the checkout the tests run from; a test cd's into a project of its own, or names one in SWARM_PROJECT"
+# set it to the main checkout): swarm.sh refuses to act on that project, named directly (a cd into it,
+# SWARM_PROJECT) or through a worktree of it (SWARM_PROJECT naming the worktree, which find_project
+# takes as given, so its main checkout is compared too). That covers swarm.sh calls; the hooks' own
+# event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log) are not swarm.sh calls and are not.
+if [[ -n "${SWARM_FORBID_PROJECT:-}" ]]; then
+  forbid_dir="$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" || forbid_dir=""
+  forbid_main="$(main_checkout "${PROJECT_DIR}" 2>/dev/null)" || forbid_main=""
+  [[ -z "${forbid_main}" ]] || forbid_main="$(cd "${forbid_main}" 2>/dev/null && pwd -P)" || forbid_main=""
+  if [[ -n "${forbid_dir}" ]] && [[ "$(cd "${PROJECT_DIR}" && pwd -P)" == "${forbid_dir}" || "${forbid_main}" == "${forbid_dir}" ]]; then
+    die "SWARM_FORBID_PROJECT: ${PROJECT_DIR} is the checkout the tests run from, or a worktree of it; a test cd's into a project of its own, or names one in SWARM_PROJECT"
+  fi
+  unset forbid_dir forbid_main
 fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 

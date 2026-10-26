@@ -5,8 +5,8 @@
 # herdr. make test runs each file from its TMPDIR with SWARM_PROJECT naming a stand-in project of
 # the job's own, as a pane's names the real one, and fails a file whose swarm.sh reaches it: every
 # file is checked on every run. Both name the checkout the tests run from in SWARM_FORBID_PROJECT,
-# which swarm.sh refuses to act on: a test that cd's into the checkout or names it stops before it
-# writes, under make test and run on its own. And events_test.sh, whose fixtures once landed in the
+# which swarm.sh refuses to act on, named directly or through a worktree of it: such a call stops
+# before it writes, under make test and run on its own. And events_test.sh, whose fixtures once landed in the
 # real findings.tsv and events.tsv, run under make test from a copy of this repo, leaves the copy's
 # findings.tsv, events.tsv and .swarm/lead/pid (which wait_lead_test.sh's wait --lead once took on
 # the real checkout) as they were. A copy, not the main checkout: a conductor appends to the real
@@ -62,8 +62,10 @@ check "with the prelude and no cd, an unpinned call stops at not in a swarm proj
 # The copy: this repo but its .git and .swarm, a git repo and a swarm project of its own (its
 # .claude/swarm/config comes along, as in the real one), with a findings.tsv and an events.tsv of one
 # line and a lead/pid no process holds.
+# Never the live .swarm, written and pruned while the suite runs, nor .git; a commit, so the copy can have a worktree.
 COPY="${ROOT}/repo"; mkdir -p "${COPY}"
-cp -R "${REPO}/." "${COPY}"; rm -rf "${COPY}/.git" "${COPY}/.swarm"; git -C "${COPY}" init -q
+rsync -a --exclude .git --exclude .swarm "${REPO}/" "${COPY}/"; git -C "${COPY}" init -q
+git -C "${COPY}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 mkdir -p "${COPY}/.swarm/lead"
 printf '2026-10-25\tseed\thttps://github.com/o/r/pull/1\ta line\tfixed\tlead\n' > "${COPY}/.swarm/findings.tsv"
 printf '2026-10-25T00:00:00Z\tseed\t-\tw:0\tok\n' > "${COPY}/.swarm/events.tsv"
@@ -81,6 +83,15 @@ check "under the runner, a test that cd's into the checkout fails: swarm.sh refu
   "$(grep -cE "^FAIL .*/checkout_test\.sh [0-9]+s$|^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "2"
 o="$(cd "${COPY}" && bash "${FX}/checkout_test.sh" 2>&1)" && rc=0 || rc=$?
 check "run on its own, the prelude names the checkout and swarm.sh refuses it" "exit ${rc}|$(grep -c "^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "exit 1|1"
+# A worktree of the copy, named in SWARM_PROJECT: find_project takes that path as given, so swarm.sh
+# compares its main checkout too and refuses it; the worktree's .swarm gains nothing.
+git -C "${COPY}" worktree add -q -b wt "${ROOT}/wt"
+{ echo '#!/usr/bin/env bash'; echo 'set -euo pipefail'; echo "source \"${COPY}/tests/test_helpers.sh\""
+  echo "SWARM_PROJECT=\"${ROOT}/wt\" env -u HERDR_ENV bash \"${COPY}/bin/swarm.sh\" log-finding vacuous-test https://github.com/o/r/pull/9 'a line'"; } > "${FX}/worktree_test.sh"
+o="$(cd "${COPY}" && TEST_RUNS_LOG="" JOBS=1 bash scripts/test.sh "${FX}/worktree_test.sh" 2>&1 || true)"
+check "a test naming a worktree of the checkout in SWARM_PROJECT fails: swarm.sh refuses it through its main checkout" \
+  "$(grep -cE "^FAIL .*/worktree_test\.sh [0-9]+s$|^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "2"
+check "and the worktree's .swarm gained nothing" "$(ls -A "${ROOT}/wt/.swarm" 2>/dev/null)" ""
 check "the copy's .swarm/findings.tsv and events.tsv gained no line, and its lead/pid is as it was" "$(state)" "findings 1|events 1|lead/pid 99999999"
 [[ ${rc} -eq 0 ]] || { echo "---- make test in the copy: each file's line, then its first FAIL lines"; grep -E "^(ok|FAIL|TIMEOUT) +tests/" "${ROOT}/make.out"; grep "^FAIL" "${ROOT}/make.out" | grep -v " tests/" | head -n 10 || tail -n 20 "${ROOT}/make.out"; }
 [[ "$(state)" == "findings 1|events 1|lead/pid 99999999" ]] \
