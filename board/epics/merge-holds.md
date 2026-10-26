@@ -22,7 +22,7 @@ The pattern at board.sh:867 (it already matches .github/, Makefile and .claude/:
 - A PR touching hooks/, .github/ or .claude/ is itself a protected-path change: once the hold lands, such a story PR waits for the user.
 - Order: this epic's pinned-head story goes after review-loop's merge_caller/merge_grant story (both edit bin/lib/merge.sh:merge_grant, merge.sh:122) and after less-noise's contents-reader story (merge_read, pr_hld, release_check).
 - Nothing a board sets is removed; a removed key warns and loads (tests/removed_test.sh:30-48).
-- tests/merge_test.sh, tests/merge_rules_test.sh and tests/merge_queue_test.sh (SLOW), tests/grants_test.sh, tests/wait_pr_test.sh (SLOW) pin today's paths.
+- tests/merge_test.sh (SLOW), tests/grants_test.sh, tests/wait_pr_test.sh (SLOW) pin today's paths.
 - bash 3.2, shellcheck, loose_match_test, make test; humanizer over docs prose.
 
 **Areas:** bin/lib/merge.sh:merge_hold, bin/lib/merge.sh:merge_grant and release_check, bin/lib/merge.sh:wait_pr, bin/lib/board.sh:pr_hld, bin/lib/lifecycle.sh:lead_queue merge line, docs/reference.md:merge holds, tests/ (merge, grants, wait_pr, wait_lead)
