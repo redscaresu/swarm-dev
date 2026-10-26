@@ -117,6 +117,34 @@ never_woke() {
     on && $3 == s && ($2 == "lead-woken" || $2 == "no-agent") { f = 1 } END { exit f }' "${P}/.swarm/events.tsv" 2>/dev/null
 }
 hold_x() { (cd "${P}" && env -u SWARM_PROJECT bash "${SWARM}" hold "$1" "$2" > /dev/null 2>&1); }
+# rbrief <slug> <url> — review-agent's brief for <slug>'s PR <url>, its first line as review_brief writes it.
+rbrief() { mkdir -p "${P}/.swarm/briefs"; printf 'Review %s, the PR of story %s, at its head %s, in this worktree.\n' "$2" "$1" "${H}" > "${P}/.swarm/briefs/review-$1.md"; }
+# rhead <slug> — the head review-agent records once review-<slug> has started.
+rhead() { mkdir -p "${P}/.swarm/reviews"; echo "${H}" > "${P}/.swarm/reviews/$1.head"; }
+# run_exit — run the exit the no-review: line in ${ROOT}/fired names, with swarm.sh the stub below: it takes only
+# `review-agent <slug> <PR URL>`, and leaves what the real one does once review-<slug> started: its ok
+# line, the head on record, and review-<slug> listed beside the panes already listed.
+mkdir -p "${ROOT}/stub"
+printf '#!/bin/sh\nP="%s"; FX="%s"; H="%s"\n' "${P}" "${FX}" "${H}" > "${ROOT}/stub/swarm.sh"
+cat >> "${ROOT}/stub/swarm.sh" <<'STUB'
+[ "$#" = 3 ] && [ "$1" = review-agent ] || exit 1
+case "$3" in https://*/pull/[0-9]*) ;; *) exit 1 ;; esac
+printf '%s\treview-agent\t%s\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$2" >> "${P}/.swarm/events.tsv"
+mkdir -p "${P}/.swarm/reviews"; echo "${H}" > "${P}/.swarm/reviews/$2.head"
+printf '%s{"name":"review-%s","agent_status":"working","pane_id":"w:p9"}' "$([ -s "${FX}/agents" ] && cat "${FX}/agents" && echo ,)" "$2" > "${FX}/agents.new"
+mv "${FX}/agents.new" "${FX}/agents"; echo "w:p9 review-$2" >> "${P}/.swarm/state/tab"
+STUB
+chmod +x "${ROOT}/stub/swarm.sh"
+run_exit() {
+  local cmd
+  cmd="$(sed -n 's/^no-review: .*, exit: \(.*\), or the fallback reviewer$/\1/p' "${ROOT}/fired")"
+  [[ "${cmd}" == "swarm.sh review-agent "* ]] || { echo "  no review-agent exit in: $(cat "${ROOT}/fired")"; return 1; }
+  PATH="${ROOT}/stub:${PATH}" bash -c "${cmd}"
+}
+# rev_fires <slug> <url> — the poll printed exactly that no-review line and exited 0.
+rev_fires() {
+  [[ "$(out)|$(rc)" == "no-review: $1 $2, exit: swarm.sh review-agent $1 $2, or the fallback reviewer|0" ]] || { echo "  got: $(out)|$(rc)"; return 1; }
+}
 
 # --- where it fires.
 fresh; story na-a "kind: code" "status: ready"; ev story na-a; built na-a; listed na-a
@@ -175,7 +203,9 @@ check "the CI window after a push (builder listed idle, review agent closed) is 
 check "and no poll woke on it (na-c)" never_woke na-c
 
 # The 2026-10-25 events of config-keys-back, up to its review agent's close, with its builder listed.
+# Its brief and head on record, so only the close keeps the review agent's absence quiet.
 fresh; story config-keys-back "kind: code" "status: ready"; built config-keys-back; listed config-keys-back
+rbrief config-keys-back "${URL}"; rhead config-keys-back
 while IFS='|' read -r t c g o; do ev "${c}" "${g}" "${o}" "${t}"; done <<'EVENTS'
 2026-10-25T10:26:57Z|story|config-keys-back|ok
 2026-10-25T10:41:55Z|tell:nudge|config-keys-back|config-keys-back is still working
@@ -419,6 +449,105 @@ check "a costs: money review story whose prs: is [a,b] with no space is the user
 fresh "merge = agent"; story na-mn "kind: code" "status: review" "costs: money"; ev story na-mn; ev close review-na-mn; poll; poll
 check "a costs: money review story with no PR URL yet is the user's too: silent" never_woke na-mn
 
+# --- no-review: a review agent that never started, or started and went, with no round under way. The
+# builder is listed idle in each: the line does not wait for it to go.
+fresh; story nr-a "kind: code" "status: ready"; ev story nr-a; built nr-a; listed nr-a
+rbrief nr-a "${URL}"; ev review-agent nr-a "review-agent: review-nr-a did not start (its pane w:p9 is closed)"
+poll
+check "a failed review-agent start and no review-nr-a pane fires, naming the PR and the exit" rev_fires nr-a "${URL}"
+check "it logs lead-woken with the kind no-review" test "$(last_event)" == "lead-woken nr-a ok (no-review)"
+cp "${ROOT}/out" "${ROOT}/fired"
+poll
+check "the same no-review line does not wake it twice" silent
+# The exit, run with swarm.sh stubbed.
+check "the line's exit runs, and starts review-nr-a" run_exit
+check "review-nr-a is listed after it" grep -q '"name":"review-nr-a"' "${FX}/agents"
+poll
+check "after the exit starts review-nr-a, the next poll is silent" silent
+check "and that poll's queue no longer lists the line" test -z "$(grep '^no-review: nr-a' "${P}/.swarm/lead/seen")"
+# Started and went: its pane gone, a findings file for an older head only, and no close line.
+listed nr-a; printf 'head: 2222222222222222222222222222222222222222\n\n## Findings\n' > "${P}/.swarm/reviews/nr-a.md"
+poll
+check "review-nr-a gone after an ok start and a head, with no findings for that head and no close, fires" rev_fires nr-a "${URL}"
+
+fresh; story nr-s "kind: code" "status: ready"; ev story nr-s; built nr-s; listed nr-s review-nr-s
+rbrief nr-s "${URL}"; ev review-agent nr-s; rhead nr-s
+poll; poll
+check "review-nr-s listed after an ok start is silent" never_woke nr-s
+listed nr-s; printf 'head: %s\n\n## Findings\n\nNone.\n' "${H}" > "${P}/.swarm/reviews/nr-s.md"
+poll; poll
+check "review-nr-s gone, its findings file a pass on its head (review_pass), is silent" never_woke nr-s
+# The builder fixing what it was told: a review start refused meanwhile is no alert.
+ev tell:findings nr-s; ev review-agent nr-s "review-agent: nr-s's worktree has uncommitted changes, so it is not the PR's head"
+poll; poll
+check "a failed start after a tell:findings line no older than the findings file is silent" never_woke nr-s
+# An ok start removes the last findings file: a tell before that start says nothing about this round,
+# even in the same second (events.tsv's order tells them apart).
+rm -f "${P}/.swarm/reviews/nr-s.md"; ev review-agent nr-s ok "$(awk -F'\t' '$2 == "tell:findings" { t = $1 } END { print t }' "${P}/.swarm/events.tsv")"
+poll
+check "review-nr-s gone after a start that follows the tell in the same second, with no findings file, fires" rev_fires nr-s "${URL}"
+# An empty seen file, so a line still there would print again.
+ev tell:findings nr-s; : > "${P}/.swarm/lead/seen"; poll
+check "a tell after that start, with still no findings file, is a round under way: silent" silent
+# A review that stopped on a moved head is no review: review_pass rejects it.
+fresh; story nr-m "kind: code" "status: ready"; ev story nr-m; built nr-m; listed nr-m
+rbrief nr-m "${URL}"; ev review-agent nr-m; rhead nr-m
+printf 'head: %s\nhead moved: a new commit\n' "${H}" > "${P}/.swarm/reviews/nr-m.md"
+poll
+check "review-nr-m gone after writing head moved: for its head fires" rev_fires nr-m "${URL}"
+
+fresh; story nr-p "kind: code" "status: ready"; ev story nr-p; built nr-p; listed nr-p
+rbrief nr-p "${URL}"; ev review-agent nr-p "review-agent: review-nr-p did not start"
+busy review-agent nr-p "${URL}"
+poll
+check "a swarm.sh review-agent nr-p process running is silent" silent
+unbusy; poll
+check "once it ends with no new line, it fires" rev_fires nr-p "${URL}"
+
+# A preflight that failed before the brief was written: the PR from the failed line, else from prs:.
+fresh; story nr-f "kind: code" "status: ready"; ev story nr-f; built nr-f; listed nr-f
+ev review-agent nr-f "review-agent: could not read ${URL}'s head (gh pr view --json headRefOid)"
+poll
+check "a preflight failure naming the PR, with no brief, fires with that PR" rev_fires nr-f "${URL}"
+fresh; story nr-g "kind: code" "status: ready" "prs: ${URL2}"; ev story nr-g; built nr-g; listed nr-g
+ev review-agent nr-g "review-agent: nr-g's worktree is at ${H}, not the PR's head; nothing was started"
+poll
+check "a preflight failure naming no PR, with no brief, fires with the PR on prs:" rev_fires nr-g "${URL2}"
+fresh; story nr-g "kind: code" "status: ready" "repo: na-sib" "prs: [${URL},${URL2}]"; ev story nr-g; built nr-g; listed nr-g
+ev review-agent nr-g "review-agent: nr-g's worktree is at ${H}, not the PR's head; nothing was started"
+poll
+check "with two PRs on prs: and nothing naming one, the exit finds the PR first" test "$(out)|$(rc)" == \
+  "no-review: nr-g, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-g, then swarm.sh review-agent nr-g <PR URL>, or the fallback reviewer|0"
+# An ok start whose brief is gone, with two PRs: none can be named either.
+fresh; story nr-g "kind: code" "status: ready" "repo: na-sib" "prs: [${URL},${URL2}]"; ev story nr-g; built nr-g; listed nr-g
+ev review-agent nr-g; rhead nr-g; poll
+check "with two PRs, an ok start and no brief, the exit finds the PR first" test "$(out)|$(rc)" == \
+  "no-review: nr-g, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-g, then swarm.sh review-agent nr-g <PR URL>, or the fallback reviewer|0"
+ev review-agent nr-g "review-agent: nr-g's worktree is at ${H}, not the PR's head; nothing was started"
+# A brief from the review of the first PR is no sign the failed start was for it.
+rbrief nr-g "${URL}"; : > "${P}/.swarm/lead/seen"; poll
+check "with two PRs and a brief for one, a failed start naming none still finds the PR first" test "$(out)|$(rc)" == \
+  "no-review: nr-g, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-g, then swarm.sh review-agent nr-g <PR URL>, or the fallback reviewer|0"
+# A brief older than the build's start is an earlier build's PR: the exit finds the PR first.
+fresh; story nr-o "kind: code" "status: ready" "repo: na-sib"; ev story nr-o; built nr-o; listed nr-o
+rbrief nr-o "${URL}"; touch -t 202001010000 "${P}/.swarm/briefs/review-nr-o.md"
+ev review-agent nr-o "review-agent: nr-o's worktree has uncommitted changes"
+poll
+check "with only a brief older than the build's start, the exit finds the PR first" test "$(out)|$(rc)" == \
+  "no-review: nr-o, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-o, then swarm.sh review-agent nr-o <PR URL>, or the fallback reviewer|0"
+# A reopen (its PR closed unmerged) makes the brief before it an old PR's too, its builder kept.
+fresh; story nr-o "kind: code" "status: ready" "repo: na-sib"; ev story nr-o 2026-01-01T00:00:00Z; built nr-o; listed nr-o
+rbrief nr-o "${URL}"; touch -t 202601020000 "${P}/.swarm/briefs/review-nr-o.md"; ev reconcile nr-o "ok (reopened)"
+ev review-agent nr-o "review-agent: nr-o's worktree is at ${H}, not the PR's head; nothing was started"
+poll
+check "after a reopen, a brief from before it is not the PR: the exit finds the PR first" test "$(out)|$(rc)" == \
+  "no-review: nr-o, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-o, then swarm.sh review-agent nr-o <PR URL>, or the fallback reviewer|0"
+# In review under merge = agent with no agent at all, its no-agent: line already names review-agent.
+fresh "merge = agent"; story nr-r "kind: code" "status: review" "prs: ${URL}"; ev story nr-r; built nr-r
+rbrief nr-r "${URL}"; ev review-agent nr-r "review-agent: review-nr-r did not start"
+poll
+check "a review story with no agent gets the no-agent: line alone" fires nr-r "swarm.sh review-agent nr-r ${URL}"
+
 # --- the state file swarm.sh wrote wins over the front matter, unless the front matter changed since.
 fresh; story na-e "kind: code" "status: ready"; ev story na-e; built na-e; ev close na-e
 mkdir -p "${P}/.swarm/board-state/stories"; printf 'status: blocked\nstatus@base: ready\n' > "${P}/.swarm/board-state/stories/na-e"
@@ -471,12 +600,14 @@ check "a failed step-up in a running upgrade's epic still fires" step_fires na-u
 unbusy; rm -f "${P}/.swarm/upgrade.pid"
 
 # --- the cost of a poll: one herdr list, no per-pane read, no gh call, with a ready and a review case
-# live and a failed step-up's marker.
+# live, a failed step-up's marker and a review agent that never started.
 fresh "merge = agent"; story na-a "kind: code" "status: ready"; ev story na-a; built na-a; ev close na-a
 story na-r "kind: code" "status: review" "prs: ${URL}"; ev story na-r; built na-r; ev close review-na-r
 story na-x "kind: code" "status: ready"; ev story na-x; built na-x; marker na-x "${DEAD}"
+story nr-c "kind: code" "status: ready"; ev story nr-c; built nr-c; rbrief nr-c "${URL}"; ev review-agent nr-c "review-agent: review-nr-c did not start"
 poll
 check "the marker's line comes out beside the no-agent lines" test "$(grep -c '^step-up failed: na-x, exit: swarm.sh step-up --resume na-x$' "${ROOT}/out")" == 1
+check "and so does the no-review line" grep -qxF "no-review: nr-c ${URL}, exit: swarm.sh review-agent nr-c ${URL}, or the fallback reviewer" "${ROOT}/out"
 poll; poll
 want=""; for ((i = 0; i < polls; i++)); do want+="agent list"$'\n'; done
 check "each poll makes one herdr agent list and no other herdr call" test "$(cat "${ROOT}/herdr.log")" == "${want%$'\n'}"

@@ -163,14 +163,44 @@ way, lists the story in its report with the reason. A story in review with no PR
 `gh pr list -R <the story's repo's origin> --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
 while wait-pr runs and may come back once after it ends.
 
+**A review agent that never started, or started and went, wakes the lead too.** `wait --lead` prints
+`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
+for a story that passes the `no-agent:` filters on status, kind, `held_for:`, `costs:` and upgrades,
+and whose review start is on record: a `review-agent <slug>` events line since its last ok `story`
+start or reopen. It comes whether or not the builder is listed. One of these must hold:
+
+- Never started: the newest `review-agent <slug>` line is not ok.
+- Started and went: that line is ok and `.swarm/reviews/<slug>.head` was written, but no findings
+  file passes on that head (as `review_pass` reads it) and no ok `close review-<slug>` line came
+  since the start. A close is the
+  conductor's own act, as between review rounds.
+
+It stays quiet while a round is under way: while herdr lists `review-<slug>` in a pane this project
+opened, while a `swarm.sh review-agent <slug>` process runs, or while an ok `tell:findings` line is no
+older than the newest findings file. With no findings file, a tell counts when it comes after the
+review start in events.tsv, since an ok start removes the last file. The PR comes from a failed start's message first: a
+preflight that fails before the brief is written leaves no brief. Next comes the first line of
+`.swarm/briefs/review-<slug>.md`, if that brief was written since the build started or was reopened and `prs:` is
+empty or holds it, and last `prs:` when it holds one URL. A story with several PRs whose failed start names
+none has no PR, since its brief may be for another of them. With no PR, the line is
+`no-review: <slug>, exit: gh pr list -R <the story's repo's origin> --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`.
+A story in review whose `no-agent:` line printed in the same poll gets no `no-review:` line, since
+that line already names `swarm.sh review-agent`. The exit starts `review-<slug>`, so the next poll
+is quiet. When no review agent can start, the fallback is `swarm.sh codex-review` run by the lead in
+the story's worktree with `SWARM_STORY=<slug>`: codex, or the fallback reviewer at codex's usage
+limit. The lead runs it only while the worktree is at the PR's head with nothing uncommitted, as
+`review-agent` checks; otherwise the builder is still at work. Its findings go to the builder with
+`swarm.sh tell <slug> findings <file>`. The line reads the
+same herdr list, events.tsv and `ps` as `no-agent:`, with one more read of events.tsv and no gh call.
+
 Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
 hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
 events.tsv are read every poll; git only for a story with a start line and no current builder; herdr's
 JSON and `ps` once, whenever a story with a build record, or a ready story with a step-up marker, is
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
-everything else and prints only these lines, `step-up failed:` lines and `unsent brief:` lines on
-its first read.
+everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines and
+`unsent brief:` lines on its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
@@ -2285,7 +2315,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), or a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), or a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |

@@ -137,6 +137,22 @@ Repeat until a step below says stop:
      report with the reason. With no PR URL on the story, find its PR with the
      `gh pr list -R <repo> --head story/<slug>` the exit names, and run the review-agent exit. The line is quiet while
      wait-pr runs and may come back once after it ends; that needs nothing new. A
+     `no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
+     line means the PR's review agent never started, or started and went without findings for its
+     head, and no review round is under way. It comes even while the builder works. Run
+     `swarm.sh review-agent <slug> <PR URL>`. Once `review-<slug>` is open, the next poll is quiet.
+     If it fails again, its `review-agent <slug>` line in `.swarm/events.tsv` says why. A worktree
+     not at the PR's head, or with uncommitted changes, means the builder is still at work: leave it,
+     and the conductor starts the review once it pushes. If no review agent can start, use the
+     fallback reviewer, but only while the story's worktree is at the PR's head
+     (`gh pr view <PR URL> --json headRefOid`) with nothing uncommitted, as review-agent checks. There,
+     run `SWARM_STORY=<slug> SWARM_PROJECT=<this project> swarm.sh codex-review <base>` in the
+     background (`swarm.sh base <repo>` prints the base). It runs codex, or the fallback reviewer
+     when codex is at its usage limit. Write its findings to a file and send them with
+     `swarm.sh tell <slug> findings <file>`. If it finds nothing, send that to the story's conductor
+     instead with `swarm.sh tell <conductor> note <file>`, under the name `swarm.sh status` lists
+     for the story's epic or for the backlog.
+     A line with no PR URL names a `gh pr list` that finds the PR first. A
      `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a step-up closed
      the story's builder and then could not start the next model's. Its conductor leaves the story
      alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says where it stopped,
