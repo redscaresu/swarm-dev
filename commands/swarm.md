@@ -122,9 +122,11 @@ Repeat until a step below says stop:
      `kept: <slug> <PR URL>... (not reviewed)` line is a story whose builder was closed while its
      PRs were still open. It is in review, but its PRs are not offered to merge until
      `swarm.sh review <slug> <PR URL>...` marks them reviewed. While a conductor runs for the
-     story's epic (or the backlog's, for a story with no epic), as `swarm.sh status` lists them,
-     leave the story to it: its merge rule reviews a kept story. Take the story up once that
-     conductor has reported. Then do the following for each PR on the line. Run
+     story's epic, as `swarm.sh status` lists them, leave the story to it: an epic's conductor
+     reviews its kept stories under its merge rule. The backlog conductor's rule does not, so a
+     kept story with no epic is yours at once. One you left to its conductor is yours at
+     `collect`, when its report or `swarm.sh status` still lists the story as `kept:`. Either
+     way, do the following for each PR on the line. Run
      `swarm.sh wait-pr <PR URL>` in the background, and on its exit 2 do as the `no-agent:` arm
      below says. Once it exits 0, compare the `head:` line of `.swarm/reviews/<slug>.md` with the
      head it printed: when they match, triage that file, and otherwise start a review with
@@ -138,9 +140,10 @@ Repeat until a step below says stop:
      findings with `swarm.sh tell <slug> findings <file>`, which counts the round and applies the
      ladder, and the rest with `swarm.sh tell <slug> nudge <file>`, which is not a round. Wait for
      the builder with `swarm.sh wait --stall <slug>` in the background, then run wait-pr and the
-     review again on its new head. When that wait times out, stalls or prints `stuck:`, or the
-     builder goes idle with no new head, act as a conductor does by § Building (**Giving up on a
-     builder.**). Once every PR's latest head has passed, wait-pr exits 0 on it, and
+     review again on its new head. When that wait times out or stalls, or the builder goes idle
+     with no new head, act as a conductor does by § Building (**Giving up on a builder.**). A
+     `stuck:` line is not a stall: the `stuck:` rule below applies. Once every PR's latest head
+     has passed, wait-pr exits 0 on it, and
      `swarm.sh findings <repo> <pr>` is triaged (§ The outer loop, **Green means more than green
      checks.**), close the builder if one is open (`swarm.sh close <slug>`). Then run
      `swarm.sh review <slug>` with every PR URL on the line: it keeps only the PRs it is given.
