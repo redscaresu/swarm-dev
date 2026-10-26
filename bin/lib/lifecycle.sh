@@ -2126,17 +2126,20 @@ resend_busy() {
 # with no pending line written there is no Enter: an unreadable pane, a paste with no session log to
 # say whether a turn ran (sent nothing), or an Enter herdr failed to send (logged as the resend's
 # outcome), is tried again next poll. An agent that a swarm.sh command is delivering to as the poll
-# runs (resend_busy over one ps read) is skipped, checked again with a fresh ps just before an Enter,
-# and while an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet,
-# and an Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a
-# second tell:findings line would count a review round twice. Prints nothing; outside herdr, or with no
-# list, it does nothing.
+# runs (resend_busy over one ps read) is skipped, checked again with a fresh ps just before an Enter
+# (which is also skipped, for the next poll, when events.tsv has grown since rows read it), and while
+# an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet, and an
+# Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a second
+# tell:findings line would count a review round twice. Prints nothing; outside herdr, or with no list,
+# it does nothing.
 resend_pass() {
-  local rows pane name at cmd k text since rc backlog line deadline=$((SECONDS + RESEND_PASS_WAIT))
+  local rows pane name at cmd k text since rc backlog line size deadline=$((SECONDS + RESEND_PASS_WAIT))
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
   # No idle agent in the list, no work: return before any process starts, as most polls do.
   [[ "${LEAD_AGENTS}" == *idle* && -s "${EVENTS_LOG}" ]] || return 0
   backlog="$(conductor_name backlog)"
+  # events.tsv's size as rows reads it: a line added before an Enter may be a newer delivery.
+  size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))
   rows="$(SWARM_PANES="$(own_panes)" SWARM_BACKLOG="${backlog}" SWARM_NAME_MAX="${AGENT_NAME_MAX}" python3 -I -c '
 import json, os, re, sys
 e = os.environ
@@ -2200,6 +2203,8 @@ sys.exit(12 if t is None else 11 if t else 10)' \
       # A delivery that began after the first ps read would take this Enter: read ps again.
       NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || continue
       ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
+      # A delivery that began and ended while the pane was read left a line rows has not seen.
+      [[ $(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) )) -eq ${size} ]] || continue
     fi
     line="${name}"$'\t'"${at}"$'\t'"${cmd}"$'\t'"${k}"
     if [[ ${rc} -eq 10 ]]; then
@@ -2210,6 +2215,7 @@ sys.exit(12 if t is None else 11 if t else 10)' \
         record_event resend "${name}" "herdr could not send Enter to ${pane}"; continue
       fi
       record_event resend "${name}"
+      size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))   # past its own line
     fi
     printf '%s\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || true
   done <<< "${rows}"

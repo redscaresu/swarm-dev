@@ -30,6 +30,8 @@ case "$1 $2" in
   "agent list") printf '{"result":{"agents":[%s]}}\n' "$(cat "${FX}/agents" 2>/dev/null)" ;;
   "agent read") if [ -e "${FX}/read.fail" ]; then rm -f "${FX}/read.fail"; exit 1; fi
                 # A tell that starts between the pass's ps read and its Enter: the fake swarm.sh, left running.
+                # A tell that starts and ends while the pane is read: its line, written then.
+                if [ -e "${FX}/read.ev" ]; then cat "${FX}/read.ev" >> "$(cat "${FX}/events.path")"; rm -f "${FX}/read.ev"; fi
                 if [ -e "${FX}/read.spawn" ]; then bash "$(cat "${FX}/read.spawn")" tell ubr-s1 findings /tmp/f.md >/dev/null 2>&1 & echo $! > "${FX}/spawn.pid"; fi
                 if [ -e "${FX}/read.hang" ]; then sleep 60; fi
                 cat "${FX}/$3.txt" 2>/dev/null ;;
@@ -219,6 +221,18 @@ fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; ec
 poll
 spawned="$(cat "${FX}/spawn.pid" 2>/dev/null || true)"; [[ -z "${spawned}" ]] || { kill "${spawned}" 2>/dev/null || true; wait "${spawned}" 2>/dev/null || true; }
 check "a tell that starts while the pane is read gets no Enter from the pass" test "${spawned:+x}|$(reads)|$(enters)" == "x|1|0"
+
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1
+echo "${P}/.swarm/events.tsv" > "${FX}/events.path"; printf '%s\ttell:findings\tubr-s1\t-\tok\n' "$(ago 30)" > "${FX}/read.ev"
+poll
+check "a tell logged while the pane is read stops that Enter" test "$(enters)|$(resends)" == "0|0"
+poll
+check "the next poll resends for the tell, once" test "$(enters)|$(resends)" == "1|1"
+# Its own resend line grows events.tsv too: that must not hold back a second agent's Enter.
+fresh; listed ubr-s1:idle ubr-s2:idle; pane w:p1 unsent; pane w:p2 unsent; ev story ubr-s1; ev story ubr-s2; session ubr-s1
+printf '2026-10-26\tcode\tubr-s2\tclaude\topus\thigh\t%s\n' "${SID}" >> "${P}/.swarm/agents.tsv"
+poll
+check "two unsent briefs are both resent in one poll" test "$(count '^pane send-keys ' "${ROOT}/herdr.log")" == 2
 
 # --- a pane that cannot be read.
 fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; touch "${FX}/read.fail"

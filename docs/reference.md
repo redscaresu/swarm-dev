@@ -100,9 +100,11 @@ failed Enter is logged as the `resend` line's outcome. A working agent's pane is
 the pane of an agent that a `swarm.sh` command is still delivering to: a `story`, `tell`,
 `review-agent`, `conduct`, `step-up` or `agent` naming it, and for a conductor any `next` or
 `merge`, which start conductors. That command's new line is not written yet, and an Enter could
-submit the brief it is sending. While an upgrade runs, which restarts agents, no pane is read at
-all. It never resends through `tell`, which would log a second `tell:findings` line and count a
-review round twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines.
+submit the brief it is sending. The process list is read again just before an Enter, and the Enter
+waits for the next read if `events.tsv` gained a line while the pane was read, since that line may
+be a newer delivery. While an upgrade runs, which restarts agents, no pane is read at all. It never
+resends through `tell`, which would log a second `tell:findings` line and count a review round
+twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines.
 
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
