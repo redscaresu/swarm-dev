@@ -35,7 +35,11 @@ has small-epic-codex 'one `swarm.sh codex-review` pass over them' "$flat"
 has chain-depth 'at most 3 stories deep' "$flat"
 has depends-on-names 'what it needs from each `depends_on`: the file or the function' "$flat"
 has report-chain 'longest chain'
+has touches-file-part 'touches. entries are `file:part`, the part starting with the function or section name' "$step2"
+has touches-bare-clash 'a bare file clashes only with the same bare file' "$step2"
+has critic-bare-file 'a bare-file `touches` entry in a story that changes only part of the file \(the finding names the `file:part` entries to write instead\)' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
 step0=$(awk '/^\*\*0\. /{on=1} /^\*\*1\. /{on=0} on' "$F" | tr '\n' ' ' | tr -s ' ')
+has small-path-bare-file 'Check every story.s `touches` yourself.*a bare file where the story changes only part of the file gets one `file:part` entry per part instead' "$step0"
 has large-epic-arm 'A large epic, one you judge at more than 8 stories \(too big for one full run\) whose \*\*Done when\*\* holds goals that can ship apart, becomes child epics instead of stories' "$step0"
 has large-epic-outside-board 'for a board outside the project.s repo, where it is, with no worktree and no commit' "$step0"
 has child-epic-shape '`docs/epics/<child>\.md` per goal, with front matter `status: active` \(`status: later` when \$1 is `later`[^)]*\), `parent: \$1`.* its own \*\*Done when\*\*' "$step0"
@@ -46,6 +50,7 @@ has critic-in-step-3 'role `critic`' "$step3"
 # logged as escaped split-gaps. The medium path's steps start no split critic.
 large=$(printf '%s' "$step0" | grep -oE 'A large epic.*A medium epic' || true)
 has split-critic-step 'start one `split-critic` agent, role `critic` \(read-only\), on the parent and the drafted children' "$large"
+has child-areas-line 'and an \*\*Areas:\*\* line naming the `file:part` areas it will change' "$large"
 has split-critic-asks 'every parent \*\*Done when\*\* item maps to exactly one child.*`depends_on` order.*too big for one full plan' "$large"
 has split-critic-output '`\.swarm/\$1/split-critic\.json` `\{findings:\[\{kind, why, fix\}\]\}`' "$large"
 # Before the board PR: the critic starts first, and nothing before it opens the PR.

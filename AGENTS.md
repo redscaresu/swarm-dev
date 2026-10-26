@@ -102,8 +102,8 @@ Useful while it runs:
   `pkill`, `killall` and `gh pr checks` loops (reference.md § Merging).
 - Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
   agent. List them for the user.
-- One conductor per epic. Two stories clash only when their `touches` name the same `file:symbol`,
-  or either names the bare file; clashing stories in two epics get a `depends_on`. Only the lead
+- One conductor per epic. Two stories clash only when their `touches` name the same file in the same repo and
+  the same first word of a part (past a leading `§`, `#`, "the", "a" or "an"), or both name the bare file; clashing stories in two epics get a `depends_on`. Only the lead
   edits the shared files the project's `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
 
@@ -117,8 +117,9 @@ bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr) and lead-stop.sh (the lead's turn ends only when next allows)
-scripts/              test.sh (the make test runner), lint (make check: JSON a test feeds must parse), pre-commit,
-                      board-only.sh
+scripts/              test.sh (the make test runner), select-tests.sh and select_tests.py (the tests a branch's
+                      changes map to), test-map.tsv (that map), lint (make check: JSON a test feeds must
+                      parse), pre-commit, board-only.sh
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference.md     every rule, setting, command and log
@@ -132,14 +133,27 @@ Before you open a PR:
 
 ```bash
 make hooks                                  # once: the gitleaks pre-commit hook
-shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
-python3 -m py_compile bin/lib/*.py
+shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
+python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*_test.sh
+scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
+                                            # a changed file the map does not know runs the full suite
 make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # it unsets the swarm env that points at a real project, and dash starts no detached refresh
 claude plugin validate .
 ```
+
+Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate: `test` is the
+required check, and it passes when its 8 `test-shard` jobs do. The full `make test` is for when you
+want the whole suite locally.
+
+The machine-wide cap on `make test` is the file `~/.swarm/test-cap`, read only by `scripts/test.sh`.
+A whole number N lets at most N runs go at once on the machine, whatever their project. A run waits
+for a free slot under `~/.swarm/test-slots/`. A missing file, an empty file or 0 means no cap, and
+nothing is made under `~/.swarm`. A `make test` that a test starts inside another run is nested: it
+skips the cap and takes no slot. It is no `swarm.sh` setting, so it is not in `CONFIG_KEYS` or
+reference.md's settings table.
 
 A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
 the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
