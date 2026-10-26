@@ -7,6 +7,8 @@
 # ${ROOT}/fetch.fail does,
 # `ls-remote` while ${ROOT}/ls-remote.fail does, and `push --delete` while ${ROOT}/push-delete.fail does.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 REPO="$(dirname "${SWARM}")/.."

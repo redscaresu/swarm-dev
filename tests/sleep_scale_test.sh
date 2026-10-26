@@ -8,15 +8,19 @@
 # comes whole after its phase, a SERIAL file runs after the parallel ones, and xargs stopping early
 # fails the run and leaves no job (nor anything a job started) running, BSD xargs's exit 1 still runs
 # the SERIAL phase, a job with no result fails it, an interrupt stops each test with a TERM and leaves
-# nothing behind, a test's end stops what it left running, a test sees none of make's variables, and
-# a path with a space runs.
+# nothing behind, a test's end stops what it left running, a test sees none of make's variables, a
+# make test inside a run that holds the one slot of a cap of 1 takes none and so never waits on it,
+# and a path with a space runs.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${ROOT}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+export HOME="${ROOT}/home"   # its own runs are top-level when it runs alone: a cap in the real ~/.swarm/test-cap would gate them
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
@@ -162,6 +166,18 @@ printf '#!/usr/bin/env bash\necho "${JOBS-unset} ${SERIAL-unset} ${TESTS-unset}"
 o="$(SERIAL="${ROOT}/env_test.sh" mk "${ROOT}/lingering_test.sh" "${ROOT}/env_test.sh")"; sleep 2
 check "a test's end stops what it left running, and a test sees no JOBS, SERIAL or TESTS" "0|no mark|unset unset unset" \
   "$(tail -1 <<< "${o}")|$([[ -e "${ROOT}/linger.mark" ]] && echo "its child ran on" || echo "no mark")|$(cat "${ROOT}/env.seen" 2>&1)"
+# With a cap of 1 in HOME, a top-level run (TEST_SH_RUN unset, TEST_RUNS_LOG at a file) holds the
+# one slot, and a test in it that runs make test again starts a nested run (TEST_SH_RUN naming the
+# outer run), which takes no slot, so it never waits on the run it is part of. A nested run that
+# waited would be stopped at TEST_FILE_TIMEOUT, past the bound.
+mkdir -p "${ROOT}/caphome/.swarm"; echo 1 > "${ROOT}/caphome/.swarm/test-cap"
+printf '#!/usr/bin/env bash\ncd "%s/caphome/.swarm/test-slots/1" && echo * > "%s/cap.holder"\n' "${ROOT}" "${ROOT}" > "${ROOT}/inner_test.sh"
+printf '#!/usr/bin/env bash\nmake -s -C "%s" test TESTS="%s/inner_test.sh" SERIAL= JOBS=1\n' "${REPO}" "${ROOT}" > "${ROOT}/nest_test.sh"
+t0="$(ms)"
+o="$(unset TEST_SH_RUN; HOME="${ROOT}/caphome" TEST_RUNS_LOG="${ROOT}/cap-runs.tsv" TEST_FILE_TIMEOUT=5 mk "${ROOT}/nest_test.sh")"; took=$(( $(ms) - t0 ))
+check "with a cap of 1, make test over a file that runs make test again holds the slot, finishes within 5 s and frees it" \
+  "0|yes|yes|empty" \
+  "$(tail -1 <<< "${o}")|$([[ -s "${ROOT}/cap.holder" && "$(cat "${ROOT}/cap.holder")" == "$(tail -1 "${ROOT}/cap-runs.tsv" | cut -f11)" ]] && echo yes || echo "no: holder $(cat "${ROOT}/cap.holder" 2>&1), runs $(cat "${ROOT}/cap-runs.tsv" 2>&1)")|$( ((took < 5000)) && echo yes || echo "no, ${took} ms")|$(compgen -G "${ROOT}/caphome/.swarm/test-slots/*" || echo empty)"
 # A file whose path holds a space runs.
 printf '#!/usr/bin/env bash\nexit 0\n' > "${ROOT}/sp ace_test.sh"
 check "a test file whose path holds a space runs" "yes" \

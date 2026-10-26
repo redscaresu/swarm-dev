@@ -10,6 +10,8 @@
 # closed, so it ends at its session log's last entry (14:30Z), not at the retry's close (15:30Z). Epic e4's h, closed on 10-03,
 # runs past --until 2026-10-02 to its cutoff, so it overlaps i on 10-02. TZ is UTC, so a build with no session log starts at a known time.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -460,7 +462,7 @@ IH=$'epic\tidle_min\tno_conductor_min\tmost_ready'
 check "idle_slots: a ready story with no build under its conductor is idle; one with no conductor counts under no conductor" \
   "$(idle)" "${IH}"$'\ne10\t0\t20\t1\ne9\t10\t0\t1\nall\t10\t20\t1'
 check "idle_slots: --epic prints that epic's row alone" "$(idle --epic e9)" "${IH}"$'\ne9\t10\t0\t1'
-ist ia e9 src/a.sh; ist ib e9 "src/b.sh, src/a.sh:f"
+ist ia e9 src/a.sh:f; ist ib e9 "src/b.sh, src/a.sh:f"
 check "idle_slots: a ready story that clashes with a running build (touches) is not idle, a build from before --since too" \
   "$(idle --since 2026-10-01 --epic e9)" "${IH}"$'\ne9\t0\t0\t1'
 # id, on the board as ready since its unblock at 13:00 and never built, waits to --until's midnight: 11 hours.

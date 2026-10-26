@@ -4,6 +4,8 @@
 # (its last event reconcile's reopen), or no reason fails and logs nothing. The conductor brief
 # conduct renders tells it to run hold for each startable story it does not start.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

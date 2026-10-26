@@ -5,6 +5,8 @@
 # With the ladder empty none does. conduct_brief names the step-ups only with the ladder on. herdr, gh
 # and claude (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -23,7 +25,7 @@ check() { # <name> <want> <got>
 # herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until the
 # tab closes; agent wait returns at once. With quick, a started session's first turn has ended by the
 # time anyone reads it: the brief writes an assistant entry in its log, a second passes, and Claude
-# Code lists it idle; a /goal writes its goal_status set entry.
+# Code lists it idle; a /goal writes its goal_status set entry. process-info prints pi when it exists.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -49,6 +51,7 @@ else:
                     case "$4" in "/goal "*) ;; *) sleep 1; echo "[{\"sessionId\":\"$sid\",\"status\":\"idle\"}]" > "$CLAUDE_STUB_AGENTS" ;; esac
                   fi
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "pane process-info") [ -e "$H/pi" ] && cat "$H/pi" ;;
   "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
@@ -74,6 +77,14 @@ case "$*" in
 esac
 EOF
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
+# ps, on PATH only where a case puts PS_BIN there: the builder's pane shell (100) runs claude, whose
+# tool shell runs make test, started 10 minutes ago.
+PS_BIN="${ROOT}/ps-bin"; mkdir -p "${PS_BIN}"
+cat > "${PS_BIN}/ps" <<'EOF'
+#!/bin/sh
+printf '%s\n' '100 1 2:00:00 -zsh' '200 100 2:00:00 claude' '300 200 10:00 /bin/zsh -c make test' '310 300 10:00 make test'
+EOF
+chmod +x "${PS_BIN}/ps"
 
 P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
@@ -118,6 +129,11 @@ for ladder in sonnet,opus,fable ""; do
   if [[ -n "${ladder}" ]]; then
     check "ladder '${ladder}': a stall found by wait --stall steps up, and wait says stepped up, not stalled" "yes|no|${want}" \
       "$(grep -q '^stepped up: s1' <<< "${out}" && echo yes)|$(grep -q '^stalled:' <<< "${out}" && echo yes || echo no)|$(stepped)"
+    # The same builder running make test in its pane is working: no stall, so no step-up.
+    fresh "${ladder}" busy; echo '{"result":{"process_info":{"pane_id":"w:1","shell_pid":100}}}' > "${ROOT}/pi"
+    out="$(SWARM_WAIT_STARTED="${OLD}" PATH="${PS_BIN}:${PATH}" run wait --stall s1 3000)" || true
+    rm -f "${ROOT}/pi"
+    check "ladder '${ladder}': a builder running make test past stall_minutes is neither stalled nor stepped up" "busy|" "${out}|$(stepped)"
   else
     check "ladder '${ladder}': a stall found by wait --stall is stalled, and steps nothing up" "yes|${want}" \
       "$(grep -q '^stalled:' <<< "${out}" && echo yes)|$(stepped)"

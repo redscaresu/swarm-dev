@@ -1,4 +1,4 @@
-.PHONY: hooks test
+.PHONY: hooks test check
 
 # Install the gitleaks pre-commit hook into .git/hooks.
 hooks:
@@ -26,3 +26,9 @@ JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
 test:
 	@JOBS="$(JOBS)" SERIAL="$(SERIAL)" SLOW="$(SLOW)" bash scripts/test.sh $(TESTS)
+
+# Run scripts/lint over LINT_FILES (every tests/*_test.sh): it prints file:line: for each finding and
+# fails if there is one. CI runs it beside shellcheck.
+LINT_FILES ?= tests/*_test.sh
+check:
+	@python3 scripts/lint $(LINT_FILES)

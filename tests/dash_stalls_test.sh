@@ -4,6 +4,8 @@
 # herdr on PATH printing a fixed agent list, and a stub gh. stty and tput are stubbed to fail, so the
 # width comes from COLUMNS (or the default 100), except in the pty tests.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -113,8 +115,19 @@ case "$1 $2" in
     esac ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
+  "agent read") [ -z "${AR_LOG:-}" ] || echo "$3" >> "${AR_LOG}"; exit 1 ;;
+  "pane process-info") [ -z "${PI_LOG:-}" ] || echo "$4 $(/bin/ps -o comm= -p "$PPID")" >> "${PI_LOG}"
+    s="$(awk -v p="$4" '$1 == p { print $2 }' "${PI_MAP:-/dev/null}")"
+    [ -n "$s" ] || exit 1
+    echo "{\"result\":{\"process_info\":{\"pane_id\":\"$4\",\"shell_pid\":$s}}}" ;;
   *) exit 1 ;;
 esac
+STUB
+# ps: the process list in PS_LIST when the test wrote one; any other call is the real ps.
+cat > "${ROOT}/bin/ps" <<'STUB'
+#!/bin/sh
+if [ "$*" = "-A -o pid=,ppid=,etime=,command=" ] && [ -n "${PS_LIST:-}" ]; then cat "${PS_LIST}"; exit 0; fi
+exec /bin/ps "$@"
 STUB
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/herdr"
 # gh: PR 7's checks are green and its branch is behind the base.
@@ -132,7 +145,7 @@ case "$1 $2 $3" in
 esac
 STUB
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/gh"
-chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nobin/gh"
+chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nobin/gh" "${ROOT}/bin/ps"
 
 # The board is committed, with one merge on the base branch; then one board file is edited.
 G=(git -C "${P}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
@@ -151,9 +164,19 @@ mins_ago() { python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M", tim
 touch -t "$(mins_ago 120)" "${ROOT}/projects/p/sess-today.jsonl"
 printf '%s\tstory\ts-three\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
 printf '%s\tconduct\te1\tw1:p1\tok\n' "$(ago 4)" >> "${P}/.swarm/events.tsv"
-fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+# herdr's process info for a pane is logged with the program that asked for it. Here s-three's pane
+# shell is 100 (PI_MAP) and ps (PS_LIST) shows no test run under it: still stalled. Elsewhere, with no
+# PI_MAP, the read fails, and the stalls hold all the same.
+export PI_LOG="${ROOT}/process-info.log" PS_LIST="${ROOT}/ps.list"
+echo 'w1:p9 100' > "${ROOT}/pi.map"
+printf '%s\n' '  100     1  02:10:00 -zsh' '  200   100  02:09:00 claude' > "${ROOT}/ps.base"; cp "${ROOT}/ps.base" "${PS_LIST}"
+fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+read_panes() { cut -d' ' -f1 "${PI_LOG}" | sort -u | tr '\n' ' '; }
+check "only the stalled builder's pane is asked for its process info, not the conductor working under stall_minutes" \
+  test "$(read_panes)" = "w1:p9 "
 check "at 160 columns a working agent's card shows its state age, then the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working [45]m  [45]m +│' <<< "${out}"
 check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 1(19|20|21)m +│' <<< "${out}"
+check "with no test run under its pane the builder still needs you" grep -qE '! look at s-three: working [0-9]+ min' <<< "${out}"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
 check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit, edit, session-log write or PR update' <<< "${out}"
@@ -164,6 +187,20 @@ mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "stall_minutes sets the threshold" lacks "look at s-three" "${out}"
 rm "${P}/.claude/swarm/config"
+# make test running under s-three's pane shell for 5 minutes is work: working, not stalled, and not
+# under needs you. The frame is rendered once: herdr's agent read (shown_state's, AR_LOG) of s-three's
+# pane runs once.
+{ cat "${ROOT}/ps.base"; printf '%s\n' '  300   200     05:00 /bin/zsh -c make test' '  310   300     05:00 make test'; } > "${PS_LIST}"
+fresh; out="$(cd "${P}" || exit 1; AR_LOG="${ROOT}/agent-read.log" PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a stalled builder running make test under its pane is working" grep -qE '● s-three .*working [0-9]+m' <<< "${out}"
+check "a builder running make test is not under needs you" lacks "look at s-three" "${out}"
+check "a frame with a test run reads each agent's pane once: one render" test "$(grep -cx 'w1:p9' "${ROOT}/agent-read.log")" = 1
+# The same run started 100 minutes ago, past 3 x stall_minutes (90), may be hung: stalled, and it needs you.
+{ cat "${ROOT}/ps.base"; printf '%s\n' '  300   200  01:40:00 /bin/zsh -c make test' '  310   300  01:40:00 make test'; } > "${PS_LIST}"
+fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a builder whose make test started past 3 x stall_minutes ago is stalled" grep -qE '! s-three .*stalled [0-9]+m' <<< "${out}"
+check "a builder whose make test started past 3 x stall_minutes ago needs you" grep -qE '! look at s-three: working [0-9]+ min' <<< "${out}"
+cp "${ROOT}/ps.base" "${PS_LIST}"
 # A file edited a minute ago in s-three's worktree (its last commit 2 hours old) is a sign of life:
 # working, not stalled. Aged past stall_minutes, it is not: stalled again.
 wt="${P}-wt/s-three"; git init -q "${wt}"
@@ -199,6 +236,13 @@ echo "stall_minutes = 3" > "${P}/.claude/swarm/config"
 out="$(COLUMNS=100 agedash)"
 check "a conductor past stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "${out}"
 check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working [45] min with no swarm action' <<< "${out}"
+# The same conductor with make check running under its pane shell (500) is working, and not under needs you.
+echo 'w1:p1 500' > "${ROOT}/pi.map"
+{ cat "${ROOT}/ps.base"; printf '%s\n' '  500     1     08:00 -zsh' '  510   500     07:00 claude' '  520   510     02:00 make check'; } > "${PS_LIST}"
+out="$(PI_MAP="${ROOT}/pi.map" COLUMNS=100 agedash)"
+check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working [0-9]+m +│$' <<< "${out}"
+check "a conductor running make check is not under needs you" lacks "look at conduct-e1" "${out}"
+cp "${ROOT}/ps.base" "${PS_LIST}"
 # A session log written a minute ago is a sign of life for any agent with a Claude session: the
 # conductor (sess-1) and a planner (plan-e9, no story and no events.tsv line) are working. With the
 # logs written 10 minutes ago, past stall_minutes, both are stalled.
@@ -240,6 +284,10 @@ cp "${ROOT}/events.bak" "${P}/.swarm/events.tsv"; rm "${ROOT}/projects/p/sess-1.
 printf '%s\treview\ts-one\tw1:p1\tok\n' "$(ago 1)" >> "${P}/.swarm/events.tsv"
 check "a line from a conductor's own pane is a sign of life" grep -qE '● conduct-e1 +conduct +opus·high +working [12]m +│$' <<< "$(COLUMNS=100 agedash)"
 rm "${P}/.claude/swarm/config"
+
+# Every process-info read came from dash.sh's bash, none from the render's python.
+from_bash() { local n; n="$(wc -l < "${PI_LOG}")"; [[ ${n} -gt 0 && "$(grep -cE '^w[0-9]+:p[0-9]+ (.*/)?bash$' "${PI_LOG}")" -eq ${n} ]]; }
+check "every herdr process-info read comes from dash.sh, none from dash_render.py" from_bash
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

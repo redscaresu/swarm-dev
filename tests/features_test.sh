@@ -9,6 +9,8 @@
 # 2020, one it never had, and an impossible date (with a warning) are judged by their uses. Then docs/features.tsv itself: every row
 # has a metric, a uses entry and a baseline (a value, or unavailable:), and every role: is one policy accepts.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -111,7 +113,7 @@ while IFS=$'\t' read -r feature landed metric baseline uses; do
   [[ "${uses}" == unlogged:* ]] && continue
   for u in ${uses}; do
     [[ "${u}" =~ ^(event|role|agent|reviewer):. ]] || bad+="${feature}: use ${u}; "
-    [[ "${u}" != role:* ]] || env -u HERDR_ENV bash "${SWARM}" policy "${u#role:}" >/dev/null 2>&1 || bad+="${feature}: ${u} unknown to policy; "
+    [[ "${u}" != role:* ]] || (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" policy "${u#role:}" >/dev/null 2>&1) || bad+="${feature}: ${u} unknown to policy; "
   done
 done < <(tail -n +2 "$(dirname "${SWARM}")/../docs/features.tsv")
 check "docs/features.tsv: a landed date or epic, a metric, uses and a baseline on every row, and roles policy accepts" "${bad}" ""

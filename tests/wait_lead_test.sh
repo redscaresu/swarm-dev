@@ -3,9 +3,12 @@
 # story, or with merge = human a review item whose PR head is green, printing one line per new item and
 # logging one lead-woken line each; at its timeout it fails with nothing printed. What it last saw is kept
 # across runs, and a new run takes over from an earlier one. gh is a stub on PATH answering the PR's
-# head and its check runs from ${FX}; herdr is a stub listing a running conductor. Both log each call.
+# head and its check runs from ${FX}; herdr is a stub listing a running conductor, read once per poll for
+# its agent list (no-agent: lines, no_agent_test.sh). Both log each call.
 # ln is a stub that fails while ${FX}/ln.fail exists and waits as many seconds as ${FX}/ln.slow holds.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -331,13 +334,15 @@ check "with no change it returns at its timeout" returned 50
 check "at its timeout it exits non-zero and prints nothing" test "$(out)|$(rc)" == "|1"
 check "events.tsv gains no line while it waits" test -z "$(events)"
 
-# --- a running conductor does not hide a new held story.
+# --- a running conductor does not hide a new held story, and a poll asks herdr only for its agent list.
 fresh
 start 20000
 held n cleared-on-error
 check "with a conductor running, a new held story still wakes it" returned 25
 check "it prints the new held story" test "$(out)" == "held: n (cleared-on-error)"
-check "it never asks herdr, so a running conductor cannot hide the lead's queue" test ! -s "${ROOT}/herdr.log"
+# wait --lead 0 reads the queue exactly once.
+rm -f "${ROOT}/herdr.log"; again; lead 0; again; lead 0
+check "one herdr agent list per poll, no per-pane read" test "$(cat "${ROOT}/herdr.log")" == "agent list"$'\n'"agent list"
 
 # --- close still finds a story's pane by its tab record, with that slug in wait --lead's seen file.
 printf 'w:c conduct-e\nw:n n\n' > "${P}/.swarm/state/tab-n"
