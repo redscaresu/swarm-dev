@@ -129,7 +129,8 @@ fi
 # the log, there from its start to its end; one whose PID has gone is stale, and removed. TEST_RUNS_LOG,
 # when set, is the file instead, and set empty for the jobs, so a run a test starts itself logs
 # nothing and is no run going. A write that fails is skipped.
-runs_log="${TEST_RUNS_LOG-}"
+runs_log="${TEST_RUNS_LOG-}" nested=""
+[[ -z "${TEST_RUNS_LOG+x}" || -n "${TEST_RUNS_LOG}" ]] || nested=1   # set empty: a run a test started
 if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
   runs_log="$(dirname "${common}")/.swarm/test-runs.tsv"
 fi
@@ -142,6 +143,79 @@ else
 fi
 filter="${filter//$'\t'/ }${SHARD:+ shard ${SHARD}}"
 branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || echo -)"
+trap 'exit 130' INT
+trap 'exit 129' HUP
+trap 'exit 143' TERM
+
+# The cap: ~/.swarm/test-cap, a whole number N above 0, lets at most N runs go at once on this
+# machine, whatever their project; absent, empty or 0, there is no cap and nothing is made under
+# ~/.swarm, and anything else stops the run. A run takes one of the slots ~/.swarm/test-slots/1 to
+# N: a directory holding one empty file named by the run's PID, built aside and renamed into place.
+# The rename fails while the slot holds a file, so no two runs hold one slot and no slot is ever
+# seen without its PID. While every slot is held the run waits, polling, and says so once. A slot
+# whose PID is gone is taken back by removing that PID's file, which empties it for the rename: a run
+# that read the dead PID late removes only that file, never a slot another run took since. A nested
+# run takes no slot: a test that runs make test would wait on the run it is part of. cleanup frees
+# the slot.
+cap_file="${HOME:-}/.swarm/test-cap" slots="${HOME:-}/.swarm/test-slots" cap="" held=0 holders=""
+CAP_POLL=1   # seconds between looks at the slots while every one is held
+# free_slot — remove this run's PID from whatever slot holds it, and the slot it built aside.
+# shellcheck disable=SC2317,SC2329 # invoked by the traps
+free_slot() {
+  local f
+  [[ "${cap:-0}" -gt 0 ]] || return 0
+  for f in "${slots}"/*/"$$"; do
+    [[ -e "${f}" ]] && rm -f "${f}" && rmdir "${f%/*}" 2>/dev/null
+  done
+  rm -rf "${slots}/.new.$$"
+}
+# take_slot — move this run's slot, built aside, into a free slot or one whose PID is gone; else fail,
+# held and holders saying how many runs hold the slots, and their PIDs.
+take_slot() {
+  local i s f p new="${slots}/.new.$$"
+  held=0 holders=""
+  for ((i = 1; i <= cap; i++)); do
+    s="${slots}/${i}"
+    rename_dir "${new}" "${s}" && return 0
+    for f in "${s}"/*; do
+      p="${f##*/}"
+      [[ -e "${f}" ]] || continue   # freed since
+      # Its PID alive, the slot is held; this run's own PID there is a dead run's, the PID reused.
+      if [[ "${p}" != "$$" ]] && kill -0 "${p}" 2>/dev/null; then held=$((held + 1)) holders+=" ${p}"; continue 2; fi
+      rm -f "${f}"
+    done
+    rename_dir "${new}" "${s}" && return 0
+  done
+  return 1
+}
+# rename_dir <dir> <slot> — rename(2), which takes <slot>'s place only while it is gone or empty;
+# mv would move <dir> into a <slot> that is there.
+rename_dir() { python3 -I -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' "$1" "$2" 2>/dev/null; }
+[[ -n "${nested}" || -z "${HOME:-}" || ! -e "${cap_file}" ]] || cap="$(< "${cap_file}")" || exit 1
+# A number past bash's integers wraps, so it must come back from arithmetic as written.
+if ! [[ "${cap}" =~ ^(0|[1-9][0-9]*)?$ ]] || [[ -n "${cap}" && "$((cap))" != "${cap}" ]]; then
+  echo "test.sh: ${cap_file} holds '${cap}', not a whole number of runs (0 or empty for no cap)" >&2
+  exit 1
+fi
+if [[ "${cap:-0}" -gt 0 ]]; then
+  trap free_slot EXIT
+  mkdir -p "${slots}/.new.$$" && : > "${slots}/.new.$$/$$" || exit 1
+  waited="" short=""
+  until take_slot; do
+    # A pass that fails while live runs hold fewer than cap slots met a run taking or freeing one,
+    # which the next pass sees; two in a row mean a slot that is no directory or cannot be written.
+    if ((held < cap)); then
+      [[ -z "${short}" ]] || { echo "test.sh: no slot in ${slots} can be taken, yet live runs hold only ${held} of ${cap}: one is not a slot directory, or cannot be written" >&2; exit 1; }
+      short=1
+    else
+      short=""
+    fi
+    [[ -n "${waited}" ]] || echo "test.sh: waiting on ${held} run(s) (PID${holders}) for a slot: ${cap_file} allows ${cap} at once" >&2
+    waited=1
+    sleep "${CAP_POLL}"
+  done
+fi
+
 t_start=${SECONDS} t_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # others — how many other runs are going: live marks but this run's.
 others() {
@@ -165,7 +239,7 @@ run="$(mktemp -d)" || exit 1
 mkdir -p "${run}/logs" "${run}/jobs"
 # On any exit, stop the jobs left (only after xargs stopped early, or an interrupt, can there be
 # any): TERM each, which stops its test's group, and give them 5 s; then TERM the group of any still
-# there, and KILL it 2 s later, and the job. Only then do the logs go.
+# there, and KILL it 2 s later, and the job. Only then do the logs go, and last the slot.
 # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() {
   local rc=$? j i g left
@@ -184,11 +258,9 @@ cleanup() {
   rm -rf "${run}"
   log_run "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((SECONDS - t_start))" "${rc}"
   [[ -z "${runs_log}" ]] || rm -f "${marks}/$$"
+  free_slot
 }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 129' HUP
-trap 'exit 143' TERM
 
 failed=0
 # show <file>... — after a phase: each failed file's log, whole, and any file whose job ended with no
