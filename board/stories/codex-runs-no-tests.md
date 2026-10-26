@@ -16,6 +16,14 @@ Needs codex-review-probe's recorded results in this story file: the variable a r
 
 Review fixes (skeptic): key the refusal only on a variable codex itself sets that the lead's shell and a builder pane lack, never CODEX_HOME (it is in AGENT_ENV, bin/lib/agents.sh:231, so every builder has it when the user sets it). The refusal comes before log_run (scripts/test.sh:162). Drop the Makefile line, since its recipe only runs scripts/test.sh (Makefile:26-27) and its test could not fail, unless a stub scripts/test.sh that writes a marker proves the Makefile line refuses first.
 
+**Probe results (codex-review-probe, 2026-10-25, codex-cli 0.164.0, a throwaway stub repo with main's scripts/test.sh and Makefile and a tests/probe_test.sh that prints a token and runs `sleep 30`):**
+- CODEX_* names in codex's own shell (`codex exec`, default sandbox): CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS, CODEX_CI, CODEX_PERMISSION_PROFILE, CODEX_SANDBOX, CODEX_SANDBOX_NETWORK_DISABLED, CODEX_SESSION_ID, CODEX_THREAD_ID, CODEX_TOOL_CALL_ID, CODEX_VERSION.
+- The lead's shell has no CODEX_* variable. Six agent panes (all six running conductors) have none either. CODEX_HOME was unset in both.
+- `codex exec review --base origin/main`, as codex_review runs it (bin/swarm.sh:700): codex ran no test; ps showed no probe_test process during the run (sampled every 3 s) or after it. The token appeared in its output only from reading the diff.
+- The same with `-c sandbox_mode=read-only`: the same result.
+- codex 0.164 refuses a prompt together with `--base` ("the argument '--base <BRANCH>' cannot be used with '[PROMPT]'"), so a review cannot be told to run tests; the risk is codex choosing to on a larger change.
+- Route: key the refusal on CODEX_SANDBOX (or CODEX_THREAD_ID), which codex sets and the lead and the agents lack.
+
 **Done when:**
 - Route (a): tests/test_refusal_test.sh runs scripts/test.sh and `make test` over a stub test that writes a marker, with the recorded variable set; both exit non-zero, print the refusal, write no `run` line and no test-runs.tsv line, and the marker is absent; with the variable unset the stub runs. Route (b): tests/codex_test.sh pins the args `exec review -c sandbox_mode=read-only --base origin/main` and the same flag in the story-prompt form (tests/codex_test.sh:203,216).
 - tests/codex_test.sh's passthrough and limit-kill cases still pass, and the PR quotes the probe's recorded results from this story file.
