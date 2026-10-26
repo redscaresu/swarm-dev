@@ -513,8 +513,8 @@ reconcile pulled that commit or you did: the file is in neither `HEAD` nor the m
 removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories that do not clash. Two stories clash only when their
-`touches` name the same `file:symbol` in the same repo, or when either names the bare file of a file
-the other also names. Otherwise both build at once, even in the same file: git merges edits to
+`touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name
+the bare file. A bare file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once, even in the same file: git merges edits to
 different parts of one file, and a story names the functions it changes. A builder whose PR
 conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict
 never sends a story back to `ready`. The conductor sends that as a `nudge` tell, which is not a
@@ -526,7 +526,7 @@ lead, alone.
 A wave only sees its own epic, so `story` also looks across epics. Before it makes anything, it
 compares the story's `touches` with those of every story in another epic (a story with no epic
 counts as another). If one of them is open (in review, or `ready` with its builder open) and touches the
-same function or file, `story` prints `warning: <other> (epic <e>) is open and touches <entry>;
+same part (by its first word) of a file, or both name the bare file, `story` prints `warning: <other> (epic <e>) is open and touches <entry>;
 start <slug> after it merges` and starts the story anyway. `story --strict` refuses instead, naming
 the other story, and leaves no branch, worktree, pane or brief behind. It also refuses when herdr
 cannot list its agents or the board's `touches` cannot be read, where plain `story` warns that it
@@ -534,8 +534,9 @@ cannot tell. Then nothing is known to be open, so the message says to retry the 
 for a merge. `--strict` may come before or after the slug. Conductors always pass
 `--strict`.
 
-A `<file>:<fn>` entry matches the same fn in the same file, and a file-only entry matches anything
-in that file. An entry with no `/` or `.` before its `:` names a fn in the previous entry's file and
+A `<file>:<part>` entry matches an entry in the same file whose part has the same first word, past a
+leading `§`, `#`, "the", "a" or "an" (so `docs/method.md:§ Building` matches `docs/method.md:Building`), and a
+file-only entry matches only another file-only entry for that file. An entry with no `/` or `.` before its `:` names a fn in the previous entry's file and
 repo, so `bin/swarm.sh:config defaults, CONFIG_KEYS` covers `bin/swarm.sh:CONFIG_KEYS`. When the
 entry's own repo (its prefix, or the story's `repo:`) has a file of that name, it is that file
 instead, so `Makefile` or `Makefile:lint` after another entry still matches. A `<repo>: ` prefix sets the entry's repo, and otherwise the
@@ -2050,7 +2051,7 @@ changes merge's exit code.
 | `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, or a green PR in review that waits on you, and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
-| `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
+| `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
 | `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. With `merge = human` the lead runs it only for a PR whose agreed HLD grants `merge`, and you merge the rest. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`, and refuses it while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line. With `merge = human` it merges only when at least one story merged since the last tag and every one of them is under an agreed HLD that grants `release`. `--board` refuses a board PR that sets an epic `active` with no ticket (the epic guard, [§ Merging](#merging)). Where the base has a merge queue, `merge` enqueues the PR. If CI on the base goes red on a commit it merged, it writes a `fix-main` story ([§ Merging](#merging)). |
 | `swarm.sh step-up <slug> <trigger>` | Close a struggling build and start the next model in `escalate_ladder` on the same branch, without counting an attempt. `<trigger>` is `findings-<step_up_findings>` (`findings-3` by default), `ci-red-2`, `stalled` or `no-pr`. `swarm.sh step-up --resume <slug>` starts a rung whose start failed. Refused while the ladder is empty ([§ The escalation ladder](#the-escalation-ladder)). |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
