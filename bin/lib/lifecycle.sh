@@ -758,16 +758,17 @@ start_rung() {
   [[ ${rc} -eq 0 ]] || echo "swarm: ${slug}: stepped up, and its ${to} builder runs, but its /goal did not set (see above): send ${prompt%.md}.goal.md as its /goal by hand" >&2
 }
 
-# rung_late <slug> <model> <err> — when start_agent's stderr <err> says the brief may have gone out
+# rung_late <slug> <model> <err> [who] — when start_agent's stderr <err> says the brief may have gone out
 # (the tries review_start_failed reads as unclear) and the agent was not blocked on a question before
 # it, warn that <slug>'s new <model> builder has not shown it took up its brief, and read it by its
 # pane once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle, no turn).
 # Succeeds when that read finds it working, blocked or past a turn; fails on any other <err>, with no
 # pane (gone), or when it is still idle with no turn, and start_rung closes it. Returns 2 when the read
-# is unsure (herdr gave no status twice in a row), and start_rung keeps the pane.
+# is unsure (herdr gave no status twice in a row), and start_rung keeps the pane. [who] names the caller
+# in its messages: step-up (start_rung's), or restart (restart_settle's), whose pane is never closed here.
 rung_late() {
   # shellcheck disable=SC2034 # prompt_settle reads SETTLE_READS
-  local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v
+  local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v who="${4:-step-up}"
   case "$3" in
     *agent_blocked*) return 1 ;;
     *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) ;;
@@ -775,13 +776,13 @@ rung_late() {
   esac
   pane="$(agent_field "$(agent_name "$1")" pane_id)"
   [[ -n "${pane}" ]] || return 1
-  echo "step-up: warning: $1's $2 builder has not shown it took up its brief; its pane is kept and read again for $((SLOW_PROMPT_TIMEOUT_MS / 1000))s before it is closed" >&2
+  echo "${who}: warning: $1's $2 builder has not shown it took up its brief; its pane is kept and read again for $((SLOW_PROMPT_TIMEOUT_MS / 1000))s$([[ "${who}" != step-up ]] || echo " before it is closed")" >&2
   v="$(prompt_settle "${pane}" idle -)"
   case "${v}" in
     taken) return 0 ;;
     "again idle") return 1 ;;
   esac
-  echo "step-up: $1's $2 builder: ${v#unsure }" >&2
+  echo "${who}: $1's $2 builder: ${v#unsure }" >&2
   return 2
 }
 
@@ -905,7 +906,7 @@ sys.exit(1)' "${CLAUDE_PROJECTS}" "$1" 2>/dev/null
 # of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry, as
 # start_agent), report that command to herdr as start_agent does, and tell the builder why.
 restart_resume() {
-  local name argv a resume=() flags=() pane out seq msg rc=0 try session id
+  local name argv a resume=() flags=() pane out seq msg try session id
   read -r session id <<< "$4"
   name="$(agent_name "$1")"; argv="${RESUME_DIR}/${session}.argv"
   while IFS= read -r a; do resume+=("${a}"); done < "${argv}"
@@ -937,9 +938,40 @@ restart_resume() {
   fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-restart.XXXXXX")" || die "restart: ${name}'s session ${id} is open in pane ${pane}, but it could not be told to carry on: tell it (swarm.sh tell $1 resume <file>)"
   printf '%s\n' "swarm.sh restart reopened this session in a new pane: your last one was gone, and with it any background command, subagent or monitor you had running (a wait-pr, a codex-review). You are in the same worktree, ${3}, on story/$1. Check git status and your PR, start again any wait you still need, and carry on where you stopped." > "${msg}"
-  (deliver_prompt "${name}" "${msg}" "${pane}") || rc=$?
+  restart_run deliver_prompt "${name}" "${msg}" "${pane}"
   rm -f "${msg}"
-  [[ ${rc} -eq 0 ]] || die "restart: ${name}'s session ${id} is open in pane ${pane}, but it was not told to carry on: tell it (swarm.sh tell $1 resume <file>)"
+  [[ ${RESTART_RC} -eq 0 ]] || die "restart: ${name}'s session ${id} is open in pane ${pane}, but it was not told to carry on: tell it (swarm.sh tell $1 resume <file>)"
+  restart_settle "$1" "$(builder_model "$1")" \
+    "it may not have taken up the prompt to carry on: read it (herdr agent read ${name}) and, if it sits idle, tell it to carry on (swarm.sh tell $1 resume <file>)"
+}
+
+# RESTART_ERR, RESTART_RC: restart_run's copy of its command's stderr, and its exit status.
+RESTART_ERR=""; RESTART_RC=0
+
+# restart_run <cmd>... — run <cmd>... in a subshell with errexit on (never in an || or if, where bash
+# drops it), its stderr shown as it comes and kept in RESTART_ERR, its status in RESTART_RC, as
+# start_rung runs start_agent. Its temp file goes on a signal too.
+restart_run() {
+  local f
+  f="$(mktemp "${TMPDIR:-/tmp}/swarm-restart-err.XXXXXX")" || die "restart: mktemp failed, so nothing was started"
+  # shellcheck disable=SC2064 # expand now: f is local
+  { trap "rm -f '${f}'; exit 129" HUP; trap "rm -f '${f}'; exit 130" INT; trap "rm -f '${f}'; exit 143" TERM; }
+  set +e
+  { (set -e; "$@") 2>&1 1>&3 | { tee "${f}" >&2 || cat >/dev/null; }; RESTART_RC=${PIPESTATUS[0]}; } 3>&1
+  set -e
+  RESTART_ERR="$(cat "${f}")"; rm -f "${f}"; trap - HUP INT TERM
+}
+
+# restart_settle <slug> <model> <what to do> — after a start or prompt that exited 0, when RESTART_ERR
+# is deliver_prompt's warning that herdr sent the prompt but did not show the turn start, read the
+# builder once more (rung_late, as start_rung does). Unless it took the prompt up after all, die with
+# <what to do>, its pane kept: herdr lists it, so no no-agent line would ever name it.
+restart_settle() {
+  local late=0
+  [[ "${RESTART_ERR}" == *"herdr did not show the turn start"* ]] || return 0
+  rung_late "$1" "$2" "${RESTART_ERR}" restart || late=$?
+  if [[ ${late} -eq 0 ]]; then echo "restart: $1's builder took up its prompt after all"; return 0; fi
+  die "restart: $1's builder runs in its pane, but herdr does not show that it took up its prompt$([[ ${late} -ne 2 ]] || echo " (herdr could not say)"); $3"
 }
 
 # restart_fresh <slug> <tab> <src> "<role> <model>" <names> — start a fresh builder for <slug> in <role> on
@@ -957,13 +989,12 @@ restart_fresh() {
   handover_brief "${slug}" "$3" "${base}" restart "${model}" "${model}" > "${prompt}"
   since="$(date +%s)"   # before the brief, for send_goal
   # start_agent said why it failed. Once it has recorded the builder, its pane is kept: it may lack its
-  # brief. Its own errexit holds only outside an || (start_rung's form).
-  set +e
-  (set -e; start_agent "$2" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "$5" "${model}")
-  rc=$?
-  set -e
-  [[ ${rc} -eq 0 ]] \
+  # brief. restart_run keeps its errexit (start_rung's form) and its stderr for restart_settle.
+  restart_run start_agent "$2" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "$5" "${model}"
+  [[ ${RESTART_RC} -eq 0 ]] \
     || die "restart: ${slug}'s fresh builder did not start cleanly (see above); if herdr lists it, read it (herdr agent read $(agent_name "${slug}")) and, with no brief taken up, send ${prompt} (swarm.sh tell ${slug} nudge ${prompt})"
+  restart_settle "${slug}" "${model}" \
+    "read it (herdr agent read $(agent_name "${slug}")) and, if it sits idle with no brief, send it (swarm.sh tell ${slug} nudge ${prompt})"
   record_event restart "${slug}" "ok (fresh on ${model}: no session to resume)"
   echo "restarted: ${slug}, a fresh ${role} builder on ${model} in ${wt}"
   [[ -n "${goal}" ]] || return 0
