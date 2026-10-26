@@ -2044,7 +2044,7 @@ no_agent_lines() {
   while read -r slug build ev name rname; do
     # Never started (no start line): nothing more is read for it.
     [[ -n "${slug}" && "${build}" != - ]] || continue
-    d="$(grep -m1 "^${slug}"$'\x1f' <<< "${data}")"
+    d="$(awk -F $'\x1f' -v s="${slug}" '$1 == s { print; exit }' <<< "${data}")"
     IFS=$'\x1f' read -r _ st repo prs <<< "${d}"
     # A PR held for the user's merge (pr_held, as costs_tag asks, on prs: split on commas too).
     if [[ "${st}" == review ]]; then
