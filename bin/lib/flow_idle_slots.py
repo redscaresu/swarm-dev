@@ -22,8 +22,8 @@
 # merged story's builder, which reconcile closes itself), after that which no earlier build of its
 # slug took, by the slug's next build with a known start (a close in its first second is the earlier
 # build's), else to that start, else to the
-# window's end. Two stories clash as touches_rows.py reads touches (the same file:symbol in the same
-# repo, or either naming the bare file, with SWARM_REPOS_DIR as build.sh's REPOS_DIR), unless one
+# window's end. Two stories clash as touches_rows.py reads touches (the same file and part's first
+# word in the same repo, or both naming the bare file, with SWARM_REPOS_DIR as build.sh's REPOS_DIR), unless one
 # depends on the other (a stacked start), each story read as story_text reads it, so a build before
 # --since counts too. A
 # conductor runs from an ok `conduct` event to its next one, an ok close of its agent, a report event
