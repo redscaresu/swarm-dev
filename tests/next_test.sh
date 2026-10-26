@@ -9,6 +9,10 @@ STUB_BIN="$(mktemp -d)"; trap 'rm -rf "${STUB_BIN}"' EXIT
 export CLAUDE_CONFIG_DIR="${STUB_BIN}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
+# The first word of each first line next printed to the helpers below (expect, expect_release,
+# expect_conductor, nxt, nextc, nextb), one per line; the arm check at the end reads it.
+STEPS="${STUB_BIN}/steps"; : > "${STEPS}"
+record_step() { local first="${1%%$'\n'*}"; if [[ -n "${first}" ]]; then echo "${first%% *}" >> "${STEPS}"; fi; }
 
 # item <path> <front-matter line>... — write a board file under docs/.
 item() {
@@ -32,7 +36,7 @@ expect() {
   # The whole output, then its first line: `| head -1` can close the pipe while next is still
   # printing a gate's list, and the broken pipe fails the run under pipefail.
   # Its stderr is kept in ${err} too, for the checks that read it.
-  out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2> "${dir}.err")"; got="${out%%$'\n'*}"
+  out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2> "${dir}.err")"; got="${out%%$'\n'*}"; record_step "${out}"
   err="$(cat "${dir}.err")"; rm -f "${dir}.err"; [[ -z "${err}" ]] || echo "${err}" >&2
   if [[ "${got}" == "${want}" ]]; then
     echo "ok   ${name}"
@@ -236,7 +240,7 @@ origin="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
   printf '%s\n' '#!/bin/sh' "[ \"\$1 \$2\" = 'pr list' ] && echo '[]'" 'exit 0' > bin/gh
   chmod +x bin/herdr bin/gh
 )
-nxt() { local got; got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; echo "${got%%$'\n'*}"; }
+nxt() { local got; got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${got}"; echo "${got%%$'\n'*}"; }
 before="$(nxt)"
 (cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" close a >/dev/null 2>&1) || true
 for pair in "before:resume a:${before}" "after:story a:$(nxt)"; do
@@ -566,7 +570,7 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
   chmod +x "${dir}/bin/herdr"
   [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-${epic}.report.md"
   for step in "${@:6}"; do (cd "${dir}" && eval "${step}"); done
-  got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; out="${got}"
+  got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; out="${got}"; record_step "${out}"
   # next only reads: it never writes a pane record or logs a stop (pane_check is status's and wait's).
   if [[ -e "${dir}/.swarm/panes" ]] || grep -q $'\tincident\t' "${dir}/.swarm/events.tsv" 2>/dev/null; then got="next wrote a pane record or an incident: ${got}"; fi
   # shellcheck disable=SC2053 # the why is a glob
@@ -652,7 +656,7 @@ expect_release() {
   release_repo "$@"
   if [[ ${herdr} == 1 ]]; then out="$(cd "${rdir}" && HERDR_ENV=1 PATH="${rdir}/bin:${PATH}" bash "${SWARM}" next)"
   else out="$(cd "${rdir}" && env -u HERDR_ENV bash "${SWARM}" next)"; fi
-  got="${out%%$'\n'*}"
+  got="${out%%$'\n'*}"; record_step "${out}"
   if [[ "${got}" == "${want}" ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: want '${want}', got '${got}'"; fails=$((fails + 1)); fi
   rm -rf "${rdir}"
@@ -891,7 +895,11 @@ if [[ "${got}" == auth && $((SECONDS - start)) -lt 5 ]] && grep -q "conduct-e1: 
   echo "ok   wait on a conductor whose login expired returns auth at once, naming it"; else
   echo "FAIL wait on a conductor whose login expired returns auth at once, naming it: got '${got}' after $((SECONDS - start))s, stderr: $(cat "${dir}/wait.err")"; fails=$((fails + 1)); fi
 # next says so too: its step stays `wait` (which returns auth at once), its why names auth and /login.
-nextc() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next); }
+nextc() {
+  local o rc=0
+  o="$(cd "${dir}" && HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)" || rc=$?
+  record_step "${o}"; printf '%s\n' "${o}"; return "${rc}"
+}
 got="$(nextc)"
 if [[ "${got}" == "wait conduct-e1"$'\n'"auth: the conductor conduct-e1 stopped on an expired login; run /login"* ]]; then
   echo "ok   next names auth and /login for a conductor whose login expired"; else
@@ -1291,7 +1299,12 @@ case "$1 $2" in
 esac
 STUB
 chmod +x "${dir}/bin/herdr"
-nextb() { : > "${dir}/agents.log"; (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next 2>/dev/null); }
+nextb() {
+  local o rc=0
+  : > "${dir}/agents.log"
+  o="$(cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next 2>/dev/null)" || rc=$?
+  record_step "${o}"; printf '%s\n' "${o}"; return "${rc}"
+}
 # collected <conductor>: the lead collected its report (collect ends with swarm.sh close, logged ok).
 collected() { printf '%s\tclose\t%s\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${dir}/.swarm/events.tsv"; }
 echo report > "${dir}/.swarm/conduct-backlog.report.md"; touch -t 202001010000 "${dir}"/docs/stories/* "${dir}"/docs/epics/* "${dir}/docs/stories" "${dir}/docs/epics"
@@ -1394,6 +1407,39 @@ if [[ "${out}" == *"warning: swarm.sh conduct e4 failed ("*"); the lead's swarm.
   echo "ok   next run by an agent leaves a failed start to the lead's next"; else
   echo "FAIL next run by an agent, one start failing: '${out}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}" "${dir}-wt"
+
+# Every step the helpers above recorded has an arm in commands/swarm.md: an arm line that starts
+# '   - `<step>' followed by a space or a backtick. A step with none is one the lead's loop cannot act on.
+# The one-off cases that run next themselves, for its why, stderr or exit code, record nothing.
+# missing_arms <swarm.md> <step>... — print each step with no arm line, one per line.
+missing_arms() {
+  local md="$1" step line found; shift
+  for step in "$@"; do
+    found=0
+    while IFS= read -r line; do
+      if [[ "${line}" == "   - \`${step}"[\ \`]* ]]; then found=1; break; fi
+    done < "${md}"
+    if [[ ${found} == 0 ]]; then echo "${step}"; fi
+  done
+}
+# shellcheck disable=SC2207 # steps are single words
+seen=($(sort -u "${STEPS}"))
+unrecorded=""
+for step in fix-main wait collect conduct resume story plan-epic plan-hld hld escalated release gate 'done'; do
+  grep -qx -- "${step}" "${STEPS}" || unrecorded="${unrecorded} ${step}"
+done
+if [[ -z "${unrecorded}" ]]; then echo "ok   the cases above reached every step"; else
+  echo "FAIL no case above reached:${unrecorded}"; fails=$((fails + 1)); fi
+SWARM_MD="${SWARM%/bin/swarm.sh}/commands/swarm.md"
+missing="$(missing_arms "${SWARM_MD}" "${seen[@]+"${seen[@]}"}")"
+if [[ -z "${missing}" ]]; then echo "ok   each step the helpers saw next print has an arm in commands/swarm.md: ${seen[*]-}"; else
+  echo "FAIL steps the helpers saw next print with no arm in commands/swarm.md: ${missing//$'\n'/ }"; fails=$((fails + 1)); fi
+# Self-check: on a copy without the release arm, the same check names release.
+# shellcheck disable=SC2016 # the backticks are swarm.md's
+grep -v '^   - `release`' "${SWARM_MD}" > "${STUB_BIN}/swarm.md"
+missing="$(missing_arms "${STUB_BIN}/swarm.md" "${seen[@]+"${seen[@]}"}")"
+if [[ "${missing}" == release ]]; then echo "ok   the arm check names release on a swarm.md without its arm"; else
+  echo "FAIL the arm check on a swarm.md without the release arm: want 'release', got '${missing//$'\n'/ }'"; fails=$((fails + 1)); fi
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
