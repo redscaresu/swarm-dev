@@ -3,8 +3,9 @@
 # a start or tell typed there (a collapsed `[Pasted text #N` paste) gets one Enter, and one `resend
 # <agent>` events.tsv line, per delivery; nothing else is ever submitted. Each poll is one `swarm.sh wait
 # --lead 0`. herdr is a stub: its agent list is ${FX}/agents, `agent read <pane>` prints ${FX}/<pane>.txt
-# (failing once while ${FX}/read.fail exists), `pane send-keys` fails once while ${FX}/keys.fail exists,
-# and it logs every call to ${ROOT}/herdr.log.
+# (failing once while ${FX}/read.fail exists, hanging while ${FX}/read.hang does), `pane send-keys` fails
+# once while ${FX}/keys.fail exists, and it logs every call to ${ROOT}/herdr.log. python3 is the real one,
+# but the resend check exits 1 once while ${FX}/py.crash exists, as an uncaught exception would.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -28,12 +29,19 @@ echo "$*" >> "${LOG}"
 case "$1 $2" in
   "agent list") printf '{"result":{"agents":[%s]}}\n' "$(cat "${FX}/agents" 2>/dev/null)" ;;
   "agent read") if [ -e "${FX}/read.fail" ]; then rm -f "${FX}/read.fail"; exit 1; fi
+                if [ -e "${FX}/read.hang" ]; then sleep 60; fi
                 cat "${FX}/$3.txt" 2>/dev/null ;;
   "pane send-keys") if [ -e "${FX}/keys.fail" ]; then rm -f "${FX}/keys.fail"; exit 1; fi ;;
   *) echo '{"result":{}}' ;;
 esac
 STUB
 chmod +x "${ROOT}/bin/herdr"
+printf '#!/bin/sh\nFX="%s"\n' "${FX}" > "${ROOT}/bin/python3"
+cat >> "${ROOT}/bin/python3" <<'STUB'
+case "$*" in *unsent_brief*) if [ -e "${FX}/py.crash" ]; then rm -f "${FX}/py.crash"; exit 1; fi ;; esac
+STUB
+printf 'exec %s "$@"\n' "$(command -v python3)" >> "${ROOT}/bin/python3"
+chmod +x "${ROOT}/bin/python3"
 # The fake swarm.sh a delivery under way runs: ps shows `bash .../swarm.sh <args>` while it sleeps.
 mkdir -p "${ROOT}/fake"; printf 'while :; do sleep 0.2; done\n' > "${ROOT}/fake/swarm.sh"
 # busy <args>... — a process running `swarm.sh <args>` until unbusy.
@@ -182,6 +190,29 @@ poll
 check "an agent that swarm.sh agent is starting under a name agent_name lowers gets no pane read" test "$(reads)|$(enters)" == "0|0"
 unbusy
 
+# swarm.sh next and merge start conductors in their own process (conduct_ready).
+fresh; listed conduct-ubr-e:idle; pane w:p1 unsent; ev conduct ubr-e "$(ago 3600)"; session conduct-ubr-e; busy merge https://github.com/o/r/pull/9
+poll
+check "a conductor gets no pane read while a swarm.sh merge, which may be starting it, runs" test "$(reads)|$(enters)" == "0|0"
+unbusy   # no check that it is resent next: any swarm.sh next or merge on the machine (another test's) holds it
+
+# --- which lines are deliveries.
+# agent_name puts an s before a slug that does not start with a letter.
+fresh; listed s2ubr-fa:idle; pane w:p1 unsent; ev story 2ubr-fa; session s2ubr-fa
+poll
+check "a digit-led slug's builder, named s<slug>, is resent" test "$(enters)|$(count $'\tresend\ts2ubr-fa\t' "${P}/.swarm/events.tsv")" == "1|1"
+# A ladder step-up logs only its escalate line; the new rung's handover brief can sit in its box.
+# A poll first checks the story line against a clear box, so only the escalate line can send.
+fresh; listed ubr-s1:idle; pane w:p1 submitted; ev story ubr-s1 "$(ago 3600)"; session ubr-s1
+poll
+pane w:p1 unsent; ev escalate ubr-s1 "$(ago 120)" "ok (findings-3: opus -> fable)"
+poll
+check "a stepped-up rung's handover brief left in its box is resent" test "$(enters)|$(resends)" == "1|1"
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1 "$(ago 3600)"
+ev tell:findings ubr-s1 "$(ago 120)" "ubr-s1: herdr's reply to the brief could not be read once, then could not send it again (timeout); see herdr agent read ubr-s1"
+poll
+check "a tell whose herdr reply could not be read, the paste maybe in the box, is resent" test "$(enters)|$(resends)" == "1|1"
+
 # --- a pane that cannot be read.
 fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; touch "${FX}/read.fail"
 poll
@@ -195,6 +226,19 @@ check "an Enter herdr fails to send logs the failure as the resend's outcome" \
   test "$(enters)|$(count $'\tresend\tubr-s1\tw:lead\therdr could not send Enter' "${P}/.swarm/events.tsv")" == "1|1"
 poll
 check "the next poll sends it again" test "$(enters)|$(count $'\tresend\tubr-s1\tw:lead\tok$' "${P}/.swarm/events.tsv")" == "2|1"
+
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; touch "${FX}/py.crash"
+poll
+check "a resend check that crashes sends nothing" test "$(enters)|$(resends)" == "0|0"
+poll
+check "the next poll checks it again and resends" test "$(enters)|$(resends)" == "1|1"
+
+# A hung herdr read must not hold the poll: the lead still gets the held story it found.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; touch "${FX}/read.hang"
+printf -- '---\nkind: code\nstatus: ready\nheld_for: needs a key\n---\n\n# ubr-h1\n' > "${B}/ubr-h1.md"
+t0=${SECONDS}; poll
+check "a hung pane read is cut off, and the poll still returns on the held story" \
+  test "$(cat "${ROOT}/out")|$(cat "${ROOT}/rc")|$(enters)|$(( SECONDS - t0 < 40 ))" == "held: ubr-h1 (needs a key)|0|0|1"
 
 # --- a tell's brief, and what the resend line is not.
 # The builder's last turn, a short one, started ten minutes before the findings tell and ended (a tool

@@ -70,63 +70,35 @@ any earlier one, so only one is ever watching. It never edits the board.
 pane as a collapsed paste (`[Pasted text #1 +40 lines]`), and an agent can sit idle with it still in
 its input box. On each read, `wait --lead` takes the agents this project opened that the read's one
 herdr list shows idle. For each one it finds the newest `events.tsv` line that gave the agent a
-prompt. That is `story`, `step-up` or a `tell` of any kind but `note` for the builder,
-`review-agent` for `review-<slug>`, `conduct` for a conductor, and `agent` for an agent started by
-name. The line must end `ok`, or in deliver_prompt's error after herdr sent the prompt (`herdr sent
-it the brief`, `may or may not have the brief`), which is how a brief that was never taken up ends.
-A command that failed before sending delivered nothing. A note (`tell:note`) goes to a conductor's
-inbox, and the prompt that wakes the conductor is one line, never a collapsed paste. If that line is
-new, it reads the agent's pane once. It sends the pane Enter (`herdr pane send-keys <pane> Enter`)
-and logs `resend <agent>` when the input box holds the paste and no turn has started since the brief
-went out. A turn start is a prompt in the agent's Claude session log (not a tool result or a
-`/goal`). An agent with no Claude session on record, or no log of it, is left alone: Claude Code
-writes the log before the first prompt, so a missing one says nothing. Its pane is read again on the
-next read. A start opens its own session, so any turn start in it counts. The line is written only
-when its command returns, so for a tell any turn start later than seven times `PROMPT_TIMEOUT_MS` (7
-minutes) before the line counts. A tell refuses a working agent. Each of deliver_prompt's two tries
-can wait two `PROMPT_TIMEOUT_MS`, and with `goal` on the findings' `/goal` can wait two more. So a
-tell sent within 7 minutes of a turn start is left alone: the log cannot tell that turn from one the
-tell started. An agent that took the brief has had a turn, so a later, unrelated paste is left
-alone. A paste in a prompt already submitted above the box does not count either. Each line it is
-done with goes in `.swarm/lead/resend`, and the pane is not read again until a newer line comes. A
-failed read, or an Enter herdr could not send, notes nothing, so the next read tries again; the
-failed Enter is logged as the `resend` line's outcome. A working agent's pane is never read, and nor
-is the pane of an agent that a `swarm.sh` command (a `story`, `tell`, `review-agent`, `conduct`,
-`step-up` or `agent` naming it) is still delivering to: its new line is not written yet, and an
-Enter could submit the brief that command is sending. It never resends through `tell`, which would
-log a second `tell:findings` line and count a review round twice. The resend prints nothing and
-wakes no one. The stall rule skips `resend` lines.
-
-**A started story with no agent wakes the lead too.** `wait --lead` also prints
-`no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
-counts a story only when all of these hold:
-
-- It is ready, or in review under `merge = agent`. A story waiting on the user is left out:
-  awaiting their merge under `merge = human`, `costs: money` or `kept:`, green or not.
-- It is of a kind an agent builds. That rules out `kind: lead`, and so every held or escalated
-  story. A blocked story is never counted.
-- It has a build record: an ok builder start that no close ended, or its worktree or
-  `story/<slug>` branch.
-- herdr lists no pane this project opened under its builder's name or `review-<slug>`. No
-  `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
-- No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
-  the slug, its answer is still on the way: each writes its own events.tsv line when it exits.
-- It has no `.swarm/briefs/<slug>.step-up` marker. A failed step-up is reported apart.
-
-Something must explain why no agent is there: an ok close of the builder or the review agent, or a
-failed start, with no later start, ok tell or hold. A story reconcile reopened (its PR closed
-unmerged) is left out until a new start: `unblock --startable` already names it for the lead, from
-the reopen being its last events line, which a line written here would hide. When a pane went with
-no such event, the poll that first sees it writes a `no-agent <slug>` events.tsv line and stays
-silent, and the next poll wakes the lead. The exit for a ready story is
-`swarm.sh hold <slug> <reason>`. A hold answers the alert but starts nothing, so if no agent is back
-by the next poll, that poll writes a new `no-agent` line and the alert comes back. For a story in
-review the exit is `swarm.sh merge --head <sha> <PR URL>`, with the `head:` line of
-`.swarm/reviews/<slug>.md`, or a plain `swarm.sh merge <PR URL>` when there is no head to pin. The
-lead runs `swarm.sh wait-pr <PR URL>` first and merges once it exits 0: while it runs, the line is
-quiet, and if the checks go red it comes back. Each poll reads `herdr agent list` once, and `ps` once when a started story needs checking, and makes no gh
-call for these lines. Outside herdr, or when herdr's list or `ps` fails, it prints none. A run with no
-`.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
+prompt. That is `story`, `escalate` (a ladder step-up), `step-up` or a `tell` of any kind but `note`
+for the builder, `review-agent` for `review-<slug>`, `conduct` for a conductor, and `agent` for an
+agent started by name. The line must end `ok`, or in deliver_prompt's error after herdr sent the
+prompt or may have (`herdr sent it the brief`, `may or may not have the brief`, `could not be
+read`), which is how a brief that was never taken up ends. A command that failed before sending
+delivered nothing. A note (`tell:note`) goes to a conductor's inbox, and the prompt that wakes the
+conductor is one line, never a collapsed paste. If that line is new, it reads the agent's pane once.
+The read and the Enter each get 10 seconds, so a hung herdr cannot hold up the items the read found
+for the lead. It sends the pane Enter (`herdr pane send-keys <pane> Enter`) and logs `resend
+<agent>` when the input box holds the paste and no turn has started since the brief went out. A turn
+start is a prompt in the agent's Claude session log (not a tool result or a `/goal`). An agent with
+no Claude session on record, or no log of it, is left alone: Claude Code writes the log before the
+first prompt, so a missing one says nothing. Its pane is read again on the next read. A start opens
+its own session, so any turn start in it counts. The line is written only when its command returns,
+so for a tell any turn start later than seven times `PROMPT_TIMEOUT_MS` (7 minutes) before the line
+counts. A tell refuses a working agent. Each of deliver_prompt's two tries can wait two
+`PROMPT_TIMEOUT_MS`, and with `goal` on the findings' `/goal` can wait two more. So a tell sent
+within 7 minutes of a turn start is left alone: the log cannot tell that turn from one the tell
+started. An agent that took the brief has had a turn, so a later, unrelated paste is left alone. A
+paste in a prompt already submitted above the box does not count either. Each line it is done with
+goes in `.swarm/lead/resend`, and the pane is not read again until a newer line comes. A failed
+read, a check that fails unexpectedly, or an Enter herdr could not send, notes nothing, so the next
+read tries again; the failed Enter is logged as the `resend` line's outcome. A working agent's pane
+is never read. Nor is the pane of an agent that a `swarm.sh` command is still delivering to: a
+`story`, `tell`, `review-agent`, `conduct`, `step-up` or `agent` naming it, and for a conductor any
+`next` or `merge`, which start conductors. That command's new line is not written yet, and an Enter
+could submit the brief it is sending. While an upgrade runs, which restarts agents, no pane is read
+at all. It never resends through `tell`, which would log a second `tell:findings` line and count a
+review round twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines.
 
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It

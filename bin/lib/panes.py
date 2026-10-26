@@ -154,7 +154,8 @@ def turn_since(log, name, projects, since, slack):
                     d = json.loads(l)
                 except ValueError:
                     continue
-                c = (d.get("message") or {}).get("content") if isinstance(d, dict) else None
+                m = d.get("message") if isinstance(d, dict) else None
+                c = m.get("content") if isinstance(m, dict) else None
                 typed = isinstance(c, str) or (isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "text" for x in c))
                 if typed and d.get("type") == "user" and not d.get("isSidechain") and is_prompt(d) \
                         and str(d.get("timestamp") or "")[:19] > cut:
