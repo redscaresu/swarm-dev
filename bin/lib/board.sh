@@ -575,14 +575,15 @@ release_due() {
 # too; a deleted one's is ignored. Prints nothing when no epic carries a stage, the board is outside
 # the repo or the tag is not x.y.z: a release as today. Else its first line is
 #   release <S>        no epic file carrying stage S is left on the board or the base
-#   patch <x.y.z+1>    S is held, and no staged work merged since the tag, so what merged is a fix: a
-#                      patch on the tag's line
+#   patch <x.y.z+1>    S is held, and above this patch of the tag's line, and no staged work merged
+#                      since the tag: what did merge, under an unstaged epic or none, goes out in
+#                      the patch (nothing checks that it is a fix)
 #   held               S is held and staged work merged since the tag: a story of a staged epic (its
 #                      epic: chain) deleted since the tag (a story's PR deletes its file), or kept on
 #                      the board at status: done when it was not done at the tag
 # and, unless release, the release-held: line next prints. One git log call.
 release_stage() {
-  local tag="${1#v}" pre f p c="" e v kind txt here="" map="" stories="" s="" open="" bad="" badl="" work="" held
+  local tag="${1#v}" pre f p c="" e v kind txt here="" map="" stories="" s="" open="" bad="" badl="" work="" held patch
   [[ ${BOARD_IN_REPO} == 1 && "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
   # map: "<epic> <stage> <parent>" a line, the epics here first, so a slug's first line wins; here:
@@ -614,7 +615,8 @@ release_stage() {
     [[ "${e}" == *.md && "${e}" != */* && "${e}" != README.md ]] || continue
     txt="$(git -C "${PROJECT_DIR}" show "${c}^:${p}" 2>/dev/null)" || continue
     if [[ "${kind}" == epics ]]; then
-      map+="${e%.md} $(stage_of "$(fm_text stage <<< "${txt}")") $(first_slug "$(fm_text parent <<< "${txt}")")"$'\n'
+      v="$(stage_of "$(fm_text stage <<< "${txt}")")"; [[ "${v}" != bad ]] || v=-   # a deleted one's malformed stage is ignored
+      map+="${e%.md} ${v} $(first_slug "$(fm_text parent <<< "${txt}")")"$'\n'
     else
       stories+="$(first_slug "$(fm_text epic <<< "${txt}")")"$'\n'
     fi
@@ -642,7 +644,10 @@ release_stage() {
     done < <(board stories)
   fi
   held="release-held: v${s}"; [[ -n "${s}" ]] || held="release-held: no valid stage"
-  if [[ -z "${work}" ]]; then echo "patch ${tag%.*}.$((10#${tag##*.} + 1))"; else echo held; fi
+  # The patch only below S: with S one patch above the tag, it would be the stage's own version.
+  patch="${tag%.*}.$((10#${tag##*.} + 1))"
+  if [[ -n "${s}" ]] && ! version_gt "${s}" "${patch}"; then work=1; fi
+  if [[ -z "${work}" ]]; then echo "patch ${patch}"; else echo held; fi
   echo "${held}, open epics:${open}, patches only${bad}"
 }
 
@@ -660,10 +665,12 @@ staged_chain() {
   return 1
 }
 
-# stage_of <stage: value> — x.y.z for v<x.y.z> (a matching pair of quotes off), - for none, bad for
-# any other value, one with a quote and no match included.
+# stage_of <stage: value> — x.y.z for v<x.y.z> (a trailing # comment and whitespace off, as slug_list
+# takes them, then a matching pair of quotes), - for none, bad for any other value, one with a quote
+# and no match included.
 stage_of() {
   local v="$1" dq='^"(.*)"$' sq="^'(.*)'\$"
+  v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi
   if [[ -z "${v}" ]]; then echo -
   elif [[ "${v}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then echo "${BASH_REMATCH[1]}"

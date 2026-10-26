@@ -1960,12 +1960,13 @@ epics an edit in your checkout deleted or changed before it reached the base (a 
 base), and the epic files deleted on `origin/<base>` since the tag. The next stage S is the lowest one above the tag. When no epic of S
 is left on the board, the step is `release v<S>`, and its why names the stage. While one is still
 there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
-only` after its step's lines, and `status` and `dash` show the same line. A fix can still go out
-while S is held. When no story of a staged epic has merged since the tag, the step is
-`release v<x.y.z+1> (patch)`, a patch on the tag's line. A merged story is one whose file was
-deleted since the tag (a story's PR deletes its file), or one the board keeps at `status: done` that
-was not done at the tag. Otherwise there is no release step, and `next` goes on to the steps after
-it. An epic on the board whose `stage:` is not
+only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
+while S is held. When no story of a staged epic has merged since the tag, and the next patch of the
+tag's line is below S, the step is `release v<x.y.z+1> (patch)`. What merged under an unstaged
+epic, or under no epic, goes out in that patch: nothing checks that it is a fix. A merged story is
+one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
+`status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
+to the steps after it. An epic on the board whose `stage:` is not
 `v<x.y.z>` holds the release too, and the line names it. A board where no epic has `stage:`
 releases as before, with a plain `release`. So does a board outside the project's repo, since git
 can't list its deleted epics.

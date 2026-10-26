@@ -741,6 +741,21 @@ rm -rf "${rdir}"
 expect_release "a stage: with an unmatched quote is malformed and holds the release" "release v1.2.1 (patch)" 0 \
   "item epics/e1.md 'status: active' 'stage: v1.2.0\"'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
 has_line "an unmatched quote is named in the release-held: line" "release-held: no valid stage, open epics: e1, patches only (e1's stage: 'v1.2.0\"' is not v<x.y.z>)"
+# The patch goes out only below S: with the stage one patch above the tag, the patch would be the
+# stage's own version, so there is no release step.
+expect_release "a held stage one patch above the tag: no patch, it would be the stage's own version" "gate" 0 \
+  "item epics/e1.md 'status: active' 'stage: v1.2.1'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+has_line "the stage one patch above the tag is held" "release-held: v1.2.1, open epics: e1, patches only"
+# stage: is read as slug_list reads a value: a trailing # comment (the epics README template writes
+# one on that line) and trailing whitespace go.
+expect_release "a stage: with a trailing # comment, as the template writes it, is read as its version" "release v1.2.1 (patch)" 0 \
+  "item epics/e1.md 'status: active' 'stage: v1.3.0  # the release that ships it'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+has_line "a commented stage: holds under its version, not as malformed" "${HELD}"
+# A deleted epic's malformed stage is ignored: its merged story is not staged work, so the patch stands.
+expect_release "a deleted epic's malformed stage is ignored: its merged story is not staged work" "release v1.2.1 (patch)" 0 \
+  "${STAGE}" "${REVIEW}" "item epics/d1.md 'status: active' 'stage: 1.3'" "item stories/s0.md 'status: ready' 'kind: code' 'epic: d1'" "${COMMIT}" \
+  "git rm -q docs/stories/s0.md docs/epics/d1.md" "echo x > bin/x" "${COMMIT}"
+has_line "a deleted malformed stage is not named in the release-held: line" "${HELD}"
 # The stages cost a git log, read only once release_due is due: dash runs next_step every frame.
 # GIT_LOG's git notes each call, then runs the real one.
 GIT_LOG="${STUB_BIN}/git-log"; GIT_CALLS="${STUB_BIN}/git-calls"; mkdir -p "${GIT_LOG}"
