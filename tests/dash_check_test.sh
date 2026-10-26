@@ -6,9 +6,10 @@
 # epic's conductor working. Then each of dash-three-defects' fixes reverted in a copy of bin/ (the
 # working count, the failed workspace list, the calling pane's cost, the waiting epic), a status that
 # lists one more working agent, a next that fails, a merge row gone while an answer row names its
-# story, a kept story's row gone, a no-agent story's row gone, and flow's cost unreadable, each make
-# --check exit 1 naming the field; a frame dash cannot draw is a frame line for each project. --check
-# refuses --watch, and tells two projects with one basename apart.
+# story, a kept story's row gone, a no-agent story's row gone, a failed step-up's line gone, no row
+# for a no-review item, and flow's cost unreadable, each make --check exit 1 naming the field; a frame
+# dash cannot draw is a frame line for each project. --check refuses --watch, and tells two projects
+# with one basename apart.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -108,10 +109,18 @@ item "${B}" stories/b-kept.md "Kept" "status: review" "kind: code" "kept: 2026-1
 # puts no-agent:b-gone in lead_queue's no-agent table, which dash draws as a no agent on story row.
 item "${B}" stories/b-gone.md "Gone" "status: ready" "kind: code"
 { printf '%s\tstory\tb-gone\tw2:p1\tok\n' "$(at 35)"; printf '%s\tno-agent\tb-gone\tw2:p1\tok\n' "$(at 34)"; } >> "${B}/.swarm/events.tsv"
+# A step-up that failed after closing b-stepped's builder (its .step-up marker says closed): an open
+# step-up-failed:b-stepped, drawn as wait --lead's step-up failed: line. b-norev's review agent failed to
+# start: an open no-review:b-norev, which the poll prints, and dash draws, as no agent on story.
+item "${B}" stories/b-stepped.md "Stepped" "status: ready" "kind: code"
+item "${B}" stories/b-norev.md "No review" "status: ready" "kind: code"
+mkdir -p "${B}/.swarm/briefs"; echo closed > "${B}/.swarm/briefs/b-stepped.step-up"
+{ printf '%s\tstory\tb-stepped\tw2:p1\tok\n' "$(at 33)"; printf '%s\tstep-up:failed\tb-stepped\tw2:p1\tok (exit 1)\n' "$(at 32)"
+  printf '%s\tstory\tb-norev\tw2:p1\tok\n' "$(at 31)"; printf '%s\treview-agent\tb-norev\tw2:p1\tfailed (exit 1)\n' "$(at 30)"; } >> "${B}/.swarm/events.tsv"
 q="$(sw "${B}" flow | sed -n '/^## lead_queue$/,/^## /p')"
 queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "escalated:b-esc2" "${q}" && has "kept:b-kept" "${q}" \
-  && grep -qE $'^[0-9-]+\t1\t.*\tno-agent:b-gone$' <<< "${q}"; }
-check "bravo: lead_queue holds the held story and its epic, b-esc2 as escalated, b-kept as kept and b-gone as no-agent" queued
+  && grep -qE $'^[0-9-]+\t3\t.*\tno-agent:b-gone,no-review:b-norev,step-up-failed:b-stepped$' <<< "${q}"; }
+check "bravo: lead_queue holds the held story and its epic, b-esc2 as escalated, b-kept as kept, b-gone as no-agent, b-norev as no-review and b-stepped as step-up-failed" queued
 fb="$(DASH_W=100 sw "${B}" dash)"
 check "bravo: the lead story's row says waits on" has "deploy waits on DNS" "${fb}"
 check "bravo: the after-only epic waits on the lead" grep -qE 'bravo-after .*after: b-after waits on the lead' <<< "${fb}"
@@ -123,8 +132,10 @@ check "bravo: dash shows b-new's merge by its URL" has "merge b-new: https://git
 check "bravo: dash shows b-fix's prompt with no reason" has "answer b-fix: " "${fb}"
 check "bravo: b-kept has a review row" grep -qE '! review kept story b-kept: ' <<< "${fb}"
 check "bravo: b-gone has a no agent on story row" grep -qE '! no agent on story b-gone' <<< "${fb}"
+check "bravo: b-norev has a no agent on story row" grep -qE '! no agent on story b-norev' <<< "${fb}"
+check "bravo: b-stepped has its step-up failed line" grep -qE '! step-up failed: b-stepped, exit: ' <<< "${fb}"
 out="$(sw "${B}" dash --check)" && rc=0 || rc=$?
-check "with a cut epic name, PRs by URL, held or wrapped, no prompt reason, a kept story and an open no-agent item, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+check "with a cut epic name, PRs by URL, held or wrapped, no prompt reason, a kept story and open no-agent, no-review and step-up-failed items, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
 
 # With lead = off, an escalated lead story is in flow's lead_queue but dash draws no row for it, as
 # it draws none for status.
@@ -235,6 +246,13 @@ check "with b-kept's row gone, --check names the lead's queue" names "${B}" "lea
   env SWARM_PROJECT="${B}" "${M}" dash --check
 check "mutant: a no-agent story's row is never drawn" mutant noagentrow lib/dash_render.py 's/add(lq, bang + \[(f"no agent on story /add([], bang + [(f"no agent on story /'
 check "with b-gone's row gone, --check names the lead's queue" names "${B}" "lead's queue" \
+  env SWARM_PROJECT="${B}" "${M}" dash --check
+check "mutant: a failed step-up's line is never drawn" mutant steprow lib/dash_render.py \
+  's/^for l in lines("DASH_NO_AGENT"):$/for l in [x for x in lines("DASH_NO_AGENT") if not x.startswith("step-up failed:")]:/'
+check "with b-stepped's line gone, --check names the lead's queue" names "${B}" "lead's queue" \
+  env SWARM_PROJECT="${B}" "${M}" dash --check
+check "mutant: --check has no row for a no-review item" mutant norev lib/dash.sh 's/ no-review) v="(no agent on story|no-review:)" ;;//'
+check "with no row for no-review:b-norev, --check names the lead's queue" names "${B}" "lead's queue" \
   env SWARM_PROJECT="${B}" "${M}" dash --check
 check "mutant: dash_render raises" mutant raise lib/dash_render.py '1s/^/raise RuntimeError("boom"); /'
 out="$(cd / && "${M}" dash --check --project "${A}" --project "${B}")" && rc=0 || rc=$?

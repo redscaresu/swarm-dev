@@ -182,24 +182,31 @@ for day, items in sorted(days.items()):
     print(f"{day}\t{len(items)}\t{statistics.median(mins):.0f}\t{max(mins):.0f}\t{still}")
 
 # No-agent items: a started story no agent works on, a failed step-up and a review agent that never
-# started (wait --lead's no-agent:, step-up failed: and no-review: lines), named no-agent,
-# step-up-failed and no-review. One enters on the earliest event that explains the missing agent since
-# its story's last sign of a live one (an ok start of its builder or review agent, an ok tell, a hold,
-# or an ok upgrade naming its epic, backlog for none, or - for all), as no_agent_events reads them: an
-# ok close of either agent, a failed start, a step-up:failed line or a no-agent line. A failed step-up
-# or _step-up line is none of them: a step-up refused before it closed anything leaves the builder
-# running, and one that failed after logs step-up:failed. A step-up:failed line or a review agent's
-# failed start enters afresh unless an item of its kind already waits, as the builder's earlier close
-# does not time either. It leaves on its lead-woken line, whose outcome names the kind; a wake with
-# nothing entered measures nothing. An item not woken is open only once a no-agent, step-up:failed or
-# failed start line is among its events (a plain close is also how every build ends), and only while its
-# story is ready, of a kind an agent builds, not held and with an ok builder start on record (a first
-# start that failed leaves no build to alert on): a review story's alert depends on its PRs' costs and
-# merge = agent, which only the poll reads, so it counts once woken and is never open. Per local day it
-# entered: items, the median and maximum minutes to the wake, and open; and per local day of the wake,
-# woken_while_working: no-agent wakes whose slug had a builder started (an ok start other than
-# review-agent) and not closed since. A builder whose pane died with no close line looks the same, as
-# only events.tsv is read. Printed under the table above only when the window has an item or a wake.
+# started, named no-agent, step-up-failed and no-review after wait --lead's no-agent: and step-up
+# failed: lines and the no-review: line story no-agent-review-gone adds. Until it lands, nothing wakes
+# the lead as ok (no-review): a failed review-agent start is woken as ok (no-agent) and filed under
+# no-agent, so no-review wakes come only from fixture lines, and a no-review item is only ever open. One
+# enters on the earliest event that explains the missing agent since its story's last sign of a live one
+# (an ok start of its builder or review agent, an ok tell, a hold, or an ok upgrade naming its epic,
+# backlog for none, or - for all), as no_agent_events reads them: an ok close of either agent, a failed
+# start, a step-up:failed line or a no-agent line. A failed step-up or _step-up line is none of them: a
+# step-up refused before it closed anything leaves the builder running, and one that failed after logs
+# step-up:failed. A step-up:failed line or a review agent's failed start enters afresh unless an item of
+# its kind already waits, as the builder's earlier close does not time either. A reconcile that reopened
+# the story (its PR closed unmerged) ends a waiting item unmeasured and keeps the story out until its
+# next ok start, as no_agent_events leaves it to unblock --startable. An item leaves on its lead-woken
+# line, whose outcome names the kind; a wake with nothing entered measures nothing. An item not woken is
+# open only once a no-agent, step-up:failed or failed start line is among its events (a plain close is
+# also how every build ends), and only while its story is ready, of a kind an agent builds, not held and
+# with an ok builder start on record (a first start that failed leaves no build to alert on): a review
+# story's alert depends on its PRs' costs and merge = agent, which only the poll reads, so it counts
+# once woken and is never open. Per local day it entered: items, the median and maximum minutes to the
+# wake, and open; and per local day of the wake, woken_while_working: no-agent wakes whose slug had a
+# builder started (an ok start other than review-agent) with no close or step-up:failed line since
+# (step-up logs that line once it has closed the builder). A builder whose pane died with no close line
+# looks the same in events.tsv, so a nonzero count is either an alert while the builder worked or a real
+# one for a pane that went with no close; the story's events and herdr's record tell which. Printed
+# under the table above only when the window has an item or a wake.
 STARTS = set(os.environ.get("SWARM_NO_AGENT_STARTS", "").split())
 NAME_MAX = int(os.environ.get("SWARM_AGENT_NAME_MAX") or 32)
 AGENT_KINDS = os.environ.get("SWARM_AGENT_KINDS", "").split()
@@ -228,7 +235,7 @@ for s in sorted(slugs):
     for n, rev in ((agent_name(s), False), ("review-" + s, True), (agent_name("review-" + s), True)):
         own.setdefault(n, (s, rev))
 # pending: slug -> (when it entered, its kind once a no-agent, step-up:failed or failed start line came).
-pending, builder, built, alerts, working = {}, {}, set(), [], []
+pending, builder, built, reopened, alerts, working = {}, {}, set(), set(), [], []
 def story_epic(slug):
     f = os.path.join(board, "stories", slug + ".md")
     return fm(f, os.path.join(project, ".swarm/board-state/stories", slug), "epic") if os.path.isfile(f) else ""
@@ -254,7 +261,14 @@ for f in rows:
             alerts.append((pending.pop(slug)[0], at, f"{kind}:{slug}"))
     elif base in ("step-up", "_step-up") and not ok and cmd != "step-up:failed":
         continue
+    elif cmd == "reconcile" and f[4] == "ok (reopened)":
+        pending.pop(slug, None)
+        reopened.add(slug)
     elif cmd in ("no-agent", "step-up:failed") or (base in STARTS and not ok):
+        if cmd == "step-up:failed":
+            builder[slug] = False
+        if slug in reopened:
+            continue
         kind = "step-up-failed" if cmd == "step-up:failed" else "no-review" if rev or cmd == "review-agent" else "no-agent"
         start, was = pending.get(slug, (at, None))
         if kind != "no-agent" and was != kind:
@@ -262,11 +276,13 @@ for f in rows:
         pending[slug] = (start, was or kind)
     elif base in STARTS:
         pending.pop(slug, None)
+        reopened.discard(slug)
         if not rev and cmd != "review-agent":
             builder[slug] = True
             built.add(slug)
     elif base == "close" and ok:
-        pending.setdefault(slug, (at, None))
+        if slug not in reopened:
+            pending.setdefault(slug, (at, None))
         if not rev:
             builder[slug] = False
     elif (base == "tell" and ok) or cmd == "hold":

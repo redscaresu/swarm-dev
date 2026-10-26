@@ -270,14 +270,16 @@ dash_check() {
   got=""
   for x in ${want}; do
     # Each kind has its own row: merge, review for a kept story, no agent on story for a no-agent item,
-    # the wait --lead line as it is for a failed step-up (its slug before a comma), or decide for an
-    # escalated or held story, which dash draws as a merge row once it is in review. A merge item counts
-    # by its slug or by any PR status lists for it.
+    # the wait --lead line as it is for a failed step-up (its exit names the slug), no agent on story for
+    # a no-review item too (the poll prints a failed review-agent start as no-agent: until
+    # no-agent-review-gone adds no-review:), or decide for an escalated or held story, which dash draws
+    # as a merge row once it is in review. A merge item counts by its slug or by any PR status lists for it.
     case "${x%%:*}" in
       merge) v=merge ;; kept) v="review kept story" ;; no-agent) v="no agent on story" ;;
-      step-up-failed) v="step-up failed:" ;; *) v="(merge|decide escalated story)" ;;
+      step-up-failed) v="step-up failed:" ;; no-review) v="(no agent on story|no-review:)" ;;
+      *) v="(merge|decide escalated story)" ;;
     esac
-    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" | tr ',' ' ' || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: a row's verb or an alternation
+    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: a row's verb or an alternation
     [[ "${x%%:*}" == merge ]] || continue
     for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do
       if [[ " ${drawn} " == *" ${f} "* ]]; then got+=" ${x}"; break; fi

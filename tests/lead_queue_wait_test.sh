@@ -19,7 +19,8 @@
 # No-agent items get their own table: a builder's close to its no-agent wake, a step-up:failed line or
 # a review agent's failed start to theirs, each since the story's last start; an alert line with no wake
 # is open while the story is ready, and a no-agent wake while a builder was started and not closed
-# counts as woken while working. A refused step-up opens nothing, and an upgrade of a story's epic ends its wait.
+# counts as woken while working (a step-up:failed line closes the builder). A refused step-up opens
+# nothing; an upgrade of a story's epic ends its wait, and a reopening reconcile ends it until the next start.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -268,10 +269,14 @@ story "${P}/docs" ff "status: ready"; story "${P}/docs" review-na "status: ready
 check "a step-up item runs from its step-up:failed line, a no-review one from its failed start, and an item since its last start" \
   "$(flow "${P}" --since 2026-10-12 --until 2026-10-12 | tail -1)" $'2026-10-12\t5\t45\t510\t0\tno-agent:op,no-agent:review-na'
 # 2026-10-13: wk's builder started at 15:00 and never closed, yet a no-agent line and a wake came for
-# it: one alert while its builder was working.
+# it: one alert while its builder was working. sx's step-up logged step-up:failed after closing its
+# builder, so its later no-agent wake is not one.
 ev 2026-10-13T15:00:00Z story wk
 ev 2026-10-13T15:10:00Z no-agent wk
 ev 2026-10-13T15:11:00Z lead-woken wk "ok (no-agent)"
+ev 2026-10-13T16:00:00Z story sx
+ev 2026-10-13T16:30:00Z step-up:failed sx "ok (exit 1)"
+ev 2026-10-13T16:40:00Z lead-woken sx "ok (no-agent)"
 check "a no-agent wake while its builder was started and not closed counts as woken while working" \
   "$(flow "${P}" --since 2026-10-11 --until 2026-10-13 | tail -3 | cut -f1,5)" $'2026-10-11\t0\n2026-10-12\t0\n2026-10-13\t1'
 # 2026-10-14: rs's step-up was refused before it closed its builder (a failed step-up line, no
@@ -297,6 +302,26 @@ ev 2026-10-15T11:00:00Z step-up:failed sc "ok (exit 1)"
 ev 2026-10-15T11:20:00Z lead-woken sc "ok (step-up failed)"
 check "a step-up:failed line restarts the wait an earlier close began" \
   "$(flow "${P}" --since 2026-10-15 --until 2026-10-15 | tail -1)" $'2026-10-15\t1\t20\t20\t0\t-'
+# 2026-10-16: ro's review agent failed to start, then a reconcile reopened ro (its PR closed unmerged):
+# no item, as the poll leaves ro to unblock --startable. ro2, the same with no reconcile, is open as
+# no-review from its failed start at 10:00 (840). ro3 was reopened, then restarted at 12:00 (an ok
+# start), and its close at 13:00 and no-agent line open it again (660).
+ev 2026-10-16T09:00:00Z story ro
+ev 2026-10-16T09:30:00Z close ro
+ev 2026-10-16T10:00:00Z review-agent ro "failed (exit 1)"
+ev 2026-10-16T10:30:00Z reconcile ro "ok (reopened)"
+ev 2026-10-16T09:00:00Z story ro2
+ev 2026-10-16T09:30:00Z close ro2
+ev 2026-10-16T10:00:00Z review-agent ro2 "failed (exit 1)"
+ev 2026-10-16T09:00:00Z story ro3
+ev 2026-10-16T10:30:00Z reconcile ro3 "ok (reopened)"
+ev 2026-10-16T11:00:00Z close ro3
+ev 2026-10-16T12:00:00Z restart ro3 "ok (fresh on opus: no session to resume)"
+ev 2026-10-16T13:00:00Z close ro3
+ev 2026-10-16T13:01:00Z no-agent ro3
+story "${P}/docs" ro "status: ready"; story "${P}/docs" ro2 "status: ready"; story "${P}/docs" ro3 "status: ready"
+check "a reopening reconcile ends a wait unmeasured until the next ok start" \
+  "$(flow "${P}" --since 2026-10-16 --until 2026-10-16 | tail -1)" $'2026-10-16\t2\t750\t840\t0\tno-agent:ro3,no-review:ro2'
 
 # merge = agent, the board at "~/my board": m (costs: [Money]) 30, o (deleted, a block list of money) 20,
 # held q 50, u (in neither the board nor git, so money) 10; n (costs: "None"), p (no costs:), r (gone
