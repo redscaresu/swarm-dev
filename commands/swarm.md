@@ -144,7 +144,8 @@ Repeat until a step below says stop:
      `swarm.sh findings <repo> <pr>` is triaged (§ The outer loop, **Green means more than green
      checks.**), close the builder if one is open (`swarm.sh close <slug>`). Then run
      `swarm.sh review <slug>` with every PR URL on the line: it keeps only the PRs it is given.
-     That clears the line and hands the PRs on to merge. Run `swarm.sh close <slug> --drop`
+     That clears the line and hands the PRs on to merge: under `merge = agent`, a `no-agent:` line
+     then names the merge, as below. Run `swarm.sh close <slug> --drop`
      only when the PRs are not worth saving. It counts the attempt, so the next build may move up a
      model or the story may become yours, then closes the PRs and sends the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
