@@ -13,7 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
 KINDS="held|escalated|merge|kept|no-agent|step-up failed|unsent brief"
-GAPS="kept"   # kept-handler-arm adds its arm and takes it off this list
+GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
