@@ -125,11 +125,14 @@ Repeat until a step below says stop:
      `swarm.sh wait review-<slug>` in the background, then close the review agent
      (`swarm.sh close review-<slug>`). A review counts only when the `head:` line in
      `.swarm/reviews/<slug>.md` names the PR's head now, and the file has a `## Findings` section
-     and no `head moved:` line; otherwise review again. Also run `swarm.sh wait-pr <PR URL>` in the
-     background: the PR passes when that review finds nothing to fix and wait-pr exits 0 on the
-     same head. Then run `swarm.sh review <slug> <PR URL>`, which clears the line and hands the PR
-     on to merge. If it does not pass, or the PR is not worth
-     saving, run `swarm.sh close <slug> --drop` to close the PR and send the story back to ready. A
+     and no `head moved:` line; otherwise review again. When the file says `codex skipped`, read
+     the diff yourself in codex's place. Also run `swarm.sh wait-pr <PR URL>` in the background,
+     and on its exit 2 do as the `no-agent:` arm below says. The PR passes when the review finds
+     nothing to fix and wait-pr exits 0 on the same head. Then run
+     `swarm.sh review <slug> <PR URL>`, which clears the line and hands the PR on to merge. For
+     findings to fix or red checks, start a builder in the story's worktree (`swarm.sh agent`)
+     with a brief naming them, and review again once it pushes. Run `swarm.sh close <slug> --drop`
+     only when the PR is not worth saving: it closes the PR and sends the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
      and no tell on the way. Run the exit it names. For a ready story it is
      `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
