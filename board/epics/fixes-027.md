@@ -17,6 +17,8 @@ The four later stories epic-guard-gaps, plan-hld-gaps, small-fixes-027 and dash-
 - dash-grant-queue: under merge = human a PR whose HLD grants merge is not in the user's queue and a costs: money one is (bin/lib/dash_render.py awaiting rows); dash keeps the user's finish PR and 'awaiting your merge' out of the lead's queue under lead = session.
 - tests/dash_stalls_test.sh passes between 00:00 and 01:00 BST (run under a faked local date past midnight).
 - Each adopted story file is trimmed to what this epic built; the epic file records where each struck item went.
+- /plan-epic splits a story that changes detection or alert logic, or is estimated over about 200 lines, before the board PR (v0.28.0 retro: select-tests-by-file took 7 review rounds and the no-agent alert stories 4 each).
+- Planning briefs (plan-hld's hld-lead, plan-epic's lead) tell the agent to write its output file early and update it as it goes, so a timed-out turn loses one item, not all (v0.28.0 retro: a revision turn timed out after 68 minutes with nothing written).
 
 **Out of scope:**
 The protected-path hold, pinned-head reads and wait-pr (merge-holds); the contents-reader helper (less-noise); the two small-fixes items no-agent-alert built; changing what counts as a grant.
