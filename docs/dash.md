@@ -241,7 +241,7 @@ session, read just before and just after the frame: anything between the two agr
 spending while it runs is no mismatch. Merges today and the 7-day rate are checked against flow's
 `merges` section, the stories finished per day. Every item that flow's `lead_queue` holds open
 must show in needs you or the lead's queue (an escalated or held story only with `lead = session`,
-the only time dash draws one), and so must every PR, every story only you or the lead can run
+the only time dash draws one, and a no-agent item only when status could read herdr's agent list), and so must every PR, every story only you or the lead can run
 (those behind `+N more` count) and every agent waiting on a prompt that status lists. flow's
 sections run inside the check and ask `gh` nothing. The release arm of `/swarm-dev:swarm` runs it
 after each release. `tests/dash_check_test.sh` shows that it agrees on the two-project fixture, with
