@@ -2,7 +2,7 @@
 # swarm.sh — run agents in herdr panes so every one can be watched.
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
-#   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same function or file, and with --strict refuse
+#   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
@@ -652,7 +652,7 @@ codex_story_prompt() {
 # group can miss a child forked while it is sent: STOP the group first). stop_codex stops it
 # after codex_minutes (SWARM_CODEX_SECONDS, a whole number of seconds, overrides it, for tests), or when this command is sent
 # TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
-# events.tsv's line says so; otherwise it exits as codex did. codex's output, stderr merged into
+# events.tsv's line says so, and it writes a reap line, target codex-<story or base>; otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
 # child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex whose last lines hold its own
 # limit message (CODEX_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a
@@ -724,6 +724,7 @@ codex_review() {
     return "${rc}"
   fi
   stop_codex "${pid}"
+  record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min"
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
 }
 

@@ -201,5 +201,16 @@ o1="$(run conduct c1 || echo "exit $?")"; o2="$(run conduct c2 || echo "exit $?"
 check "conduct names the workspace for a commented or quoted parent:, else the epic" "yes|yes|yes|2|yes" \
   "$(has "workspace big-epic (w)" "${o1}")|$(has "workspace big-epic (w)" "${o2}")|$(has "workspace solo (w)" "${o3}")|$(grep -c 'workspace create --label big-epic' "${ROOT}/herdr.log")|$(has "workspace create --label solo " "$(cat "${ROOT}/herdr.log")")"
 
+# --- The clash check between two backlog stories compares parts: a bare file does not clash with a
+# part of it, the same part does. Built in svc, a repo beside the project with a main on its remote.
+g -c init.defaultBranch=main init -q --bare "${ROOT}/svc.git"; g clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
+g -C "${ROOT}/svc" commit -q --allow-empty -m init && git -C "${ROOT}/svc" push -q origin HEAD:main
+item "${b}" stories/kopen.md "status: review" "kind: code" "repo: svc" "touches: [bin/swarm.sh:load_config]"
+item "${b}" stories/kbare.md "status: ready" "kind: code" "repo: svc" "touches: [bin/swarm.sh]"
+item "${b}" stories/kpart.md "status: ready" "kind: code" "repo: svc" "touches: [bin/swarm.sh:load_config and the dispatch]"
+rc1=0; out1="$(run story --strict kbare)" || rc1=$?; rc2=0; out2="$(run story --strict kpart)" || rc2=$?
+check "story --strict between backlog stories starts one whose bare file the open one names a part of, and refuses one naming the same part" \
+  "0|no|fail|yes" "${rc1}|$(hasnt "kopen" "${out1}")|$([[ ${rc2} -ne 0 ]] && echo fail || echo ok)|$(has "kpart: kopen (epic none) is open and touches bin/swarm.sh:load_config" "${out2}")"
+
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -1840,7 +1840,7 @@ status_report() {
   fi
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
   echo; echo "Next"
-  next_step | sed 's/^/  /'
+  next_lines | sed 's/^/  /'
 }
 
 # stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no build yet can

@@ -42,7 +42,10 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 3. **Build.** A conductor agent starts one builder per story. Each builder works in its own git
    worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
    fixes what they find. A story that fails twice is rebuilt once on Fable, the most capable model,
-   then handed to the lead.
+   then handed to the lead. One story waits for another only when they clash: their `touches`
+   name the same file in the same repo, and either the same part or both the bare file. Parts match
+   on their first word (a function or section name), skipping a leading `§`, `#`, "the", "a" or
+   "an". A bare file does not clash with a part of that file.
 4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
    the agreed HLD over its work lists `merge` in its `grants:`.
    With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
@@ -151,6 +154,9 @@ Restart Claude Code afterwards. Agents already running stay on the old version u
 `swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. upgrade runs
 detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
 
+An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
+`next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
+
 Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:` line. Once its
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
@@ -162,8 +168,11 @@ by hand.
 - [AGENTS.md](AGENTS.md) for working on swarm-dev itself, and [SECURITY.md](SECURITY.md) for
   reporting a vulnerability.
 - `make test` stops a test file that runs past `TEST_FILE_TIMEOUT` seconds (600 unless set, three times that for the files in `SLOW`) and fails it as
-  `TIMEOUT <file> after <n>s`, with the file's last 20 lines of output.
+  `TIMEOUT <file> after <n>s`, with the file's last 20 lines of output. It also adds a `reap` line naming the file to `.swarm/events.tsv`, beside `test-runs.tsv`; `codex-review` writes one too when it stops a codex that ran past `codex_minutes`.
+- `make test` and `scripts/test.sh` refuse to run under codex, where `CODEX_SANDBOX` or
+  `CODEX_THREAD_ID` is set.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
+- To cap how many `make test` runs go at once on your machine, across all projects, write a whole number to `~/.swarm/test-cap`. There is no cap by default: no file, an empty file and 0 all mean none. Each run holds a slot in `~/.swarm/test-slots/` while it goes. A run past the cap prints that it is waiting, with the PID and slot of each run ahead of it, and starts when one of them ends. The wait has no time limit: a run that is stopped (Ctrl-Z) or hung keeps its slot. To free a slot by hand, `rm -r` the slot path the message names. A `make test` that a test starts inside another run takes no slot.
 - `scripts/select-tests.sh` prints the test files that cover this branch's changes against `origin/main`,
   using `scripts/test-map.tsv`. When a changed file has no row in the map, or its row finds no test, it
   prints every test file. `--run` runs the list through `make test`, four files at a time.

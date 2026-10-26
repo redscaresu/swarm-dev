@@ -3,10 +3,21 @@
 # xargs -P; then each file in SERIAL (one whose timing does not hold up beside the others) runs on its
 # own. Each file has a TMPDIR of its own, stdin from /dev/null and its output in a log: a "run" line as
 # it starts, ok or FAIL with its seconds as it ends, and once a phase is over, the log of each file in
-# it that failed. A file passes only on its job's ok result. Exits 1 when any file failed, or when
-# xargs stopped before every file had run; an interrupt (INT, HUP, TERM) stops every job and its test
-# first, as the cleanup below does.
+# it that failed. A file passes only on its job's ok result. Under a cap in ~/.swarm/test-cap (below)
+# a run may first wait for a slot. Exits 1 when any file failed, or when xargs stopped before every
+# file had run, or before any file runs when the cap file holds no whole number or a slot cannot be
+# used; an interrupt (INT, HUP, TERM) stops every job and its test first, as the cleanup below does.
+# Under codex it refuses before anything else.
 set -uo pipefail
+
+# This suite does not run in a codex session (a codex review reads the diff; nothing codex runs
+# needs it), so under codex this exits 1 with one line, before any job, "run" line or test-runs.tsv
+# line. codex 0.164 sets CODEX_SANDBOX and CODEX_THREAD_ID in its own shell; the lead's shell and an
+# agent's pane have neither (CODEX_HOME, which an agent may have, is no sign of codex). Either one
+# refuses, in case a codex run lacks the other.
+for v in CODEX_SANDBOX CODEX_THREAD_ID; do
+  [[ -z "${!v+x}" ]] || { echo "test.sh: refused under codex (${v} is set): the suite does not run in a codex session; run make test outside codex" >&2; exit 1; }
+done
 
 # stop_group <pgid> <seconds> — TERM a process group, give it <seconds>, then KILL what is left.
 # shellcheck disable=SC2317,SC2329 # invoked by the traps
@@ -24,7 +35,9 @@ stop_group() {
 # stops the group the same way once the file has run TEST_FILE_TIMEOUT seconds (a whole number, default
 # 600; three times that for a file in SLOW; bash 3.2 and macOS have no timeout): the job then prints
 # "TIMEOUT <file> after <n>s", n being the seconds it ran, and its log is cut to the file's last 20
-# lines. SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
+# lines; it also appends a "reap" line (append_event's five fields) to TEST_REAP_LOG, the events.tsv
+# beside the run's test-runs.tsv, which the run sets for its jobs and --one unsets before the test runs.
+# SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
 # test's made-up panes. Nor any SWARM_* but SWARM_SLEEP_SCALE: a builder's pane carries every SWARM_*
@@ -35,9 +48,10 @@ for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
 limit="${TEST_FILE_TIMEOUT:-600}"
 if [[ "${1:-}" == --one ]]; then
-  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd=""
+  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd="" fields=() x="" reap_log=""
   case " ${SLOW:-} " in *" ${f} "*) limit=$((limit * 3)) ;; esac   # the files that take minutes alone
-  unset TEST_FILE_TIMEOUT JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
+  reap_log="${TEST_REAP_LOG:-}"   # the run's events.tsv, or empty; the test never sees it
+  unset TEST_FILE_TIMEOUT TEST_REAP_LOG JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
   trap '[[ -z "${wd}" ]] || kill "${wd}" 2>/dev/null; [[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
   : > "${run}/jobs/$$"   # first, so the cleanup can find this job before its test starts
@@ -70,6 +84,11 @@ if [[ "${1:-}" == --one ]]; then
     : > "${log}.failed"
     { echo "TIMEOUT ${f} after ${elapsed}s (last 20 lines)"; tail -n 20 "${log}"; } > "${log}.tail"; mv "${log}.tail" "${log}"
     echo "TIMEOUT ${f} after ${elapsed}s"
+    # A reap line, in append_event's five fields; a log that cannot be written is skipped.
+    if [[ -n "${reap_log}" ]]; then
+      for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" reap "${f}" "${HERDR_PANE_ID:--}" "TIMEOUT after ${elapsed}s"; do fields+=("${x//[$'\t\n\r']/ }"); done
+      { mkdir -p "${reap_log%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${reap_log}"; } 2>/dev/null || true
+    fi
     exit 1
   fi
   if [[ ${rc} -eq 0 ]]; then : > "${log}.ok"; echo "ok   ${f} ${elapsed}s"; exit 0; fi
@@ -134,6 +153,29 @@ if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --path-format=absolu
   runs_log="$(dirname "${common}")/.swarm/test-runs.tsv"
 fi
 export TEST_RUNS_LOG=""
+# The jobs' reap log: the events.tsv beside the runs log, or empty for a nested run.
+export TEST_REAP_LOG=""
+[[ -z "${runs_log}" ]] || TEST_REAP_LOG="$(dirname "${runs_log}")/events.tsv"
+# ps_words <pid> <field>... — ps's fields for that process, one space between words, the same
+# whatever the caller's TZ; started <pid> — when it started.
+ps_words() {
+  local p="$1" f
+  local -a w
+  shift
+  f="$(IFS=,; echo "$*")"
+  read -r -a w <<< "$(TZ=UTC LC_ALL=C ps -ww -o "${f}" -p "${p}" 2>/dev/null)"
+  echo "${w[*]+"${w[*]}"}"
+}
+started() { ps_words "$1" lstart=; }
+# A nested run, one a test started: TEST_SH_RUN, which each run exports for its jobs as its PID and
+# start time, names a run still going: alive, no zombie, and started then, so neither a gone run nor
+# its PID taken since makes a run nested.
+nested="" me="$(started $$)"
+if [[ "${TEST_SH_RUN:-}" == [0-9]*" "* ]]; then
+  outer="$(ps_words "${TEST_SH_RUN%% *}" stat= lstart=)"
+  [[ -n "${outer}" && "${outer}" != Z* && "${outer#* }" == "${TEST_SH_RUN#* }" ]] && nested=1
+fi
+export TEST_SH_RUN="$$ ${me}"
 marks="$(dirname "${runs_log:-.}")/test-runs.d"
 if [[ "$(printf '%s\n' "${files[@]+"${files[@]}"}" | LC_ALL=C sort)" == "$(printf '%s\n' tests/*_test.sh | LC_ALL=C sort)" ]]; then
   filter=all
@@ -142,6 +184,122 @@ else
 fi
 filter="${filter//$'\t'/ }${SHARD:+ shard ${SHARD}}"
 branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || echo -)"
+trap 'exit 130' INT
+trap 'exit 129' HUP
+trap 'exit 143' TERM
+
+# The cap: ~/.swarm/test-cap, a whole number N above 0, lets at most N runs go at once on this
+# machine, whatever their project; absent, empty or 0, there is no cap and nothing is made under
+# ~/.swarm, and anything else, or a cap file it cannot read, stops the run. A run takes one of the
+# slots ~/.swarm/test-slots/1 to N: a directory holding one file, named by the run's PID and holding
+# the run's start time, built aside as .new.<pid> and renamed into place. The rename fails while the
+# slot holds anything, so no two runs hold one slot and no slot is ever seen without its PID. A slot
+# is held while its PID is alive and started then; a PID that has gone (or is a zombie), or that
+# another process has taken since, holds nothing, and what such a slot holds (hidden files too) is removed by name, so a
+# run that looked late never removes a slot another run took since. Only then does a run start perl
+# for the rename. While every slot is held the run waits, polling, and names the holders and their
+# slots whenever they change. The wait has no time limit: a holder that is stopped (Ctrl-Z) or hung
+# keeps its slot until it ends or someone removes the slot by hand (rm -r <slot>, the path the
+# message names). A slot that is no directory this run can read and write, or that it cannot clear,
+# stops the run; so does a take with no perl to run, or no ps to read start times with. A take that keeps failing with a slot free says
+# once what fails, then keeps trying. A nested run takes no slot: a test that runs make test would
+# wait on the run it is part of. cleanup frees the slot.
+cap_file="${HOME:-}/.swarm/test-cap" slots="${HOME:-}/.swarm/test-slots" cap="" held=0 holders=""
+CAP_POLL=1   # seconds between looks at the slots while every one is held
+CAP_STUCK=5  # passes in a row that fail with a slot free before the run says what fails
+# free_slot — remove this run's PID from whatever slot holds it, and the slot it built aside.
+# shellcheck disable=SC2317,SC2329 # invoked by the traps
+free_slot() {
+  local f
+  [[ "${cap:-0}" -gt 0 ]] || return 0
+  for f in "${slots}"/*/"$$"; do
+    [[ -e "${f}" ]] && rm -f "${f}" && rmdir "${f%/*}" 2>/dev/null
+  done
+  rm -rf "${slots}/.new.$$"
+}
+# holder <entry> — 0 when a slot entry names the run that holds the slot: a file named by a live PID
+# (not this run's: it holds no slot yet) and holding that process's start time, as the run wrote it
+# when it took the slot. A PID another process has taken since started later, and holds nothing; nor
+# does a run that has died and not been reaped (a zombie, state Z). A live PID whose start time this
+# run cannot read, from the file or from ps, still holds, so a failed read never frees a slot; once
+# that PID is gone, kill -0 frees it.
+holder() {
+  local p="${1##*/}" want now
+  [[ "${p}" =~ ^[0-9]+$ && "${p}" != "$$" && -f "$1" ]] && kill -0 "${p}" 2>/dev/null || return 1
+  if ! want="$(cat "$1" 2>/dev/null)" || [[ -z "${want}" ]]; then return 0; fi
+  now="$(ps_words "${p}" stat= lstart=)"
+  [[ -n "${now}" ]] || return 0
+  [[ "${now}" != Z* && "${now#* }" == "${want}" ]]
+}
+# take_slot — move this run's slot, built aside, into the first slot no live run holds, once what a
+# gone run left there is removed; else fail, held and holders saying how many runs hold the slots,
+# and which, and failed the last slot it could not take and why.
+take_slot() {
+  local i s e live new="${slots}/.new.$$"
+  local -a gone
+  held=0 holders="" failed=""
+  for ((i = 1; i <= cap; i++)); do
+    s="${slots}/${i}"
+    if [[ -L "${s}" ]] || [[ -e "${s}" && ! ( -d "${s}" && -r "${s}" && -w "${s}" && -x "${s}" ) ]]; then
+      echo "test.sh: ${s} is no slot this run can use (a directory it can read and write); remove it by hand: rm -r '${s}'" >&2
+      exit 1
+    fi
+    live="" gone=()
+    for e in "${s}"/* "${s}"/.[!.]* "${s}"/..?*; do
+      [[ -e "${e}" || -L "${e}" ]] || continue
+      if holder "${e}"; then live="${e##*/}"; break; fi
+      gone+=("${e}")
+    done
+    if [[ -n "${live}" ]]; then held=$((held + 1)) holders+="${holders:+, }PID ${live} holds ${s}"; continue; fi
+    [[ ${#gone[@]} -eq 0 ]] || rm -rf "${gone[@]}" 2>/dev/null || {
+      echo "test.sh: cannot clear ${s} of what a gone run left there; remove it by hand: rm -r '${s}'" >&2
+      exit 1
+    }
+    rename_dir "${new}" "${s}" && return 0
+    (($? != 127)) || { echo "test.sh: the cap needs perl to take a slot: ${take_err}" >&2; exit 1; }
+    failed="${s}: ${take_err:-the rename failed}"
+  done
+  return 1
+}
+# rename_dir <dir> <slot> — rename(2), which takes <slot>'s place only while it is gone or empty
+# (mv would move <dir> into a <slot> that is there); take_err holds what failed, if it did.
+rename_dir() { take_err="$(perl -e 'rename($ARGV[0], $ARGV[1]) or die "$!\n"' "$1" "$2" 2>&1)"; }
+if [[ -z "${nested}" && -n "${HOME:-}" ]] && [[ -e "${cap_file}" || -L "${cap_file}" ]]; then
+  if ! [[ -f "${cap_file}" && -r "${cap_file}" ]] || ! cap="$(cat "${cap_file}" 2>/dev/null)"; then
+    echo "test.sh: cannot read ${cap_file}, which must be a file holding a whole number of runs; fix it or remove it" >&2
+    exit 1
+  fi
+fi
+# A number past bash's integers wraps, so it must come back from arithmetic as written.
+if ! [[ "${cap}" =~ ^(0|[1-9][0-9]*)?$ ]] || [[ -n "${cap}" && "$((cap))" != "${cap}" ]]; then
+  echo "test.sh: ${cap_file} holds '${cap}', not a whole number of runs (0 or empty for no cap); fix it or remove it" >&2
+  exit 1
+fi
+if [[ "${cap:-0}" -gt 0 ]]; then
+  trap free_slot EXIT
+  # A run killed while it waited left its .new.<pid>.
+  for e in "${slots}"/.new.*; do
+    p="${e##*/.new.}"
+    [[ -e "${e}" && "${p}" != "$$" ]] && ! kill -0 "${p}" 2>/dev/null && rm -rf "${e}"
+  done
+  [[ -n "${me}" ]] || { echo "test.sh: the cap needs ps to tell runs apart, and ps gave no start time for this run" >&2; exit 1; }
+  mkdir -p "${slots}/.new.$$" && echo "${me}" > "${slots}/.new.$$/$$" || exit 1
+  # A pass that fails with fewer than cap slots held most often lost a race to a run taking or
+  # freeing one, and the next pass looks again. CAP_STUCK of them in a row are more likely a slot that
+  # will not take: the run says once what fails, and keeps trying, as a race is still possible.
+  said="" short=0
+  until take_slot; do
+    if ((held == cap)); then
+      short=0
+      [[ "${holders}" == "${said}" ]] || echo "test.sh: waiting for a slot, as ${cap_file} allows ${cap} run(s) at once: ${holders}. A slot frees when its run ends; the wait has no time limit, so to free one by hand, rm -r it." >&2
+      said="${holders}"
+    elif ((++short == CAP_STUCK)); then
+      echo "test.sh: cannot take a slot though live runs hold only ${held} of ${cap}: ${failed}. Still trying; if it does not clear, remove that slot by hand: rm -r it." >&2
+    fi
+    sleep "${CAP_POLL}"
+  done
+fi
+
 t_start=${SECONDS} t_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # others — how many other runs are going: live marks but this run's.
 others() {
@@ -165,7 +323,7 @@ run="$(mktemp -d)" || exit 1
 mkdir -p "${run}/logs" "${run}/jobs"
 # On any exit, stop the jobs left (only after xargs stopped early, or an interrupt, can there be
 # any): TERM each, which stops its test's group, and give them 5 s; then TERM the group of any still
-# there, and KILL it 2 s later, and the job. Only then do the logs go.
+# there, and KILL it 2 s later, and the job. Only then do the logs go, and last the slot.
 # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() {
   local rc=$? j i g left
@@ -184,11 +342,9 @@ cleanup() {
   rm -rf "${run}"
   log_run "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((SECONDS - t_start))" "${rc}"
   [[ -z "${runs_log}" ]] || rm -f "${marks}/$$"
+  free_slot
 }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 129' HUP
-trap 'exit 143' TERM
 
 failed=0
 # show <file>... — after a phase: each failed file's log, whole, and any file whose job ended with no
