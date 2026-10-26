@@ -177,6 +177,11 @@ by hand.
 - `scripts/select-tests.sh` prints the test files that cover this branch's changes against `origin/main`,
   using `scripts/test-map.tsv`. When a changed file has no row in the map, or its row finds no test, it
   prints every test file. `--run` runs the list through `make test`, four files at a time.
+  `--functions` prints, instead, the functions the branch changed in `bin/swarm.sh` and `bin/lib/*.sh`:
+  `<file>:<function>`, or `bin/swarm.sh:arm <command>` for a dispatch arm. For a changed `bin/lib/*.py`
+  it prints the functions that run it. It prints `full` when a changed line in those files is outside
+  any function, when no function runs the `.py`, or when a hook, script or test runs it. It prints
+  nothing when the branch changes none of those files, or only blank lines outside their functions.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
   see [reference.md § Building](docs/reference.md#building).
 
