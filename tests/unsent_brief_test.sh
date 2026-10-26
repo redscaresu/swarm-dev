@@ -155,6 +155,11 @@ poll
 check "a told brief taken up before its tell logged the line, then an unrelated paste, is not submitted" test "$(enters)|$(resends)" == "0|0"
 
 # What the command's outcome says about the prompt.
+# A newer start that failed before sending decides, though an older one went: its new session has no turn.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1
+ev story ubr-s1 "$(ago 120)" "ubr-s1: herdr did not send it the brief (agent_not_found); see herdr agent read ubr-s1"
+poll
+check "a newer start that failed before sending gets no Enter from an older ok one" test "$(enters)|$(resends)" == "0|0"
 fresh; listed ubr-s1:idle; pane w:p1 finished; ev story ubr-s1 "$(ago 3600)"; session ubr-s1 "$(ago 3600)"
 ev tell:findings ubr-s1 "$(ago 120)" "ubr-s1: no file /tmp/findings.md"
 poll

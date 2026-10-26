@@ -2113,23 +2113,24 @@ resend_busy() {
 # which goes to the inbox, its wake prompt one line that is never a collapsed paste), review-agent for
 # review-<slug>, conduct for conduct-<epic>, agent for an agent started by name, each mapped as
 # agent_name maps it. Its outcome is ok, or deliver_prompt's failure after herdr sent (or may have
-# sent) the prompt (a brief never taken up ends its command so); a command that failed before sending
-# delivered nothing. A line not yet in LEAD_RESENT gets one pane read. Each herdr call has
-# RESEND_HERDR_WAIT seconds (within), and no read starts RESEND_PASS_WAIT seconds into the pass (the
-# rest wait for the next poll), so a hung herdr cannot hold the poll. When the box holds a collapsed
-# paste (panes.py's unsent_brief) and no turn started since the prompt went out (turn_since: for a
-# start, which opens its own session, any turn in it; for a tell, one later than RESEND_SLACK before
-# the line), it sends the pane Enter and logs `resend <agent>`. A turn that started and ended in those
-# seconds before a tell reads as the tell taken up: the log cannot tell them apart, so that tell is
-# left alone, never submitted on a guess. The line goes in LEAD_RESENT once the pane is read and needs
-# nothing, or once the Enter went; before the Enter it goes in marked pending, which is not done, and
-# with no pending line written there is no Enter: an unreadable pane, a paste with no session log to
-# say whether a turn ran (sent nothing), or an Enter herdr failed to send (logged as the resend's
-# outcome), is tried again next poll. An agent that a swarm.sh command is delivering to as the poll
-# runs (resend_busy over one ps read) is skipped, checked again with a fresh ps just before an Enter
-# (which is also skipped, for the next poll, when events.tsv has grown since rows read it), and while
-# an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet, and an
-# Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a second
+# sent) the prompt (a brief never taken up ends its command so); a tell that failed before sending
+# delivered nothing and is passed over, while a start that did skips its agent (it may have opened the
+# pane and recorded the session that turn_since reads). A line not yet in LEAD_RESENT gets one pane
+# read. Each herdr call has RESEND_HERDR_WAIT seconds (within), and no read starts RESEND_PASS_WAIT
+# seconds into the pass (the rest wait for the next poll), so a hung herdr cannot hold the poll. When
+# the box holds a collapsed paste (panes.py's unsent_brief) and no turn started since the prompt went
+# out (turn_since: for a start, which opens its own session, any turn in it; for a tell, one later than
+# RESEND_SLACK before the line), it sends the pane Enter and logs `resend <agent>`. A turn that started
+# and ended in those seconds before a tell reads as the tell taken up: the log cannot tell them apart,
+# so that tell is left alone, never submitted on a guess. The line goes in LEAD_RESENT once the pane is
+# read and needs nothing, or once the Enter went; before the Enter it goes in marked pending, which is
+# not done, and with no pending line written there is no Enter: an unreadable pane, a paste with no
+# session log to say whether a turn ran (sent nothing), or an Enter herdr failed to send (logged as the
+# resend's outcome), is tried again next poll. An agent that a swarm.sh command is delivering to as the
+# poll runs (resend_busy over one ps read) is skipped, checked again with a fresh ps just before an
+# Enter (which is also skipped, for the next poll, when events.tsv has grown since rows read it), and
+# while an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet, and
+# an Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a second
 # tell:findings line would count a review round twice. Prints nothing; outside herdr, or with no list,
 # it does nothing.
 resend_pass() {
@@ -2154,25 +2155,31 @@ newest, alike = {}, {}
 try:
     for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
         f = l.rstrip("\n").split("\t")
-        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
-        if len(f) != 5 or not (f[4] == "ok" or f[4].startswith("ok (") or any(w in f[4] for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read"))):
+        if len(f) != 5:
             continue
         c, t = f[1], f[2]
         if c in ("story", "escalate", "step-up", "step-up:resume", "agent", "tell") or (c.startswith("tell:") and c != "tell:note"): n = name(t)
         elif c == "review-agent": n = name("review-" + t)
         elif c == "conduct": n = e["SWARM_BACKLOG"] if t in ("--backlog", "backlog") else name("conduct-" + t)
         else: continue
-        if n in idle:
+        if n not in idle:
+            continue
+        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
+        if f[4] == "ok" or f[4].startswith("ok (") or any(w in f[4] for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
             k = (n, f[0], c)
             alike[k] = alike.get(k, 0) + 1
             newest[n] = (f[0], c, alike[k])
+        elif not c.startswith("tell"):
+            # A start that failed before sending may still have opened the pane and recorded its session
+            # (record_agent comes before deliver_prompt): whatever is in the box is not an older brief.
+            newest[n] = None
 except OSError:
     pass
 try:
     seen = set(open(sys.argv[2], encoding="utf-8").read().splitlines())
 except OSError:
     seen = set()
-for n, (t, c, k) in sorted(newest.items()):
+for n, (t, c, k) in sorted((n, v) for n, v in newest.items() if v):
     if "\t".join((n, t, c, str(k))) not in seen:
         print("\t".join((idle[n], n, t, c, str(k))))' "${EVENTS_LOG}" "${LEAD_RESENT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
   [[ -n "${rows}" ]] || return 0

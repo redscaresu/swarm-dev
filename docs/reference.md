@@ -74,15 +74,17 @@ prompt. That is `story`, `escalate` (a ladder step-up), `step-up` or a `tell` of
 for the builder, `review-agent` for `review-<slug>`, `conduct` for a conductor, and `agent` for an
 agent started by name. The line must end `ok`, or in deliver_prompt's error after herdr sent the
 prompt or may have (`herdr sent it the brief`, `may or may not have the brief`, `could not be
-read`), which is how a brief that was never taken up ends. A command that failed before sending
-delivered nothing. A note (`tell:note`) goes to a conductor's inbox, and the prompt that wakes the
-conductor is one line, never a collapsed paste. If that line is new, it reads the agent's pane once.
-The read and the Enter each get 10 seconds, and no read starts 20 seconds into the pass (the rest
-wait for the next read), so a hung herdr cannot hold up the items the read found for the lead. It
-sends the pane Enter (`herdr pane send-keys <pane> Enter`) and logs `resend <agent>` when the input
-box holds the paste and no turn has started since the brief went out. A turn start is a prompt in
-the agent's Claude session log (not a tool result or a `/goal`). An agent with no Claude session on
-record, or no log of it, is left alone: Claude Code writes the log before the first prompt, so a
+read`), which is how a brief that was never taken up ends. A tell that failed before sending
+delivered nothing, and the line before it counts. A start that failed before sending leaves its
+agent alone: it may have opened the pane and recorded a new session with no turn in it, so its box
+holds no older brief. A note (`tell:note`) goes to a conductor's inbox, and the prompt that wakes
+the conductor is one line, never a collapsed paste. If that line is new, it reads the agent's pane
+once. The read and the Enter each get 10 seconds, and no read starts 20 seconds into the pass (the
+rest wait for the next read), so a hung herdr cannot hold up the items the read found for the lead.
+It sends the pane Enter (`herdr pane send-keys <pane> Enter`) and logs `resend <agent>` when the
+input box holds the paste and no turn has started since the brief went out. A turn start is a prompt
+in the agent's Claude session log (not a tool result or a `/goal`). An agent with no Claude session
+on record, or no log of it, is left alone: Claude Code writes the log before the first prompt, so a
 missing one says nothing. Its pane is read again on the next read. A start opens its own session, so
 any turn start in it counts. The line is written only when its command returns, so for a tell any
 turn start later than seven times `PROMPT_TIMEOUT_MS` (7 minutes) before the line counts. A tell
