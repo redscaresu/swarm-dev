@@ -11,3 +11,6 @@ sonnet_share = 4
 fallback_reviewer = sonnet
 # step-up hands a build to the next model on findings-3, ci-red-2, stalled or no-pr. The user agreed the Fable rung on 2026-10-21.
 escalate_ladder = sonnet,opus,fable
+# A green, mergeable PR waits this long for a review agent before it shows as queued. v0.28.0 retro
+# (2026-10-26): at the default 30, green PRs sat up to 30 minutes before anyone noticed.
+queue_minutes = 10
