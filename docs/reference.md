@@ -323,7 +323,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `lead_epics` (default `off`): `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through the user or a grant. Any other value stops `swarm.sh` with the file and line
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
 - `agent_env` (default empty): variable names, separated by spaces, that every agent gets with the values of the session that starts it, such as a provider's key (§ Building, **The agents' environment.**)
-- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines. A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set
+- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines and appending a `reap` line to `.swarm/events.tsv` (see the audit log). A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set
 
 ## Scoping an epic
 
@@ -912,7 +912,12 @@ unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the
 none, so one stuck builder is one incident. `swarm.sh intervene <kind> "<one line>"` writes one with
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
-first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write. When `status` or `wait` reads an agent's pane, herdr
+first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write.
+A `reap` line records something swarm-dev killed for running too long. Its target is what was
+killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
+with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past
+`TEST_FILE_TIMEOUT`, with the file as target and the outcome `TIMEOUT after <n>s`, to the events.tsv beside the run's `test-runs.tsv`;
+a nested run, whose runs log is set empty, writes none. A command that finishes in time writes no `reap` line. When `status` or `wait` reads an agent's pane, herdr
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
 mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API

@@ -724,6 +724,7 @@ codex_review() {
     return "${rc}"
   fi
   stop_codex "${pid}"
+  record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min"
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
 }
 

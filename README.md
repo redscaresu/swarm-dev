@@ -162,7 +162,7 @@ by hand.
 - [AGENTS.md](AGENTS.md) for working on swarm-dev itself, and [SECURITY.md](SECURITY.md) for
   reporting a vulnerability.
 - `make test` stops a test file that runs past `TEST_FILE_TIMEOUT` seconds (600 unless set, three times that for the files in `SLOW`) and fails it as
-  `TIMEOUT <file> after <n>s`, with the file's last 20 lines of output.
+  `TIMEOUT <file> after <n>s`, with the file's last 20 lines of output. It also adds a `reap` line naming the file to `.swarm/events.tsv`, beside `test-runs.tsv`; `codex-review` writes one too when it stops a codex that ran past `codex_minutes`.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
 - To cap how many `make test` runs go at once on your machine, across all projects, write a whole number to `~/.swarm/test-cap`. There is no cap by default: no file, an empty file and 0 all mean none. A run past the cap prints that it is waiting and the PIDs of the runs that hold the slots, then starts when one of them ends. Each run holds a slot in `~/.swarm/test-slots/` while it goes. A `make test` that a test starts inside another run takes no slot.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;

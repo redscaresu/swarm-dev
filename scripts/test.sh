@@ -24,7 +24,8 @@ stop_group() {
 # stops the group the same way once the file has run TEST_FILE_TIMEOUT seconds (a whole number, default
 # 600; three times that for a file in SLOW; bash 3.2 and macOS have no timeout): the job then prints
 # "TIMEOUT <file> after <n>s", n being the seconds it ran, and its log is cut to the file's last 20
-# lines. SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
+# lines; it also appends a "reap" line (append_event's five fields) to TEST_REAP_LOG, the events.tsv
+# beside the run's test-runs.tsv, which the run sets for its jobs and --one unsets before the test runs. SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
 # test's made-up panes. Nor any SWARM_* but SWARM_SLEEP_SCALE: a builder's pane carries every SWARM_*
@@ -35,9 +36,10 @@ for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
 limit="${TEST_FILE_TIMEOUT:-600}"
 if [[ "${1:-}" == --one ]]; then
-  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd=""
+  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd="" fields=() x="" reap_log=""
   case " ${SLOW:-} " in *" ${f} "*) limit=$((limit * 3)) ;; esac   # the files that take minutes alone
-  unset TEST_FILE_TIMEOUT JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
+  reap_log="${TEST_REAP_LOG:-}"   # the run's events.tsv, or empty; the test never sees it
+  unset TEST_FILE_TIMEOUT TEST_REAP_LOG JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
   trap '[[ -z "${wd}" ]] || kill "${wd}" 2>/dev/null; [[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
   : > "${run}/jobs/$$"   # first, so the cleanup can find this job before its test starts
@@ -70,6 +72,11 @@ if [[ "${1:-}" == --one ]]; then
     : > "${log}.failed"
     { echo "TIMEOUT ${f} after ${elapsed}s (last 20 lines)"; tail -n 20 "${log}"; } > "${log}.tail"; mv "${log}.tail" "${log}"
     echo "TIMEOUT ${f} after ${elapsed}s"
+    # A reap line, in append_event's five fields; a log that cannot be written is skipped.
+    if [[ -n "${reap_log}" ]]; then
+      for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" reap "${f}" "${HERDR_PANE_ID:--}" "TIMEOUT after ${elapsed}s"; do fields+=("${x//[$'\t\n\r']/ }"); done
+      { mkdir -p "${reap_log%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${reap_log}"; } 2>/dev/null || true
+    fi
     exit 1
   fi
   if [[ ${rc} -eq 0 ]]; then : > "${log}.ok"; echo "ok   ${f} ${elapsed}s"; exit 0; fi
@@ -135,6 +142,9 @@ if [[ -z "${TEST_RUNS_LOG+x}" ]] && common="$(git rev-parse --path-format=absolu
   runs_log="$(dirname "${common}")/.swarm/test-runs.tsv"
 fi
 export TEST_RUNS_LOG=""
+# The jobs' reap log: the events.tsv beside the runs log, or empty for a nested run.
+export TEST_REAP_LOG=""
+[[ -z "${runs_log}" ]] || TEST_REAP_LOG="$(dirname "${runs_log}")/events.tsv"
 marks="$(dirname "${runs_log:-.}")/test-runs.d"
 if [[ "$(printf '%s\n' "${files[@]+"${files[@]}"}" | LC_ALL=C sort)" == "$(printf '%s\n' tests/*_test.sh | LC_ALL=C sort)" ]]; then
   filter=all
