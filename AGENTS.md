@@ -102,8 +102,8 @@ Useful while it runs:
   `pkill`, `killall` and `gh pr checks` loops (reference.md § Merging).
 - Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
   agent. List them for the user.
-- One conductor per epic. Two stories clash only when their `touches` name the same `file:symbol`,
-  or either names the bare file; clashing stories in two epics get a `depends_on`. Only the lead
+- One conductor per epic. Two stories clash only when their `touches` name the same file in the same repo and
+  the same first word of a part (past a leading `§`, `#`, "the", "a" or "an"), or both name the bare file; clashing stories in two epics get a `depends_on`. Only the lead
   edits the shared files the project's `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
 
@@ -117,7 +117,8 @@ bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr) and lead-stop.sh (the lead's turn ends only when next allows)
-scripts/              test.sh (the make test runner), pre-commit, board-only.sh
+scripts/              test.sh (the make test runner), lint (make check: JSON a test feeds must parse), pre-commit,
+                      board-only.sh
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference.md     every rule, setting, command and log
@@ -133,11 +134,26 @@ Before you open a PR:
 make hooks                                  # once: the gitleaks pre-commit hook
 shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py
+make check                                  # scripts/lint over tests/*_test.sh
 make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
-                                            # it unsets the swarm env that points at a real project, and dash starts no detached refresh
+                                            # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
+                                            # if its swarm.sh reaches it; an unpinned swarm.sh call stops there; dash starts no detached refresh
 claude plugin validate .
 ```
+
+Every `tests/*_test.sh` sources `tests/test_helpers.sh` as its first command after `set -euo pipefail`. It
+drops the pane's `SWARM_*` settings and `HERDR_SOCKET_PATH`, which name the lead's real project and herdr.
+`make test` runs each file from its own `TMPDIR`, where a `swarm.sh` call a test leaves unpinned (no `cd`
+into a project of its own, no `SWARM_PROJECT` on the call) stops at "not in a swarm project", and with
+`SWARM_PROJECT` naming a stand-in project, failing a file whose `swarm.sh` reaches it. Both name the
+checkout the tests run from (its main checkout, from a worktree) in `SWARM_FORBID_PROJECT`, and `swarm.sh`
+refuses to act on that project, named directly or through a worktree of it, so such a `swarm.sh` call stops
+before it writes. That covers `swarm.sh` calls; the hooks' own event lines (`hooks/merge-guard.sh` `record`,
+`hooks/lead-stop.sh` `log`) append to the project under the call's cwd and are not covered. `tests/live_logs_test.sh` checks the source line in every file and the runner's check, that
+`events_test.sh`, whose fixtures once reached the real logs, leaves a copy of the checkout's `findings.tsv`,
+`events.tsv` and `.swarm/lead/pid` as they were under `make test`, and that a test naming the copy, or a
+worktree of it, is refused and writes nothing there.
 
 A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
 the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to

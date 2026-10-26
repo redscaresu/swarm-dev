@@ -8,6 +8,8 @@
 # leaves a dash_slow.py and its swarm.sh flow, so the look can fail. The stub runs swarm.sh through a
 # link under the test's marker directory, so both name the marker however the project resolved.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

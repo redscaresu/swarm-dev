@@ -347,12 +347,17 @@ dataset_report() {
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
-#     (an ok held, escalated, close:impossible or review line in events.tsv; with merge = agent, a
-#     review only of a story whose costs: is not none, or that cannot be read) the minutes until its
-#     slug's next ok finish, reset, drop or reconcile (finished or reopened), stopping at the local
-#     midnight after --until (or now), where an item still waiting is listed under open as kind:slug. One with no
-#     leaving line counts only while its story or epic is on the board in review, held or escalated.
-#     --epic does not narrow it.
+#     (an ok held, escalated, close:impossible, kept or review line in events.tsv; with merge = agent, a
+#     review only of a story whose costs: is not none, or that cannot be read; a kept line ends any item
+#     waiting for its slug, and counts nothing for a child held by an open parent, held now, unblocked
+#     since or blocked at the end) the minutes until its
+#     slug's next ok finish, reset, drop or reconcile (finished or reopened). A kept item also ends on a
+#     review, held, escalated or close:impossible line, or on a close --drop once a new build, a leaving
+#     line other than a finish or reconcile, or the story no longer kept shows it dropped the build.
+#     A finish or reconcile ends it at its own time. Waits stop at
+#     the local midnight after --until (or now), where an item still waiting is listed under open as
+#     kind:slug. One with no leaving line counts only while its story or epic is on the board in review
+#     (a kept one only with kept: set), held or escalated. --epic does not narrow it.
 #   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their
 #     base in (without --since, the 30 days up to --until or today): each merge-in (a PR commit gh's
 #     REST API lists whose headline merges the base in, by outcomes' main_merges rule) re-merged from
@@ -382,11 +387,13 @@ dataset_report() {
 #     there: on a merged PR pass (that round fixed nothing) or merged-after-fixes, else unmerged. --epic keeps only
 #     the PRs of that epic (outcomes epic column) in every block, and a last block lists every PR
 #     block 1 or 2 counted.
-#   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its full runs (filter all) whose start's local
-#     day is in the window, less the interrupted (status 128 or more): TSV at_once runs median_s p90_s
-#     median_load, per runs going at once (the larger of start's and end's, 1, 2, 3-4, 5+); then the 5
-#     slowest, TSV start seconds branch at_once status. Nothing with no log, a line with no full run in
-#     the window. --epic does not narrow it.
+#   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its runs whose start's local day is in the
+#     window, less the interrupted (status 128 or more) and torn. Over the full runs (filter all): TSV
+#     at_once runs median_s p90_s median_load, per runs going at once (the larger of start's and end's,
+#     1, 2, 3-4, 5+); then the 5 slowest, TSV start seconds branch at_once status. Then TSV
+#     builder_runs median_s p90_s over the builders' runs (branch story/*) of every filter, shards
+#     left out. Nothing with no log, a line in place of the full runs' blocks with none in the window.
+#     --epic does not narrow it.
 #   throughput: one TSV row per epic, then `all` for the project, over the outcomes rows dated in the
 #     window and the ok events.tsv lines whose local day is in it; with --epic, that epic's row alone.
 #     builds; builders_mean and builders_max, how many builds ran at once, time-weighted over the span

@@ -888,8 +888,8 @@ touches_overlap() {
 # on its parents' branches. Touches are a bracketed list split on commas
 # outside parentheses, parentheticals dropped. An entry is [<repo>: ]<file>[:<fn>]. One with no / or .
 # before its : is a fn of the previous entry's file and repo, unless that head is a file in its own
-# repo's checkout (Makefile, Makefile:lint). (repo, file, fn) are compared: fn exactly, and a file-only entry
-# overlaps the whole file. An empty status prints as -. Its own function, not inside a <(...):
+# repo's checkout (Makefile, Makefile:lint). (repo, file, fn) are compared: fn by its first word, and a
+# file-only entry overlaps only the same file-only entry. An empty status prints as -. Its own function, not inside a <(...):
 # bash 3.2 misreads the parentheses in a heredoc there.
 touches_rows() {
   python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
@@ -938,7 +938,8 @@ starts from origin's base, so it reads the old story text until that PR merges: 
 start again, a story whose edit is still in a board PR.
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
-of another epic (in review, or with its builder open) touches the same function or file. On a refusal
+of another epic (in review, or with its builder open) touches the same part (by its first word) of a
+file, or both name the bare file. On a refusal
 that says the named story \`is open\`, start yours in a later wave, after the named story merges.$(costs_wait_rule) On
 one that says it \`cannot tell\` (herdr could not list its agents, or the board's touches could not
 be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only
@@ -1125,11 +1126,13 @@ EOF
 }
 
 # clash_rule — when two stories may build at once, and what a conflict with the base costs. Git merges
-# edits to different parts of one file, so only a shared symbol or a bare file holds a story back.
+# edits to different parts of one file, so only the same part (by its first word) or two bare files hold a
+# story back; a bare file does not clash with a part of it.
 clash_rule() {
   cat <<EOF
-Two stories clash only when their \`touches\` name the same \`file:symbol\` in the same repo, or
-when either names the bare file (no \`:symbol\`) of a file the other also names in the same repo.
+Two stories clash only when their \`touches\` name the same file in the same repo and the same first
+word of a part (\`file:part\`), or when both name the bare file (no \`:part\`). A bare file does not clash with a part of it.
+A part's first word skips a leading \`§\`, \`#\`, "the", "a" or "an".
 Otherwise both build at once, even in the same file. A builder whose PR conflicts with its base
 merges the base in, resolves it, re-runs the tests and pushes. A conflict never sends a story back
 to \`ready\`: never close a builder over one. When \`swarm.sh watch\` says a PR CONFLICTS, write a

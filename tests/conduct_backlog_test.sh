@@ -4,6 +4,8 @@
 # close, status and dash in each project find its own and not the other's, even for two dirs of one name,
 # and a name held by another project's agent is refused naming where it runs, before the report goes. herdr, gh and claude are stubs on PATH; herdr's state is shared by both projects.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

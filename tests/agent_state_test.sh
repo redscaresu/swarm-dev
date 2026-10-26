@@ -7,6 +7,8 @@
 # from tidy_panes, and no `herdr agent read ... |` pipeline scrapes a pane. Run on another file with
 # `bash tests/agent_state_test.sh <swarm.sh>`.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

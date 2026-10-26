@@ -19,6 +19,8 @@
 # is skipped, a merged story with no merged_at adds no wait, and a build
 # with no cost is named.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

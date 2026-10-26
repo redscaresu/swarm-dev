@@ -5,6 +5,8 @@
 # with a shell variable spliced in. Each one has matched what it should not: a regex built from an
 # unescaped URL, a check name with a parenthesis, a slug ending in -done. A line that is correct says so with a trailing `# loose-match: ok <reason>`.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

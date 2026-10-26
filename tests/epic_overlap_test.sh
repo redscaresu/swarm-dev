@@ -4,6 +4,8 @@
 # herdr is a stub on PATH that hands out pane ids in order and remembers tab labels; the repo is a
 # local bare remote. gh is a stub too, so a close's PR lookup never reaches the real gh.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -125,7 +127,7 @@ run() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH
 # events.tsv lives here.
 mkdir -p "${p}/.swarm"
 
-# --- story warns when an open story of another epic touches the same function or file; --strict refuses.
+# --- story warns when an open story of another epic touches the same part of a file or both name the bare file; --strict refuses.
 # subject <slug> <touches> — a ready story of e1 in svc; other <front-matter line>... — xb, in svc unless
 # a line says otherwise; warns <slug> — story's warning lines, or none.
 subject() { item "${b}" "stories/$1.md" "status: ready" "kind: code" "epic: e1" "repo: svc" "touches: $2"; }
@@ -175,9 +177,25 @@ check "a shorthand inherits the previous entry's repo with its file" \
   "warning: xb (epic e2) is open and touches src/a.go:y; start xn after it merges" "$(warns xn)"
 other "status: review" "epic: e2" "touches: [other: docs/y.md]"; subject xf "[docs/y.md]"
 check "the same file in another repo does not overlap" "none" "$(warns xf)"
-other "status: review" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; subject xg "[bin/swarm.sh]"
-check "a file-only entry overlaps any function in that file" \
-  "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xg after it merges" "$(warns xg)"
+# Parts: a bare file clashes only with the bare file; two parts clash when their first words match.
+check "a bare file does not clash with a part of it, nor one part with another" "none|none" \
+  "$(other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xg "[bin/swarm.sh]"; warns xg)|$(
+  other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xg2 "[bin/swarm.sh:main]"; warns xg2)"
+check "a bare file clashes with the bare file, and a part with one that starts with the same word" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh; start xg3 after it merges|warning: xb (epic e2) is open and touches bin/swarm.sh:load_config; start xg4 after it merges" \
+  "$(other "status: review" "epic: e2" "touches: [bin/swarm.sh]"; subject xg3 "[bin/swarm.sh]"; warns xg3)|$(
+  other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xg4 "[bin/swarm.sh:load_config and the dispatch]"; warns xg4)"
+check "a part's first word skips a leading section marker or article, in either case" "none|none|none" \
+  "$(other "status: review" "epic: e2" "touches: [docs/x.md:§ The audit log]"; subject xu1 "[docs/x.md:§ The lead]"; warns xu1)|$(
+  other "status: review" "epic: e2" "touches: [docs/x.md:the clash rule]"; subject xu2 "[docs/x.md:the merge table]"; warns xu2)|$(
+  other "status: review" "epic: e2" "touches: [docs/x.md:§ A]"; subject xu3 "[docs/x.md:§ B]"; warns xu3)"
+check "and two parts whose first word past them is the same still clash" \
+  "warning: xb (epic e2) is open and touches docs/x.md:§ The lead wakeups paragraph; start xu4 after it merges" \
+  "$(other "status: review" "epic: e2" "touches: [docs/x.md:§ The lead wakeups paragraph]"; subject xu4 "[docs/x.md:§ The lead kinds paragraph]"; warns xu4)"
+other "status: review" "epic: e2" "touches: [bin/swarm.sh:load_config]"; subject xs1 "[bin/swarm.sh]"; subject xs2 "[bin/swarm.sh:load_config (CFG)]"
+rc1=0; run story --strict xs1 >/dev/null || rc1=$?; rc2=0; out="$(run story --strict xs2)" || rc2=$?
+check "story --strict across epics starts a story whose bare file another epic's open story names a part of, and refuses one naming the same part" \
+  "0|fail|yes" "${rc1}|$([[ ${rc2} -ne 0 ]] && echo fail || echo ok)|$(has "xs2: xb (epic e2) is open and touches bin/swarm.sh:load_config" "${out}")"
 # xb's builder open: built in e2 (its own warnings about e1's open builders are not this check's).
 other "status: ready" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; run story xb >/dev/null; subject xh "[bin/swarm.sh:tell_agent]"
 check "a ready story whose builder herdr lists open warns" \

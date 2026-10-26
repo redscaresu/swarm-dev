@@ -7,6 +7,8 @@
 # and by subcommand, each hour's budget under its all row, with many and the share of 5000; what it
 # says with no log or none in the window; and where swarm.sh's own calls are logged.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 # The shim's own variables, as a swarm.sh or an agent running this test would have them set.
 unset SWARM_GH_VIA SWARM_GH_CALLER SWARM_GH_LOG SWARM_AGENT
