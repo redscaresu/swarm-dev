@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # merge_board_root_test.sh — swarm.sh merge --board when board_dir is the project root: the board
 # check holds the board's own paths (stories/, epics/, ...), not the whole repo. The gh and herdr stubs
-# are merge_test.sh's, trimmed to what a board merge reads.
+# are merge_fixture.sh's, trimmed to what a board merge reads.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
