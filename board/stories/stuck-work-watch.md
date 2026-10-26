@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: less-noise
 depends_on: []
 touches: [bin/lib/lifecycle.sh:lead_queue, bin/lib/panes.py:prompt detection, commands/swarm.md:wait --lead handler, tests/stuck_work_watch_test.sh (new), docs/reference.md:wait --lead lines]
