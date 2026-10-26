@@ -11,6 +11,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+export HOME="${ROOT}/home"   # its runs are top-level: a cap in the real ~/.swarm/test-cap would gate them
 # The runs log, so no run here writes to this checkout's .swarm; its events.tsv is the one beside it.
 mkdir -p "${ROOT}/log"
 export TEST_RUNS_LOG="${ROOT}/log/test-runs.tsv"
