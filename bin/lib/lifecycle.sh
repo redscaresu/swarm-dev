@@ -2019,7 +2019,10 @@ no_agent_exit() {
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
 # matter in one pass (stories_fm) and events.tsv once; per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder), then herdr's JSON and one ps
-# once a started story is left. No gh. Prints nothing outside herdr or when herdr's list or ps fails.
+# once a started story is left. No gh. dash (dash_render) hands it its own herdr list instead, in
+# LEAD_AGENTS and LEAD_AGENTS_OK with LEAD_AGENTS_READ set, so it runs from outside a herdr pane too.
+# Prints nothing when it has no herdr list (outside a pane, unless dash handed it one) or when herdr's
+# list or ps fails.
 no_agent_lines() {
   local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d u
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
