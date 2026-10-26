@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # unsent_brief_test.sh — wait --lead's resend pass: an idle agent whose input box still holds the brief
 # a start or tell typed there (a collapsed `[Pasted text #N` paste) gets one Enter, and one `resend
-# <agent>` events.tsv line, per delivery; nothing else is ever submitted. Each poll is one `swarm.sh wait
+# <agent>` events.tsv line, per delivery; nothing else is ever submitted. A paste still there on the read
+# after that Enter writes a .swarm/briefs/<stem>.unsent marker, which wakes the lead with an `unsent brief:`
+# line until its agent works, goes, or shows a clear box. Each poll is one `swarm.sh wait
 # --lead 0`. herdr is a stub: its agent list is ${FX}/agents, `agent read <pane>` prints ${FX}/<pane>.txt
 # (failing once while ${FX}/read.fail exists, hanging while ${FX}/read.hang does), `pane send-keys` fails
 # once while ${FX}/keys.fail exists, and it logs every call to ${ROOT}/herdr.log. python3 is the real one,
@@ -93,7 +95,7 @@ tool() {
 
 # fresh — an empty board, no events, sessions or panes, an empty seen file (a run before this one).
 fresh() {
-  rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${P}/.swarm/lead" "${FX:?}"/* \
+  rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${P}/.swarm/lead" "${P}/.swarm/briefs" "${FX:?}"/* \
     "${CLAUDE_CONFIG_DIR}/projects/proj/"* "${ROOT}"/*.log
   : > "${P}/.claude/swarm/config"
   listed
@@ -312,6 +314,114 @@ printf -- '---\nkind: code\nstatus: ready\nheld_for: needs a key\n---\n\n# ubr-h
 poll
 check "a poll that resends and finds a held story returns on the held story alone" \
   test "$(cat "${ROOT}/out")|$(cat "${ROOT}/rc")|$(enters)|$(resends)" == "held: ubr-h1 (needs a key)|0|1|1"
+
+# --- still unsent after the resend: the .unsent marker and its lead line.
+M="${P}/.swarm/briefs/ubr-s1.unsent"
+in_seen() { count '^unsent brief: ' "${P}/.swarm/lead/seen"; }
+# A ready story with its worktree and builder on record, which no_agent_exit offers a restart.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; mkdir -p "${ROOT}/proj-wt/ubr-s1"
+printf -- '---\nkind: code\nstatus: ready\n---\n\n# ubr-s1\n' > "${B}/ubr-s1.md"
+poll
+check "the poll that resends writes no .unsent marker" test "$(enters)|$([[ -e "${M}" ]] && echo marker)" == "1|"
+poll
+check "the poll after the resend, still reading the paste in the box, writes .swarm/briefs/ubr-s1.unsent" test -f "${M}"
+check "and wait --lead returns, naming the builder's close and restart" \
+  test "$(cat "${ROOT}/out")|$(cat "${ROOT}/rc")" == "unsent brief: ubr-s1, exit: herdr pane close w:p1 then swarm.sh restart ubr-s1, or swarm.sh hold ubr-s1 <reason>|0"
+: > "${ROOT}/herdr.log"; poll
+check "a later poll reads the marked pane once, sends nothing, keeps the marker and does not return" \
+  test "$(reads)|$(enters)|$([[ -e "${M}" ]] && echo marker)|$(cat "${ROOT}/out")|$(cat "${ROOT}/rc")" == "1|0|marker||1"
+listed ubr-s1:working; poll
+check "the marker goes on the poll that finds its agent working" test ! -e "${M}"
+check "and its line is gone from .swarm/lead/seen" test "$(in_seen)" == 0
+rm -rf "${ROOT}/proj-wt"
+
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; poll; poll
+check "with the marker written, its line is in .swarm/lead/seen" test "$(in_seen)" == 1
+pane w:p1 submitted; poll
+check "the marker goes on the poll that finds its box clear" test "$(in_seen)|$([[ -e "${M}" ]] && echo marker)" == "0|"
+# The brief taken up between polls, and a new paste left in the box after it.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1; poll; poll
+pane w:p1 finished; session ubr-s1 "$(ago 10)"; poll
+check "the marker goes on the poll whose session shows a turn since the brief, a new paste in the box" \
+  test "$(in_seen)|$([[ -e "${M}" ]] && echo marker)" == "0|"
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; poll; poll; listed; poll
+check "the marker goes once herdr no longer lists its agent" test "$(in_seen)|$([[ -e "${M}" ]] && echo marker)" == "0|"
+
+# The false case: the resend went through.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; poll
+pane w:p1 submitted; poll
+check "a box clear on the poll after the resend gets no marker" test ! -e "${M}"
+check "and wait --lead does not return" silent
+: > "${ROOT}/herdr.log"; poll
+check "that read after the resend is done once: the next poll reads nothing" test "$(reads)" == 0
+# A tell logged while that read runs: the paste may be the tell's own, which has had no resend yet.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1; poll
+echo "${P}/.swarm/events.tsv" > "${FX}/events.path"; printf '%s\ttell:findings\tubr-s1\t-\tok\n' "$(ago 30)" > "${FX}/read.ev"
+poll
+check "a tell logged during the read after the resend writes no marker" test "$([[ -e "${M}" ]] && echo marker)|$(cat "${ROOT}/rc")" == "|1"
+poll
+check "and the next poll resends for that tell instead" test "$(enters)|$(resends)" == "2|2"
+
+fresh; listed review-ubr-s1:idle; pane w:p1 unsent; ev review-agent ubr-s1; session review-ubr-s1
+printf -- '---\nkind: code\nstatus: ready\nprs: https://github.com/o/r/pull/7\n---\n\n# ubr-s1\n' > "${B}/ubr-s1.md"
+poll; poll
+check "a review agent's line names swarm.sh close review-<slug>, then review-agent <slug> <PR URL>" \
+  test "$(cat "${ROOT}/out")|$(cat "${P}/.swarm/briefs/review-ubr-s1.unsent" 2>/dev/null | head -1)" \
+  == "unsent brief: review-ubr-s1, exit: swarm.sh close review-ubr-s1 then swarm.sh review-agent ubr-s1 https://github.com/o/r/pull/7|review-ubr-s1 w:p1 review"
+
+# A tell takes its agent's role: from its start line (a review agent), or with none, from the name it
+# was told by (a conductor). Any swarm.sh next or merge on the machine holds a conductor's read
+# (resend_busy), so its polls go on until the marker is written, at most six.
+fresh; listed review-ubr-s1:idle; pane w:p1 unsent; ev review-agent ubr-s1 "$(ago 3600)"; ev tell:nudge review-ubr-s1
+session review-ubr-s1 "$(ago 3600)"
+printf -- '---\nkind: code\nstatus: ready\nprs: https://github.com/o/r/pull/7\n---\n\n# ubr-s1\n' > "${B}/ubr-s1.md"
+poll; poll
+check "a tell left unsent in a review agent's box gets a review marker and the review-agent exit" \
+  test "$(cat "${ROOT}/out")|$(head -1 "${P}/.swarm/briefs/review-ubr-s1.unsent" 2>/dev/null)" \
+  == "unsent brief: review-ubr-s1, exit: swarm.sh close review-ubr-s1 then swarm.sh review-agent ubr-s1 https://github.com/o/r/pull/7|review-ubr-s1 w:p1 review"
+fresh; listed conduct-ubr-e:idle; pane w:p1 unsent; ev tell:nudge conduct-ubr-e; session conduct-ubr-e
+for i in 1 2 3 4 5 6; do poll; [[ ! -e "${P}/.swarm/briefs/conduct-ubr-e.unsent" ]] || break; done
+# nexts — the swarm.sh next and merge processes running now, which hold every conductor's read.
+nexts() { ps -A -ww -o command= | awk '{ for (i = 1; i < NF; i++) if ($i ~ /swarm\.sh$/ && ($(i + 1) == "next" || $(i + 1) == "merge")) { n++; break } } END { print n + 0 }'; }
+if [[ ! -e "${P}/.swarm/briefs/conduct-ubr-e.unsent" && "$(nexts)" -gt 0 ]]; then
+  echo "skip a tell left unsent in a conductor's box: a swarm.sh next or merge on this machine held every read"
+else
+  check "a tell left unsent in a conductor's box gets a conductor marker and the conduct exit" \
+    test "$(cat "${ROOT}/out")|$(head -1 "${P}/.swarm/briefs/conduct-ubr-e.unsent" 2>/dev/null)" \
+    == "unsent brief: conduct-ubr-e, exit: swarm.sh close conduct-ubr-e then swarm.sh conduct ubr-e|conduct-ubr-e w:p1 conductor"
+fi
+
+# A story in review: restart refuses it, so its builder, findings in the box, is kept.
+fresh; echo "merge = agent" > "${P}/.claude/swarm/config"; listed ubr-s1:idle; pane w:p1 unsent
+ev story ubr-s1 "$(ago 3600)"; ev tell:findings ubr-s1; session ubr-s1 "$(ago 3600)"
+printf -- '---\nkind: code\nstatus: review\nprs: https://github.com/o/r/pull/7\n---\n\n# ubr-s1\n' > "${B}/ubr-s1.md"
+poll; poll
+check "a story in review's builder, its findings unsent, is kept: the exit tells it a nudge" \
+  test "$(cat "${ROOT}/out")" == "unsent brief: ubr-s1, exit: swarm.sh tell ubr-s1 nudge <a file asking it to act on the brief in its input box>"
+
+# A restart is a delivery: its brief is watched, and an older resend is not read against it.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1; poll
+ev restart ubr-s1 "$(ago 60)" "ok (fresh on opus: no session to resume)"; poll
+check "a builder restarted after the resend gets its new brief resent, and no marker from the old one" \
+  test "$(enters)|$(resends)|$([[ -e "${M}" ]] && echo marker)" == "2|2|"
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1; poll; poll
+listed; poll; listed ubr-s1:idle; ev restart ubr-s1 "$(ago 60)" "ok (fresh on opus: no session to resume)"; poll
+check "after the exit's pane close and restart, the restarted builder's brief is resent" \
+  test "$(enters)|$([[ -e "${M}" ]] && echo marker)" == "2|"
+poll
+check "and, still in its box on the next poll, gets the marker again" test -f "${M}"
+
+# An Enter herdr fails to send logs a line: another agent's marker in the same pass is not put off.
+fresh; listed ubr-s1:working ubr-s2:idle; pane w:p1 unsent; pane w:p2 unsent; ev story ubr-s2 "$(ago 3600)"; session ubr-s2
+printf '2026-10-26\tcode\tubr-s1\tclaude\topus\thigh\t%s\n' "${SID}" >> "${P}/.swarm/agents.tsv"; poll
+listed ubr-s1:idle ubr-s2:idle; ev story ubr-s1 "$(ago 60)"; touch "${FX}/keys.fail"; poll
+check "a failed Enter to one agent does not stop the marker of another in the same poll" \
+  test "$(count $'\tresend\tubr-s1\tw:lead\therdr could not send Enter' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/ubr-s2.unsent" ]] && echo marker)" == "1|marker"
+
+# herdr can list an agent with no status: it is still listed, so its marker stays.
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; poll; poll
+printf '{"name":"ubr-s1","pane_id":"w:p1"}' > "${FX}/agents"; poll
+check "an agent herdr lists with no status keeps its marker" test -f "${M}"
 
 echo
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
