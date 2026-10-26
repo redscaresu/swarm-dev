@@ -165,7 +165,7 @@ by hand.
   `TIMEOUT <file> after <n>s`, with the file's last 20 lines of output.
 - `make test` refuses to run under codex (when `CODEX_SANDBOX` or `CODEX_THREAD_ID` is set), so a
   codex review cannot run the suite.
-- Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section.
+- Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
   see [reference.md § Building](docs/reference.md#building).
 
