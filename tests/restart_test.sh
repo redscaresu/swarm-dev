@@ -39,14 +39,16 @@ case "$1 $2" in
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent get")    awk -v p="$3" '$2 == p { f = 1 } END { exit !f }' "$H/agents" || exit 1
                   echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-  "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent list")   [ ! -e "$H/listhang" ] || sleep 30
+                  awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
 esac
 EOF
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$1 $2" in
-  "pr list") s="$(echo "$*" | sed 's/.*--head story\/\([^ ]*\).*/\1/')"
+  "pr list") [ ! -e "$H/ghhang" ] || sleep 30
+             s="$(echo "$*" | sed 's/.*--head story\/\([^ ]*\).*/\1/')"
              if [ -e "$H/prs-$s.json" ]; then cat "$H/prs-$s.json"; else echo '[{"state":"OPEN","url":"https://github.com/o/proj/pull/7","autoMergeRequest":null}]'; fi ;;
   "pr checks") ;;
   *) exit 1 ;;
@@ -56,8 +58,8 @@ chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 touch "${ROOT}/agents"
 
 # A project whose board is in its repo: e1 in epic ep and the one-off o1 started, each with a commit in
-# its worktree; c1 whose builder ran /clear, w1 whose brief never landed, y1 whose first start herdr fails; and k1, u1, l1, m1, b1, r1, g1
-# and h1 started for the refusals, n1 never built.
+# its worktree; c1 whose builder ran /clear, w1 whose brief never landed, y1 whose first start herdr fails; and k1, u1, l1, m1, b1, r1, g1,
+# h1, k3 and m3 started for the refusals, n1 never built.
 P="${ROOT}/proj"
 "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
 "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
@@ -65,15 +67,15 @@ mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/briefs"
 story() { printf '%s\n' --- "status: ready" "$2" "${3:-}" --- "" "# $1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/$1.md"; }
 story e1 "kind: code" "epic: ep"; story o1 "kind: code"; story k1 "kind: code"; story n1 "kind: code"
 story u1 "kind: code"; story l1 "kind: lead"; story m1 "kind: code"; story b1 "kind: code"; story r1 "kind: code"
-story c1 "kind: code" "epic: ep"; story w1 "kind: code"; story y1 "kind: code"; story g1 "kind: code"; story h1 "kind: code"
+story c1 "kind: code" "epic: ep"; story w1 "kind: code"; story y1 "kind: code"; story k3 "kind: code"; story m3 "kind: code"; story g1 "kind: code"; story h1 "kind: code"
 : > "${P}/.claude/swarm/config"
 "${GIT[@]}" -C "${P}" add -A && "${GIT[@]}" -C "${P}" commit -qm init && "${GIT[@]}" -C "${P}" push -q origin main
-for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1; do
+for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1 k3 m3; do
   "${GIT[@]}" -C "${P}" worktree add -q -b "story/${s}" "${ROOT}/proj-wt/${s}" origin/main
   echo "${s}-WORK" > "${ROOT}/proj-wt/${s}/work.txt"
   "${GIT[@]}" -C "${ROOT}/proj-wt/${s}" add work.txt && "${GIT[@]}" -C "${ROOT}/proj-wt/${s}" commit -qm work
 done
-for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1; do printf '2026-10-01\tcode\t%s\tclaude\t%s\thigh\tsess-%s\n' "${s}" "$([[ ${s} == o1 ]] && echo opus || echo sonnet)" "${s}"; done > "${P}/.swarm/agents.tsv"
+for s in e1 o1 k1 u1 l1 m1 b1 r1 c1 w1 y1 g1 h1 k3 m3; do printf '2026-10-01\tcode\t%s\tclaude\t%s\thigh\tsess-%s\n' "${s}" "$([[ ${s} == o1 ]] && echo opus || echo sonnet)" "${s}"; done > "${P}/.swarm/agents.tsv"
 # e1's build: started, a findings round sent, its review agent closed, its builder's pane gone.
 printf '%s\n' $'2026-10-01T09:00:00Z\tstory\te1\tw:1\tok' $'2026-10-01T09:30:00Z\ttell:findings\te1\tw:1\tok' \
   $'2026-10-01T09:40:00Z\tclose\te1\tw:1\tok' $'2026-10-01T09:00:00Z\tstory\to1\tw:1\tok' > "${P}/.swarm/events.tsv"
@@ -115,7 +117,7 @@ check "reopening its recorded session with its flags" "agent start e1 --kind cla
 check "and reports the recorded resume command to herdr" "yes" "$(has "--agent-session-id sess-e1 -- python3 -I ${R}/sess-e1.py claude --resume sess-e1" "$(cat "${ROOT}/herdr.log")")"
 check "and tells it, in its new pane, to carry on" "yes" "$(has "agent prompt w:11 swarm.sh restart reopened this session" "$(cat "${ROOT}/herdr.log")")"
 check "its worktree is still on story/e1" "story/e1" "$(git -C "${ROOT}/proj-wt/e1" rev-parse --abbrev-ref HEAD)"
-check "a resumed session adds no agents.tsv line" "13" "$(wc -l < "${P}/.swarm/agents.tsv" | tr -d ' ')"
+check "a resumed session adds no agents.tsv line" "15" "$(wc -l < "${P}/.swarm/agents.tsv" | tr -d ' ')"
 check "it logs one restart line, naming the session" "restart e1 ok (resumed session sess-e1)|1" "$(last_event)|$(restarts e1)"
 check "build_started and review_round read the same after the restart line" "${before}" "$(lifecycle e1)"
 check "and they read e1's build and its second round" "2026-10-01T09:00:00Z 2" "${before}"
@@ -171,11 +173,22 @@ refused() { # <name> <slug> <why>
 echo "k1 w:5" >> "${ROOT}/agents"
 refused "a builder herdr lists" k1 "restart: k1's builder k1 is still listed"
 mkdir -p "${P}/.swarm/locks/step-up-g1"; echo $$ > "${P}/.swarm/locks/step-up-g1/pid"
-refused "a story whose step-up lock is held" g1 "restart: a step-up or restart of g1 is running"
+refused "a story whose step-up lock is held" g1 "restart: a step-up, restart or top-rung hold of g1 is running"
 check "and the lock it did not take is kept" "$$" "$(cat "${P}/.swarm/locks/step-up-g1/pid")"
 touch "$(git -C "${ROOT}/proj-wt/h1" rev-parse --absolute-git-dir)/MERGE_HEAD"
 refused "a worktree with a merge left unfinished" h1 "MERGE_HEAD, a git step left unfinished"
 check "a refused restart lets its lock go" "no" "$(test -e "${P}/.swarm/locks/step-up-h1" && echo yes || echo no)"
+# A hung herdr list or gh read stops after SWARM_RESTART_READ_WAIT seconds, refuses, and lets the lock go.
+export SWARM_RESTART_READ_WAIT=1
+touch "${ROOT}/listhang"; t0="$(date +%s)"
+refused "a herdr agent list that hangs" k3 "restart: herdr could not list its agents (it failed or took over 1s)"
+rm "${ROOT}/listhang"
+touch "${ROOT}/ghhang"
+refused "a gh pr list that hangs" m3 "restart: could not list the PRs on story/m3 (git or gh failed, or gh took over 1s)"
+rm "${ROOT}/ghhang"
+check "both stop well before the hung reads' 30s, and let the lock go" "yes|no|no" \
+  "$( (( $(date +%s) - t0 < 25 )) && echo yes || echo no)|$(test -e "${P}/.swarm/locks/step-up-k3" && echo yes || echo no)|$(test -e "${P}/.swarm/locks/step-up-m3" && echo yes || echo no)"
+unset SWARM_RESTART_READ_WAIT
 refused "a story with no worktree" n1 "restart: n1 has no worktree at ${ROOT}/proj-wt/n1"
 echo "stalled sonnet opus code" > "${P}/.swarm/briefs/u1.step-up"
 refused "a story with a .step-up marker" u1 "run swarm.sh step-up --resume u1 instead"

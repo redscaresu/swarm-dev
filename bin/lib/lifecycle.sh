@@ -512,7 +512,7 @@ close_agent() {
       rc=0; ladder_step "$1" no-pr || rc=$?
       [[ ${rc} != 0 ]] || return 0
       [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
-      [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "close: another step-up of $1 is running and may be starting its next builder, so nothing was closed or counted: wait on $1, then close it if it still needs closing"
+      [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "close: another step-up or a restart of $1 is running and may be starting its next builder, so nothing was closed or counted: wait on $1, then close it if it still needs closing"
     fi
   fi
   shut_agent "$1"
@@ -575,8 +575,8 @@ STEP_UP_RED_HEADS=2
 # shellcheck disable=SC2034,SC2154 # read in another file; CFG_top_rung_rounds is assigned in another file
 TOP_RUNG_FINDINGS="${CFG_top_rung_rounds}"
 # STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder, and only then.
-# STEP_UP_BUSY: ladder_step's when another step-up of the story holds its lock: it may be starting
-# the next builder, so the caller touches nothing.
+# STEP_UP_BUSY: ladder_step's when another step-up of the story, or a restart, holds its lock: it may be
+# starting the next builder, so the caller touches nothing.
 STEP_UP_PARTWAY=4
 STEP_UP_BUSY=5
 STEP_UP_TRIGGERS="findings-${STEP_UP_FINDINGS} ci-red-${STEP_UP_RED_HEADS} stalled no-pr"
@@ -807,13 +807,14 @@ step_up_failed() {
 # until its parents merge), or has a .step-up marker (step-up --resume starts that rung); with no
 # worktree, one holding a git step left unfinished, one not on story/<slug>, or no builder in
 # agents.tsv; while herdr lists its builder, or cannot list its agents; when a PR on story/<slug> has
-# merged or is set to auto-merge; and while its lock is held. It logs its own `restart <slug> ok
+# merged or is set to auto-merge; while its lock is held; and when its read of herdr's list or of the PRs
+# fails or takes over SWARM_RESTART_READ_WAIT seconds (default HERDR_LIST_WAIT). It logs its own `restart <slug> ok
 # (<how>)` line (main logs only a failure), which build_started and review_round never read.
 restart_build() {
   local slug="$1" f="${BOARD}/stories/$1.md" src wt gd p name listed role kind model session resume names tab url prs
-  local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1"
+  local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" wait="${SWARM_RESTART_READ_WAIT:-${HERDR_LIST_WAIT}}"
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "restart: no story ${f} (swarm.sh restart <slug>)"
-  step_lock "${lock}" || die "restart: a step-up or restart of ${slug} is running (it holds ${lock}); nothing was started"
+  step_lock "${lock}" || die "restart: a step-up, restart or top-rung hold of ${slug} is running (it holds ${lock}); nothing was started"
   # shellcheck disable=SC2064 # expand now: the lock is local
   trap "rm -rf '${lock}'" EXIT
   [[ "$(fm "${f}" status)" == ready ]] || die "restart: ${slug} is not status: ready; nothing was started"
@@ -836,17 +837,19 @@ restart_build() {
   [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "story/${slug}" ]] \
     || die "restart: ${slug}'s worktree ${wt} is not on story/${slug} (switched or detached): put it back there first; nothing was started"
   name="$(agent_name "${slug}")"
-  listed="$(herdr agent list </dev/null 2>/dev/null | SWARM_NAME="${name}" json "any(a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" 2>/dev/null)" || listed=""
+  # Both reads below are bounded (within): a hung herdr or gh would keep the lock from every step-up.
+  listed="$(within "${wait}" herdr agent list </dev/null 2>/dev/null | SWARM_NAME="${name}" json "any(a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" 2>/dev/null)" || listed=""
   [[ "${listed}" != True ]] || die "restart: ${slug}'s builder ${name} is still listed (herdr agent list): wait on it or tell it; nothing was started"
-  [[ "${listed}" == False ]] || die "restart: herdr could not list its agents, so whether ${slug}'s builder is there is not known; nothing was started"
+  [[ "${listed}" == False ]] \
+    || die "restart: herdr could not list its agents (it failed or took over ${wait}s), so whether ${slug}'s builder is there is not known; nothing was started"
   read -r role kind model session <<< "$(awk -F'\t' -v n="${name}" '$3 == n { l = $2 " " $4 " " $5 " " $7 } END { print l }' "${AGENTS_LOG}" 2>/dev/null || true)"
   [[ -n "${session}" ]] || die "restart: ${slug} has no builder in ${AGENTS_LOG}, so there is no build to start again; nothing was started"
   # As step_up_story reads them: a merged or auto-merging PR is a build that is done. STEP_PR, the open PR
   # or empty, is what handover_brief names.
   if ! url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
-     || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json state,url,autoMergeRequest </dev/null 2>/dev/null)" \
+     || ! prs="$(within "${wait}" gh pr list -R "${url}" --head "story/${slug}" --state all --json state,url,autoMergeRequest </dev/null 2>/dev/null)" \
      || ! STEP_PR="$(json "next((p['url'] for p in d if p['state'] == 'OPEN'), '')" <<< "${prs}" 2>/dev/null)"; then
-    die "restart: could not list the PRs on story/${slug} (git or gh); nothing was started"
+    die "restart: could not list the PRs on story/${slug} (git or gh failed, or gh took over ${wait}s); nothing was started"
   fi
   [[ "$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")" == False ]] \
     || die "restart: a PR on story/${slug} has merged or is set to auto-merge, so its build is done; nothing was started"
@@ -986,7 +989,7 @@ build_started() {
 
 # ladder_step <slug> <trigger> [findings] — step_up <slug> for a trigger swarm.sh saw itself (close,
 # wait --stall, tell, watch): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
-# builder, and the caller stops; STEP_UP_BUSY when another step-up of it holds the lock, and the caller
+# builder, and the caller stops; STEP_UP_BUSY when another step-up or a restart of it holds the lock, and the caller
 # touches nothing; any other status when nothing was closed (a refusal, said on stderr,
 # or a failure before the close), and the caller carries on as before. One step-up of a story at a
 # time, under its lock (step_lock); inside it step_due reads the build again, and with nothing due
@@ -1261,7 +1264,7 @@ top_rung_since() {
 # already, so its findings are never sent.
 top_rung_hold() {
   local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" rc
-  step_lock "${lock}" || die "tell: $1 was not told: a step-up or hold of it is running; wait on it, then tell it"
+  step_lock "${lock}" || die "tell: $1 was not told: a step-up, restart or hold of it is running; wait on it, then tell it"
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" escalated_from)" ]]; then
     rm -rf "${lock}"; die "tell: $1 was not told: it is held for the lead already (escalated_from:); the lead decides it"
   fi

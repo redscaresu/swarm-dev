@@ -284,7 +284,7 @@ for ladder in sonnet,opus,fable ""; do
     fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
     out="$(run close s1)" && rc=0 || rc=$?
     check "a step-up lock held by a live process: the close refuses, closing and counting nothing" "1|yes|||0|yes" \
-      "${rc}|$(grep -q 'another step-up of s1 is running' <<< "${out}" && echo yes)|$(stepped)|$(attempts)|$(grep -c '^tab close' "${ROOT}/herdr.log" 2>/dev/null || true)|$([[ -d "${WT}" ]] && echo yes)"
+      "${rc}|$(grep -q 'another step-up or a restart of s1 is running' <<< "${out}" && echo yes)|$(stepped)|$(attempts)|$(grep -c '^tab close' "${ROOT}/herdr.log" 2>/dev/null || true)|$([[ -d "${WT}" ]] && echo yes)"
     fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; (exit 0) & dead=$!; wait "${dead}"; echo "${dead}" > "${P}/.swarm/locks/step-up-s1/pid"
     run close s1 >/dev/null || true
     check "a step-up lock left by a process that is gone is taken over, and released" "ok (no-pr: sonnet -> opus)|no" \

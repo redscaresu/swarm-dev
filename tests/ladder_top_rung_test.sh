@@ -165,11 +165,11 @@ fresh fable 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a PR that is set to auto-merge holds nothing, and is told" "yes|code|" "$(told "${out}")|$(kind)|$(held)"
 echo "${OPEN_PR}" > "${ROOT}/prs.json"
 
-# Another step-up or hold of it running: the tell is refused, and nothing is held.
+# Another step-up, restart or hold of it running: the tell is refused, and nothing is held.
 fresh fable 1; mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
 out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a held step-up lock refuses the tell, holding nothing" "yes|no|code|" \
-  "$(grep -q 'a step-up or hold of it is running' <<< "${out}" && echo yes)|$(told "${out}")|$(kind)|$(held)"
+  "$(grep -q 'a step-up, restart or hold of it is running' <<< "${out}" && echo yes)|$(told "${out}")|$(kind)|$(held)"
 
 # A hold that fails after its block is written (the board state cannot be written): the tell fails,
 # and the findings are not sent.
