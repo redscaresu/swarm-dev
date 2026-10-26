@@ -130,8 +130,9 @@ Repeat until a step below says stop:
      and on its exit 2 do as the `no-agent:` arm below says. The PR passes when the review finds
      nothing to fix and wait-pr exits 0 on the same head. Then run
      `swarm.sh review <slug> <PR URL>`, which clears the line and hands the PR on to merge. For
-     findings to fix or red checks, start a builder in the story's worktree (`swarm.sh agent`)
-     with a brief naming them, and review again once it pushes. Run `swarm.sh close <slug> --drop`
+     findings to fix, red checks, or a worktree review-agent refuses (uncommitted changes, or not
+     at the PR's head), start a builder in the story's worktree (`swarm.sh agent`) with a brief
+     naming them, and review again once it pushes. Run `swarm.sh close <slug> --drop`
      only when the PR is not worth saving: it closes the PR and sends the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
      and no tell on the way. Run the exit it names. For a ready story it is
