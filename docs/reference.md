@@ -97,12 +97,14 @@ review the exit is never an unpinned merge. With one PR and a findings file
 `swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since. With several PRs, or
 no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
 each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
-merges. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
+compares the head wait-pr printed with the exit's `<sha>`: the same, it merges; different, the PR was
+pushed after its review, so it runs `swarm.sh review-agent <slug> <PR URL>` instead, since merge
+refuses the old pin and the line, already seen, would not come back. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
 checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
 story. On 2 it reads why: on a conflict with the base, a builder in the story's worktree merges the
 base in and pushes; on a gh error or the timeout, it runs wait-pr once more, and if it ends the same
 way, lists the story in its report with the reason. A story in review with no PR URL gets the exit
-`gh pr list --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
+`gh pr list -R <the story's repo's origin> --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
 while wait-pr runs and may come back once after it ends.
 
 Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
