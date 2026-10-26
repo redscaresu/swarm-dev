@@ -373,16 +373,21 @@ got+="$(armwords '   - `story <slug>`:' 'swarm.sh conduct --backlog' 'not starte
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story and resume arms run conduct --backlog, stop on not started: or an unchanged report, and say what clears each stop"
 else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fails + 1)); fi
 # The stage arm sets the drafts active in a board PR; under merge = human with no merge grant the
-# PR is the user's, since the epics grant covers the activation, not the merge.
+# PR is the user's, since the epics grant covers the activation, not the merge, and leaving it
+# unmerged is how the user says not yet. From the gate's row the arm probes with board-pr open,
+# which tells the branch's own PR from an earlier use of the name; under merge = agent or a merge
+# grant it waits for the open PR's checks and lands it.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 got="$(armwords '   - `stage v<S>`:' '`swarm.sh board-pr start <name>`' '`status: active`' 'Run `swarm.sh wait-pr <url>` in the background' \
   '`swarm.sh merge --board <url>` when `swarm.sh config merge` prints `agent` or `swarm.sh grants <url>` lists `merge`' \
   'Otherwise hand the PR to the user: the `epics` grant lets you set the epics active, not merge the PR' \
-  'If merge refuses, stop and tell the user' '`swarm.sh board-pr done <name>`' 'When that lists none (`board-pr open` failed), run the `board-pr open` line once more' \
-  'If it fails again, stop and tell the user what it printed' 'whether its epics are still drafts or the merge has made them active' \
-  'a CLOSED one (closed, not merged) is the user saying not yet. Open no new PR while the user has not answered' \
-  'an epic leaves the stage when its `stage:` or `hld:` is dropped' 'you do not act on it until the user answers')"
-if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's stage arm opens a board PR, merges it only under merge = agent or a merge grant, else hands it to the user"
+  'If merge refuses, stop and tell the user' 'On that line, finish the edit first' 'Then run the `board-pr open` line once more' \
+  'When it says the PR on the branch has merged or closed, or that the worktree changes nothing, run `swarm.sh board-pr done <name>`' \
+  'On any other failure, stop and tell the user what it printed' 'whether its epics are still drafts or the merge has made them active' \
+  'the user says not yet by leaving the PR unmerged: `next` names no new stage PR while it is open' \
+  'An epic leaves the stage when its `stage:` or `hld:` is dropped' \
+  'With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh wait-pr <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>` when it exits 0')"
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's stage arm opens a board PR, merges it only under merge = agent or a merge grant, else hands it to the user, who says not yet by leaving it unmerged"
 else echo "FAIL commands/swarm.md's stage arm:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
 # shellcheck disable=SC2016 # the backticks are literal Markdown

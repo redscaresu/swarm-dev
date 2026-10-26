@@ -264,28 +264,31 @@ Repeat until a step below says stop:
    - `stage v<S>`: a tag at or above the minor before v<S> is on the base, and the draft epics `next`'s why
      names carry `stage: v<S>` and an `hld:` naming an agreed HLD that grants `epics`, so they go
      active with no agreement from the user. The board PR is named `stage-v<S>` with the dots as
-     dashes (v0.30.0 gives `stage-v0-30-0`). First read its earlier PRs (`gh pr list --head
-     board/<name> --state all --json url,state`): a CLOSED one (closed, not merged) is the user
-     saying not yet. Open no new PR while the user has not answered: tell them `next` names this
-     stage again, that an epic leaves the stage when its `stage:` or `hld:` is dropped, and that you
-     open the PR again only once they say go, then stop. Otherwise open it: `swarm.sh board-pr start <name>`, set each named epic's
-     `status: active` there and change nothing else, then `swarm.sh board-pr open <name> "Start stage
-     v<S>" <body-file>`, its body naming the epics and the tag. Run `swarm.sh wait-pr <url>` in the
-     background and wait for it; if it does not exit 0, tell the user what it printed and stop.
-     Land it with `swarm.sh merge --board <url>` when `swarm.sh config merge` prints `agent` or
-     `swarm.sh grants <url>` lists `merge`. Otherwise hand the PR to the user: the `epics` grant
-     lets you set the epics active, not merge the PR. If merge refuses, stop and tell the user what it printed. For as long as the PR's
-     worktree exists, `next` goes on to the steps after this one, and the gate, `status` and `dash`
-     list `stage PR awaiting merge: v<S>`, whether its epics are still drafts or the merge has made
-     them active. On that line, read the PR (`gh pr list --head board/<name> --state all --json
-     url,state`). Once it has merged, run `swarm.sh board-pr done <name>`, so a later draft of the
-     same stage is not held behind the worktree. Once it is CLOSED without merging, run `swarm.sh
-     board-pr done <name>` too, then stop and tell the user as above: `next` then prints `stage v<S>`
-     again at once, and you do not act on it until the user answers. While it is open, it is the user's
-     under `merge = human` with no `merge` grant. When that lists none (`board-pr open` failed), run
-     the `board-pr open` line once more, which opens it, and go on as above. If it fails again, stop
-     and tell the user what it printed; if it says the worktree changes nothing, run `swarm.sh
-     board-pr done <name>` instead, so `next` names the stage step again. Then go back to 1.
+     dashes (v0.30.0 gives `stage-v0-30-0`). Open it: `swarm.sh board-pr start <name>`, set each
+     named epic's `status: active` there and change nothing else, then `swarm.sh board-pr open <name>
+     "Start stage v<S>" <body-file>`, its body naming the epics and the tag. Run `swarm.sh wait-pr
+     <url>` in the background and wait for it; if it does not exit 0, tell the user what it printed
+     and stop. Land it with `swarm.sh merge --board <url>` when `swarm.sh config merge` prints
+     `agent` or `swarm.sh grants <url>` lists `merge`, then go back to 1. Otherwise hand the PR to
+     the user: the `epics` grant lets you set the epics active, not merge the PR. If merge refuses,
+     stop and tell the user what it printed. Under `merge = human` with no `merge` grant, the user
+     says not yet by leaving the PR unmerged: `next` names no new stage PR while it is open. An
+     epic leaves the stage when its `stage:` or `hld:` is dropped. Tell the user both as you hand
+     them the PR, then go back to 1. For as long as the PR's worktree exists, `next` goes on to the
+     steps after this one, and the gate, `status` and `dash` list `stage PR awaiting merge: v<S>`,
+     whether its epics are still drafts or the merge has made them active. On that line, finish the
+     edit first, since a run that stopped between the edits left some of the stage's epics drafts:
+     every draft epic in the worktree that carries `stage: v<S>` and an `hld:` naming an agreed HLD
+     that grants `epics` gets `status: active`. Then run the `board-pr open` line once more: it
+     prints the PR's URL, the one already open or a new one, and tells the branch's own PR from an
+     earlier use of the name. When it says the PR on the branch has merged or closed, or that the
+     worktree changes nothing, run `swarm.sh board-pr done <name>`, so a later draft of the same
+     stage is not held behind the worktree, and go back to 1: after a PR closed without merging,
+     `next` names `stage v<S>` again and you open a new one. On any other failure, stop and tell
+     the user what it printed. With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh
+     wait-pr <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>`
+     when it exits 0, then go back to 1; if it does not, or merge refuses, tell the user what it
+     printed and stop. Under `merge = human` with no `merge` grant, it is the user's: stop.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
      When its why says a `later` epic's dependencies are done (offered before the gate), run it
@@ -429,7 +432,8 @@ Repeat until a step below says stop:
      story is never in that list: it is yours, and `next` names it first. A staged epic
      (`staged epic: <slug>, stage v<T>, after v<P>`) needs nothing from the user: `next` names
      `stage v<T>` once the base has a tag at or above v<P>, and you set it active then. A `stage PR awaiting
-     merge: v<T>` line is the stage arm's PR: handle it as that arm says. Stop.
+     merge: v<T>` line is the stage arm's PR: handle it as that arm says, which may go back to 1.
+     Otherwise stop.
    - `done`: say so and stop. If this finds no file (`find <board>/epics <board>/stories
      -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in
      about five lines (an epic written with you, split into stories, built by
