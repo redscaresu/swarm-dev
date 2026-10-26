@@ -116,7 +116,9 @@ bin/lib/*.py          the Python helpers the commands run
 bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls.tsv, then runs the real gh
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
-                      (an agent's state for herdr) and lead-stop.sh (the lead's turn ends only when next allows)
+                      (an agent's state for herdr), lead-stop.sh (the lead's turn ends only when next allows),
+                      lead-session.sh (sourced: tells the lead's session from an agent's) and
+                      user-caught-reminder.sh (reminds the lead to log a time a person had to step in)
 scripts/              test.sh (the make test runner), select-tests.sh and select_tests.py (the tests a branch's
                       changes map to), test-map.tsv (that map), lint (make check: JSON a test feeds must
                       parse), pre-commit, board-only.sh
@@ -133,7 +135,7 @@ Before you open a PR:
 
 ```bash
 make hooks                                  # once: the gitleaks pre-commit hook
-shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
+shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh hooks/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*_test.sh
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
