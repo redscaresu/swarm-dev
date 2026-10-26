@@ -42,6 +42,9 @@ jobs:
       - name: Compile bin/lib/*.py and scripts/select_tests.py
         if: steps.gate.outputs.board_only != 'true'
         run: python3 -m py_compile bin/lib/*.py scripts/select_tests.py
+      - name: Lint the tests (make check)
+        if: steps.gate.outputs.board_only != 'true'
+        run: make check
 
   # make test in shards: each runs the files scripts/test.sh's SHARD=i/N split gives it. The shard list
   # is 1 to N, each once (tests/test_shard_test.sh).

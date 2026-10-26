@@ -595,7 +595,7 @@ check "watch --epic reads the mergeable state of its own story's PR alone" "api 
 item "${w}/docs" stories/fix-main-abcdef1.md "status: review" "kind: code" "repo: svc"
 cp "${ROOT}/gh/prlist.json" "${ROOT}/gh/prlist.keep"
 { sed 's/}]$/},/' "${ROOT}/gh/prlist.keep"
-  echo ' {"number": 5, "headRefName": "story/fix-main-abcdef1", "headRefOid": "head5", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]'; } > "${ROOT}/gh/prlist.json"
+  echo ' {"number": 5, "headRefName": "story/fix-main-abcdef1", "headRefOid": "head5", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]'; } > "${ROOT}/gh/prlist.json" # vacuous-test: ok, the tail of a list
 check "watch --epic wakes for a fix-main story's PR" "o/svc #5 story/fix-main-abcdef1 checks finished on head5" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1)"
 mv "${ROOT}/gh/prlist.keep" "${ROOT}/gh/prlist.json"; rm -f "${w}/docs/stories/fix-main-abcdef1.md"
@@ -615,7 +615,7 @@ check "watch reads up to 100 check runs" "yes" "$(grep -q 'commits/head6/check-r
 # every poll, and a failure on the other PR is named too once it fails.
 item "${w}/docs" stories/fix-main-abcdef1.md "status: review" "kind: code" "repo: svc"
 { sed 's/}]$/},/' "${ROOT}/gh/prlist.json"
-  echo ' {"number": 5, "headRefName": "story/fix-main-abcdef1", "headRefOid": "head7", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]'; } > "${ROOT}/gh/prlist.two"
+  echo ' {"number": 5, "headRefName": "story/fix-main-abcdef1", "headRefOid": "head7", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]'; } > "${ROOT}/gh/prlist.two" # vacuous-test: ok, the tail of a list
 mv "${ROOT}/gh/prlist.two" "${ROOT}/gh/prlist.json"
 echo head6 > "${ROOT}/gh/runs-fail-heads"; : > "${ROOT}/gh/calls"
 out="$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 3; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1 || true)"
