@@ -55,7 +55,8 @@
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
 #   sign_time(f) -> an events.tsv line's (fields) epoch when it is a sign of life, else None. A
-#     nudge is not one, so `nudge` and `resume` (wait's) and `tell:nudge` (the lead's) lines are skipped, as are
+#     nudge is not one, so `nudge` and `resume` (wait's), `resend` (wait --lead's Enter on a brief left in
+#     an idle pane's input box) and `tell:nudge` (the lead's) lines are skipped, as are
 #     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder. A `board-pr:<step>`
 #     line is the lead's board edit, whose name may be a story's slug, so it is never one either, and

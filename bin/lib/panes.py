@@ -1,4 +1,4 @@
-import glob, json, os, re, subprocess
+import calendar, glob, json, os, re, subprocess, time
 WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
@@ -119,6 +119,51 @@ def pane_text(pane):
         return subprocess.run(["herdr", "agent", "read", pane, "--source", "recent-unwrapped"], capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
+# BRIEF_PASTE: how Claude Code shows a collapsed paste, a brief herdr typed into the pane.
+BRIEF_PASTE = re.compile(r"\[Pasted text #\d+")
+def input_box(text):
+    # The input box, as pane_stop (agents.sh) reads it: the lines between the last two border lines
+    # at the margin, with no reply from the upper one down. None when there is no such box.
+    lines = (text or "").splitlines()
+    borders = [i for i, l in enumerate(lines) if re.match("(╭|╰)?─", l)]
+    if len(borders) < 2 or any(re.match("(⏺|●)", l) for l in lines[borders[-2]:]):
+        return None
+    return lines[borders[-2] + 1:borders[-1]]
+def unsent_brief(text):
+    # A paste left in the input box. A submitted one above the box (`> [Pasted text #1 ...]`) is not.
+    return any(BRIEF_PASTE.search(l) for l in input_box(text) or [])
+def turn_since(log, name, projects, since, slack):
+    # True when <name>'s Claude session log has a turn start (a prompt typed or pasted in, not a tool
+    # result or an automated prompt) stamped later than <slack> seconds before <since> (an events.tsv
+    # time, written once the command that sent the prompt returned, so a turn it started may be stamped
+    # before it). With <since> "-", any turn start in the session counts. None when it cannot say: no
+    # session on record, or no readable log of it (Claude Code writes the log before the first prompt,
+    # so a missing one is no sign that no turn ran).
+    sid, cut = session_id(log, name), ""
+    try:
+        if since != "-":
+            cut = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(calendar.timegm(time.strptime(since[:19], "%Y-%m-%dT%H:%M:%S")) - int(slack)))
+    except (ValueError, OverflowError):
+        return True   # an unreadable time: never resend on it
+    for path in glob.glob(os.path.join(glob.escape(projects), "*", glob.escape(sid) + ".jsonl")) if sid else []:
+        try:
+            for l in open(path, encoding="utf-8", errors="replace"):
+                if "\"timestamp\"" not in l:
+                    continue
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                m = d.get("message") if isinstance(d, dict) else None
+                c = m.get("content") if isinstance(m, dict) else None
+                typed = isinstance(c, str) or (isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "text" for x in c))
+                if typed and d.get("type") == "user" and not d.get("isSidechain") and is_prompt(d) \
+                        and str(d.get("timestamp") or "")[:19] > cut:
+                    return True
+        except OSError:
+            return None
+        return False
+    return None
 def shown_state(a, name, s, log, projects):
     st, look = agent_state(a, name, s)
     if st == "idle" and s is not None and login_expired(log, name, projects):
