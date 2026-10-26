@@ -1879,9 +1879,11 @@ no_agent_name() {
 # events.tsv in order: "<slug> <build> <event> <name> <review-name>". build is 1 when a builder's ok start
 # is newer than its last ok close, - when the slug has no start line at all (never started), else 0.
 # An ok upgrade line (its target the epic, backlog, or - for every agent) restarted its agents, so it
-# counts as a start for the stories in its scope. event is the time of the newest event that explains why no agent is there (an ok close
-# of the builder or review agent, a failed start, a no-agent line) when no sign of a live agent (an ok
-# start, an ok tell) and no hold line came after it, else -. A slug whose newest reconcile reopen (its PR
+# counts as a start for the stories in its scope, but never clears a reopen: it restarts only running
+# agents, and a reopened story's builder was not one. event is the time of the newest event that
+# explains why no agent is there (an ok close of the builder or review agent, a failed start, a
+# no-agent line) when no sign of a live agent (an ok start, an ok tell) and no hold line came after it,
+# else -. A slug whose newest reconcile reopen (its PR
 # closed unmerged) has no ok start after it is left out: unblock --startable names it for the lead from
 # that reopen being its last event, which a lead-woken, no-agent or hold line would hide.
 no_agent_events() {
@@ -1898,7 +1900,7 @@ no_agent_events() {
       }
     }
     NF == 5 && $2 == "upgrade" && $5 ~ /^ok/ {
-      for (x in epic) if ($3 == "-" || $3 == epic[x] || ($3 == "backlog" && epic[x] == "-")) { ev[x] = ""; reo[x] = 0 }
+      for (x in epic) if ($3 == "-" || $3 == epic[x] || ($3 == "backlog" && epic[x] == "-")) ev[x] = ""
       next
     }
     NF == 5 && ($3 in own) {
@@ -2046,8 +2048,10 @@ no_agent_lines() {
     [[ -n "${slug}" && "${build}" != - ]] || continue
     d="$(awk -F $'\x1f' -v s="${slug}" '$1 == s { print; exit }' <<< "${data}")"
     IFS=$'\x1f' read -r _ st repo prs <<< "${d}"
-    # A PR held for the user's merge (pr_held, as costs_tag asks, on prs: split on commas too).
+    # A PR held for the user's merge (pr_held, as costs_tag asks, on prs: split on commas too), or the
+    # story's own costs: or its parents' (money_walk), which also holds one whose prs: is still empty.
     if [[ "${st}" == review ]]; then
+      [[ -z "$(money_walk "${slug}")" ]] || continue
       for u in ${prs}; do [[ -z "$(pr_held "${u}")" ]] || continue 2; done
     fi
     if [[ "${build}" != 1 ]]; then

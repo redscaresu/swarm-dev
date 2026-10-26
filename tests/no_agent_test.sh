@@ -153,6 +153,12 @@ check "a story reconcile reopened is silent, its worktree kept or not" never_wok
 check "and its last events line is still the reopen" test "$(last_event)" == "reconcile na-o ok (reopened)"
 ev story na-o; ev close na-o; poll
 check "once a new build starts and its builder goes, it fires again" fires na-o "swarm.sh hold na-o <reason>"
+# An upgrade restarts only running agents: a reopened story's builder was not one, so it stays left out.
+fresh; story na-o "kind: code" "status: ready" "epic: e1"; ev story na-o; ev reconcile na-o "ok (reopened)"; built na-o
+poll; ev upgrade e1; poll; poll
+check "reopened, then an upgrade of its epic: still silent" never_woke na-o
+check "and the reopen stays the last events line for its slug" \
+  test "$(awk -F'\t' '$3 == "na-o" { l = $2 " " $5 } END { print l }' "${P}/.swarm/events.tsv")" == "reconcile ok (reopened)"
 
 fresh; story na-c "kind: code" "status: ready"; ev story na-c; built na-c; listed na-c
 ev review-agent na-c; ev close review-na-c
@@ -286,6 +292,8 @@ check "a review story with no PR URL is never offered hold, which refuses it: fi
 fresh "merge = agent"; story na-mo "kind: code" "status: review" "costs: money" "prs: [${URL},${URL2}]"
 ev story na-mo; built na-mo; ev close review-na-mo; poll; poll
 check "a costs: money review story whose prs: is [a,b] with no space is the user's: silent" never_woke na-mo
+fresh "merge = agent"; story na-mn "kind: code" "status: review" "costs: money"; ev story na-mn; ev close review-na-mn; poll; poll
+check "a costs: money review story with no PR URL yet is the user's too: silent" never_woke na-mn
 
 # --- the state file swarm.sh wrote wins over the front matter, unless the front matter changed since.
 fresh; story na-e "kind: code" "status: ready"; ev story na-e; built na-e; ev close na-e

@@ -77,7 +77,8 @@ counts a story only when all of these hold:
 - It has a build record: an ok builder start that no close ended or, for a story with any start
   line, its worktree or `story/<slug>` branch.
 - No `swarm.sh upgrade` runs in this project for its epic, its backlog or every agent: an upgrade
-  stops agents and starts them again. Its ok events line counts as a start.
+  stops agents and starts them again. Its ok events line counts as a start, except for a story
+  reconcile reopened: an upgrade restarts only running agents, so that story stays left out.
 - herdr lists no pane this project opened under its builder's name or `review-<slug>`. No
   `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
 - No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
@@ -109,8 +110,9 @@ while wait-pr runs and may come back once after it ends.
 
 Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
 hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
-events.tsv are read every poll; git only for a story with a start line and no current builder; `ps`
-once, only when a started story has no agent listed. No gh call is made for these lines. Outside
+events.tsv are read every poll; git only for a story with a start line and no current builder; herdr's
+JSON and `ps` once, whenever a story with a build record is left after those reads, before the
+listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no
 `.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
 
