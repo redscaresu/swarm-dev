@@ -16,7 +16,7 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111
 # A URL no other test's processes name: a merge or wait-pr on it anywhere on the machine silences a case.
-URL=https://github.com/na-owner/na-repo/pull/41
+URL=https://github.com/na-owner/na-repo/pull/41; URL2=https://github.com/na-owner/na-repo/pull/42
 mkdir -p "${P}/.claude/swarm" "${B}" "${P}/.swarm/state" "${ROOT}/bin" "${ROOT}/fake" "${FX}"
 git -C "${P}" init -q
 
@@ -25,6 +25,7 @@ cat >> "${ROOT}/bin/herdr" <<'STUB'
 echo "$*" >> "${LOG}"
 case "$1 $2" in
   "agent list") [ ! -e "${FX}/list.fail" ] || exit 1
+                [ ! -e "${FX}/list.hang" ] || sleep 90
                 printf '{"result":{"agents":[%s]}}\n' "$(cat "${FX}/agents" 2>/dev/null)" ;;
   *) echo '{"result":{}}' ;;
 esac
@@ -42,6 +43,9 @@ STUB
 # ps: the real one, except that a process list (-A) fails while ${FX}/ps.fail exists.
 printf '#!/bin/sh\ncase " $* " in *" -A "*) [ ! -e "%s/ps.fail" ] || exit 1 ;; esac\nexec %s "$@"\n' "${FX}" "$(command -v ps)" > "${ROOT}/bin/ps"
 chmod +x "${ROOT}/bin/ps"
+# git: the real one, logging each show-ref (a build read from git).
+printf '#!/bin/sh\ncase " $* " in *" show-ref "*) echo "$*" >> "%s" ;; esac\nexec %s "$@"\n' "${ROOT}/git.log" "$(command -v git)" > "${ROOT}/bin/git"
+chmod +x "${ROOT}/bin/git"
 # The fake swarm.sh a busy process runs: ps shows `bash .../swarm.sh <args>` while it sleeps.
 printf 'while :; do sleep 0.2; done\n' > "${ROOT}/fake/swarm.sh"
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh"
@@ -73,23 +77,26 @@ unbusy() { [[ -z "${busy_pid}" ]] || { kill "${busy_pid}" 2>/dev/null || true; w
 fresh() {
   unbusy
   rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
-    "${FX}/list.fail" "${FX}/ps.fail" "${ROOT}"/*.log
+    "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${P}/.swarm/upgrade.pid" "${ROOT}"/*.log
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   listed
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
   polls=0
 }
 # poll — one read of the lead's queue, inside herdr; output in ${ROOT}/out, exit code in ${ROOT}/rc.
+# poll [VAR=value]... — one read of the lead's queue, inside herdr; output in ${ROOT}/out, exit code in
+# ${ROOT}/rc.
 poll() {
   polls=$((polls + 1))
-  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:lead \
+  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:lead "$@" \
     bash "${SWARM}" wait --lead 0 > "${ROOT}/out" 2>&1) && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
 }
 out() { cat "${ROOT}/out"; }
 rc() { cat "${ROOT}/rc"; }
 silent() { [[ "$(out)|$(rc)" == "|1" ]]; }
 no_line() { ! grep -q '^no-agent:' "${ROOT}/out"; }
-fires() { [[ "$(out)|$(rc)" == "no-agent: $1, exit: $2|0" ]]; }
+# fires <slug> <exit> — the poll printed exactly that no-agent line and exited 0; else it says what it got.
+fires() { [[ "$(out)|$(rc)" == "no-agent: $1, exit: $2|0" ]] || { echo "  got: $(out)|$(rc)"; return 1; }; }
 last_event() { tail -1 "${P}/.swarm/events.tsv" 2>/dev/null | awk -F'\t' '{ print $2 " " $3 " " $5 }'; }
 events() { awk -F'\t' '{ print $2 " " $3 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 # never_woke <slug> [after] — no lead-woken or no-agent events line for <slug> (after the first line
@@ -135,7 +142,7 @@ check "and gets no no-agent events line" test -z "$(events)"
 # A build cleared by a close that counted it (no worktree, no branch) is a story queued for its next attempt.
 fresh; story na-q "kind: code" "status: ready" "attempts: 1"; ev story na-q; ev close:stalled na-q; poll; poll
 check "a ready story whose last build a close cleared is silent" silent
-check "and no poll woke on it" never_woke na-q
+check "and no poll woke on it (na-q)" never_woke na-q
 # reconcile reopened it (its PR closed unmerged), its builder gone with no close: unblock --startable names
 # it for the lead from the reopen being its last event, so no line may hide that, kept build or not.
 fresh; story na-o "kind: code" "status: ready"; ev story na-o; ev reconcile na-o "ok (reopened)"; built na-o; poll; poll
@@ -148,7 +155,7 @@ fresh; story na-c "kind: code" "status: ready"; ev story na-c; built na-c; liste
 ev review-agent na-c; ev close review-na-c
 poll; poll
 check "the CI window after a push (builder listed idle, review agent closed) is silent" silent
-check "and no poll woke on it" never_woke na-c
+check "and no poll woke on it (na-c)" never_woke na-c
 
 # The 2026-10-25 events of config-keys-back, up to its review agent's close, with its builder listed.
 fresh; story config-keys-back "kind: code" "status: ready"; built config-keys-back; listed config-keys-back
@@ -166,21 +173,22 @@ while IFS='|' read -r t c g o; do ev "${c}" "${g}" "${o}" "${t}"; done <<'EVENTS
 EVENTS
 poll; poll
 check "the 2026-10-25 close review-config-keys-back replayed with the builder listed is silent" silent
-check "and no poll woke on it" never_woke config-keys-back
+check "and no poll woke on it (config-keys-back)" never_woke config-keys-back
 
 fresh "merge = human"; story na-u "kind: code" "status: review" "prs: ${URL}"; ev story na-u; built na-u; ev close na-u
 poll; poll
 check "a review story waiting on the user's merge with its head pending (merge = human) is silent" silent
-check "and no poll woke on it" never_woke na-u
+check "and no poll woke on it (na-u)" never_woke na-u
 
-fresh; story na-h "kind: lead" "status: ready" "escalated_from: code" "held_for: paused"; ev story na-h; built na-h; ev close na-h
+# Of a kind an agent builds, so only its held_for: keeps it out.
+fresh; story na-h "kind: code" "status: ready" "held_for: paused"; ev story na-h; built na-h; ev close na-h
 poll
 check "a held story gets no no-agent line" no_line
 check "and no no-agent event (its held: line wakes the lead instead)" test -z "$(events | grep -x 'no-agent na-h')"
 fresh; story na-l "kind: lead" "status: ready"; ev agent na-l; built na-l; ev close na-l
 poll; poll
 check "a kind: lead story gets no no-agent line" no_line
-check "and no poll woke on it" never_woke na-l
+check "and no poll woke on it (na-l)" never_woke na-l
 
 fresh; story na-f "kind: code" "status: ready"; ev story na-f; built na-f; ev close na-f; touch "${FX}/list.fail"
 poll; poll
@@ -193,7 +201,7 @@ fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev cl
 mkdir -p "${P}/.swarm/briefs"; echo "stalled opus fable code" > "${P}/.swarm/briefs/na-s.step-up"
 poll; poll
 check "a story with a .step-up marker is silent (the marker's own line reports it)" silent
-check "and no poll woke on it" never_woke na-s
+check "and no poll woke on it (na-s)" never_woke na-s
 
 fresh "merge = agent"; story na-m "kind: code" "status: review" "prs: ${URL}"; ev story na-m; built na-m; ev close review-na-m
 busy merge --head "${H}" "${URL}"
@@ -204,7 +212,10 @@ poll
 check "and with a swarm.sh wait-pr <url> process running" silent
 unbusy
 poll
-check "once no process answers for it, it fires" fires na-m "swarm.sh merge ${URL}"
+check "once no process answers for it, it fires, naming review-agent when no reviewed head is known" \
+  fires na-m "swarm.sh review-agent na-m ${URL}"
+poll
+check "after the wait-pr ends, the line comes back once and then stays quiet" silent
 
 # --- tells.
 fresh; story na-t "kind: code" "status: ready"; ev story na-t; built na-t; ev close na-t
@@ -258,6 +269,55 @@ check "and no poll woke on it after the restart" never_woke na-x "restart na-x"
 fresh; rm -f "${P}/.swarm/lead/seen"; story na-n "kind: code" "status: ready"; ev story na-n; built na-n; ev close na-n
 poll
 check "a fresh run with no .swarm/lead/seen prints the line on its first read" fires na-n "swarm.sh restart na-n, or swarm.sh hold na-n <reason>"
+
+# --- the review exit is never an unpinned merge, and prs: is split on commas too.
+fresh "merge = agent"; story na-p "kind: code" "status: review" "prs: [${URL},${URL2}]"; ev story na-p; built na-p; ev close review-na-p
+mkdir -p "${P}/.swarm/reviews"; printf 'head: %s\n\n## Findings\n' "${H}" > "${P}/.swarm/reviews/na-p.md"
+busy merge --head "${H}" "${URL2}"
+poll
+check "a merge on the second URL of prs: [a,b] silences it" silent
+unbusy; poll
+check "with two PRs one head cannot pin, the exit is review-agent for each" \
+  fires na-p "swarm.sh review-agent na-p ${URL}, then swarm.sh review-agent na-p ${URL2}"
+# A review agent that wrote its head: line and stopped before its findings: no pass, so no merge.
+fresh "merge = agent"; story na-i "kind: code" "status: review" "prs: ${URL}"; ev story na-i; built na-i; ev close review-na-i
+mkdir -p "${P}/.swarm/reviews"; printf 'head: %s\n' "${H}" > "${P}/.swarm/reviews/na-i.md"; poll
+check "a findings file with a head: line but no review is no pass: the exit is review-agent" \
+  fires na-i "swarm.sh review-agent na-i ${URL}"
+fresh "merge = agent"; story na-x "kind: code" "status: review"; ev story na-x; built na-x; ev close na-x; poll
+check "a review story with no PR URL is never offered hold, which refuses it: find its PR, then review-agent" \
+  fires na-x "gh pr list --head story/na-x, then swarm.sh review-agent na-x <PR URL>"
+
+# --- a hung herdr: the list is killed after SWARM_LEAD_LIST_WAIT, and the other lines still wake.
+fresh; story na-z "kind: lead" "status: ready" "escalated_from: code" "held_for: paused"
+story na-y "kind: code" "status: ready"; ev story na-y; built na-y; ev close na-y; touch "${FX}/list.hang"
+t0=${SECONDS}; poll SWARM_LEAD_LIST_WAIT=1
+check "with herdr's list hung, a held story still wakes the lead, and no no-agent line is printed" \
+  test "$(out)|$(rc)" == "held: na-z (paused)|0"
+check "the read gives up on the list within its wait" test $((SECONDS - t0)) -lt 60
+
+# --- a story never started costs no git read.
+fresh; story na-q "kind: code" "status: ready"; poll; poll
+check "a ready story with no start line is not read from git" test ! -e "${ROOT}/git.log"
+fresh; story na-q "kind: code" "status: ready"; ev story na-q; ev close:stalled na-q; poll
+check "one whose last build a close ended is" grep -q 'refs/heads/story/na-q' "${ROOT}/git.log"
+
+# --- an upgrade running here stops and restarts agents: its scope stays silent, and its end is a start.
+fresh; story na-v "kind: code" "status: ready" "epic: e1"; ev story na-v; built na-v; ev close na-v
+busy upgrade e1; echo "${busy_pid} e1 /tmp/upgrade.log" > "${P}/.swarm/upgrade.pid"
+poll; poll
+check "a story in a running upgrade's epic is silent" never_woke na-v
+unbusy; rm -f "${P}/.swarm/upgrade.pid"; ev upgrade e1
+poll
+check "the upgrade's ok line counts as a start: the next poll writes a no-agent line, silent" \
+  test "$(out)|$(last_event)" == "|no-agent na-v ok"
+poll
+check "and the one after fires" fires na-v "swarm.sh restart na-v, or swarm.sh hold na-v <reason>"
+fresh; story na-w "kind: code" "status: ready" "epic: e2"; ev story na-w; built na-w; ev close na-w
+busy upgrade e1; echo "${busy_pid} e1 /tmp/upgrade.log" > "${P}/.swarm/upgrade.pid"
+poll
+check "a story outside the upgrade's epic still fires" fires na-w "swarm.sh restart na-w, or swarm.sh hold na-w <reason>"
+unbusy
 
 # --- the cost of a poll: one herdr list, no per-pane read, no gh call, with a ready and a review case live.
 fresh "merge = agent"; story na-a "kind: code" "status: ready"; ev story na-a; built na-a; ev close na-a

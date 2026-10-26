@@ -120,13 +120,21 @@ Repeat until a step below says stop:
      `next` names the running conductor first and would not get to it. For a
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
-     and no tell on the way. Run the exit it names. For a ready story that is
+     and no tell on the way. Run the exit it names. For a ready story it is
      `swarm.sh restart <slug>`, which starts its builder again in its worktree, or
-     `swarm.sh hold <slug> <reason>` when it should wait, saying why. For a story in review under
-     `merge = agent` it is `swarm.sh merge`. Before that merge, run `swarm.sh wait-pr <PR URL>` in the background and
-     merge only once it exits 0; while it waits, the line stays quiet, and it comes back if the
-     checks go red. A hold only answers the line; if no agent is back by the next poll, it
-     comes back. Then start
+     `swarm.sh hold <slug> <reason>` when it should wait, saying why. A hold only answers the line: if no
+     agent is back by the next poll, it comes back. For a story in review under `merge = agent`
+     it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
+     no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
+     background and act on its exit, not on the line, once per head. On 0, run the merge. On 1
+     (red), start a builder in the story's worktree (`swarm.sh agent`) with a brief naming the
+     failing checks, or, if you leave it, list it in your report with the reason:
+     `swarm.sh hold` takes only a ready story. On 2, read why it printed: on a conflict with the
+     base, have a builder in the story's worktree merge the base in and push; on a gh error or
+     the timeout, run wait-pr once more, and if it ends the same way, list the story in your
+     report with the reason. With no PR URL on the story, find its PR with
+     `gh pr list --head story/<slug>` and run the review-agent exit. The line is quiet while
+     wait-pr runs and may come back once after it ends; that needs nothing new. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs

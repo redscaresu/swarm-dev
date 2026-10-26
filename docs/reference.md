@@ -74,8 +74,10 @@ counts a story only when all of these hold:
   awaiting their merge under `merge = human`, `costs: money` or `kept:`, green or not.
 - It is of a kind an agent builds. That rules out `kind: lead`, and so every held or escalated
   story. A blocked story is never counted.
-- It has a build record: an ok builder start that no close ended, or its worktree or
-  `story/<slug>` branch.
+- It has a build record: an ok builder start that no close ended or, for a story with any start
+  line, its worktree or `story/<slug>` branch.
+- No `swarm.sh upgrade` runs in this project for its epic, its backlog or every agent: an upgrade
+  stops agents and starts them again. Its ok events line counts as a start.
 - herdr lists no pane this project opened under its builder's name or `review-<slug>`. No
   `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
 - No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
@@ -91,11 +93,24 @@ silent, and the next poll wakes the lead. The exit for a ready story is
 `swarm.sh restart <slug>, or swarm.sh hold <slug> <reason>`. Restart brings the builder back in its
 worktree, so the next poll is quiet. A hold answers the alert but starts nothing, so if no agent is
 back by the next poll, that poll writes a new `no-agent` line and the alert comes back. For a story in
-review the exit is `swarm.sh merge --head <sha> <PR URL>`, with the `head:` line of
-`.swarm/reviews/<slug>.md`, or a plain `swarm.sh merge <PR URL>` when there is no head to pin. The
-lead runs `swarm.sh wait-pr <PR URL>` first and merges once it exits 0: while it runs, the line is
-quiet, and if the checks go red it comes back. Each poll reads `herdr agent list` once, and `ps` once when a started story needs checking, and makes no gh
-call for these lines. Outside herdr, or when herdr's list or `ps` fails, it prints none. A run with no
+review the exit is never an unpinned merge. With one PR and a findings file
+`.swarm/reviews/<slug>.md` that passes on its 40-hex `head:` line, it is
+`swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since. With several PRs, or
+no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
+each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
+merges. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
+checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
+story. On 2 it reads why: on a conflict with the base, a builder in the story's worktree merges the
+base in and pushes; on a gh error or the timeout, it runs wait-pr once more, and if it ends the same
+way, lists the story in its report with the reason. A story in review with no PR URL gets the exit
+`gh pr list --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
+while wait-pr runs and may come back once after it ends.
+
+Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
+hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
+events.tsv are read every poll; git only for a story with a start line and no current builder; `ps`
+once, only when a started story has no agent listed. No gh call is made for these lines. Outside
+herdr, or when herdr's list or `ps` fails, it prints none. A run with no
 `.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
@@ -340,7 +355,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 The table in [the guide](method.md) lists every key. The rules the table leaves out:
 
 - `merge` (default `human`): `human`: no agent merges, and a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one (§ Merging). `agent`: the conductor merges, except a PR `swarm.sh merge` holds for you (§ Merging)
-- `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, resumes, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts its session log (`.jsonl`). For `wait --stall` that is the newest entry of the agent's own work (an assistant message, a tool call or a tool result) in the log or in its Task subagents' logs (`<session>/subagents/*.jsonl`). Compaction, summary and background-task entries do not count, because a session hung on a command keeps writing them. `dash` still counts the log's last write. When `wait --stall` finds a builder stalled, its `stalled:` line, and the `incident` line it logs in `events.tsv`, end `; longest-running: pid <PID>, <N> min: <program> (under <parents>)` when a foreground Bash call is running a command. That call is the newest of Claude Code's Bash tool shells, and it must have started after the builder's last own work: a shell started earlier (a `run_in_background` server, say) is not the foreground call, and the builder is hung somewhere else. From that shell the line follows the oldest child at each step down to the leaf, so a hung `sleep` under `make test` names the `sleep`. Each process shows only its program name (ps's `comm`, so a path with spaces stays whole), never its arguments, which may hold a token. Processes outside a tool shell (caffeinate, an MCP or LSP server) are never named. When nothing is named, the line ends `; longest-running: none named (<why>)`: a codex builder, whose commands are not traced; no Bash tool call running a command; no tool shell started since its last own work; or a process list that could not be read. When the stall is stepped up (`escalate_ladder`), the `longest-running:` line follows `stepped up:` and says the step-up closed the pane, so the PID may be gone. The conductor checks the PID with `ps` and stops only a hung leaf with `kill <PID>`, then waits on the builder again; it closes the build as stalled when nothing is named or the builder stalls again. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
+- `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, resumes, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts its session log (`.jsonl`). For `wait --stall` that is the newest entry of the agent's own work (an assistant message, a tool call or a tool result) in the log or in its Task subagents' logs (`<session>/subagents/*.jsonl`). Compaction, summary and background-task entries do not count, because a session hung on a command keeps writing them. `dash` still counts the log's last write. `wait` and `dash` also count a test suite running in the agent's pane as work: a process under the pane's shell that runs `make test`, `make check`, or `scripts/test.sh` (through a shell, or run directly). While that run is younger than 3 times `stall_minutes`, `wait --stall` finds no stall and `wait` does not say `stuck: no output`. `dash` shows the agent as `working <N>m`, with no `!` and no `look at` line. A command that only names one, such as `grep scripts/test.sh` or `cat test`, is not a test run, and neither is one in another pane. When herdr's process info or the process list cannot be read, the run is not seen, and the stall fires as it would without one. An older run may be hung, so it no longer counts: the builder can stall, and `wait` can say `stuck`, as if no run were there. The `longest-running:` line then names the leaf under the run if its tool shell started after the builder's last own work (see below). `dash` shows such an agent `stalled`, with its `look at` line. `dash` reads an agent's processes only once it is past `stall_minutes`, so an agent working under it costs no read. When `wait --stall` finds a builder stalled, its `stalled:` line, and the `incident` line it logs in `events.tsv`, end `; longest-running: pid <PID>, <N> min: <program> (under <parents>)` when a foreground Bash call is running a command. That call is the newest of Claude Code's Bash tool shells, and it must have started after the builder's last own work: a shell started earlier (a `run_in_background` server, say) is not the foreground call, and the builder is hung somewhere else. From that shell the line follows the oldest child at each step down to the leaf, so a hung `sleep` under `make lint` names the `sleep`. Each process shows only its program name (ps's `comm`, so a path with spaces stays whole), never its arguments, which may hold a token. Processes outside a tool shell (caffeinate, an MCP or LSP server) are never named. When nothing is named, the line ends `; longest-running: none named (<why>)`: a codex builder, whose commands are not traced; no Bash tool call running a command; no tool shell started since its last own work; or a process list that could not be read. When the stall is stepped up (`escalate_ladder`), the `longest-running:` line follows `stepped up:` and says the step-up closed the pane, so the PID may be gone. The conductor checks the PID with `ps` and stops only a hung leaf with `kill <PID>`, then waits on the builder again; it closes the build as stalled when nothing is named or the builder stalls again. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
 - `queue_minutes` (default `30`): a story PR is queued when its head is green by `ci_gate`'s rule (every check run on every page and every commit status passed, at least one run), the last of them finished this many minutes ago, the PR is open and mergeable, its story is one an agent builds (never a `lead` story's), and that head has no review agent's review. A review counts when its findings file for the head is a pass (`## Findings`, no `head moved:`), or while the agent started on it (`.swarm/reviews/<slug>.head`) is still open in herdr with no file written: one that crashed, was closed or was tidied is no review. `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>` once per head, after it has reported the head's checks finished. `next`, while conductors work, prints the same line after its step's why for each such PR of every working conductor, ending in `(<conductor>)`, the one to send it to. A head is sent once: `watch` and `swarm.sh tell <conductor> note` (for each such line in the note) both record `queued <sha>` in `.swarm/state/watch-seen`, and neither `watch` nor `next` prints a recorded head again. `dash` and `status` do not look
 - `sonnet_share` (default `0`): `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
@@ -657,7 +672,10 @@ treats such an agent as idle and delivers, and `next` names a conductor's stop. 
 prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
 herdr's working for one herdr answers for) has not changed its pane for `stall_minutes` and its
 transcript shows no background task still running (a shell, an async subagent or a monitor it
-started, with no `<task-notification>` carrying a `<status>` for it since). It sends nothing then: read the pane. `stuck` is
+started, with no `<task-notification>` carrying a `<status>` for it since). A test suite running in
+its pane (`make test`, `make check` or `scripts/test.sh`, as under `stall_minutes`) also keeps it
+from being stuck, for a conductor as for a builder, but only until the run is 3 times
+`stall_minutes` old: a hung one gives `stuck` after that. It sends nothing then: read the pane. `stuck` is
 not a stall, and no close follows from it. When an agent's pane shows Claude Code's usage-limit dialog
 ("Stop and wait for limit to reset" / "Wait here, then continue automatically"), `wait` picks
 "Wait here, then continue automatically" (the user's standing choice) once per dialog (a keypress
@@ -670,7 +688,8 @@ it sits; at its timeout `wait` prints `usage-limit` and exits 1. Until the pane 
 and `dash` show `usage-limit` for the agent in place of working or idle. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, own work in the session log or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
-worktree, its own work in its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
+worktree, its own work in its session log, a PR update, a swarm action on its story, a test suite
+running in its pane, up to 3 times `stall_minutes` old) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
 So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at the timeout or when
 herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
@@ -923,6 +942,13 @@ call of its own runs has not finished. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
 (no time left for a fallback)`. The planning `codex` panes of
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
+
+A codex review reads the diff. In this repository, swarm-dev's own, its `scripts/test.sh` refuses to
+run under codex, and so does its `make test`: when `CODEX_SANDBOX` or `CODEX_THREAD_ID` is set,
+`scripts/test.sh` prints one line and exits 1 before it runs a file or writes `.swarm/test-runs.tsv`,
+and `make test` then exits 2 with make's own error line after it. `init` copies no test runner, so a
+project of your own gets no such refusal. codex 0.164 sets both variables in the shell it runs
+commands in. The lead's shell and an agent's pane have neither, so the refusal stops no builder.
 
 
 ## Logs and outcomes
@@ -2009,6 +2035,23 @@ stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
+Epics can name the release they belong to with `stage: v<x.y.z>`. Once a release is due, `next`
+reads the stages: the epics on the board, whatever their status, the copies `origin/<base>` has of
+epics an edit in your checkout deleted or changed before it reached the base (a release ships the
+base), and the epic files deleted on `origin/<base>` since the tag. The next stage S is the lowest one above the tag. When no epic of S
+is left on the board, the step is `release v<S>`, and its why names the stage. While one is still
+there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
+only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
+while S is held. When no story of a staged epic has merged since the tag, and the next patch of the
+tag's line is below S, the step is `release v<x.y.z+1> (patch)`. What merged under an unstaged
+epic, or under no epic, goes out in that patch: nothing checks that it is a fix. A merged story is
+one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
+`status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
+to the steps after it. An epic on the board whose `stage:` is not
+`v<x.y.z>` holds the release too, and the line names it. A board where no epic has `stage:`
+releases as before, with a plain `release`. So does a board outside the project's repo, since git
+can't list its deleted epics.
+
 Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30
 seconds at most. If that is not the base the release check last read, a PR landed between that read
 and the merge, and the release shipped commits no check read. merge then prints `warning: <merge
@@ -2052,7 +2095,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, or a green PR in review that waits on you, and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, a green PR in review that waits on you, or a started story with no live agent (`no-agent: <slug>, exit: <exit>`), and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |

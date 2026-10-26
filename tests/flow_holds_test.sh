@@ -36,7 +36,7 @@ git -C "${P}" mv docs/stories/s-q.md docs/stories/s-q2.md && commit 2026-10-01T1
 ev() { printf '2026-10-01T%s:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${P}/.swarm/events.tsv"; }
 ev 08:00 story merge ok
 ev 09:00 story s-b ok
-ev 10:00 hold s-a "ok (clashes with s-b on flow.sh)"
+ev 10:00 hold s-a "ok (clashes with s-b on flow.sh:holds)"
 ev 10:10 hold s-c "ok (waits on PR #12)"
 ev 10:20 hold s-c "ok (the lead asked)"
 ev 10:30 hold s-d "ok (waits on #13)"
@@ -72,7 +72,7 @@ check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 out="$(holds)"
-check "a hold runs from its line to the next ok build start, with its reason" "$(row s-a)" $'s-a\te1\tclashes with s-b on flow.sh\t50'
+check "a hold runs from its line to the next ok build start, with its reason" "$(row s-a)" $'s-a\te1\tclashes with s-b on flow.sh:holds\t50'
 check "a story held and never built is open" "$(row s-d)" $'s-d\te1\twaits on #13\topen'
 check "two holds of one story count once, from the first, with its reason" "$(row s-c)" $'s-c\te1\twaits on PR #12\t50'
 check "a story with no board file or rows has epic -" "$(row s-e)" $'s-e\t-\tthe lead asked\t5'
