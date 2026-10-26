@@ -11,7 +11,8 @@
 # with ${FX}/head.hang or ${FX}/checks.hang, that read hangs ${HANG}s before it answers, ignoring SIGALRM
 # as gh (a Go program) does with ${FX}/ignore-alrm;
 # commit statuses come from ${FX}/status, else none; api rate_limit answers ${FX}/reset.<core|graphql>, for
-# the budget asked about, else ${FX}/reset ("<epoch> <time>" of a spent budget's reset), else nothing,
+# the budget asked about, else ${FX}/reset ("<epoch> <time>" of a spent budget's reset), else with
+# ${FX}/reset.in ("<seconds> <time>") a reset that many seconds after this read, else nothing,
 # ${HANG}s late with ${FX}/reset.hang.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -29,10 +30,14 @@ mkdir -p "${P}/.claude/swarm" "${P}/docs/stories" "${ROOT}/bin"; : > "${P}/.clau
 git -C "${P}" init -q
 
 # Wall-clock budgets, in seconds. ROOM is the deadline a case gives its reads: each read gets the time
-# left, at least 1s (within), and a loaded CI runner can take seconds to start python3 and gh. A wait
-# that ends at its deadline ends within SLACK of it (LATE); a hung read (HANG) and a pause past the
-# deadline (PAUSE) run well past LATE, so a wait that missed its deadline shows.
-ROOM=10; SLACK=8; LATE=$((ROOM + SLACK)); HANG=$((LATE + 12)); PAUSE=${HANG}
+# left, at least 1s (within). On a Mac at load average 21 on 14 CPUs (2026-10-26), the slowest wait-pr
+# call that made a head read and a check read took 2.6s, start-up included, which ROOM does not count.
+# A wait that ends at its deadline ends within SLACK of it (LATE); a hung read (HANG) and a pause past
+# the deadline (PAUSE) run well past LATE, so a wait that missed its deadline shows. PAST is a reset
+# wait or retry pause that must outlast ROOM (a grace or deadline); each starts after the read it
+# follows, so swarm.sh's start-up does not eat into it. Only the cases that run to a deadline or wait
+# out a pause pay for these.
+ROOM=7; SLACK=8; LATE=$((ROOM + SLACK)); HANG=$((LATE + 12)); PAUSE=${HANG}; PAST=$((ROOM + 3))
 printf '#!/usr/bin/env bash\nFX="%s"; LOG="%s"; H="%s"; HANG="%s"\n' "${FX}" "${ROOT}/gh.log" "${H}" "${HANG}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
@@ -50,12 +55,17 @@ case "$*" in
     if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
   "api rate_limit"*) [ ! -e "${FX}/reset.hang" ] || sleep "${HANG}"
     case "$*" in *resources.graphql*) b=graphql ;; *) b=core ;; esac
-    cat "${FX}/reset.${b}" 2>/dev/null || cat "${FX}/reset" 2>/dev/null || true ;;
+    cat "${FX}/reset.${b}" 2>/dev/null || cat "${FX}/reset" 2>/dev/null \
+      || { [ ! -e "${FX}/reset.in" ] || { read -r s t < "${FX}/reset.in"; echo "$(($(date +%s) + s)) ${t}"; }; } ;;
   */status*) cat "${FX}/status" 2>/dev/null || echo '{"total_count":0,"statuses":[]}' ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
-chmod +x "${ROOT}/bin/gh"
+# sleep: logs each pause it is given to sleeps.log, then sleeps it, so a case can read wait-pr's pause
+# without waiting out a long one to time it.
+# shellcheck disable=SC2016 # expanded when the stub runs
+printf '#!/bin/sh\necho "$*" >> "%s"\nexec /bin/sleep "$@"\n' "${ROOT}/sleeps.log" > "${ROOT}/bin/sleep"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/sleep"
 
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
@@ -71,7 +81,7 @@ run() { local c=null; [[ -z "${3:-}" ]] || c="\"$3\""; printf '{"name":"%s","sta
 # checks <file> <run>... — a page of check runs.
 checks() { local f="$1" IFS=,; shift; printf '{"total_count":%s,"check_runs":[%s]}\n' "$#" "$*" > "${f}"; }
 RATE="gh: API rate limit exceeded for user ID 1. (HTTP 403)"
-fresh() { rm -rf "${FX}"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"; checks "${FX}/checks" "$(run test completed success)" "$(run lint completed success)"; }
+fresh() { rm -rf "${FX}"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"; : > "${ROOT}/sleeps.log"; checks "${FX}/checks" "$(run test completed success)" "$(run lint completed success)"; }
 # wait_pr [VAR=value]... [arg]... — swarm.sh wait-pr [arg]... ${URL} with no pause unless VARs say
 # otherwise; sets rc and took (seconds), output in ${ROOT}/out.
 wait_pr() {
@@ -148,11 +158,11 @@ is "transient errors either side of a reset wait: six reads" 6 "$(reads)"
 # The grace for a head with no check runs pauses with the reset wait: a wait longer than the grace,
 # then a read still with none, goes on.
 fresh; checks "${FX}/checks.1"; echo "${LIMIT}" > "${FX}/checks.2.err"; checks "${FX}/checks.3"
-echo "$(($(date +%s) + LATE)) 2030-01-01T00:00:18Z" > "${FX}/reset"; wait_pr SWARM_WAIT_PR_GRACE="${ROOM}"
+echo "${PAST} 2030-01-01T00:00:10Z" > "${FX}/reset.in"; wait_pr SWARM_WAIT_PR_GRACE="${ROOM}"
 is "a reset wait longer than the no-check grace: exits 0" 0 "${rc}"
 is "a reset wait longer than the no-check grace: four reads" 4 "$(reads)"
 # The wait moves the default deadline: a reset past it is still waited for.
-fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "$(($(date +%s) + LATE)) 2030-01-01T00:00:18Z" > "${FX}/reset"
+fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "${PAST} 2030-01-01T00:00:10Z" > "${FX}/reset.in"
 wait_pr SWARM_MERGE_CI_SECONDS="${ROOM}"
 is "rate limit resetting past the default deadline: exits 0" 0 "${rc}"
 # An explicit --timeout bounds it: a reset past that ends the wait at once, naming the reset time.
@@ -162,19 +172,25 @@ is "rate limit resetting past --timeout: exits 2" 2 "${rc}"
 check "rate limit resetting past --timeout: names the reset time" said "resets at 2030-01-01T00:01:00Z, past --timeout ${HANG}s"
 check "rate limit resetting past --timeout: ends at once" test "${took}" -lt "${LATE}"
 # With the budget left, the same words are GitHub's secondary limit: no wait for the reset, but the
-# retry pause and up to half again, ending within SLACK of it. RETRY is 2 * SLACK, so twice the retry
-# pause is past that.
-RETRY=$((2 * SLACK))
+# retry pause and up to half again, ending within SLACK of it. The one pause wait-pr sleeps, read from
+# the sleep stub's log, is the retry pause or up to half again, so twice the retry pause shows.
+RETRY=2
+# backs_off — the last wait_pr took the retry pause and ended within SLACK of it, and slept one pause,
+# of RETRY to RETRY * 3 / 2 seconds.
+backs_off() {
+  local s; s="$(cat "${ROOT}/sleeps.log")"
+  [[ "${took}" -ge "${RETRY}" && "${took}" -lt $((RETRY * 3 / 2 + SLACK)) && "${s}" =~ ^[0-9]+$ ]] && ((s >= RETRY && s <= RETRY * 3 / 2))
+}
 fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY="${RETRY}"
 is "rate limit with the budget left: exits 0" 0 "${rc}"
-check "rate limit with the budget left: backs off the retry pause, plus at most half again" test "${took}" -ge "${RETRY}" -a "${took}" -lt $((RETRY * 3 / 2 + SLACK))
+check "rate limit with the budget left: backs off the retry pause, plus at most half again" backs_off
 check "rate limit with the budget left: is retried, with no reset wait" said "retrying after"
 # A secondary limit in its own words is retried the same way, with no read of the budget.
 fresh; echo "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)" > "${FX}/checks.1.err"
 echo "$(($(date +%s) + 2 * HANG)) 2030-01-01T00:01:00Z" > "${FX}/reset"; wait_pr SWARM_WAIT_PR_RETRY="${RETRY}"
 is "secondary rate limit: exits 0" 0 "${rc}"
 is "secondary rate limit: does not read the budget" 0 "$(grep -c "^api rate_limit" "${ROOT}/gh.log")"
-check "secondary rate limit: backs off the retry pause, plus at most half again" test "${took}" -ge "${RETRY}" -a "${took}" -lt $((RETRY * 3 / 2 + SLACK))
+check "secondary rate limit: backs off the retry pause, plus at most half again" backs_off
 # The read of the reset time is bounded by the deadline too: one that hangs ends the wait there.
 fresh; echo "${LIMIT}" > "${FX}/head.1.err"; : > "${FX}/reset.hang"; wait_pr SWARM_WAIT_PR_RETRY="${PAUSE}" --timeout "${ROOM}"
 is "a reset read hanging past --timeout: exits 2" 2 "${rc}"
@@ -229,9 +245,9 @@ wait_pr SWARM_WAIT_PR_GRACE=0
 is "no check runs beside a pending status past the grace: exits 2" 2 "${rc}"
 check "no check runs beside a pending status past the grace: says so" said "no check runs on ${H:0:7}"
 
-# --- The grace starts at the first read that finds no check runs: a head read retried for LATE
+# --- The grace starts at the first read that finds no check runs: a head read retried for PAST
 # seconds first leaves a ROOM grace whole.
-fresh; echo "${RATE}" > "${FX}/head.1.err"; checks "${FX}/checks.1"; wait_pr SWARM_WAIT_PR_RETRY="${LATE}" SWARM_WAIT_PR_GRACE="${ROOM}"
+fresh; echo "${RATE}" > "${FX}/head.1.err"; checks "${FX}/checks.1"; wait_pr SWARM_WAIT_PR_RETRY="${PAST}" SWARM_WAIT_PR_GRACE="${ROOM}"
 is "grace after a retried head read: exits 0" 0 "${rc}"
 is "grace after a retried head read: two check reads" 2 "$(reads)"
 
