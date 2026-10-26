@@ -77,7 +77,8 @@ counts a story only when all of these hold:
 - It has a build record: an ok builder start that no close ended or, for a story with any start
   line, its worktree or `story/<slug>` branch.
 - No `swarm.sh upgrade` runs in this project for its epic, its backlog or every agent: an upgrade
-  stops agents and starts them again. Its ok events line counts as a start.
+  stops agents and starts them again. Its ok events line counts as a start, except for a story
+  reconcile reopened: an upgrade restarts only running agents, so that story stays left out.
 - herdr lists no pane this project opened under its builder's name or `review-<slug>`. No
   `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
 - No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
@@ -98,21 +99,23 @@ review the exit is never an unpinned merge. With one PR and a findings file
 `swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since. With several PRs, or
 no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
 each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
-merges. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
+compares the head wait-pr printed with the exit's `<sha>`: the same, it merges; different, the PR was
+pushed after its review, so it runs `swarm.sh review-agent <slug> <PR URL>` instead, since merge
+refuses the old pin and the line, already seen, would not come back. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
 checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
 story. On 2 it reads why: on a conflict with the base, a builder in the story's worktree merges the
 base in and pushes; on a gh error or the timeout, it runs wait-pr once more, and if it ends the same
 way, lists the story in its report with the reason. A story in review with no PR URL gets the exit
-`gh pr list --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
+`gh pr list -R <the story's repo's origin> --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
 while wait-pr runs and may come back once after it ends.
 
 Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
 hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
-events.tsv are read every poll; git only for a story with a start line and no current builder; `ps`
-once, only when a started story has no agent listed or a ready story has a step-up marker. No gh
-call is made for these lines. Outside herdr, or when herdr's list or `ps` fails, it prints none. A run
-with no `.swarm/lead/seen` yet notes everything else and prints only these lines and `step-up failed:`
-lines on its first read.
+events.tsv are read every poll; git only for a story with a start line and no current builder; herdr's
+JSON and `ps` once, whenever a story with a build record, or a ready story with a step-up marker, is
+left after those reads, before the listing is checked. No gh call is made for these lines. Outside
+herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
+everything else and prints only these lines and `step-up failed:` lines on its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
@@ -143,10 +146,10 @@ gh call, and prints `<what>: <stem>, exit: <exit>`. The `.step-up` marker works 
   is the old builder when the step-up stopped before it closed it: a resume would start a second
   one. When a failure from one of the points listed above, which all come after the close, is logged
   after the story's newest ok `escalate` or ok `story` line, that pane is the new rung's, kept, and
-  the line is printed. A later resume that fails in its checks does not change that. A marker gone by the time its pid is read is a rung that
-  started, not a failure. The story must be ready, since only a ready
-  story steps up, and pass the `no-agent:` filters on kind and `held_for:`. A story in review keeps
-  to the `no-agent:` line, marker or not.
+  the line is printed. A later resume that fails in its checks does not change that. A marker gone
+  by the time its pid is read is a rung that started, not a failure. The story must be ready, since
+  only a ready story steps up, and pass the `no-agent:` filters on kind and `held_for:`. A story in
+  review keeps to the `no-agent:` line, marker or not.
 - Exit: fix the cause the failure line names, then run `swarm.sh step-up --resume <slug>`. With no
   failure line, the step-up was killed partway, and the lead runs the exit. The conductor leaves
   the story alone and does not list it in its report.
@@ -404,14 +407,14 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `top_rung_rounds` (default `2`): `N`: with `escalate_ladder` set, a builder on or above the ladder's top rung is not sent its Nth findings round since it got there (or since the lead last reset the story), or any later one; the story is held for the lead instead (`escalate_ladder` above). A value that is not a whole number of 2 or more is refused, naming the key: at `1` every findings round after the lead lifts a hold would hold the story again
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
-- `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic)
+- `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero. Its events.tsv line says the same, and a `reap` line names the codex it stopped (see the audit log). It ships on (§ Scoping an epic)
 - `fallback_reviewer` (default empty): a model such as `sonnet`. When codex reports a usage limit, `codex-review` starts a review agent on it in codex's place (role `review-fallback`), waits for its findings and prints them in codex's form. Empty keeps `codex skipped: usage limit`. § Building has the details
 - `lead` (default `off`): `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step and an expired login. Every merge row (with `merge = agent`, a `costs: money` merge row stays under needs you), an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, a story a close kept (`review kept story <slug>`, with `swarm.sh review` and `swarm.sh close <slug> --drop`), an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged
 - `merge_admin` (default `off`): `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, so it merges in a repo whose ruleset requires an approving review, which no agent can give. It does so only after the checks it always makes: the head is green, no `costs: money` hold applies, the `--board` or `--release` scope holds, and the head is the one `--head` names. `--admin` skips every rule on the base, not only the review, so `swarm.sh merge` first reads the base's rulesets and branch protection itself. It refuses while a status check they require is absent from the head, while they require the branch up to date (strict) and the head is behind the base, and whenever they hold a rule besides the review, the status checks and rules about pushes (deletion, force pushes, creation): a merge queue, required workflows, signatures, linear history, conversation resolution, deployments, code scanning or push restrictions. That includes the review rule's own thread resolution, and merge methods that leave out the one `swarm.sh merge` picks from the repo's settings. A classic protection field outside the few known to be safe is refused whatever its name, and a 404 from branch protection counts as unprotected only when GitHub says `Branch not protected`, since a token that cannot read protection gets a 404 too. The refusal names the rule. A red head, a held PR or a moved head is still refused before `gh pr merge` runs. Off, `swarm.sh merge` never passes `--admin` and reads none of these
 - `lead_epics` (default `off`): `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through the user or a grant. Any other value stops `swarm.sh` with the file and line
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
 - `agent_env` (default empty): variable names, separated by spaces, that every agent gets with the values of the session that starts it, such as a provider's key (§ Building, **The agents' environment.**)
-- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines. A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set
+- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines and appending a `reap` line to `.swarm/events.tsv` (see the audit log). A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set
 
 ## Scoping an epic
 
@@ -1012,7 +1015,12 @@ unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the
 none, so one stuck builder is one incident. `swarm.sh intervene <kind> "<one line>"` writes one with
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
-first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write. When `status` or `wait` reads an agent's pane, herdr
+first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write.
+A `reap` line records something swarm-dev killed for running too long. Its target is what was
+killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
+with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past
+`TEST_FILE_TIMEOUT`, with the file as target and the outcome `TIMEOUT after <n>s`, to the events.tsv beside the run's `test-runs.tsv`;
+a nested run, whose runs log is set empty, writes none. A command that finishes in time writes no `reap` line. Only those two write it. A fallback reviewer, or its agent when it writes no findings in time, is killed with no `reap` line, so the count is not every kill. When `status` or `wait` reads an agent's pane, herdr
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
 mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API

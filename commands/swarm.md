@@ -125,14 +125,16 @@ Repeat until a step below says stop:
      agent is back by the next poll, it comes back. For a story in review under `merge = agent`
      it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
      no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
-     background and act on its exit, not on the line, once per head. On 0, run the merge. On 1
+     background and act on its exit, not on the line, once per head. On 0, compare the head it
+     printed with the `<sha>` in the exit: the same, run the merge; different (pushed since the
+     review), run `swarm.sh review-agent <slug> <PR URL>` instead. On 1
      (red), start a builder in the story's worktree (`swarm.sh agent`) with a brief naming the
      failing checks, or, if you leave it, list it in your report with the reason:
      `swarm.sh hold` takes only a ready story. On 2, read why it printed: on a conflict with the
      base, have a builder in the story's worktree merge the base in and push; on a gh error or
      the timeout, run wait-pr once more, and if it ends the same way, list the story in your
-     report with the reason. With no PR URL on the story, find its PR with
-     `gh pr list --head story/<slug>` and run the review-agent exit. The line is quiet while
+     report with the reason. With no PR URL on the story, find its PR with the
+     `gh pr list -R <repo> --head story/<slug>` the exit names, and run the review-agent exit. The line is quiet while
      wait-pr runs and may come back once after it ends; that needs nothing new. A
      `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a step-up closed
      the story's builder and then could not start the next model's. Its conductor leaves the story
@@ -141,8 +143,8 @@ Repeat until a step below says stop:
      itself, and the error is in the conductor's pane (`herdr agent read conduct-<epic>`).
      `ok (start unclear)` kept the new builder's pane: read it first (`herdr agent read <slug>`).
      If it took up its brief it is working, so do not resume: tell the user, since no swarm.sh
-     command records that rung. With no such line, the step-up was killed partway: run the exit. If you cannot fix
-     the cause, tell the user. Then start
+     command records that rung. With no such line, the step-up was killed partway: run the exit.
+     If you cannot fix the cause, tell the user. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs

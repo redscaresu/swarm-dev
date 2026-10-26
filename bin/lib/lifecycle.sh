@@ -1929,9 +1929,11 @@ no_agent_name() {
 # events.tsv in order: "<slug> <build> <event> <name> <review-name>". build is 1 when a builder's ok start
 # is newer than its last ok close, - when the slug has no start line at all (never started), else 0.
 # An ok upgrade line (its target the epic, backlog, or - for every agent) restarted its agents, so it
-# counts as a start for the stories in its scope. event is the time of the newest event that explains why no agent is there (an ok close
-# of the builder or review agent, a failed start, a no-agent line) when no sign of a live agent (an ok
-# start, an ok tell) and no hold line came after it, else -. A slug whose newest reconcile reopen (its PR
+# counts as a start for the stories in its scope, but never clears a reopen: it restarts only running
+# agents, and a reopened story's builder was not one. event is the time of the newest event that
+# explains why no agent is there (an ok close of the builder or review agent, a failed start, a
+# no-agent line) when no sign of a live agent (an ok start, an ok tell) and no hold line came after it,
+# else -. A slug whose newest reconcile reopen (its PR
 # closed unmerged) has no ok start after it is left out: unblock --startable names it for the lead from
 # that reopen being its last event, which a lead-woken, no-agent or hold line would hide.
 no_agent_events() {
@@ -1948,7 +1950,7 @@ no_agent_events() {
       }
     }
     NF == 5 && $2 == "upgrade" && $5 ~ /^ok/ {
-      for (x in epic) if ($3 == "-" || $3 == epic[x] || ($3 == "backlog" && epic[x] == "-")) { ev[x] = ""; reo[x] = 0 }
+      for (x in epic) if ($3 == "-" || $3 == epic[x] || ($3 == "backlog" && epic[x] == "-")) ev[x] = ""
       next
     }
     NF == 5 && ($3 in own) {
@@ -1982,25 +1984,70 @@ no_agent_busy() {
     } } END { exit !f }' <<< "${NO_AGENT_PS}"
 }
 
-# story_prs <story-file> — its prs: URLs, space-separated: split on spaces and commas as pr_stories
-# splits them, YAML's [ ] and quotes gone.
-story_prs() {
-  local v
-  v="$(fm "$1" prs)"; v="${v//[][\"\']/}"
-  awk '{ $1 = $1; printf "%s", $0 }' <<< "${v//,/ }"
+# pr_words <prs value> — a prs: value's URLs, space-separated: split on spaces and commas as pr_stories
+# splits them, YAML's [ ] and quotes gone. No subshell, so the poll can split every story's.
+PR_WORDS=""
+pr_words() {
+  local v="${1//[][\"\']/}" u
+  PR_WORDS=""
+  for u in ${v//,/ }; do PR_WORDS+="${PR_WORDS:+ }${u}"; done
+}
+
+# story_prs <story-file> — its prs: URLs, space-separated (pr_words).
+story_prs() { pr_words "$(fm "$1" prs)"; printf '%s' "${PR_WORDS}"; }
+
+# stories_fm <key>... — one line per story on the board, read in one pass: its slug, then each key's
+# value, separated by \x1f (not a tab: read merges empty fields between tabs). A value is fm's: the
+# state file's (BOARD_STATE_DIR) unless the front matter changed from its <key>@base: line, else the
+# front matter's first <key>: line.
+stories_fm() {
+  local f files=() n=0
+  for f in "${BOARD}"/stories/*.md; do
+    [[ -e "${f}" && "${f##*/}" != README.md ]] || continue
+    files+=("${f}"); n=$((n + 1))
+    [[ ! -f "${BOARD_STATE_DIR}/stories/$(basename "${f}" .md)" ]] || files+=("${BOARD_STATE_DIR}/stories/$(basename "${f}" .md)")
+  done
+  [[ ${n} -gt 0 ]] || return 0
+  awk -v keys="$*" -v sdir="${BOARD_STATE_DIR}/stories/" '
+    function val(l, k) { l = substr(l, length(k) + 1); sub(/^ +/, "", l); sub(/\r$/, "", l); return l }
+    function flush(   i, k, v, line) {
+      if (slug == "") return
+      line = slug
+      for (i = 1; i <= nk; i++) { k = K[i]; v = ((k in st) && (!(k in base) || base[k] == own[k])) ? st[k] : own[k]; line = line "\x1f" v }
+      print line
+    }
+    BEGIN { nk = split(keys, K, " ") }
+    FNR == 1 && index(FILENAME, sdir) != 1 {
+      flush(); slug = FILENAME; sub(/.*\//, "", slug); sub(/\.md$/, "", slug)
+      n = 0; split("", own); split("", st); split("", base)
+    }
+    index(FILENAME, sdir) == 1 {
+      for (i = 1; i <= nk; i++) {
+        if (!(K[i] in st) && index($0, K[i] ":") == 1) st[K[i]] = val($0, K[i] ":")
+        if (!(K[i] in base) && index($0, K[i] "@base:") == 1) base[K[i]] = val($0, K[i] "@base:")
+      }
+      next
+    }
+    $0 == "---" { n++; next }
+    n == 1 { for (i = 1; i <= nk; i++) if (!(K[i] in own) && index($0, K[i] ":") == 1) own[K[i]] = val($0, K[i] ":") }
+    END { flush() }' "${files[@]}"
 }
 
 # no_agent_exit <slug> — what the lead does for a no-agent: line, never an unpinned merge. A ready story:
 # `swarm.sh hold <slug> <reason>`. A story in review with one PR whose findings file is a pass on its
 # 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
 # since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
-# <slug> <pr>` for each. A story in review with no PR URL: find it by hand (gh pr list --head
-# story/<slug>), then the review-agent exit; hold takes only a ready story, so it is never that.
+# <slug> <pr>` for each. A story in review with no PR URL: find it by hand in the story's repo (gh pr
+# list -R <its origin> --head story/<slug>, as open_pr asks), then the review-agent exit; hold takes
+# only a ready story, so it is never that.
 no_agent_exit() {
-  local f="${BOARD}/stories/$1.md" head u prs out=""
+  local f="${BOARD}/stories/$1.md" head u prs out="" url
   prs="$(story_prs "${f}")"
   if [[ "$(fm "${f}" status)" != review ]]; then echo "swarm.sh hold $1 <reason>"; return 0; fi
-  if [[ -z "${prs}" ]]; then echo "gh pr list --head story/$1, then swarm.sh review-agent $1 <PR URL>"; return 0; fi
+  if [[ -z "${prs}" ]]; then
+    url="$(git -C "$(repo_dir "$(fm "${f}" repo)")" remote get-url origin 2>/dev/null)" || url="<its repo's origin>"
+    echo "gh pr list -R ${url} --head story/$1, then swarm.sh review-agent $1 <PR URL>"; return 0
+  fi
   head="$(sed -n 's/^head: *//p' "${PROJECT_DIR}/.swarm/reviews/$1.md" 2>/dev/null | head -1)"
   if [[ "${head}" =~ ^[0-9a-f]{40}$ && "${prs}" != *" "* ]] && review_pass "$1" "${head}"; then
     echo "swarm.sh merge --head ${head} ${prs}"; return 0
@@ -2011,56 +2058,64 @@ no_agent_exit() {
 
 # no_agent_lines [record] — `no-agent: <slug>, exit: <exit>` (no_agent_exit) for each started story that
 # no agent works on and that is not the user's to move: status ready, or review under merge = agent;
-# of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money (waiting_on_user
-# hands those to the user); with a build record (an ok builder start no close ended, or its worktree or
-# story/<slug> branch, build_exists, read only for a slug with a start line); not in the scope of an
-# upgrade running here (upgrade_holder), which stops and restarts agents; no pane this project opened (own_panes) listed under its builder's
-# or review-<slug>'s name; no tell pending and no wait-pr or merge on its PR (no_agent_busy); and, for a
-# ready story, no .swarm/briefs/<slug>.step-up marker. It prints one only when an event explains the agent's absence
-# (no_agent_events); with record set, a story with none gets a `no-agent <slug>` events.tsv line, so the
-# next poll prints it. A hold line answers the alert until a new event: the next poll writes one.
-# A ready story with a .step-up marker gets `step-up failed: <slug>, exit: swarm.sh step-up --resume
-# <slug>` instead, unless its step-up still runs (step_up_running) or its builder is still listed.
-# Reads the poll's herdr list (lead_agents, read here when the poll has none), one ps and files; no gh.
-# Prints nothing outside herdr or when herdr's list or ps fails.
+# of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money
+# (waiting_on_user hands those to the user); with a build record (an ok builder start no close ended,
+# or, for a slug with a start line, its worktree or story/<slug> branch, build_exists); not in the
+# scope of an upgrade running here (upgrade_holder), which stops and restarts agents; no pane this
+# project opened (own_panes) listed under its builder's or review-<slug>'s name; no tell pending and no
+# wait-pr or merge on its PR (no_agent_busy); and, for a ready story, no .swarm/briefs/<slug>.step-up
+# marker. It prints one only when an event explains the agent's absence (no_agent_events); with record
+# set, a story with none gets a `no-agent <slug>` events.tsv line, so the next poll prints it. A hold
+# line answers the alert until a new event: the next poll writes one. A ready story with a .step-up
+# marker gets `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` instead, unless its
+# step-up still runs (step_up_running) or its builder is still listed.
+# Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
+# matter in one pass (stories_fm) and events.tsv once; per story only for one that passed those: its
+# costs: walk (a review story), git (a start line but no current builder), then herdr's JSON and one ps
+# once a started story or a marker is left. No gh. Prints nothing outside herdr or when herdr's list
+# or ps fails.
 no_agent_lines() {
-  local live f slug st rows="" built="" marked="" build ev src name rname up="" e
+  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d u marked=""
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
-  if up="$(upgrade_holder)"; then up="${up%% *}"; fi
-  while IFS= read -r f; do
-    slug="$(basename "${f}" .md)"; st="$(fm "${f}" status)"
+  if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
+  while IFS=$'\x1f' read -r slug st kind held kept e repo prs; do
     # shellcheck disable=SC2154 # CFG_merge is assigned in another file
     case "${st}" in
       ready) ;;
-      review) [[ "${CFG_merge}" == agent && -z "$(get_fm "${f}" kept)" && -z "$(costs_tag "${f}")" ]] || continue ;;
+      review) [[ "${CFG_merge}" == agent && -z "${kept}" ]] || continue ;;
       *) continue ;;
     esac
     # Not kind: lead, which every escalated story is (lead_block), and a held one too.
-    agent_kind "$(fm "${f}" kind)" || continue
-    [[ -z "$(get_fm "${f}" held_for)" ]] || continue
+    agent_kind "${kind}" && [[ -z "${held}" ]] || continue
     # A step-up runs only on a ready story, so only a ready one's marker is a failed step-up. It is
     # reported while an upgrade runs too: the upgrade restarts agents, and this story has none.
     if [[ "${st}" == ready && -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]]; then marked+=" ${slug}"; continue; fi
-    e="$(fm "${f}" epic)"; e="${e:--}"
+    e="${e:--}"
     [[ -z "${up}" || ( "${up}" != - && "${up}" != "${e}" && ! ( "${up}" == backlog && "${e}" == - ) ) ]] || continue
-    no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"
+    no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"; pr_words "${prs}"
     rows+=" ${slug} ${name} ${rname} ${e}"
-  done < <(board stories)
+    data+="${slug}"$'\x1f'"${st}"$'\x1f'"${repo}"$'\x1f'"${PR_WORDS}"$'\n'
+  done < <(stories_fm status kind held_for kept epic repo prs)
   [[ -n "${rows}${marked}" ]] || return 0
   # shellcheck disable=SC2086 # rows: space-separated 4-tuples
   [[ -z "${rows}" ]] || while read -r slug build ev name rname; do
-    # Never started (no start line): no git read. Started, its builder no longer current: read the build.
+    # Never started (no start line): nothing more is read for it.
     [[ -n "${slug}" && "${build}" != - ]] || continue
+    d="$(awk -F $'\x1f' -v s="${slug}" '$1 == s { print; exit }' <<< "${data}")"
+    IFS=$'\x1f' read -r _ st repo prs <<< "${d}"
+    # A PR held for the user's merge (pr_held, as costs_tag asks, on prs: split on commas too), or the
+    # story's own costs: or its parents' (money_walk), which also holds one whose prs: is still empty.
+    if [[ "${st}" == review ]]; then
+      [[ -z "$(money_walk "${slug}")" ]] || continue
+      for u in ${prs}; do [[ -z "$(pr_held "${u}")" ]] || continue 2; done
+    fi
     if [[ "${build}" != 1 ]]; then
-      src="$(repo_dir "$(fm "${BOARD}/stories/${slug}.md" repo)")" || continue
+      src="$(repo_dir "${repo}")" || continue
       build_exists "${src}" "${slug}" || continue
     fi
-    built+="${slug} ${ev} ${name} ${rname}"$'\n'
+    built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'
   done < <(no_agent_events ${rows})
-  # The poll read herdr's list already (lead_wake). Here the board's front matter and events.tsv are
-  # read every poll, git only for a story with a start line but no current builder, and herdr's JSON
-  # and ps only once a started story or a marker is left.
   [[ -n "${built}${marked}" ]] || return 0
   live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
   # -ww: the whole command line, never cut at a width. With no process list a pending tell, wait-pr or
@@ -2074,10 +2129,10 @@ no_agent_lines() {
     step_up_running "${slug}" || echo "step-up failed: ${slug}, exit: swarm.sh step-up --resume ${slug}"
   done
   [[ -n "${built}" ]] || return 0
-  while read -r slug ev name rname; do
+  while read -r slug ev name rname prs; do
     [[ -n "${slug}" ]] || continue
     ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
-    ! no_agent_busy "${slug}" "${name}" "$(story_prs "${BOARD}/stories/${slug}.md")" || continue
+    ! no_agent_busy "${slug}" "${name}" "${prs}" || continue
     if [[ "${ev}" == - ]]; then
       [[ "${1:-}" != record ]] || record_event no-agent "${slug}"
       continue

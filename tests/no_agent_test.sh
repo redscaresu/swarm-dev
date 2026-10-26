@@ -11,7 +11,8 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 busy_pid=""
-trap 'unbusy; rm -rf "${ROOT}"' EXIT
+other_pid=""
+trap 'unbusy; [[ -z "${other_pid}" ]] || kill "${other_pid}" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111
@@ -40,17 +41,22 @@ case "$*" in
   *) exit 1 ;;
 esac
 STUB
-# ps: the real one, except that a process list (-A) fails while ${FX}/ps.fail exists, removes the file
-# ${FX}/ps.rm names first (a rung starting between the board read and the process list), and leaves out
-# the pid ${FX}/ps.hide holds (a process started after the list was read).
+# ps: the real one, except that a process list (-A) fails while ${FX}/ps.fail exists, and lists only this
+# run's processes (its fake swarm.sh is under ${ROOT}): another copy of this test running on the machine
+# starts fakes with the same slugs and URLs, which would make a story here look busy. Before the list it
+# removes the file ${FX}/ps.rm names (a rung starting between the board read and the process list), and
+# it leaves out the pid ${FX}/ps.hide holds (a process started after the list was read).
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\ncase " $* " in *" -A "*) [ ! -e "%s/ps.fail" ] || exit 1\n  [ ! -e "%s/ps.rm" ] || rm -f "$(cat "%s/ps.rm")" ;; esac\n%s "$@" | awk -v h="$(cat "%s/ps.hide" 2>/dev/null)" '"'"'h == "" || $1 != h'"'"'\n' "${FX}" "${FX}" "${FX}" "$(command -v ps)" "${FX}" > "${ROOT}/bin/ps"
+printf '#!/bin/sh\ncase " $* " in *" -A "*) [ ! -e "%s/ps.fail" ] || exit 1\n  [ ! -e "%s/ps.rm" ] || rm -f "$(cat "%s/ps.rm")"\n  %s "$@" | grep -F "%s" | awk -v h="$(cat "%s/ps.hide" 2>/dev/null)" '"'"'h == "" || $1 != h'"'"'; exit 0 ;; esac\nexec %s "$@"\n' \
+  "${FX}" "${FX}" "${FX}" "$(command -v ps)" "${ROOT}" "${FX}" "$(command -v ps)" > "${ROOT}/bin/ps"
 chmod +x "${ROOT}/bin/ps"
 # git: the real one, logging each show-ref (a build read from git).
 printf '#!/bin/sh\ncase " $* " in *" show-ref "*) echo "$*" >> "%s" ;; esac\nexec %s "$@"\n' "${ROOT}/git.log" "$(command -v git)" > "${ROOT}/bin/git"
 chmod +x "${ROOT}/bin/git"
 # The fake swarm.sh a busy process runs: ps shows `bash .../swarm.sh <args>` while it sleeps.
 printf 'while :; do sleep 0.2; done\n' > "${ROOT}/fake/swarm.sh"
+# Another program, alive but no swarm.sh: a pid a step-up marker may name once reused.
+cp "${ROOT}/fake/swarm.sh" "${ROOT}/fake/other.sh"
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh"
 
 fails=0
@@ -80,7 +86,7 @@ unbusy() { [[ -z "${busy_pid}" ]] || { kill "${busy_pid}" 2>/dev/null || true; w
 fresh() {
   unbusy
   rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
-    "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${FX}/ps.rm" "${FX}/ps.hide" "${P}/.swarm/upgrade.pid" "${ROOT}"/*.log
+    "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${FX}/ps.rm" "${FX}/ps.hide" "${P}/.swarm/upgrade.pid" "${P}/.swarm/board-state" "${ROOT}"/*.log
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   listed
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
@@ -153,6 +159,12 @@ check "a story reconcile reopened is silent, its worktree kept or not" never_wok
 check "and its last events line is still the reopen" test "$(last_event)" == "reconcile na-o ok (reopened)"
 ev story na-o; ev close na-o; poll
 check "once a new build starts and its builder goes, it fires again" fires na-o "swarm.sh hold na-o <reason>"
+# An upgrade restarts only running agents: a reopened story's builder was not one, so it stays left out.
+fresh; story na-o "kind: code" "status: ready" "epic: e1"; ev story na-o; ev reconcile na-o "ok (reopened)"; built na-o
+poll; ev upgrade e1; poll; poll
+check "reopened, then an upgrade of its epic: still silent" never_woke na-o
+check "and the reopen stays the last events line for its slug" \
+  test "$(awk -F'\t' '$3 == "na-o" { l = $2 " " $5 } END { print l }' "${P}/.swarm/events.tsv")" == "reconcile ok (reopened)"
 
 fresh; story na-c "kind: code" "status: ready"; ev story na-c; built na-c; listed na-c
 ev review-agent na-c; ev close review-na-c
@@ -295,8 +307,10 @@ unbusy
 poll
 check "a marker whose step-up pid is gone, with no failure line and the lock still held, fires within one poll" step_fires na-s
 # A pid that is alive but not a swarm.sh step-up (the pid reused) is no step-up running either.
-fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "$$"
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s
+bash "${ROOT}/fake/other.sh" & other_pid=$!; marker na-s "${other_pid}"
 poll
+kill "${other_pid}" 2>/dev/null || true; wait "${other_pid}" 2>/dev/null || true
 check "a marker whose pid is now another program's fires" step_fires na-s
 fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s
 poll
@@ -355,9 +369,33 @@ fresh "merge = agent"; story na-i "kind: code" "status: review" "prs: ${URL}"; e
 mkdir -p "${P}/.swarm/reviews"; printf 'head: %s\n' "${H}" > "${P}/.swarm/reviews/na-i.md"; poll
 check "a findings file with a head: line but no review is no pass: the exit is review-agent" \
   fires na-i "swarm.sh review-agent na-i ${URL}"
-fresh "merge = agent"; story na-x "kind: code" "status: review"; ev story na-x; built na-x; ev close na-x; poll
-check "a review story with no PR URL is never offered hold, which refuses it: find its PR, then review-agent" \
-  fires na-x "gh pr list --head story/na-x, then swarm.sh review-agent na-x <PR URL>"
+# Its PR is looked for in the story's own repo, a sibling of the project here, by that repo's origin.
+git init -q "${ROOT}/na-sib"; git -C "${ROOT}/na-sib" remote add origin https://github.com/na-owner/na-sib.git
+fresh "merge = agent"; story na-x "kind: code" "status: review" "repo: na-sib"; ev story na-x; ev close review-na-x; poll
+check "a review story with no PR URL is never offered hold, which refuses it: find its PR in its repo, then review-agent" \
+  fires na-x "gh pr list -R https://github.com/na-owner/na-sib.git --head story/na-x, then swarm.sh review-agent na-x <PR URL>"
+
+# costs: money holds its PRs for the user's merge, however prs: is written.
+fresh "merge = agent"; story na-mo "kind: code" "status: review" "costs: money" "prs: [${URL},${URL2}]"
+ev story na-mo; built na-mo; ev close review-na-mo; poll; poll
+check "a costs: money review story whose prs: is [a,b] with no space is the user's: silent" never_woke na-mo
+fresh "merge = agent"; story na-mn "kind: code" "status: review" "costs: money"; ev story na-mn; ev close review-na-mn; poll; poll
+check "a costs: money review story with no PR URL yet is the user's too: silent" never_woke na-mn
+
+# --- the state file swarm.sh wrote wins over the front matter, unless the front matter changed since.
+fresh; story na-e "kind: code" "status: ready"; ev story na-e; built na-e; ev close na-e
+mkdir -p "${P}/.swarm/board-state/stories"; printf 'status: blocked\nstatus@base: ready\n' > "${P}/.swarm/board-state/stories/na-e"
+poll; poll
+check "a story its state file says is blocked is silent though its front matter says ready" never_woke na-e
+fresh; story na-e "kind: code" "status: ready"; ev story na-e; built na-e; ev close na-e
+mkdir -p "${P}/.swarm/board-state/stories"; printf 'status: blocked\nstatus@base: review\n' > "${P}/.swarm/board-state/stories/na-e"
+poll
+check "once the front matter differs from status@base, its own status (ready) counts over the state file's" \
+  fires na-e "swarm.sh hold na-e <reason>"
+fresh "merge = agent"; story na-e "kind: code" "status: review" "prs: ${URL}"; ev story na-e; built na-e; ev close review-na-e
+mkdir -p "${P}/.swarm/board-state/stories"; printf 'status: ready\nstatus@base: review\n' > "${P}/.swarm/board-state/stories/na-e"
+poll
+check "a state file's status: ready over front matter review gives the ready exit" fires na-e "swarm.sh hold na-e <reason>"
 
 # --- a hung herdr: the list is killed after SWARM_LEAD_LIST_WAIT, and the other lines still wake.
 fresh; story na-z "kind: lead" "status: ready" "escalated_from: code" "held_for: paused"
