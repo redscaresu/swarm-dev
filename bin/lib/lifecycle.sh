@@ -678,16 +678,21 @@ step_up_story() {
 # could not start, from the brief and .step-up marker it wrote, once the story still passes
 # step_up_story (a story made kind: lead since gets no agent).
 step_up_resume() {
-  local slug="$1"
+  local slug="$1" rung
   local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1"
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]] \
     || die "step-up --resume: no step-up of '${slug}' waits to start (no .swarm/briefs/${slug}.step-up)"
   # One step-up of a story at a time (ladder_step's lock): a refused resume leaves the marker as it is.
   step_lock "${lock}" || die "step-up --resume: another step-up of ${slug} is running; nothing was started"
+  # The rung read under the lock: a resume that ran between the check above and the lock started it
+  # (start_rung removes the marker) and freed the lock, so this one must start no second builder, and
+  # nothing failed, so it logs nothing. A marker with an empty first line is no rung to start either.
+  rung="$(head -1 "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" 2>/dev/null)" || rung=""
+  [[ -n "${rung}" ]] || { rm -rf "${lock}"; die "step-up --resume: ${slug}'s .swarm/briefs/${slug}.step-up is gone or empty since the check above (a resume that ran meanwhile started the rung); nothing was started"; }
   # Its own pid next, and closed, since a resume only follows a close, so the lead's poll reads the
   # resume as under way from here. From here a refusal is a failed resume too: it logs its
   # step-up:failed line, and the lock goes on any exit.
-  step_up_marker "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" "$(head -1 "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up")" closed
+  step_up_marker "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" "${rung}" closed
   # shellcheck disable=SC2064 # expand now: the slug and lock are local
   trap "step_up_failed '${slug}'; rm -rf '${lock}'" EXIT
   STEP_UP_CLOSED=1   # the step-up that wrote the marker closed the builder
