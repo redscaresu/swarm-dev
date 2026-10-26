@@ -308,6 +308,7 @@ queue = []
 lq = queue if LEAD else need
 bang = [sym("look")]
 waiting = []   # (dir, slug) of the board item each row waits on, where it names one: the first light's age
+merging = set()   # the (dir, slug) items with a merge row
 yours, more = None, 0
 
 def add(rows, row, item=None):
@@ -336,6 +337,7 @@ for l in lines("DASH_WAITING"):
         rows = need if m.group(1) and E["DASH_MERGE"] == "agent" else lq
         what = ("epic " if m.group(2) else "") + m.group(3) + (" (costs money)" if m.group(1) else "")
         item = ("epics" if m.group(2) else "stories", m.group(3))
+        merging.add(item)
         urls = list(URL.finditer(m.group(4)))
         if m.group(1):
             # A held PR is listed once, under the first item naming it (a story and its epic both may).
@@ -379,6 +381,19 @@ for l in lines("DASH_WAITING"):
         lq.append(bang + [(l, "")])
 if more:
     yours.append((f"  +{more} more", "dim"))
+# A started story no agent works on (the lead's no-agent: line) is the lead's, with no_agent_exit's
+# exit, unless that exit is a merge and the story has a merge row already (a review story under merge =
+# agent): one row for one action. A review-agent exit (no passing review) keeps its row. It waits from the event that explains it (DASH_NO_AGENT_AT). A line of another shape
+# comes through as it is.
+for l in lines("DASH_NO_AGENT"):
+    l = l.strip()
+    m = re.match(r"no-agent: (\S+), exit: (.*)$", l)
+    if m:
+        slug = m.group(1)
+        if not (m.group(2).startswith("swarm.sh merge ") and ("stories", slug) in merging):
+            add(lq, bang + [(f"no agent on story {slug}{story_title(slug)}: ", ""), (m.group(2), "dim")], ("no-agent", slug))
+    else:
+        lq.append(bang + [(l, "")])
 # An escalated lead story, impossible or failed on Fable, is the lead's (next's escalated step): waiting_on_user
 # leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left, except for a
 # held story, whose hold reset always lifts (as next says).
@@ -717,14 +732,19 @@ def running_view():
 # the times a person stepped in on those days (`swarm.sh intervene`'s incident lines, of the kinds
 # swarm.sh passes): on the speedometer's line when it fits, else on its own line, which a cut frame
 # gives up last of the lines under the speedometer (after the sparkline, the gauges and the idle line). A board item waits from its newest
-# review, kept, close:<cause> or escalated line in events.tsv, else from its file's last commit.
+# review, kept, close:<cause> or escalated line in events.tsv, else from its file's last commit; a
+# no-agent row from the event that explains it (dash_no_agent_at), else as its story.
 def waited_from(item):
     d, slug = item
+    if d == "no-agent":
+        t = no_agent_at.get(slug)
+        return t if t is not None else waited_from(("stories", slug))
     if slug in moved:
         return moved[slug]
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
+no_agent_at = {s: epoch(t) for s, _, t in (l.partition("\t") for l in lines("DASH_NO_AGENT_AT"))}
 INTERVENE_KINDS = E.get("DASH_INTERVENE_KINDS", "").split()   # swarm.sh's INTERVENE_KINDS
 moved, done_at, stepped_in = {}, {}, 0   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):

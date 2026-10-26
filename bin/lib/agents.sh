@@ -723,20 +723,23 @@ SLOW_PROMPT_TIMEOUT_MS=300000
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), and fails loudly rather than reporting success. It reports the
 # prompt taken on evidence: herdr's reply, or prompt_settle (working, blocked, a turn finished since,
-# or, for an agent whose Claude session read idle before the send, that session busy, waiting, or
-# with the prompt in its log since: DELIVER_LINE, else the file's first non-blank line). It sends it
+# or, for an agent with a Claude session on record, that session showing it: busy or waiting when it
+# read idle before the send, else only the prompt in its log since: DELIVER_LINE, else the file's
+# first non-blank line). herdr reading it idle or `unclear` does not outweigh that session: a new
+# review agent reads so through the turn it is on. It sends it
 # again only on evidence it was not taken: prompt_settle found the agent idle or done with no turn
-# finished since, and, if herdr sent it, that Claude session showed no sign of it. herdr's screen can
+# finished since, and, if herdr sent it, that Claude session, read idle before, showed no sign of it. herdr's screen can
 # read idle through a whole turn (plan-hld-command's four findings tells on 2026-10-24, each sent
-# twice), so a prompt herdr sent to an agent with no session to read (codex, a session Claude Code
-# does not list yet, or one it reads busy, waiting or not at all) is never sent again: when no turn
-# shows, it succeeds with a warning that herdr sent it the brief and did not show the turn start. A
+# twice), so a prompt herdr sent to any other agent (codex, or a session Claude Code does not list
+# yet, or reads busy, waiting or not at all) is never sent again: when prompt_settle finds it idle or
+# done with no turn finished since, it succeeds with a warning that herdr sent it the brief and did
+# not show the turn start. A
 # prompt herdr refused before sending fails at once, naming herdr's code. Anything else (no read
 # before the prompt, no status) fails saying it may or may not have it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before try sent=0 unread=0 sess="" mark="" line=""
+  local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before try sent=0 unread=0 sess="" mark="" line="" resend="" logonly="" was
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
@@ -744,11 +747,16 @@ deliver_prompt() {
     return
   fi
   read -r status before <<< "$(agent_info "${target}")"   # the baseline, before anything goes out
-  # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG) that
-  # Claude Code reads idle: the session to read.
-  if awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n && $4 == "claude" { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null \
-    && [[ "$(session_state "${name}")" == idle ]] && mark="$(session_mark "${name}")"; then
-    sess="${name}" line="${DELIVER_LINE:-$(awk 'NF { print; exit }' "${prompt_file}")}"
+  # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG): the
+  # session to read. Read idle before the send, its busy or waiting is the prompt's work, and the
+  # prompt may go again when nothing shows. Not listed yet (a new agent), busy, waiting or unreadable
+  # before, only its log can say: a new session can be busy on its own start-up, not the prompt.
+  if awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n && $4 == "claude" { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
+    was="$(session_state "${name}")"
+    if mark="$(session_mark "${name}")"; then
+      sess="${name}" line="${DELIVER_LINE:-$(awk 'NF { print; exit }' "${prompt_file}")}"
+      if [[ "${was}" == idle ]]; then resend=yes; else logonly=yes; fi
+    fi
   fi
   for try in 1 2; do
     reply="$(prompt_once "${target}" "${prompt_file}")"
@@ -762,10 +770,10 @@ deliver_prompt() {
       *) [[ $((sent + unread)) -gt 0 ]] || die "${name}: herdr did not send it the brief (${reply}); see herdr agent read ${name}"
          die "${name}: $(sent_note "${sent}" "${unread}"), then could not send it again (${reply}); see herdr agent read ${name}" ;;
     esac
-    verdict="$(prompt_settle "${target}" "${status}" "${before}" "${sess}" "${mark}" "${line}")"
+    verdict="$(prompt_settle "${target}" "${status}" "${before}" "${sess}" "${mark}" "${line}" "${logonly}")"
     case "${verdict}" in
       taken) return 0 ;;
-      again\ *) if [[ ${sent} -gt 0 && -z "${sess}" ]]; then
+      again\ *) if [[ ${sent} -gt 0 && -z "${resend}" ]]; then
           echo "warning: ${name}: $(sent_note "${sent}" "${unread}"), and herdr did not show the turn start (it reads it ${verdict#again } with no turn finished since); it was not sent again, see herdr agent read ${name}" >&2
           return 0
         fi ;;
@@ -837,13 +845,13 @@ agent_info() {
 # as a prompt has to be taken up, so a slow starter still idle after herdr's 5 s is not sent it again.
 SETTLE_READS=$((PROMPT_TIMEOUT_MS / 5000 > 1 ? PROMPT_TIMEOUT_MS / 5000 : 1))
 
-# prompt_settle <target> <status-before> <completion-before> [<name> <mark> <line>] — after a prompt
+# prompt_settle <target> <status-before> <completion-before> [<name> <mark> <line> [logonly]] — after a prompt
 # that went out (or may have) with no status in herdr's reply, read the agent (agent_info) until it
 # shows it took it, and print what came of it, against agent_info's read before the prompt (a status
 # of - or unknown there is no baseline). taken: working, blocked, a completion_seq that was not there
 # before (a turn finished since), or, given <name>, its Claude session showing it took the prompt
-# (session_took past <mark>, for <line>), so a turn herdr's screen misses, or a short one between two
-# reads, counts. "again <status>": no turn ran: idle before and on the last read with no
+# (session_took past <mark>, for <line>; with logonly, its log alone), so a turn herdr's screen misses
+# or reads as unclear, or a short one between two reads, counts. "again <status>": no turn ran: idle before and on the last read with no
 # completion_seq, or done with the same completion_seq. Else "unsure <why>": two failed reads in a
 # row (herdr down), no baseline, or anything else.
 prompt_settle() {
@@ -858,7 +866,7 @@ prompt_settle() {
     esac
     misses=0
     if [[ -n "${known}" && "${c}" != - && "${c}" != "$3" ]]; then echo taken; return; fi
-    if [[ -n "${4:-}" ]] && session_took "$4" "$5" "$6"; then echo taken; return; fi
+    if [[ -n "${4:-}" ]] && session_took "$4" "$5" "$6" "${7:-}"; then echo taken; return; fi
   done
   if [[ -n "${known}" && "${c}" == "$3" ]] && [[ ( "${s}" == idle && "$2" == idle ) || ( "${s}" == "done" && "${c}" != - ) ]]; then echo "again ${s}"
   elif [[ "${s}" == - ]]; then echo "unsure herdr gave no status for it"
@@ -876,17 +884,18 @@ sid = session_id(sys.argv[1], sys.argv[2]); path = session_log(sys.argv[3], sid)
 print(os.path.getsize(path) if path else 0)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
-# session_took <name> <mark> <line> — succeed when <name>'s Claude session shows it took a prompt:
-# Claude Code reads it busy or waiting (one claude_agents call), or its main log has, past byte
+# session_took <name> <mark> <line> [logonly] — succeed when <name>'s Claude session shows it took a
+# prompt: Claude Code reads it busy or waiting (one claude_agents call; not with logonly, for a session
+# that was not idle before the prompt, which makes no call), or its main log has, past byte
 # <mark>, a user prompt (panes.py's is_prompt, not a Task subagent's entry) whose text holds <line>
 # (whitespace aside). Not a tool result, an automated prompt or another tell's: a turn the prompt did
 # not start writes those too.
 session_took() {
-  { claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+  { [[ -n "${4:-}" ]] || claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *; from report import session_log
-log, name, projects, mark, line = sys.argv[1:6]
-if (session_state(log, name, sys.stdin.read() or None) or ("",))[0] in ("busy", "waiting"):
+log, name, projects, mark, line, logonly = sys.argv[1:7]
+if not logonly and (session_state(log, name, sys.stdin.read() or None) or ("",))[0] in ("busy", "waiting"):
     sys.exit(0)
 want, sid = " ".join(line.split()), session_id(log, name)
 path = session_log(projects, sid) if sid else ""
@@ -906,7 +915,7 @@ with open(path, "rb") as f:
             c = " ".join(str(x.get("text") or "") for x in c if isinstance(x, dict) and x.get("type") == "text")
         if want in " ".join(str(c or "").split()):
             sys.exit(0)
-sys.exit(1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "$3" 2>/dev/null
+sys.exit(1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "$3" "${4:-}" 2>/dev/null
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
@@ -1379,8 +1388,8 @@ wait_agent() {
       record_event incident "${name}" "${status}"
       rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
-      # Another step-up still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
-      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"
+      # Another step-up or a restart still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
+      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up or a restart of it is running; wait on its builder again"
       if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
         echo "${out}"
         if [[ ${rc} != "${STEP_UP_BUSY}" && "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"
@@ -1647,7 +1656,7 @@ tell_agent() {
     rc=0; ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}" || rc=$?
     [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
-    [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up of it is running; wait on it, then tell it"
+    [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
   fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
