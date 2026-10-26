@@ -253,8 +253,12 @@ Repeat until a step below says stop:
      (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
    - `stage v<S>`: a tag at or above the minor before v<S> is on the base, and the draft epics `next`'s why
      names carry `stage: v<S>` and an `hld:` naming an agreed HLD that grants `epics`, so they go
-     active with no agreement from the user. Open a board PR named `stage-v<S>` with the dots as
-     dashes (v0.30.0 gives `stage-v0-30-0`): `swarm.sh board-pr start <name>`, set each named epic's
+     active with no agreement from the user. The board PR is named `stage-v<S>` with the dots as
+     dashes (v0.30.0 gives `stage-v0-30-0`). First read its earlier PRs (`gh pr list --head
+     board/<name> --state all --json url,state`): a CLOSED one (closed, not merged) is the user
+     saying not yet. Open no new PR while the user has not answered: tell them `next` names this
+     stage again, that an epic leaves the stage when its `stage:` or `hld:` is dropped, and that you
+     open the PR again only once they say go, then stop. Otherwise open it: `swarm.sh board-pr start <name>`, set each named epic's
      `status: active` there and change nothing else, then `swarm.sh board-pr open <name> "Start stage
      v<S>" <body-file>`, its body naming the epics and the tag. Run `swarm.sh wait-pr <url>` in the
      background and wait for it; if it does not exit 0, tell the user what it printed and stop.
@@ -264,8 +268,10 @@ Repeat until a step below says stop:
      worktree exists, `next` goes on to the steps after this one, and the gate, `status` and `dash`
      list `stage PR awaiting merge: v<S>`, whether its epics are still drafts or the merge has made
      them active. On that line, read the PR (`gh pr list --head board/<name> --state all --json
-     url,state`). Once it has merged or closed, run `swarm.sh board-pr done <name>`, so a later
-     draft of the same stage is not held behind the worktree. While it is open, it is the user's
+     url,state`). Once it has merged, run `swarm.sh board-pr done <name>`, so a later draft of the
+     same stage is not held behind the worktree. Once it is CLOSED without merging, run `swarm.sh
+     board-pr done <name>` too, then stop and tell the user as above: `next` then prints `stage v<S>`
+     again at once, and you do not act on it until the user answers. While it is open, it is the user's
      under `merge = human` with no `merge` grant. When that lists none (`board-pr open` failed), run
      the `board-pr open` line once more, which opens it, and go on as above. If it fails again, stop
      and tell the user what it printed; if it says the worktree changes nothing, run `swarm.sh
