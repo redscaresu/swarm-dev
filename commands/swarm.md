@@ -127,8 +127,9 @@ Repeat until a step below says stop:
      `.swarm/reviews/<slug>.md` names the PR's head now, and the file has a `## Findings` section
      and no `head moved:` line; otherwise review again. When the file says `codex skipped`, read
      the diff yourself in codex's place. Also run `swarm.sh wait-pr <PR URL>` in the background,
-     and on its exit 2 do as the `no-agent:` arm below says. The PR passes when the review finds
-     nothing to fix and wait-pr exits 0 on the same head. Then run
+     and on its exit 2 do as the `no-agent:` arm below says. Log each finding you decline with
+     `swarm.sh log-finding --declined <reason> --reviewer <who> <kind> <PR URL> '<text>'`. The PR
+     passes when you fix none of the review's findings and wait-pr exits 0 on the same head. Then run
      `swarm.sh review <slug> <PR URL>`, which clears the line and hands the PR on to merge. For
      findings to fix, red checks, or a worktree review-agent refuses (uncommitted changes, or not
      at the PR's head), start a builder in the story's worktree (`swarm.sh agent`) with a brief
