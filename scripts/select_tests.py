@@ -11,8 +11,9 @@
 # select_tests.py --functions prints, one per line, the bin/ functions those changes reach: each
 # changed line of bin/swarm.sh or bin/lib/*.sh, at the merge base and now, as <file>:<function>, or
 # <file>:arm <cmd> in an arm of bin/swarm.sh's dispatch case; for a changed bin/lib/*.py, each
-# function whose body names it. It prints `full` alone, and says why on stderr, for a line in no
-# function (top level, a setting), a .py no function names, or a git command that fails.
+# function whose body names it or a .py that imports it. It prints `full` alone, and says why on
+# stderr, for a line in no function (top level, a setting), a .py no function names or a script runs,
+# or a git command that fails.
 # Both read the map and tests/ of the git checkout the current directory is in, and exit 2 on a map
 # that does not parse or lists a test file that is not there.
 import glob
