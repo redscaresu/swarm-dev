@@ -124,9 +124,11 @@ Repeat until a step below says stop:
      offered to merge. Start a review with `swarm.sh review-agent <slug> <PR URL>`, wait for it with
      `swarm.sh wait review-<slug>` in the background, then close the review agent
      (`swarm.sh close review-<slug>`). A review counts only when the `head:` line in
-     `.swarm/reviews/<slug>.md` names the PR's head now, and the file has no `head moved:` line;
-     otherwise review again. If the review passes, run `swarm.sh review <slug> <PR URL>`,
-     which clears the line and hands the PR on to merge. If it does not, or the PR is not worth
+     `.swarm/reviews/<slug>.md` names the PR's head now, and the file has a `## Findings` section
+     and no `head moved:` line; otherwise review again. Also run `swarm.sh wait-pr <PR URL>` in the
+     background: the PR passes when that review finds nothing to fix and wait-pr exits 0 on the
+     same head. Then run `swarm.sh review <slug> <PR URL>`, which clears the line and hands the PR
+     on to merge. If it does not pass, or the PR is not worth
      saving, run `swarm.sh close <slug> --drop` to close the PR and send the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
      and no tell on the way. Run the exit it names. For a ready story it is
