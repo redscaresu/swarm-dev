@@ -235,7 +235,7 @@ out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 check "with status failing, --check says status could not be read" unread "alpha: agents and Waiting on you: status could not be read"
 nostatus() { ! grep -qE "^alpha: (agents working|running|PRs waiting for a merge|stories only you or the lead can run|agents waiting on a prompt): " <<< "${out}"; }
 check "with status failing, --check compares none of the fields status owns" nostatus
-check "mutant: next's step fails" mutant next swarm.sh 's/^    _step)  next_step ;;/    _step)  exit 3 ;;/'
+check "mutant: next's step fails" mutant next swarm.sh 's/^    _step)  /    _step)  exit 3; /'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 # shellcheck disable=SC2016 # the script's own $1 and $2
 check "with next's step failing, --check exits 1 naming next (exit ${rc}: ${out})" \
@@ -286,6 +286,19 @@ chmod +x "${ROOT}/garbled/herdr"
 check "with an unreadable agent list, status says herdr gave none" has "(herdr gave no agent list)" "$(PATH="${ROOT}/garbled:${PATH}" HERDR_ENV=1 sw "${A}" status)"
 out="$(PATH="${ROOT}/garbled:${PATH}" sw "${A}" dash --check)" && rc=0 || rc=$?
 check "with an unreadable agent list, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+# herdr's agent list fails: status's No agent and Agents lines both say so, and dash draws no running
+# gauge, so --check does not compare it.
+mkdir -p "${ROOT}/nolist"
+cat > "${ROOT}/nolist/herdr" <<STUB
+#!/bin/sh
+[ "\$1 \$2" != "agent list" ] || exit 1
+exec "${ROOT}/bin/herdr" "\$@"
+STUB
+chmod +x "${ROOT}/nolist/herdr"
+check "with no agent list, status's Agents line says herdr gave none" \
+  has "Agents: herdr gave no agent list, so their states are not available" "$(PATH="${ROOT}/nolist:${PATH}" HERDR_ENV=1 sw "${A}" status)"
+out="$(PATH="${ROOT}/nolist:${PATH}" sw "${A}" dash --check)" && rc=0 || rc=$?
+check "with no agent list, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
 
 # --check draws nothing, so it refuses the flags that change how a frame is drawn.
 out="$(sw "${A}" dash --check --watch 30 2>&1)" && rc=0 || rc=$?

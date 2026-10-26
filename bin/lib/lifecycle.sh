@@ -2030,6 +2030,8 @@ LEAD_POLL="${SWARM_LEAD_POLL:-30}"    # seconds between wait --lead's reads of t
 # wait --lead's own files, kept out of STATE_DIR, whose files close reads as tab records.
 LEAD_DIR="${PROJECT_DIR}/.swarm/lead"
 LEAD_SEEN="${LEAD_DIR}/seen"          # the lead's queue at wait --lead's last read, kept across runs
+# shellcheck disable=SC2034 # board.sh reads it
+NEXT_SEEN="${LEAD_DIR}/next-seen"     # the no-agent: lines swarm.sh next named as its step (next_report)
 LEAD_GREEN="${LEAD_DIR}/green"        # "<PR URL> <sha>" per head ci_gate passed, so it runs once per head
 LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one takes over from
 LEAD_HEADS="${LEAD_DIR}/heads"        # each review item's verdict from the last heads pass (lead_heads)
@@ -2153,7 +2155,8 @@ lead_queue() {
   done < <(lead_review_items)
   # A verdict on a head read before its item left review says nothing about the head it comes back with.
   [[ ! -f "${LEAD_HEADS}" ]] || { printf '%s' "${keep}" > "${LEAD_HEADS}.tmp" && mv "${LEAD_HEADS}.tmp" "${LEAD_HEADS}"; }
-  no_agent_lines record
+  # A list it could not check (2) wakes no one; the other lines above still do.
+  no_agent_lines record || true
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
@@ -2342,12 +2345,13 @@ no_agent_exit() {
 # costs: walk (a review story), git (a start line but no current builder), then herdr's JSON and one ps
 # once a started story or a marker is left. No gh. dash (dash_render) hands it its own herdr list
 # instead, in LEAD_AGENTS and LEAD_AGENTS_OK with LEAD_AGENTS_READ set, so it runs from outside a herdr
-# pane too. Prints nothing when it has no herdr list (outside a pane, unless dash handed it one) or
-# when herdr's list or ps fails.
+# pane too. Prints nothing and returns 2 when it could not check: no herdr list (outside a pane,
+# unless dash handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
+# with or without lines.
 no_agent_lines() {
   local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d u marked=""
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
-  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 2
   if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
   while IFS=$'\x1f' read -r slug st kind held kept e repo prs; do
     # shellcheck disable=SC2154 # CFG_merge is assigned in another file
@@ -2387,10 +2391,10 @@ no_agent_lines() {
     built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'
   done < <(no_agent_events ${rows})
   [[ -n "${built}${marked}" ]] || return 0
-  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 2
   # -ww: the whole command line, never cut at a width. With no process list a pending tell, wait-pr or
   # merge, or a running step-up, cannot be ruled out, so nothing is printed, as for herdr's list.
-  NO_AGENT_PS="$(ps -A -ww -o pid=,command= 2>/dev/null)" || return 0
+  NO_AGENT_PS="$(ps -A -ww -o pid=,command= 2>/dev/null)" || return 2
   for slug in ${marked}; do
     # A pane listed under the builder's name may be the old builder, never closed, unless the marker
     # says the close was done (step_up_closed): then it is the new rung's, kept or left behind.
@@ -2409,6 +2413,16 @@ no_agent_lines() {
     fi
     echo "no-agent: ${slug}, exit: $(no_agent_exit "${slug}")"
   done <<< "${built}"
+  return 0
+}
+
+# no_agent_from <herdr agent list JSON> — no_agent_lines read from a list the caller already holds
+# (status, dash), so herdr is not asked again, with its exit (2: could not check). Read-only (no
+# record). The list is local to the call, so it never reaches a later lead_agents.
+no_agent_from() {
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  local LEAD_AGENTS="$1" LEAD_AGENTS_OK="${1:+1}" LEAD_AGENTS_READ=1
+  no_agent_lines
 }
 
 # step_up_running <slug> — true while the process <slug>'s .step-up marker names on its `pid <n>` line

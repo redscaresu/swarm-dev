@@ -91,6 +91,23 @@ Repeat until a step below says stop:
      handle the step as `wait <conductor>`. Otherwise handle it as `story <slug>`. Once its build
      has started, `next` names the usual steps for it: `resume`, `wait`, or the gate with its PR
      waiting on a merge.
+   - `no-agent <slug>`: the story's build started, but no agent works on it and no tell, wait-pr
+     or merge is running for it. It is the line `wait --lead` prints as
+     `no-agent: <slug>, exit: <exit>`, and `next` names it ahead of a conductor's wait so the wait
+     cannot hide it. The why ends with the exit. A conductor may still be working behind this
+     step: when `swarm.sh status` lists one with no report, start its watchers before the exit,
+     `swarm.sh wait --until-report <conductor>` for each one and `swarm.sh wait --lead`, in the
+     background, in the same response that read `next`. The exit can be a backgrounded wait-pr
+     and then a merge, and the conductor must not go unwatched while they run. When one of those
+     waits returns, act on it as `wait <agent>` says. Then run the exit as that line's handling
+     under `wait <agent>` says: for a ready story, `swarm.sh restart <slug>` or
+     `swarm.sh hold <slug> <reason>`; for one in review, the merge, review-agent or `gh pr list`
+     the exit names, with `swarm.sh wait-pr <PR URL>` first only before the merge.
+     `next` names each line once, so its next run goes on to the other steps even when the exit did
+     not clear the story. If that leaves the story stuck, list it for the user
+     with why. While a conductor works, `next` also starts conductors for other ready work and prints
+     `started:` or `no conductor` lines after the why: handle them as under `wait <agent>`. Then go
+     back to 1.
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns
