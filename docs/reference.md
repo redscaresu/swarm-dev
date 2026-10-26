@@ -120,6 +120,17 @@ listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no
 `.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
 
+**`next` and `status` name it first too.** `next` reads the same lines, without writing an
+events.tsv line, and when there is one it prints `no-agent <slug>` as its step. A pane that went
+with no event shows there once a `wait --lead` poll has written its `no-agent` line. The why ends with the
+line's exit. The step comes after `fix-main` and before a conductor's `wait` or `collect`, since
+the lead would otherwise wait on the conductor and never see the story. Working out the step makes
+no gh call, because `dash` reads it every frame. `status` prints a `No agent` section before its agents, one line per
+story: `<slug>, exit: <exit>`. With no such story it prints no section. It needs only herdr's
+agent list, so a failed pane list still shows it. Outside herdr, or when herdr gives no agent list, it
+says it did not check. `hooks/lead-stop.sh` does not know the `no-agent` step, so it
+allows the lead's stop on it.
+
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
 missed. That rule lives only in the lead's prompt, and the lead forgot it: on 2026-10-25 the user
@@ -758,7 +769,8 @@ with its time, and waits on the builder again. It never closes or tells a builde
 a dialog is not an attempt. Any other dialog, and every permission or tool prompt, it leaves alone.
 `/swarm-dev:swarm` does the same for the lead's one-off stories.
 
-**Watching it.** `swarm.sh status` lists the agents that need a look (waiting on a prompt, an empty
+**Watching it.** `swarm.sh status` first lists, under No agent, each started story no agent works on,
+with its exit (§ The lead). Then it lists the agents that need a look (waiting on a prompt, an empty
 pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose login expired,
 which only your `/login` clears), what waits on you, and the next step. A Stacked section, shown
 only when it has a line, lists each stacked build that has to catch up with a parent. It reads the
@@ -2124,7 +2136,7 @@ changes merge's exit code.
 | `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh init` | Set a project up, from its git root: the board templates, `.claude/swarm/` with a commented `commit_trailers` line, the `.gitignore` lines, a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch, and fails when make has no `check` target, with a gate (`.github/swarm-board-only.sh`) that skips a PR or push changing only the board's own files (with workflows already there, it writes the gate and prints the step to add; a board outside the repo gets no gate; when origin's default branch can't be found, no CI), and a pre-commit hook that runs `make check` except on a commit that changes only the board's own files (when a hook exists or `core.hooksPath` is set, it writes none and prints the lines to add before any `exec`, or, for a global `core.hooksPath`, says to add them nowhere there). It ends by listing the files it wrote that git does not track yet, to commit. A second run changes nothing. |
-| `swarm.sh status` | Show agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
+| `swarm.sh status` | Show started stories with no live agent (No agent, with each one's exit), agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights, and a third when someone had to step in. `swarm.sh dash --project <dir>` (repeatable) draws several projects. `swarm.sh dash --check` compares each figure with the command that owns it and exits 1 naming each one that differs. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |

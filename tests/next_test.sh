@@ -1457,6 +1457,69 @@ if [[ "${out}" == *"warning: swarm.sh conduct e4 failed ("*"); the lead's swarm.
   echo "FAIL next run by an agent, one start failing: '${out}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}" "${dir}-wt"
 
+# A started story whose builder's pane is gone (no_agent_lines' no-agent: line) comes before a working
+# conductor's wait, which would hide it, with the line's exit as its why; fix-main still comes first.
+# herdr lists the conductor, and the builder too while ${dir}/builder exists; gh logs each call and fails.
+na_project() {
+  dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+  [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+  (
+    cd "${dir}" && git init -q && mkdir -p docs/stories docs/epics bin .swarm/state "${dir}-wt/nxna-a"
+    item epics/e1.md 'status: active'
+    item stories/nxna-a.md 'status: ready' 'kind: code' 'epic: e1'
+    printf 'w:7 conduct-e1\nw:8 nxna-a\n' > .swarm/state/tab
+    printf '2026-10-26T10:00:00Z\tstory\tnxna-a\t-\tok\n2026-10-26T10:30:00Z\tclose\tnxna-a\t-\tok\n' > .swarm/events.tsv
+    printf '2026-10-26\tcode\tnxna-a\tclaude\tsonnet\thigh\ts-nxna-a\n' > .swarm/agents.tsv
+  )
+  printf '#!/bin/sh\nD="%s"\n' "${dir}" > "${dir}/bin/herdr"
+  cat >> "${dir}/bin/herdr" <<'STUB'
+b=""; [ ! -e "${D}/builder" ] || b=',{"name":"nxna-a","agent_status":"idle","pane_id":"w:8"}'
+case "$1 $2" in
+  "pane list") [ ! -e "${D}/panes.fail" ] || exit 1; echo '{"result":{"panes":[{"pane_id":"w:7"},{"pane_id":"w:8"}]}}' ;;
+  *) echo "{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"idle\",\"pane_id\":\"w:7\"}${b}]}}" ;;
+esac
+STUB
+  printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\nexit 1\n' "${dir}" > "${dir}/bin/gh"
+  chmod +x "${dir}/bin/herdr" "${dir}/bin/gh"
+}
+# na_run <command> — swarm.sh <command> inside herdr in ${dir}, its stdout in out.
+na_run() { out="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" "$1" 2>/dev/null)" || true; }
+NA_EXIT="swarm.sh restart nxna-a, or swarm.sh hold nxna-a <reason>"
+na_project; na_run next; record_step "${out}"
+if [[ "${out}" == "no-agent nxna-a"$'\n'*"; run its exit: ${NA_EXIT}"* ]]; then echo "ok   a started story with no agent comes before a working conductor's wait, its why naming the exit"
+else echo "FAIL a started story with no agent before a working conductor's wait: ${out}"; fails=$((fails + 1)); fi
+# next_step alone (_step), as dash and hooks/lead-stop.sh read it: next adds conductors_queued's gh
+# calls for its lines past the why, whatever the step.
+rm -f "${dir}/gh.log"; na_run _step
+if [[ "${out%%$'\n'*}" == "no-agent nxna-a" && ! -s "${dir}/gh.log" ]]; then echo "ok   next's no-agent arm makes no gh call"
+else echo "FAIL next's no-agent arm: ${out%%$'\n'*}, gh calls: $(paste -sd'|' - < "${dir}/gh.log" 2>/dev/null)"; fails=$((fails + 1)); fi
+na_run status
+if [[ "${out}" == "No agent"$'\n'"  nxna-a, exit: ${NA_EXIT}"$'\n\n'"Agents"* ]]; then echo "ok   status prints the No agent section first, with the story and its exit"
+else echo "FAIL status's No agent section: ${out}"; fails=$((fails + 1)); fi
+# herdr's pane list fails but its agent list answers: the No agent section needs only the agent list.
+touch "${dir}/panes.fail"; na_run status; rm -f "${dir}/panes.fail"
+if [[ "${out}" == "No agent"$'\n'"  nxna-a, exit: ${NA_EXIT}"$'\n\n'"Agents: not inside herdr"* ]]; then echo "ok   status prints the No agent section when only herdr's pane list fails"
+else echo "FAIL status's No agent section with herdr's pane list failing: ${out}"; fails=$((fails + 1)); fi
+touch "${dir}/builder"; na_run next; record_step "${out}"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" ]]; then echo "ok   with the builder listed, next waits on the conductor"
+else echo "FAIL with the builder listed, next: ${out}"; fails=$((fails + 1)); fi
+na_run status
+if [[ "${out}" != *"No agent"* && "${out}" == "Agents"* ]]; then echo "ok   status prints no No agent section when every started story has a live agent"
+else echo "FAIL status with every started story's agent live: ${out}"; fails=$((fails + 1)); fi
+rm -f "${dir}/builder"
+printf '2026-10-26T11:00:00Z\tmain-red\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t-\to/r main e2e (failure)\n' >> "${dir}/.swarm/events.tsv"
+(cd "${dir}" && item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: code')
+na_run next; record_step "${out}"
+if [[ "${out%%$'\n'*}" == "fix-main fix-main-aaaaaaa" ]]; then echo "ok   a red main's fix-main comes before a story with no agent"
+else echo "FAIL a red main with a story with no agent: ${out}"; fails=$((fails + 1)); fi
+rm -rf "${dir}" "${dir}-wt"
+# Outside herdr, status says the check needs it.
+na_project
+out="$(cd "${dir}" && env -u HERDR_ENV PATH="${dir}/bin:${PATH}" bash "${SWARM}" status 2>&1)" || true
+if [[ "${out}" == "No agent: not checked; it needs herdr's agent list"* ]]; then echo "ok   status outside herdr says the No agent check needs herdr"
+else echo "FAIL status outside herdr: ${out}"; fails=$((fails + 1)); fi
+rm -rf "${dir}" "${dir}-wt"
+
 # Every step recorded above has an arm in commands/swarm.md: an arm line that starts
 # '   - `<step>' followed by a space or a backtick. A step with none is one the lead's loop cannot act on.
 # The one-off cases that keep only next's why line, or its stdout with its exit status, record nothing.
@@ -1474,7 +1537,7 @@ missing_arms() {
 # shellcheck disable=SC2207 # steps are single words
 seen=($(sort -u "${STEPS}"))
 unrecorded=""
-for step in fix-main wait collect conduct resume story stage plan-epic plan-hld hld escalated release gate 'done'; do
+for step in fix-main no-agent wait collect conduct resume story stage plan-epic plan-hld hld escalated release gate 'done'; do
   grep -qx -- "${step}" "${STEPS}" || unrecorded="${unrecorded} ${step}"
 done
 if [[ -z "${unrecorded}" ]]; then echo "ok   the cases above reached every step"; else

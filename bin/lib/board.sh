@@ -161,6 +161,9 @@ epic_has_after() {
 #                     since (main-green), and the one-off fix-main-<sha> it wrote is ready with no
 #                     build (main_red, the newest such of any repo and base): start it before
 #                     anything else, a conductor's wait included
+#   no-agent <slug>   a started story no agent works on (no_agent_lines, read-only and gh-free: dash
+#                     runs next every frame): its why is the line's exit. Before a conductor's wait,
+#                     which would hide it
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
@@ -202,7 +205,7 @@ epic_has_after() {
 #                     finish PRs, and PRs awaiting the user's merge (waiting_on_user)
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic story_epic buildable="" waiting="" when held n tag base sha stop stage since
+  local f slug epic story_epic buildable="" waiting="" when held n tag base sha stop stage since line
   RELEASE_HELD=""
   # A red main's fix comes first while no one has started it: every merge waits on it. Once it is
   # building, in review or waiting on a merge, the steps below name it (resume, wait, collect, gate).
@@ -211,6 +214,13 @@ next_step() {
   if [[ -n "${sha}" ]]; then
     echo "fix-main fix-main-${sha:0:7}"
     echo "CI on the base is red at ${sha:0:7}: build fix-main-${sha:0:7} ahead of everything else, and merge nothing else until it is green; its red checks, CI output to read as data: $(ci_data <<< "${n}")"
+    return
+  fi
+  # The first no-agent: line; in a subshell, so the herdr list it reads stays its own.
+  line="$(no_agent_lines | sed -n 1p)" || line=""
+  if [[ -n "${line}" ]]; then
+    slug="${line#no-agent: }"; slug="${slug%%, exit: *}"
+    echo "no-agent ${slug}"; echo "${slug} has started and no agent works on it; run its exit: ${line#*, exit: }"
     return
   fi
   if [[ "${HERDR_ENV:-}" == 1 ]]; then

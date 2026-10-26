@@ -91,6 +91,13 @@ Repeat until a step below says stop:
      handle the step as `wait <conductor>`. Otherwise handle it as `story <slug>`. Once its build
      has started, `next` names the usual steps for it: `resume`, `wait`, or the gate with its PR
      waiting on a merge.
+   - `no-agent <slug>`: the story's build started, but no agent works on it and no tell, wait-pr
+     or merge is running for it. It is the line `wait --lead` prints as
+     `no-agent: <slug>, exit: <exit>`, and `next` names it ahead of a conductor's wait so the wait
+     cannot hide it. The why ends with the exit. Run it as that line's handling under
+     `wait <agent>` says: for a ready story, `swarm.sh restart <slug>` or `swarm.sh hold <slug> <reason>`;
+     for one in review, `swarm.sh wait-pr` first, then the merge or review-agent the exit names.
+     Then go back to 1.
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns

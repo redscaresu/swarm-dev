@@ -1805,15 +1805,28 @@ stacked_lines() {
   done < <(board stories)
 }
 
-# status [--all] — one summary for the user: the agents that need a look or are working, the stacked
+# status [--all] — one summary for the user: first a No agent section with each started story no
+# agent works on (no_agent_lines, from status's own herdr list; none when there are none), then the
+# agents that need a look or are working, the stacked
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
 # waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
 status_report() {
-  local all="${1:-}" agents panes waiting sessions
-  if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
+  local all="${1:-}" agents="" panes waiting sessions noagent
+  # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
+  if [[ "${HERDR_ENV:-}" != 1 ]]; then
+    echo "No agent: not checked; it needs herdr's agent list, so run status inside a herdr pane"
+  elif agents=$(herdr agent list 2>/dev/null); then
+    # shellcheck disable=SC2034 # no_agent_lines (lifecycle.sh) reads them
+    noagent="$(LEAD_AGENTS="${agents}"; LEAD_AGENTS_OK=1; LEAD_AGENTS_READ=1; no_agent_lines)" || noagent=""
+    noagent="${noagent//no-agent: /}"
+    [[ -z "${noagent}" ]] || printf 'No agent\n  %s\n\n' "${noagent//$'\n'/$'\n'  }"
+  else
+    agents=""; echo "No agent: not checked; herdr gave no agent list"
+  fi
+  if [[ -n "${agents}" ]] && panes=$(herdr pane list 2>/dev/null); then
     sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
     # Each agent in this project's panes, read once (pane_check): when its pane last changed, and an
     # API error or auto mode denial it stopped on.
