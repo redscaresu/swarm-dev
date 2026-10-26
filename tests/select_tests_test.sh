@@ -54,7 +54,8 @@ echo 'echo plan-swarm.md old-board-only.sh merge-guard.shx' > "${G}/tests/x_test
 # --functions' fixture: a dispatch case in bin/swarm.sh, and functions of both forms in bin/lib/x.sh,
 # one of which runs named.py, which imports helper.py, which imports util.py; another imports
 # inline.py after a ;. lone.py is named only in a top-level comment, quiet.py only in a comment in a
-# function. noted is a one-liner with a comment.
+# function. named.py mentions solo.py only in a comment and aside.py only in its docstring. noted is a
+# one-liner with a comment.
 cat > "${G}/bin/swarm.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -98,7 +99,10 @@ after() {
   echo after
 }
 EOF
-printf 'import helper\nprint(helper.X)\n' > "${G}/bin/lib/named.py"
+printf '"""Prints helper.X; aside.py is only mentioned here."""\nimport helper  # solo.py is only mentioned here\nprint(helper.X)\n' \
+  > "${G}/bin/lib/named.py"
+echo 'print(3)' > "${G}/bin/lib/solo.py"
+echo 'print(4)' > "${G}/bin/lib/aside.py"
 printf 'import util\nX = util.Y\n' > "${G}/bin/lib/helper.py"
 echo 'Y = 1' > "${G}/bin/lib/util.py"
 echo 'print(1)' > "${G}/bin/lib/lone.py"
@@ -180,6 +184,8 @@ check "an edit to a .py imported after a ; gives the function that imports it" \
   "$(fn "echo 'Y = 2' >> bin/lib/inline.py; ${commit}")" bin/lib/x.sh:run_inline
 check "a .py named only in a top-level comment gives full" "$(fn "echo 1 >> bin/lib/lone.py; ${commit}")" full
 check "a .py named only in a comment in a function gives full" "$(fn "echo 1 >> bin/lib/quiet.py; ${commit}")" full
+check "a .py named only in another .py's comment gives full" "$(fn "echo 1 >> bin/lib/solo.py; ${commit}")" full
+check "a .py named only in another .py's docstring gives full" "$(fn "echo 1 >> bin/lib/aside.py; ${commit}")" full
 check "a .py a script runs gives full" \
   "$(fn "echo 'python3 bin/lib/named.py' >> scripts/board-only.sh; echo 1 >> bin/lib/named.py")" full
 check "a .py a test runs gives full" \

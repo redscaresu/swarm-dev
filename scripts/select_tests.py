@@ -19,10 +19,12 @@
 # is in, and exit 2 on a map that does not parse or lists a test file that is not there; --functions
 # reads no map.
 import glob
+import io
 import os
 import re
 import subprocess
 import sys
+import tokenize
 
 MAP = "scripts/test-map.tsv"
 TESTS = "tests/*_test.sh"
@@ -279,11 +281,34 @@ def names_py(text, path):
                 or re.search(rf"(^|;)\s*(from|import)\s.*(?<![\w.]){module}(?!\w)", text, re.M))
 
 
-# runners(root, path) — (the functions whose code, comments aside, names a bin/lib .py, or one that
-# imports or names it in turn, None), or (None, why) for full: one of those a hook, script or test
+# py_code(text) — a .py's text with its comments and docstrings (a string that is a statement of its
+# own) blanked, so a .py that only mentions another does not count as running it; the text as it is
+# when it does not tokenize.
+def py_code(text):
+    lines = text.split("\n")
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return text
+    starts = (tokenize.NEWLINE, tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT)
+    for k, t in enumerate(tokens):
+        lone = t.type == tokenize.STRING and (k == 0 or tokens[k - 1].type in starts) \
+            and k + 1 < len(tokens) and tokens[k + 1].type in (tokenize.NEWLINE, tokenize.ENDMARKER, tokenize.COMMENT)
+        if t.type != tokenize.COMMENT and not lone:
+            continue
+        (r0, c0), (r1, c1) = t.start, t.end
+        for r in range(r0, r1 + 1):
+            line = lines[r - 1]
+            a, b = (c0 if r == r0 else 0), (c1 if r == r1 else len(line))
+            lines[r - 1] = line[:a] + " " * (b - a) + line[b:]
+    return "\n".join(lines)
+
+
+# runners(root, path) — (the functions whose code, comments aside, names a bin/lib .py, or one whose
+# code, comments and docstrings aside, imports or names it in turn, None), or (None, why) for full: one of those a hook, script or test
 # runs, or one no function and no other .py names.
 def runners(root, path):
-    pys = {p: read(root, p) for p in in_tree(root, (PY_FILES,))}
+    pys = {p: py_code(read(root, p)) for p in in_tree(root, (PY_FILES,))}
     shells = {}
     for sh in in_tree(root, SHELL_FILES):
         text = read(root, sh)
