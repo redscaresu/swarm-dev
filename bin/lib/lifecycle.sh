@@ -2300,14 +2300,166 @@ no_agent_lines() {
   done <<< "${built}"
 }
 
+# LEAD_RESENT: "<agent>\t<time>\t<command>\t<n>" per events.tsv delivery line resend_pass is done with,
+# <n> telling apart lines alike to the second; the same with "\tpending" for an Enter about to go. RESEND_SLACK: how long, in seconds, before a tell's line
+# a turn its prompt started can be stamped: tell refuses a working agent; each of deliver_prompt's two
+# tries waits up to PROMPT_TIMEOUT_MS in herdr's prompt and as long again in prompt_settle; with goal on,
+# findings_goal's send_goal waits two more; and one more covers the reads between them.
+LEAD_RESENT="${LEAD_DIR}/resend"
+RESEND_SLACK=$(( 7 * PROMPT_TIMEOUT_MS / 1000 ))
+RESEND_HERDR_WAIT=10   # seconds each herdr read or key press of resend_pass may take, as pane_text gives a read
+RESEND_PASS_WAIT=20    # seconds after which resend_pass starts no more pane reads, leaving them for the next poll
+
+# resend_busy <name> [backlog] — true while a swarm.sh command that may deliver <name> a prompt runs:
+# one of NO_AGENT_ASKS or conduct, with an argument that is <name> once made an agent name
+# (agent_name's lower case, dashes and cut) as it is, as review-<arg> or as conduct-<arg>, or --backlog
+# with backlog set (the backlog conductor); for a conductor, also any swarm.sh next or merge, which
+# start conductors in their own process (conduct_ready). Reads NO_AGENT_PS; a command line may hold a
+# token, so none is ever printed.
+resend_busy() {
+  awk -v n="$1" -v bl="${2:-}" -v max="${AGENT_NAME_MAX}" -v asks=" ${NO_AGENT_ASKS} conduct " '
+    function nm(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, max) }
+    {
+    m = split($0, w, " ")
+    for (i = 1; i < m; i++) {
+      if (w[i] !~ /(^|\/)swarm\.sh$/) continue
+      if (n ~ /^conduct-/ && (w[i + 1] == "next" || w[i + 1] == "merge")) { f = 1; exit }
+      if (!index(asks, " " w[i + 1] " ")) continue
+      for (j = i + 2; j <= m; j++)
+        if (nm(w[j]) == n || nm("review-" w[j]) == n || nm("conduct-" w[j]) == n || (bl != "" && w[j] == "--backlog")) { f = 1; exit }
+    } } END { exit !f }' <<< "${NO_AGENT_PS}"
+}
+
+# resend_pass — submit a brief left unsent in an idle agent's input box, once per delivery. For each
+# agent this project opened that the poll's herdr list (lead_agents) shows idle, it takes the newest
+# events.tsv line that delivered it a prompt: story, escalate, step-up or tell for <slug> (not a note,
+# which goes to the inbox, its wake prompt one line that is never a collapsed paste), review-agent for
+# review-<slug>, conduct for conduct-<epic>, agent for an agent started by name, each mapped as
+# agent_name maps it. Its outcome is ok, or deliver_prompt's failure after herdr sent (or may have
+# sent) the prompt (a brief never taken up ends its command so); a tell that failed before sending
+# delivered nothing and is passed over, while a start that did skips its agent (it may have opened the
+# pane and recorded the session that turn_since reads). A line not yet in LEAD_RESENT gets one pane
+# read. Each herdr call has RESEND_HERDR_WAIT seconds (within), and no read starts RESEND_PASS_WAIT
+# seconds into the pass (the rest wait for the next poll), so a hung herdr cannot hold the poll. When
+# the box holds a collapsed paste (panes.py's unsent_brief) and no turn started since the prompt went
+# out (turn_since: for a start, which opens its own session, any turn in it; for a tell, one later than
+# RESEND_SLACK before the line), it sends the pane Enter and logs `resend <agent>`. A turn that started
+# and ended in those seconds before a tell reads as the tell taken up: the log cannot tell them apart,
+# so that tell is left alone, never submitted on a guess. The line goes in LEAD_RESENT once the pane is
+# read and needs nothing, or once the Enter went; before the Enter it goes in marked pending, which is
+# not done, and with no pending line written there is no Enter: an unreadable pane, a paste with no
+# session log to say whether a turn ran (sent nothing), or an Enter herdr failed to send (logged as the
+# resend's outcome), is tried again next poll. An agent that a swarm.sh command is delivering to as the
+# poll runs (resend_busy over one ps read) is skipped, checked again with a fresh ps just before an
+# Enter (which is also skipped, for the next poll, when events.tsv has grown since rows read it), and
+# while an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet, and
+# an Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a second
+# tell:findings line would count a review round twice. Prints nothing; outside herdr, or with no list,
+# it does nothing.
+resend_pass() {
+  local rows pane name at cmd k text since rc backlog line size deadline=$((SECONDS + RESEND_PASS_WAIT))
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  # No idle agent in the list, no work: return before any process starts, as most polls do.
+  [[ "${LEAD_AGENTS}" == *idle* && -s "${EVENTS_LOG}" ]] || return 0
+  backlog="$(conductor_name backlog)"
+  # events.tsv's size as rows reads it: a line added before an Enter may be a newer delivery.
+  size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))
+  rows="$(SWARM_PANES="$(own_panes)" SWARM_BACKLOG="${backlog}" SWARM_NAME_MAX="${AGENT_NAME_MAX}" python3 -I -c '
+import json, os, re, sys
+e = os.environ
+own = set(e["SWARM_PANES"].split())
+# agent_name: lower case, any other byte a dash, s before a name that does not start with a letter, the cut.
+def name(x):
+    x = re.sub(rb"[^a-z0-9_-]", b"-", x.encode().lower()).decode()
+    return (x if re.match("[a-z]", x) else "s" + x)[:int(e["SWARM_NAME_MAX"])]
+idle = {a["name"]: a["pane_id"] for a in json.loads(sys.stdin.read())["result"]["agents"]
+        if a.get("name") and a.get("pane_id") in own and a.get("agent_status") == "idle"}
+newest, alike = {}, {}
+try:
+    for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
+        f = l.rstrip("\n").split("\t")
+        if len(f) != 5:
+            continue
+        c, t = f[1], f[2]
+        if c in ("story", "escalate", "step-up", "step-up:resume", "agent", "tell") or (c.startswith("tell:") and c != "tell:note"): n = name(t)
+        elif c == "review-agent": n = name("review-" + t)
+        elif c == "conduct": n = e["SWARM_BACKLOG"] if t in ("--backlog", "backlog") else name("conduct-" + t)
+        else: continue
+        if n not in idle:
+            continue
+        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
+        if f[4] == "ok" or f[4].startswith("ok (") or any(w in f[4] for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
+            k = (n, f[0], c)
+            alike[k] = alike.get(k, 0) + 1
+            newest[n] = (f[0], c, alike[k])
+        elif not c.startswith("tell"):
+            # A start that failed before sending may still have opened the pane and recorded its session
+            # (record_agent comes before deliver_prompt): whatever is in the box is not an older brief.
+            newest[n] = None
+except OSError:
+    pass
+try:
+    seen = set(open(sys.argv[2], encoding="utf-8").read().splitlines())
+except OSError:
+    seen = set()
+for n, (t, c, k) in sorted((n, v) for n, v in newest.items() if v):
+    if "\t".join((n, t, c, str(k))) not in seen:
+        print("\t".join((idle[n], n, t, c, str(k))))' "${EVENTS_LOG}" "${LEAD_RESENT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  [[ -n "${rows}" ]] || return 0
+  # An upgrade restarts agents in its own process and logs them only at its end, as no_agent_lines skips them.
+  [[ ! -f "${UPGRADE_PID}" ]] || [[ -z "$(upgrade_holder)" ]] || return 0
+  # With no process list, a delivery under way cannot be ruled out, so nothing is read.
+  NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || return 0
+  mkdir -p "${LEAD_DIR}" 2>/dev/null || return 0
+  while IFS=$'\t' read -r pane name at cmd k; do
+    [[ -n "${pane}" ]] || continue
+    (( SECONDS < deadline )) || break
+    ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
+    # pane_text's read, with its failure kept: an empty or failed read is no clear box.
+    text="$(within "${RESEND_HERDR_WAIT}" herdr agent read "${pane}" --source recent-unwrapped </dev/null 2>/dev/null)" && [[ -n "${text}" ]] || continue
+    since="${at}"; [[ "${cmd}" == tell* ]] || since=-
+    # 10: resend; 11: nothing to send. Anything else (12, a paste with no session log to say whether a
+    # turn ran, or python's own error exit) is tried again next poll.
+    rc=0; printf '%s' "${text}" | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import unsent_brief, turn_since
+if not unsent_brief(sys.stdin.read()):
+    sys.exit(11)
+t = turn_since(*sys.argv[1:6])
+sys.exit(12 if t is None else 11 if t else 10)' \
+      "${AGENTS_LOG}" "${name}" "${CLAUDE_PROJECTS}" "${since}" "${RESEND_SLACK}" 2>/dev/null || rc=$?
+    [[ ${rc} -eq 10 || ${rc} -eq 11 ]] || continue
+    if [[ ${rc} -eq 10 ]]; then
+      # A delivery that began after the first ps read would take this Enter: read ps again.
+      NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || continue
+      ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
+      # A delivery that began and ended while the pane was read left a line rows has not seen.
+      [[ $(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) )) -eq ${size} ]] || continue
+    fi
+    line="${name}"$'\t'"${at}"$'\t'"${cmd}"$'\t'"${k}"
+    if [[ ${rc} -eq 10 ]]; then
+      # Pending first, which counts as not done: a run stopped before the Enter, or an Enter that failed,
+      # is tried again next poll, which reads the box again. A file it cannot write gets no Enter.
+      printf '%s\tpending\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || continue
+      if ! within "${RESEND_HERDR_WAIT}" herdr pane send-keys "${pane}" Enter </dev/null >/dev/null 2>&1; then
+        record_event resend "${name}" "herdr could not send Enter to ${pane}"; continue
+      fi
+      record_event resend "${name}"
+      size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))   # past its own line
+    fi
+    printf '%s\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || true
+  done <<< "${rows}"
+}
+
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents),
-# and save it as LEAD_SEEN. Print each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
+# run resend_pass off that list, and save the queue as LEAD_SEEN. Print each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
 # no-agent: items and saves the rest.
 lead_wake() {
   local now line new="" slug
   lead_agents
   now="$(lead_queue)"
+  resend_pass >/dev/null 2>&1 || true
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || [[ -n "${1:-}" && "${line}" != "no-agent: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
@@ -2370,7 +2522,7 @@ lead_lock() {
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
 # (lead_wake). The first read of a run reports what landed since the last run; with no LEAD_SEEN yet
 # it notes the queue and reports only no-agent: items. At the timeout (default an hour) it fails with
-# nothing printed. It nudges no one and edits no board file.
+# nothing printed. It edits no board file, and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
