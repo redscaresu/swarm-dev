@@ -621,7 +621,8 @@ review_round() {
 # Returns, so review_agent records the head, only when the start was unclear and the agent runs: <err>
 # says the brief may have gone out (deliver_prompt's sent or unread tries) and read_state calls it busy
 # or waiting (herdr's working or blocked for codex), or idle with its session log showing the brief
-# (a review agent sits idle while its codex runs). The file stays aside. Dies otherwise. When the
+# (a review agent sits idle while its codex runs) and no expired login after it. The file stays
+# aside. Dies otherwise. When the
 # brief may have reached an agent that is not running, or herdr cannot list its agents, the file stays
 # aside and the message says what to do. In any other case (herdr surely sent nothing, no pane, a
 # session that is gone or that herdr has no status for), it closes the pane and puts back the file
@@ -636,10 +637,11 @@ review_start_failed() {
   case "$3" in
     *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) unclear=yes ;;
   esac
-  # Idle is no sign of a brief that was not taken: its session log has the brief when it was.
+  # Idle is no sign of a brief that was not taken: its session log has the brief when it was. An
+  # agent that took it and then stopped on an expired login is idle too, and runs nothing.
   if [[ "${unclear}:${state}" == yes:idle ]] \
     && session_took "${name}" 0 "$(awk 'NF { print; exit }' "${PROJECT_DIR}/.swarm/briefs/review-$1.md" 2>/dev/null)" logonly; then
-    state=running
+    if login_expired "${name}"; then state="idle on an expired login (only your /login clears it)"; else state=running; fi
   fi
   case "${unclear}:${state}" in
     yes:unlisted)

@@ -73,6 +73,8 @@ case "$1 $2" in
                   if [ -e "$H/sentprompt" ] && [ ! -e "$H/latelogged" ]; then
                     touch "$H/latelogged"; sid=$(awk '{ s = $3 } END { print s }' "$H/agents"); mkdir -p "$H/projects/p"
                     python3 -c 'import json, sys; print(json.dumps({"type": "user", "message": {"content": sys.argv[1]}}))' "$(cat "$H/lastbrief")" >> "$H/projects/p/$sid.jsonl"
+                    # With authfail, the turn the brief started stopped on an expired login.
+                    [ ! -e "$H/authfail" ] || echo '{"type":"assistant","error":"authentication_failed","message":{"content":[{"type":"text","text":"Login expired · Please run /login"}]}}' >> "$H/projects/p/$sid.jsonl"
                   fi
                   awk -v d="$H/done" 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { s = system("test -e " d "/" $1) == 0 ? "idle" : "working"
@@ -325,7 +327,7 @@ rm -f "${ROOT}/prompt" "${ROOT}/listfail"
 # and the agent sits idle (its codex runs). review-agent returns 0 and records the head. s18's session
 # is not listed (gone) while the brief goes, which is the old start reading's blind spot; s19's log
 # gets the brief only after the start's reads, so only the failure's own check finds it.
-for s in s18 s19 s20; do
+for s in s18 s19 s20 s21; do
   sed "s/s4/${s}/g" "${b}/stories/s4.md" > "${b}/stories/${s}.md"
   "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${s}" "${ROOT}/svc-wt/${s}" origin/main
   echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/${s}.md"
@@ -340,6 +342,11 @@ check "when review-s19 sits idle with the brief in its session log after the sta
 rm -f "${ROOT}/sentprompt" "${ROOT}/latelogged"; echo unread > "${ROOT}/prompt"; touch "${ROOT}/done/review-s20"
 check "when review-s20 sits idle and its log has no brief, review-agent still fails, and records no head" "1|yes|no" \
   "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s20 "${PR}")"; echo "$?|$(has "may have its brief" "${o}")")|$([[ -e "${p}/.swarm/reviews/s20.head" ]] && echo yes || echo no)"
+# An idle agent that took the brief and then stopped on an expired login runs nothing: that start fails.
+echo latelog > "${ROOT}/prompt"; touch "${ROOT}/authfail" "${ROOT}/done/review-s21"
+check "when review-s21 took the brief and stopped on an expired login, review-agent fails, says so, and records no head" "1|yes|no" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s21 "${PR}")"; echo "$?|$(has "expired login" "${o}")")|$([[ -e "${p}/.swarm/reviews/s21.head" ]] && echo yes || echo no)"
+rm -f "${ROOT}/sentprompt" "${ROOT}/latelogged" "${ROOT}/authfail"
 rm -f "${ROOT}/prompt" "${ROOT}/getidle"
 
 # --- An agent that writes its findings before review-agent returns keeps them: only the last

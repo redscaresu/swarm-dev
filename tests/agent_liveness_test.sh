@@ -437,8 +437,13 @@ check "prompt_settle reads for SWARM_PROMPT_TIMEOUT_MS: 10 s is 2 reads a try" \
 check "under set -o posix the failure still counts the prompts in words" test "$(POSIX=1 PROMPT_REPLY=fail OWN=idle dp)" = "1|2|7|${idle2}"
 # A review agent's brief, read through its Claude session. herdr reads a new agent unclear or idle through
 # its turn, and Claude Code does not list its session until the turn starts (gone before the prompt).
-check "a brief to an agent herdr reads unclear, whose session reads busy after it (not listed before), is taken" \
-  test "$(SESS='gone busy' PROMPT_REPLY=junk OWN='unclear unclear' dp)" = "0|1|2|"
+# With no state from before the prompt, only its log counts: a new session is busy on its own start-up.
+check "a brief to an agent herdr reads unclear, whose session (not listed before) has the brief in its log, is taken" \
+  test "$(SESS='gone busy' SLOG=1 PROMPT_REPLY=junk OWN='unclear unclear' dp)" = "0|1|2|"
+check "a session not listed before the prompt and busy after it, with no brief in its log, did not take it" \
+  test "$(SESS='gone busy' PROMPT_REPLY=junk OWN='unclear unclear' dp)" = "1|1|4|${unsure} herdr sent it the brief once, then herdr reads it unclear, ${nobase}"
+check "reading only its log, the settle lists Claude Code's sessions once, before the prompt, and never again" \
+  test "$(wc -l < "${ROOT}/dp/lists" | tr -d ' ')" = 1
 check "a brief to an agent herdr reads idle with no baseline, whose session has the brief in its log, is taken" \
   test "$(SESS='gone idle' SLOG=1 PROMPT_REPLY=junk OWN='- idle' dp)" = "0|1|2|"
 check "a brief to an agent herdr reads unclear whose session never took it fails, sent nothing more" \

@@ -717,16 +717,17 @@ SLOW_PROMPT_TIMEOUT_MS=300000
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), and fails loudly rather than reporting success. It reports the
 # prompt taken on evidence: herdr's reply, or prompt_settle (working, blocked, a turn finished since,
-# or, for an agent with a Claude session on record, that session busy or waiting (when it read idle or
-# was not listed before the send) or with the prompt in its log since: DELIVER_LINE, else the file's
-# first non-blank line). herdr's status counts for nothing then: a new review agent reads `unclear`
-# or idle through the turn it is on. It sends it
+# or, for an agent with a Claude session on record, that session showing it: busy or waiting when it
+# read idle before the send, else only the prompt in its log since: DELIVER_LINE, else the file's
+# first non-blank line). herdr reading it idle or `unclear` does not outweigh that session: a new
+# review agent reads so through the turn it is on. It sends it
 # again only on evidence it was not taken: prompt_settle found the agent idle or done with no turn
 # finished since, and, if herdr sent it, that Claude session, read idle before, showed no sign of it. herdr's screen can
 # read idle through a whole turn (plan-hld-command's four findings tells on 2026-10-24, each sent
-# twice), so a prompt herdr sent to an agent with no session to read (codex, a session Claude Code
-# does not list yet, or one it reads busy, waiting or not at all) is never sent again: when no turn
-# shows, it succeeds with a warning that herdr sent it the brief and did not show the turn start. A
+# twice), so a prompt herdr sent to any other agent (codex, or a session Claude Code does not list
+# yet, or reads busy, waiting or not at all) is never sent again: when prompt_settle finds it idle or
+# done with no turn finished since, it succeeds with a warning that herdr sent it the brief and did
+# not show the turn start. A
 # prompt herdr refused before sending fails at once, naming herdr's code. Anything else (no read
 # before the prompt, no status) fails saying it may or may not have it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
@@ -742,17 +743,13 @@ deliver_prompt() {
   read -r status before <<< "$(agent_info "${target}")"   # the baseline, before anything goes out
   # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG): the
   # session to read. Read idle before the send, its busy or waiting is the prompt's work, and the
-  # prompt may go again when nothing shows; not listed yet (a new agent), its busy or waiting is too, but
-  # the prompt never goes again blind. Busy, waiting or unreadable before, only its log can say.
+  # prompt may go again when nothing shows. Not listed yet (a new agent), busy, waiting or unreadable
+  # before, only its log can say: a new session can be busy on its own start-up, not the prompt.
   if awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n && $4 == "claude" { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
     was="$(session_state "${name}")"
     if mark="$(session_mark "${name}")"; then
       sess="${name}" line="${DELIVER_LINE:-$(awk 'NF { print; exit }' "${prompt_file}")}"
-      case "${was}" in
-        idle) resend=yes ;;
-        gone) ;;
-        *) logonly=yes ;;
-      esac
+      if [[ "${was}" == idle ]]; then resend=yes; else logonly=yes; fi
     fi
   fi
   for try in 1 2; do
@@ -883,12 +880,12 @@ print(os.path.getsize(path) if path else 0)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJ
 
 # session_took <name> <mark> <line> [logonly] — succeed when <name>'s Claude session shows it took a
 # prompt: Claude Code reads it busy or waiting (one claude_agents call; not with logonly, for a session
-# that was busy or waiting before the prompt), or its main log has, past byte
+# that was not idle before the prompt, which makes no call), or its main log has, past byte
 # <mark>, a user prompt (panes.py's is_prompt, not a Task subagent's entry) whose text holds <line>
 # (whitespace aside). Not a tool result, an automated prompt or another tell's: a turn the prompt did
 # not start writes those too.
 session_took() {
-  { claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+  { [[ -n "${4:-}" ]] || claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *; from report import session_log
 log, name, projects, mark, line, logonly = sys.argv[1:7]
