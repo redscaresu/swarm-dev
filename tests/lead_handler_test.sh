@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|step-up failed|unsent brief"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -60,6 +60,11 @@ board() {
     merge) story s "kind: code" "status: review" "prs: ${URL}" ;;
     kept) story s "kind: code" "status: review" "prs: ${URL}" "kept: 2026-10-25 close stalled (not reviewed)" ;;
     no-agent) story s "kind: code" "status: ready"; ev story s; mkdir -p "${ROOT}/proj-wt/s"; ev close s ;;
+    # A review agent whose start failed after its brief, its builder at work in pane w:p1.
+    no-review) story s "kind: code" "status: ready"; ev story s; mkdir -p "${P}/.swarm/briefs"
+               echo "Review ${URL}, the PR of story s, at its head ${H}, in this worktree." > "${P}/.swarm/briefs/review-s.md"
+               ev review-agent s "review-agent: review-s did not start"; echo "w:p1 s" > "${P}/.swarm/state/tab"
+               echo '{"name":"s","agent_status":"working","pane_id":"w:p1"}' > "${ROOT}/agents" ;;
     # A failed step-up's marker, its pid (above every system's limit) gone.
     "step-up failed") story s "kind: code" "status: ready"; ev story s; mkdir -p "${ROOT}/proj-wt/s" "${P}/.swarm/briefs"
                       printf 'stalled opus fable code\npid 999999999\n' > "${P}/.swarm/briefs/s.step-up"; ev step-up:failed s "ok (start failed)" ;;
