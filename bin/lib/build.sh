@@ -878,8 +878,8 @@ touches_overlap() {
 # on its parents' branches. Touches are a bracketed list split on commas
 # outside parentheses, parentheticals dropped. An entry is [<repo>: ]<file>[:<fn>]. One with no / or .
 # before its : is a fn of the previous entry's file and repo, unless that head is a file in its own
-# repo's checkout (Makefile, Makefile:lint). (repo, file, fn) are compared: fn exactly, and a file-only entry
-# overlaps the whole file. An empty status prints as -. Its own function, not inside a <(...):
+# repo's checkout (Makefile, Makefile:lint). (repo, file, fn) are compared: fn by its first word, and a
+# file-only entry overlaps only the same file-only entry. An empty status prints as -. Its own function, not inside a <(...):
 # bash 3.2 misreads the parentheses in a heredoc there.
 touches_rows() {
   python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
