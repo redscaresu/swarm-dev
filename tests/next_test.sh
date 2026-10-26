@@ -1480,7 +1480,7 @@ rm -rf "${dir}" "${dir}-wt"
 # conductor's wait, which would hide it, with the line's exit as its why, once; fix-main still comes
 # first. herdr lists the conductor, and the builder too while ${dir}/builder exists; its agent list
 # fails while ${dir}/agents.fail exists, its pane list while ${dir}/panes.fail does. gh logs each call
-# and fails; ps logs each process-list read (-A).
+# and fails; ps logs each process-list read (-A), which fails while ${dir}/ps.fail exists.
 na_project() {
   dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
   [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -1503,7 +1503,8 @@ case "$1 $2" in
 esac
 STUB
   printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\nexit 1\n' "${dir}" > "${dir}/bin/gh"
-  printf '#!/bin/sh\ncase " $* " in *" -A "*) echo "$*" >> "%s/ps.log" ;; esac\nexec %s "$@"\n' "${dir}" "$(command -v ps)" > "${dir}/bin/ps"
+  printf '#!/bin/sh\ncase " $* " in *" -A "*) echo "$*" >> "%s/ps.log"; [ ! -e "%s/ps.fail" ] || exit 1 ;; esac\nexec %s "$@"\n' \
+    "${dir}" "${dir}" "$(command -v ps)" > "${dir}/bin/ps"
   chmod +x "${dir}/bin/herdr" "${dir}/bin/gh" "${dir}/bin/ps"
 }
 # na_run <command> [arg] — swarm.sh <command> inside herdr in ${dir}, its stdout in out.
@@ -1546,9 +1547,23 @@ rm -f "${dir}/.swarm/lead/next-seen"; na_run status
 na_check "status labels a failed step-up's line in the No agent section" \
   "$(is "${out}" "No agent"$'\n'"  nxna-s (step-up failed), exit: swarm.sh step-up --resume nxna-s"$'\n'"  nxna-a, exit: ${NA_EXIT}"$'\n\n'"*")"
 rm -f "${dir}/docs/stories/nxna-s.md" "${dir}/.swarm/briefs/nxna-s.step-up"
-# A line wait --lead printed (its seen file) is not named again.
-echo "${NA_LINE}" > "${dir}/.swarm/lead/seen"; na_run next; rm -f "${dir}/.swarm/lead/seen"
-na_check "a no-agent line wait --lead has printed is not next's step" "$(is "${out%%$'\n'*}" "wait conduct-e1")"
+# wait --lead's seen file, kept across its runs, does not hide a line from next: only next-seen does.
+rm -f "${dir}/.swarm/lead/next-seen"; echo "${NA_LINE}" > "${dir}/.swarm/lead/seen"; na_run next; rm -f "${dir}/.swarm/lead/seen"
+na_check "a no-agent line in wait --lead's seen file is still next's step" "$(is "${out%%$'\n'*}" "no-agent nxna-a")"
+# A run that stops at fix-main, or whose read could not check (ps fails), forgets no named line.
+printf '2026-10-26T11:00:00Z\tmain-red\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t-\to/r main e2e (failure)\n' >> "${dir}/.swarm/events.tsv"
+(cd "${dir}" && item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: code')
+na_run next; rm -f "${dir}/docs/stories/fix-main-aaaaaaa.md"; grep -v main-red "${dir}/.swarm/events.tsv" > "${dir}/ev"; mv "${dir}/ev" "${dir}/.swarm/events.tsv"; na_run next
+na_check "a next that stopped at fix-main keeps the named line: the next run waits" "$(is "${out%%$'\n'*}" "wait conduct-e1")"
+touch "${dir}/ps.fail"; na_run next; rm -f "${dir}/ps.fail"; na_run next
+na_check "a next whose read could not check keeps the named line: the next run waits" "$(is "${out%%$'\n'*}" "wait conduct-e1")"
+# A next-seen that cannot be written still leaves next printing its step.
+rm -f "${dir}/.swarm/lead/next-seen"; chmod 555 "${dir}/.swarm/lead"; na_run next; chmod 755 "${dir}/.swarm/lead"
+na_check "a next that cannot write next-seen still prints its step" "$(is "${out%%$'\n'*}" "no-agent nxna-a")"
+# status says when its No agent check could not run, rather than showing an empty section.
+touch "${dir}/ps.fail"; na_run status; rm -f "${dir}/ps.fail"
+na_check "with ps failing, status says the No agent check did not run" \
+  "$(is "${out}" "No agent: not checked; herdr's agent list could not be read or ps failed"$'\n'"Agents*")"
 # A line that leaves (its builder is back) and comes back is named again.
 rm -f "${dir}/.swarm/lead/next-seen"; na_run next; touch "${dir}/builder"; na_run next; rm -f "${dir}/builder"; na_run next
 na_check "a no-agent line that left and came back is named again" "$(is "${out%%$'\n'*}" "no-agent nxna-a")"

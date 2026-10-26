@@ -97,8 +97,8 @@ Repeat until a step below says stop:
      cannot hide it. The why ends with the exit. Run it as that line's handling under
      `wait <agent>` says: for a ready story, `swarm.sh restart <slug>` or `swarm.sh hold <slug> <reason>`;
      for one in review, `swarm.sh wait-pr` first, then the merge or review-agent the exit names.
-     `next` names each line once, as `wait --lead` does, so its next run goes on to the other steps
-     even when the exit did not clear the story. If that leaves the story stuck, list it for the user
+     `next` names each line once, so its next run goes on to the other steps even when the exit did
+     not clear the story. If that leaves the story stuck, list it for the user
      with why. While a conductor works, `next` also starts conductors for other ready work and prints
      `started:` or `no conductor` lines after the why: handle them as under `wait <agent>`. Then go
      back to 1.

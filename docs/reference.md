@@ -268,11 +268,14 @@ event shows there once a `wait --lead` poll has written its `no-agent` line. The
 line's exit. The step comes after `fix-main` and before a conductor's `wait` or `collect`, since
 the lead would otherwise wait on the conductor and never see the story. While a conductor works,
 `next` still starts conductors for other ready work on this step, as it does on a `wait`.
-`next` names each line once, as `wait --lead` does. It skips a line that `wait --lead` has printed
-(`.swarm/lead/seen`) or that `swarm.sh next` has already named (`.swarm/lead/next-seen`, which only
-`next` run inside herdr writes), and goes on to the other steps. So an exit that clears nothing, such
-as a merge refused on a red head, does not hold the lead's loop. A line that leaves (its agent came
-back, a hold) and comes back is named again. A `step-up failed:` line is never the step: `wait --lead`
+`next` names each line once. It skips a line that `swarm.sh next` has already named
+(`.swarm/lead/next-seen`, which only `next` run inside herdr writes) and goes on to the other steps.
+So an exit that clears nothing, such as a merge refused on a red head, does not hold the lead's loop.
+`next` forgets a line once a read that checked no longer has it (its agent came back, a hold), so the
+line is named again if it comes back. A run that stopped at `fix-main`, or whose read could not
+check, forgets nothing. `wait --lead` keeps its own record, so the lead may hear of a line from both.
+Two `next` runs at once may both name the same line, and a `next` that cannot write the file still
+prints its step. A `step-up failed:` line is never the step: `wait --lead`
 hands that one to the lead. Working out the step makes no gh call, because `dash` reads it every
 frame. `status` and `dash` hand `next` the lines they have already read, so neither asks herdr and
 `ps` twice, and dash's Next row agrees with its No agent rows from outside a herdr pane too.
@@ -281,7 +284,8 @@ frame. `status` and `dash` hand `next` the lines they have already read, so neit
 or `<slug> (step-up failed), exit: swarm.sh step-up --resume <slug>` for a failed step-up. With no
 such story it prints no section. It needs only herdr's agent list, so a failed pane list still shows
 it, and the Agents line then says herdr gave no pane list. Outside herdr, or when herdr gives no agent
-list, it says it did not check. `hooks/lead-stop.sh` does not know the `no-agent` step, so it allows
+list, it says it did not check. It says so too when a started story is left to check and herdr's list
+cannot be read or `ps` fails, so an empty section always means every started story has an agent. `hooks/lead-stop.sh` does not know the `no-agent` step, so it allows
 the lead's stop on it.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run

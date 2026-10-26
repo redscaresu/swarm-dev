@@ -1819,11 +1819,14 @@ status_report() {
   if [[ "${HERDR_ENV:-}" != 1 ]]; then
     echo "No agent: not checked; it needs herdr's agent list, so run status inside a herdr pane"
   elif agents=$(herdr agent list 2>/dev/null); then
-    noagent="$(no_agent_from "${agents}")" || noagent=""
-    # shellcheck disable=SC2034 # next_step (board.sh) reads it
-    NO_AGENT_NOW="${noagent}"
-    noagent="$(sed -e 's/^no-agent: //' -e 's/^step-up failed: \([^,]*\),/\1 (step-up failed),/' <<< "${noagent}")"
-    [[ -z "${noagent}" ]] || printf 'No agent\n  %s\n\n' "${noagent//$'\n'/$'\n'  }"
+    if noagent="$(no_agent_from "${agents}")"; then
+      # shellcheck disable=SC2034 # next_step (board.sh) reads it
+      NO_AGENT_NOW="${noagent}"
+      noagent="$(sed -e 's/^no-agent: //' -e 's/^step-up failed: \([^,]*\),/\1 (step-up failed),/' <<< "${noagent}")"
+      [[ -z "${noagent}" ]] || printf 'No agent\n  %s\n\n' "${noagent//$'\n'/$'\n'  }"
+    else
+      echo "No agent: not checked; herdr's agent list could not be read or ps failed"
+    fi
   else
     agents=""; echo "No agent: not checked; herdr gave no agent list"
   fi
