@@ -17,10 +17,12 @@ hooks:
 TESTS ?= tests/*_test.sh
 SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_test.sh \
   tests/dash_stalls_test.sh tests/sleep_scale_test.sh
-# SLOW: files that take minutes on their own, merge_test about 150 s, dash_check about 170 s and
-# wait_pr about 230 s, most of it waiting out deadlines, graces and pauses with seconds of room. They start first, and
-# CI's SHARD=i/N split gives each SLOW and SERIAL file a shard of its own.
-SLOW ?= tests/merge_test.sh tests/dash_check_test.sh tests/wait_pr_test.sh
+# SLOW: the files that take longest on their own: dash_check, wait_pr, and merge_test with the two
+# files that share its fixture (merge_rules, merge_queue). They start first, and CI's SHARD=i/N split
+# gives each SLOW and SERIAL file a shard of its own, so ci.yml's shard count is at least the two
+# lists' length (tests/test_shard_test.sh).
+SLOW ?= tests/merge_test.sh tests/merge_rules_test.sh tests/merge_queue_test.sh tests/dash_check_test.sh \
+  tests/wait_pr_test.sh
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
 test:
