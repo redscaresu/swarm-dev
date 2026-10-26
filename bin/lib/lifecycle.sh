@@ -1841,20 +1841,169 @@ lead_queue() {
     FILENAME == ARGV[1] { if (!($1 in got)) print; got[$1] = 1; next }
     !($1 in got) && index(keep, " " $1 " ") { print }' "${LEAD_GREEN}.new" "${LEAD_GREEN}" > "${LEAD_GREEN}.tmp"
   mv "${LEAD_GREEN}.tmp" "${LEAD_GREEN}"; rm -f "${LEAD_GREEN}.new"
+  no_agent_lines record
 }
 
-# lead_wake [quiet] — read the lead's queue once and save it as LEAD_SEEN. Print each item that was not in
-# LEAD_SEEN before and log `lead-woken <slug>` for it; true when there was one. quiet only saves.
+# lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
+# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered. Outside herdr
+# (HERDR_ENV unset) it asks nothing.
+LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=""
+lead_agents() {
+  LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=1
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  if LEAD_AGENTS="$(herdr agent list </dev/null 2>/dev/null)"; then LEAD_AGENTS_OK=1; else LEAD_AGENTS=""; fi
+}
+
+# NO_AGENT_STARTS: the commands whose ok line starts an agent on a story, and whose failed line is a start
+# that failed. NO_AGENT_ASKS: the commands that, while one runs for a slug, may start or answer its agent
+# (a tell pending). Each answers with its own events.tsv line, written when it exits.
+NO_AGENT_STARTS="story escalate agent step-up _step-up restart review-agent"
+NO_AGENT_ASKS="tell story review-agent step-up _step-up restart agent"
+
+# no_agent_name <var> <name> — set <var> to agent_name <name>, with no subshell for a name that is
+# already one: the poll names every ready story twice.
+no_agent_name() {
+  if [[ "$2" =~ ^[a-z][a-z0-9_-]*$ && ${#2} -le ${AGENT_NAME_MAX} ]]; then printf -v "$1" '%s' "$2"
+  else printf -v "$1" '%s' "$(agent_name "$2")"; fi
+}
+
+# no_agent_events <slug name review-name>... — per slug, from one read of events.tsv in order:
+# "<slug> <build> <event> <name> <review-name>". build is 1 when a builder's ok start is newer than its
+# last ok close. event is the time of the newest event that explains why no agent is there (an ok close
+# of the builder or review agent, a failed start, a no-agent line) when no sign of a live agent (an ok
+# start, an ok tell) and no hold line came after it, else -. A slug whose newest reconcile reopen (its PR
+# closed unmerged) has no ok start after it is left out: unblock --startable names it for the lead from
+# that reopen being its last event, which a lead-woken, no-agent or hold line would hide.
+no_agent_events() {
+  local log="${EVENTS_LOG}"
+  [[ -f "${log}" ]] || log=/dev/null   # BSD awk stops at a missing file before its END
+  awk -F'\t' -v rows="$*" -v starts=" ${NO_AGENT_STARTS} " '
+    BEGIN {
+      n = split(rows, w, " ")
+      # A close names the review agent in full (review-<slug>), herdr and agent lines by its cut name.
+      for (i = 1; i + 2 <= n; i += 3) {
+        own[w[i]] = own[w[i + 1]] = own[w[i + 2]] = own["review-" w[i]] = w[i]
+        rev[w[i + 2]] = rev["review-" w[i]] = 1; order[++k] = w[i]; name[w[i]] = w[i + 1]; rname[w[i]] = w[i + 2]
+      }
+    }
+    NF == 5 && ($3 in own) {
+      s = own[$3]; c = $2; sub(/:.*/, "", c); ok = $5 ~ /^ok/
+      if (index(starts, " " c " ")) {
+        if (!ok) ev[s] = $1
+        else { ev[s] = ""; reo[s] = 0; if (c != "review-agent" && !($3 in rev)) build[s] = 1 }
+      } else if (c == "close") {
+        if (ok) { ev[s] = $1; if (!($3 in rev)) build[s] = 0 }
+      } else if ($2 == "reconcile" && $5 == "ok (reopened)") reo[s] = 1
+      else if ($2 == "no-agent") ev[s] = $1
+      else if ((c == "tell" && ok) || $2 == "hold") ev[s] = ""
+    }
+    END { for (i = 1; i <= k; i++) { s = order[i]; if (!reo[s]) print s, build[s] + 0, (ev[s] == "" ? "-" : ev[s]), name[s], rname[s] } }' \
+    "${log}" 2>/dev/null || true
+}
+
+# no_agent_busy <slug> <name> <urls> — true while a process runs that answers for <slug> though no agent
+# is listed: a tell pending (a swarm.sh NO_AGENT_ASKS command naming <slug> or its builder's <name>) or a
+# `swarm.sh wait-pr` or `swarm.sh merge` on one of <urls>. Reads NO_AGENT_PS, one `ps` read, and only matches it:
+# a command line may hold a token, so none is ever printed.
+no_agent_busy() {
+  awk -v s="$1" -v n="$2" -v urls=" $3 " -v asks=" ${NO_AGENT_ASKS} " '{
+    m = split($0, w, " ")
+    for (i = 1; i < m; i++) {
+      if (w[i] !~ /(^|\/)swarm\.sh$/) continue
+      for (j = i + 2; j <= m; j++)
+        if ((index(asks, " " w[i + 1] " ") && (w[j] == s || w[j] == n)) || ((w[i + 1] == "wait-pr" || w[i + 1] == "merge") && index(urls, " " w[j] " "))) { f = 1; exit }
+    } } END { exit !f }' <<< "${NO_AGENT_PS}"
+}
+
+# no_agent_exit <slug> — what the lead does for a no-agent: line. For a ready story, `swarm.sh hold <slug>
+# <reason>`. For a story in review, `swarm.sh merge --head <sha> <pr>` with the head: line of
+# .swarm/reviews/<slug>.md, or with no such line (or several PRs, which one head cannot pin) a plain
+# `swarm.sh merge <pr>` for each.
+no_agent_exit() {
+  local f="${BOARD}/stories/$1.md" head u prs="" out=""
+  if [[ "$(fm "${f}" status)" != review ]]; then echo "swarm.sh hold $1 <reason>"; return 0; fi
+  for u in $(fm "${f}" prs); do u="${u//[][,\"\']/}"; [[ -z "${u}" ]] || prs+=" ${u}"; done
+  head="$(sed -n 's/^head: *//p' "${PROJECT_DIR}/.swarm/reviews/$1.md" 2>/dev/null | head -1)"
+  [[ "${head}" =~ ^[0-9a-f]{40}$ && "${prs# }" != *" "* ]] || head=""
+  for u in ${prs}; do out+="${out:+, then }swarm.sh merge ${head:+--head ${head} }${u}"; done
+  echo "${out:-swarm.sh merge <PR URL>}"
+}
+
+# no_agent_lines [record] — `no-agent: <slug>, exit: <exit>` (no_agent_exit) for each started story that
+# no agent works on and that is not the user's to move: status ready, or review under merge = agent;
+# of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money (waiting_on_user
+# hands those to the user); with a build record (an ok builder start no close ended, or its worktree or
+# story/<slug> branch, build_exists); no pane this project opened (own_panes) listed under its builder's
+# or review-<slug>'s name; no tell pending and no wait-pr or merge on its PR (no_agent_busy); and no
+# .swarm/briefs/<slug>.step-up marker. It prints one only when an event explains the agent's absence
+# (no_agent_events); with record set, a story with none gets a `no-agent <slug>` events.tsv line, so the
+# next poll prints it. A hold line answers the alert until a new event: the next poll writes one.
+# Reads the poll's herdr list (lead_agents, read here when the poll has none), one ps and files; no gh.
+# Prints nothing outside herdr or when herdr's list or ps fails.
+no_agent_lines() {
+  local live f slug st rows="" built="" urls u build ev src name rname
+  [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  while IFS= read -r f; do
+    slug="$(basename "${f}" .md)"; st="$(fm "${f}" status)"
+    # shellcheck disable=SC2154 # CFG_merge is assigned in another file
+    case "${st}" in
+      ready) ;;
+      review) [[ "${CFG_merge}" == agent && -z "$(get_fm "${f}" kept)" && -z "$(costs_tag "${f}")" ]] || continue ;;
+      *) continue ;;
+    esac
+    # Not kind: lead, which every escalated story is (lead_block), and a held one too.
+    agent_kind "$(fm "${f}" kind)" || continue
+    [[ -z "$(get_fm "${f}" held_for)" ]] || continue
+    [[ ! -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]] || continue
+    no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"
+    rows+=" ${slug} ${name} ${rname}"
+  done < <(board stories)
+  [[ -n "${rows}" ]] || return 0
+  # shellcheck disable=SC2086 # rows: space-separated triples
+  while read -r slug build ev name rname; do
+    [[ -n "${slug}" ]] || continue
+    if [[ "${build}" != 1 ]]; then
+      src="$(repo_dir "$(fm "${BOARD}/stories/${slug}.md" repo)")" || continue
+      build_exists "${src}" "${slug}" || continue
+    fi
+    built+="${slug} ${ev} ${name} ${rname}"$'\n'
+  done < <(no_agent_events ${rows})
+  # The list and ps are read only for a started story, so a poll with none costs no more than before.
+  [[ -n "${built}" ]] || return 0
+  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  # -ww: the whole command line, never cut at a width. With no process list a pending tell, wait-pr or
+  # merge cannot be ruled out, so nothing is printed, as for herdr's list.
+  NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || return 0
+  while read -r slug ev name rname; do
+    [[ -n "${slug}" ]] || continue
+    ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
+    urls=""; for u in $(fm "${BOARD}/stories/${slug}.md" prs); do urls+=" ${u//[][,\"\']/}"; done
+    ! no_agent_busy "${slug}" "${name}" "${urls# }" || continue
+    if [[ "${ev}" == - ]]; then
+      [[ "${1:-}" != record ]] || record_event no-agent "${slug}"
+      continue
+    fi
+    echo "no-agent: ${slug}, exit: $(no_agent_exit "${slug}")"
+  done <<< "${built}"
+}
+
+# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents),
+# and save it as LEAD_SEEN. Print each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
+# for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
+# no-agent: items and saves the rest.
 lead_wake() {
-  local now line new=""
+  local now line new="" slug
+  lead_agents
   now="$(lead_queue)"
   while IFS= read -r line; do
-    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || new+="${line}"$'\n'
+    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || [[ -n "${1:-}" && "${line}" != "no-agent: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
-  [[ -z "${1:-}" && -n "${new}" ]] || return 1
+  [[ -n "${new}" ]] || return 1
   while IFS= read -r line; do
-    echo "${line}"; line="${line#*: }"; record_event lead-woken "${line%% *}"
+    echo "${line}"; slug="${line#*: }"; slug="${slug%%,*}"
+    record_event lead-woken "${slug%% *}" "ok (${line%%: *})"
   done <<< "${new%$'\n'}"
 }
 
@@ -1908,8 +2057,8 @@ lead_lock() {
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
 # (lead_wake). The first read of a run reports what landed since the last run; with no LEAD_SEEN yet
-# it only notes the queue. At the timeout (default an hour) it fails with nothing printed. It nudges no
-# one and edits no board file.
+# it notes the queue and reports only no-agent: items. At the timeout (default an hour) it fails with
+# nothing printed. It nudges no one and edits no board file.
 wait_lead() {
   local timeout="${1:-3600000}" start left
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
@@ -1917,7 +2066,7 @@ wait_lead() {
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
   lead_lock
   start=${SECONDS}
-  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else lead_wake quiet || true; fi
+  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else ! lead_wake quiet || return 0; fi
   while (( (SECONDS - start) * 1000 < timeout )); do
     left=$(( (timeout + 999) / 1000 - (SECONDS - start) ))
     sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))

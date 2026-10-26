@@ -60,10 +60,43 @@ lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seco
 (`SWARM_LEAD_POLL`) it reads the board, and it returns as soon as a new item appears: a held story
 (`held_for:`), an escalated one, or a story or epic in review whose PR heads are all green and that
 waits on the lead's user: every one with `merge = human`, and with `merge = agent` only a PR
-`swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv.
+`swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv,
+with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
 The lead handles each line at once and starts it again. It keeps what it last saw in
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
+
+**A started story with no agent wakes the lead too.** `wait --lead` also prints
+`no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
+counts a story only when all of these hold:
+
+- It is ready, or in review under `merge = agent`. A story waiting on the user is left out:
+  awaiting their merge under `merge = human`, `costs: money` or `kept:`, green or not.
+- It is of a kind an agent builds. That rules out `kind: lead`, and so every held or escalated
+  story. A blocked story is never counted.
+- It has a build record: an ok builder start that no close ended, or its worktree or
+  `story/<slug>` branch.
+- herdr lists no pane this project opened under its builder's name or `review-<slug>`. No
+  `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
+- No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
+  the slug, its answer is still on the way: each writes its own events.tsv line when it exits.
+- It has no `.swarm/briefs/<slug>.step-up` marker. A failed step-up is reported apart.
+
+Something must explain why no agent is there: an ok close of the builder or the review agent, or a
+failed start, with no later start, ok tell or hold. A story reconcile reopened (its PR closed
+unmerged) is left out until a new start: `unblock --startable` already names it for the lead, from
+the reopen being its last events line, which a line written here would hide. When a pane went with
+no such event, the poll that first sees it writes a `no-agent <slug>` events.tsv line and stays
+silent, and the next poll wakes the lead. The exit for a ready story is
+`swarm.sh hold <slug> <reason>`. A hold answers the alert but starts nothing, so if no agent is back
+by the next poll, that poll writes a new `no-agent` line and the alert comes back. For a story in
+review the exit is `swarm.sh merge --head <sha> <PR URL>`, with the `head:` line of
+`.swarm/reviews/<slug>.md`, or a plain `swarm.sh merge <PR URL>` when there is no head to pin. The
+lead runs `swarm.sh wait-pr <PR URL>` first and merges once it exits 0: while it runs, the line is
+quiet, and if the checks go red it comes back. Each poll
+reads `herdr agent list` once, and `ps` once when a started story needs checking, and makes no gh
+call for these lines. Outside herdr, or when herdr's list or `ps` fails, it prints none. A run with no
+`.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
 
 ## Writing an HLD
 

@@ -118,7 +118,14 @@ Repeat until a step below says stop:
      something new lands in your queue while the conductor works, one line per item. For a
      `held: <slug> (<cause>)` or `escalated: <slug>` line, do the `escalated <slug>` step for that slug at once, without waiting for `next`:
      `next` names the running conductor first and would not get to it. For a
-     `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. Then start
+     `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
+     `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
+     and no tell on the way. Run the exit it names: `swarm.sh hold <slug> <reason>` for a ready
+     story, saying why it waits, or the `swarm.sh merge` for a story in review under
+     `merge = agent`. Before that merge, run `swarm.sh wait-pr <PR URL>` in the background and
+     merge only once it exits 0; while it waits, the line stays quiet, and it comes back if the
+     checks go red. A hold only answers the line; if no agent is back by the next poll, it
+     comes back. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
