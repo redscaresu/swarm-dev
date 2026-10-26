@@ -4,8 +4,8 @@
 # against its merge base with origin/main (committed, uncommitted and untracked; a rename by both
 # paths), from scripts/test-map.tsv. It fails toward more: a path no row matches, a `named` row that
 # finds no test, a `self` test that is gone or a git command that fails selects every
-# tests/*_test.sh, which scripts/test.sh logs as `all`, and says why on stderr; stdout is the list
-# alone.
+# tests/*_test.sh, which scripts/test.sh logs as `all`, and says why on stderr; an empty selection
+# says so on stderr too. stdout is the list alone.
 # select_tests.py --check-map reads paths from stdin (`git ls-files`) and names each one under bin/,
 # scripts/, commands/, hooks/ or docs/ that no row matches; it exits 1 when there is one.
 # Both read the map and tests/ of the git checkout the current directory is in, and exit 2 on a map
@@ -23,6 +23,8 @@ KEYWORDS = ("named", "self", "all", "none")
 ALONE = ("all", "none")
 KNOWN = ", ".join(KEYWORDS)
 MAPPED_DIRS = ("bin/", "scripts/", "commands/", "hooks/", "docs/")
+# The selector's own test: its fixture names real paths it does not test, so it counts as naming none.
+NOT_NAMERS = ("tests/select_tests_test.sh",)
 # A basename is named when no word character, '-' or '.' runs on before it, nor a word character or
 # '-' after it: swarm.md is not plan-swarm.md, test.sh is not select_test.sh.
 BEFORE, AFTER = r"(?<![\w.-])", r"(?![\w-])"
@@ -77,11 +79,13 @@ def all_tests(root):
 
 
 # naming(root, tests, path) — the tests whose text names the path's basename, read now, so a test
-# added since the map was written is found.
+# added since the map was written is found; NOT_NAMERS never count.
 def naming(root, tests, path):
     word = re.compile(BEFORE + re.escape(os.path.basename(path)) + AFTER)
     out = []
     for t in tests:
+        if t in NOT_NAMERS:
+            continue
         with open(os.path.join(root, t), encoding="utf-8", errors="replace") as f:
             if word.search(f.read()):
                 out.append(t)
@@ -153,6 +157,8 @@ def main(argv):
     if picked is None:
         print(f"select-tests: every test: {why}", file=sys.stderr)
         picked = all_tests(root)
+    elif not picked:
+        print("select-tests: no test file covers this branch's changes", file=sys.stderr)
     for t in picked:
         print(t)
     return 0
