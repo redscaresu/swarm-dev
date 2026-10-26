@@ -740,7 +740,7 @@ def running_view():
 # the times a person stepped in on those days (`swarm.sh intervene`'s incident lines, of the kinds
 # swarm.sh passes): on the speedometer's line when it fits, else on its own line, which a cut frame
 # gives up last of the lines under the speedometer (after the sparkline, the gauges and the idle line). A board item waits from its newest
-# review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
+# review, kept, close:<cause> or escalated line in events.tsv, else from its file's last commit.
 def waited_from(item):
     d, slug = item
     if slug in moved:
@@ -757,7 +757,7 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
     if t is not None and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
         done_at[f[2]] = max(t, done_at.get(f[2], t))
-    t = t if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
+    t = t if f[1] in ("review", "kept", "escalated") or f[1].startswith("close:") else None
     if t is not None and t > moved.get(f[2], 0):
         moved[f[2]] = t
 
