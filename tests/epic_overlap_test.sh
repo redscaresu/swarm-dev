@@ -4,6 +4,8 @@
 # herdr is a stub on PATH that hands out pane ids in order and remembers tab labels; the repo is a
 # local bare remote. gh is a stub too, so a close's PR lookup never reaches the real gh.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -125,7 +127,7 @@ run() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH
 # events.tsv lives here.
 mkdir -p "${p}/.swarm"
 
-# --- story warns when an open story of another epic touches the same function or file; --strict refuses.
+# --- story warns when an open story of another epic touches the same part of a file or both name the bare file; --strict refuses.
 # subject <slug> <touches> — a ready story of e1 in svc; other <front-matter line>... — xb, in svc unless
 # a line says otherwise; warns <slug> — story's warning lines, or none.
 subject() { item "${b}" "stories/$1.md" "status: ready" "kind: code" "epic: e1" "repo: svc" "touches: $2"; }

@@ -8,6 +8,8 @@
 # judges the PR, or the PR's when the base has none. gh is a stub on PATH answering main's latest
 # commit from ${FX}/tip and each commit's check runs from ${FX}/<sha>.checks.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATE="${REPO}/scripts/board-only.sh"

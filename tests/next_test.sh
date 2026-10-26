@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # next_test.sh — `swarm.sh next` against small throwaway boards, one per case.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 fails=0
