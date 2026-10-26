@@ -128,8 +128,12 @@ Repeat until a step below says stop:
      background and act on its exit, not on the line, once per head. On 0, run the merge. On 1
      (red), start a builder in the story's worktree (`swarm.sh agent`) with a brief naming the
      failing checks, or, if you leave it, list it in your report with the reason:
-     `swarm.sh hold` takes only a ready story. The line is quiet while wait-pr runs and may come
-     back once after it ends; that needs nothing new. A
+     `swarm.sh hold` takes only a ready story. On 2, read why it printed: on a conflict with the
+     base, have a builder in the story's worktree merge the base in and push; on a gh error or
+     the timeout, run wait-pr once more, and if it ends the same way, list the story in your
+     report with the reason. With no PR URL on the story, find its PR with
+     `gh pr list --head story/<slug>` and run the review-agent exit. The line is quiet while
+     wait-pr runs and may come back once after it ends; that needs nothing new. A
      `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a step-up closed
      the story's builder and then could not start the next model's. Its conductor leaves the story
      alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says why. Fix that

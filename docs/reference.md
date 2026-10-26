@@ -100,7 +100,11 @@ no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
 each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
 merges. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
 checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
-story. The line is quiet while wait-pr runs and may come back once after it ends.
+story. On 2 it reads why: on a conflict with the base, a builder in the story's worktree merges the
+base in and pushes; on a gh error or the timeout, it runs wait-pr once more, and if it ends the same
+way, lists the story in its report with the reason. A story in review with no PR URL gets the exit
+`gh pr list --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>`. The line is quiet
+while wait-pr runs and may come back once after it ends.
 
 Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
 hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
@@ -2059,6 +2063,23 @@ stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
+Epics can name the release they belong to with `stage: v<x.y.z>`. Once a release is due, `next`
+reads the stages: the epics on the board, whatever their status, the copies `origin/<base>` has of
+epics an edit in your checkout deleted or changed before it reached the base (a release ships the
+base), and the epic files deleted on `origin/<base>` since the tag. The next stage S is the lowest one above the tag. When no epic of S
+is left on the board, the step is `release v<S>`, and its why names the stage. While one is still
+there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
+only` after its step's lines, and `status` and `dash` show the same line. A patch can still go out
+while S is held. When no story of a staged epic has merged since the tag, and the next patch of the
+tag's line is below S, the step is `release v<x.y.z+1> (patch)`. What merged under an unstaged
+epic, or under no epic, goes out in that patch: nothing checks that it is a fix. A merged story is
+one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
+`status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
+to the steps after it. An epic on the board whose `stage:` is not
+`v<x.y.z>` holds the release too, and the line names it. A board where no epic has `stage:`
+releases as before, with a plain `release`. So does a board outside the project's repo, since git
+can't list its deleted epics.
+
 Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30
 seconds at most. If that is not the base the release check last read, a PR landed between that read
 and the merge, and the release shipped commits no check read. merge then prints `warning: <merge
@@ -2102,7 +2123,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, or a green PR in review that waits on you, and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, a green PR in review that waits on you, or a started story with no live agent (`no-agent: <slug>, exit: <exit>`), and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
