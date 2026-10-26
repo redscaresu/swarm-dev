@@ -3,6 +3,8 @@
 # `reconcile`, the gate in `next`, and `findings`; also how an agent starts (a name already
 # taken, a failed start, codex's update check). gh and herdr are stubs on PATH.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

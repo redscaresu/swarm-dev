@@ -4,6 +4,8 @@
 # SWARM_GH_CALLER), from a story worktree or outside a swarm project; it exits 0 every time. Also:
 # hooks.json runs it on UserPromptSubmit beside agent-state.sh.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${REPO}/hooks/user-caught-reminder.sh"

@@ -24,6 +24,8 @@
 # build after it runs on fable with its own outcomes row's PR. s-mm merges, then is built again: the
 # rebuild is its own loop. s-retry's fable round fixes one: the top rung's share. TZ is UTC.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

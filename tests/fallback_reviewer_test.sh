@@ -8,6 +8,8 @@
 # PR body's "reviewed by fallback" line. codex, herdr and claude are stubs on PATH: herdr's agent
 # writes its findings file as its brief arrives, then goes idle, unless ${ROOT}/silent exists.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
