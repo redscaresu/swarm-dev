@@ -514,7 +514,7 @@ removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories that do not clash. Two stories clash only when their
 `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name
-the bare file. A bare file does not clash with a part of it. Otherwise both build at once, even in the same file: git merges edits to
+the bare file. A bare file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once, even in the same file: git merges edits to
 different parts of one file, and a story names the functions it changes. A builder whose PR
 conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict
 never sends a story back to `ready`. The conductor sends that as a `nudge` tell, which is not a
@@ -534,7 +534,8 @@ cannot tell. Then nothing is known to be open, so the message says to retry the 
 for a merge. `--strict` may come before or after the slug. Conductors always pass
 `--strict`.
 
-A `<file>:<part>` entry matches an entry in the same file whose part has the same first word, and a
+A `<file>:<part>` entry matches an entry in the same file whose part has the same first word, past a
+leading `§`, `#`, "the", "a" or "an" (so `docs/method.md:§ Building` matches `docs/method.md:Building`), and a
 file-only entry matches only another file-only entry for that file. An entry with no `/` or `.` before its `:` names a fn in the previous entry's file and
 repo, so `bin/swarm.sh:config defaults, CONFIG_KEYS` covers `bin/swarm.sh:CONFIG_KEYS`. When the
 entry's own repo (its prefix, or the story's `repo:`) has a file of that name, it is that file

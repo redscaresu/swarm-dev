@@ -1122,6 +1122,7 @@ clash_rule() {
   cat <<EOF
 Two stories clash only when their \`touches\` name the same file in the same repo and the same first
 word of a part (\`file:part\`), or when both name the bare file (no \`:part\`). A bare file does not clash with a part of it.
+A part's first word skips a leading \`§\`, \`#\`, "the", "a" or "an".
 Otherwise both build at once, even in the same file. A builder whose PR conflicts with its base
 merges the base in, resolves it, re-runs the tests and pushes. A conflict never sends a story back
 to \`ready\`: never close a builder over one. When \`swarm.sh watch\` says a PR CONFLICTS, write a
