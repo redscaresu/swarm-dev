@@ -36,8 +36,8 @@ is one column, top to bottom:
   each `!` and lit when its count is above 0, `✓ 0` when not. The first counts what waits on you
   (or on you or the lead, with `lead = session`): every row in needs you and the lead's queue, plus
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
-  from its newest `review`, `kept`, `close:<cause>`, `escalated` or `no-agent` line in `events.tsv`, or else from its
-  file's last commit. The second counts the escaped defects logged in the last 7 days
+  from its newest `review`, `kept`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
+  file's last commit. A `no agent on story` row waits from the event that explains it. The second counts the escaped defects logged in the last 7 days
   (`--reviewer escaped` in `findings.tsv`). A third light shows only when someone had to step in on
   those 7 days: `! N interventions in 7 days`, the `swarm.sh intervene` lines (`lead-hand` and
   `user-caught`), the same count `flow`'s `incidents` section gives for them. It goes on the
@@ -81,8 +81,13 @@ is one column, top to bottom:
   pane, nudges, resumes, incidents and failed tells excepted), `agree` a draft epic, and `no agent
   on story` for a started story that no agent works on any more. That last row is the `no-agent:`
   line `swarm.sh wait --lead` wakes the lead with. It names the story and what to run:
-  `swarm.sh hold <slug> <reason>` for a ready story, `swarm.sh merge` for one in review. To draw it,
-  dash reads herdr's agent list once a frame; it writes no `events.tsv` line. A `lead` story's row ends with
+  `swarm.sh hold <slug> <reason>` for a ready story, and for one in review `swarm.sh merge` once a
+  review passed on its head, else `swarm.sh review-agent`. A story whose exit is a merge and that
+  already has a `merge` row gets no second row. The row shows only once an event explains why
+  the agent is gone: an ok close, a failed start, or the `no-agent` line a `wait --lead` poll
+  writes. A pane that closed with nothing logged gets no row until a `wait --lead` poll has run
+  since, and with `lead` off nothing may run one, so the row may never show. To draw it, dash reads
+  herdr's agent list once a frame and writes no `events.tsv` line. A `lead` story's row ends with
   who it waits for: `waits for: you: create the read-only user`, with the text of its first
   **You:** line, or `waits for: the lead` when it has none. Only your next **You:** step is listed,
   the first ready `lead` story that has one, with `+N more` when other stories have one too. When

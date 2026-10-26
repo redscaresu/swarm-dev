@@ -275,6 +275,15 @@ out="$(NA_LISTED=1 ldash 100)"
 check "lead = session: with the builder listed, no no-agent row" lacks "no agent on story l-na" "${out}"
 check "lead = session: and the lead's queue still has the kept row" has "review kept story k-kept" "$(joined "$(lbox "lead's queue" "${out}")")"
 sed -i.bak '/^w4:p6 l-na$/d' "${L}/.swarm/state/l"; rm -f "${L}/.swarm/state/l.bak"
+# A no-agent row explained by a failed start (no no-agent line) waits from that start, 2h30m ago, not
+# from its file's last commit (L has none, so no age at all) or l-na's newer no-agent line.
+litem stories/l-nf.md '' 'status: ready' 'kind: code'
+printf '%s\t%s\tl-nf\t-\t%s\n' "$(ago 200)" story ok "$(ago 150)" restart failed >> "${L}/.swarm/events.tsv"
+out="$(ldash 100)"
+check "lead = session: a story whose restart failed is a no-agent row" \
+  has "! no agent on story l-nf: swarm.sh hold l-nf <reason>" "$(joined "$(lbox "lead's queue" "${out}")")"
+check "lead = session: and its row waits from the failed start" has "waiting on you or the lead, oldest 2h" "${out}"
+rm "${L}/docs/stories/l-nf.md"
 # With merge = agent swarm.sh merge holds a costs: money story for the user: no lead session can merge it.
 printf 'lead = session\nmerge = agent\n' > "${L}/.claude/swarm/config"; out="$(ldash 100)"
 check "lead = session, merge = agent: a costs: money merge is under needs you" \
@@ -286,6 +295,23 @@ litem epics/ep-paid.md '' 'status: review' 'prs: https://github.com/o/l/pull/5';
 check "lead = session, merge = agent: a held PR a story and its epic both list is one row" \
   test "$(grep -c 'l#5' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
 rm -f "${L}/docs/epics/ep-paid.md"
+# A review story with no live agent: under merge = agent no_agent_lines names it. With no passing review
+# its exit is review-agent, a row beside its merge row. Its merge row waits from its review line,
+# 3h20m ago, not from its newer no-agent line.
+litem stories/l-nr.md '' 'status: review' 'kind: code' 'prs: https://github.com/o/l/pull/9'
+printf '%s\t%s\tl-nr\t-\tok\n' "$(ago 240)" story "$(ago 200)" review "$(ago 10)" no-agent >> "${L}/.swarm/events.tsv"
+out="$(ldash 100)"; queue="$(joined "$(lbox "lead's queue" "${out}")")"
+check "lead = session, merge = agent: a review story with no agent has its merge row" has "! merge l-nr: https://github.com/o/l/pull/9" "${queue}"
+check "lead = session, merge = agent: with no passing review, a no-agent row with review-agent too" \
+  has "! no agent on story l-nr: swarm.sh review-agent l-nr https://github.com/o/l/pull/9" "${queue}"
+check "lead = session, merge = agent: its merge row waits from its review line" has "waiting on you or the lead, oldest 3h" "${out}"
+# A review that passed on its head: the exit is that merge, so the merge row is its one row.
+H=0123456789abcdef0123456789abcdef01234567
+mkdir -p "${L}/.swarm/reviews"; printf 'head: %s\n\n## Findings\n\nNone.\n' "${H}" > "${L}/.swarm/reviews/l-nr.md"
+out="$(ldash 100)"
+check "lead = session, merge = agent: with a passing review, the merge row is its one row" \
+  test "$(grep -c 'l-nr' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
+rm "${L}/docs/stories/l-nr.md" "${L}/.swarm/reviews/l-nr.md"
 echo "lead = session" > "${L}/.claude/swarm/config"
 # Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
 printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
