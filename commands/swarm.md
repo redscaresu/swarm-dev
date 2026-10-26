@@ -119,27 +119,34 @@ Repeat until a step below says stop:
      `held: <slug> (<cause>)` or `escalated: <slug>` line, do the `escalated <slug>` step for that slug at once, without waiting for `next`:
      `next` names the running conductor first and would not get to it. For a
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
-     `kept: <slug> <PR URL> (not reviewed)` line is a story whose builder was closed while its PR
-     was still open. It is in review, but the PR is not offered to merge until
-     `swarm.sh review <slug> <PR URL>` marks it reviewed. First run `swarm.sh wait-pr <PR URL>` in
-     the background, and on its exit 2 do as the `no-agent:` arm below says. Once it exits 0,
-     compare the `head:` line of `.swarm/reviews/<slug>.md` with the head it printed: when they
-     match, triage that file, and otherwise start a review with
+     `kept: <slug> <PR URL>... (not reviewed)` line is a story whose builder was closed while its
+     PRs were still open. It is in review, but its PRs are not offered to merge until
+     `swarm.sh review <slug> <PR URL>...` marks them reviewed. While a conductor runs for the
+     story's epic (or the backlog's, for a story with no epic), as `swarm.sh status` lists them,
+     leave the story to it: its merge rule reviews a kept story. Take the story up once that
+     conductor has reported. Then do the following for each PR on the line. Run
+     `swarm.sh wait-pr <PR URL>` in the background, and on its exit 2 do as the `no-agent:` arm
+     below says. Once it exits 0, compare the `head:` line of `.swarm/reviews/<slug>.md` with the
+     head it printed: when they match, triage that file, and otherwise start a review with
      `swarm.sh review-agent <slug> <PR URL>`. From there, review the PR as a conductor does, by
      reference.md § Building (**Review before closing.**) and § The outer loop, logging every
      finding, fixed or declined, with `--round <n>`. Findings to fix, red checks, and a worktree
      review-agent refuses go to a builder. If none is open, start one in the story's worktree with
-     `swarm.sh agent`, its brief naming the story and its PR, and wait for it to go idle with
-     `swarm.sh wait <slug>`. Send review findings with `swarm.sh tell <slug> findings <file>`, which
-     counts the round and applies the ladder, and the rest with `swarm.sh tell <slug> nudge <file>`,
-     which is not a round. Wait for the builder with `swarm.sh wait <slug>` in the background, then
-     run wait-pr and the review again on its new head. Once the latest head has passed, wait-pr
-     exits 0 on it and `swarm.sh findings <repo> <pr>` is triaged (§ The outer loop, **Green means
-     more than green checks.**),
-     close the builder if one is open (`swarm.sh close <slug>`), then run the `swarm.sh review`
-     above, which clears the line and hands the PR on to merge. Run `swarm.sh close <slug> --drop`
-     only when the PR is not worth saving. It counts the attempt, so the next build may move up a
-     model or the story may become yours, then closes the PR and sends the story back to ready. A
+     `swarm.sh agent <tab> <slug> <worktree> <role> <brief>`, where <tab> is the story's `epic:`
+     (its slug when it has none) and <role> is what `swarm.sh _role <slug>` prints. Its brief
+     names the story and its PRs. Wait for it to go idle with `swarm.sh wait <slug>`. Send review
+     findings with `swarm.sh tell <slug> findings <file>`, which counts the round and applies the
+     ladder, and the rest with `swarm.sh tell <slug> nudge <file>`, which is not a round. Wait for
+     the builder with `swarm.sh wait --stall <slug>` in the background, then run wait-pr and the
+     review again on its new head. When that wait times out, stalls or prints `stuck:`, or the
+     builder goes idle with no new head, act as a conductor does by § Building (**Giving up on a
+     builder.**). Once every PR's latest head has passed, wait-pr exits 0 on it, and
+     `swarm.sh findings <repo> <pr>` is triaged (§ The outer loop, **Green means more than green
+     checks.**), close the builder if one is open (`swarm.sh close <slug>`). Then run
+     `swarm.sh review <slug>` with every PR URL on the line: it keeps only the PRs it is given.
+     That clears the line and hands the PRs on to merge. Run `swarm.sh close <slug> --drop`
+     only when the PRs are not worth saving. It counts the attempt, so the next build may move up a
+     model or the story may become yours, then closes the PRs and sends the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
      and no tell on the way. Run the exit it names. For a ready story it is
      `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
