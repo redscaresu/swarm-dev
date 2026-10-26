@@ -668,7 +668,7 @@ codex_story_prompt() {
 # group can miss a child forked while it is sent: STOP the group first). stop_codex stops it
 # after codex_minutes (SWARM_CODEX_SECONDS, a whole number of seconds, overrides it, for tests), or when this command is sent
 # TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
-# events.tsv's line says so; otherwise it exits as codex did. codex's output, stderr merged into
+# events.tsv's line says so, and it writes a reap line, target codex-<story or base>; otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
 # child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex whose last lines hold its own
 # limit message (CODEX_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a
@@ -740,6 +740,7 @@ codex_review() {
     return "${rc}"
   fi
   stop_codex "${pid}"
+  record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min"
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
 }
 

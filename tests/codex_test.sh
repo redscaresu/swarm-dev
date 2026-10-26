@@ -2,7 +2,8 @@
 # codex_test.sh — swarm.sh codex-review <base>: codex's review against origin/<base>, with no prompt
 # and stdin from /dev/null, its output and exit passed through. One that runs past the limit
 # (SWARM_CODEX_SECONDS here) is stopped, TERM then KILL, leaving nothing of it running, and the
-# command dies with "codex skipped: timed out", which events.tsv records. With SWARM_STORY, a prompt
+# command dies with "codex skipped: timed out", which events.tsv records, with a reap line naming
+# codex-<base or story>; one that finishes writes none. With SWARM_STORY, a prompt
 # holding the story's touches and Done when replaces --base. codex is a stub on PATH.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -91,6 +92,8 @@ left() {
 }
 # markers — codex-review's markers left in the project's state dir, one per line.
 markers() { compgen -G "${P}/.swarm/state/codex-review.*" || true; }
+# reaps — the reap lines in the project's events.tsv, "target|outcome", one per line; nothing before any.
+reaps() { awk -F'\t' '$2 == "reap" { print $3 "|" $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 last_event() { awk -F'\t' '$2 == "codex-review" { o = $3 "|" $5 } END { print o }' "${P}/.swarm/events.tsv"; }
 
 # --- A codex that sleeps past the limit is stopped, with its child, and named.
@@ -99,6 +102,7 @@ stub '"${d}/stubsleep" 60'
 review
 check "a codex past the limit fails within 10 s, saying it was skipped" "fails|yes|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le 10 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: timed out" "${out}")"
+check "a codex past the limit writes exactly one reap line, naming codex-<base> and the timeout" "codex-main|timed out after 10 min" "$(reaps)"
 check "neither the stub nor its child sleep is left" "yes" "$(gone)"
 check "a timed-out codex-review leaves no marker" "" "$(markers)"
 left "the timeout case"
@@ -227,6 +231,18 @@ printf '%s\n' '---' 'touches: [x.sh]' '---' '**Done when:** the inline item hold
 STORY=s2 review
 check "the story prompt keeps a Done when written on its heading line" "yes" "$(has "the inline item holds." "$(cat "${BIN}/args")")"
 left "SWARM_STORY's prompt case"
+
+# --- A story's review that times out reaps codex-<story>, one line more; a codex that finishes writes none.
+nreaps() { reaps | wc -l | tr -d ' '; }
+n0="$(nreaps)"
+stub 'exit 0'
+STORY=s1 review
+check "a codex that finishes writes no reap line" "${n0}" "$(nreaps)"
+# shellcheck disable=SC2016 # the stub's variable
+stub '"${d}/stubsleep" 60'
+STORY=s1 review
+check "a story's codex past the limit adds one reap line, naming codex-<story>" "$((n0 + 1))|codex-s1|timed out after 10 min" "$(nreaps)|$(reaps | tail -n 1)"
+left "the story timeout case"
 
 # --- A SWARM_STORY that names no story, names a story with no Done when item, or is no slug fails,
 # naming why, before codex starts.
