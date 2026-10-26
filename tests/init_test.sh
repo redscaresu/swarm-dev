@@ -4,6 +4,8 @@
 # lines, a CI workflow with a board-only skip, a pre-commit hook, a second run that changes nothing,
 # board_dir, and the refusals outside a repo's root.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 TEMPLATES="$(dirname "${SWARM}")/../templates/docs"
