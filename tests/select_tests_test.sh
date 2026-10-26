@@ -38,26 +38,29 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 # those files), the selector's own test naming a hook it does not test, and a test naming each named
 # path, one per test.
 DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections; do DOC_FLOOR+=("tests/${t}_test.sh"); done
-CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed; do CMD_FLOOR+=("tests/${t}_test.sh"); done
+CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
 BIN_FLOOR=(); for t in agent_state command_names doc_check events lib_path loose_match removed roles skill timeouts; do BIN_FLOOR+=("tests/${t}_test.sh"); done
 git init -q -b main "${G}"
 mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" "${G}/docs" "${G}/hooks" "${G}/scripts" "${G}/tests"
-for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md docs/method.md \
+for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
   hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
 for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHELL_FLOOR[@]}" "${BIN_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
+echo 'cat commands/plan-epic.md' > "${G}/tests/names_plan_epic_test.sh"
 echo 'bash hooks/merge-guard.sh' > "${G}/tests/names_guard_test.sh"
 echo 'cp scripts/board-only.sh .' > "${G}/tests/names_gate_test.sh"
 echo 'bin/gh-shim/gh api' > "${G}/tests/names_shim_test.sh"
 echo 'cat commands/renamed.md' > "${G}/tests/names_renamed_test.sh"
 echo 'echo plan-swarm.md old-board-only.sh merge-guard.shx' > "${G}/tests/x_test.sh"   # near misses
 # --functions' fixture: a dispatch case in bin/swarm.sh, and functions of both forms in bin/lib/x.sh,
-# one of which runs named.py, which imports helper.py, which imports util.py; lone.py is named only
-# in a comment.
+# one of which runs named.py, which imports helper.py, which imports util.py; another imports
+# inline.py after a ;. lone.py is named only in a top-level comment, quiet.py only in a comment in a
+# function. named.py mentions solo.py only in a comment and aside.py only in its docstring. noted is a
+# one-liner with a comment.
 cat > "${G}/bin/swarm.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -90,9 +93,17 @@ run_named() {
 }
 
 sub_two() (
+  # quiet.py is not run here
   echo two
 )
 gone() { echo gone; }
+run_inline() {
+  python3 -c 'import sys; sys.path.insert(0, "bin/lib"); from inline import X'
+}
+noted() { echo noted; }  # a one-liner with a comment
+after() {
+  echo after
+}
 
 step_one() {
   echo one
@@ -101,10 +112,15 @@ step_one() {
 uses_step() {
   step_one
 }
+
+run_go_py() {
+  python3 bin/lib/runs_go.py
+}
 EOF
 # reach's fixture: tests that run the go arm (directly, by a wrapper function, by a hook, by a script
 # whose path to swarm.sh is unquoted, by a hook that runs it through PATH, by a hook whose function
-# passes "$@" on, by a hook that passes "$@" on and names go), run only the stop arm,
+# passes "$@" on, by a hook that passes "$@" on and names go, by a .py a function runs and the test
+# runs itself), run only the stop arm,
 # source the lib to call step_one's caller, and call step_one itself.
 # shellcheck disable=SC2016 # the hook's text, expanded when it runs
 printf '#!/usr/bin/env bash\n"$(dirname "$0")/../bin/swarm.sh" go\n' > "${G}/hooks/runs-go.sh"
@@ -124,10 +140,17 @@ echo 'bash hooks/fwd.sh "$1"' > "${G}/tests/fwd_test.sh"
 printf 'f() { bash bin/swarm.sh "$@"; }\nf go\n' > "${G}/hooks/fn-fwd.sh"
 echo 'bash hooks/fn-fwd.sh' > "${G}/tests/fn_fwd_test.sh"
 printf 'source bin/lib/x.sh\nuses_step\n' > "${G}/tests/sources_lib_test.sh"
-printf 'import helper\nprint(helper.X)\n' > "${G}/bin/lib/named.py"
+printf 'import subprocess\nsubprocess.run(["bash", "bin/swarm.sh", "go"])\n' > "${G}/bin/lib/runs_go.py"
+echo 'python3 bin/lib/runs_go.py' > "${G}/tests/py_go_test.sh"
+printf '"""Prints helper.X; aside.py is only mentioned here."""\nimport helper  # solo.py is only mentioned here\nprint(helper.X)\n' \
+  > "${G}/bin/lib/named.py"
+echo 'print(3)' > "${G}/bin/lib/solo.py"
+echo 'print(4)' > "${G}/bin/lib/aside.py"
 printf 'import util\nX = util.Y\n' > "${G}/bin/lib/helper.py"
 echo 'Y = 1' > "${G}/bin/lib/util.py"
 echo 'print(1)' > "${G}/bin/lib/lone.py"
+echo 'X = 1' > "${G}/bin/lib/inline.py"
+echo 'print(2)' > "${G}/bin/lib/quiet.py"
 git -C "${G}" add -A; git -C "${G}" commit -qm base
 git -C "${G}" update-ref refs/remotes/origin/main HEAD
 BASE="$(git -C "${G}" rev-parse HEAD)"
@@ -146,6 +169,8 @@ check "a doc selects the doc floor and the test that names it" "$(sel "echo 1 >>
   "$(lines "${DOC_FLOOR[@]}" tests/names_method_test.sh)"
 check "an unstaged command selects the command floor and the test that names it, no other" "$(sel 'echo 1 >> commands/swarm.md')" \
   "$(lines "${CMD_FLOOR[@]}" tests/names_swarm_test.sh)"
+check "a command only its own test names still selects command_names_test.sh, which greps every command" \
+  "$(sel "echo 1 >> commands/plan-epic.md; ${commit}")" "$(lines "${CMD_FLOOR[@]}" tests/names_plan_epic_test.sh)"
 check "a staged hook selects the shell-scan floor and the test that names it, no other" "$(sel 'echo 1 >> hooks/merge-guard.sh; git add -A')" \
   "$(lines "${SHELL_FLOOR[@]}" tests/names_guard_test.sh)"
 check "a script selects the test that names it, alone" "$(sel "echo 1 >> scripts/board-only.sh; ${commit}")" tests/names_gate_test.sh
@@ -175,7 +200,7 @@ check "an empty selection says so on stderr" "$(cd "${G}" && bash "${SEL}" 2>&1 
 
 # reach: the bin/ row, by function.
 GO=(tests/runs_go_test.sh tests/wrapper_test.sh tests/hook_test.sh tests/script_test.sh tests/bare_hook_test.sh
-  tests/fn_fwd_test.sh tests/fwd_test.sh)
+  tests/fn_fwd_test.sh tests/fwd_test.sh tests/py_go_test.sh)
 check "a function the go arm reaches selects the go tests, the lib caller's and the bin floor, not the stop test" \
   "$(sel "perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; ${commit}")" "$(lines "${GO[@]}" tests/sources_lib_test.sh tests/names_step_test.sh "${BIN_FLOOR[@]}")"
 check "a deleted function still selects the tests of its callers" \
@@ -187,10 +212,10 @@ check "the stop arm (and its other name, halt) selects the test that runs it and
 why() { (cd "${G}" && { bash "${SEL}" > /dev/null; } 2>&1); }
 check "a call by a built name that may be the function selects every test, and says so" \
   "$(sel "perl -pi -e 's/echo one/echo 1/; s/^  step_one\\b/  \"step_\\\${1:-one}\"/' bin/lib/x.sh; ${commit}")|$(why)" \
-  "${ALL}|select-tests: every test: bin/lib/x.sh:step_one: bin/lib/x.sh:18 calls a function by a name it builds, which may be step_one"
+  "${ALL}|select-tests: every test: bin/lib/x.sh:step_one: bin/lib/x.sh:26 calls a function by a name it builds, which may be step_one"
 check "a variable set to a built name and run selects every test, and says so" \
   "$(sel "perl -pi -e 's/echo one/echo 1/; s/^  step_one\\b/  fn=\"step_\\\${1:-one}\"; \"\\\$fn\"/' bin/lib/x.sh; ${commit}")|$(why)" \
-  "${ALL}|select-tests: every test: bin/lib/x.sh:step_one: bin/lib/x.sh:18 calls a function by a name it builds, which may be step_one"
+  "${ALL}|select-tests: every test: bin/lib/x.sh:step_one: bin/lib/x.sh:26 calls a function by a name it builds, which may be step_one"
 check "a test that runs swarm.sh with no command word selects every test, and says so" \
   "$(sel "perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; echo 'for c in a b; do bash bin/swarm.sh \"\$c\"; done' > tests/blind_test.sh")|$(why)" \
   "$(lines "${ALL}" tests/blind_test.sh)|select-tests: every test: tests/blind_test.sh runs swarm.sh with no command word in it"
@@ -223,10 +248,25 @@ check "a mode change to a bin file gives full" "$(fn "chmod +x bin/lib/x.sh; ${c
 check "an edit to a .py gives the shell functions whose bodies name it" "$(fn 'echo 1 >> bin/lib/named.py')" bin/lib/x.sh:run_named
 check "an edit to a .py two imports away gives the functions that run the first" \
   "$(fn "echo 'Z = 2' >> bin/lib/util.py; ${commit}")" bin/lib/x.sh:run_named
-check "a .py no function names gives full" "$(fn "echo 1 >> bin/lib/lone.py; ${commit}")" full
+check "an edit to a .py imported after a ; gives the function that imports it" \
+  "$(fn "echo 'Y = 2' >> bin/lib/inline.py; ${commit}")" bin/lib/x.sh:run_inline
+check "a .py named only in a top-level comment gives full" "$(fn "echo 1 >> bin/lib/lone.py; ${commit}")" full
+check "a .py named only in a comment in a function gives full" "$(fn "echo 1 >> bin/lib/quiet.py; ${commit}")" full
+check "a .py named only in another .py's comment gives full" "$(fn "echo 1 >> bin/lib/solo.py; ${commit}")" full
+check "a .py named only in another .py's docstring gives full" "$(fn "echo 1 >> bin/lib/aside.py; ${commit}")" full
 check "a .py a script runs gives full" \
   "$(fn "echo 'python3 bin/lib/named.py' >> scripts/board-only.sh; echo 1 >> bin/lib/named.py")" full
+check "a .py a test runs gives full" \
+  "$(fn "echo 'python3 bin/lib/named.py' > tests/direct_test.sh; echo 1 >> bin/lib/named.py")" full
+check "an edit after a one-liner with a comment gives the next function" \
+  "$(fn "perl -pi -e 's/echo after/echo later/' bin/lib/x.sh; ${commit}")" bin/lib/x.sh:after
+check "a function it cannot parse gives full" \
+  "$(fn "printf 'odd() { echo x; } ; echo y\\nlater() {\\n  :\\n}\\n' >> bin/lib/x.sh; ${commit}")" full
+check "--functions reads no map" \
+  "$(fn "echo bad > scripts/test-map.tsv; perl -pi -e 's/echo two/echo 2/' bin/lib/x.sh")" bin/lib/x.sh:sub_two
 check "a change outside bin/ gives no function" "$(fn "echo 1 >> docs/method.md; ${commit}")" ""
+check "--functions says so on stderr when it gives no function" "$(cd "${G}" && bash "${SEL}" --functions 2>&1 >/dev/null)" \
+  "select-tests: no bin/ function: no change reaches a function in bin/swarm.sh, bin/lib/*.sh or bin/lib/*.py"
 check "no origin/main gives full" \
   "$(fn "echo 1 >> bin/lib/named.py; git update-ref -d refs/remotes/origin/main")" full
 git -C "${G}" update-ref refs/remotes/origin/main "${BASE}"
@@ -243,6 +283,9 @@ want="$(lines "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" tests/names_method_test.sh tes
 check "--run runs make test on the whole selection, JOBS=4, with no SHARD" "${out}|$(cat "${tmp}/make.args")" \
   "|$(printf '%s\n' test "TESTS=${want% }" JOBS=4 "SHARD unset")"
 rm -f "${tmp}/make.args"
+out="$(cd "${G}" && PATH="${tmp}/bin:${PATH}" bash "${SEL}" --run --functions 2>&1)" && rc=0 || rc=$?
+check "--run with --functions is refused and runs nothing" "${out}|${rc}|$([[ -e "${tmp}/make.args" ]] && echo ran)" \
+  "select-tests: --run takes no other option, so it cannot run --functions' or --check-map's output|2|"
 out="$(PATH="${tmp}/bin:${PATH}" sel "echo 1 >> board/stories/a.md; ${commit}" --run)"
 check "--run on an empty selection runs nothing and says so" "${out}|$([[ -e "${tmp}/make.args" ]] && echo ran)" \
   "select-tests: nothing to run|"

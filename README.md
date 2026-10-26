@@ -171,9 +171,11 @@ by hand.
   path, plus the tests that read `bin/`'s code as text. When it cannot follow the calls (a change
   outside any function, a call by a name built at run time, or a test that runs `swarm.sh` with no
   command in its text), it prints every test file. `--run` runs the list through `make test`, four files at a time.
-  `--functions` prints the `bin/` functions the branch changed instead, as `<file>:<function>`, or
-  `bin/swarm.sh:arm <command>` for a dispatch arm. For a changed `bin/lib/*.py` it prints the functions
-  that run it. It prints `full` when a change falls outside any function or no function runs the `.py`.
+  `--functions` prints, instead, the functions the branch changed in `bin/swarm.sh` and `bin/lib/*.sh`:
+  `<file>:<function>`, or `bin/swarm.sh:arm <command>` for a dispatch arm. For a changed `bin/lib/*.py`
+  it prints the functions that run it. It prints `full` when a changed line in those files is outside
+  any function, when no function runs the `.py`, or when a hook, script or test runs it. It prints
+  nothing when the branch changes none of those files, or only blank lines outside their functions.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
   see [reference.md § Building](docs/reference.md#building).
 

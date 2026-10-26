@@ -25,8 +25,8 @@ scripts/test.sh Makefile	all
 scripts/select-tests.sh scripts/select_tests.py scripts/test-map.tsv	tests/select_tests_test.sh
 scripts/*	named
 # Every command file is read by the tests that check the docs' names, the roles, the codex lines, the
-# skill's links and the removed names.
-commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex_test.sh tests/skill_test.sh tests/removed_test.sh
+# skill's links, the removed names, and the bare /swarm that command_names_test.sh greps every command for.
+commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex_test.sh tests/skill_test.sh tests/removed_test.sh tests/command_names_test.sh
 hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh
 # The docs: the tests that name the file, and always the ones that check or read the real docs.
 README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh tests/llms_test.sh tests/config_test.sh tests/epic_codex_test.sh tests/board_pr_test.sh tests/merge_test.sh tests/skill_test.sh tests/removed_test.sh tests/flow_sections_test.sh
