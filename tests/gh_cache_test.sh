@@ -167,7 +167,7 @@ check "a cached run created over 90 days ago is dropped" "$(cached_runs)" "11 21
 git -C "${P}" remote add origin https://github.com/o/r.git   # a window with no PR still lists the origin's runs
 flow --since "$(ago 0)" > /dev/null
 check "with --since after the days the cache lists from, runs are listed from --since" "$(listing)" "$(ago 0)"
-for f in "${C}/pulls/1.json" "${C}/runs.json" "${C}/merged.json"; do printf '{"half' > "${f}"; done
+for f in "${C}/pulls/1.json" "${C}/runs.json" "${C}/merged.json"; do printf '{"half' > "${f}"; done # vacuous-test: ok, a damaged cache on purpose
 check "a damaged cache prints the same" "$(flow)" "${done_out}"
 check "and reads PR 1 and lists runs and merged PRs from the window's start again" "$(calls 'pulls/1$') $(merged) $(listing)" "1 $(ago 5 d) ${since}"
 check "then rewrites them whole" "$(python3 -c 'import json, sys; [json.load(open(f)) for f in sys.argv[1:]]; print("parsed")' "${C}/pulls/1.json" "${C}/runs.json" "${C}/merged.json")" parsed
