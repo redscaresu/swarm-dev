@@ -7,6 +7,7 @@
 # from tidy_panes, and no `herdr agent read ... |` pipeline scrapes a pane. Run on another file with
 # `bash tests/agent_state_test.sh <swarm.sh>`.
 set -euo pipefail
+unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

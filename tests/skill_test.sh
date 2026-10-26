@@ -4,6 +4,7 @@
 # plugin command or a Claude Code built-in. Its description carries the trigger phrases; its body is
 # short, names no board path, and copies no line from README.md, docs/method.md or docs/reference.md.
 set -euo pipefail
+unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

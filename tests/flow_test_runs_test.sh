@@ -68,7 +68,8 @@ mkdir "${dir}/wt/hold"
 hold() { printf '#!/usr/bin/env bash\n: > "%s/in%s"\nfor _ in $(seq 600); do [ -e "%s/go%s" ] && exit 0; sleep 0.1; done\nexit 1\n' "${dir}" "$1" "${dir}" "$1"; }
 hold A > "${dir}/wt/hold/hold_a_test.sh"
 hold D > "${dir}/wt/hold/hold_d_test.sh"
-printf '#!/usr/bin/env bash\nbash "%s/scripts/test.sh" hold/hold_a_test.sh\n' "${ROOT}" > "${dir}/wt/hold/nest_test.sh"
+# B is named by its absolute path: test.sh runs a test from its TMPDIR, not from the checkout.
+printf '#!/usr/bin/env bash\nbash "%s/scripts/test.sh" "%s/hold/hold_a_test.sh"\n' "${ROOT}" "${dir}/wt" > "${dir}/wt/hold/nest_test.sh"
 # until_there <file> — wait for it, 60 s at most.
 until_there() { for _ in $(seq 600); do [[ -e "$1" ]] && return 0; sleep 0.1; done; echo "FAIL $1 never appeared"; exit 1; }
 sleep 0 & dead=$!; wait "${dead}"

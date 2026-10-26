@@ -2,6 +2,7 @@
 # epic_codex_test.sh — every codex run goes through codex-review, and every log-finding line and
 # --declined the docs and finding_rule give names its reviewer and reason. Reads the source only.
 set -euo pipefail
+unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

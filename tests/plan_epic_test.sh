@@ -3,6 +3,7 @@
 # `bash tests/plan_epic_test.sh <plan-epic.md> <reference.md> <epic.md>`.
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
+unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

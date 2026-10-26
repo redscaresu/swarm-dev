@@ -135,9 +135,17 @@ shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scr
 python3 -m py_compile bin/lib/*.py
 make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
-                                            # it unsets the swarm env that points at a real project, and dash starts no detached refresh
+                                            # it unsets the swarm env that points at a real project, runs each file from its own TMPDIR
+                                            # (an unpinned swarm.sh call stops there instead of writing this checkout's .swarm), and dash starts no detached refresh
 claude plugin validate .
 ```
+
+Every `tests/*_test.sh` that runs `swarm.sh` unsets `SWARM_PROJECT` at the top, or sets it per call, and
+`cd`s into the project it made before each call. Run on its own from a pane (`bash tests/<file>`), a
+test would otherwise take the lead's `SWARM_PROJECT` and write the real project's `.swarm/findings.tsv`
+and `events.tsv`. `tests/live_logs_test.sh` checks that every file handles `SWARM_PROJECT`, and runs
+`tests/events_test.sh` (the one that did write them) under `make test` and directly, against a copy of
+the checkout, to see that neither run adds a line to its logs.
 
 A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
 the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to

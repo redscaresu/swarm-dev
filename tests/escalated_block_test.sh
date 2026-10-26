@@ -5,6 +5,7 @@
 # reset deletes the block. herdr and gh are stubs on PATH: herdr lists the agents in ${ROOT}/agents
 # ("<name> <pane>" lines); gh answers pr list with no PRs.
 set -euo pipefail
+unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

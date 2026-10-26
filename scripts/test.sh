@@ -30,7 +30,9 @@ stop_group() {
 # test's made-up panes. Nor any SWARM_* but SWARM_SLEEP_SCALE: a builder's pane carries every SWARM_*
 # the lead exported, SWARM_PROJECT and SWARM_AGENT among them, which name its real project. And
 # SWARM_NO_CI_REFRESH is set, so a dash test starts no detached ci refresh, which outlives the test
-# and runs flow, and gh, on a project.
+# and runs flow, and gh, on a project. And the file runs from its TMPDIR, outside any git repo: a
+# swarm.sh call a test leaves unpinned (no cd into its project, no SWARM_PROJECT) stops there at "not
+# in a swarm project" instead of reaching this checkout's .swarm logs (tests/live_logs_test.sh).
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${v}" ;; esac; done
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
 limit="${TEST_FILE_TIMEOUT:-600}"
@@ -44,8 +46,9 @@ if [[ "${1:-}" == --one ]]; then
   echo "run  ${f}"
   # Inside the run dir, so it goes with it even if this job is KILLed.
   tmp="$(mktemp -d "${run}/tmp.XXXXXX")" || exit 1
+  case "${f}" in /*) abs="${f}" ;; *) abs="${PWD}/${f}" ;; esac   # the file, from the TMPDIR it runs in
   set -m   # the job below leads a process group of its own
-  TMPDIR="${tmp}" bash "${f}" < /dev/null > "${log}" 2>&1 &
+  (cd "${tmp}" && TMPDIR="${tmp}" exec bash "${abs}") < /dev/null > "${log}" 2>&1 &
   pid=$!
   set +m
   echo "${pid}" > "${run}/jobs/$$"

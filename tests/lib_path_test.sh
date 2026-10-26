@@ -6,6 +6,7 @@
 # bin/lib runs under -I (no cwd on sys.path), sets SWARM_LIB, and puts it first on sys.path before its
 # first import.
 set -euo pipefail
+unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
