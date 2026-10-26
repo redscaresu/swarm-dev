@@ -6,6 +6,8 @@
 # (failing once while ${FX}/read.fail exists), `pane send-keys` fails once while ${FX}/keys.fail exists,
 # and it logs every call to ${ROOT}/herdr.log.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/lib"

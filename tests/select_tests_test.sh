@@ -11,6 +11,8 @@
 # commands/, hooks/ and docs/, refuses a map that lists a missing test, and passes the real repo's
 # ls-files.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SEL="${REPO}/scripts/select-tests.sh"
