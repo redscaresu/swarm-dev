@@ -4,6 +4,8 @@
 # the name that works is /swarm-dev:swarm. /epic and /plan-epic resolve as typed, /hld writes
 # an HLD above them, and /plan-hld plans it into epics.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

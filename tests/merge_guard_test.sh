@@ -8,6 +8,8 @@
 # kill by pattern or of every process. A block writes one incident line to the project's
 # .swarm/events.tsv, and hooks.json runs the script on Bash calls.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 unset SWARM_AGENT  # the lead's session unless a case sets it
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

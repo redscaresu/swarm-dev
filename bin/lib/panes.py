@@ -190,3 +190,43 @@ def session_state(log, name, listing):
         why = " ".join(str(e.get("waitingFor") or "").split())
         return st, why if len(why) <= WHY_MAX else why[:WHY_MAX - 1] + "…"
     return (st, "") if st in ("busy", "idle") else ("unknown", "")
+# TEST_RUN: a command line that runs a test suite: make with a test or check argument, a shell running
+# scripts/test.sh, or the script run as itself. A word that only names one (grep scripts/test.sh, cat
+# test) is none.
+TEST_RUN = re.compile(r"(\S*/)?g?make(\s+\S+)*?\s+(test|check)(\s|$)"
+                      r"|(\S*/)?(ba|z|da|k)?sh(\s+-\S+)*\s+(\S*/)?scripts/test\.sh(\s|$)"
+                      r"|(\S*/)?scripts/test\.sh(\s|$)")
+# TEST_RUN_STALLS: how many stall_minutes a test run counts as work for; an older one may be hung.
+TEST_RUN_STALLS = 3
+def etime_secs(t):   # ps etime: [[dd-]hh:]mm:ss
+    d, _, hms = t.rpartition("-")
+    h = [0, 0] + [int(x) for x in hms.split(":")]
+    return int(d or 0) * 86400 + h[-3] * 3600 + h[-2] * 60 + h[-1]
+def test_running(info, stall_minutes):
+    try:
+        shell = int(json.loads(info)["result"]["process_info"]["shell_pid"])
+        cap = TEST_RUN_STALLS * int(stall_minutes) * 60
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,etime=,command="], capture_output=True, text=True, timeout=10)
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+        return False
+    if out.returncode != 0:
+        return False
+    parent, runs = {}, set()
+    for l in out.stdout.splitlines():
+        f = l.split(None, 3)
+        if len(f) == 4 and f[0].isdigit() and f[1].isdigit():
+            parent[int(f[0])] = int(f[1])
+            try:
+                young = etime_secs(f[2]) < cap
+            except ValueError:
+                young = False
+            if young and TEST_RUN.match(f[3].strip()):
+                runs.add(int(f[0]))
+    for p in runs:
+        for _ in parent:   # up to the pane's shell; a cycle or a process with no parent listed ends the walk
+            p = parent.get(p)
+            if p is None or p == shell:
+                break
+        if p == shell:
+            return True
+    return False

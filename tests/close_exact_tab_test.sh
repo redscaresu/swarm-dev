@@ -11,6 +11,8 @@
 # pr list gives ${ROOT}/prs.json, or no PRs, and pr close records each URL in ${ROOT}/prs-closed. The
 # project has an empty bare origin.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

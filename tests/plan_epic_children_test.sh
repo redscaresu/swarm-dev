@@ -2,6 +2,8 @@
 # plan_epic_children_test.sh — `swarm.sh next` on a board where /plan-epic split an epic into child
 # epics: the children are planned, and the split parent counts as done once none of them is left.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 fails=0

@@ -6,6 +6,8 @@
 # its grants, any other none); a story or epic of the same name wins; a path as the name dies with bad
 # slug. gh is a stub on PATH answering a PR's files and head contents from ${FX}.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

@@ -7,6 +7,8 @@
 # Run on other copies with `bash tests/plan_hld_test.sh <plan-hld.md> <swarm.md> <hld README.md> <hld.md>`.
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

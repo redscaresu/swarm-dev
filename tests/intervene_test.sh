@@ -4,6 +4,8 @@
 # dash's interventions light agree on the 7-day count over a fixture events.tsv, and commands/swarm.md
 # tells the lead to log both kinds.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
