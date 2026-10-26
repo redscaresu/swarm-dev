@@ -2718,7 +2718,9 @@ lead_wake() {
   fi
   now="$(lead_queue)"
   resend_pass >/dev/null 2>&1 || true
-  u="$(unsent_lines)"; now="${now}${now:+${u:+$'\n'}}${u}"
+  # No marker, no subshell: most polls have none.
+  u=""; ! compgen -G "${PROJECT_DIR}/.swarm/briefs/*.unsent" >/dev/null || u="$(unsent_lines)"
+  now="${now}${now:+${u:+$'\n'}}${u}"
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
       || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* ]] || new+="${line}"$'\n'
