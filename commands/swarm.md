@@ -121,18 +121,19 @@ Repeat until a step below says stop:
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
      `kept: <slug> <PR URL> (not reviewed)` line is a story whose builder was closed while its PR
      was still open. It is in review, but the PR is not offered to merge until
-     `swarm.sh review <slug> <PR URL>` marks it reviewed. First compare the `head:` line of
-     `.swarm/reviews/<slug>.md` with the PR's head
-     (`gh pr view <PR URL> --json headRefOid --jq .headRefOid`): when they match, triage that
-     file, and otherwise start a review with `swarm.sh review-agent <slug> <PR URL>`. From there,
-     review the PR as a conductor does, by reference.md § Building (**Review before closing.**)
-     and § The outer loop, logging every finding, fixed or declined, with `--round <n>`. Findings
-     to fix, red checks, and a worktree review-agent refuses go to a builder. If none is open,
-     start one in the story's worktree with `swarm.sh agent`, its brief naming the story and its
-     PR. Send them with `swarm.sh tell <slug> findings <file>`, which counts the round and applies
-     the ladder. Wait for the builder with `swarm.sh wait <slug>` in the background, then review
-     its new head. Run `swarm.sh wait-pr <PR URL>` in the background too, and on its exit 2 do as
-     the `no-agent:` arm below says. Once the latest head has passed and wait-pr exits 0 on it,
+     `swarm.sh review <slug> <PR URL>` marks it reviewed. First run `swarm.sh wait-pr <PR URL>` in
+     the background, and on its exit 2 do as the `no-agent:` arm below says. Once it exits 0,
+     compare the `head:` line of `.swarm/reviews/<slug>.md` with the head it printed: when they
+     match, triage that file, and otherwise start a review with
+     `swarm.sh review-agent <slug> <PR URL>`. From there, review the PR as a conductor does, by
+     reference.md § Building (**Review before closing.**) and § The outer loop, logging every
+     finding, fixed or declined, with `--round <n>`. Findings to fix, red checks, and a worktree
+     review-agent refuses go to a builder. If none is open, start one in the story's worktree with
+     `swarm.sh agent`, its brief naming the story and its PR, and wait for it to go idle with
+     `swarm.sh wait <slug>`. Send them with `swarm.sh tell <slug> findings <file>`, which counts the
+     round and applies the ladder. Wait for the builder with `swarm.sh wait <slug>` in the
+     background, then run wait-pr and the review again on its new head. Once the latest head has
+     passed and wait-pr exits 0 on it,
      close the builder if one is open (`swarm.sh close <slug>`), then run the `swarm.sh review`
      above, which clears the line and hands the PR on to merge. Run `swarm.sh close <slug> --drop`
      only when the PR is not worth saving. It counts the attempt, so the next build may move up a
