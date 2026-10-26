@@ -13,6 +13,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LINT="${REPO}/scripts/lint"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${tmp}"' EXIT
+export CLAUDE_CONFIG_DIR="${tmp}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 
 check() { # <name> <test...>
