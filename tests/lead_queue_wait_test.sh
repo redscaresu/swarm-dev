@@ -13,8 +13,9 @@
 # A kept line opens a kept item (ending a stale one for its slug; none for a child held by an open
 # parent), which the close that kept it does not end: it is open while its story is in review with
 # kept:. A later review (which opens a merge item) or held line ends it at its own time; a close --drop
-# ends it at the last close once a new build, a leaving line other than a finish, or the story no
-# longer kept shows it dropped the build.
+# ends it at the last close once a new build, a leaving line other than a finish or reconcile, or the
+# story no longer kept shows it dropped the build. A finish or reconcile (finished or reopened) ends it
+# at its own time.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -180,8 +181,19 @@ story "${P}/docs" kc "status: blocked" "held_by: kp" "kept: 2026-10-08 close (no
 story "${P}/docs" kc3 "status: blocked"
 check "a child held by an open parent opens no kept item, held now, unblocked since or dropped" \
   "$(flow "${P}" --since 2026-10-08 --until 2026-10-08 | tail -1)" $'day\titems\tmedian_min\tmax_min\topen'
+# 2026-10-10: kv was kept on an earlier build and reviewed (30); its later build is held by an open
+# parent now (no kept line: review held it). That hold is the current build's, so the earlier wait counts.
+ev 2026-10-10T10:00:00Z kept kv "ok (https://github.com/o/r/pull/20; not reviewed)"
+ev 2026-10-10T10:00:00Z close kv
+ev 2026-10-10T10:30:00Z review kv "ok (https://github.com/o/r/pull/20)"
+ev 2026-10-10T11:00:00Z story kv
+story "${P}/docs" kv "status: blocked" "held_by: kp" "prs: https://github.com/o/r/pull/21"
+check "a kept wait on an earlier build counts though the story is held by a parent now" \
+  "$(flow "${P}" --since 2026-10-10 --until 2026-10-10 | tail -1)" $'2026-10-10\t1\t30\t30\t-'
 # 2026-10-09: kx's close --drop sent it back to ready, so its later drop ends the kept wait at that
-# close (5); ky's close dropped nothing and its PR merged, so the finished reconcile ends it there (45).
+# close (5); ky's close dropped nothing and its PR merged, so the finished reconcile ends it there (45);
+# kz's close dropped nothing and its PR was closed by hand, so the reopening reconcile, which reopens
+# only an item still in review, ends it there (60).
 ev 2026-10-09T10:00:00Z kept kx "ok (https://github.com/o/r/pull/13; not reviewed)"
 ev 2026-10-09T10:00:00Z close kx
 ev 2026-10-09T10:05:00Z close kx
@@ -190,8 +202,12 @@ ev 2026-10-09T11:00:00Z kept ky "ok (https://github.com/o/r/pull/14; not reviewe
 ev 2026-10-09T11:00:00Z close ky
 ev 2026-10-09T11:10:00Z close ky
 ev 2026-10-09T11:45:00Z reconcile ky "ok (finished)"
-check "after a close --drop, a leaving line ends a kept wait at the close; a finished reconcile at its own time" \
-  "$(flow "${P}" --since 2026-10-09 --until 2026-10-09 | tail -1)" $'2026-10-09\t2\t25\t45\t-'
+ev 2026-10-09T12:00:00Z kept kz "ok (https://github.com/o/r/pull/19; not reviewed)"
+ev 2026-10-09T12:00:00Z close kz
+ev 2026-10-09T12:10:00Z close kz
+ev 2026-10-09T13:00:00Z reconcile kz "ok (reopened)"
+check "after a close --drop, a leaving line ends a kept wait at the close; a reconcile, finished or reopened, at its own time" \
+  "$(flow "${P}" --since 2026-10-09 --until 2026-10-09 | tail -1)" $'2026-10-09\t3\t45\t60\t-'
 
 # merge = agent, the board at "~/my board": m (costs: [Money]) 30, o (deleted, a block list of money) 20,
 # held q 50, u (in neither the board nor git, so money) 10; n (costs: "None"), p (no costs:), r (gone

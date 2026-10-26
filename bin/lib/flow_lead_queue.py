@@ -8,15 +8,18 @@
 # closed unmerged); a merge line is one PR's, so it does not end the wait. A kept line ends whatever
 # item waits for its slug and opens a kept one, except for a child held by an open parent (blocked with
 # held_by: on the board now), which status and wait --lead list as blocked, never kept: its kept line
-# opens and ends nothing. Such a child may be unblocked since: unblock frees only a blocked story, and a
+# opens and ends nothing (only the current build's kept line can be one: the slug's last, after its last
+# story line). Such a child may be unblocked since: unblock frees only a blocked story, and a
 # kept story in review is never blocked, so an unblock line on a kept item, or its story blocked at the
-# end, shows it was such a child, and the item is dropped, never counted. A kept item also leaves on a review (which then enters it as merge), a held
-# or escalated line or an impossible close, each at its own time. keep_build logs its kept line inside
-# a close, so the slug's next close line, whatever its outcome, is that keeping close's own. A later
-# close (close --drop, which sends the story back to ready) logs ok even when it drops nothing, so the
-# wait ends at the last such close only once something shows it dropped the build: a new build (story),
-# a leaving line other than a finish (finish, or reconcile finished, whose merged PR shows the close
-# dropped nothing, and which ends the wait at its own time), or the story no longer kept at the end.
+# end, shows it was such a child, and the item is dropped, never counted. A kept item also leaves on a
+# review (which then enters it as merge), a held or escalated line or an impossible close, each at its
+# own time. keep_build logs its kept line inside a close, so the slug's next close line, whatever its
+# outcome, is that keeping close's own. A later close (close --drop, which sends the story back to
+# ready) logs ok even when it drops nothing, so the wait ends at the last such close only once something
+# shows it dropped the build: a new build (story), a leaving line other than a finish or reconcile, or
+# the story no longer kept at the end. A finish or reconcile ends the wait at its own time: a merged PR
+# (finish, reconcile finished) or a reopen (reconcile reopens only an item still in review) shows the
+# close dropped nothing.
 # Waits stop at local midnight after --until (or now): an item that left later is open there. One with
 # no leaving line is open only while its story or epic is on the board in review (a kept one only with
 # kept: set), held or escalated (read with board-state as fm reads it); any other is dropped, its end
@@ -119,10 +122,14 @@ def leave(slug, end):
     dropped.pop(slug, None)
     done.append((start, end, f"{kind}:{slug}"))
 
-for line in open(events, errors="ignore") if os.path.exists(events) else ():
-    f = line.rstrip("\n").split("\t")
-    if len(f) != 5:
-        continue
+rows = [f for f in (l.rstrip("\n").split("\t") for l in open(events, errors="ignore")) if len(f) == 5] if os.path.exists(events) else []
+# The current build's kept line: a slug's last ok kept line after its last ok story line (a build's start).
+# Only it can be the kept line of a child held now; an earlier one is an earlier build's.
+last = {}
+for n, f in enumerate(rows):
+    if f[1] in ("kept", "story") and f[4].startswith("ok"):
+        last[(f[1], f[2])] = n
+for n, f in enumerate(rows):
     cmd, slug = f[1], f[2]
     if slug in keeping and cmd.split(":")[0] == "close":
         keeping.discard(slug)
@@ -136,7 +143,7 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     kept = slug in waiting and waiting[slug][0] == "kept"
     if cmd == "kept":
         keeping.add(slug)
-        if blocked_now(slug, held_by=True):
+        if n == last[("kept", slug)] and n > last.get(("story", slug), -1) and blocked_now(slug, held_by=True):
             continue
         if slug in waiting:
             leave(slug, at)
@@ -152,8 +159,7 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     if kept and slug in dropped and cmd == "story":
         leave(slug, dropped[slug])
     elif slug in waiting and (cmd in LEAVE or (kept and cmd in ENTER)):
-        finished = cmd == "finish" or (cmd == "reconcile" and f[4].startswith("ok (finished"))
-        leave(slug, dropped[slug] if cmd in LEAVE and slug in dropped and not finished else at)
+        leave(slug, dropped[slug] if cmd in LEAVE and slug in dropped and cmd not in ("finish", "reconcile") else at)
     if cmd in ENTER and slug not in waiting:
         if cmd != "review" or cfg.get("merge") != "agent" or costs_money(slug):
             waiting[slug] = (ENTER[cmd], at)

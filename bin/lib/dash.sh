@@ -268,7 +268,7 @@ dash_check() {
     # story, which dash draws as a merge row once it is in review. A merge item counts by its slug or by
     # any PR status lists for it.
     case "${x%%:*}" in merge) v=merge ;; kept) v="review kept story" ;; *) v="(merge|decide escalated story)" ;; esac
-    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: merge or an alternation
+    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: a row's verb or an alternation
     [[ "${x%%:*}" == merge ]] || continue
     for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do
       if [[ " ${drawn} " == *" ${f} "* ]]; then got+=" ${x}"; break; fi

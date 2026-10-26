@@ -36,7 +36,7 @@ is one column, top to bottom:
   each `!` and lit when its count is above 0, `✓ 0` when not. The first counts what waits on you
   (or on you or the lead, with `lead = session`): every row in needs you and the lead's queue, plus
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
-  from its newest `review`, `close:<cause>`, `escalated` or `no-agent` line in `events.tsv`, or else from its
+  from its newest `review`, `kept`, `close:<cause>`, `escalated` or `no-agent` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
   (`--reviewer escaped` in `findings.tsv`). A third light shows only when someone had to step in on
   those 7 days: `! N interventions in 7 days`, the `swarm.sh intervene` lines (`lead-hand` and
@@ -86,12 +86,17 @@ is one column, top to bottom:
   who it waits for: `waits for: you: create the read-only user`, with the text of its first
   **You:** line, or `waits for: the lead` when it has none. Only your next **You:** step is listed,
   the first ready `lead` story that has one, with `+N more` when other stories have one too. When
-  nothing needs you, it is one line.
+  nothing needs you, it is one line. A story a close kept (its PR not reviewed) is a
+  `review kept story <slug>` row with its two ways out: `swarm.sh review <slug> <PR URL>` once you
+  have reviewed it, or `swarm.sh close <slug> --drop`, which closes the PR and sends the story back
+  to ready.
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
   you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic) and
   everything else from the list above moves to this box under it: every `merge`, `answer`, `close`,
   `look at` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
-  every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`). It is left out when empty.
+  every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`), and `review kept story` for
+  every story a close kept (`swarm.sh review` or `swarm.sh close <slug> --drop`). It is left out when
+  empty.
 - **Running now**: one row per agent open in this project's panes (empty panes and retired agents
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`
   or `agent` line in `events.tsv`, or else from midnight on its `agents.tsv` day) and its last
