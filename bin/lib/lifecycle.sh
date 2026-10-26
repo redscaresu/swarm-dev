@@ -797,18 +797,25 @@ step_up_failed() {
 
 # restart_build <slug> — `restart`: start a started story's builder again once herdr no longer lists it
 # (no_agent_exit's exit for a ready story), in its worktree and on its branch, in the tab build_story puts
-# it in. Its newest agents.tsv line gives its role, kind, model and session. With the resume command
-# resume_file wrote for that Claude session (RESUME_DIR/<session>.argv) it reopens the session
-# (restart_resume); without one it starts a fresh builder in that role on that model, the one
-# builder_model reads, with handover_brief (restart_fresh). Refused, with nothing started, for a story
-# that is not ready, not of a kind an agent builds (kind: lead, as every escalated story is), held
-# (held_for:, or held_by: until its parents merge), or has a .step-up marker (step-up --resume starts
-# that rung); with no worktree, one not on story/<slug>, or no builder in agents.tsv; and while herdr lists its builder, or cannot
-# list its agents, or a PR on story/<slug> has merged or is set to auto-merge. It logs its own `restart <slug> ok (<how>)` line (main logs only a failure), which
-# build_started and review_round never read: the build goes on.
+# it in. Its newest agents.tsv line gives its role, kind, model and session. When the resume command
+# resume_file wrote for that Claude session (RESUME_DIR/<session>.argv) names a session that took a
+# prompt (restart_session, restart_took), it reopens that session (restart_resume); else it starts a
+# fresh builder in that role on that model, the one builder_model reads, with handover_brief
+# (restart_fresh). It holds the story's step-up lock (step_lock) throughout, so no second restart and
+# no step-up starts a builder beside it. Refused, with nothing started, for a story that is not ready,
+# not of a kind an agent builds (kind: lead, as every escalated story is), held (held_for:, or held_by:
+# until its parents merge), or has a .step-up marker (step-up --resume starts that rung); with no
+# worktree, one holding a git step left unfinished, one not on story/<slug>, or no builder in
+# agents.tsv; while herdr lists its builder, or cannot list its agents; when a PR on story/<slug> has
+# merged or is set to auto-merge; and while its lock is held. It logs its own `restart <slug> ok
+# (<how>)` line (main logs only a failure), which build_started and review_round never read.
 restart_build() {
-  local slug="$1" f="${BOARD}/stories/$1.md" src wt name listed role kind model session names tab url prs
+  local slug="$1" f="${BOARD}/stories/$1.md" src wt gd p name listed role kind model session resume names tab url prs
+  local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1"
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "restart: no story ${f} (swarm.sh restart <slug>)"
+  step_lock "${lock}" || die "restart: a step-up or restart of ${slug} is running (it holds ${lock}); nothing was started"
+  # shellcheck disable=SC2064 # expand now: the lock is local
+  trap "rm -rf '${lock}'" EXIT
   [[ "$(fm "${f}" status)" == ready ]] || die "restart: ${slug} is not status: ready; nothing was started"
   agent_kind "$(fm "${f}" kind)" \
     || die "restart: ${slug} is kind: $(fm "${f}" kind), which the lead runs, not an agent (an escalated story is too); nothing was started"
@@ -821,8 +828,13 @@ restart_build() {
   src="$(repo_dir "$(fm "${f}" repo)")" || die "restart: ${slug}: ${src}"
   wt="$(worktree_for "${src}" "${slug}")"
   [[ -d "${wt}" ]] || die "restart: ${slug} has no worktree at ${wt}, so there is no build to start again; nothing was started"
+  gd="$(git -C "${wt}" rev-parse --absolute-git-dir 2>/dev/null)" || die "restart: git cannot read ${slug}'s worktree ${wt}; nothing was started"
+  for p in index.lock MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD; do
+    [[ ! -e "${gd}/${p}" ]] \
+      || die "restart: ${slug}'s worktree ${wt} holds ${gd}/${p}, a git step left unfinished: finish or abort it there first; nothing was started"
+  done
   [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "story/${slug}" ]] \
-    || die "restart: ${slug}'s worktree ${wt} is not on story/${slug} (switched, or a git step left unfinished): put it back there first; nothing was started"
+    || die "restart: ${slug}'s worktree ${wt} is not on story/${slug} (switched or detached): put it back there first; nothing was started"
   name="$(agent_name "${slug}")"
   listed="$(herdr agent list </dev/null 2>/dev/null | SWARM_NAME="${name}" json "any(a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" 2>/dev/null)" || listed=""
   [[ "${listed}" != True ]] || die "restart: ${slug}'s builder ${name} is still listed (herdr agent list): wait on it or tell it; nothing was started"
@@ -840,28 +852,62 @@ restart_build() {
     || die "restart: a PR on story/${slug} has merged or is set to auto-merge, so its build is done; nothing was started"
   names="$(story_env "${f}")" || die "${names}"
   tab="$(fm "${f}" epic)"; tab="${tab:-${slug}}"   # as build_story: the epic's tab, or a one-off's own
-  require_trusted "${wt}"
+  resume=""
   if [[ "${kind}" == claude && "${session}" != - && -f "${RESUME_DIR}/${session}.argv" ]]; then
-    restart_resume "${slug}" "${tab}" "${wt}" "${session}" "${names}"
-    record_event restart "${slug}" "ok (resumed session ${session})"
-    echo "restarted: ${slug}, its session ${session} reopened in ${wt}"
+    resume="$(restart_session "${session}")" \
+      || die "restart: ${RESUME_DIR}/${session}.argv is not a resume command swarm.sh wrote (python3 -I <wrapper> claude --resume <session> ...); nothing was started"
+    # A builder whose brief never landed has nothing to resume: it starts fresh, with the brief.
+    restart_took "${resume}" || resume=""
+  fi
+  if [[ -n "${resume}" ]]; then
+    restart_resume "${slug}" "${tab}" "${wt}" "${session} ${resume}" "${names}"
+    record_event restart "${slug}" "ok (resumed session ${resume})"
+    echo "restarted: ${slug}, its session ${resume} reopened in ${wt}"
   else
     restart_fresh "${slug}" "${tab}" "${src}" "${role} ${model}" "${names}"
   fi
 }
 
-# restart_resume <slug> <tab> <wt> <session> <names> — reopen <slug>'s builder's Claude <session> in a new
-# pane in <tab>, at <wt>, with the flags of its resume command (resume_file's .argv), as upgrade_one
-# starts one again, report that command to herdr as start_agent does, and tell the builder why. A command
-# that is not the shape resume_file writes is refused before any pane opens.
+# restart_session <session> — the session <session>'s resume command (resume_file's .argv) resumes: its
+# --resume argument, which hooks/agent-state.sh moves to the new session after a /clear. Fails when the
+# file is not the shape resume_file writes.
+restart_session() {
+  local a=() l
+  while IFS= read -r l; do a+=("${l}"); done < "${RESUME_DIR}/$1.argv"
+  [[ ${#a[@]} -ge 6 && "${a[0]} ${a[1]}" == "python3 -I" && "${a[2]}" == "${RESUME_DIR}/$1.py" \
+     && "${a[3]} ${a[4]}" == "claude --resume" && "${a[5]}" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+  echo "${a[5]}"
+}
+
+# restart_took <session> — succeed when Claude session <session>'s main log (report.py's session_log)
+# holds a user prompt (panes.py's is_prompt, not a Task subagent's entry): its brief, or a later one,
+# landed. Fails with no log.
+restart_took() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import json, os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import is_prompt; from report import session_log
+path = session_log(sys.argv[1], sys.argv[2])
+for l in (open(path, errors="replace") if path else ()):
+    try:
+        d = json.loads(l)
+    except ValueError:
+        continue
+    if isinstance(d, dict) and d.get("type") == "user" and not d.get("isSidechain") and is_prompt(d):
+        sys.exit(0)
+sys.exit(1)' "${CLAUDE_PROJECTS}" "$1" 2>/dev/null
+}
+
+# restart_resume <slug> <tab> <wt> "<session> <resume>" <names> — reopen <slug>'s builder's Claude session
+# <resume> (restart_session of its agents.tsv <session>) in a new pane in <tab>, at <wt>, with the flags
+# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry, as
+# start_agent), report that command to herdr as start_agent does, and tell the builder why.
 restart_resume() {
-  local name argv="${RESUME_DIR}/$4.argv" a resume=() flags=() pane out seq msg rc=0
-  name="$(agent_name "$1")"
+  local name argv a resume=() flags=() pane out seq msg rc=0 try session id
+  read -r session id <<< "$4"
+  name="$(agent_name "$1")"; argv="${RESUME_DIR}/${session}.argv"
   while IFS= read -r a; do resume+=("${a}"); done < "${argv}"
-  [[ ${#resume[@]} -ge 6 && "${resume[0]} ${resume[1]}" == "python3 -I" && "${resume[2]}" == "${RESUME_DIR}/$4.py" \
-     && "${resume[3]} ${resume[4]} ${resume[5]}" == "claude --resume $4" ]] \
-    || die "restart: ${argv} is not a resume command swarm.sh wrote (python3 -I <wrapper> claude --resume $4 ...); nothing was started"
   flags=("${resume[@]:6}")
+  require_trusted "$3"   # a fresh start's start_agent checks it, for a Claude builder only
   # shellcheck disable=SC2119 # takes no argument here
   require_claude
   require_herdr_version
@@ -870,23 +916,27 @@ restart_resume() {
   local -x SWARM_RESUME="${argv}"
   a="$(agent_env_names)"
   clean_env "${pane}" "${name}" "${a}${a:+ }$5"
-  out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "$4" ${flags[@]+"${flags[@]}"} 2>&1)" || {
-    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
-    die "restart: herdr could not reopen ${name}'s session $4: ${out}"
-  }
+  for try in 1 2; do
+    out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${id}" ${flags[@]+"${flags[@]}"} 2>&1)" && break
+    if [[ ${try} -eq 2 ]]; then
+      herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+      die "restart: herdr could not reopen ${name}'s session ${id}: ${out}"
+    fi
+    nap 3
+  done
   # As start_agent: without it a herdr restart would resume the session without its guards, and the
   # builder has done nothing in this pane yet, so a refusal closes it.
   seq="$(python3 -I -c 'import time; print(time.time_ns())')" || seq=""
   if [[ -z "${seq}" ]] || ! out="$(herdr pane report-agent "${pane}" --source swarm --agent claude --state idle --seq "${seq}" \
-      --agent-session-id "$4" -- "${resume[@]}" 2>&1)"; then
+      --agent-session-id "${id}" -- "${resume[@]}" 2>&1)"; then
     herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
     die "restart: herdr did not take ${name}'s resume command, so a herdr restart would drop its guards; its pane is closed: ${out:-could not read the clock (python3)}"
   fi
-  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-restart.XXXXXX")" || die "restart: ${name}'s session $4 is open in pane ${pane}, but it could not be told to carry on: tell it (swarm.sh tell $1 resume <file>)"
+  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-restart.XXXXXX")" || die "restart: ${name}'s session ${id} is open in pane ${pane}, but it could not be told to carry on: tell it (swarm.sh tell $1 resume <file>)"
   printf '%s\n' "swarm.sh restart reopened this session in a new pane: your last one was gone, and with it any background command, subagent or monitor you had running (a wait-pr, a codex-review). You are in the same worktree, ${3}, on story/$1. Check git status and your PR, start again any wait you still need, and carry on where you stopped." > "${msg}"
   (deliver_prompt "${name}" "${msg}" "${pane}") || rc=$?
   rm -f "${msg}"
-  [[ ${rc} -eq 0 ]] || die "restart: ${name}'s session $4 is open in pane ${pane}, but it was not told to carry on: tell it (swarm.sh tell $1 resume <file>)"
+  [[ ${rc} -eq 0 ]] || die "restart: ${name}'s session ${id} is open in pane ${pane}, but it was not told to carry on: tell it (swarm.sh tell $1 resume <file>)"
 }
 
 # restart_fresh <slug> <tab> <src> "<role> <model>" <names> — start a fresh builder for <slug> in <role> on
@@ -903,8 +953,13 @@ restart_fresh() {
   mkdir -p "${prompt%/*}"
   handover_brief "${slug}" "$3" "${base}" restart "${model}" "${model}" > "${prompt}"
   since="$(date +%s)"   # before the brief, for send_goal
-  # start_agent said why it failed. Once it has recorded the builder, its pane is kept: it may lack its brief.
-  (set -e; start_agent "$2" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "$5" "${model}") \
+  # start_agent said why it failed. Once it has recorded the builder, its pane is kept: it may lack its
+  # brief. Its own errexit holds only outside an || (start_rung's form).
+  set +e
+  (set -e; start_agent "$2" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "$5" "${model}")
+  rc=$?
+  set -e
+  [[ ${rc} -eq 0 ]] \
     || die "restart: ${slug}'s fresh builder did not start cleanly (see above); if herdr lists it, read it (herdr agent read $(agent_name "${slug}")) and, with no brief taken up, send ${prompt} (swarm.sh tell ${slug} nudge ${prompt})"
   record_event restart "${slug}" "ok (fresh on ${model}: no session to resume)"
   echo "restarted: ${slug}, a fresh ${role} builder on ${model} in ${wt}"
@@ -2063,15 +2118,23 @@ story_prs() {
 }
 
 # no_agent_exit <slug> — what the lead does for a no-agent: line, never an unpinned merge. A ready story:
-# `swarm.sh restart <slug>` (restart_build), or `swarm.sh hold <slug> <reason>`. A story in review with one PR whose findings file is a pass on its
+# `swarm.sh restart <slug>` (restart_build), or `swarm.sh hold <slug> <reason>`; only the hold when
+# restart would refuse it as no_agent_lines lets it through: held_by:, no worktree (a branch left), or no
+# builder in agents.tsv (a first start that failed before it was recorded). A story in review with one PR whose findings file is a pass on its
 # 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
 # since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
 # <slug> <pr>` for each. A story in review with no PR URL: find it by hand (gh pr list --head
 # story/<slug>), then the review-agent exit; hold takes only a ready story, so it is never that.
 no_agent_exit() {
-  local f="${BOARD}/stories/$1.md" head u prs out=""
+  local f="${BOARD}/stories/$1.md" head u prs src out=""
   prs="$(story_prs "${f}")"
-  if [[ "$(fm "${f}" status)" != review ]]; then echo "swarm.sh restart $1, or swarm.sh hold $1 <reason>"; return 0; fi
+  if [[ "$(fm "${f}" status)" != review ]]; then
+    if [[ -z "$(get_fm "${f}" held_by)" && -n "$(builder_model "$1")" ]] && src="$(repo_dir "$(fm "${f}" repo)")" \
+       && [[ -d "$(worktree_for "${src}" "$1")" ]]; then
+      echo "swarm.sh restart $1, or swarm.sh hold $1 <reason>"
+    else echo "swarm.sh hold $1 <reason>"; fi
+    return 0
+  fi
   if [[ -z "${prs}" ]]; then echo "gh pr list --head story/$1, then swarm.sh review-agent $1 <PR URL>"; return 0; fi
   head="$(sed -n 's/^head: *//p' "${PROJECT_DIR}/.swarm/reviews/$1.md" 2>/dev/null | head -1)"
   if [[ "${head}" =~ ^[0-9a-f]{40}$ && "${prs}" != *" "* ]] && review_pass "$1" "${head}"; then

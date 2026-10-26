@@ -56,8 +56,8 @@ check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "
 story() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${B}/$1.md"; }
 # ev <command> <target> [outcome] [time] — one events.tsv line, as swarm.sh writes it.
 ev() { printf '%s\t%s\t%s\t-\t%s\n' "${4:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" "$1" "$2" "${3:-ok}" >> "${P}/.swarm/events.tsv"; }
-# built <slug> — its worktree, where worktree_for puts it.
-built() { mkdir -p "${ROOT}/proj-wt/$1"; }
+# built <slug> — its worktree, where worktree_for puts it, and its builder in agents.tsv.
+built() { mkdir -p "${ROOT}/proj-wt/$1"; printf '2026-10-01\tcode\t%s\tclaude\tsonnet\thigh\ts-%s\n' "$1" "$1" >> "${P}/.swarm/agents.tsv"; }
 # listed <name>... — herdr lists each, idle, in a pane this project opened; with none, no agent.
 listed() {
   local n list="" i=0
@@ -76,7 +76,7 @@ unbusy() { [[ -z "${busy_pid}" ]] || { kill "${busy_pid}" 2>/dev/null || true; w
 # fresh [config line]... — an empty board, no events, no agents, an empty seen file (a run before this one).
 fresh() {
   unbusy
-  rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
+  rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${P}/.swarm/lead" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
     "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${P}/.swarm/upgrade.pid" "${ROOT}"/*.log
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   listed
@@ -260,10 +260,26 @@ fresh; story na-x "kind: code" "status: ready"; ev story na-x; built na-x; ev cl
 poll
 check "a ready story's exit names swarm.sh restart <slug>" fires na-x "swarm.sh restart na-x, or swarm.sh hold na-x <reason>"
 ev restart na-x "ok (resumed session s-1)"; listed na-x
+# An empty seen file, as a new lead run starts with, so only the restart keeps the line from printing again.
+: > "${P}/.swarm/lead/seen"
 poll
 check "after a restart the next poll is silent" silent
 check "and that poll's queue no longer lists the line" test -z "$(grep '^no-agent: na-x' "${P}/.swarm/lead/seen")"
 check "and no poll woke on it after the restart" never_woke na-x "restart na-x"
+# Where restart would refuse the story, the exit is the hold alone: held until its parents merge
+# (held_by:), or its worktree gone with only its branch left.
+fresh; story na-y "kind: code" "status: ready" "held_by: [na-x]"; ev story na-y; built na-y; ev close na-y
+poll
+check "a story held until its parents merge gets only the hold exit" fires na-y "swarm.sh hold na-y <reason>"
+git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m init
+git -C "${P}" branch story/na-z
+fresh; story na-z "kind: code" "status: ready"; ev story na-z; ev close na-z
+poll
+check "a story with only its branch left, no worktree, gets only the hold exit" fires na-z "swarm.sh hold na-z <reason>"
+git -C "${P}" branch -q -D story/na-z
+fresh; story na-f2 "kind: code" "status: ready"; ev story na-f2 "start failed"; mkdir -p "${ROOT}/proj-wt/na-f2"
+poll
+check "a first start that failed before its builder was recorded gets only the hold exit" fires na-f2 "swarm.sh hold na-f2 <reason>"
 
 # --- a fresh run, with no seen file.
 fresh; rm -f "${P}/.swarm/lead/seen"; story na-n "kind: code" "status: ready"; ev story na-n; built na-n; ev close na-n
