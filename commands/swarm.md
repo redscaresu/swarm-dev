@@ -119,6 +119,13 @@ Repeat until a step below says stop:
      `held: <slug> (<cause>)` or `escalated: <slug>` line, do the `escalated <slug>` step for that slug at once, without waiting for `next`:
      `next` names the running conductor first and would not get to it. For a
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
+     `kept: <slug> <PR URL> (not reviewed)` line is a story whose builder was closed while its PR
+     was still open. The story is in review, but nothing has reviewed its PR, so the PR is not
+     offered to merge. Start a review with `swarm.sh review-agent <slug> <PR URL>`, wait for it with
+     `swarm.sh wait review-<slug>` in the background, then close the review agent
+     (`swarm.sh close review-<slug>`). If the review passes, run `swarm.sh review <slug> <PR URL>`,
+     which clears the line and hands the PR on to merge. If it does not, or the PR is not worth
+     saving, run `swarm.sh close <slug> --drop` to close the PR and send the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
      and no tell on the way. Run the exit it names. For a ready story it is
      `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
