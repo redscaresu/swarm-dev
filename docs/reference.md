@@ -1983,7 +1983,9 @@ from `release/v<new>` that bumps only that file, to the next minor version (a pa
 change since the tag is a fix), and lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
 every behaviour change since the tag, and the release PR names it. When nothing since the tag
 changes what a user runs, sees or has to do, a `Docs: none — <why>` line in the release PR body
-stands in for the docs PR. With `merge = agent` the
+stands in for the docs PR. The release PR body also lists the behaviour
+changes every project gets on upgrade and names the infrafactory build they were tried on, or says
+none. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
@@ -2000,7 +2002,8 @@ epic, or under no epic, goes out in that patch: nothing checks that it is a fix.
 one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
 `status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
 to the steps after it. An epic on the board whose `stage:` is not
-`v<x.y.z>` holds the release too, and the line names it. A board where no epic has `stage:`
+`v<x.y.z>` holds the release too, and the line names it. `merge --release` does not read the hold, so the lead cuts a
+release only when `next` prints it. A board where no epic has `stage:`
 releases as before, with a plain `release`. So does a board outside the project's repo, since git
 can't list its deleted epics.
 

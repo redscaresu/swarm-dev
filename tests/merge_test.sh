@@ -1940,6 +1940,18 @@ check "merge.sh refuses a release the grant does not cover with 'waits on the us
   grep -qF "waits on the user's merge (merge = human" "${REPO}/bin/lib/merge.sh"
 check "commands/swarm.md's release arm keys the outcome on merged:, and leaves a refused PR waiting on the user" \
   grep -qE 'by whether merge printed .merged:.,.* Any other refusal: under .merge = human. the release-grant refusal .* Tell the user what the refusal printed and that the PR waits on their merge' <<< "${arm}"
+check "commands/swarm.md's release arm says a stage release is a minor at v<S>" \
+  grep -qF 'A stage release is a minor: cut it only when' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm cuts only on release v<S>" \
+  grep -qF 'cut it only when `next` prints `release v<S>`' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm cuts no minor while next prints release-held:" \
+  grep -qF 'While `next` prints a `release-held:` line, cut no minor' <<< "${arm}"
+check "commands/swarm.md's release arm lists the behaviour changes every project gets on upgrade" \
+  grep -qF 'lists the behaviour changes every project gets on upgrade' <<< "${arm}"
+check "commands/swarm.md's release arm names the infrafactory build or says none" \
+  grep -qF 'names the infrafactory build they were tried on, or says none' <<< "${arm}"
 check "reference.md § Merging merges with swarm.sh merge" \
   bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
 
