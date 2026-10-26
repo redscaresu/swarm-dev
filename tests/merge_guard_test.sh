@@ -121,7 +121,7 @@ mkdir -p "${ROOT}/nopy" && for b in cat sed tr; do printf '#!/bin/sh\nexec %s "$
 printf '{"cwd": "%s", "tool_input": {"command": "git merge x"}}' "${OUT}" > "${ROOT}/says-merge.json"
 printf '{"tool_input": {"command": "ls"}}' > "${ROOT}/ls.json"
 printf '{"cwd": "%s", "tool_input": {"command": "git checkout -- f"}}' "${W}" > "${ROOT}/says-git.json"
-printf '{"tool_input": {"command": "merge' > "${ROOT}/bad.json"
+printf '{"tool_input": {"command": "merge' > "${ROOT}/bad.json" # vacuous-test: ok, bad JSON on purpose
 python3 -c 'import json, sys
 for c in ("gh pr merge 7 # ", "echo \"gh pr merge 7\" # "):
     print(json.dumps({"cwd": sys.argv[1], "tool_input": {"command": c + "x" * 3000000}}))' "${P}" > "${ROOT}/big.jsonl"
