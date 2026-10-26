@@ -353,7 +353,8 @@ dataset_report() {
 #     since or blocked at the end) the minutes until its
 #     slug's next ok finish, reset, drop or reconcile (finished or reopened). A kept item also ends on a
 #     review, held, escalated or close:impossible line, or on a close --drop once a new build, a leaving
-#     line other than a finish, or the story no longer kept shows it dropped the build. Waits stop at
+#     line other than a finish or reconcile, or the story no longer kept shows it dropped the build.
+#     A finish or reconcile ends it at its own time. Waits stop at
 #     the local midnight after --until (or now), where an item still waiting is listed under open as
 #     kind:slug. One with no leaving line counts only while its story or epic is on the board in review
 #     (a kept one only with kept: set), held or escalated. --epic does not narrow it.
