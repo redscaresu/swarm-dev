@@ -20,7 +20,11 @@ Add to lead_queue (so wait --lead, next and status all show it), each line namin
 
 Reads stay inside wait --lead's poll budget (one herdr agent list per poll; a per-pane read only for an agent herdr lists as blocked, idle or done).
 
+
+`swarm.sh tell` checks the pane itself before refusing an agent herdr lists as blocked: a dialog the user has cleared leaves herdr's status stale, and on 2026-10-26 the user had to type into #540's pane because no tell got through (v0.28.0 retro).
+
 **Done when:**
 - A test per line kind fires on its real case and stays silent on its false case (a pane mid-command that is not a prompt; a PR passed review on an older head; a PR mergeable but not reviewed).
 - commands/swarm.md's wait --lead handler has an arm for each new kind, and the handler-coverage test covers them.
 - `make test` passes.
+- A test: an agent herdr lists as blocked whose pane shows an empty prompt receives the tell.
