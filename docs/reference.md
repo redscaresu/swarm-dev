@@ -74,8 +74,10 @@ counts a story only when all of these hold:
   awaiting their merge under `merge = human`, `costs: money` or `kept:`, green or not.
 - It is of a kind an agent builds. That rules out `kind: lead`, and so every held or escalated
   story. A blocked story is never counted.
-- It has a build record: an ok builder start that no close ended, or its worktree or
-  `story/<slug>` branch.
+- It has a build record: an ok builder start that no close ended or, for a story with any start
+  line, its worktree or `story/<slug>` branch.
+- No `swarm.sh upgrade` runs in this project for its epic, its backlog or every agent: an upgrade
+  stops agents and starts them again. Its ok events line counts as a start.
 - herdr lists no pane this project opened under its builder's name or `review-<slug>`. No
   `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
 - No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
@@ -90,11 +92,20 @@ no such event, the poll that first sees it writes a `no-agent <slug>` events.tsv
 silent, and the next poll wakes the lead. The exit for a ready story is
 `swarm.sh hold <slug> <reason>`. A hold answers the alert but starts nothing, so if no agent is back
 by the next poll, that poll writes a new `no-agent` line and the alert comes back. For a story in
-review the exit is `swarm.sh merge --head <sha> <PR URL>`, with the `head:` line of
-`.swarm/reviews/<slug>.md`, or a plain `swarm.sh merge <PR URL>` when there is no head to pin. The
-lead runs `swarm.sh wait-pr <PR URL>` first and merges once it exits 0: while it runs, the line is
-quiet, and if the checks go red it comes back. Each poll reads `herdr agent list` once, and `ps` once when a started story needs checking, and makes no gh
-call for these lines. Outside herdr, or when herdr's list or `ps` fails, it prints none. A run with no
+review the exit is never an unpinned merge. With one PR and a findings file
+`.swarm/reviews/<slug>.md` that passes on its 40-hex `head:` line, it is
+`swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since. With several PRs, or
+no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
+each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
+merges. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
+checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
+story. The line is quiet while wait-pr runs and may come back once after it ends.
+
+Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
+hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
+events.tsv are read every poll; git only for a story with a start line and no current builder; `ps`
+once, only when a started story has no agent listed. No gh call is made for these lines. Outside
+herdr, or when herdr's list or `ps` fails, it prints none. A run with no
 `.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
