@@ -1943,11 +1943,13 @@ story_prs() {
 # `swarm.sh hold <slug> <reason>`. A story in review with one PR whose findings file is a pass on its
 # 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
 # since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
-# <slug> <pr>` for each; with no PR URL, the hold.
+# <slug> <pr>` for each. A story in review with no PR URL: find it by hand (gh pr list --head
+# story/<slug>), then the review-agent exit; hold takes only a ready story, so it is never that.
 no_agent_exit() {
   local f="${BOARD}/stories/$1.md" head u prs out=""
   prs="$(story_prs "${f}")"
-  if [[ "$(fm "${f}" status)" != review || -z "${prs}" ]]; then echo "swarm.sh hold $1 <reason>"; return 0; fi
+  if [[ "$(fm "${f}" status)" != review ]]; then echo "swarm.sh hold $1 <reason>"; return 0; fi
+  if [[ -z "${prs}" ]]; then echo "gh pr list --head story/$1, then swarm.sh review-agent $1 <PR URL>"; return 0; fi
   head="$(sed -n 's/^head: *//p' "${PROJECT_DIR}/.swarm/reviews/$1.md" 2>/dev/null | head -1)"
   if [[ "${head}" =~ ^[0-9a-f]{40}$ && "${prs}" != *" "* ]] && review_pass "$1" "${head}"; then
     echo "swarm.sh merge --head ${head} ${prs}"; return 0
