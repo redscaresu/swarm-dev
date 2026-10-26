@@ -14,6 +14,8 @@ Merge correctness gaps the 0.27 run left: under merge = agent a story PR that ch
 - merge_grant and pr_hld read the pinned head, not headRefOid (board.sh:856-862), and release_check reads the base after the pin, not before the merge call; a test each.
 - wait-pr after a push waits for the new head's check runs before reading green (Appendix C; bin/lib/merge.sh:950-1010 and WAIT_PR_GRACE at merge.sh:8): reproduced on current code first, then fixed with a test, or recorded in the story as already handled and closed.
 - docs/reference.md's merge section documents the agent-mode hold and its exit; doc_check passes.
+- Two PRs green on their own cannot turn main red when merged one after the other (v0.28.0 lesson: #527 and #530 each passed CI before #529 landed, and main went red). swarm.sh merge re-checks a PR whose base moved since its last CI run: it merges the base in (or asks the builder to) and waits for green on that head before merging. A test with a base that moved under a green PR.
+- retire_fixes retires an older fix-main story when a newer fix-main that descends from it has merged, by commit ancestry, not by the order the red events were logged (v0.28.0: fix-main-0ec59b6 stayed on the board after fix-main-83b2e54 fixed the same red). A test with the two red events logged out of order.
 
 **Out of scope:**
 The pattern at board.sh:867 (it already matches .github/, Makefile and .claude/: the gap is the agent-mode hold, not the regex); the contents-reader helper (less-noise); changing what counts as a grant; the four later stories (fixes-027).
