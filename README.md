@@ -43,8 +43,9 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
    worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
    fixes what they find. A story that fails twice is rebuilt once on Fable, the most capable model,
    then handed to the lead. One story waits for another only when they clash: their `touches`
-   name the same file and the same part, matched by its first word (a function or section name),
-   or both name the bare file. A bare file does not clash with a part of that file.
+   name the same file in the same repo, and either the same part or both the bare file. Parts match
+   on their first word (a function or section name), skipping a leading `§`, `#`, "the", "a" or
+   "an". A bare file does not clash with a part of that file.
 4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
    the agreed HLD over its work lists `merge` in its `grants:`.
    With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
