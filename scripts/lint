@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""scripts/lint [file...] — the repo's lints over shell test files (tests/*_test.sh by default); make
+check runs it. It prints file:line: and the problem for each finding, and exits 1 when there is one.
+
+vacuous-test: JSON a test feeds to a hook or helper must parse, or the code it meant to exercise never
+runs and the test passes anyway (#515: a stray \\} in a hook input). Each quoted shell word and each
+heredoc body is decoded the way bash would: adjacent quoted parts joined, \\" and \\$ unescaped in
+double quotes, a printf format's %s and escapes applied, and each ${x:-default} read once as its
+default. One that then starts like JSON ({" {} [{ [ { [" [] [1 [true) must parse with each $var,
+${...}, $(...), `...` and %s read as 0, or else with each read as nothing (an optional field): whole,
+or one value per line (JSON Lines). A value that only ends early (a fragment a later command
+completes) passes, and so do a list's comma-joined items, unless the word reaches its reader whole: a
+heredoc, a here-string, a variable's value, or a printf format or echo's one word in a command that
+pipes or redirects. A word that is not JSON on purpose (bad input a test feeds to see it refused, or
+the tail of a list) says so in a comment on its line (or the heredoc's <<), e.g.
+"# vacuous-test: ok, bad JSON on purpose"."""
+import glob
+import json
+import os
+import re
+import sys
+
+OK_MARK = "vacuous-test: ok"
+# An object, or a list: of objects, or with no space after its [ (a shell test, [ "$x" or [[ -z, has
+# one), or of numbers, whose comma or ] no shell test has.
+LOOKS_JSON = re.compile(r'\s*(\{\s*["}]|\[+(\s*\{|["\]]|\s*-?(0|[1-9][0-9]*)(\.[0-9]+)?\s*[,\]]|true|false|null))')
+# A redirect, or a pipe into anything but a text filter (sed 's/,$//' trims what printf repeats).
+SENT = re.compile(r'\|(?!\s*(sed|tr|awk|head|tail|cut|paste|sort|uniq|grep|fold)\b)|(?<![0-9&])>')
+PRINTF_BEFORE = re.compile(r'(^|[\s;|&(])printf\s+(-v\s+\S+\s+)?(--\s+)?$')
+ECHO_BEFORE = re.compile(r'(^|[\s;|&(])(echo\s+(-[neE]+\s+)?|printf\s+(-v\s+\S+\s+)?([\'"])%s(\\n)?\5\s+)$')   # one word, printed whole
+ASSIGNED = re.compile(r'(^|[\s;(])((local|export|declare|readonly)\s+(-\w+\s+)*)?\w+=$')
+HEREDOC = re.compile(r'<<(-?)\s*(["\']?)([A-Za-z_]\w*)\2')
+DEFAULT = re.compile(r'\$\{\w+:?[-=+](.*)\}$', re.DOTALL)
+PRINTF_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", '"': '"', "'": "'"}   # and \NNN; others print as written
+FORMAT_SPEC = re.compile(r'%%|%[-+ #0-9.]*[sdiuxXfgc]')
+IN_DOUBLE = '$`"\\\n'    # what a backslash escapes in double quotes
+IN_HEREDOC = '$`\\\n'    # and in an unquoted heredoc
+WORD_END = " \t\n;|&()<>"
+MARK = "\x00"   # where an expansion was; values() tries it as 0, then as nothing
+SHOWN = 60   # characters of a bad value a finding shows
+
+
+def scan(text, first_line, found, whole=False):
+    """Walk shell text whose first character is on file line first_line, adding to found an
+    (anchor, start, parts, before, sent) for each word with a quoted part and each heredoc: the line of
+    its first quote or <<, the line its text starts on, its parts ([(kind, raw)], kind single, double,
+    bare, heredoc or quoted-heredoc), the text before it on its line, and whether its reader gets it
+    as it is (a heredoc, a here-string, or a word whose command pipes or redirects it). whole: text is
+    a $(...) whose output reaches its reader whole."""
+    i, n, pending = 0, len(text), []
+
+    def line_at(pos):
+        return first_line + text.count("\n", 0, pos)
+
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;|&()"):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif c == "'" and text[i - 1:i] == "$":
+            i = skip_ansi_c(text, i + 1)
+        elif c in "'\"":
+            parts, end, subs = read_word(text, i)
+            before = text[text.rfind("\n", 0, i) + 1:i]
+            line_end = re.compile(r'(?<!\\)\n').search(text, end)   # a \ at a line's end continues it
+            command = re.split(r';|&&|\|\|', text[end:line_end.start() if line_end else n])[0]
+            sent = sent_as_is(before, command, whole)
+            found.append((line_at(i), line_at(i), parts, before, sent))
+            for a, b in subs:   # "$(printf '{...}')" holds words of its own
+                scan(text[a:b], line_at(a), found, sent)
+            i = end
+        elif text.startswith("<<", i) and not text.startswith("<<<", i) and text[i - 1:i] != "<":
+            m = HEREDOC.match(text, i)
+            if m:
+                pending.append((m.group(1) == "-", bool(m.group(2)), m.group(3), line_at(i)))
+            i = m.end() if m else i + 2
+        elif c == "\n" and pending:
+            i = read_heredocs(text, i + 1, pending, line_at, found)
+            pending = []
+        else:
+            i += 1
+
+
+def sent_as_is(before, command, whole):
+    """Whether a word reaches its reader whole: a here-string, a variable's value (a later line
+    sends it), or a printf format or the one word of an echo or a printf '%s', in a command that pipes
+    or redirects or,
+    with whole, in an unpiped $(...) whose output reaches its reader whole. A printf's other words,
+    or one of several words an echo joins, are pieces of what it prints."""
+    if before.rstrip().endswith("<<<") or ASSIGNED.search(before):
+        return True
+    to = SENT.search(command)
+    if not to and not (whole and "|" not in command):
+        return False
+    words = command[:to.start() if to else len(command)].strip()
+    return bool(PRINTF_BEFORE.search(before)) or (bool(ECHO_BEFORE.search(before)) and not words)
+
+
+def read_word(t, i):
+    """The parts of the word whose first quote is at i, the index past the word, and the (start, end)
+    of each $(...) body in it outside single quotes, whose own words scan() reads too."""
+    parts, subs = [], []
+    while i < len(t) and t[i] not in WORD_END:
+        if t[i] == "'":
+            end = t.find("'", i + 1)
+            end = len(t) if end < 0 else end
+            parts.append(("single", t[i + 1:end]))
+            i = end + 1
+        elif t[i] == '"':
+            end = skip_double(t, i + 1, subs)
+            parts.append(("double", t[i + 1:end]))
+            i = end + 1
+        else:
+            start = i
+            while i < len(t) and t[i] not in WORD_END + "'\"":
+                if t[i] == "\\":
+                    i += 2
+                elif t.startswith("$(", i) or t.startswith("${", i):
+                    i = skip_group(t, i + 1, subs)
+                else:
+                    i += 1
+            parts.append(("bare", t[start:i]))
+    return parts, i, subs
+
+
+def skip_ansi_c(t, i):
+    """The index past the closing ' of a $'...' string whose body starts at i."""
+    while i < len(t) and t[i] != "'":
+        i += 2 if t[i] == "\\" else 1
+    return i + 1
+
+
+def skip_double(t, i, subs=None):
+    """The index of the closing " of a double-quoted string whose body starts at i; each $(...) body
+    in it goes to subs."""
+    while i < len(t) and t[i] != '"':
+        if t[i] == "\\":
+            i += 2
+        elif t.startswith("$(", i) or t.startswith("${", i):
+            i = skip_group(t, i + 1, subs)
+        elif t[i] == "`":
+            end = t.find("`", i + 1)
+            i = len(t) if end < 0 else end + 1
+        else:
+            i += 1
+    return min(i, len(t))
+
+
+def skip_group(t, i, subs=None):
+    """The index past the bracket that closes the $( or ${ whose bracket is at i, quotes inside it
+    skipped; a $(...)'s body goes to subs. As in bash, a { nests only as ${: "${2:-{\"a\":1}}" is the default {"a":1 and a }."""
+    opening, start = t[i], i
+    close = ")" if opening == "(" else "}"
+    depth = 0
+    while i < len(t):
+        c = t[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"':
+            i = skip_double(t, i + 1)
+        elif c == "'" and close == ")":
+            end = t.find("'", i + 1)
+            i = len(t) if end < 0 else end
+        elif c == opening and (opening == "(" or t[i - 1:i] == "$"):
+            depth += 1
+        elif c == close:
+            depth -= 1
+            if depth == 0:
+                if subs is not None and close == ")":
+                    subs.append((start + 1, i))
+                return i + 1
+        i += 1
+    return i
+
+
+def read_heredocs(t, i, pending, line_at, found):
+    """Read the bodies of the heredocs opened on the line before i; the index past the last one."""
+    for strip_tabs, quoted, delim, opener in pending:
+        start, body = i, []
+        while i < len(t):
+            end = t.find("\n", i)
+            end = len(t) if end < 0 else end
+            line = t[i:end]
+            i = end + 1
+            if (line.lstrip("\t") if strip_tabs else line) == delim:
+                break
+            body.append(line)
+        found.append((opener, line_at(start), [("quoted-heredoc" if quoted else "heredoc", "\n".join(body))], "", True))
+    return i
+
+
+def expand(text, escaped, defaults):
+    """text with bash's quoting rules applied: a backslash escapes the characters in escaped (any
+    character when escaped is None) and each expansion reads as MARK. For each ${x:-default} it adds
+    to defaults (its index in the list returned, its default decoded); it returns a list of strings
+    to join."""
+    out, i = [], 0
+    while i < len(text):
+        c, nxt = text[i], text[i + 1:i + 2]
+        if c == "\\" and nxt and (escaped is None or nxt in escaped):
+            out.append("" if nxt == "\n" else nxt)
+            i += 2
+        elif c == "$" and nxt in ("(", "{"):
+            end = skip_group(text, i + 1)
+            m = DEFAULT.match(text[i:end])
+            if m:
+                defaults.append((len(out), "".join(expand(m.group(1), IN_DOUBLE, []))))
+            out.append(MARK)
+            i = end
+        elif c == "$" and nxt and re.match(r'[\w@*#?$!-]', nxt):
+            m = re.match(r'\$(\w+|.)', text[i:])
+            out.append(MARK)
+            i += len(m.group(0))
+        elif c == "`":
+            end = text.find("`", i + 1)
+            out.append(MARK)
+            i = len(text) if end < 0 else end + 1
+        else:
+            out.append(c)
+            i += 1
+    return out
+
+
+def printf_format(text):
+    """A printf format as printf prints it, each conversion given MARK."""
+    text = FORMAT_SPEC.sub(lambda m: "%" if m.group(0) == "%%" else MARK, text)
+    return re.sub(r'\\([0-7]{1,3}|.)', lambda m: chr(int(m.group(1), 8)) if m.group(1)[0] in "01234567"
+                  else PRINTF_ESCAPES.get(m.group(1), m.group(0)), text)
+
+
+def values(parts, before):
+    """What a word puts in front of its reader: its text with every expansion read as MARK, then the
+    same with each ${x:-default} in turn read as its default."""
+    pieces, defaults = [], []
+    for kind, raw in parts:
+        found = []
+        if kind in ("single", "quoted-heredoc"):
+            got = [raw]
+        elif kind == "double":
+            got = expand(raw, IN_DOUBLE, found)
+        elif kind == "heredoc":
+            got = expand(raw, IN_HEREDOC, found)
+        else:
+            got = expand(raw, None, found)
+        defaults += [(len(pieces) + k, d) for k, d in found]
+        pieces += got
+    words = ["".join(pieces)]
+    words += ["".join(pieces[:k] + [d] + pieces[k + 1:]) for k, d in defaults]
+    return [printf_format(w) for w in words] if PRINTF_BEFORE.search(before) else words
+
+
+def judge(value, sent):
+    """None when value, its expansions read as 0 or else as nothing, is not JSON-like or passes
+    problem(); else the 0 reading's (line within it, message)."""
+    zero = value.replace(MARK, "0")
+    if not LOOKS_JSON.match(zero):
+        return None
+    bad = problem(zero, sent)
+    return bad if bad and problem(value.replace(MARK, ""), sent) else None
+
+
+def problem(text, sent):
+    """None when text is JSON, JSON Lines or, unless sent, a list's items or a fragment that only
+    ends early; else (line within text, json's message)."""
+    try:
+        json.loads(text)
+        return None
+    except ValueError as e:
+        if not sent and e.pos >= len(text.rstrip()):   # a later command completes it
+            return None
+        whole = (e.lineno, e.msg)
+    try:
+        if not sent:   # a list's items, which a later command or a printf format encloses
+            json.loads("[" + text.rstrip().rstrip(",") + "]")
+            return None
+    except ValueError:
+        pass
+    lines = text.split("\n")
+    if len(lines) < 2 or not all(LOOKS_JSON.match(ln) for ln in lines if ln.strip()):
+        return whole
+    for k, ln in enumerate(lines, 1):
+        try:
+            if ln.strip():
+                json.loads(ln)
+        except ValueError as e:
+            return (k, e.msg)
+    return None
+
+
+def lint_file(path):
+    """The vacuous-test findings in one file, each 'path:line: message'."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    file_lines, found, out = text.split("\n"), [], []
+    scan(text, 1, found)
+    bodies = [(start, parts[0][1]) for _, start, parts, _, _ in found if parts[0][0].endswith("heredoc")]
+    for start, body in bodies:   # a stub's shell has words of its own; a JSON body is data
+        if not LOOKS_JSON.match(body):
+            scan(body, start, found)
+    for anchor, start, parts, before, sent in found:
+        if OK_MARK in file_lines[anchor - 1].lower():
+            continue
+        for value in values(parts, before):
+            bad = judge(value, sent)
+            if bad:
+                shown = value.replace(MARK, "0").strip().replace("\n", " ")
+                shown = shown if len(shown) <= SHOWN else shown[:SHOWN] + "..."
+                out.append(f"{path}:{start + bad[0] - 1}: vacuous-test: invalid JSON ({bad[1]}): {shown}")
+    return out
+
+
+def main(argv):
+    tests = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "tests")
+    paths = argv or sorted(os.path.relpath(p) for p in glob.glob(os.path.join(tests, "*_test.sh")))
+    findings = [f for p in paths for f in lint_file(p)]
+    for f in findings:
+        print(f)
+    if findings:
+        print(f"lint: {len(findings)} finding(s); a word that is not JSON on purpose says so in a"
+              f" comment on its line: # {OK_MARK}, <why>")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

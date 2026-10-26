@@ -151,7 +151,7 @@ check "plan-epic when config board_dir fails allows" [ -z "${out}" ]
 touch -t 201901010000 "${project}/.swarm/X/critic.json"
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
 check "plan-epic with only an answer older than the epic (a previous plan) blocks" blocked "plan-epic X"
-echo '{"cut' > "${project}/.swarm/X/critic.json"
+echo '{"cut' > "${project}/.swarm/X/critic.json" # vacuous-test: ok, a cut-off answer on purpose
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
 check "plan-epic with only an answer that is not JSON blocks" blocked "plan-epic X"
 rm -rf "${project}/.swarm/X" "${project}/docs/epics/X.md"
@@ -175,7 +175,7 @@ check "plan-hld with the critic's answer newer than the HLD allows" [ -z "${out}
 touch -t 201901010000 "${project}/.swarm/H/critic.json"
 STUB_NEXT="plan-hld H" run "lead-stop plan-hld blocked"
 check "plan-hld with only an answer older than the HLD blocks" blocked "plan-hld H"
-echo '{"cut' > "${project}/.swarm/H/critic.json"
+echo '{"cut' > "${project}/.swarm/H/critic.json" # vacuous-test: ok, a cut-off answer on purpose
 STUB_NEXT="plan-hld H" run "lead-stop plan-hld blocked"
 check "plan-hld with only an answer that is not JSON blocks" blocked "plan-hld H"
 rm -rf "${project}/.swarm/H" "${project}/docs/hld"
