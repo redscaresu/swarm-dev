@@ -32,17 +32,18 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 # those files), the selector's own test naming a hook it does not test, and a test naming each named
 # path, one per test.
 DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections; do DOC_FLOOR+=("tests/${t}_test.sh"); done
-CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed; do CMD_FLOOR+=("tests/${t}_test.sh"); done
+CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
 git init -q -b main "${G}"
 mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" "${G}/docs" "${G}/hooks" "${G}/scripts" "${G}/tests"
-for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md docs/method.md \
+for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
   hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
 for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHELL_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
+echo 'cat commands/plan-epic.md' > "${G}/tests/names_plan_epic_test.sh"
 echo 'bash hooks/merge-guard.sh' > "${G}/tests/names_guard_test.sh"
 echo 'cp scripts/board-only.sh .' > "${G}/tests/names_gate_test.sh"
 echo 'bin/gh-shim/gh api' > "${G}/tests/names_shim_test.sh"
@@ -66,6 +67,8 @@ check "a doc selects the doc floor and the test that names it" "$(sel "echo 1 >>
   "$(lines "${DOC_FLOOR[@]}" tests/names_method_test.sh)"
 check "an unstaged command selects the command floor and the test that names it, no other" "$(sel 'echo 1 >> commands/swarm.md')" \
   "$(lines "${CMD_FLOOR[@]}" tests/names_swarm_test.sh)"
+check "a command only its own test names still selects command_names_test.sh, which greps every command" \
+  "$(sel "echo 1 >> commands/plan-epic.md; ${commit}")" "$(lines "${CMD_FLOOR[@]}" tests/names_plan_epic_test.sh)"
 check "a staged hook selects the shell-scan floor and the test that names it, no other" "$(sel 'echo 1 >> hooks/merge-guard.sh; git add -A')" \
   "$(lines "${SHELL_FLOOR[@]}" tests/names_guard_test.sh)"
 check "a script selects the test that names it, alone" "$(sel "echo 1 >> scripts/board-only.sh; ${commit}")" tests/names_gate_test.sh
