@@ -93,7 +93,8 @@ with `goal` on the findings' `/goal` can wait two more. So a tell sent within 7 
 start is left alone: the log cannot tell that turn from one the tell started. An agent that took the
 brief has had a turn, so a later, unrelated paste is left alone. A paste in a prompt already
 submitted above the box does not count either. Each line it is done with goes in
-`.swarm/lead/resend`, and the pane is not read again until a newer line comes. Before the Enter the
+`.swarm/lead/resend`, and the pane is not read again until a newer line comes, except once after
+an Enter (the `.unsent` marker, below). Before the Enter the
 line goes in marked `pending`, which does not count as done, and a line it cannot write gets no
 Enter. A run stopped before its Enter is tried again by the next read, which reads the box first, so
 a brief that did go is not sent twice. A failed read, a check that fails unexpectedly, or an Enter
@@ -106,7 +107,8 @@ submit the brief it is sending. The process list is read again just before an En
 waits for the next read if `events.tsv` gained a line while the pane was read, since that line may
 be a newer delivery. While an upgrade runs, which restarts agents, no pane is read at all. It never
 resends through `tell`, which would log a second `tell:findings` line and count a review round
-twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines.
+twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines. A brief
+still in the box on the read after the Enter wakes the lead through an `.unsent` marker (below).
 
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
@@ -161,14 +163,16 @@ events.tsv are read every poll; git only for a story with a start line and no cu
 JSON and `ps` once, whenever a story with a build record, or a ready story with a step-up marker, is
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
-everything else and prints only these lines and `step-up failed:` lines on its first read.
+everything else and prints only these lines, `step-up failed:` lines and `unsent brief:` lines on
+its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
 `<kind>` says what it marks. Its first line holds the marker's own fields. A `pid <n>` line names the
 swarm.sh process that wrote it. A later one-word line, such as `closed`, records a step the writer
-got past. `wait --lead` reads markers in the same pass as its `no-agent:`
-lines, from the poll's one `herdr agent list`, events.tsv and one `ps`, with no gh call. Outside
+got past. `wait --lead` reads `.step-up` markers in the same pass as its `no-agent:`
+lines, from the poll's one `herdr agent list`, events.tsv and one `ps`, with no gh call. It reads
+`.unsent` markers just after the resend, which writes and removes them. Outside
 herdr, or while herdr's list or `ps` fails, it prints no marker line either: without the list it
 cannot tell whether the builder is still open. It prints `<what>: <stem>, exit: <exit>`. The
 `.step-up` marker works like this:
@@ -216,6 +220,34 @@ cannot tell whether the builder is still open. It prints `<what>: <stem>, exit: 
   waiting, naming it. A working one took up its brief, so the lead tells the user instead of
   resuming again, since no swarm.sh command records that rung. The conductor leaves the story
   alone and does not list it in its report.
+
+The `.unsent` marker works like this:
+
+- Path: `.swarm/briefs/<stem>.unsent`, where `<stem>` is the brief's file name without `.md`: the
+  slug for a builder, `review-<slug>` for a review agent, `conduct-<epic>` for a conductor and
+  `conduct-backlog` for the backlog's conductor. The resend writes it, on the first read after its
+  Enter, when the agent is idle, its input box still holds the paste and its session shows no turn
+  since the brief went out. That read is made once per Enter. As before an Enter, the process list
+  is read again first, and nothing is written while a `swarm.sh` command is delivering to the agent
+  or when `events.tsv` gained a line during the read, since that line may be a newer delivery. An agent started by name with
+  `swarm.sh agent` gets the resend but no marker: no command starts it again. deliver_prompt never
+  writes it, since it has returned before the resend.
+- First line: `<agent> <pane> <role>`, the agent's herdr name, its pane and `builder`, `review` or
+  `conductor`. Then `pid <n>`, the `wait --lead` that wrote it.
+- Lead line: `unsent brief: <stem>, exit: <exit>`.
+- Exit: for a builder, `herdr pane close <pane> then <the no-agent: exit>`, which for a ready story
+  is `swarm.sh restart <slug>, or swarm.sh hold <slug> <reason>`. A builder's pane is closed with
+  herdr, not `swarm.sh close`: on a ready story with no PR that close counts a failed attempt and
+  clears the worktree, and restart then refuses. For a review agent it is
+  `swarm.sh close review-<slug> then swarm.sh review-agent <slug> <PR URL>`, once per PR on the
+  story (`<PR URL>` itself when it has none). For a conductor it is
+  `swarm.sh close conduct-<epic> then swarm.sh conduct <epic>`, and for the backlog's,
+  `swarm.sh close <its agent name> then swarm.sh conduct --backlog`.
+- It goes on the read that finds its agent working, blocked or done, that finds herdr no longer
+  lists the agent in that pane, or that reads its box clear or finds a turn started in its session
+  since the brief went out (it took the brief, then got a new paste). Its line then leaves
+  `.swarm/lead/seen` too. While the agent stays idle, its pane is read once each poll. A failed read
+  leaves the marker as it is.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
