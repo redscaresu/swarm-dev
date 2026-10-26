@@ -7,7 +7,17 @@
 # a run may first wait for a slot. Exits 1 when any file failed, or when xargs stopped before every
 # file had run, or before any file runs when the cap file holds no whole number or a slot cannot be
 # used; an interrupt (INT, HUP, TERM) stops every job and its test first, as the cleanup below does.
+# Under codex it refuses before anything else.
 set -uo pipefail
+
+# This suite does not run in a codex session (a codex review reads the diff; nothing codex runs
+# needs it), so under codex this exits 1 with one line, before any job, "run" line or test-runs.tsv
+# line. codex 0.164 sets CODEX_SANDBOX and CODEX_THREAD_ID in its own shell; the lead's shell and an
+# agent's pane have neither (CODEX_HOME, which an agent may have, is no sign of codex). Either one
+# refuses, in case a codex run lacks the other.
+for v in CODEX_SANDBOX CODEX_THREAD_ID; do
+  [[ -z "${!v+x}" ]] || { echo "test.sh: refused under codex (${v} is set): the suite does not run in a codex session; run make test outside codex" >&2; exit 1; }
+done
 
 # stop_group <pgid> <seconds> — TERM a process group, give it <seconds>, then KILL what is left.
 # shellcheck disable=SC2317,SC2329 # invoked by the traps
