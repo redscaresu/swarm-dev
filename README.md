@@ -151,6 +151,9 @@ Restart Claude Code afterwards. Agents already running stay on the old version u
 `swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. upgrade runs
 detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
 
+An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
+`next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
+
 Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:` line. Once its
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.

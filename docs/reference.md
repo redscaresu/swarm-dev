@@ -1954,6 +1954,22 @@ stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
+Epics can name the release they belong to with `stage: v<x.y.z>`. Once a release is due, `next`
+reads the stages: the epics on the board, whatever their status, the copies `origin/<base>` has of
+epics an edit in your checkout deleted or changed before it reached the base (a release ships the
+base), and the epic files deleted on `origin/<base>` since the tag. The next stage S is the lowest one above the tag. When no epic of S
+is left on the board, the step is `release v<S>`, and its why names the stage. While one is still
+there, the release is held. `next` then prints `release-held: v<S>, open epics: <slugs>, patches
+only` after its step's lines, and `status` and `dash` show the same line. A fix can still go out
+while S is held. When no story of a staged epic has merged since the tag, the step is
+`release v<x.y.z+1> (patch)`, a patch on the tag's line. A merged story is one whose file was
+deleted since the tag (a story's PR deletes its file), or one the board keeps at `status: done` that
+was not done at the tag. Otherwise there is no release step, and `next` goes on to the steps after
+it. An epic on the board whose `stage:` is not
+`v<x.y.z>` holds the release too, and the line names it. A board where no epic has `stage:`
+releases as before, with a plain `release`. So does a board outside the project's repo, since git
+can't list its deleted epics.
+
 Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30
 seconds at most. If that is not the base the release check last read, a PR landed between that read
 and the merge, and the release shipped commits no check read. merge then prints `warning: <merge

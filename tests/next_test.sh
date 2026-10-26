@@ -629,38 +629,141 @@ else echo "FAIL an also: line with no blocked story depending on the lead story:
 
 # release: a fixture repo whose origin/HEAD is main, plugin.json says 1.2.0 and the local tag v1.2.0
 # is on origin/main; each setup runs after the tag, then the repo is pushed and fetched. herdr=1 runs
-# next with a stub herdr listing a working conductor.
-expect_release() { # <name> <want> <herdr: 0|1> <setup>...
-  local name="$1" want="$2" herdr="$3" dir got step; shift 3
-  dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+# next with a stub herdr listing a working conductor. release_repo leaves the repo in rdir.
+release_repo() { # <setup>...
+  rdir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
   (
-    cd "${dir}" && git init -q && git init -q --bare origin.git && git remote add origin "${dir}/origin.git"
+    cd "${rdir}" && git init -q && git init -q --bare origin.git && git remote add origin "${rdir}/origin.git"
     printf 'origin.git\n' > .git/info/exclude
     mkdir -p docs/stories .claude-plugin bin && echo "# Stories" > docs/stories/README.md
     echo '{"name":"x","version":"1.2.0"}' > .claude-plugin/plugin.json
-    git add -A && git -c user.name=t -c user.email=t@t commit -q -m init && git tag v1.2.0
+    git add -A && git -c user.name=t -c user.email=t@t commit -q -m init && git -c tag.gpgsign=false tag v1.2.0
     for step in "$@"; do eval "${step}"; done
     git push -q origin HEAD:main && git fetch -q origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
     mkdir -p .swarm/briefs .swarm/state && touch .swarm/briefs/conduct-e1.md && echo "w:7 conduct-e1" > .swarm/state/tab
     printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"working\",\"pane_id\":\"w:7\"}]}}'" > bin/herdr
     chmod +x bin/herdr
   )
-  if [[ ${herdr} == 1 ]]; then got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"
-  else got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; fi
-  got="${got%%$'\n'*}"
+}
+# expect_release <name> <want> <herdr: 0|1> <setup>... — next's first line on release_repo's fixture;
+# the whole output is left in out.
+expect_release() {
+  local name="$1" want="$2" herdr="$3" got; shift 3
+  release_repo "$@"
+  if [[ ${herdr} == 1 ]]; then out="$(cd "${rdir}" && HERDR_ENV=1 PATH="${rdir}/bin:${PATH}" bash "${SWARM}" next)"
+  else out="$(cd "${rdir}" && env -u HERDR_ENV bash "${SWARM}" next)"; fi
+  got="${out%%$'\n'*}"
   if [[ "${got}" == "${want}" ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: want '${want}', got '${got}'"; fails=$((fails + 1)); fi
-  rm -rf "${dir}"
+  rm -rf "${rdir}"
 }
 COMMIT="git add -A && git -c user.name=t -c user.email=t@t commit -q -m change"
+GH_FAIL="${STUB_BIN}/gh-fail"; mkdir -p "${GH_FAIL}"; printf '#!/bin/sh\nexit 1\n' > "${GH_FAIL}/gh"; chmod +x "${GH_FAIL}/gh"
 expect_release "a commit outside the board since the tag: release" release 0 "echo x > bin/x" "${COMMIT}"
+if [[ "${out}" != *release-held:* ]]; then echo "ok   a board with no stage: prints no release-held: line"
+else echo "FAIL a board with no stage: prints a release-held: line: ${out}"; fails=$((fails + 1)); fi
 expect_release "only board commits since the tag: not release" "done" 0 "echo x > docs/stories/README.md" "${COMMIT}"
 expect_release "no plugin.json: not release" "done" 0 "git rm -q .claude-plugin/plugin.json" "echo x > bin/x" "${COMMIT}"
 expect_release "the tag missing locally: not release" "done" 0 "echo x > bin/x" "${COMMIT}" "git tag -d v1.2.0 >/dev/null"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture
 expect_release "the tag on a commit off origin/main: not release" "done" 0 "echo x > bin/x" "${COMMIT}" \
-  'git tag -f v1.2.0 "$(git -c user.name=t -c user.email=t@t commit-tree "HEAD^{tree}" -m side)" >/dev/null'
+  'git -c tag.gpgsign=false tag -f v1.2.0 "$(git -c user.name=t -c user.email=t@t commit-tree "HEAD^{tree}" -m side)" >/dev/null'
 expect_release "a working conductor's wait comes before release" "wait conduct-e1" 1 "echo x > bin/x" "${COMMIT}"
+
+# Stages: S is the lowest stage: above the tag (v1.2.0) among the board's epics and the epic files
+# deleted since it. The fixtures use an active stage epic with a story in review, which no other arm
+# builds or plans. While an epic of S is on the board, whatever its status, the release is held:
+# next prints the release-held: line, and a patch on the tag's line when no staged epic's story was
+# deleted (merged) since the tag; once every one has left, release v<S>.
+STAGE="item epics/e1.md 'status: active' 'stage: v1.3.0'"
+REVIEW="item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
+HELD="release-held: v1.3.0, open epics: e1, patches only"
+has_line() { # <name> <line> — a line of next's output in out is <line>
+  if grep -qxF -- "$2" <<< "${out}"; then echo "ok   $1"; else echo "FAIL $1: no line '$2' in: ${out}"; fails=$((fails + 1)); fi
+}
+expect_release "an open stage epic and a fix since the tag: the patch on the tag's line, not release v1.3.0" "release v1.2.1 (patch)" 0 \
+  "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+has_line "an open stage epic: the release-held: line names it" "${HELD}"
+v="${out%%$'\n'*}"; v="${v#release v}"; v="${v% (patch)}"
+# merge --release's own test of the bump (bin/lib/merge.sh, release_check): MAJOR.MINOR.PATCH.
+if python3 -c 'import re, sys; sys.exit(not re.fullmatch(r"\d+\.\d+\.\d+", sys.argv[1]))' "${v}"; then echo "ok   the patch version ${v} is MAJOR.MINOR.PATCH, as merge --release takes it"
+else echo "FAIL the patch version '${v}' is not MAJOR.MINOR.PATCH"; fails=$((fails + 1)); fi
+expect_release "an open stage epic whose story merged since the tag: no release step" "gate" 0 \
+  "${STAGE}" "${REVIEW}" "item stories/s0.md 'status: ready' 'kind: code' 'epic: e1'" "${COMMIT}" \
+  "git rm -q docs/stories/s0.md" "echo x > bin/x" "${COMMIT}"
+has_line "an open stage epic whose story merged: the release-held: line after the step" "${HELD}"
+expect_release "a merged story of a child epic whose parent carries the stage: no release step" "gate" 0 \
+  "item epics/e1.md 'status: split' 'stage: v1.3.0'" "item epics/c1.md 'status: active' 'parent: e1'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: c1'" "item stories/s0.md 'status: ready' 'kind: code' 'epic: c1'" "${COMMIT}" \
+  "git rm -q docs/stories/s0.md" "echo x > bin/x" "${COMMIT}"
+expect_release "the stage epic's file deleted since the tag: release v1.3.0" "release v1.3.0" 0 \
+  "${STAGE}" "${COMMIT}" "git rm -q docs/epics/e1.md" "echo x > bin/x" "${COMMIT}"
+if [[ "${out}" == *"stage v1.3.0"* && "${out}" != *release-held:* ]]; then echo "ok   release v1.3.0's why names the stage, and nothing is held"
+else echo "FAIL release v1.3.0's why does not name the stage, or a line is held: ${out}"; fails=$((fails + 1)); fi
+expect_release "the stage epic deleted, a draft epic of the next stage on the board: still release v1.3.0" "release v1.3.0" 0 \
+  "${STAGE}" "${COMMIT}" "git rm -q docs/epics/e1.md" "item epics/e2.md 'status: draft' 'stage: v1.4.0'" "echo x > bin/x" "${COMMIT}"
+expect_release "a stage epic still on the board at status: done holds it" "release v1.2.1 (patch)" 0 \
+  "item epics/e1.md 'status: done' 'stage: v1.3.0'" "echo x > bin/x" "${COMMIT}"
+has_line "a done stage epic on the board is named as open" "${HELD}"
+expect_release "a malformed stage: holds the release" "release v1.2.1 (patch)" 0 \
+  "item epics/e1.md 'status: active' 'stage: 1.3'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+has_line "a malformed stage: is named in the release-held: line" "release-held: no valid stage, open epics: e1, patches only (e1's stage: '1.3' is not v<x.y.z>)"
+# A child epic with parent: and no stage: carries no stage: a board with no stage field releases as
+# today, whatever other front matter its epics have.
+expect_release "a child epic with parent: and no stage: releases as today" release 0 \
+  "item epics/e1.md 'status: split'" "item epics/c1.md 'status: active' 'parent: e1'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: c1'" "echo x > bin/x" "${COMMIT}"
+if [[ "${out}" != *release-held:* ]]; then echo "ok   a child epic with parent: and no stage: prints no release-held: line"
+else echo "FAIL a child epic with parent: and no stage: prints a release-held: line: ${out%%$'\n'*}"; fails=$((fails + 1)); fi
+# Staged work the board keeps at status: done (a merge that left the story file) counts as merged
+# since the tag unless the story was done at the tag already.
+expect_release "a staged epic's story kept done on the board since the tag: no release step" "gate" 0 \
+  "${STAGE}" "${REVIEW}" "item stories/s0.md 'status: done' 'kind: code' 'epic: e1'" "echo x > bin/x" "${COMMIT}"
+has_line "a staged story done since the tag: the release-held: line after the step" "${HELD}"
+expect_release "a staged epic's story done at the tag already: still the patch" "release v1.2.1 (patch)" 0 \
+  "${STAGE}" "${REVIEW}" "item stories/s0.md 'status: done' 'kind: code' 'epic: e1'" "${COMMIT}" \
+  "git -c tag.gpgsign=false tag -f v1.2.0 >/dev/null" "echo x > bin/x" "${COMMIT}"
+# A staged epic deleted here, in a commit not pushed yet, is still on origin/main: it holds the stage.
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+out="$(cd "${rdir}" && git rm -q docs/epics/e1.md && eval "${COMMIT}" && env -u HERDR_ENV bash "${SWARM}" next)"
+if [[ "${out%%$'\n'*}" == "release v1.2.1 (patch)" ]]; then echo "ok   a staged epic deleted here but not on origin/main still holds the stage"
+else echo "FAIL a staged epic deleted here but not on origin/main: want 'release v1.2.1 (patch)', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "an epic deleted here but not on origin/main is named in the release-held: line" "${HELD}"
+rm -rf "${rdir}"
+# An epic whose stage: an edit here removed, not committed: origin/main's copy still holds it, once.
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+out="$(cd "${rdir}" && grep -v '^stage:' docs/epics/e1.md > e1.tmp && mv e1.tmp docs/epics/e1.md && env -u HERDR_ENV bash "${SWARM}" next)"
+if [[ "${out%%$'\n'*}" == "release v1.2.1 (patch)" ]]; then echo "ok   a stage: removed here but not on origin/main still holds the stage"
+else echo "FAIL a stage: removed here but not on origin/main: want 'release v1.2.1 (patch)', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "an epic whose stage: was removed here is named in the release-held: line once" "${HELD}"
+rm -rf "${rdir}"
+# A quote with no match is not stripped: v1.2.0" is malformed, not the tag's own stage to pass over.
+expect_release "a stage: with an unmatched quote is malformed and holds the release" "release v1.2.1 (patch)" 0 \
+  "item epics/e1.md 'status: active' 'stage: v1.2.0\"'" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+has_line "an unmatched quote is named in the release-held: line" "release-held: no valid stage, open epics: e1, patches only (e1's stage: 'v1.2.0\"' is not v<x.y.z>)"
+# The stages cost a git log, read only once release_due is due: dash runs next_step every frame.
+# GIT_LOG's git notes each call, then runs the real one.
+GIT_LOG="${STUB_BIN}/git-log"; GIT_CALLS="${STUB_BIN}/git-calls"; mkdir -p "${GIT_LOG}"
+printf '#!/bin/sh\necho "$*" >> "%s"\nexec "%s" "$@"\n' "${GIT_CALLS}" "$(command -v git)" > "${GIT_LOG}/git"; chmod +x "${GIT_LOG}/git"
+step_git_logs() { # <setup>... — how many git log calls `swarm.sh _step` (next_step alone) makes on release_repo's fixture
+  release_repo "$@"; rm -f "${GIT_CALLS}"
+  (cd "${rdir}" && env -u HERDR_ENV PATH="${GIT_LOG}:${PATH}" bash "${SWARM}" _step > /dev/null)
+  grep -cE '(^| )log( |$)' "${GIT_CALLS}" || true
+  rm -rf "${rdir}"
+}
+n="$(step_git_logs "${STAGE}" "${REVIEW}" "echo x > docs/stories/README.md" "${COMMIT}")"
+if [[ "${n}" == 0 ]]; then echo "ok   next_step makes no git log call when release_due is not due"
+else echo "FAIL next_step makes ${n} git log call(s) when release_due is not due"; fails=$((fails + 1)); fi
+n="$(step_git_logs "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}")"
+if [[ "${n}" == 1 ]]; then echo "ok   next_step reads the stages with one git log call once a release is due"
+else echo "FAIL next_step makes ${n} git log call(s) once a release is due, not 1"; fails=$((fails + 1)); fi
+# status and dash show the release-held: line next prints. gh fails here, as offline.
+release_repo "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
+out="$(cd "${rdir}" && env -u HERDR_ENV PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" status 2> /dev/null)"
+has_line "status prints the release-held: line under Next" "  ${HELD}"
+out="$(cd "${rdir}" && env -u HERDR_ENV COLUMNS=120 PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" dash 2> /dev/null)"
+has_line "dash prints the release-held: line" "${HELD}"
+rm -rf "${rdir}"
 
 # A red main that merge recorded (main-red, with its fix-main story ready and unstarted on the board)
 # comes before everything, a working conductor's wait too. A later main-green of the same repo and

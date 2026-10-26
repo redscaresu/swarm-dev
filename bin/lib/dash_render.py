@@ -910,6 +910,9 @@ if not WIDE:
 drift = lines("DASH_DRIFT")
 if drift:
     out.append(fit([(f"board: {len(drift)} uncommitted edit{'' if len(drift) == 1 else 's'} in the main checkout: {', '.join(drift)}", "warn")], W))
+# next's release-held: line, when the next stage holds the release: only patches go out until it is done.
+if E.get("DASH_HELD"):
+    out.append(fit([(E["DASH_HELD"], "warn")], W))
 
 # The main column: needs you, the epics (or the tree), the blocked count. From 140 columns it is the
 # left column, LW wide.
