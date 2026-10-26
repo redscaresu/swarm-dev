@@ -13,7 +13,8 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 busy_pid=""
-trap 'unbusy; rm -rf "${ROOT}"' EXIT
+other_pid=""
+trap 'unbusy; [[ -z "${other_pid}" ]] || kill "${other_pid}" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111
@@ -44,15 +45,20 @@ esac
 STUB
 # ps: the real one, except that a process list (-A) fails while ${FX}/ps.fail exists, and lists only this
 # run's processes (its fake swarm.sh is under ${ROOT}): another copy of this test running on the machine
-# starts fakes with the same slugs and URLs, which would make a story here look busy.
-printf '#!/bin/sh\ncase " $* " in *" -A "*) [ ! -e "%s/ps.fail" ] || exit 1; %s "$@" | grep -F "%s"; exit 0 ;; esac\nexec %s "$@"\n' \
-  "${FX}" "$(command -v ps)" "${ROOT}" "$(command -v ps)" > "${ROOT}/bin/ps"
+# starts fakes with the same slugs and URLs, which would make a story here look busy. Before the list it
+# removes the file ${FX}/ps.rm names (a rung starting between the board read and the process list), and
+# it leaves out the pid ${FX}/ps.hide holds (a process started after the list was read).
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase " $* " in *" -A "*) [ ! -e "%s/ps.fail" ] || exit 1\n  [ ! -e "%s/ps.rm" ] || rm -f "$(cat "%s/ps.rm")"\n  %s "$@" | grep -F "%s" | awk -v h="$(cat "%s/ps.hide" 2>/dev/null)" '"'"'h == "" || $1 != h'"'"'; exit 0 ;; esac\nexec %s "$@"\n' \
+  "${FX}" "${FX}" "${FX}" "$(command -v ps)" "${ROOT}" "${FX}" "$(command -v ps)" > "${ROOT}/bin/ps"
 chmod +x "${ROOT}/bin/ps"
 # git: the real one, logging each show-ref (a build read from git).
 printf '#!/bin/sh\ncase " $* " in *" show-ref "*) echo "$*" >> "%s" ;; esac\nexec %s "$@"\n' "${ROOT}/git.log" "$(command -v git)" > "${ROOT}/bin/git"
 chmod +x "${ROOT}/bin/git"
 # The fake swarm.sh a busy process runs: ps shows `bash .../swarm.sh <args>` while it sleeps.
 printf 'while :; do sleep 0.2; done\n' > "${ROOT}/fake/swarm.sh"
+# Another program, alive but no swarm.sh: a pid a step-up marker may name once reused.
+cp "${ROOT}/fake/swarm.sh" "${ROOT}/fake/other.sh"
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh"
 
 fails=0
@@ -82,7 +88,7 @@ unbusy() { [[ -z "${busy_pid}" ]] || { kill "${busy_pid}" 2>/dev/null || true; w
 fresh() {
   unbusy
   rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${P}/.swarm/lead" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
-    "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${P}/.swarm/upgrade.pid" "${P}/.swarm/board-state" "${ROOT}"/*.log
+    "${FX}/list.fail" "${FX}/list.hang" "${FX}/ps.fail" "${FX}/ps.rm" "${FX}/ps.hide" "${P}/.swarm/upgrade.pid" "${P}/.swarm/board-state" "${ROOT}"/*.log
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   listed
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
@@ -208,12 +214,6 @@ check "and writes no events line" test "$(last_event)" == "close na-f ok"
 rm -f "${FX}/list.fail"; touch "${FX}/ps.fail"; poll; poll
 check "with ps failing, a pending tell cannot be ruled out, so it is silent" never_woke na-f
 
-fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev close na-s
-mkdir -p "${P}/.swarm/briefs"; echo "stalled opus fable code" > "${P}/.swarm/briefs/na-s.step-up"
-poll; poll
-check "a story with a .step-up marker is silent (the marker's own line reports it)" silent
-check "and no poll woke on it (na-s)" never_woke na-s
-
 fresh "merge = agent"; story na-m "kind: code" "status: review" "prs: ${URL}"; ev story na-m; built na-m; ev close review-na-m
 busy merge --head "${H}" "${URL}"
 poll
@@ -297,6 +297,101 @@ fresh; rm -f "${P}/.swarm/lead/seen"; story na-n "kind: code" "status: ready"; e
 poll
 check "a fresh run with no .swarm/lead/seen prints the line on its first read" fires na-n "swarm.sh restart na-n, or swarm.sh hold na-n <reason>"
 
+# --- a failed step-up: its .step-up marker gets its own line, step-up failed:, once no step-up of it runs.
+# marker <slug> [pid] — the .step-up marker step_up writes, with a `pid [pid]` line when [pid] is given.
+# marker <slug> [pid] [closed] — a .step-up marker: its rung, a pid line with [pid], and closed with [closed].
+marker() { mkdir -p "${P}/.swarm/briefs"; { echo "stalled opus fable code"; [[ -z "${2:-}" ]] || echo "pid $2"; [[ -z "${3:-}" ]] || echo closed; } > "${P}/.swarm/briefs/$1.step-up"; }
+DEAD=999999999   # above every system's pid limit, so no process has it
+step_fires() { [[ "$(out)|$(rc)" == "step-up failed: $1, exit: swarm.sh step-up --resume $1|0" ]]; }
+
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev close na-s
+marker na-s "${DEAD}"; ev step-up:failed na-s "ok (start failed)"
+poll
+check "a marker, a step-up:failed line and no builder: the first poll wakes the lead with the resume exit, and no no-agent line" step_fires na-s
+check "it logs lead-woken with the kind in the outcome" test "$(last_event)" == "lead-woken na-s ok (step-up failed)"
+poll
+check "the same step-up failed line does not wake it twice" silent
+
+fresh; rm -f "${P}/.swarm/lead/seen"; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev close na-s
+marker na-s "${DEAD}"; ev step-up:failed na-s "ok (start failed)"
+poll
+check "a fresh run with no .swarm/lead/seen prints the step-up failed line on its first read" step_fires na-s
+# Only those two kinds: a held line whose cause holds ", exit: " is noted, not printed.
+fresh; rm -f "${P}/.swarm/lead/seen"; story na-h "kind: lead" "status: ready" "escalated_from: code" "held_for: paused, exit: none"
+poll
+check "a fresh run does not print a held line whose cause holds ', exit: '" silent
+
+# A step-up under way: its marker, no failure line, no builder listed, and its swarm.sh _step-up (the pid
+# on the marker) running, its lock held.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s
+busy _step-up na-s stalled; marker na-s "${busy_pid}"; mkdir -p "${P}/.swarm/locks/step-up-na-s"
+poll
+check "a step-up under way (its process alive) is silent" silent
+poll
+check "and no poll woke on it" never_woke na-s
+# A resume that rewrote the marker after the poll read ps: its pid is missing from that list but alive.
+echo "${busy_pid}" > "${FX}/ps.hide"; poll; rm -f "${FX}/ps.hide"
+check "a marker pid missing from the poll's ps but alive now (a resume just started) is silent" silent
+# Killed after closing the builder, before it could log step-up:failed: its pid is gone, its lock left.
+unbusy
+poll
+check "a marker whose step-up pid is gone, with no failure line and the lock still held, fires within one poll" step_fires na-s
+# A pid that is alive but not a swarm.sh step-up (the pid reused) is no step-up running either.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s
+bash "${ROOT}/fake/other.sh" & other_pid=$!; marker na-s "${other_pid}"
+poll
+kill "${other_pid}" 2>/dev/null || true; wait "${other_pid}" 2>/dev/null || true
+check "a marker whose pid is now another program's fires" step_fires na-s
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s
+poll
+check "a marker with no pid line fires" step_fires na-s
+# A pid reused by another story's step-up is not this one's.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s
+busy _step-up na-other stalled; marker na-s "${busy_pid}"
+poll
+check "a marker whose pid is now another story's step-up fires" step_fires na-s
+unbusy
+# Killed inside the close (no closed line on the marker): the pane listed under the builder's name may
+# be the old builder, so the alert waits.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}"; listed na-s
+poll; poll
+check "a marker without a closed line whose step-up is gone but whose builder is still listed is silent" never_woke na-s
+# The marker says the old builder was closed: a pane under its name is the new rung's. Left by a step-up
+# killed after start_agent opened it, before start_rung could log anything: it fires.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}" closed; listed na-s
+poll
+check "a closed marker with a dead pid and no failure line, its pane listed (killed after the new pane opened), fires" step_fires na-s
+# Or kept by start_rung, its failure logged: it fires.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}" closed; listed na-s
+ev step-up:failed na-s "ok (start unclear)"
+poll
+check "a marker whose new rung's pane was kept (start unclear) fires, the pane listed" step_fires na-s
+# A resume that then fails in its checks (a generic failure line) leaves the kept pane the new rung's.
+ev step-up:failed na-s "ok (step-up: could not list the PRs on story/na-s (git or gh), so nothing was closed)"; rm -f "${P}/.swarm/lead/seen"
+poll
+check "a later resume failing in its checks still leaves the kept pane the new rung's: it fires" step_fires na-s
+# The rung started between the board read and the pid read (start_rung removed the marker): no alert.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev close na-s; marker na-s "${DEAD}"
+echo "${P}/.swarm/briefs/na-s.step-up" > "${FX}/ps.rm"
+poll
+check "a marker gone by the time its pid is read is a rung that started: silent" silent
+
+# After a resume that worked: the marker gone, the step-up logged, the new builder listed.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; ev close na-s
+ev step-up:failed na-s "ok (start failed)"; ev escalate na-s "ok (stalled: opus -> fable)"; ev step-up:resume na-s; listed na-s
+poll
+check "after a resume that worked (no marker, its builder listed) it is silent" silent
+poll
+check "and no poll woke on it" never_woke na-s
+fresh; story na-s "kind: lead" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}"
+poll
+check "a kind: lead story's marker gets no line" silent
+# Only a ready story steps up: one in review keeps to the no-agent: line and its merge exit, marker or not.
+fresh "merge = agent"; story na-s "kind: code" "status: review" "prs: ${URL}"; ev story na-s; built na-s; ev close review-na-s
+marker na-s "${DEAD}"
+poll
+check "a story in review with a marker gets the no-agent: review exit, never a resume" fires na-s "swarm.sh review-agent na-s ${URL}"
+
 # --- the review exit is never an unpinned merge, and prs: is split on commas too.
 fresh "merge = agent"; story na-p "kind: code" "status: review" "prs: [${URL},${URL2}]"; ev story na-p; built na-p; ev close review-na-p
 mkdir -p "${P}/.swarm/reviews"; printf 'head: %s\n\n## Findings\n' "${H}" > "${P}/.swarm/reviews/na-p.md"
@@ -369,11 +464,20 @@ busy upgrade e1; echo "${busy_pid} e1 /tmp/upgrade.log" > "${P}/.swarm/upgrade.p
 poll
 check "a story outside the upgrade's epic still fires" fires na-w "swarm.sh restart na-w, or swarm.sh hold na-w <reason>"
 unbusy
+fresh; story na-u2 "kind: code" "status: ready" "epic: e1"; ev story na-u2; built na-u2; ev close na-u2; marker na-u2 "${DEAD}"
+busy upgrade e1; echo "${busy_pid} e1 /tmp/upgrade.log" > "${P}/.swarm/upgrade.pid"
+poll
+check "a failed step-up in a running upgrade's epic still fires" step_fires na-u2
+unbusy; rm -f "${P}/.swarm/upgrade.pid"
 
-# --- the cost of a poll: one herdr list, no per-pane read, no gh call, with a ready and a review case live.
+# --- the cost of a poll: one herdr list, no per-pane read, no gh call, with a ready and a review case
+# live and a failed step-up's marker.
 fresh "merge = agent"; story na-a "kind: code" "status: ready"; ev story na-a; built na-a; ev close na-a
 story na-r "kind: code" "status: review" "prs: ${URL}"; ev story na-r; built na-r; ev close review-na-r
-poll; poll; poll
+story na-x "kind: code" "status: ready"; ev story na-x; built na-x; marker na-x "${DEAD}"
+poll
+check "the marker's line comes out beside the no-agent lines" test "$(grep -c '^step-up failed: na-x, exit: swarm.sh step-up --resume na-x$' "${ROOT}/out")" == 1
+poll; poll
 want=""; for ((i = 0; i < polls; i++)); do want+="agent list"$'\n'; done
 check "each poll makes one herdr agent list and no other herdr call" test "$(cat "${ROOT}/herdr.log")" == "${want%$'\n'}"
 check "and no gh call" test ! -e "${ROOT}/gh.log"
