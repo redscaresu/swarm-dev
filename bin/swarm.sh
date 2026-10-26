@@ -566,7 +566,8 @@ dispatch() {
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
-    _step)  next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds
+    _step)  if [[ "${1:-}" == --dash ]]; then a="$(herdr agent list 2>/dev/null)" || a=""; dash_no_agent "${a}"; fi
+            next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds; --dash: dash --check's, its no-agent lines read as dash reads them
     _conductor) conductor_name "${1:?epic or backlog}"; echo ;;   # test hook: a conductor's agent name
     _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by

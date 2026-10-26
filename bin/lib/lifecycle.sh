@@ -2030,6 +2030,8 @@ LEAD_POLL="${SWARM_LEAD_POLL:-30}"    # seconds between wait --lead's reads of t
 # wait --lead's own files, kept out of STATE_DIR, whose files close reads as tab records.
 LEAD_DIR="${PROJECT_DIR}/.swarm/lead"
 LEAD_SEEN="${LEAD_DIR}/seen"          # the lead's queue at wait --lead's last read, kept across runs
+# shellcheck disable=SC2034 # board.sh reads it
+NEXT_SEEN="${LEAD_DIR}/next-seen"     # the no-agent: lines swarm.sh next named as its step (next_report)
 LEAD_GREEN="${LEAD_DIR}/green"        # "<PR URL> <sha>" per head ci_gate passed, so it runs once per head
 LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one takes over from
 
@@ -2369,6 +2371,15 @@ no_agent_lines() {
     fi
     echo "no-agent: ${slug}, exit: $(no_agent_exit "${slug}")"
   done <<< "${built}"
+}
+
+# no_agent_from <herdr agent list JSON> — no_agent_lines read from a list the caller already holds
+# (status, dash), so herdr is not asked again. Read-only (no record). The list is local to the call,
+# so it never reaches a later lead_agents.
+no_agent_from() {
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  local LEAD_AGENTS="$1" LEAD_AGENTS_OK="${1:+1}" LEAD_AGENTS_READ=1
+  no_agent_lines
 }
 
 # step_up_running <slug> — true while the process <slug>'s .step-up marker names on its `pid <n>` line

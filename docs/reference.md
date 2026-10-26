@@ -217,16 +217,27 @@ cannot tell whether the builder is still open. It prints `<what>: <stem>, exit: 
   resuming again, since no swarm.sh command records that rung. The conductor leaves the story
   alone and does not list it in its report.
 
-**`next` and `status` name it first too.** `next` reads the same lines, without writing an
-events.tsv line, and when there is one it prints `no-agent <slug>` as its step. A pane that went
-with no event shows there once a `wait --lead` poll has written its `no-agent` line. The why ends with the
+**`next` and `status` name it first too.** `next` reads the same `no-agent:` lines, without writing
+an events.tsv line, and prints the first as its step, `no-agent <slug>`. A pane that went with no
+event shows there once a `wait --lead` poll has written its `no-agent` line. The why ends with the
 line's exit. The step comes after `fix-main` and before a conductor's `wait` or `collect`, since
-the lead would otherwise wait on the conductor and never see the story. Working out the step makes
-no gh call, because `dash` reads it every frame. `status` prints a `No agent` section before its agents, one line per
-story: `<slug>, exit: <exit>`. With no such story it prints no section. It needs only herdr's
-agent list, so a failed pane list still shows it. Outside herdr, or when herdr gives no agent list, it
-says it did not check. `hooks/lead-stop.sh` does not know the `no-agent` step, so it
-allows the lead's stop on it.
+the lead would otherwise wait on the conductor and never see the story. While a conductor works,
+`next` still starts conductors for other ready work on this step, as it does on a `wait`.
+`next` names each line once, as `wait --lead` does. It skips a line that `wait --lead` has printed
+(`.swarm/lead/seen`) or that `swarm.sh next` has already named (`.swarm/lead/next-seen`, which only
+`next` run inside herdr writes), and goes on to the other steps. So an exit that clears nothing, such
+as a merge refused on a red head, does not hold the lead's loop. A line that leaves (its agent came
+back, a hold) and comes back is named again. A `step-up failed:` line is never the step: `wait --lead`
+hands that one to the lead. Working out the step makes no gh call, because `dash` reads it every
+frame. `status` and `dash` hand `next` the lines they have already read, so neither asks herdr and
+`ps` twice, and dash's Next row agrees with its No agent rows from outside a herdr pane too.
+
+`status` prints a `No agent` section before its agents, one line per story: `<slug>, exit: <exit>`,
+or `<slug> (step-up failed), exit: swarm.sh step-up --resume <slug>` for a failed step-up. With no
+such story it prints no section. It needs only herdr's agent list, so a failed pane list still shows
+it, and the Agents line then says herdr gave no pane list. Outside herdr, or when herdr gives no agent
+list, it says it did not check. `hooks/lead-stop.sh` does not know the `no-agent` step, so it allows
+the lead's stop on it.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm

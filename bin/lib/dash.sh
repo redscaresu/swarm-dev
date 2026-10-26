@@ -237,9 +237,9 @@ dash_check() {
   want="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"
   dash_agree "agents working" "$(dash_first '.* \([0-9][0-9]*\) agents working.*' "${frame}")" status "${want}"
   got="$(dash_first '.*running [^0-9]*\([0-9][0-9]*\) of peak.*' "${frame}")"
-  # dash leaves the gauge out only with no agent list from herdr (none, or none it can read), and then
-  # status has none either.
-  if [[ -n "${got}" || ( "${st}" != "Agents: not inside herdr"* && "${st}" != *"(herdr gave no agent list)"* ) ]]; then
+  # dash leaves the gauge out only with no agent or pane list from herdr (none, or none it can read),
+  # and then status has none either: its Agents line says their states are not available.
+  if [[ -n "${got}" || ( "${st}" != *$'\nAgents: '*"so their states are not available"* && "${st}" != "Agents: "*"so their states are not available"* && "${st}" != *"(herdr gave no agent list)"* ) ]]; then
     dash_agree running "${got}" status "${want}"
   fi
 
@@ -286,8 +286,8 @@ dash_check() {
   dash_agree "agents waiting on a prompt" "$(sed -n 's/^│ [^ ]* answer \([^ :]*\)[: ].*/\1/p' <<< "${boxes}" | dash_words)" \
     status "$(sed -n 's/^  \([^ ]*\)  *WAITING .*/\1/p' <<< "${st}" | dash_words)"
 
-  # _step: next's step without the conductors next starts.
-  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" _step 2>/dev/null | sed -n 1p || true)"
+  # _step: next's step without the conductors next starts; --dash: its no-agent lines read as dash reads them.
+  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" _step --dash 2>/dev/null | sed -n 1p || true)"
   got="$(dash_first '.*  next \(.*[^ ]\)  *[0-9][0-9:]*$' "$(sed -n 1p <<< "${frame}")")"
   dash_agree next "$(dash_cut "${got}" "${want}")" next "${want}"
 
@@ -542,6 +542,24 @@ dash_no_agent_at() {
   no_agent_events ${rows} | awk '$3 != "-" { print $1 "\t" $3 }'
 }
 
+# dash_no_agent <herdr agent list> [board] — set next_step's NO_AGENT_NOW (and NO_AGENT_SET) to the
+# no-agent lines read from that list (no_agent_from), asked only while a story could have one (ready,
+# or review under merge = agent); board is dash_render's rows, else the board is read. Used by
+# dash_render and by `_step --dash`, dash --check's next, which reads herdr's list as dash does,
+# whenever herdr is on PATH, in a pane or not.
+dash_no_agent() {
+  local rows="${2:-}" f
+  NO_AGENT_NOW=""
+  # shellcheck disable=SC2034 # next_step (board.sh) reads it
+  NO_AGENT_SET=1
+  if [[ -z "${rows}" ]]; then
+    while IFS= read -r f; do rows+="stories"$'\t'"x"$'\t'"$(fm "${f}" status)"$'\n'; done < <(board stories)
+  fi
+  # shellcheck disable=SC2154 # CFG_merge is assigned in another file
+  awk -F'\t' -v m="${CFG_merge}" '$1 == "stories" && ($3 == "ready" || ($3 == "review" && m == "agent")) { f = 1; exit } END { exit !f }' <<< "${rows}" || return 0
+  NO_AGENT_NOW="$(no_agent_from "$1")" || NO_AGENT_NOW=""
+}
+
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
 # DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads. Claude
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
@@ -595,15 +613,10 @@ for a in agents:
     n = a.get("name") if isinstance(a, dict) else None
     if n and a.get("pane_id") in own and agent_state(a, n, session_state(E["DASH_AGENTS_LOG"], n, E["DASH_SESSIONS"]))[0] == "working":
         print(story_for(n, rows) or "")' 2>/dev/null || true)
-  # The lead's no-agent: lines (no_agent_lines), from this frame's herdr list, asked only while a
-  # story could have one (ready, or review under merge = agent); in a subshell, so the list it is
-  # handed never reaches next_step's. Read-only: no record, so it writes no events.tsv line.
-  # shellcheck disable=SC2154 # CFG_merge is assigned in another file
-  if awk -F'\t' -v m="${CFG_merge}" '$1 == "stories" && ($3 == "ready" || ($3 == "review" && m == "agent")) { f = 1; exit } END { exit !f }' <<< "${board}"; then
-    # shellcheck disable=SC2034 # no_agent_lines (lifecycle.sh) reads them
-    noagent="$(LEAD_AGENTS="${listed}"; LEAD_AGENTS_OK="${listed:+1}"; LEAD_AGENTS_READ=1; no_agent_lines)" || noagent=""
-    noagent_at="$(dash_no_agent_at "${noagent}")"
-  fi
+  # The lead's no-agent: lines (dash_no_agent), from this frame's herdr list, which next_step takes
+  # too, so the Next row and the No agent rows agree. Read-only: it writes no events.tsv line.
+  dash_no_agent "${listed}" "${board}"; noagent="${NO_AGENT_NOW}"
+  [[ -z "${noagent}" ]] || noagent_at="$(dash_no_agent_at "${noagent}")"
   # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.
   for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
   if [[ ${PROJECT_IS_GIT} == 1 ]]; then

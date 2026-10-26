@@ -97,7 +97,11 @@ Repeat until a step below says stop:
      cannot hide it. The why ends with the exit. Run it as that line's handling under
      `wait <agent>` says: for a ready story, `swarm.sh restart <slug>` or `swarm.sh hold <slug> <reason>`;
      for one in review, `swarm.sh wait-pr` first, then the merge or review-agent the exit names.
-     Then go back to 1.
+     `next` names each line once, as `wait --lead` does, so its next run goes on to the other steps
+     even when the exit did not clear the story. If that leaves the story stuck, list it for the user
+     with why. While a conductor works, `next` also starts conductors for other ready work and prints
+     `started:` or `no conductor` lines after the why: handle them as under `wait <agent>`. Then go
+     back to 1.
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns

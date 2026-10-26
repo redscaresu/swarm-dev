@@ -1806,8 +1806,8 @@ stacked_lines() {
 }
 
 # status [--all] — one summary for the user: first a No agent section with each started story no
-# agent works on (no_agent_lines, from status's own herdr list; none when there are none), then the
-# agents that need a look or are working, the stacked
+# agent works on (no_agent_lines, from status's own herdr list, which next_step then takes; a failed
+# step-up labelled; none when there are none), then the agents that need a look or are working, the stacked
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
 # waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
@@ -1819,14 +1819,23 @@ status_report() {
   if [[ "${HERDR_ENV:-}" != 1 ]]; then
     echo "No agent: not checked; it needs herdr's agent list, so run status inside a herdr pane"
   elif agents=$(herdr agent list 2>/dev/null); then
-    # shellcheck disable=SC2034 # no_agent_lines (lifecycle.sh) reads them
-    noagent="$(LEAD_AGENTS="${agents}"; LEAD_AGENTS_OK=1; LEAD_AGENTS_READ=1; no_agent_lines)" || noagent=""
-    noagent="${noagent//no-agent: /}"
+    noagent="$(no_agent_from "${agents}")" || noagent=""
+    # shellcheck disable=SC2034 # next_step (board.sh) reads it
+    NO_AGENT_NOW="${noagent}"
+    noagent="$(sed -e 's/^no-agent: //' -e 's/^step-up failed: \([^,]*\),/\1 (step-up failed),/' <<< "${noagent}")"
     [[ -z "${noagent}" ]] || printf 'No agent\n  %s\n\n' "${noagent//$'\n'/$'\n'  }"
   else
     agents=""; echo "No agent: not checked; herdr gave no agent list"
   fi
-  if [[ -n "${agents}" ]] && panes=$(herdr pane list 2>/dev/null); then
+  # next_step, at the end, takes these lines rather than asking herdr and ps again.
+  # shellcheck disable=SC2034 # next_step (board.sh) reads it
+  NO_AGENT_SET=1
+  if [[ -z "${agents}" ]]; then
+    if [[ "${HERDR_ENV:-}" == 1 ]]; then echo "Agents: herdr gave no agent list, so their states are not available"
+    else echo "Agents: not inside herdr, so their states are not available"; fi
+  elif ! panes=$(herdr pane list 2>/dev/null); then
+    echo "Agents: herdr gave no pane list, so their states are not available"
+  else
     sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
     # Each agent in this project's panes, read once (pane_check): when its pane last changed, and an
     # API error or auto mode denial it stopped on.
@@ -1838,8 +1847,6 @@ status_report() {
     SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
       python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
     upgrade_status
-  else
-    echo "Agents: not inside herdr, so their states are not available"
   fi
   local stacked; stacked="$(stacked_lines)" || true
   [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"

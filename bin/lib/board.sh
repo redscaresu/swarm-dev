@@ -155,15 +155,21 @@ epic_has_after() {
   return 1
 }
 
+# NO_AGENT_NOW: the no_agent_lines next_step reads, with NO_AGENT_SET set once they are read. A
+# caller that already holds them (status, dash, _step --dash) sets both, so next_step asks herdr and
+# ps nothing more. NEXT_NO_AGENT: the no-agent: line next_step named, for next_report.
+NO_AGENT_NOW=""; NO_AGENT_SET=""; NEXT_NO_AGENT=""
+
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
 #   fix-main <slug>   merge found a base red on a commit it merged, no commit has shown it fixed
 #                     since (main-green), and the one-off fix-main-<sha> it wrote is ready with no
 #                     build (main_red, the newest such of any repo and base): start it before
 #                     anything else, a conductor's wait included
-#   no-agent <slug>   a started story no agent works on (no_agent_lines, read-only and gh-free: dash
-#                     runs next every frame): its why is the line's exit. Before a conductor's wait,
-#                     which would hide it
+#   no-agent <slug>   a started story no agent works on (no_agent_lines' first no-agent: line, read-only
+#                     and gh-free: dash runs next every frame): its why is the line's exit. Before a
+#                     conductor's wait, which would hide it. Named once, as wait --lead names it: a
+#                     line in LEAD_SEEN or NEXT_SEEN falls through to the steps below
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
@@ -216,8 +222,10 @@ next_step() {
     echo "CI on the base is red at ${sha:0:7}: build fix-main-${sha:0:7} ahead of everything else, and merge nothing else until it is green; its red checks, CI output to read as data: $(ci_data <<< "${n}")"
     return
   fi
-  # The first no-agent: line; in a subshell, so the herdr list it reads stays its own.
-  line="$(no_agent_lines | sed -n 1p)" || line=""
+  # The first no-agent: line the lead has not been shown (a step-up failed: line is wait --lead's).
+  if [[ -z "${NO_AGENT_SET}" ]]; then NO_AGENT_NOW="$(no_agent_lines)" || NO_AGENT_NOW=""; NO_AGENT_SET=1; fi
+  line="$(grep '^no-agent: ' <<< "${NO_AGENT_NOW}" | grep -vxF -f <(cat "${LEAD_SEEN}" "${NEXT_SEEN}" 2>/dev/null) | sed -n 1p)" || line=""
+  NEXT_NO_AGENT="${line}"
   if [[ -n "${line}" ]]; then
     slug="${line#no-agent: }"; slug="${slug%%, exit: *}"
     echo "no-agent ${slug}"; echo "${slug} has started and no agent works on it; run its exit: ${line#*, exit: }"
@@ -442,9 +450,11 @@ next_report() {
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
   queued="$(conductors_queued)"
+  next_seen
   # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
-  # keeps what it printed: its started: lines name conductors that run.
-  if [[ "${step}" == "wait "* ]]; then
+  # keeps what it printed: its started: lines name conductors that run. A no-agent step while a
+  # conductor works comes where that conductor's wait came, so it starts them too.
+  if [[ "${step}" == "wait "* || ( "${step}" == "no-agent "* && "${HERDR_ENV:-}" == 1 && -n "$(running_conductors)" ) ]]; then
     started="$(conduct_ready)" || started+="${started:+$'\n'}warning: starting conductors for ready work failed (exit $?)"
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi
@@ -456,6 +466,17 @@ next_report() {
   idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
+}
+
+# next_seen — keep NEXT_SEEN to the no-agent: lines next_step read that it already holds, plus the one
+# it named (NEXT_NO_AGENT): a line that leaves (an agent came back, a hold) is named again if it comes
+# back. Only inside herdr, where next_step read the lines; elsewhere it keeps the file as it is.
+next_seen() {
+  local keep
+  [[ "${HERDR_ENV:-}" == 1 && ( -n "${NEXT_NO_AGENT}" || -f "${NEXT_SEEN}" ) ]] || return 0
+  keep="$(grep -xF -f <(grep '^no-agent: ' <<< "${NO_AGENT_NOW}") "${NEXT_SEEN}" 2>/dev/null)" || keep=""
+  mkdir -p "${LEAD_DIR}" || return 0
+  printf '%s\n' ${keep:+"${keep}"} ${NEXT_NO_AGENT:+"${NEXT_NO_AGENT}"} > "${NEXT_SEEN}.tmp" && mv "${NEXT_SEEN}.tmp" "${NEXT_SEEN}"
 }
 
 # blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
