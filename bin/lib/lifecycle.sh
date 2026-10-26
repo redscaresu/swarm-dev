@@ -1822,7 +1822,10 @@ heads_green() {
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human (or
 # for a costs: money story, under merge = agent too) `merge: <slug> <PR URL>...` for a story or epic in
-# review (waiting_on_user) whose every PR head is green.
+# review (waiting_on_user) whose every PR head is green. Last, `no-agent: <slug>, exit: <exit>` for a
+# started story no agent works on (no_agent_lines record), which reads the poll's herdr list
+# (lead_agents) and one ps, and writes a `no-agent <slug>` events.tsv line for a story whose missing
+# agent no event explains yet.
 # A review item whose heads could not be read stays as LEAD_SEEN has it, so a gh error wakes no one.
 lead_queue() {
   local f held line slug prs rc urls="" tag u new seen=" " red="|"
@@ -1874,13 +1877,18 @@ lead_queue() {
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
-# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered. Outside herdr
-# (HERDR_ENV unset) it asks nothing.
+# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered within
+# SWARM_LEAD_LIST_WAIT seconds (default HERDR_LIST_WAIT); a hung herdr counts as a failed list, so the
+# poll's other lines still wake the lead. Outside herdr (HERDR_ENV unset) it asks nothing.
 LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=""
 lead_agents() {
   LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=1
   [[ "${HERDR_ENV:-}" == 1 ]] || return 0
-  if LEAD_AGENTS="$(herdr agent list </dev/null 2>/dev/null)"; then LEAD_AGENTS_OK=1; else LEAD_AGENTS=""; fi
+  if LEAD_AGENTS="$(within "${SWARM_LEAD_LIST_WAIT:-${HERDR_LIST_WAIT}}" herdr agent list </dev/null 2>/dev/null)"; then
+    LEAD_AGENTS_OK=1
+  else
+    LEAD_AGENTS=""
+  fi
 }
 
 # NO_AGENT_STARTS: the commands whose ok line starts an agent on a story, and whose failed line is a start
@@ -1896,9 +1904,11 @@ no_agent_name() {
   else printf -v "$1" '%s' "$(agent_name "$2")"; fi
 }
 
-# no_agent_events <slug name review-name>... — per slug, from one read of events.tsv in order:
-# "<slug> <build> <event> <name> <review-name>". build is 1 when a builder's ok start is newer than its
-# last ok close. event is the time of the newest event that explains why no agent is there (an ok close
+# no_agent_events <slug name review-name epic>... — per slug (epic - for none), from one read of
+# events.tsv in order: "<slug> <build> <event> <name> <review-name>". build is 1 when a builder's ok start
+# is newer than its last ok close, - when the slug has no start line at all (never started), else 0.
+# An ok upgrade line (its target the epic, backlog, or - for every agent) restarted its agents, so it
+# counts as a start for the stories in its scope. event is the time of the newest event that explains why no agent is there (an ok close
 # of the builder or review agent, a failed start, a no-agent line) when no sign of a live agent (an ok
 # start, an ok tell) and no hold line came after it, else -. A slug whose newest reconcile reopen (its PR
 # closed unmerged) has no ok start after it is left out: unblock --startable names it for the lead from
@@ -1910,15 +1920,21 @@ no_agent_events() {
     BEGIN {
       n = split(rows, w, " ")
       # A close names the review agent in full (review-<slug>), herdr and agent lines by its cut name.
-      for (i = 1; i + 2 <= n; i += 3) {
+      for (i = 1; i + 3 <= n; i += 4) {
         own[w[i]] = own[w[i + 1]] = own[w[i + 2]] = own["review-" w[i]] = w[i]
         rev[w[i + 2]] = rev["review-" w[i]] = 1; order[++k] = w[i]; name[w[i]] = w[i + 1]; rname[w[i]] = w[i + 2]
+        epic[w[i]] = w[i + 3]
       }
+    }
+    NF == 5 && $2 == "upgrade" && $5 ~ /^ok/ {
+      for (x in epic) if ($3 == "-" || $3 == epic[x] || ($3 == "backlog" && epic[x] == "-")) { ev[x] = ""; reo[x] = 0 }
+      next
     }
     NF == 5 && ($3 in own) {
       s = own[$3]; c = $2; sub(/:.*/, "", c); ok = $5 ~ /^ok/
       if ($2 == "step-up:failed") ev[s] = $1
       else if (index(starts, " " c " ")) {
+        if (!($3 in rev)) tried[s] = 1
         if (!ok) ev[s] = $1
         else { ev[s] = ""; reo[s] = 0; if (c != "review-agent" && !($3 in rev)) build[s] = 1 }
       } else if (c == "close") {
@@ -1927,7 +1943,7 @@ no_agent_events() {
       else if ($2 == "no-agent") ev[s] = $1
       else if ((c == "tell" && ok) || $2 == "hold") ev[s] = ""
     }
-    END { for (i = 1; i <= k; i++) { s = order[i]; if (!reo[s]) print s, build[s] + 0, (ev[s] == "" ? "-" : ev[s]), name[s], rname[s] } }' \
+    END { for (i = 1; i <= k; i++) { s = order[i]; if (!reo[s]) print s, (tried[s] ? build[s] + 0 : "-"), (ev[s] == "" ? "-" : ev[s]), name[s], rname[s] } }' \
     "${log}" 2>/dev/null || true
 }
 
@@ -1945,25 +1961,37 @@ no_agent_busy() {
     } } END { exit !f }' <<< "${NO_AGENT_PS}"
 }
 
-# no_agent_exit <slug> — what the lead does for a no-agent: line. For a ready story, `swarm.sh hold <slug>
-# <reason>`. For a story in review, `swarm.sh merge --head <sha> <pr>` with the head: line of
-# .swarm/reviews/<slug>.md, or with no such line (or several PRs, which one head cannot pin) a plain
-# `swarm.sh merge <pr>` for each.
+# story_prs <story-file> — its prs: URLs, space-separated: split on spaces and commas as pr_stories
+# splits them, YAML's [ ] and quotes gone.
+story_prs() {
+  local v
+  v="$(fm "$1" prs)"; v="${v//[][\"\']/}"
+  awk '{ $1 = $1; printf "%s", $0 }' <<< "${v//,/ }"
+}
+
+# no_agent_exit <slug> — what the lead does for a no-agent: line, never an unpinned merge. A ready story:
+# `swarm.sh hold <slug> <reason>`. A story in review with one PR whose findings file is a pass on its
+# 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
+# since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
+# <slug> <pr>` for each; with no PR URL, the hold.
 no_agent_exit() {
-  local f="${BOARD}/stories/$1.md" head u prs="" out=""
-  if [[ "$(fm "${f}" status)" != review ]]; then echo "swarm.sh hold $1 <reason>"; return 0; fi
-  for u in $(fm "${f}" prs); do u="${u//[][,\"\']/}"; [[ -z "${u}" ]] || prs+=" ${u}"; done
+  local f="${BOARD}/stories/$1.md" head u prs out=""
+  prs="$(story_prs "${f}")"
+  if [[ "$(fm "${f}" status)" != review || -z "${prs}" ]]; then echo "swarm.sh hold $1 <reason>"; return 0; fi
   head="$(sed -n 's/^head: *//p' "${PROJECT_DIR}/.swarm/reviews/$1.md" 2>/dev/null | head -1)"
-  [[ "${head}" =~ ^[0-9a-f]{40}$ && "${prs# }" != *" "* ]] || head=""
-  for u in ${prs}; do out+="${out:+, then }swarm.sh merge ${head:+--head ${head} }${u}"; done
-  echo "${out:-swarm.sh merge <PR URL>}"
+  if [[ "${head}" =~ ^[0-9a-f]{40}$ && "${prs}" != *" "* ]] && review_pass "$1" "${head}"; then
+    echo "swarm.sh merge --head ${head} ${prs}"; return 0
+  fi
+  for u in ${prs}; do out+="${out:+, then }swarm.sh review-agent $1 ${u}"; done
+  echo "${out}"
 }
 
 # no_agent_lines [record] — `no-agent: <slug>, exit: <exit>` (no_agent_exit) for each started story that
 # no agent works on and that is not the user's to move: status ready, or review under merge = agent;
 # of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money (waiting_on_user
 # hands those to the user); with a build record (an ok builder start no close ended, or its worktree or
-# story/<slug> branch, build_exists); no pane this project opened (own_panes) listed under its builder's
+# story/<slug> branch, build_exists, read only for a slug with a start line); not in the scope of an
+# upgrade running here (upgrade_holder), which stops and restarts agents; no pane this project opened (own_panes) listed under its builder's
 # or review-<slug>'s name; no tell pending and no wait-pr or merge on its PR (no_agent_busy); and, for a
 # ready story, no .swarm/briefs/<slug>.step-up marker. It prints one only when an event explains the agent's absence
 # (no_agent_events); with record set, a story with none gets a `no-agent <slug>` events.tsv line, so the
@@ -1973,9 +2001,10 @@ no_agent_exit() {
 # Reads the poll's herdr list (lead_agents, read here when the poll has none), one ps and files; no gh.
 # Prints nothing outside herdr or when herdr's list or ps fails.
 no_agent_lines() {
-  local live f slug st rows="" built="" marked="" urls u build ev src name rname
+  local live f slug st rows="" built="" marked="" build ev src name rname up="" e
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  if up="$(upgrade_holder)"; then up="${up%% *}"; fi
   while IFS= read -r f; do
     slug="$(basename "${f}" .md)"; st="$(fm "${f}" status)"
     # shellcheck disable=SC2154 # CFG_merge is assigned in another file
@@ -1987,28 +2016,32 @@ no_agent_lines() {
     # Not kind: lead, which every escalated story is (lead_block), and a held one too.
     agent_kind "$(fm "${f}" kind)" || continue
     [[ -z "$(get_fm "${f}" held_for)" ]] || continue
+    e="$(fm "${f}" epic)"; e="${e:--}"
+    [[ -z "${up}" || ( "${up}" != - && "${up}" != "${e}" && ! ( "${up}" == backlog && "${e}" == - ) ) ]] || continue
     # A step-up runs only on a ready story, so only a ready one's marker is a failed step-up.
     if [[ "${st}" == ready && -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]]; then marked+=" ${slug}"; continue; fi
     no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"
-    rows+=" ${slug} ${name} ${rname}"
+    rows+=" ${slug} ${name} ${rname} ${e}"
   done < <(board stories)
   [[ -n "${rows}${marked}" ]] || return 0
-  # shellcheck disable=SC2086 # rows: space-separated triples
+  # shellcheck disable=SC2086 # rows: space-separated 4-tuples
   [[ -z "${rows}" ]] || while read -r slug build ev name rname; do
-    [[ -n "${slug}" ]] || continue
+    # Never started (no start line): no git read. Started, its builder no longer current: read the build.
+    [[ -n "${slug}" && "${build}" != - ]] || continue
     if [[ "${build}" != 1 ]]; then
       src="$(repo_dir "$(fm "${BOARD}/stories/${slug}.md" repo)")" || continue
       build_exists "${src}" "${slug}" || continue
     fi
     built+="${slug} ${ev} ${name} ${rname}"$'\n'
   done < <(no_agent_events ${rows})
-  # The list and ps are read only for a started story or a marker, so a poll with neither costs no more
-  # than before.
+  # The poll read herdr's list already (lead_wake). Here the board's front matter and events.tsv are
+  # read every poll, git only for a story with a start line but no current builder, and herdr's JSON
+  # and ps only once a started story or a marker is left.
   [[ -n "${built}${marked}" ]] || return 0
+  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
   # -ww: the whole command line, never cut at a width. With no process list a pending tell, wait-pr or
   # merge, or a running step-up, cannot be ruled out, so nothing is printed, as for herdr's list.
   NO_AGENT_PS="$(ps -A -ww -o pid=,command= 2>/dev/null)" || return 0
-  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
   for slug in ${marked}; do
     # A builder still listed: the step-up stopped before it closed it, so a resume would start a second one.
     no_agent_name name "${slug}"
@@ -2019,8 +2052,7 @@ no_agent_lines() {
   while read -r slug ev name rname; do
     [[ -n "${slug}" ]] || continue
     ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
-    urls=""; for u in $(fm "${BOARD}/stories/${slug}.md" prs); do urls+=" ${u//[][,\"\']/}"; done
-    ! no_agent_busy "${slug}" "${name}" "${urls# }" || continue
+    ! no_agent_busy "${slug}" "${name}" "$(story_prs "${BOARD}/stories/${slug}.md")" || continue
     if [[ "${ev}" == - ]]; then
       [[ "${1:-}" != record ]] || record_event no-agent "${slug}"
       continue
@@ -2031,8 +2063,8 @@ no_agent_lines() {
 
 # step_up_running <slug> — true while the process <slug>'s .step-up marker names on its `pid <n>` line
 # (step_up_marker) is in NO_AGENT_PS as a swarm.sh step-up or _step-up naming <slug>. A marker with no
-# pid line, or whose process is gone (a step-up that failed, or was killed before it could log that), is not running,
-# whatever events.tsv or its lock says.
+# pid line, or whose process is gone (a step-up that failed, or was killed before it could log that),
+# is not running, whatever events.tsv or its lock says.
 step_up_running() {
   local k v pid=""
   while read -r k v; do [[ "${k}" != pid ]] || pid="${v}"; done 2>/dev/null < "${PROJECT_DIR}/.swarm/briefs/$1.step-up" || true

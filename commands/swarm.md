@@ -120,16 +120,21 @@ Repeat until a step below says stop:
      `next` names the running conductor first and would not get to it. For a
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
-     and no tell on the way. Run the exit it names: `swarm.sh hold <slug> <reason>` for a ready
-     story, saying why it waits, or the `swarm.sh merge` for a story in review under
-     `merge = agent`. Before that merge, run `swarm.sh wait-pr <PR URL>` in the background and
-     merge only once it exits 0; while it waits, the line stays quiet, and it comes back if the
-     checks go red. A hold only answers the line; if no agent is back by the next poll, it
-     comes back. A `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a
-     step-up closed the story's builder and then could not start the next model's. Its conductor
-     leaves the story alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says
-     why. Fix that cause, then run the exit. With no such line, the step-up was killed partway:
-     run the exit. If you cannot fix the cause, tell the user. Then start
+     and no tell on the way. Run the exit it names. For a ready story it is
+     `swarm.sh hold <slug> <reason>`, saying why it waits. A hold only answers the line: if no
+     agent is back by the next poll, it comes back. For a story in review under `merge = agent`
+     it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
+     no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
+     background and act on its exit, not on the line, once per head. On 0, run the merge. On 1
+     (red), start a builder in the story's worktree (`swarm.sh agent`) with a brief naming the
+     failing checks, or, if you leave it, list it in your report with the reason:
+     `swarm.sh hold` takes only a ready story. The line is quiet while wait-pr runs and may come
+     back once after it ends; that needs nothing new. A
+     `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a step-up closed
+     the story's builder and then could not start the next model's. Its conductor leaves the story
+     alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says why. Fix that
+     cause, then run the exit. With no such line, the step-up was killed partway: run the exit. If
+     you cannot fix the cause, tell the user. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
