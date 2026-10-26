@@ -1173,9 +1173,9 @@ longest_child() {
 # agent_stalled <name> <since> <target> — when <name> is a story's builder that has shown no sign of
 # life for stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last
 # commit or edit (story_work_time) and its newest own work across its session log and its subagents'
-# logs (session_mtime) as signs, print how many minutes and succeed. Its PRs are asked for their
-# updatedAt only once the rest already looks stalled, so gh is rarely called, and a test suite
-# running in pane <target> (test_running) is work, asked only after that, so it is no stall.
+# logs (session_mtime) as signs, print how many minutes and succeed. Only once the rest already
+# looks stalled is pane <target> asked whether it runs a test suite (test_running), which is work, so
+# no stall; and only then are its PRs asked for their updatedAt, so gh is rarely called.
 agent_stalled() {
   local slug url age ct sl prs=()
   slug="$(stall_py story "$1")"
@@ -1184,12 +1184,12 @@ agent_stalled() {
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}")"
   # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
+  ! test_running "$3" || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
   done
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
-  ! test_running "$3" || return 1
   echo "${age}"
 }
 

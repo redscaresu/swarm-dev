@@ -262,7 +262,7 @@ fresh; rm -f "${FX}/${H1}.checks"; page "${FX}/${H1}.checks" check_runs 101 "${g
 merge "${URL}"; refused "fewer runs read than total_count" "read 100 of 101"
 fresh; rm -f "${FX}/${H1}.checks"; page "${FX}/${H1}.checks.fail" check_runs 101 "${green[@]}"
 merge "${URL}"; refused "check runs that fail after a green page" "HTTP 502"
-fresh; echo '{"total_count":1,"check_runs":[' > "${FX}/${H1}.checks"
+fresh; echo '{"total_count":1,"check_runs":[' > "${FX}/${H1}.checks" # vacuous-test: ok, cut off on purpose
 merge "${URL}"; refused "check runs that are not JSON" "error"
 fresh; touch "${FX}/pr-view.fail"; merge "${URL}"; refused "gh pr view failing" "gh cannot read ${URL}"
 fresh; echo MERGED > "${FX}/state"; merge "${URL}"; refused "a PR that is not open" "is MERGED, not open"
@@ -707,7 +707,7 @@ fresh; rm "${FX}/workflows"; checks "${FX}/${M}.checks"; wfruns "${FX}/${M}.runs
 is "nothing at all through the grace: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
 check "nothing at all through the grace: read more than once" test "$(cat "${FX}/${M}.checks.n")" -gt 1
 # A truncated contents answer is a missed read too.
-fresh; echo '[{"name":' > "${FX}/workflows.1"; merge "${URL}"
+fresh; echo '[{"name":' > "${FX}/workflows.1"; merge "${URL}" # vacuous-test: ok, cut off on purpose
 is "one unreadable .github/workflows listing between good reads: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
 fresh; echo '[{"name":"ci.yml"}]' > "${FX}/workflows.1"; merge "${URL}"
 is "one listing missing its keys between good reads: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
