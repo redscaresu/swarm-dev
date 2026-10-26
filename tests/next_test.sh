@@ -372,6 +372,23 @@ got+="$(armwords '   - `story <slug>`:' 'swarm.sh conduct --backlog' 'not starte
   'deleting `.swarm/conduct-backlog.report.md` once the cause is fixed')"
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story and resume arms run conduct --backlog, stop on not started: or an unchanged report, and say what clears each stop"
 else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fails + 1)); fi
+# The stage arm sets the drafts active in a board PR; under merge = human with no merge grant the
+# PR is the user's, since the epics grant covers the activation, not the merge, and leaving it
+# unmerged is how the user says not yet. From the gate's row the arm probes with board-pr open,
+# which tells the branch's own PR from an earlier use of the name; under merge = agent or a merge
+# grant it waits for the open PR's checks and lands it.
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+got="$(armwords '   - `stage v<S>`:' '`swarm.sh board-pr start <name>`' '`status: active`' 'Run `swarm.sh wait-pr <url>` in the background' \
+  '`swarm.sh merge --board <url>` when `swarm.sh config merge` prints `agent` or `swarm.sh grants <url>` lists `merge`' \
+  'Otherwise hand the PR to the user: the `epics` grant lets you set the epics active, not merge the PR' \
+  'If merge refuses, stop and tell the user' 'On that line, finish the edit first' 'Then run the `board-pr open` line once more' \
+  'When it says the PR on the branch has merged or closed, or that the worktree changes nothing, run `swarm.sh board-pr done <name>`' \
+  'On any other failure, stop and tell the user what it printed' 'whether its epics are still drafts or the merge has made them active' \
+  'the user says not yet by leaving the PR unmerged: `next` names no new stage PR while it is open' \
+  'An epic leaves the stage when its `stage:` or `hld:` is dropped' \
+  'With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh wait-pr <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>` when it exits 0')"
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's stage arm opens a board PR, merges it only under merge = agent or a merge grant, else hands it to the user, who says not yet by leaving it unmerged"
+else echo "FAIL commands/swarm.md's stage arm:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `escalated <slug>`:/,/^   - `gate`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
@@ -786,6 +803,54 @@ has_line "status prints the release-held: line under Next" "  ${HELD}"
 out="$(cd "${rdir}" && env -u HERDR_ENV COLUMNS=120 PATH="${GH_FAIL}:${PATH}" bash "${SWARM}" dash 2> /dev/null)"
 has_line "dash prints the release-held: line" "${HELD}"
 rm -rf "${rdir}"
+
+# Staged drafts: a draft epic with stage: v<T> and an hld: naming an agreed HLD that grants epics
+# waits on the tag of the minor before T (v1.2.0 here), then next's stage step sets T's drafts active.
+GRANTED="item hld/h.md 'status: agreed' 'grants: [epics]'"
+staged() { echo "item epics/$1.md 'status: draft' 'stage: $2' 'hld: h'"; } # <slug> <stage>
+expect_release "staged drafts of v1.3.0 with v1.2.0 tagged: the stage step, before an active epic's plan" "stage v1.3.0" 0 \
+  "${GRANTED}" "$(staged a v1.3.0)" "$(staged b v1.3.0)" "$(staged z v1.4.0)" "item epics/e0.md 'status: active'" "${COMMIT}"
+if [[ "${out}" == *"set a b active (board PR under the epics grant)"* ]]; then echo "ok   the stage step's why names a b, not the later stage's z"
+else echo "FAIL the stage step's why does not name 'set a b active (board PR under the epics grant)': ${out}"; fails=$((fails + 1)); fi
+expect_release "a staged draft whose stage before it is not tagged: no stage step" "gate" 0 \
+  "${GRANTED}" "$(staged c v1.4.0)" "item epics/x.md 'status: draft' 'stage: v1.3.0'" "item epics/y.md 'status: draft'" "${COMMIT}"
+has_line "the gate lists the staged draft with its stage and the tag it waits on" "  staged epic: c, stage v1.4.0, after v1.3.0"
+if [[ "${out}" != *"run /epic c"* ]]; then echo "ok   a staged draft is not on the /epic path"
+else echo "FAIL a staged draft is on the /epic path: ${out}"; fails=$((fails + 1)); fi
+has_line "a draft with stage: and no hld: keeps the /epic path" "  draft epic: x, run /epic x"
+has_line "a draft with no stage: keeps the /epic path" "  draft epic: y, run /epic y"
+expect_release "a staged draft under an HLD that does not grant epics: no stage step" "gate" 0 \
+  "item hld/h.md 'status: agreed' 'grants: [stories, merge]'" "$(staged n v1.3.0)" "${COMMIT}"
+has_line "a staged draft under an HLD without the epics grant keeps the /epic path" "  draft epic: n, run /epic n"
+expect_release "a v2.0.0 stage has no minor before it: no stage step" "gate" 0 \
+  "${GRANTED}" "$(staged m v2.0.0)" "${COMMIT}"
+has_line "a v2.0.0 staged draft keeps the /epic path" "  draft epic: m, run /epic m"
+EXT="${STUB_BIN}/ext-board"
+expect "a staged draft on a board outside the repo: no stage step, board-pr cannot open its PR" "gate" \
+  "${GRANTED}" "$(staged o v1.3.0)" "mv docs '${EXT}' && mkdir -p .claude/swarm && echo 'board_dir = ${EXT}' > .claude/swarm/config"
+rm -rf "${EXT}"
+if [[ "${out}" == *"  draft epic: o, run /epic o"* ]]; then echo "ok   a staged draft on a board outside the repo keeps the /epic path"
+else echo "FAIL a staged draft on a board outside the repo is not on the /epic path: ${out}"; fails=$((fails + 1)); fi
+# While the stage's board PR is open (its worktree), next goes on to the steps after it, and the gate
+# lists the PR.
+release_repo "${GRANTED}" "$(staged a v1.3.0)" "${COMMIT}"
+mkdir -p "${rdir}-wt/_board-stage-v1-3-0"
+out="$(cd "${rdir}" && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${out}"
+if [[ "${out%%$'\n'*}" == gate ]]; then echo "ok   an open stage board PR lets next fall through to the gate"
+else echo "FAIL an open stage board PR: want 'gate', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
+has_line "the gate lists the open stage board PR" "  stage PR awaiting merge: v1.3.0"
+rm -rf "${rdir}" "${rdir}-wt"
+# Once the user merges the stage PR its epics are no longer drafts; the worktree's row stays until
+# board-pr done removes it, so a later draft of the same stage is not held behind it unseen.
+release_repo "${GRANTED}" "item epics/a.md 'status: done' 'stage: v1.3.0' 'hld: h'" "${COMMIT}"
+mkdir -p "${rdir}-wt/_board-stage-v1-3-0"
+out="$(cd "${rdir}" && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${out}"
+has_line "a merged stage PR's worktree is still a gate row once its epics are active" "  stage PR awaiting merge: v1.3.0"
+rm -rf "${rdir}" "${rdir}-wt"
+# The stage before T counts as tagged once the newest tag on the base is at or above it: v1.1.0 was
+# never cut here, and v1.2.0 is on the base.
+expect_release "a staged draft whose minor before it was never tagged, a newer tag on the base: the stage step" "stage v1.2.0" 0 \
+  "${GRANTED}" "$(staged q v1.2.0)" "${COMMIT}"
 
 # A red main that merge recorded (main-red, with its fix-main story ready and unstarted on the board)
 # comes before everything, a working conductor's wait too. A later main-green of the same repo and
@@ -1428,7 +1493,7 @@ missing_arms() {
 # shellcheck disable=SC2207 # steps are single words
 seen=($(sort -u "${STEPS}"))
 unrecorded=""
-for step in fix-main wait collect conduct resume story plan-epic plan-hld hld escalated release gate 'done'; do
+for step in fix-main wait collect conduct resume story stage plan-epic plan-hld hld escalated release gate 'done'; do
   grep -qx -- "${step}" "${STEPS}" || unrecorded="${unrecorded} ${step}"
 done
 if [[ -z "${unrecorded}" ]]; then echo "ok   the cases above reached every step"; else
@@ -1443,6 +1508,11 @@ grep -v '^   - `release`' "${SWARM_MD}" > "${STUB_BIN}/swarm.md"
 missing="$(missing_arms "${STUB_BIN}/swarm.md" "${seen[@]+"${seen[@]}"}")"
 if [[ "${missing}" == release ]]; then echo "ok   the arm check names release on a swarm.md without its arm"; else
   echo "FAIL the arm check on a swarm.md without the release arm: want 'release', got '${missing//$'\n'/ }'"; fails=$((fails + 1)); fi
+# shellcheck disable=SC2016 # the backticks are swarm.md's
+grep -v '^   - `stage v<S>`' "${SWARM_MD}" > "${STUB_BIN}/swarm.md"
+missing="$(missing_arms "${STUB_BIN}/swarm.md" "${seen[@]+"${seen[@]}"}")"
+if [[ "${missing}" == stage ]]; then echo "ok   the arm check names stage on a swarm.md without its arm"; else
+  echo "FAIL the arm check on a swarm.md without the stage arm: want 'stage', got '${missing//$'\n'/ }'"; fails=$((fails + 1)); fi
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

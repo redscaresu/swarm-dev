@@ -373,10 +373,13 @@ because the conductor stops when they hold. **Non-goals** keep the plan from gro
 
 **Staged epics.** An epic in a staged HLD's Rollout carries `stage: v<x.y.0>`, the release that
 ships it. This is an exception to step 4: a draft epic with both `stage:` and `hld:`, under an
-HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`, once the tag of the
-previous minor, `v<x.(y-1).0>`, exists. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. A staged
-draft with no `hld:`, or under an HLD without the `epics` grant, still goes through `/epic`. See
-[Releases](#releases) for when a stage's release is cut.
+HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`, once the base has a
+tag at or above the previous minor, `v<x.(y-1).0>`. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. A staged
+draft with no `hld:`, or under an HLD without the `epics` grant, or on a board outside the project's
+repo, still goes through `/epic`. Until
+then, the gate, `status` and `dash` list it as `staged epic: <slug>, stage v<x.y.0>, after
+v<x.(y-1).0>`, which needs nothing from you. See [Releases](#releases) for the step that sets it
+active and for when a stage's release is cut.
 
 **Stopping and resuming.** The epic is a file, so nothing is lost if you stop: run `/epic` on its
 own (or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress
@@ -517,7 +520,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
 - `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero. Its events.tsv line says the same, and a `reap` line names the codex it stopped (see the audit log). It ships on (§ Scoping an epic)
 - `fallback_reviewer` (default empty): a model such as `sonnet`. When codex reports a usage limit, `codex-review` starts a review agent on it in codex's place (role `review-fallback`), waits for its findings and prints them in codex's form. Empty keeps `codex skipped: usage limit`. § Building has the details
-- `lead` (default `off`): `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step and an expired login. Every merge row (with `merge = agent`, a `costs: money` merge row stays under needs you), an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, a story a close kept (`review kept story <slug>`, with `swarm.sh review` and `swarm.sh close <slug> --drop`), a started story no agent works on (`no agent on story <slug>`, with the exit of `wait --lead`'s `no-agent:` line), an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged
+- `lead` (default `off`): `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step and an expired login. Every merge row (with `merge = agent`, a `costs: money` merge row stays under needs you), an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, a story a close kept (`review kept story <slug>`, with `swarm.sh review` and `swarm.sh close <slug> --drop`), a staged draft epic (`staged epic <slug>: stage v<T>, after v<P>`, with no `agree draft epic` row), a started story no agent works on (`no agent on story <slug>`, with the exit of `wait --lead`'s `no-agent:` line), an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged
 - `merge_admin` (default `off`): `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, so it merges in a repo whose ruleset requires an approving review, which no agent can give. It does so only after the checks it always makes: the head is green, no `costs: money` hold applies, the `--board` or `--release` scope holds, and the head is the one `--head` names. `--admin` skips every rule on the base, not only the review, so `swarm.sh merge` first reads the base's rulesets and branch protection itself. It refuses while a status check they require is absent from the head, while they require the branch up to date (strict) and the head is behind the base, and whenever they hold a rule besides the review, the status checks and rules about pushes (deletion, force pushes, creation): a merge queue, required workflows, signatures, linear history, conversation resolution, deployments, code scanning or push restrictions. That includes the review rule's own thread resolution, and merge methods that leave out the one `swarm.sh merge` picks from the repo's settings. A classic protection field outside the few known to be safe is refused whatever its name, and a 404 from branch protection counts as unprotected only when GitHub says `Branch not protected`, since a token that cannot read protection gets a 404 too. The refusal names the rule. A red head, a held PR or a moved head is still refused before `gh pr merge` runs. Off, `swarm.sh merge` never passes `--admin` and reads none of these
 - `lead_epics` (default `off`): `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through the user or a grant. Any other value stops `swarm.sh` with the file and line
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
@@ -2219,6 +2222,25 @@ to the steps after it. An epic on the board whose `stage:` is not
 release only when `next` prints it. A board where no epic has `stage:`
 releases as before, with a plain `release`. So does a board outside the project's repo, since git
 can't list its deleted epics.
+
+Staged draft epics wait for the stage before theirs. Take T, the lowest stage among them, and P, the
+minor before it (v0.30.0 gives v0.29.0). Once the newest `v<x.y.z>` tag on `origin/<base>` is at or
+above `v<P>` (local refs, as for `release`), `next` prints `stage v<T>`, with the why `set <slugs> active (board PR under the
+epics grant)`. It comes after a ready one-off story and before an active epic's `plan-epic`. While
+a conductor works, `next` prints its `wait` instead. The lead opens a
+board PR named `stage-v<T>` with the dots as dashes, which sets those epics `active` and changes
+nothing else. It lands it with `swarm.sh merge --board` when `merge = agent` or the HLD grants
+`merge`. Otherwise you merge it: the `epics` grant covers setting the epics active, not the merge.
+While that PR's worktree (`<repo>-wt/_board-stage-v<x-y-z>`) exists, `next` goes on to the steps
+after `stage`, and the gate, `status` and `dash` list `stage PR awaiting merge: v<T>`, whether its
+epics are still drafts or the merge has made them active. The lead removes the worktree with
+`swarm.sh board-pr done stage-v<x-y-z>` once the PR has merged or closed. Under `merge = agent` or a
+`merge` grant, the lead waits for an open stage PR's checks from that row and lands it once they are
+green. Under `merge = human` with no `merge` grant, you say not yet by leaving the PR unmerged:
+`next` names no new stage PR while it is open. Closing it unmerged is not a no: the lead removes its
+worktree, `next` names the stage again and a new PR opens. To take an epic out of its stage, drop
+its `stage:` or `hld:`; it is then a plain draft, agreed through `/epic`. `hooks/lead-stop.sh` does not
+know the `stage` step, so it allows the lead's stop on it, as on any step it does not list.
 
 Once a release merges, `merge --release` reads its merge commit's first parent through gh, for 30
 seconds at most. If that is not the base the release check last read, a PR landed between that read
