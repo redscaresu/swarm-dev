@@ -4,7 +4,8 @@
 # refusal before a stub test runs: the stub's marker is absent, and there is no "run" line, no line
 # in TEST_RUNS_LOG and no test-runs.d beside it. With neither set, the same stub runs and the log gets
 # its start and end lines, so the looks above can fail. Neither variable is one an agent starts with
-# (AGENT_ENV, AGENT_SET or an AGENT_PREFIXES prefix), so the refusal never stops a builder.
+# (AGENT_ENV, AGENT_SET or an AGENT_PREFIXES prefix), so the refusal never stops a builder. The inner
+# make runs without the outer make's MAKEFLAGS, so `make test SHARD=i/N` does not shard the stub away.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,10 +20,11 @@ check() { # <name> <output> <exact expected output>
 
 STUB="${ROOT}/stub_test.sh" MARK="${ROOT}/stub-ran" LOGS="${ROOT}/logs"
 printf ': > "%s"\n' "${MARK}" > "${STUB}"
-refusal() { echo "test.sh: refused under codex ($1 is set): a codex review reads the diff and runs no tests"; }
+refusal() { echo "test.sh: refused under codex ($1 is set): the suite does not run in a codex session; run make test outside codex"; }
 
 # run_stub <script|make> [NAME=value] — the stub run through scripts/test.sh or make test, from a fresh
-# start, with no CODEX_* but the one given and TEST_RUNS_LOG an empty file: its exit (0 or non-zero),
+# start, with no CODEX_* but the one given, none of an outer make's flags (MAKEFLAGS would hand its
+# SHARD or TESTS to the inner make) and TEST_RUNS_LOG an empty file: its exit (0 or non-zero),
 # its refusal line or none, whether it printed the stub's "run" line, whether the stub ran, the log's
 # lines (start or end) and whether test-runs.d exists. One field a line.
 run_stub() {
@@ -31,7 +33,7 @@ run_stub() {
   rm -rf "${LOGS}" "${MARK}"; mkdir "${LOGS}"; : > "${LOGS}/test-runs.tsv"
   local cmd=(bash "${REPO}/scripts/test.sh" "${STUB}")
   [[ "${how}" == script ]] || cmd=(make -s -C "${REPO}" test TESTS="${STUB}" SERIAL= JOBS=1)
-  out="$(cd "${ROOT}" && env -u CODEX_SANDBOX -u CODEX_THREAD_ID TEST_RUNS_LOG="${LOGS}/test-runs.tsv" "$@" "${cmd[@]}" 2>&1)" || rc=$?
+  out="$(cd "${ROOT}" && env -u CODEX_SANDBOX -u CODEX_THREAD_ID -u MAKEFLAGS -u MAKELEVEL -u MFLAGS TEST_RUNS_LOG="${LOGS}/test-runs.tsv" "$@" "${cmd[@]}" 2>&1)" || rc=$?
   if [[ ${rc} -eq 0 ]]; then echo "exit 0"; else echo "exit non-zero"; fi
   grep '^test.sh: refused' <<< "${out}" || echo "no refusal"
   if grep -qx "run  ${STUB}" <<< "${out}"; then echo "run line"; else echo "no run line"; fi

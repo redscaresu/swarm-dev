@@ -8,12 +8,13 @@
 # first, as the cleanup below does. Under codex it refuses before anything else.
 set -uo pipefail
 
-# A codex review reads the diff and runs no test, so under codex this exits 1 with one line, before
-# any job, "run" line or test-runs.tsv line. codex 0.164 sets CODEX_SANDBOX and CODEX_THREAD_ID in
-# its own shell; the lead's shell and an agent's pane have neither (CODEX_HOME, which an agent may
-# have, is no sign of codex). Either one refuses, in case a codex run lacks the other.
+# This suite does not run in a codex session (a codex review reads the diff; nothing codex runs
+# needs it), so under codex this exits 1 with one line, before any job, "run" line or test-runs.tsv
+# line. codex 0.164 sets CODEX_SANDBOX and CODEX_THREAD_ID in its own shell; the lead's shell and an
+# agent's pane have neither (CODEX_HOME, which an agent may have, is no sign of codex). Either one
+# refuses, in case a codex run lacks the other.
 for v in CODEX_SANDBOX CODEX_THREAD_ID; do
-  [[ -z "${!v+x}" ]] || { echo "test.sh: refused under codex (${v} is set): a codex review reads the diff and runs no tests" >&2; exit 1; }
+  [[ -z "${!v+x}" ]] || { echo "test.sh: refused under codex (${v} is set): the suite does not run in a codex session; run make test outside codex" >&2; exit 1; }
 done
 
 # stop_group <pgid> <seconds> — TERM a process group, give it <seconds>, then KILL what is left.

@@ -891,10 +891,12 @@ under two minutes of `codex_minutes` left, no fallback starts: it prints `codex 
 (no time left for a fallback)`. The planning `codex` panes of
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
-A codex review reads the diff. If codex runs the suite anyway, `scripts/test.sh`, and so `make test`,
-refuses: when `CODEX_SANDBOX` or `CODEX_THREAD_ID` is set it prints one line and exits 1, before it
-runs a file or writes `.swarm/test-runs.tsv`. codex 0.164 sets both in the shell it runs commands in.
-The lead's shell and an agent's pane have neither, so the refusal stops no builder.
+A codex review reads the diff. In this repository, swarm-dev's own, its `scripts/test.sh` refuses to
+run under codex, and so does its `make test`: when `CODEX_SANDBOX` or `CODEX_THREAD_ID` is set,
+`scripts/test.sh` prints one line and exits 1 before it runs a file or writes `.swarm/test-runs.tsv`,
+and `make test` then exits 2 with make's own error line after it. `init` copies no test runner, so a
+project of your own gets no such refusal. codex 0.164 sets both variables in the shell it runs
+commands in. The lead's shell and an agent's pane have neither, so the refusal stops no builder.
 
 
 ## Logs and outcomes
