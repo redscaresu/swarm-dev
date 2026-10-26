@@ -4,7 +4,7 @@
 # plus its row's floor and no other, a doc adds the doc floor, scripts/test.sh, the Makefile and
 # bin/lib select every test, a test selects itself, a board story nothing, a board README its
 # template test, and a rename both paths' tests; committed, staged, unstaged and untracked changes
-# all count. Any doubt selects every test: a path no row matches, a `named` path no test names (the
+# all count, and a test adds the four tests that read every test file. Any doubt selects every test: a path no row matches, a `named` path no test names (the
 # selector's own test, whose fixture names real paths, never counts as naming one), no origin/main.
 # An empty selection says so on stderr. --run hands the list to a stub make with JOBS=4, or runs
 # nothing and says so. Last, --check-map: it names each unmapped path under bin/, scripts/,
@@ -31,15 +31,17 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 # The fixture: the files the cases change, the real map, each row's floor tests (which name none of
 # those files), the selector's own test naming a hook it does not test, and a test naming each named
 # path, one per test.
-DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections; do DOC_FLOOR+=("tests/${t}_test.sh"); done
+DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections command_names; do DOC_FLOOR+=("tests/${t}_test.sh"); done
 CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
+SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh)
+TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh)
 git init -q -b main "${G}"
 mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" "${G}/docs" "${G}/hooks" "${G}/scripts" "${G}/tests"
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
-  hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile; do echo base > "${G}/${f}"; done
+  hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
-for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHELL_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
+for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
@@ -48,6 +50,7 @@ echo 'bash hooks/merge-guard.sh' > "${G}/tests/names_guard_test.sh"
 echo 'cp scripts/board-only.sh .' > "${G}/tests/names_gate_test.sh"
 echo 'bin/gh-shim/gh api' > "${G}/tests/names_shim_test.sh"
 echo 'cat commands/renamed.md' > "${G}/tests/names_renamed_test.sh"
+echo 'source tests/helper.sh' > "${G}/tests/names_helper_test.sh"
 echo 'echo plan-swarm.md old-board-only.sh merge-guard.shx' > "${G}/tests/x_test.sh"   # near misses
 git -C "${G}" add -A; git -C "${G}" commit -qm base
 git -C "${G}" update-ref refs/remotes/origin/main HEAD
@@ -72,13 +75,16 @@ check "a command only its own test names still selects command_names_test.sh, wh
 check "a staged hook selects the shell-scan floor and the test that names it, no other" "$(sel 'echo 1 >> hooks/merge-guard.sh; git add -A')" \
   "$(lines "${SHELL_FLOOR[@]}" tests/names_guard_test.sh)"
 check "a script selects the test that names it, alone" "$(sel "echo 1 >> scripts/board-only.sh; ${commit}")" tests/names_gate_test.sh
-check "the gh shim selects the shell-scan floor and the test that names it, no other" "$(sel "echo 1 >> bin/gh-shim/gh; ${commit}")" \
-  "$(lines "${SHELL_FLOOR[@]}" tests/names_shim_test.sh)"
+check "the gh shim selects the shell-scan and removed-name floor and the test that names it, no other" "$(sel "echo 1 >> bin/gh-shim/gh; ${commit}")" \
+  "$(lines "${SHIM_FLOOR[@]}" tests/names_shim_test.sh)"
 check "scripts/test.sh selects every test" "$(sel "echo 1 >> scripts/test.sh; ${commit}")" "${ALL}"
 check "the Makefile selects every test" "$(sel "echo 1 >> Makefile; ${commit}")" "${ALL}"
 check "a bin/lib file selects every test" "$(sel "echo 1 >> bin/lib/x.sh; ${commit}")" "${ALL}"
-check "a test selects itself" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" tests/x_test.sh
-check "a new untracked test selects itself" "$(sel 'echo 1 > tests/new_test.sh')" tests/new_test.sh
+check "a test selects itself and the four tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
+  "$(lines "${TEST_FLOOR[@]}" tests/x_test.sh)"
+check "a new untracked test selects itself and those four" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
+check "a test helper selects the test that names it and removed_test.sh, which greps every tests/*.sh" \
+  "$(sel "echo 1 >> tests/helper.sh; ${commit}")" "$(lines tests/names_helper_test.sh tests/removed_test.sh)"
 check "a board story selects nothing" "$(sel "echo 1 >> board/stories/a.md; ${commit}")" ""
 check "a board README selects the test that checks it against its template" "$(sel "echo 1 >> board/stories/README.md; ${commit}")" \
   tests/board_readme_test.sh
