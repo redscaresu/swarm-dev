@@ -3,6 +3,7 @@ E = os.environ
 from report import *
 from panes import *
 from stall import *
+from dash_age import *
 W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
 # Now, and so today and the header's clock: SWARM_DASH_NOW (epoch seconds) fixes them, so a test's
@@ -97,14 +98,7 @@ for l in lines("DASH_FINISHED"):
     e, _, n = l.partition("\t")
     finished[e] += int(n) if n.isdigit() else 0
 
-PRS = {}
-for l in lines("DASH_PRSTATE"):
-    url, _, j = l.partition("\t")
-    try:
-        PRS[url] = json.loads(j)
-    except ValueError:
-        pass
-URL = re.compile(r"https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
+PRS = pr_states(lines("DASH_PRSTATE"))
 # A builder's open PR on story/<slug> (dash_slow's), for a story whose file lists none yet.
 HEADS = dict(l.split("\t", 1) for l in lines("DASH_HEADS") if "\t" in l)
 FAILED = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")
@@ -137,21 +131,11 @@ def pr_ref(m):
     return f"{m.group(2)}#{m.group(3)}"
 
 # Agents: this project's panes (its tab records). A working agent shows how long since its last sign
-# of life (STALL_PY's stall_age); past stall_minutes it is stalled, and needs you. A story's builder
-# counts its worktree's commits and PR updates; an agent with no story (a conductor or planner)
-# its own events.tsv lines: by target, and once it has a start line, by the pane that ran them.
-commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
-seen = last_seen(E["DASH_EVENTS"])
-STARTS = ("agent", "conduct", "story")
-started = {}   # target -> when its newest start (agent, conduct, story, or a step-up's escalate) in events.tsv ran
-ran = {}       # pane -> when the newest sign of life it ran (STALL_PY's sign_time) was written
-for f in read_tsv(E["DASH_EVENTS"], 5):
-    t = sign_time(f)
-    if t is not None and t > ran.get(f[3], 0):
-        ran[f[3]] = t
-    t = epoch(f[0]) if (f[1] in STARTS and f[4] == "ok") or (f[1] == "escalate" and STEP_UP.fullmatch(f[4])) else None
-    if t is not None and t > started.get(f[2], 0):
-        started[f[2]] = t
+# of life (dash_age's Signs.age); past stall_minutes it is stalled, and needs you, unless its pane runs a
+# test suite (TESTING): then it is working. A story's builder counts its worktree's commits and PR
+# updates; an agent with no story (a conductor or planner) its own events.tsv lines: by target, and once
+# it has a start line, by the pane that ran them.
+signs = Signs(E["DASH_EVENTS"], dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l), PRS, E["DASH_PROJECTS"], NOW)
 # Escalation: today's escalate builds (escalate_build, on the escalate role's model: a step-up to a
 # lower rung is none), and each slug's newest one: when, and its attempt, or for a step-up the model it
 # came from.
@@ -169,6 +153,9 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     if t > escalated_at.get(f[2], (0,))[0]:
         escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {f[4][len('ok (attempt '):-1]}")
 recs, stalled = [], []
+# The panes of agents past stall_minutes that run a test suite (dash.sh's test_running over dash_age's
+# stalled_panes): working, not stalled.
+TESTING = set(E.get("DASH_TESTING", "").split())
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
@@ -257,25 +244,15 @@ if agents is not None:
             why = s[1] if s and st == "WAITING" else ""
             words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle", "auth": "auth: login expired",
                      "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
-            since = started.get(slug) or started.get(epic_of.get(base)) or started.get(base)
+            since = signs.since(slug, epic_of.get(base), base)
             try:   # pane_check's record, unless status or wait last read the pane stall_minutes ago or more
                 f = os.path.join(E["DASH_PROJECT"], ".swarm", "panes", name)
                 pane_at = float(open(f).read().split("\t")[1]) if NOW - os.path.getmtime(f) < 60 * int(E["DASH_STALL_MIN"]) else None
             except (OSError, ValueError, IndexError):
                 pane_at = None
             if st == "working":
-                # Any agent with a Claude session: its session log, written on every turn and tool call.
-                log = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
-                try:
-                    logged = os.path.getmtime(log) if log else None
-                except OSError:   # removed since the glob: no sign
-                    logged = None
-                if slug:
-                    signs = [commit_of.get(slug, ""), logged] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
-                    age, lack = stall_age(seen, slug, base, signs, NOW), "no commit, edit, session-log write or PR update"
-                else:
-                    age, lack = stall_age(seen, epic_of.get(base), base, ([since, ran.get(pane)] if since else []) + [logged], NOW), "no swarm action"
-                if age is not None and age >= int(E["DASH_STALL_MIN"]):
+                age, lack = signs.age((slug, epic_of.get(base), base, pane), rec[6] if rec else "", story_by_slug[slug][3] if slug else "")
+                if age is not None and age >= int(E["DASH_STALL_MIN"]) and pane not in TESTING:
                     st, look, words = "stalled", True, f"stalled {age}m"
                     stalled.append((name, age, lack))
                 elif age is not None:
@@ -331,6 +308,7 @@ queue = []
 lq = queue if LEAD else need
 bang = [sym("look")]
 waiting = []   # (dir, slug) of the board item each row waits on, where it names one: the first light's age
+merging = set()   # the (dir, slug) items with a merge row
 yours, more = None, 0
 
 def add(rows, row, item=None):
@@ -359,6 +337,7 @@ for l in lines("DASH_WAITING"):
         rows = need if m.group(1) and E["DASH_MERGE"] == "agent" else lq
         what = ("epic " if m.group(2) else "") + m.group(3) + (" (costs money)" if m.group(1) else "")
         item = ("epics" if m.group(2) else "stories", m.group(3))
+        merging.add(item)
         urls = list(URL.finditer(m.group(4)))
         if m.group(1):
             # A held PR is listed once, under the first item naming it (a story and its epic both may).
@@ -375,6 +354,14 @@ for l in lines("DASH_WAITING"):
                 continue
             green += st[0] == "done"
             add(rows, bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")], item)
+        continue
+    # A story a close kept (its PR not reviewed) is the lead's to review or drop, never one to merge,
+    # with keep_build's two exits.
+    m = re.match(r"kept: (\S+) (.*?) ?\(not reviewed\)$", l)
+    if m:
+        slug, prs = m.group(1), m.group(2).strip() or "<PR URL>"
+        add(lq, bang + [(f"review kept story {slug}{story_title(slug)}: ", ""),
+                        (f"swarm.sh review {slug} {prs} or swarm.sh close {slug} --drop", "dim")], ("stories", slug))
         continue
     m = re.match(r"(\S+): (\S+)$", l)
     if m:
@@ -394,6 +381,19 @@ for l in lines("DASH_WAITING"):
         lq.append(bang + [(l, "")])
 if more:
     yours.append((f"  +{more} more", "dim"))
+# A started story no agent works on (the lead's no-agent: line) is the lead's, with no_agent_exit's
+# exit, unless that exit is a merge and the story has a merge row already (a review story under merge =
+# agent): one row for one action. A review-agent exit (no passing review) keeps its row. It waits from the event that explains it (DASH_NO_AGENT_AT). A line of another shape
+# comes through as it is.
+for l in lines("DASH_NO_AGENT"):
+    l = l.strip()
+    m = re.match(r"no-agent: (\S+), exit: (.*)$", l)
+    if m:
+        slug = m.group(1)
+        if not (m.group(2).startswith("swarm.sh merge ") and ("stories", slug) in merging):
+            add(lq, bang + [(f"no agent on story {slug}{story_title(slug)}: ", ""), (m.group(2), "dim")], ("no-agent", slug))
+    else:
+        lq.append(bang + [(l, "")])
 # An escalated lead story, impossible or failed on Fable, is the lead's (next's escalated step): waiting_on_user
 # leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left, except for a
 # held story, whose hold reset always lifts (as next says).
@@ -732,14 +732,19 @@ def running_view():
 # the times a person stepped in on those days (`swarm.sh intervene`'s incident lines, of the kinds
 # swarm.sh passes): on the speedometer's line when it fits, else on its own line, which a cut frame
 # gives up last of the lines under the speedometer (after the sparkline, the gauges and the idle line). A board item waits from its newest
-# review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
+# review, kept, close:<cause> or escalated line in events.tsv, else from its file's last commit; a
+# no-agent row from the event that explains it (dash_no_agent_at), else as its story.
 def waited_from(item):
     d, slug = item
+    if d == "no-agent":
+        t = no_agent_at.get(slug)
+        return t if t is not None else waited_from(("stories", slug))
     if slug in moved:
         return moved[slug]
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
+no_agent_at = {s: epoch(t) for s, _, t in (l.partition("\t") for l in lines("DASH_NO_AGENT_AT"))}
 INTERVENE_KINDS = E.get("DASH_INTERVENE_KINDS", "").split()   # swarm.sh's INTERVENE_KINDS
 moved, done_at, stepped_in = {}, {}, 0   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):
@@ -749,7 +754,7 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
     if t is not None and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
         done_at[f[2]] = max(t, done_at.get(f[2], t))
-    t = t if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
+    t = t if f[1] in ("review", "kept", "escalated") or f[1].startswith("close:") else None
     if t is not None and t > moved.get(f[2], 0):
         moved[f[2]] = t
 
@@ -910,6 +915,9 @@ if not WIDE:
 drift = lines("DASH_DRIFT")
 if drift:
     out.append(fit([(f"board: {len(drift)} uncommitted edit{'' if len(drift) == 1 else 's'} in the main checkout: {', '.join(drift)}", "warn")], W))
+# next's release-held: line, when the next stage holds the release: only patches go out until it is done.
+if E.get("DASH_HELD"):
+    out.append(fit([(E["DASH_HELD"], "warn")], W))
 
 # The main column: needs you, the epics (or the tree), the blocked count. From 140 columns it is the
 # left column, LW wide.

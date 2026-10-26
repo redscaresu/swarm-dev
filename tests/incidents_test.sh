@@ -7,6 +7,8 @@
 # none for a stalled, paused, cleared-on-error or impossible close or a build with an open PR. Then flow's incidents section over a
 # fixture events.tsv holding six kinds on two days prints the per-day count of each.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -97,7 +99,7 @@ ladder() (
   LADDER_RC="$1" wait_agent a 1000 --stall 2>/dev/null; echo "exit $?"
 )
 check "another step-up still running prints the longest-running line as read" "$(ladder 5)" \
-  "$(printf '%s\n' 'stepping up: a: another step-up of it is running; wait on its builder again' 'longest-running: pid 400, 45 min: sleep' 'exit 0')"
+  "$(printf '%s\n' 'stepping up: a: another step-up or a restart of it is running; wait on its builder again' 'longest-running: pid 400, 45 min: sleep' 'exit 0')"
 check "a stall stepped up prints the longest-running line after stepped up" "$(ladder 0)" \
   "$(printf '%s\n' 'stepped up: a: sonnet -> opus' 'longest-running: pid 400, 45 min: sleep; read before the step-up closed its pane, so the PID may be gone: check it with ps first' 'exit 0')"
 for cause in stalled paused cleared-on-error impossible; do

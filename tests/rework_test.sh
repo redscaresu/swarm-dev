@@ -14,6 +14,8 @@
 # oldest PR); and the reviewer rows of a window that leaves out a's latest build. gh is a stub on PATH.
 # TZ is UTC unless a check sets it.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"

@@ -7,6 +7,8 @@
 # from tidy_panes, and no `herdr agent read ... |` pipeline scrapes a pane. Run on another file with
 # `bash tests/agent_state_test.sh <swarm.sh>`.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT
@@ -35,6 +37,7 @@ herdr_step      herdr_wait's step, its stream or herdr agent wait: codex, or no 
 herdr_events    herdr_wait's event stream (herdr_events.py): codex, or no session recorded
 close_lists     close's guard, read once per close: herdr's word for an agent no session answers for
 turn_ended      an API-error or auto-denied stop: herdr's done or idle, while open background shells keep the session busy
+resend_pass     wait --lead's resend: herdr's idle in the poll's one list picks whose pane to read; the session log (turn_since) decides
 "
 # Allowed anywhere, with no list entry:
 #   `-z "$(agent_field <name> agent_status any)"` — a name check: does any agent hold the name. Any

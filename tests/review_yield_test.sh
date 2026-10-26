@@ -5,6 +5,8 @@
 # twice on one PR, a story built twice with a PR per attempt, each in its own epic, for --epic. gh is a
 # stub on PATH. TZ is UTC, so a build with no session log starts at a known time.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"

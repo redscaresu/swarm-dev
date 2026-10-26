@@ -4,6 +4,8 @@
 # <role>, a start_agent call in bin/swarm.sh or bin/lib/*.sh that passes it literally, or
 # `swarm.sh _role` for a fixture story. A role policy() knows that nothing starts is dead weight, or a missing caller.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${REPO}/bin/swarm.sh"

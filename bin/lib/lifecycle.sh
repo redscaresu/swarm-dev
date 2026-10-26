@@ -512,7 +512,7 @@ close_agent() {
       rc=0; ladder_step "$1" no-pr || rc=$?
       [[ ${rc} != 0 ]] || return 0
       [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
-      [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "close: another step-up of $1 is running and may be starting its next builder, so nothing was closed or counted: wait on $1, then close it if it still needs closing"
+      [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "close: another step-up or a restart of $1 is running and may be starting its next builder, so nothing was closed or counted: wait on $1, then close it if it still needs closing"
     fi
   fi
   shut_agent "$1"
@@ -575,8 +575,8 @@ STEP_UP_RED_HEADS=2
 # shellcheck disable=SC2034,SC2154 # read in another file; CFG_top_rung_rounds is assigned in another file
 TOP_RUNG_FINDINGS="${CFG_top_rung_rounds}"
 # STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder, and only then.
-# STEP_UP_BUSY: ladder_step's when another step-up of the story holds its lock: it may be starting
-# the next builder, so the caller touches nothing.
+# STEP_UP_BUSY: ladder_step's when another step-up of the story, or a restart, holds its lock: it may be
+# starting the next builder, so the caller touches nothing.
 STEP_UP_PARTWAY=4
 STEP_UP_BUSY=5
 STEP_UP_TRIGGERS="findings-${STEP_UP_FINDINGS} ci-red-${STEP_UP_RED_HEADS} stalled no-pr"
@@ -758,16 +758,17 @@ start_rung() {
   [[ ${rc} -eq 0 ]] || echo "swarm: ${slug}: stepped up, and its ${to} builder runs, but its /goal did not set (see above): send ${prompt%.md}.goal.md as its /goal by hand" >&2
 }
 
-# rung_late <slug> <model> <err> — when start_agent's stderr <err> says the brief may have gone out
+# rung_late <slug> <model> <err> [who] — when start_agent's stderr <err> says the brief may have gone out
 # (the tries review_start_failed reads as unclear) and the agent was not blocked on a question before
 # it, warn that <slug>'s new <model> builder has not shown it took up its brief, and read it by its
 # pane once more over SLOW_PROMPT_TIMEOUT_MS (prompt_settle, against a fresh agent: idle, no turn).
 # Succeeds when that read finds it working, blocked or past a turn; fails on any other <err>, with no
 # pane (gone), or when it is still idle with no turn, and start_rung closes it. Returns 2 when the read
-# is unsure (herdr gave no status twice in a row), and start_rung keeps the pane.
+# is unsure (herdr gave no status twice in a row), and start_rung keeps the pane. [who] names the caller
+# in its messages: step-up (start_rung's), or restart (restart_settle's), whose pane is never closed here.
 rung_late() {
   # shellcheck disable=SC2034 # prompt_settle reads SETTLE_READS
-  local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v
+  local SETTLE_READS=$((SLOW_PROMPT_TIMEOUT_MS / 5000)) pane v who="${4:-step-up}"
   case "$3" in
     *agent_blocked*) return 1 ;;
     *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) ;;
@@ -775,13 +776,13 @@ rung_late() {
   esac
   pane="$(agent_field "$(agent_name "$1")" pane_id)"
   [[ -n "${pane}" ]] || return 1
-  echo "step-up: warning: $1's $2 builder has not shown it took up its brief; its pane is kept and read again for $((SLOW_PROMPT_TIMEOUT_MS / 1000))s before it is closed" >&2
+  echo "${who}: warning: $1's $2 builder has not shown it took up its brief; its pane is kept and read again for $((SLOW_PROMPT_TIMEOUT_MS / 1000))s$([[ "${who}" != step-up ]] || echo " before it is closed")" >&2
   v="$(prompt_settle "${pane}" idle -)"
   case "${v}" in
     taken) return 0 ;;
     "again idle") return 1 ;;
   esac
-  echo "step-up: $1's $2 builder: ${v#unsure }" >&2
+  echo "${who}: $1's $2 builder: ${v#unsure }" >&2
   return 2
 }
 
@@ -793,6 +794,216 @@ step_up_failed() {
   [[ ${rc} != 0 ]] || return 0
   echo "step-up failed: $1 stopped after its builder was closed: list it for the lead (swarm.sh step-up --resume $1 starts the rung once the cause is fixed); do not close, retry or tell it"
   exit "${STEP_UP_PARTWAY}"
+}
+
+# restart_build <slug> — `restart`: start a started story's builder again once herdr no longer lists it
+# (no_agent_exit's exit for a ready story), in its worktree and on its branch, in the tab build_story puts
+# it in. Its newest agents.tsv line gives its role, kind, model and session. When the resume command
+# resume_file wrote for that Claude session (RESUME_DIR/<session>.argv) names a session that took a
+# prompt (restart_session, restart_took), it reopens that session (restart_resume); else it starts a
+# fresh builder in that role on that model, the one builder_model reads, with handover_brief
+# (restart_fresh). It holds the story's step-up lock (step_lock) throughout, so no second restart and
+# no step-up starts a builder beside it. Refused, with nothing started, for a story that is not ready,
+# not of a kind an agent builds (kind: lead, as every escalated story is), held (held_for:, or held_by:
+# until its parents merge), or has a .step-up marker (step-up --resume starts that rung); with no
+# worktree, one holding a git step left unfinished, one not on story/<slug>, or no builder in
+# agents.tsv; while herdr lists its builder, or cannot list its agents; when a PR on story/<slug> has
+# merged or is set to auto-merge; while its lock is held; and when its read of herdr's list or of the PRs
+# fails or takes over SWARM_RESTART_READ_WAIT seconds (default HERDR_LIST_WAIT). It logs its own `restart <slug> ok
+# (<how>)` line (main logs only a failure), which build_started and review_round never read.
+restart_build() {
+  local slug="$1" f="${BOARD}/stories/$1.md" src wt gd p name listed role kind model session resume names tab url prs
+  local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" wait="${SWARM_RESTART_READ_WAIT:-${HERDR_LIST_WAIT}}"
+  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "restart: no story ${f} (swarm.sh restart <slug>)"
+  step_lock "${lock}" || die "restart: a step-up, restart or top-rung hold of ${slug} is running (it holds ${lock}); nothing was started"
+  # shellcheck disable=SC2064 # expand now: the lock is local
+  trap "rm -rf '${lock}'" EXIT
+  [[ "$(fm "${f}" status)" == ready ]] || die "restart: ${slug} is not status: ready; nothing was started"
+  agent_kind "$(fm "${f}" kind)" \
+    || die "restart: ${slug} is kind: $(fm "${f}" kind), which the lead runs, not an agent (an escalated story is too); nothing was started"
+  [[ -z "$(get_fm "${f}" held_for)" ]] \
+    || die "restart: ${slug} is held for the lead (held_for: $(get_fm "${f}" held_for)): reset or drop it; nothing was started"
+  [[ -z "$(get_fm "${f}" held_by)" ]] \
+    || die "restart: ${slug} is held until its parents merge (held_by:), and is reviewed again, never built again; nothing was started"
+  [[ ! -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]] \
+    || die "restart: ${slug} has a step-up waiting to start (.swarm/briefs/${slug}.step-up): run swarm.sh step-up --resume ${slug} instead; nothing was started"
+  src="$(repo_dir "$(fm "${f}" repo)")" || die "restart: ${slug}: ${src}"
+  wt="$(worktree_for "${src}" "${slug}")"
+  [[ -d "${wt}" ]] || die "restart: ${slug} has no worktree at ${wt}, so there is no build to start again; nothing was started"
+  gd="$(git -C "${wt}" rev-parse --absolute-git-dir 2>/dev/null)" || die "restart: git cannot read ${slug}'s worktree ${wt}; nothing was started"
+  for p in index.lock MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD; do
+    [[ ! -e "${gd}/${p}" ]] \
+      || die "restart: ${slug}'s worktree ${wt} holds ${gd}/${p}, a git step left unfinished: finish or abort it there first; nothing was started"
+  done
+  [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "story/${slug}" ]] \
+    || die "restart: ${slug}'s worktree ${wt} is not on story/${slug} (switched or detached): put it back there first; nothing was started"
+  name="$(agent_name "${slug}")"
+  # Both reads below are bounded (within): a hung herdr or gh would keep the lock from every step-up.
+  listed="$(within "${wait}" herdr agent list </dev/null 2>/dev/null | SWARM_NAME="${name}" json "any(a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" 2>/dev/null)" || listed=""
+  [[ "${listed}" != True ]] || die "restart: ${slug}'s builder ${name} is still listed (herdr agent list): wait on it or tell it; nothing was started"
+  [[ "${listed}" == False ]] \
+    || die "restart: herdr could not list its agents (it failed or took over ${wait}s), so whether ${slug}'s builder is there is not known; nothing was started"
+  read -r role kind model session <<< "$(awk -F'\t' -v n="${name}" '$3 == n { l = $2 " " $4 " " $5 " " $7 } END { print l }' "${AGENTS_LOG}" 2>/dev/null || true)"
+  [[ -n "${session}" ]] || die "restart: ${slug} has no builder in ${AGENTS_LOG}, so there is no build to start again; nothing was started"
+  # As step_up_story reads them: a merged or auto-merging PR is a build that is done. STEP_PR, the open PR
+  # or empty, is what handover_brief names.
+  if ! url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
+     || ! prs="$(within "${wait}" gh pr list -R "${url}" --head "story/${slug}" --state all --json state,url,autoMergeRequest </dev/null 2>/dev/null)" \
+     || ! STEP_PR="$(json "next((p['url'] for p in d if p['state'] == 'OPEN'), '')" <<< "${prs}" 2>/dev/null)"; then
+    die "restart: could not list the PRs on story/${slug} (git or gh failed, or gh took over ${wait}s); nothing was started"
+  fi
+  [[ "$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")" == False ]] \
+    || die "restart: a PR on story/${slug} has merged or is set to auto-merge, so its build is done; nothing was started"
+  names="$(story_env "${f}")" || die "${names}"
+  tab="$(fm "${f}" epic)"; tab="${tab:-${slug}}"   # as build_story: the epic's tab, or a one-off's own
+  resume=""
+  if [[ "${kind}" == claude && "${session}" != - && -f "${RESUME_DIR}/${session}.argv" ]]; then
+    resume="$(restart_session "${session}")" \
+      || die "restart: ${RESUME_DIR}/${session}.argv is not a resume command swarm.sh wrote (python3 -I <wrapper> claude --resume <session> ...); nothing was started"
+    # A builder whose brief never landed has nothing to resume: it starts fresh, with the brief.
+    restart_took "${resume}" || resume=""
+  fi
+  if [[ -n "${resume}" ]]; then
+    restart_resume "${slug}" "${tab}" "${wt}" "${session} ${resume}" "${names}"
+    record_event restart "${slug}" "ok (resumed session ${resume})"
+    echo "restarted: ${slug}, its session ${resume} reopened in ${wt}"
+  else
+    restart_fresh "${slug}" "${tab}" "${src}" "${role} ${model}" "${names}"
+  fi
+}
+
+# restart_session <session> — the session <session>'s resume command (resume_file's .argv) resumes: its
+# --resume argument, which hooks/agent-state.sh moves to the new session after a /clear. Fails when the
+# file is not the shape resume_file writes.
+restart_session() {
+  local a=() l
+  while IFS= read -r l; do a+=("${l}"); done < "${RESUME_DIR}/$1.argv"
+  [[ ${#a[@]} -ge 6 && "${a[0]} ${a[1]}" == "python3 -I" && "${a[2]}" == "${RESUME_DIR}/$1.py" \
+     && "${a[3]} ${a[4]}" == "claude --resume" && "${a[5]}" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+  echo "${a[5]}"
+}
+
+# restart_took <session> — succeed when Claude session <session>'s main log (report.py's session_log)
+# holds a user prompt (panes.py's is_prompt, not a Task subagent's entry): its brief, or a later one,
+# landed. Fails with no log.
+restart_took() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import json, os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import is_prompt; from report import session_log
+path = session_log(sys.argv[1], sys.argv[2])
+for l in (open(path, errors="replace") if path else ()):
+    try:
+        d = json.loads(l)
+    except ValueError:
+        continue
+    if isinstance(d, dict) and d.get("type") == "user" and not d.get("isSidechain") and is_prompt(d):
+        sys.exit(0)
+sys.exit(1)' "${CLAUDE_PROJECTS}" "$1" 2>/dev/null
+}
+
+# restart_resume <slug> <tab> <wt> "<session> <resume>" <names> — reopen <slug>'s builder's Claude session
+# <resume> (restart_session of its agents.tsv <session>) in a new pane in <tab>, at <wt>, with the flags
+# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry, as
+# start_agent), report that command to herdr as start_agent does, and tell the builder why.
+restart_resume() {
+  local name argv a resume=() flags=() pane out seq msg try session id
+  read -r session id <<< "$4"
+  name="$(agent_name "$1")"; argv="${RESUME_DIR}/${session}.argv"
+  while IFS= read -r a; do resume+=("${a}"); done < "${argv}"
+  flags=("${resume[@]:6}")
+  require_trusted "$3"   # a fresh start's start_agent checks it, for a Claude builder only
+  # shellcheck disable=SC2119 # takes no argument here
+  require_claude
+  require_herdr_version
+  rm -f "${PANE_DIR:?}/${name}"   # the last holder's pane record (pane_check), as start_agent
+  pane="$(next_pane "$2" "$3" "$1")"
+  local -x SWARM_RESUME="${argv}"
+  a="$(agent_env_names)"
+  clean_env "${pane}" "${name}" "${a}${a:+ }$5"
+  for try in 1 2; do
+    out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${id}" ${flags[@]+"${flags[@]}"} 2>&1)" && break
+    if [[ ${try} -eq 2 ]]; then
+      herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+      die "restart: herdr could not reopen ${name}'s session ${id}: ${out}"
+    fi
+    nap 3
+  done
+  # As start_agent: without it a herdr restart would resume the session without its guards, and the
+  # builder has done nothing in this pane yet, so a refusal closes it.
+  seq="$(python3 -I -c 'import time; print(time.time_ns())')" || seq=""
+  if [[ -z "${seq}" ]] || ! out="$(herdr pane report-agent "${pane}" --source swarm --agent claude --state idle --seq "${seq}" \
+      --agent-session-id "${id}" -- "${resume[@]}" 2>&1)"; then
+    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+    die "restart: herdr did not take ${name}'s resume command, so a herdr restart would drop its guards; its pane is closed: ${out:-could not read the clock (python3)}"
+  fi
+  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-restart.XXXXXX")" || die "restart: ${name}'s session ${id} is open in pane ${pane}, but it could not be told to carry on: tell it (swarm.sh tell $1 resume <file>)"
+  printf '%s\n' "swarm.sh restart reopened this session in a new pane: your last one was gone, and with it any background command, subagent or monitor you had running (a wait-pr, a codex-review). You are in the same worktree, ${3}, on story/$1. Check git status and your PR, start again any wait you still need, and carry on where you stopped." > "${msg}"
+  restart_run deliver_prompt "${name}" "${msg}" "${pane}"
+  rm -f "${msg}"
+  [[ ${RESTART_RC} -eq 0 ]] || die "restart: ${name}'s session ${id} is open in pane ${pane}, but it was not told to carry on: tell it (swarm.sh tell $1 resume <file>)"
+  restart_settle "$1" "$(builder_model "$1")" \
+    "it may not have taken up the prompt to carry on: read it (herdr agent read ${name}) and, if it sits idle, tell it to carry on (swarm.sh tell $1 resume <file>)"
+}
+
+# RESTART_ERR, RESTART_RC: restart_run's copy of its command's stderr, and its exit status.
+RESTART_ERR=""; RESTART_RC=0
+
+# restart_run <cmd>... — run <cmd>... in a subshell with errexit on (never in an || or if, where bash
+# drops it), its stderr shown as it comes and kept in RESTART_ERR, its status in RESTART_RC, as
+# start_rung runs start_agent. Its temp file goes on a signal too.
+restart_run() {
+  local f
+  f="$(mktemp "${TMPDIR:-/tmp}/swarm-restart-err.XXXXXX")" || die "restart: mktemp failed, so nothing was started"
+  # shellcheck disable=SC2064 # expand now: f is local
+  { trap "rm -f '${f}'; exit 129" HUP; trap "rm -f '${f}'; exit 130" INT; trap "rm -f '${f}'; exit 143" TERM; }
+  set +e
+  { (set -e; "$@") 2>&1 1>&3 | { tee "${f}" >&2 || cat >/dev/null; }; RESTART_RC=${PIPESTATUS[0]}; } 3>&1
+  set -e
+  RESTART_ERR="$(cat "${f}")"; rm -f "${f}"; trap - HUP INT TERM
+}
+
+# restart_settle <slug> <model> <what to do> — after a start or prompt that exited 0, when RESTART_ERR
+# is deliver_prompt's warning that herdr sent the prompt but did not show the turn start, read the
+# builder once more (rung_late, as start_rung does). Unless it took the prompt up after all, die with
+# <what to do>, its pane kept: herdr lists it, so no no-agent line would ever name it.
+restart_settle() {
+  local late=0
+  [[ "${RESTART_ERR}" == *"herdr did not show the turn start"* ]] || return 0
+  rung_late "$1" "$2" "${RESTART_ERR}" restart || late=$?
+  if [[ ${late} -eq 0 ]]; then echo "restart: $1's builder took up its prompt after all"; return 0; fi
+  die "restart: $1's builder runs in its pane, but herdr does not show that it took up its prompt$([[ ${late} -ne 2 ]] || echo " (herdr could not say)"); $3"
+}
+
+# restart_fresh <slug> <tab> <src> "<role> <model>" <names> — start a fresh builder for <slug> in <role> on
+# <model> in its worktree, in <tab>, with handover_brief (trigger restart, from and to both <model>), as
+# start_rung starts a rung, then log the restart line and send the /goal goal_preflight made.
+restart_fresh() {
+  local slug="$1" role model wt base prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" since goal rc=0
+  read -r role model <<< "$4"
+  (policy "${role}") >/dev/null 2>&1 \
+    || die "restart: ${slug}'s last build ran as ${role}, a role nothing starts now; nothing was started"
+  wt="$(worktree_for "$3" "${slug}")"
+  goal_preflight "${slug}" "$3"; goal="${PREFLIGHT_GOAL}"
+  base="$(base_for "$3")" || die "restart: origin's default branch could not be read (see above); nothing was started"
+  mkdir -p "${prompt%/*}"
+  handover_brief "${slug}" "$3" "${base}" restart "${model}" "${model}" > "${prompt}"
+  since="$(date +%s)"   # before the brief, for send_goal
+  # start_agent said why it failed. Once it has recorded the builder, its pane is kept: it may lack its
+  # brief. restart_run keeps its errexit (start_rung's form) and its stderr for restart_settle.
+  restart_run start_agent "$2" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "$5" "${model}"
+  [[ ${RESTART_RC} -eq 0 ]] \
+    || die "restart: ${slug}'s fresh builder did not start cleanly (see above); if herdr lists it, read it (herdr agent read $(agent_name "${slug}")) and, with no brief taken up, send ${prompt} (swarm.sh tell ${slug} nudge ${prompt})"
+  restart_settle "${slug}" "${model}" \
+    "read it (herdr agent read $(agent_name "${slug}")) and, if it sits idle with no brief, send it (swarm.sh tell ${slug} nudge ${prompt})"
+  record_event restart "${slug}" "ok (fresh on ${model}: no session to resume)"
+  echo "restarted: ${slug}, a fresh ${role} builder on ${model} in ${wt}"
+  [[ -n "${goal}" ]] || return 0
+  printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
+  set +e
+  (set -e; send_goal "${slug}" "${prompt%.md}.goal.md" brief "${since}")
+  rc=$?
+  set -e
+  [[ ${rc} -eq 0 ]] || echo "swarm: ${slug}: restarted, and its builder runs, but its /goal did not set (see above): send ${prompt%.md}.goal.md as its /goal by hand" >&2
 }
 
 # builder_model <slug> — the model of the newest agents.tsv line for <slug>'s builder.
@@ -809,7 +1020,7 @@ build_started() {
 
 # ladder_step <slug> <trigger> [findings] — step_up <slug> for a trigger swarm.sh saw itself (close,
 # wait --stall, tell, watch): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
-# builder, and the caller stops; STEP_UP_BUSY when another step-up of it holds the lock, and the caller
+# builder, and the caller stops; STEP_UP_BUSY when another step-up or a restart of it holds the lock, and the caller
 # touches nothing; any other status when nothing was closed (a refusal, said on stderr,
 # or a failure before the close), and the caller carries on as before. One step-up of a story at a
 # time, under its lock (step_lock); inside it step_due reads the build again, and with nothing due
@@ -868,7 +1079,8 @@ stepped_up_since() {
   awk -F'\t' -v s="$1" -v t="$2" '$2 == "escalate" && $3 == s && $1 >= t && $5 ~ /^ok/ { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
-# handover_brief <slug> <src> <base> <trigger> <from> <to> [findings] — the next rung's brief: the builder's
+# handover_brief <slug> <src> <base> <trigger> <from> <to> [findings] — the next rung's brief, or with
+# trigger restart a fresh builder's on the same model (restart_fresh): the builder's
 # brief (story_brief), then why the build was handed on, the PR body's Models: line, for a story
 # stacked on parents with open PRs build_story's Merge after note, the story as the board holds it
 # (the last builder may have deleted it from the worktree already), the diff from handover_from
@@ -936,7 +1148,7 @@ handover_brief() {
 
 ## Handover
 
-You take this story over from a builder on $5, stepped up to you on $6 because $(step_trigger "$4").
+You take this story over from a builder on $5, $(if [[ "$4" == restart ]]; then echo "started again on $6 by swarm.sh restart because its pane was gone and it left no session to resume"; else echo "stepped up to you on $6 because $(step_trigger "$4")"; fi).
 This worktree and its branch story/$1 are as that builder left them: carry on from them, and never
 start again from origin/$3. The PR body lists every model that worked on this story on one line, the
 models line: \`Models: ${models}\`. If a PR is open, edit its body to add it (\`gh pr edit --body-file\`).${stack}
@@ -1083,7 +1295,7 @@ top_rung_since() {
 # already, so its findings are never sent.
 top_rung_hold() {
   local lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" rc
-  step_lock "${lock}" || die "tell: $1 was not told: a step-up or hold of it is running; wait on it, then tell it"
+  step_lock "${lock}" || die "tell: $1 was not told: a step-up, restart or hold of it is running; wait on it, then tell it"
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" escalated_from)" ]]; then
     rm -rf "${lock}"; die "tell: $1 was not told: it is held for the lead already (escalated_from:); the lead decides it"
   fi
@@ -1793,7 +2005,10 @@ heads_green() {
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human (or
 # for a costs: money story, under merge = agent too) `merge: <slug> <PR URL>...` for a story or epic in
-# review (waiting_on_user) whose every PR head is green.
+# review (waiting_on_user) whose every PR head is green. Last, `no-agent: <slug>, exit: <exit>` for a
+# started story no agent works on (no_agent_lines record), which reads the poll's herdr list
+# (lead_agents) and one ps, and writes a `no-agent <slug>` events.tsv line for a story whose missing
+# agent no event explains yet.
 # A review item whose heads could not be read stays as LEAD_SEEN has it, so a gh error wakes no one.
 lead_queue() {
   local f held line slug prs rc urls="" tag u new seen=" " red="|"
@@ -1841,20 +2056,418 @@ lead_queue() {
     FILENAME == ARGV[1] { if (!($1 in got)) print; got[$1] = 1; next }
     !($1 in got) && index(keep, " " $1 " ") { print }' "${LEAD_GREEN}.new" "${LEAD_GREEN}" > "${LEAD_GREEN}.tmp"
   mv "${LEAD_GREEN}.tmp" "${LEAD_GREEN}"; rm -f "${LEAD_GREEN}.new"
+  no_agent_lines record
 }
 
-# lead_wake [quiet] — read the lead's queue once and save it as LEAD_SEEN. Print each item that was not in
-# LEAD_SEEN before and log `lead-woken <slug>` for it; true when there was one. quiet only saves.
+# lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
+# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered within
+# SWARM_LEAD_LIST_WAIT seconds (default HERDR_LIST_WAIT); a hung herdr counts as a failed list, so the
+# poll's other lines still wake the lead. Outside herdr (HERDR_ENV unset) it asks nothing.
+LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=""
+lead_agents() {
+  LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=1
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  if LEAD_AGENTS="$(within "${SWARM_LEAD_LIST_WAIT:-${HERDR_LIST_WAIT}}" herdr agent list </dev/null 2>/dev/null)"; then
+    LEAD_AGENTS_OK=1
+  else
+    LEAD_AGENTS=""
+  fi
+}
+
+# NO_AGENT_STARTS: the commands whose ok line starts an agent on a story, and whose failed line is a start
+# that failed. NO_AGENT_ASKS: the commands that, while one runs for a slug, may start or answer its agent
+# (a tell pending). Each answers with its own events.tsv line, written when it exits.
+NO_AGENT_STARTS="story escalate agent step-up _step-up restart review-agent"
+NO_AGENT_ASKS="tell story review-agent step-up _step-up restart agent"
+
+# no_agent_name <var> <name> — set <var> to agent_name <name>, with no subshell for a name that is
+# already one: the poll names every ready story twice.
+no_agent_name() {
+  if [[ "$2" =~ ^[a-z][a-z0-9_-]*$ && ${#2} -le ${AGENT_NAME_MAX} ]]; then printf -v "$1" '%s' "$2"
+  else printf -v "$1" '%s' "$(agent_name "$2")"; fi
+}
+
+# no_agent_events <slug name review-name epic>... — per slug (epic - for none), from one read of
+# events.tsv in order: "<slug> <build> <event> <name> <review-name>". build is 1 when a builder's ok start
+# is newer than its last ok close, - when the slug has no start line at all (never started), else 0.
+# An ok upgrade line (its target the epic, backlog, or - for every agent) restarted its agents, so it
+# counts as a start for the stories in its scope, but never clears a reopen: it restarts only running
+# agents, and a reopened story's builder was not one. event is the time of the newest event that
+# explains why no agent is there (an ok close of the builder or review agent, a failed start, a
+# no-agent line) when no sign of a live agent (an ok start, an ok tell) and no hold line came after it,
+# else -. A slug whose newest reconcile reopen (its PR
+# closed unmerged) has no ok start after it is left out: unblock --startable names it for the lead from
+# that reopen being its last event, which a lead-woken, no-agent or hold line would hide.
+no_agent_events() {
+  local log="${EVENTS_LOG}"
+  [[ -f "${log}" ]] || log=/dev/null   # BSD awk stops at a missing file before its END
+  awk -F'\t' -v rows="$*" -v starts=" ${NO_AGENT_STARTS} " '
+    BEGIN {
+      n = split(rows, w, " ")
+      # A close names the review agent in full (review-<slug>), herdr and agent lines by its cut name.
+      for (i = 1; i + 3 <= n; i += 4) {
+        own[w[i]] = own[w[i + 1]] = own[w[i + 2]] = own["review-" w[i]] = w[i]
+        rev[w[i + 2]] = rev["review-" w[i]] = 1; order[++k] = w[i]; name[w[i]] = w[i + 1]; rname[w[i]] = w[i + 2]
+        epic[w[i]] = w[i + 3]
+      }
+    }
+    NF == 5 && $2 == "upgrade" && $5 ~ /^ok/ {
+      for (x in epic) if ($3 == "-" || $3 == epic[x] || ($3 == "backlog" && epic[x] == "-")) ev[x] = ""
+      next
+    }
+    NF == 5 && ($3 in own) {
+      s = own[$3]; c = $2; sub(/:.*/, "", c); ok = $5 ~ /^ok/
+      if (index(starts, " " c " ")) {
+        if (!($3 in rev)) tried[s] = 1
+        if (!ok) ev[s] = $1
+        else { ev[s] = ""; reo[s] = 0; if (c != "review-agent" && !($3 in rev)) build[s] = 1 }
+      } else if (c == "close") {
+        if (ok) { ev[s] = $1; if (!($3 in rev)) build[s] = 0 }
+      } else if ($2 == "reconcile" && $5 == "ok (reopened)") reo[s] = 1
+      else if ($2 == "no-agent") ev[s] = $1
+      else if ((c == "tell" && ok) || $2 == "hold") ev[s] = ""
+    }
+    END { for (i = 1; i <= k; i++) { s = order[i]; if (!reo[s]) print s, (tried[s] ? build[s] + 0 : "-"), (ev[s] == "" ? "-" : ev[s]), name[s], rname[s] } }' \
+    "${log}" 2>/dev/null || true
+}
+
+# no_agent_busy <slug> <name> <urls> — true while a process runs that answers for <slug> though no agent
+# is listed: a tell pending (a swarm.sh NO_AGENT_ASKS command naming <slug> or its builder's <name>) or a
+# `swarm.sh wait-pr` or `swarm.sh merge` on one of <urls>. Reads NO_AGENT_PS, one `ps` read, and only matches it:
+# a command line may hold a token, so none is ever printed.
+no_agent_busy() {
+  awk -v s="$1" -v n="$2" -v urls=" $3 " -v asks=" ${NO_AGENT_ASKS} " '{
+    m = split($0, w, " ")
+    for (i = 1; i < m; i++) {
+      if (w[i] !~ /(^|\/)swarm\.sh$/) continue
+      for (j = i + 2; j <= m; j++)
+        if ((index(asks, " " w[i + 1] " ") && (w[j] == s || w[j] == n)) || ((w[i + 1] == "wait-pr" || w[i + 1] == "merge") && index(urls, " " w[j] " "))) { f = 1; exit }
+    } } END { exit !f }' <<< "${NO_AGENT_PS}"
+}
+
+# pr_words <prs value> — a prs: value's URLs, space-separated: split on spaces and commas as pr_stories
+# splits them, YAML's [ ] and quotes gone. No subshell, so the poll can split every story's.
+PR_WORDS=""
+pr_words() {
+  local v="${1//[][\"\']/}" u
+  PR_WORDS=""
+  for u in ${v//,/ }; do PR_WORDS+="${PR_WORDS:+ }${u}"; done
+}
+
+# story_prs <story-file> — its prs: URLs, space-separated (pr_words).
+story_prs() { pr_words "$(fm "$1" prs)"; printf '%s' "${PR_WORDS}"; }
+
+# stories_fm <key>... — one line per story on the board, read in one pass: its slug, then each key's
+# value, separated by \x1f (not a tab: read merges empty fields between tabs). A value is fm's: the
+# state file's (BOARD_STATE_DIR) unless the front matter changed from its <key>@base: line, else the
+# front matter's first <key>: line.
+stories_fm() {
+  local f files=() n=0
+  for f in "${BOARD}"/stories/*.md; do
+    [[ -e "${f}" && "${f##*/}" != README.md ]] || continue
+    files+=("${f}"); n=$((n + 1))
+    [[ ! -f "${BOARD_STATE_DIR}/stories/$(basename "${f}" .md)" ]] || files+=("${BOARD_STATE_DIR}/stories/$(basename "${f}" .md)")
+  done
+  [[ ${n} -gt 0 ]] || return 0
+  awk -v keys="$*" -v sdir="${BOARD_STATE_DIR}/stories/" '
+    function val(l, k) { l = substr(l, length(k) + 1); sub(/^ +/, "", l); sub(/\r$/, "", l); return l }
+    function flush(   i, k, v, line) {
+      if (slug == "") return
+      line = slug
+      for (i = 1; i <= nk; i++) { k = K[i]; v = ((k in st) && (!(k in base) || base[k] == own[k])) ? st[k] : own[k]; line = line "\x1f" v }
+      print line
+    }
+    BEGIN { nk = split(keys, K, " ") }
+    FNR == 1 && index(FILENAME, sdir) != 1 {
+      flush(); slug = FILENAME; sub(/.*\//, "", slug); sub(/\.md$/, "", slug)
+      n = 0; split("", own); split("", st); split("", base)
+    }
+    index(FILENAME, sdir) == 1 {
+      for (i = 1; i <= nk; i++) {
+        if (!(K[i] in st) && index($0, K[i] ":") == 1) st[K[i]] = val($0, K[i] ":")
+        if (!(K[i] in base) && index($0, K[i] "@base:") == 1) base[K[i]] = val($0, K[i] "@base:")
+      }
+      next
+    }
+    $0 == "---" { n++; next }
+    n == 1 { for (i = 1; i <= nk; i++) if (!(K[i] in own) && index($0, K[i] ":") == 1) own[K[i]] = val($0, K[i] ":") }
+    END { flush() }' "${files[@]}"
+}
+
+# no_agent_exit <slug> — what the lead does for a no-agent: line, never an unpinned merge. A ready story:
+# `swarm.sh restart <slug>` (restart_build), or `swarm.sh hold <slug> <reason>`; only the hold when
+# restart would refuse it as no_agent_lines lets it through: held_by:, no worktree (a branch left), or no
+# builder in agents.tsv (a first start that failed before it was recorded). A story in review with one PR whose findings file is a pass on its
+# 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
+# since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
+# <slug> <pr>` for each. A story in review with no PR URL: find it by hand in the story's repo (gh pr
+# list -R <its origin> --head story/<slug>, as open_pr asks), then the review-agent exit; hold takes
+# only a ready story, so it is never that.
+no_agent_exit() {
+  local f="${BOARD}/stories/$1.md" head u prs src out="" url
+  prs="$(story_prs "${f}")"
+  if [[ "$(fm "${f}" status)" != review ]]; then
+    if [[ -z "$(get_fm "${f}" held_by)" && -n "$(builder_model "$1")" ]] && src="$(repo_dir "$(fm "${f}" repo)")" \
+       && [[ -d "$(worktree_for "${src}" "$1")" ]]; then
+      echo "swarm.sh restart $1, or swarm.sh hold $1 <reason>"
+    else echo "swarm.sh hold $1 <reason>"; fi
+    return 0
+  fi
+  if [[ -z "${prs}" ]]; then
+    url="$(git -C "$(repo_dir "$(fm "${f}" repo)")" remote get-url origin 2>/dev/null)" || url="<its repo's origin>"
+    echo "gh pr list -R ${url} --head story/$1, then swarm.sh review-agent $1 <PR URL>"; return 0
+  fi
+  head="$(sed -n 's/^head: *//p' "${PROJECT_DIR}/.swarm/reviews/$1.md" 2>/dev/null | head -1)"
+  if [[ "${head}" =~ ^[0-9a-f]{40}$ && "${prs}" != *" "* ]] && review_pass "$1" "${head}"; then
+    echo "swarm.sh merge --head ${head} ${prs}"; return 0
+  fi
+  for u in ${prs}; do out+="${out:+, then }swarm.sh review-agent $1 ${u}"; done
+  echo "${out}"
+}
+
+# no_agent_lines [record] — `no-agent: <slug>, exit: <exit>` (no_agent_exit) for each started story that
+# no agent works on and that is not the user's to move: status ready, or review under merge = agent;
+# of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money
+# (waiting_on_user hands those to the user); with a build record (an ok builder start no close ended,
+# or, for a slug with a start line, its worktree or story/<slug> branch, build_exists); not in the
+# scope of an upgrade running here (upgrade_holder), which stops and restarts agents; no pane this
+# project opened (own_panes) listed under its builder's or review-<slug>'s name; no tell pending and no
+# wait-pr or merge on its PR (no_agent_busy); and no .swarm/briefs/<slug>.step-up marker. It prints one
+# only when an event explains the agent's absence (no_agent_events); with record set, a story with none
+# gets a `no-agent <slug>` events.tsv line, so the next poll prints it. A hold line answers the alert
+# until a new event: the next poll writes one.
+# Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
+# matter in one pass (stories_fm) and events.tsv once; per story only for one that passed those: its
+# costs: walk (a review story), git (a start line but no current builder), then herdr's JSON and one ps
+# once a started story is left. No gh. dash (dash_render) hands it its own herdr list instead, in
+# LEAD_AGENTS and LEAD_AGENTS_OK with LEAD_AGENTS_READ set, so it runs from outside a herdr pane too.
+# Prints nothing when it has no herdr list (outside a pane, unless dash handed it one) or when herdr's
+# list or ps fails.
+no_agent_lines() {
+  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d u
+  [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
+  while IFS=$'\x1f' read -r slug st kind held kept e repo prs; do
+    # shellcheck disable=SC2154 # CFG_merge is assigned in another file
+    case "${st}" in
+      ready) ;;
+      review) [[ "${CFG_merge}" == agent && -z "${kept}" ]] || continue ;;
+      *) continue ;;
+    esac
+    # Not kind: lead, which every escalated story is (lead_block), and a held one too.
+    agent_kind "${kind}" && [[ -z "${held}" ]] || continue
+    [[ ! -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]] || continue
+    e="${e:--}"
+    [[ -z "${up}" || ( "${up}" != - && "${up}" != "${e}" && ! ( "${up}" == backlog && "${e}" == - ) ) ]] || continue
+    no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"; pr_words "${prs}"
+    rows+=" ${slug} ${name} ${rname} ${e}"
+    data+="${slug}"$'\x1f'"${st}"$'\x1f'"${repo}"$'\x1f'"${PR_WORDS}"$'\n'
+  done < <(stories_fm status kind held_for kept epic repo prs)
+  [[ -n "${rows}" ]] || return 0
+  # shellcheck disable=SC2086 # rows: space-separated 4-tuples
+  while read -r slug build ev name rname; do
+    # Never started (no start line): nothing more is read for it.
+    [[ -n "${slug}" && "${build}" != - ]] || continue
+    d="$(awk -F $'\x1f' -v s="${slug}" '$1 == s { print; exit }' <<< "${data}")"
+    IFS=$'\x1f' read -r _ st repo prs <<< "${d}"
+    # A PR held for the user's merge (pr_held, as costs_tag asks, on prs: split on commas too), or the
+    # story's own costs: or its parents' (money_walk), which also holds one whose prs: is still empty.
+    if [[ "${st}" == review ]]; then
+      [[ -z "$(money_walk "${slug}")" ]] || continue
+      for u in ${prs}; do [[ -z "$(pr_held "${u}")" ]] || continue 2; done
+    fi
+    if [[ "${build}" != 1 ]]; then
+      src="$(repo_dir "${repo}")" || continue
+      build_exists "${src}" "${slug}" || continue
+    fi
+    built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'
+  done < <(no_agent_events ${rows})
+  [[ -n "${built}" ]] || return 0
+  live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  # -ww: the whole command line, never cut at a width. With no process list a pending tell, wait-pr or
+  # merge cannot be ruled out, so nothing is printed, as for herdr's list.
+  NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || return 0
+  while read -r slug ev name rname prs; do
+    [[ -n "${slug}" ]] || continue
+    ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
+    ! no_agent_busy "${slug}" "${name}" "${prs}" || continue
+    if [[ "${ev}" == - ]]; then
+      [[ "${1:-}" != record ]] || record_event no-agent "${slug}"
+      continue
+    fi
+    echo "no-agent: ${slug}, exit: $(no_agent_exit "${slug}")"
+  done <<< "${built}"
+}
+
+# LEAD_RESENT: "<agent>\t<time>\t<command>\t<n>" per events.tsv delivery line resend_pass is done with,
+# <n> telling apart lines alike to the second; the same with "\tpending" for an Enter about to go. RESEND_SLACK: how long, in seconds, before a tell's line
+# a turn its prompt started can be stamped: tell refuses a working agent; each of deliver_prompt's two
+# tries waits up to PROMPT_TIMEOUT_MS in herdr's prompt and as long again in prompt_settle; with goal on,
+# findings_goal's send_goal waits two more; and one more covers the reads between them.
+LEAD_RESENT="${LEAD_DIR}/resend"
+RESEND_SLACK=$(( 7 * PROMPT_TIMEOUT_MS / 1000 ))
+RESEND_HERDR_WAIT=10   # seconds each herdr read or key press of resend_pass may take, as pane_text gives a read
+RESEND_PASS_WAIT=20    # seconds after which resend_pass starts no more pane reads, leaving them for the next poll
+
+# resend_busy <name> [backlog] — true while a swarm.sh command that may deliver <name> a prompt runs:
+# one of NO_AGENT_ASKS or conduct, with an argument that is <name> once made an agent name
+# (agent_name's lower case, dashes and cut) as it is, as review-<arg> or as conduct-<arg>, or --backlog
+# with backlog set (the backlog conductor); for a conductor, also any swarm.sh next or merge, which
+# start conductors in their own process (conduct_ready). Reads NO_AGENT_PS; a command line may hold a
+# token, so none is ever printed.
+resend_busy() {
+  awk -v n="$1" -v bl="${2:-}" -v max="${AGENT_NAME_MAX}" -v asks=" ${NO_AGENT_ASKS} conduct " '
+    function nm(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, max) }
+    {
+    m = split($0, w, " ")
+    for (i = 1; i < m; i++) {
+      if (w[i] !~ /(^|\/)swarm\.sh$/) continue
+      if (n ~ /^conduct-/ && (w[i + 1] == "next" || w[i + 1] == "merge")) { f = 1; exit }
+      if (!index(asks, " " w[i + 1] " ")) continue
+      for (j = i + 2; j <= m; j++)
+        if (nm(w[j]) == n || nm("review-" w[j]) == n || nm("conduct-" w[j]) == n || (bl != "" && w[j] == "--backlog")) { f = 1; exit }
+    } } END { exit !f }' <<< "${NO_AGENT_PS}"
+}
+
+# resend_pass — submit a brief left unsent in an idle agent's input box, once per delivery. For each
+# agent this project opened that the poll's herdr list (lead_agents) shows idle, it takes the newest
+# events.tsv line that delivered it a prompt: story, escalate, step-up or tell for <slug> (not a note,
+# which goes to the inbox, its wake prompt one line that is never a collapsed paste), review-agent for
+# review-<slug>, conduct for conduct-<epic>, agent for an agent started by name, each mapped as
+# agent_name maps it. Its outcome is ok, or deliver_prompt's failure after herdr sent (or may have
+# sent) the prompt (a brief never taken up ends its command so); a tell that failed before sending
+# delivered nothing and is passed over, while a start that did skips its agent (it may have opened the
+# pane and recorded the session that turn_since reads). A line not yet in LEAD_RESENT gets one pane
+# read. Each herdr call has RESEND_HERDR_WAIT seconds (within), and no read starts RESEND_PASS_WAIT
+# seconds into the pass (the rest wait for the next poll), so a hung herdr cannot hold the poll. When
+# the box holds a collapsed paste (panes.py's unsent_brief) and no turn started since the prompt went
+# out (turn_since: for a start, which opens its own session, any turn in it; for a tell, one later than
+# RESEND_SLACK before the line), it sends the pane Enter and logs `resend <agent>`. A turn that started
+# and ended in those seconds before a tell reads as the tell taken up: the log cannot tell them apart,
+# so that tell is left alone, never submitted on a guess. The line goes in LEAD_RESENT once the pane is
+# read and needs nothing, or once the Enter went; before the Enter it goes in marked pending, which is
+# not done, and with no pending line written there is no Enter: an unreadable pane, a paste with no
+# session log to say whether a turn ran (sent nothing), or an Enter herdr failed to send (logged as the
+# resend's outcome), is tried again next poll. An agent that a swarm.sh command is delivering to as the
+# poll runs (resend_busy over one ps read) is skipped, checked again with a fresh ps just before an
+# Enter (which is also skipped, for the next poll, when events.tsv has grown since rows read it), and
+# while an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet, and
+# an Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a second
+# tell:findings line would count a review round twice. Prints nothing; outside herdr, or with no list,
+# it does nothing.
+resend_pass() {
+  local rows pane name at cmd k text since rc backlog line size deadline=$((SECONDS + RESEND_PASS_WAIT))
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  # No idle agent in the list, no work: return before any process starts, as most polls do.
+  [[ "${LEAD_AGENTS}" == *idle* && -s "${EVENTS_LOG}" ]] || return 0
+  backlog="$(conductor_name backlog)"
+  # events.tsv's size as rows reads it: a line added before an Enter may be a newer delivery.
+  size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))
+  rows="$(SWARM_PANES="$(own_panes)" SWARM_BACKLOG="${backlog}" SWARM_NAME_MAX="${AGENT_NAME_MAX}" python3 -I -c '
+import json, os, re, sys
+e = os.environ
+own = set(e["SWARM_PANES"].split())
+# agent_name: lower case, any other byte a dash, s before a name that does not start with a letter, the cut.
+def name(x):
+    x = re.sub(rb"[^a-z0-9_-]", b"-", x.encode().lower()).decode()
+    return (x if re.match("[a-z]", x) else "s" + x)[:int(e["SWARM_NAME_MAX"])]
+idle = {a["name"]: a["pane_id"] for a in json.loads(sys.stdin.read())["result"]["agents"]
+        if a.get("name") and a.get("pane_id") in own and a.get("agent_status") == "idle"}
+newest, alike = {}, {}
+try:
+    for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
+        f = l.rstrip("\n").split("\t")
+        if len(f) != 5:
+            continue
+        c, t = f[1], f[2]
+        if c in ("story", "escalate", "step-up", "step-up:resume", "agent", "tell") or (c.startswith("tell:") and c != "tell:note"): n = name(t)
+        elif c == "review-agent": n = name("review-" + t)
+        elif c == "conduct": n = e["SWARM_BACKLOG"] if t in ("--backlog", "backlog") else name("conduct-" + t)
+        else: continue
+        if n not in idle:
+            continue
+        # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
+        if f[4] == "ok" or f[4].startswith("ok (") or any(w in f[4] for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
+            k = (n, f[0], c)
+            alike[k] = alike.get(k, 0) + 1
+            newest[n] = (f[0], c, alike[k])
+        elif not c.startswith("tell"):
+            # A start that failed before sending may still have opened the pane and recorded its session
+            # (record_agent comes before deliver_prompt): whatever is in the box is not an older brief.
+            newest[n] = None
+except OSError:
+    pass
+try:
+    seen = set(open(sys.argv[2], encoding="utf-8").read().splitlines())
+except OSError:
+    seen = set()
+for n, (t, c, k) in sorted((n, v) for n, v in newest.items() if v):
+    if "\t".join((n, t, c, str(k))) not in seen:
+        print("\t".join((idle[n], n, t, c, str(k))))' "${EVENTS_LOG}" "${LEAD_RESENT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  [[ -n "${rows}" ]] || return 0
+  # An upgrade restarts agents in its own process and logs them only at its end, as no_agent_lines skips them.
+  [[ ! -f "${UPGRADE_PID}" ]] || [[ -z "$(upgrade_holder)" ]] || return 0
+  # With no process list, a delivery under way cannot be ruled out, so nothing is read.
+  NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || return 0
+  mkdir -p "${LEAD_DIR}" 2>/dev/null || return 0
+  while IFS=$'\t' read -r pane name at cmd k; do
+    [[ -n "${pane}" ]] || continue
+    (( SECONDS < deadline )) || break
+    ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
+    # pane_text's read, with its failure kept: an empty or failed read is no clear box.
+    text="$(within "${RESEND_HERDR_WAIT}" herdr agent read "${pane}" --source recent-unwrapped </dev/null 2>/dev/null)" && [[ -n "${text}" ]] || continue
+    since="${at}"; [[ "${cmd}" == tell* ]] || since=-
+    # 10: resend; 11: nothing to send. Anything else (12, a paste with no session log to say whether a
+    # turn ran, or python's own error exit) is tried again next poll.
+    rc=0; printf '%s' "${text}" | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import unsent_brief, turn_since
+if not unsent_brief(sys.stdin.read()):
+    sys.exit(11)
+t = turn_since(*sys.argv[1:6])
+sys.exit(12 if t is None else 11 if t else 10)' \
+      "${AGENTS_LOG}" "${name}" "${CLAUDE_PROJECTS}" "${since}" "${RESEND_SLACK}" 2>/dev/null || rc=$?
+    [[ ${rc} -eq 10 || ${rc} -eq 11 ]] || continue
+    if [[ ${rc} -eq 10 ]]; then
+      # A delivery that began after the first ps read would take this Enter: read ps again.
+      NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || continue
+      ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
+      # A delivery that began and ended while the pane was read left a line rows has not seen.
+      [[ $(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) )) -eq ${size} ]] || continue
+    fi
+    line="${name}"$'\t'"${at}"$'\t'"${cmd}"$'\t'"${k}"
+    if [[ ${rc} -eq 10 ]]; then
+      # Pending first, which counts as not done: a run stopped before the Enter, or an Enter that failed,
+      # is tried again next poll, which reads the box again. A file it cannot write gets no Enter.
+      printf '%s\tpending\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || continue
+      if ! within "${RESEND_HERDR_WAIT}" herdr pane send-keys "${pane}" Enter </dev/null >/dev/null 2>&1; then
+        record_event resend "${name}" "herdr could not send Enter to ${pane}"; continue
+      fi
+      record_event resend "${name}"
+      size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))   # past its own line
+    fi
+    printf '%s\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || true
+  done <<< "${rows}"
+}
+
+# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents),
+# run resend_pass off that list, and save the queue as LEAD_SEEN. Print each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
+# for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
+# no-agent: items and saves the rest.
 lead_wake() {
-  local now line new=""
+  local now line new="" slug
+  lead_agents
   now="$(lead_queue)"
+  resend_pass >/dev/null 2>&1 || true
   while IFS= read -r line; do
-    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || new+="${line}"$'\n'
+    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || [[ -n "${1:-}" && "${line}" != "no-agent: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
-  [[ -z "${1:-}" && -n "${new}" ]] || return 1
+  [[ -n "${new}" ]] || return 1
   while IFS= read -r line; do
-    echo "${line}"; line="${line#*: }"; record_event lead-woken "${line%% *}"
+    echo "${line}"; slug="${line#*: }"; slug="${slug%%,*}"
+    record_event lead-woken "${slug%% *}" "ok (${line%%: *})"
   done <<< "${new%$'\n'}"
 }
 
@@ -1908,8 +2521,8 @@ lead_lock() {
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
 # (lead_wake). The first read of a run reports what landed since the last run; with no LEAD_SEEN yet
-# it only notes the queue. At the timeout (default an hour) it fails with nothing printed. It nudges no
-# one and edits no board file.
+# it notes the queue and reports only no-agent: items. At the timeout (default an hour) it fails with
+# nothing printed. It edits no board file, and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
@@ -1917,7 +2530,7 @@ wait_lead() {
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
   lead_lock
   start=${SECONDS}
-  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else lead_wake quiet || true; fi
+  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else ! lead_wake quiet || return 0; fi
   while (( (SECONDS - start) * 1000 < timeout )); do
     left=$(( (timeout + 999) / 1000 - (SECONDS - start) ))
     sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))

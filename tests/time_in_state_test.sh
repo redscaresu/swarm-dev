@@ -18,6 +18,8 @@
 # epic's conductor started at 06:00, so it waited ready, held, for 180 minutes before its first build;
 # its retries hold none.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

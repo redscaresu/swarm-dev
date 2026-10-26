@@ -14,6 +14,8 @@
 # state of the stories the pulled commits deleted, and of an epic whose deletion took docs/epics.
 # gh is a stub on PATH; origin is a local bare repo.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

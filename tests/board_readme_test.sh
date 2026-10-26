@@ -2,6 +2,8 @@
 # board_readme_test.sh — swarm-dev's own board/stories/, board/epics/ and board/hld/ READMEs match the
 # templates a project copies under templates/docs/. A change to one without the other fails here.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
