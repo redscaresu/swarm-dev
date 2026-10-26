@@ -6,10 +6,12 @@
 # epic's conductor working. Then each of dash-three-defects' fixes reverted in a copy of bin/ (the
 # working count, the failed workspace list, the calling pane's cost, the waiting epic), a status that
 # lists one more working agent, a next that fails, a merge row gone while an answer row names its
-# story, and flow's cost unreadable, each make --check exit 1 naming the field; a frame dash cannot
-# draw is a frame line for each project. --check refuses --watch, and tells two projects with one
-# basename apart.
+# story, a kept story's row gone, and flow's cost unreadable, each make --check exit 1 naming the
+# field; a frame dash cannot draw is a frame line for each project. --check refuses --watch, and tells
+# two projects with one basename apart.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -95,11 +97,16 @@ item "${B}" epics/bravo-after.md "After" "status: active"
 item "${B}" stories/b-after-code.md "Build it" "status: done" "kind: code" "epic: bravo-after"
 item "${B}" stories/b-after.md "Measure it" "status: ready" "kind: lead" "epic: bravo-after" "after: bravo-after"
 item "${B}" stories/b-esc2.md "Escalated" "status: review" "kind: code" "prs: https://github.com/o/bravo/pull/95"
+# A story a close kept: its kept line (inside the close that kept it) puts kept:b-kept in lead_queue,
+# which dash draws as a review row with its exits.
+item "${B}" stories/b-kept.md "Kept" "status: review" "kind: code" "kept: 2026-10-10 close (not reviewed)" "prs: https://github.com/o/bravo/pull/94"
 { printf '%s\treview\tb-held\tw2:p1\tok\n' "$(at 40)"; printf '%s\treview\tbravo-held\tw2:p1\tok\n' "$(at 39)"
-  printf '%s\tescalated\tb-esc2\tw2:p1\tok\n' "$(at 38)"; printf '%s\treview\tb-esc2\tw2:p1\tok\n' "$(at 37)"; } >> "${B}/.swarm/events.tsv"
+  printf '%s\tescalated\tb-esc2\tw2:p1\tok\n' "$(at 38)"; printf '%s\treview\tb-esc2\tw2:p1\tok\n' "$(at 37)"
+  printf '%s\tkept\tb-kept\tw2:p1\tok (https://github.com/o/bravo/pull/94; not reviewed)\n' "$(at 36)"
+  printf '%s\tclose\tb-kept\tw2:p1\tok\n' "$(at 36)"; } >> "${B}/.swarm/events.tsv"
 q="$(sw "${B}" flow | sed -n '/^## lead_queue$/,/^## /p')"
-queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "escalated:b-esc2" "${q}"; }
-check "bravo: lead_queue holds the held story and its epic, and b-esc2 as escalated" queued
+queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "escalated:b-esc2" "${q}" && has "kept:b-kept" "${q}"; }
+check "bravo: lead_queue holds the held story and its epic, b-esc2 as escalated and b-kept as kept" queued
 fb="$(DASH_W=100 sw "${B}" dash)"
 check "bravo: the lead story's row says waits on" has "deploy waits on DNS" "${fb}"
 check "bravo: the after-only epic waits on the lead" grep -qE 'bravo-after .*after: b-after waits on the lead' <<< "${fb}"
@@ -109,8 +116,9 @@ check "bravo: the long merge row wraps" grep -qE '^│   https://github.com/o/br
 check "bravo: dash cuts the long epic's name" grep -qE '⏸ bravo-an-epic-name-too-long[^ ]*… ' <<< "${fb}"
 check "bravo: dash shows b-new's merge by its URL" has "merge b-new: https://github.com/o/bravo/pull/99" "${fb}"
 check "bravo: dash shows b-fix's prompt with no reason" has "answer b-fix: " "${fb}"
+check "bravo: b-kept has a review row" grep -qE '! review kept story b-kept: ' <<< "${fb}"
 out="$(sw "${B}" dash --check)" && rc=0 || rc=$?
-check "with a cut epic name, PRs by URL, held or wrapped, and no prompt reason, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+check "with a cut epic name, PRs by URL, held or wrapped, no prompt reason and a kept story, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
 
 # With lead = off, an escalated lead story is in flow's lead_queue but dash draws no row for it, as
 # it draws none for status.
@@ -215,6 +223,9 @@ check "with next's step failing, --check exits 1 naming next (exit ${rc}: ${out}
 
 check "mutant: a merge row with checks is never drawn" mutant mergerow lib/dash_render.py 's/add(rows, bang + \[(f"merge {pr_ref(u)} (",/add([], bang + [(f"merge {pr_ref(u)} (",/'
 check "with b-fix's merge row gone but its answer row kept, --check names the lead's queue" names "${B}" "lead's queue" \
+  env SWARM_PROJECT="${B}" "${M}" dash --check
+check "mutant: a kept story's row is never drawn" mutant keptrow lib/dash_render.py 's/add(lq, bang + \[(f"review kept story /add([], bang + [(f"review kept story /'
+check "with b-kept's row gone, --check names the lead's queue" names "${B}" "lead's queue" \
   env SWARM_PROJECT="${B}" "${M}" dash --check
 check "mutant: dash_render raises" mutant raise lib/dash_render.py '1s/^/raise RuntimeError("boom"); /'
 out="$(cd / && "${M}" dash --check --project "${A}" --project "${B}")" && rc=0 || rc=$?

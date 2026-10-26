@@ -6,6 +6,8 @@
 # (merge_fixture.sh), so the three run on CI shards of their own.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -46,7 +48,7 @@ fresh; rm -f "${FX}/${H1}.checks"; page "${FX}/${H1}.checks" check_runs 101 "${g
 merge "${URL}"; refused "fewer runs read than total_count" "read 100 of 101"
 fresh; rm -f "${FX}/${H1}.checks"; page "${FX}/${H1}.checks.fail" check_runs 101 "${green[@]}"
 merge "${URL}"; refused "check runs that fail after a green page" "HTTP 502"
-fresh; echo '{"total_count":1,"check_runs":[' > "${FX}/${H1}.checks"
+fresh; echo '{"total_count":1,"check_runs":[' > "${FX}/${H1}.checks" # vacuous-test: ok, cut off on purpose
 merge "${URL}"; refused "check runs that are not JSON" "error"
 fresh; touch "${FX}/pr-view.fail"; merge "${URL}"; refused "gh pr view failing" "gh cannot read ${URL}"
 fresh; echo MERGED > "${FX}/state"; merge "${URL}"; refused "a PR that is not open" "is MERGED, not open"
@@ -501,7 +503,7 @@ fresh; rm "${FX}/workflows"; checks "${FX}/${M}.checks"; wfruns "${FX}/${M}.runs
 is "nothing at all through the grace: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
 check "nothing at all through the grace: read more than once" test "$(cat "${FX}/${M}.checks.n")" -gt 1
 # A truncated contents answer is a missed read too.
-fresh; echo '[{"name":' > "${FX}/workflows.1"; merge "${URL}"
+fresh; echo '[{"name":' > "${FX}/workflows.1"; merge "${URL}" # vacuous-test: ok, cut off on purpose
 is "one unreadable .github/workflows listing between good reads: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
 fresh; echo '[{"name":"ci.yml"}]' > "${FX}/workflows.1"; merge "${URL}"
 is "one listing missing its keys between good reads: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
@@ -540,6 +542,28 @@ check "merge.sh refuses a release the grant does not cover with 'waits on the us
   grep -qF "waits on the user's merge (merge = human" "${REPO}/bin/lib/merge.sh"
 check "commands/swarm.md's release arm keys the outcome on merged:, and leaves a refused PR waiting on the user" \
   grep -qE 'by whether merge printed .merged:.,.* Any other refusal: under .merge = human. the release-grant refusal .* Tell the user what the refusal printed and that the PR waits on their merge' <<< "${arm}"
+check "commands/swarm.md's release arm says a stage release is a minor" \
+  grep -qF 'A stage release is a minor: cut it only when' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm sets <new> from the version next named, without the v" \
+  grep -qF 'make `<new>` that number without the `v`' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm bumps to the version next named, a minor only on a bare release" \
+  bash -c 'grep -qF "to \`<new>\`: the version \`next\` named, either the stage" <<< "$1" &&
+    grep -qF "Only when \`next\` printed a bare \`release\`, bump to the next minor version" <<< "$1"' _ "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm makes <new> the number alone for a patch step too" \
+  grep -qF 'without the `v` and without ` (patch)`' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm cuts only on release v<S>" \
+  grep -qF 'cut it only when `next` prints `release v<S>`' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm cuts no minor while next prints release-held:" \
+  grep -qF 'While `next` prints a `release-held:` line, cut no minor' <<< "${arm}"
+check "commands/swarm.md's release arm lists the behaviour changes every project gets on upgrade" \
+  grep -qF 'lists the behaviour changes every project gets on upgrade' <<< "${arm}"
+check "commands/swarm.md's release arm names the infrafactory build or says none" \
+  grep -qF 'names the infrafactory build they were tried on, or says none' <<< "${arm}"
 check "reference.md § Merging merges with swarm.sh merge" \
   bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
 finish merge

@@ -42,6 +42,8 @@
 # telling an agent it was restarted fails while ${H}/promptfail exists, and one telling it upgrade could not
 # restart it while ${H}/sayfail does. Every call is logged.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${REPO}/bin/swarm.sh"

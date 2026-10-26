@@ -8,9 +8,13 @@
 # cannot be written, a run still exits as its test did. Then, on a fixture test-runs.tsv: the at_once
 # buckets (the larger of a run's start and end) with their medians, p90s and median start loads, and
 # the 5 slowest full runs, two runs that start in the same second paired by PID; a start line alone,
-# a filtered run, a shard, an interrupted run and a run before --since count nowhere, and with no log
-# the section prints nothing. TZ is UTC.
+# a filtered run, a shard, an interrupted run and a run before --since count nowhere in that baseline.
+# The builder block counts story/* runs of every filter (a TESTS filter, N files, all) with their
+# median and p90, and no run on main or -, shard, interrupted run or torn line. With no log the section
+# prints nothing. TZ is UTC.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,6 +22,7 @@ dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'touch "${dir}/goA" "${dir}/goD" 2>/dev/null; wait; rm -rf "${dir}"' EXIT
 export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
+export HOME="${dir}/home"   # its runs are top-level: a cap in the real ~/.swarm/test-cap would gate them
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
@@ -66,7 +71,8 @@ mkdir "${dir}/wt/hold"
 hold() { printf '#!/usr/bin/env bash\n: > "%s/in%s"\nfor _ in $(seq 600); do [ -e "%s/go%s" ] && exit 0; sleep 0.1; done\nexit 1\n' "${dir}" "$1" "${dir}" "$1"; }
 hold A > "${dir}/wt/hold/hold_a_test.sh"
 hold D > "${dir}/wt/hold/hold_d_test.sh"
-printf '#!/usr/bin/env bash\nbash "%s/scripts/test.sh" hold/hold_a_test.sh\n' "${ROOT}" > "${dir}/wt/hold/nest_test.sh"
+# B is named by its absolute path: test.sh runs a test from its TMPDIR, not from the checkout.
+printf '#!/usr/bin/env bash\nbash "%s/scripts/test.sh" "%s/hold/hold_a_test.sh"\n' "${ROOT}" "${dir}/wt" > "${dir}/wt/hold/nest_test.sh"
 # until_there <file> — wait for it, 60 s at most.
 until_there() { for _ in $(seq 600); do [[ -e "$1" ]] && return 0; sleep 0.1; done; echo "FAIL $1 never appeared"; exit 1; }
 sleep 0 & dead=$!; wait "${dead}"
@@ -95,11 +101,13 @@ check "and a failing run still exits 1" "$(run tests/fail_test.sh)" 1
 mkdir -p "${dir}/project/.swarm"
 P="$(cd "${dir}/project" && pwd -P)"
 git init -q "${P}"
-# line <start> <end> <seconds> <filter> <load> <others at start> <others at end> <status> — a run's start
-# line, then its end line, whose load (99) flow never reads; its PID is its seconds.
+# line <start> <end> <seconds> <filter> <load> <others at start> <others at end> <status> [branch] — a
+# run's start line, then its end line, whose load (99) flow never reads; its PID is its seconds, its
+# branch b-<seconds> unless given.
 line() {
-  printf '%s\t\t\t4\t%s\tb-%s\t%s\t10\t%s\t\t%s\n' "$1" "$4" "$3" "$5" "$6" "$3" >> "${P}/.swarm/test-runs.tsv"
-  printf '%s\t%s\t%s\t4\t%s\tb-%s\t99.00\t10\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$3" "$7" "$8" "$3" >> "${P}/.swarm/test-runs.tsv"
+  local b="${9:-b-$3}"
+  printf '%s\t\t\t4\t%s\t%s\t%s\t10\t%s\t\t%s\n' "$1" "$4" "${b}" "$5" "$6" "$3" >> "${P}/.swarm/test-runs.tsv"
+  printf '%s\t%s\t%s\t4\t%s\t%s\t99.00\t10\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "${b}" "$7" "$8" "$3" >> "${P}/.swarm/test-runs.tsv"
 }
 printf '2026-10-01T09:00:00Z\t\t\t4\tall\tb-killed\t1.00\t10\t0\t\t1\n' >> "${P}/.swarm/test-runs.tsv"
 line 2026-10-01T10:00:00Z 2026-10-01T10:01:40Z 100 all 1.00 0 0 0
@@ -113,18 +121,39 @@ line 2026-10-02T12:40:00Z 2026-10-02T13:00:00Z 1200 all 40.00 0 0 143
 line 2026-10-02T13:00:00Z 2026-10-02T14:00:00Z 3600 tests/x_test.sh 9.00 0 0 0
 line 2026-10-02T15:00:00Z 2026-10-02T16:00:00Z 3700 'all shard 1/8' 9.00 0 0 0
 line 2026-09-01T10:00:00Z 2026-09-01T11:23:20Z 5000 all 9.00 0 0 0
+# Builders' runs: a TESTS filter, N files and a full run count; on main or -, a shard, an interrupted
+# run, a torn line (story/h's, below) and a run before --since do not.
+line 2026-10-03T10:00:00Z 2026-10-03T10:02:00Z 120 tests/a_test.sh 1.00 0 0 1 story/a
+line 2026-10-03T11:00:00Z 2026-10-03T11:04:00Z 240 '3 files' 1.00 0 0 0 story/b
+line 2026-10-03T12:00:00Z 2026-10-03T12:02:30Z 150 all 1.50 0 0 0 story/c
+line 2026-10-03T13:00:00Z 2026-10-03T13:06:40Z 400 tests/d_test.sh 1.00 0 0 0 story/d
+line 2026-10-03T14:00:00Z 2026-10-03T14:01:10Z 70 tests/a_test.sh 1.00 0 0 0 main
+line 2026-10-03T14:10:00Z 2026-10-03T14:11:20Z 80 tests/a_test.sh 1.00 0 0 0 -
+line 2026-10-03T15:00:00Z 2026-10-03T15:01:30Z 90 'all shard 2/8' 1.00 0 0 0 story/e
+line 2026-10-03T16:00:00Z 2026-10-03T16:01:40Z 101 tests/a_test.sh 1.00 0 0 130 story/f
+line 2026-09-03T16:00:00Z 2026-09-03T16:01:40Z 102 tests/a_test.sh 1.00 0 0 0 story/g
+{
 # Two runs on one branch that start in the same second, told apart by their PIDs.
 printf '%s\n' $'2026-10-02T08:00:00Z\t\t\t4\tall\tb-same\t7.00\t10\t4\t\t600' $'2026-10-02T08:00:00Z\t\t\t4\tall\tb-same\t6.00\t10\t0\t\t700' \
   $'2026-10-02T08:00:00Z\t2026-10-02T08:10:00Z\t600\t4\tall\tb-same\t99.00\t10\t0\t0\t600' \
-  $'2026-10-02T08:00:00Z\t2026-10-02T08:11:40Z\t700\t4\tall\tb-same\t99.00\t10\t0\t0\t700' >> "${P}/.swarm/test-runs.tsv"
-# An end line whose start line is missing: its own load and other runs.
-printf '2026-10-02T09:00:00Z\t2026-10-02T09:06:40Z\t400\t4\tall\tb-400\t5.00\t10\t4\t0\t400\n' >> "${P}/.swarm/test-runs.tsv"
+  $'2026-10-02T08:00:00Z\t2026-10-02T08:11:40Z\t700\t4\tall\tb-same\t99.00\t10\t0\t0\t700'
+# An end line whose start line is missing: its own load and other runs. Then two builders' end lines
+# torn before their PID, one before its tab and one after it.
+printf '%s\n' $'2026-10-02T09:00:00Z\t2026-10-02T09:06:40Z\t400\t4\tall\tb-400\t5.00\t10\t4\t0\t400' \
+  $'2026-10-03T17:00:00Z\t2026-10-03T17:01:43Z\t103\t4\ttests/a_test.sh\tstory/h\t99.00\t10\t0\t0' \
+  $'2026-10-03T17:10:00Z\t2026-10-03T17:11:44Z\t104\t4\ttests/a_test.sh\tstory/i\t99.00\t10\t0\t0\t'
+# Last, a builder's end line torn inside its PID: every field there, but no newline.
+printf '2026-10-03T18:00:00Z\t2026-10-03T18:01:45Z\t105\t4\ttests/a_test.sh\tstory/j\t99.00\t10\t0\t0\t10'
+} >> "${P}/.swarm/test-runs.tsv"
 section() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=test_runs bash "${ROOT}/bin/swarm.sh" flow "$@" | grep -v '^## test_runs$'); }
-check "the buckets, medians and slowest five" "$(section --since 2026-10-01)" "$(printf '%s\n' \
-  $'at_once\truns\tmedian_s\tp90_s\tmedian_load' $'1\t4\t250\t700\t2.50' $'2\t1\t500\t500\t8.00' $'3-4\t2\t950\t1000\t25.00' $'5+\t2\t500\t600\t6.00' '' \
+# The full runs alone, story/c's among them, fill the at_once table; the four builders' runs the last block.
+check "the buckets, medians, slowest five and builders' runs" "$(section --since 2026-10-01)" "$(printf '%s\n' \
+  $'at_once\truns\tmedian_s\tp90_s\tmedian_load' $'1\t5\t200\t700\t2.00' $'2\t1\t500\t500\t8.00' $'3-4\t2\t950\t1000\t25.00' $'5+\t2\t500\t600\t6.00' '' \
   $'start\tseconds\tbranch\tat_once\tstatus' $'2026-10-02T12:00:00Z\t1000\tb-1000\t4\t0' $'2026-10-02T11:00:00Z\t900\tb-900\t3\t0' \
-  $'2026-10-02T08:00:00Z\t700\tb-same\t1\t0' $'2026-10-02T08:00:00Z\t600\tb-same\t5\t0' $'2026-10-02T10:00:00Z\t500\tb-500\t2\t0')"
-check "a window with no full run says so" "$(section --since 2026-11-01)" "no full test runs logged in the window (2026-11-01 to 9999-12-30)"
+  $'2026-10-02T08:00:00Z\t700\tb-same\t1\t0' $'2026-10-02T08:00:00Z\t600\tb-same\t5\t0' $'2026-10-02T10:00:00Z\t500\tb-500\t2\t0' '' \
+  $'builder_runs\tmedian_s\tp90_s' $'4\t195\t400')"
+check "a window with no run says so, and counts no builders' runs" "$(section --since 2026-11-01)" "$(printf '%s\n' \
+  'no full test runs logged in the window (2026-11-01 to 9999-12-30)' '' $'builder_runs\tmedian_s\tp90_s' $'0\t-\t-')"
 rm "${P}/.swarm/test-runs.tsv"
 check "with no log (a project with no scripts/test.sh) it prints nothing" "$(section)" ""
 

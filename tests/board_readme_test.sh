@@ -2,6 +2,8 @@
 # board_readme_test.sh — swarm-dev's own board/stories/, board/epics/ and board/hld/ READMEs match the
 # templates a project copies under templates/docs/. A change to one without the other fails here.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
@@ -28,4 +30,10 @@ for kind in stories epics hld; do
   fi
   echo "ok   ${board} matches ${template}"
 done
+# The epics README's front-matter block must show stage:, or a staged HLD's epics have no documented field.
+# Goes red if someone drops the stage: line from the block.
+if ! awk '/^```$/{n++} n==1 && /^stage:/{f=1} END{exit !f}' board/epics/README.md; then
+  echo "FAIL board/epics/README.md front-matter block has no stage: line"; exit 1
+fi
+echo "ok   board/epics/README.md documents stage:"
 echo "all passed"

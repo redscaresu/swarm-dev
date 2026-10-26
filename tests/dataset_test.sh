@@ -31,6 +31,8 @@
 # is over 7 days old, so outcomes has judged every merge's rework, whatever day the test runs. gh is a stub on PATH. The fixture's path is left as mktemp gives it
 # (on macOS under /var, a symlink to /private/var).
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
