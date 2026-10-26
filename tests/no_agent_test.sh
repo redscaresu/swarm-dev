@@ -5,6 +5,8 @@
 # ${FX}/agents, failing while ${FX}/list.fail exists; gh is a stub answering a pending head. Both log each
 # call. A process that answers for a story (a tell, a wait-pr, a merge) is a fake swarm.sh that sleeps.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

@@ -8,6 +8,8 @@
 # it is silent. herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH: herdr logs each call,
 # lists the agents in ${ROOT}/agents ("<name> <pane>" lines, all idle) and adds one on agent start.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
