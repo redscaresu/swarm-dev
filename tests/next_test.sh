@@ -378,7 +378,8 @@ else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fail
 got="$(armwords '   - `stage v<S>`:' '`swarm.sh board-pr start <name>`' '`status: active`' 'Run `swarm.sh wait-pr <url>` in the background' \
   '`swarm.sh merge --board <url>` when `swarm.sh config merge` prints `agent` or `swarm.sh grants <url>` lists `merge`' \
   'Otherwise hand the PR to the user: the `epics` grant lets you set the epics active, not merge the PR' \
-  'If merge refuses, stop and tell the user' '`swarm.sh board-pr done <name>`' 'When that lists none (`board-pr open` failed), run the `board-pr open` line again')"
+  'If merge refuses, stop and tell the user' '`swarm.sh board-pr done <name>`' 'When that lists none (`board-pr open` failed), run the `board-pr open` line once more' \
+  'If it fails again, stop and tell the user what it printed' 'whether its epics are still drafts or the merge has made them active')"
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's stage arm opens a board PR, merges it only under merge = agent or a merge grant, else hands it to the user"
 else echo "FAIL commands/swarm.md's stage arm:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
@@ -832,6 +833,17 @@ if [[ "${out%%$'\n'*}" == gate ]]; then echo "ok   an open stage board PR lets n
 else echo "FAIL an open stage board PR: want 'gate', got '${out%%$'\n'*}'"; fails=$((fails + 1)); fi
 has_line "the gate lists the open stage board PR" "  stage PR awaiting merge: v1.3.0"
 rm -rf "${rdir}" "${rdir}-wt"
+# Once the user merges the stage PR its epics are no longer drafts; the worktree's row stays until
+# board-pr done removes it, so a later draft of the same stage is not held behind it unseen.
+release_repo "${GRANTED}" "item epics/a.md 'status: done' 'stage: v1.3.0' 'hld: h'" "${COMMIT}"
+mkdir -p "${rdir}-wt/_board-stage-v1-3-0"
+out="$(cd "${rdir}" && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${out}"
+has_line "a merged stage PR's worktree is still a gate row once its epics are active" "  stage PR awaiting merge: v1.3.0"
+rm -rf "${rdir}" "${rdir}-wt"
+# The stage before T counts as tagged once the newest tag on the base is at or above it: v1.1.0 was
+# never cut here, and v1.2.0 is on the base.
+expect_release "a staged draft whose minor before it was never tagged, a newer tag on the base: the stage step" "stage v1.2.0" 0 \
+  "${GRANTED}" "$(staged q v1.2.0)" "${COMMIT}"
 
 # A red main that merge recorded (main-red, with its fix-main story ready and unstarted on the board)
 # comes before everything, a working conductor's wait too. A later main-green of the same repo and

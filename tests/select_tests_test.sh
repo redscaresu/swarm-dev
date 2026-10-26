@@ -2,11 +2,15 @@
 # select_tests_test.sh — scripts/select-tests.sh on a fixture git repo that carries the real
 # scripts/test-map.tsv and fixture tests: each named path's change selects the test that names it
 # plus its row's floor and no other, a doc adds the doc floor, scripts/test.sh, the Makefile and
-# bin/lib select every test, a test selects itself, a board story nothing, a board README its
+# a bin/lib top-level line select every test, a test selects itself, a board story nothing, a board README its
 # template test, and a rename both paths' tests; committed, staged, unstaged and untracked changes
 # all count, and a test adds the four tests that read every test file. Any doubt selects every test: a path no row matches, a `named` path no test names (the
 # selector's own test, whose fixture names real paths, never counts as naming one), no origin/main.
-# An empty selection says so on stderr. --run hands the list to a stub make with JOBS=4, or runs
+# An empty selection says so on stderr. bin/ goes by reach: a change to a function the go arm reaches
+# selects the tests that run that arm (directly, through a wrapper function or a hook), a test that
+# sources the lib and calls a caller, and the bin floor, not a test that runs only the stop arm; a
+# call by a built name, a test that runs swarm.sh with no command word and a function no test reaches
+# each select every test, and say why. --run hands the list to a stub make with JOBS=4, or runs
 # nothing and says so. --functions names the bin/ functions and dispatch arms a change reaches,
 # from both sides of the diff, and the functions that run a changed .py; a line in no function, or a
 # .py no function runs, gives full. Last, --check-map: it names each unmapped path under bin/, scripts/,
@@ -38,6 +42,7 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections command_names; do DOC_FLOOR+=("tests/${t}_test.sh"); done
 CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
+BIN_FLOOR=(); for t in agent_state command_names doc_check events lib_path loose_match removed roles skill timeouts; do BIN_FLOOR+=("tests/${t}_test.sh"); done
 SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh)
 TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh)
 git init -q -b main "${G}"
@@ -45,7 +50,7 @@ mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" 
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
   hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
-for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
+for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
@@ -67,7 +72,8 @@ set -euo pipefail
 
 # go_to — what the go arm runs.
 go_to() {
-  echo go
+  echo go $(( 1 << 2 ))
+  uses_step
 }
 
 dispatch() {
@@ -103,7 +109,75 @@ noted() { echo noted; }  # a one-liner with a comment
 after() {
   echo after
 }
+
+step_one() {
+  echo one
+}
+
+uses_step() {
+  step_one
+}
+
+run_go_py() {
+  python3 bin/lib/runs_go.py
+}
+
+by_var() {
+  local fn="step_one"
+  "$fn"
+}
 EOF
+cat > "${G}/bin/lib/handle.sh" <<'EOF'
+# handle.sh — functions that run the go arm through a name set outside them.
+SW="bin/swarm.sh"
+by_file_name() {
+  "$SW" go
+}
+by_self() {
+  "$0" go
+}
+by_swarm_var() {
+  "$SWARM" go
+}
+EOF
+cat > "${G}/bin/lib/top.sh" <<'EOF'
+# top.sh — the fixture's calls at a file's top level, inside "$(...)".
+top_dir() { echo d; }
+top_abs() { echo "$1"; }
+TOP_DIR="$(top_dir)"
+TOP_ABS="$(top_abs "${TOP_DIR}")"
+EOF
+# reach's fixture: tests that run the go arm (directly, by a wrapper function, by a hook, by a script
+# whose path to swarm.sh is unquoted, by a hook that runs it through PATH, by a hook whose function
+# passes "$@" on, by a hook that passes "$@" on and names go, by a .py a function runs and the test
+# runs itself), run only the stop arm, source the lib to call step_one's caller (by name, or by a
+# quoted name in a variable), call step_one itself, read x.sh as text, call top.sh's functions, and
+# call handle.sh's, which run the go arm through a file-level name, $0 or $SWARM.
+# shellcheck disable=SC2016 # the hook's text, expanded when it runs
+printf '#!/usr/bin/env bash\n"$(dirname "$0")/../bin/swarm.sh" go\n' > "${G}/hooks/runs-go.sh"
+echo 'bash bin/swarm.sh go' > "${G}/tests/runs_go_test.sh"
+echo 'bash bin/swarm.sh stop' > "${G}/tests/runs_stop_test.sh"
+printf 'going() { bash bin/swarm.sh go "$@"; }\ngoing --fast\n' > "${G}/tests/wrapper_test.sh"
+echo 'bash hooks/runs-go.sh' > "${G}/tests/hook_test.sh"
+echo 'bash bin/swarm.sh go' > "${G}/scripts/start.sh"
+echo 'bash scripts/start.sh' > "${G}/tests/script_test.sh"
+echo 'swarm.sh go' > "${G}/hooks/bare.sh"
+echo 'bash hooks/bare.sh' > "${G}/tests/bare_hook_test.sh"
+printf 'source bin/lib/x.sh\nstep_one\n' > "${G}/tests/names_step_test.sh"
+# shellcheck disable=SC2016 # fixture text, expanded when it runs
+echo 'bash bin/swarm.sh "$@"   # go' > "${G}/hooks/fwd.sh"
+# shellcheck disable=SC2016 # fixture text, expanded when it runs
+echo 'bash hooks/fwd.sh "$1"' > "${G}/tests/fwd_test.sh"
+printf 'f() { bash bin/swarm.sh "$@"; }\nf go\n' > "${G}/hooks/fn-fwd.sh"
+echo 'bash hooks/fn-fwd.sh' > "${G}/tests/fn_fwd_test.sh"
+printf 'source bin/lib/x.sh\nuses_step\n' > "${G}/tests/sources_lib_test.sh"
+# shellcheck disable=SC2016 # fixture text, expanded when it runs
+printf 'for f in bin/lib/*.sh; do source "$f"; done\nby_var\n' > "${G}/tests/by_var_test.sh"
+echo 'wc -l bin/lib/x.sh' > "${G}/tests/reads_x_test.sh"
+for f in by_file_name by_self by_swarm_var; do printf 'source bin/lib/handle.sh\n%s\n' "${f}" > "${G}/tests/${f}_test.sh"; done
+printf 'source bin/lib/top.sh\ntop_dir\ntop_abs x\n' > "${G}/tests/top_test.sh"
+printf 'import subprocess\nsubprocess.run(["bash", "bin/swarm.sh", "go"])\n' > "${G}/bin/lib/runs_go.py"
+echo 'python3 bin/lib/runs_go.py' > "${G}/tests/py_go_test.sh"
 printf '"""Prints helper.X; aside.py is only mentioned here."""\nimport helper  # solo.py is only mentioned here\nprint(helper.X)\n' \
   > "${G}/bin/lib/named.py"
 echo 'print(3)' > "${G}/bin/lib/solo.py"
@@ -140,7 +214,7 @@ check "the gh shim selects the shell-scan and removed-name floor and the test th
   "$(lines "${SHIM_FLOOR[@]}" tests/names_shim_test.sh)"
 check "scripts/test.sh selects every test" "$(sel "echo 1 >> scripts/test.sh; ${commit}")" "${ALL}"
 check "the Makefile selects every test" "$(sel "echo 1 >> Makefile; ${commit}")" "${ALL}"
-check "a bin/lib file selects every test" "$(sel "echo 1 >> bin/lib/x.sh; ${commit}")" "${ALL}"
+check "a bin/lib file's top level selects every test" "$(sel "echo 1 >> bin/lib/x.sh; ${commit}")" "${ALL}"
 check "a test selects itself and the four tests that read every test file" "$(sel "echo 1 >> tests/x_test.sh; ${commit}")" \
   "$(lines "${TEST_FLOOR[@]}" tests/x_test.sh)"
 check "a new untracked test selects itself and those four" "$(sel 'echo 1 > tests/new_test.sh')" "$(lines "${TEST_FLOOR[@]}" tests/new_test.sh)"
@@ -162,6 +236,41 @@ check "it says why it selects every test" "$(cd "${G}" && bash "${SEL}" 2>&1 >/d
 sel "echo 1 >> board/stories/a.md; ${commit}" > /dev/null
 check "an empty selection says so on stderr" "$(cd "${G}" && bash "${SEL}" 2>&1 >/dev/null)" \
   "select-tests: no test file covers this branch's changes"
+
+# reach: the bin/ row, by function.
+GO=(tests/runs_go_test.sh tests/wrapper_test.sh tests/hook_test.sh tests/script_test.sh tests/bare_hook_test.sh
+  tests/fn_fwd_test.sh tests/fwd_test.sh tests/py_go_test.sh tests/by_file_name_test.sh tests/by_self_test.sh tests/by_swarm_var_test.sh)
+X_NAMERS=(tests/sources_lib_test.sh tests/names_step_test.sh tests/reads_x_test.sh)   # source or read x.sh
+check "a function the go arm reaches selects the go tests (handle.sh's through a file-level name, \$0 and \$SWARM), its callers' (by_var's through a quoted name), x.sh's namers and the bin floor, not the stop test" \
+  "$(sel "perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; ${commit}")" "$(lines "${GO[@]}" "${X_NAMERS[@]}" tests/by_var_test.sh "${BIN_FLOOR[@]}")"
+check "a deleted function still selects the tests of its callers" \
+  "$(sel "perl -0pi -e 's/step_one\\(\\) \\{\\n  echo one\\n\\}\\n//' bin/lib/x.sh; ${commit}")" \
+  "$(lines "${GO[@]}" "${X_NAMERS[@]}" tests/by_var_test.sh "${BIN_FLOOR[@]}")"
+check "the stop arm (and its other name, halt) selects the test that runs it, swarm.sh's namers and the bin floor, no other" \
+  "$(sel "perl -pi -e 's/echo stop/echo stopping/' bin/swarm.sh")" \
+  "$(lines tests/runs_stop_test.sh tests/runs_go_test.sh tests/wrapper_test.sh "${BIN_FLOOR[@]}")"
+check "a call after an arithmetic shift (\$(( 1 << 2 ))) still reaches its arm" \
+  "$(sel "perl -pi -e 's/^  step_one\\b/  step_one; :/' bin/lib/x.sh; ${commit}")" "$(lines "${GO[@]}" "${X_NAMERS[@]}" "${BIN_FLOOR[@]}")"
+# why — what select-tests.sh says on stderr in the fixture as the last case left it.
+why() { (cd "${G}" && { bash "${SEL}" > /dev/null; } 2>&1); }
+check "a function a top-level line calls in \"\$(...)\" selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo d;/echo e;/' bin/lib/top.sh; ${commit}")|$(why)" \
+  "${ALL}|select-tests: every test: bin/lib/top.sh:top_dir: top_dir runs outside any function, at bin/lib/top.sh:4"
+check "a function a top-level line calls in \"\$(... args)\" selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo \"\\\$1\";/echo \"\\\$1\/\";/' bin/lib/top.sh; ${commit}")|$(why)" \
+  "${ALL}|select-tests: every test: bin/lib/top.sh:top_abs: top_abs runs outside any function, at bin/lib/top.sh:5"
+check "a call by a built name that may be the function selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo one/echo 1/; s/^  step_one\\b/  \"step_\\\${1:-one}\"/' bin/lib/x.sh; ${commit}")|$(why)" \
+  "${ALL}|select-tests: every test: bin/lib/x.sh:step_one: bin/lib/x.sh:26 calls a function by a name it builds, which may be step_one"
+check "a variable set to a built name and run selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo one/echo 1/; s/^  step_one\\b/  fn=\"step_\\\${1:-one}\"; \"\\\$fn\"/' bin/lib/x.sh; ${commit}")|$(why)" \
+  "${ALL}|select-tests: every test: bin/lib/x.sh:step_one: bin/lib/x.sh:26 calls a function by a name it builds, which may be step_one"
+check "a test that runs swarm.sh with no command word selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo one/echo 1/' bin/lib/x.sh; echo 'for c in a b; do bash bin/swarm.sh \"\$c\"; done' > tests/blind_test.sh")|$(why)" \
+  "$(lines "${ALL}" tests/blind_test.sh)|select-tests: every test: tests/blind_test.sh runs swarm.sh with no command word in it"
+check "a function no test reaches selects every test, and says so" \
+  "$(sel "perl -pi -e 's/echo two/echo 2/' bin/lib/x.sh; ${commit}")|$(why)" \
+  "${ALL}|select-tests: every test: bin/lib/x.sh:sub_two: no test reaches it"
 
 # --functions, on the bin/ fixture above.
 fn() { sel "$1" --functions; }

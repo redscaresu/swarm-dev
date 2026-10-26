@@ -5,7 +5,13 @@
 # paths), from scripts/test-map.tsv. It fails toward more: a path no row matches, a `named` row that
 # finds no test, a `self` test that is gone or a git command that fails selects every
 # tests/*_test.sh, which scripts/test.sh logs as `all`, and says why on stderr; an empty selection
-# says so on stderr too. stdout is the list alone.
+# says so on stderr too. stdout is the list alone. A `reach` row (bin/) selects by function: for each
+# function and arm --functions gives, its callers in a static call graph of bin's shell up to the
+# dispatch arms (a function's code that names another calls it; code that runs swarm.sh calls the arm
+# its command names), and the tests that name a function on that chain or a reached arm's command, or
+# a hook or script that runs that arm, and the tests that name the changed file. It selects every test for --functions' full, a caller at a
+# file's top level, the catch-all arm, a call by a name built at run time ("cmd_${x}", eval), a test
+# that runs swarm.sh and names no arm's command, or a function no test reaches.
 # select_tests.py --check-map reads paths from stdin (`git ls-files`) and names each one under bin/,
 # scripts/, commands/, hooks/ or docs/ that no row matches; it exits 1 when there is one.
 # select_tests.py --functions prints, one per line, the bin/ functions those changes reach: each
@@ -29,7 +35,7 @@ import tokenize
 MAP = "scripts/test-map.tsv"
 TESTS = "tests/*_test.sh"
 BASE = "origin/main"
-KEYWORDS = ("named", "self", "all", "none")
+KEYWORDS = ("named", "self", "all", "none", "reach")
 ALONE = ("all", "none")
 KNOWN = ", ".join(KEYWORDS)
 MAPPED_DIRS = ("bin/", "scripts/", "commands/", "hooks/", "docs/")
@@ -47,7 +53,7 @@ DISPATCH = ("bin/swarm.sh", "dispatch")
 DEF = re.compile(r"([A-Za-z_][\w-]*)\(\)\s*([{(])")
 CASE = re.compile(r"\s*case .* in$")
 ARM = re.compile(r"\s*([^\s#()][^)]*)\)")
-HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.M)
+HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 
 
 class MapError(Exception):
@@ -112,9 +118,10 @@ def naming(root, tests, path):
     return out
 
 
-# select(root, rows, paths) — (the tests to run, None) or (None, why) for every test.
-def select(root, rows, paths):
-    tests, picked = all_tests(root), set()
+# select(root, rows, paths, base) — (the tests to run, None) or (None, why) for every test. The paths a
+# `reach` row select the tests that name them, and go to reaching() together, after the rest.
+def select(root, rows, paths, base):
+    tests, picked, reach = all_tests(root), set(), []
     for path in paths:
         row = row_for(rows, path)
         if row is None:
@@ -132,8 +139,16 @@ def select(root, rows, paths):
                 if path not in tests:
                     return None, f"{path}: the test is gone"
                 picked.add(path)
+            elif t == "reach":
+                reach.append(path)
+                picked.update(naming(root, tests, path))   # a test that reads the file as text
             elif t != "none":
                 picked.add(t)
+    if reach:
+        found, why = reaching(root, base, reach)
+        if why:
+            return None, why
+        picked |= found
     return sorted(picked), None
 
 
@@ -278,7 +293,7 @@ def names_py(text, path):
     name = os.path.basename(path)
     module = re.escape(name[:-len(".py")])
     return bool(re.search(BEFORE + re.escape(name) + AFTER, text)
-                or re.search(rf"(^|;)\s*(from|import)\s.*(?<![\w.]){module}(?!\w)", text, re.M))
+                or re.search(rf"(^|;)\s*(from|import)\s.*(?<![\w.]){module}(?!\w)", text, re.MULTILINE))
 
 
 # py_code(text) — a .py's text with its comments and docstrings (a string that is a statement of its
@@ -314,14 +329,8 @@ def runners(root, path):
         text = read(root, sh)
         shells[sh] = list(zip(text.split("\n"), owners(sh, text)))
     others = {p: read(root, p) for p in in_tree(root, OTHER_RUNNERS) if p not in NOT_NAMERS}
-    reach, todo, got = {path}, [path], set()
-    while todo:
-        x = todo.pop()
-        for y in sorted(pys):
-            if y not in reach and names_py(pys[y], x):
-                reach.add(y)
-                todo.append(y)
-    for x in sorted(reach):
+    got = set()
+    for x in py_reach(pys, path):
         named = set()
         for sh, lines in shells.items():
             for n, (line, labels) in enumerate(lines, 1):
@@ -336,6 +345,18 @@ def runners(root, path):
             return None, f"{x}: no function names it" + ("" if x == path else f", and it reaches {path}")
         got |= named
     return got, None
+
+
+# py_reach(pys, path) — the .py and every bin/lib .py that imports or names it, in turn, sorted.
+def py_reach(pys, path):
+    reach, todo = {path}, [path]
+    while todo:
+        x = todo.pop()
+        for y in sorted(pys):
+            if y not in reach and names_py(pys[y], x):
+                reach.add(y)
+                todo.append(y)
+    return sorted(reach)
 
 
 # in_tree(root, patterns) — the working tree's files that match the globs, sorted.
@@ -361,6 +382,279 @@ def changed_functions(root, base, paths):
             return None, why
         got |= labels
     return sorted(got), None
+
+
+# Runs swarm.sh: its path, closed by a quote or followed by a space ("${SWARM_HOME}/bin/swarm.sh",
+# bash bin/swarm.sh go), its name alone in quotes (a .py's "swarm.sh"), or its name as a command word
+# (swarm.sh go, through PATH); prose names it otherwise.
+SWARM_PATH = r"(?:[/\"']swarm\.sh[\"']|/swarm\.sh(?=[ \t])|(?m:(?:^|[;&|(]|\$\(|\b(?:then|do|else|exec)\s)[ \t]*)swarm\.sh(?=[ \t]))"
+# A command word: at a line's start, or after ; & | ( ) ! $( or a keyword that starts a command, or a
+# { that does not open an expansion.
+CMD_AT = r"(?:^|[;&|()!]|(?<!\$)\{|\b(?:then|do|else|if|while|until)\s)\s*"
+BUILT = r"[\"']?((?:[\w-]|\$\{[^}]*\}|\$\w+)+)[\"']?"
+CMD_WORD = re.compile(CMD_AT + BUILT)
+# A variable set to a name, and one run as a command ("$fn"), which calls what it holds: a literal
+# name, quoted or not, which call_graph counts as a call by the line that sets it, or a built one.
+ASSIGNED = re.compile(r"(?<![\w$-])(\w+)=" + BUILT)
+RUN_VAR = re.compile(CMD_AT + r"\"?\$\{?(\w+)\}?\"?(?=[\s;)]|\Z)", re.MULTILINE)
+EVAL = re.compile(CMD_AT + r"eval" + AFTER)
+EXPANSION = re.compile(r"(\$\{[^}]*\}|\$\w+)")
+CALL = re.compile(CMD_AT + r"\"?([\w-]+)")
+# A name the path to swarm.sh is put in, and a function that runs one with "$@".
+HANDLE = re.compile(r"(\w+)\s*=[^\n]*" + SWARM_PATH)
+# $0 and a variable with SWARM in its name: swarm.sh, which sources bin/lib, or a path set elsewhere.
+SELF = r"(?<![\w`$-])\$\{?(?:0|\w*SWARM\w*)\}?(?![\w-])"
+FORWARDER = r"([\w-]+)\(\)\s*[{(][^\n]*(?:NAMES)[^\n]*\"\$@\""
+# A case pattern that opens a line: the words in it are matched, not called.
+CASE_PATTERN = re.compile(r"^\s*\(?[^\s()|;]+(?:\s*\|\s*[^\s()|;]+)*\)(?=\s|\Z)")
+# A test runs swarm.sh: its path or a name for it as a command word, after any of VAR=x, env -u X, bash,
+# exec or timeout N; not an assignment's value, nor an argument (a reader's sed -n ... "${SWARM}").
+RUN_PREFIX = r"(?:(?:\w+=\S*|env(?:\s+-u\s+\S+)*|bash|sh|exec|timeout\s+\S+)\s+)*\"?"
+# Run swarm.sh outside bin/: a test that names one runs the commands it names.
+WRAPPERS = ("hooks/*", "scripts/*")
+CATCH_ALL = "arm *"
+
+
+# words_re(words) — a regex for any of the words, named as naming() names a file; one that never matches for none.
+def words_re(words, after=AFTER):
+    if not words:
+        return re.compile(r"(?!)")
+    return re.compile(BEFORE + "(?:" + "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True)) + ")" + after)
+
+
+# shell_code(text) — per line of a shell file, the code that names what it calls: comments, quoted text
+# and heredoc bodies blanked, but a $( ) inside double quotes (with its $( and )) or an unquoted heredoc
+# kept, and a trap's or a -c's quoted text kept whole. A << inside (( )) is a shift, not a heredoc.
+def shell_code(text):
+    buf, stack, docs, i, n = [], [], [], 0, len(text)   # stack: '"' per double quote, a paren count per $( in one
+    while i < n:
+        ch, quoted = text[i], bool(stack) and stack[-1] == '"'
+        if ch == "\n" and docs and not quoted:
+            buf.append(ch)
+            for delim, raw, tabs in docs:
+                i = heredoc(text, i + 1, delim, raw, tabs, buf)
+            docs = []
+            continue
+        if ch == "\\":
+            buf.append(blank(text[i:i + 2]) if quoted else text[i:i + 2])
+            i += 2
+            continue
+        if quoted:
+            sub = text.startswith("$(", i)
+            if ch == '"':
+                stack.pop()
+            elif sub:
+                stack.append(1)
+            buf.append("$(" if sub else blank(ch))
+            i += 2 if sub else 1
+            continue
+        whole = re.search(r"(?:\btrap|\s-c)\s+\Z", text[text.rfind("\n", 0, i) + 1:i])
+        m = re.compile(r"'[^']*'?|\"(?:[^\"\\]|\\.)*\"?" if whole else r"'[^']*'?|#[^\n]*").match(text, i)
+        if m and (m.group(0)[0] != "#" or i == 0 or text[i - 1].isspace() or text[i - 1] in ";|&("):
+            buf.append(m.group(0) if whole else blank(m.group(0)))
+            i = m.end()
+            continue
+        doc = re.compile(r"<<(-?)[ \t]*(['\"]?)([\w-]+)\2").match(text, i)
+        before = text[text.rfind("\n", 0, i) + 1:i]
+        if doc and not text.startswith("<<<", i) and before.count("((") <= before.count("))"):
+            docs.append((doc.group(3), bool(doc.group(2)), bool(doc.group(1))))
+        if ch == '"':
+            stack.append('"')
+            ch = " "
+        elif stack and ch in "()":
+            stack[-1] += 1 if ch == "(" else -1
+            if not stack[-1]:
+                stack.pop()
+        buf.append(ch)
+        i += 1
+    return "".join(buf).split("\n")
+
+
+def blank(s):
+    return re.sub(r"[^\n]", " ", s)
+
+
+# heredoc(text, i, delim, raw, tabs, buf) — a heredoc body from i to its delimiter's line, onto buf: blank,
+# but each $( ) in it kept when its delimiter is unquoted; the position of the newline that ends it.
+def heredoc(text, i, delim, raw, tabs, buf):
+    while i < len(text):
+        end = text.find("\n", i)
+        end = len(text) if end < 0 else end
+        line = text[i:end]
+        if (line.lstrip("\t") if tabs else line) == delim:
+            buf.append(blank(line))
+            return end
+        kept = blank(line)
+        for m in re.finditer(r"\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)", "" if raw else line):
+            kept = kept[:m.start(1)] + m.group(1) + kept[m.end(1):]
+        buf.append(kept + ("\n" if end < len(text) else ""))
+        i = end + 1
+    return len(text)
+
+
+# built_call(line, run_vars) — the regexes of the function names a line calls by a name it builds at
+# run time: a whole command word glued from a name and an expansion ("cmd_${x}"), or such a value set
+# to a variable in run_vars; not a case pattern (which a ) ends, where no $( opened it); or eval, which may call any.
+def built_call(line, run_vars):
+    out = [re.compile(r".*")] if EVAL.search(line) else []
+    words = [(m, m.group(1)) for m in CMD_WORD.finditer(line)]
+    words += [(m, m.group(2)) for m in ASSIGNED.finditer(line) if m.group(1) in run_vars]
+    for m, w in words:
+        after = line[m.end():m.end() + 1]
+        if after == ")" and not line[:m.start(1)].rstrip('"').endswith("$("):
+            continue
+        if after not in ("", ")") and not after.isspace() and after not in ";&|":
+            continue
+        if "$" in w and re.search(r"[\w-]", EXPANSION.sub("", w)):
+            out.append(re.compile("".join(r"[\w-]*" if p.startswith("$") else re.escape(p) for p in EXPANSION.split(w))))
+    return out
+
+
+# swarm_runs(text, arms, arm_re, scope=None) — the commands a unit's text runs swarm.sh with: each
+# arm's command that follows its path, $0, a variable with SWARM in its name (as runs_swarm takes), or
+# a name scope (the unit's whole file, else its text) gives the path (HANDLE, FORWARDER), not in
+# `prose`. One followed by an expansion ("$@"), but in a FORWARDER, runs each arm the text names, every
+# arm when it names none.
+def swarm_runs(text, arms, arm_re, scope=None):
+    scope = text if scope is None else scope
+    names = {m.group(1) for m in HANDLE.finditer(scope)}
+    ran = "|".join([SWARM_PATH, SELF] + [r"(?<![\w-])" + re.escape(n) + r"(?![\w-])" for n in names])
+    names |= {m.group(1) for m in re.finditer(FORWARDER.replace("NAMES", ran), scope)}
+    names = "|".join(map(re.escape, names or ["(?!)"]))
+    handle = r"(?:" + SWARM_PATH + r"[\"']?|" + SELF + r"|(?<![\w`${-])\$?\{?(?:" + names + r")\}?(?![\w-]))"
+    if not re.search(handle, text):
+        return set()
+    got, unsure = set(), False
+    for m in re.finditer(handle + r"[\"']?,?[ \t]+[\"']?(\$\S*|[\w-]+)", text):
+        if m.group(1) in arms:
+            got.add(m.group(1))
+        elif m.group(1).startswith("$"):
+            unsure = unsure or not re.match(r"[\w-]+\(\)", text[text.rfind("\n", 0, m.start()) + 1:])
+    return got | (set(arm_re.findall(text)) or set(arms) if unsure else set())
+
+
+# call_graph(root) — bin's static call graph, as a dict. callers: per function name or `arm <cmd>`, the
+# labels (owners') of the code lines that name it, comments left out. A unit that runs swarm.sh (a
+# function's or an arm's lines, a bin/lib .py, a hook or a script) calls each arm whose command its
+# text names, or every arm when it names none: a .py for the functions whose code names it or a .py
+# that imports it. top: per function or arm, where a shell file's top level calls it, or the .py that
+# runs it when a top level or no function runs that .py. dynamic: (regex,
+# where) per call by a built name. arms: every arm's command. wrappers: per hook, script or bin/lib .py
+# (and each .py that imports one), the arms it calls.
+# gone: names to find callers of beyond the functions defined now (a deleted one, whose callers break).
+def call_graph(root, gone=()):
+    units, fns, texts, g = {}, set(), {}, {"callers": {}, "top": {}, "dynamic": [], "wrappers": {}}
+    for sh in in_tree(root, SHELL_FILES):
+        text = texts[sh] = read(root, sh)
+        run_vars = set(RUN_VAR.findall(text))
+        for n, (line, code, labels) in enumerate(zip(text.split("\n"), shell_code(text), owners(sh, text)), 1):
+            m = DEF.match(line)
+            fns.update([m.group(1)] if m else [])
+            if labels:
+                units.setdefault(labels, []).append((f"{sh}:{n}", code_of(line), code, run_vars))
+    g["arms"] = arms = sorted({c[4:] for labels in units for c in labels if c.startswith("arm ")} - {"*"})
+    fn_re, arm_re = words_re(fns | set(gone), r"(?![\w.-])"), words_re(arms)   # a function is never named as board.sh is
+
+    def arms_run(text, scope=None):
+        return {"arm " + a for a in swarm_runs(text, arms, arm_re, scope)}
+
+    for labels, lines in units.items():
+        for c in labels if labels[0].startswith("arm ") else ():
+            g["callers"].setdefault(c, set()).update(labels)   # one arm's commands reach each other
+        scope = texts[lines[0][0].rsplit(":", 1)[0]]   # a unit's lines are all in one file
+        ran = arms_run("\n".join(line for _, line, _, _ in lines), scope) if FULL not in labels else set()
+        for where, line, code, run_vars in lines:
+            if FULL in labels:
+                named = {w for w in CALL.findall(code) if w in fns}
+            else:
+                named = set(fn_re.findall(CASE_PATTERN.sub("", code, count=1)))
+            if code.strip() or line.lstrip()[:1] in "\"'":   # not a heredoc's or a long string's line
+                g["dynamic"] += [(rx, where) for rx in built_call(line, run_vars)]
+            named |= {m.group(2) for m in ASSIGNED.finditer(line) if m.group(1) in run_vars and m.group(2) in fns | set(gone)}
+            for c in named | (arms_run(line, scope) if FULL in labels else ran):
+                if FULL in labels:
+                    g["top"].setdefault(c, where)
+                else:
+                    g["callers"].setdefault(c, set()).update(labels)
+    for w in in_tree(root, WRAPPERS):
+        g["wrappers"][w] = arms_run(read(root, w))
+    pys = {p: py_code(read(root, p)) for p in in_tree(root, (PY_FILES,))}
+    for py in pys:
+        ran = arms_run(read(root, py))
+        reach = py_reach(pys, py) if ran else []
+        by = {label: where for labels, lines in units.items() for where, line, _, _ in lines
+              if any(names_py(line, x) for x in reach) for label in labels}
+        for c in ran:
+            if FULL in by or not by:
+                g["top"].setdefault(c, f"{py}, " + (f"which {by[FULL]} runs" if by else "which no function runs"))
+            g["callers"].setdefault(c, set()).update(by)
+        for x in reach:   # a test that runs it, or a .py that imports it, runs these arms
+            g["wrappers"][x] = g["wrappers"].get(x, set()) | ran
+    return g
+
+
+# chain_of(g, start) — (the function or arm and every caller of each, up to the dispatch arms, sorted,
+# None), or (None, why) when one runs outside any function, is the catch-all arm, or may be called by a
+# built name.
+def chain_of(g, start):
+    chain, todo = {start}, [start]
+    while todo:
+        x = todo.pop()
+        if x == CATCH_ALL:
+            return None, "the catch-all arm runs for any command"
+        if x in g["top"]:
+            return None, f"{x} runs outside any function, at {g['top'][x]}"
+        for rx, where in g["dynamic"]:
+            if not x.startswith("arm ") and rx.fullmatch(x):
+                return None, f"{where} calls a function by a name it builds, which may be {x}"
+        for c in sorted(g["callers"].get(x, ())):
+            if c not in chain:
+                chain.add(c)
+                todo.append(c)
+    return sorted(chain), None
+
+
+# runs_swarm(text) — whether a test's text runs swarm.sh (RUN_PREFIX). A name for it is one the text
+# sets to its path, or any with SWARM in it, which a test can take from a file it sources.
+def runs_swarm(text):
+    names = "|".join([re.escape(m.group(1)) for m in HANDLE.finditer(text)] + [r"\w*SWARM\w*"])
+    command = r"(?:[^\s=\"]*/)?swarm\.sh|\$\{?(?:" + names + r")\}?"
+    return bool(re.search(CMD_AT + RUN_PREFIX + "(?:" + command + r")\"?(?=\s|\)|\Z)", text, re.MULTILINE))
+
+
+# reaching(root, base, paths) — (the tests that reach what the changed bin paths change, None), or (None,
+# why) for every test. A test reaches a changed function when it names a function on its chain, a
+# reached arm's command, or a hook or script that runs that arm; a changed .py also selects the tests
+# that name it or a .py that imports it. Every test: --functions' full, a chain chain_of refuses, a
+# test that runs swarm.sh and names no arm's command, or a function no test reaches.
+def reaching(root, base, paths):
+    labels, why = changed_functions(root, base, paths)
+    if why:
+        return None, why
+    g = call_graph(root, [label.split(":", 1)[1] for label in labels if ":arm " not in label])
+    tests = {t: read(root, t) for t in all_tests(root) if t not in NOT_NAMERS}
+    any_arm = words_re(g["arms"])
+    for t, text in tests.items():
+        if runs_swarm(text) and not any_arm.search(text):
+            return None, f"{t} runs swarm.sh with no command word in it"
+    picked = set()
+    pys = {p: py_code(read(root, p)) for p in in_tree(root, (PY_FILES,))}
+    for path in paths:
+        if matches(path, (PY_FILES,)):
+            for x in py_reach(pys, path):
+                picked.update(naming(root, sorted(tests), x))
+    for label in labels:
+        chain, why = chain_of(g, label.split(":", 1)[1])
+        if why:
+            return None, f"{label}: {why}"
+        arms = {c for c in chain if c.startswith("arm ")}
+        said = words_re([c[4:] if c in arms else c for c in chain]
+                        + [os.path.basename(w) for w, called in g["wrappers"].items() if called & arms])
+        found = {t for t, text in tests.items() if said.search(text)}
+        if not found:
+            return None, f"{label}: no test reaches it"
+        picked |= found
+    return picked, None
 
 
 def check_map(rows, paths):
@@ -400,7 +694,7 @@ def main(argv):
         return 0
     try:
         base = merge_base(root)
-        picked, why = select(root, rows, changed(root, base))
+        picked, why = select(root, rows, changed(root, base), base)
     except subprocess.CalledProcessError as e:
         picked, why = None, f"git {e.cmd[3]} failed: {e.stderr.strip()}"
     if picked is None:
