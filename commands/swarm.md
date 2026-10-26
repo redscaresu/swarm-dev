@@ -121,7 +121,8 @@ Repeat until a step below says stop:
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
      and no tell on the way. Run the exit it names. For a ready story it is
-     `swarm.sh hold <slug> <reason>`, saying why it waits. A hold only answers the line: if no
+     `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
+     `swarm.sh hold <slug> <reason>` when it should wait, saying why. A hold only answers the line: if no
      agent is back by the next poll, it comes back. For a story in review under `merge = agent`
      it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
      no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
