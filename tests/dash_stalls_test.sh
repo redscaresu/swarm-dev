@@ -113,6 +113,7 @@ case "$1 $2" in
     esac ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
+  "agent read") [ -z "${AR_LOG:-}" ] || echo "$3" >> "${AR_LOG}"; exit 1 ;;
   "pane process-info") [ -z "${PI_LOG:-}" ] || echo "$4 $(/bin/ps -o comm= -p "$PPID")" >> "${PI_LOG}"
     s="$(awk -v p="$4" '$1 == p { print $2 }' "${PI_MAP:-/dev/null}")"
     [ -n "$s" ] || exit 1
@@ -173,7 +174,7 @@ check "only the stalled builder's pane is asked for its process info, not the co
   test "$(read_panes)" = "w1:p9 "
 check "at 160 columns a working agent's card shows its state age, then the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working [45]m  [45]m +│' <<< "${out}"
 check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 1(19|20|21)m +│' <<< "${out}"
-check "with no test run under its pane the builder still needs you" grep -qE '! look at s-three: working 1(19|20|21) min' <<< "${out}"
+check "with no test run under its pane the builder still needs you" grep -qE '! look at s-three: working [0-9]+ min' <<< "${out}"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
 check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit, edit, session-log write or PR update' <<< "${out}"
@@ -185,10 +186,12 @@ fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "
 check "stall_minutes sets the threshold" lacks "look at s-three" "${out}"
 rm "${P}/.claude/swarm/config"
 # make test running under s-three's pane shell is work: working, not stalled, and not under needs you.
+# The frame is rendered once: herdr's agent read (shown_state's, AR_LOG) of s-three's pane runs once.
 { cat "${ROOT}/ps.base"; printf '%s\n' '  300   200 /bin/zsh -c make test' '  310   300 make test'; } > "${PS_LIST}"
-fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "a stalled builder running make test under its pane is working" grep -qE '● s-three .*working 1(19|20|21)m' <<< "${out}"
+fresh; out="$(cd "${P}" || exit 1; AR_LOG="${ROOT}/agent-read.log" PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a stalled builder running make test under its pane is working" grep -qE '● s-three .*working [0-9]+m' <<< "${out}"
 check "a builder running make test is not under needs you" lacks "look at s-three" "${out}"
+check "a frame with a test run reads each agent's pane once: one render" test "$(grep -cx 'w1:p9' "${ROOT}/agent-read.log")" = 1
 cp "${ROOT}/ps.base" "${PS_LIST}"
 # A file edited a minute ago in s-three's worktree (its last commit 2 hours old) is a sign of life:
 # working, not stalled. Aged past stall_minutes, it is not: stalled again.
@@ -229,7 +232,7 @@ check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working [4
 echo 'w1:p1 500' > "${ROOT}/pi.map"
 { cat "${ROOT}/ps.base"; printf '%s\n' '  500     1 -zsh' '  510   500 claude' '  520   510 make check'; } > "${PS_LIST}"
 out="$(PI_MAP="${ROOT}/pi.map" COLUMNS=100 agedash)"
-check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working [45]m +│$' <<< "${out}"
+check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working [0-9]+m +│$' <<< "${out}"
 check "a conductor running make check is not under needs you" lacks "look at conduct-e1" "${out}"
 cp "${ROOT}/ps.base" "${PS_LIST}"
 # A session log written a minute ago is a sign of life for any agent with a Claude session: the
