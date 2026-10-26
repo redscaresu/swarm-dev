@@ -166,7 +166,11 @@ by hand.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
 - `scripts/select-tests.sh` prints the test files that cover this branch's changes against `origin/main`,
   using `scripts/test-map.tsv`. When a changed file has no row in the map, or its row finds no test, it
-  prints every test file. `--run` runs the list through `make test`, four files at a time.
+  prints every test file. A change under `bin/` selects by function: the tests that name a changed
+  function, one of its callers up to `bin/swarm.sh`'s dispatch arms, or the command of an arm on that
+  path, plus the tests that read `bin/`'s code as text. When it cannot follow the calls (a change
+  outside any function, a call by a name built at run time, or a test that runs `swarm.sh` with no
+  command in its text), it prints every test file. `--run` runs the list through `make test`, four files at a time.
   `--functions` prints the `bin/` functions the branch changed instead, as `<file>:<function>`, or
   `bin/swarm.sh:arm <command>` for a dispatch arm. For a changed `bin/lib/*.py` it prints the functions
   that run it. It prints `full` when a change falls outside any function or no function runs the `.py`.

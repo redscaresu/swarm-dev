@@ -5,13 +5,17 @@
 #   self   the path itself, a test file
 #   all    every test (alone)
 #   none   no test (alone)
+#   reach  the tests that reach the bin/ functions the change touches: each function's callers up to
+#          bin/swarm.sh's dispatch arms, and the tests that name one of them or a reached arm's command
 # A row with `named` and test files selects both: the files are its floor, the tests that read every
 # file the row covers through a glob, which name none of them. A path no row matches selects every
 # test, and so does a `named` that finds none. tests/select_tests_test.sh fails on a tracked file
 # under bin/, scripts/, commands/, hooks/ or docs/ that no row matches.
 
-# Every test that runs swarm.sh sources every bin/lib/*.sh: all, until select-tests-by-reach narrows it.
-bin/swarm.sh bin/lib/*.sh bin/lib/*.py	all
+# A test that runs swarm.sh sources every bin/lib/*.sh, so bin/ goes by function, not by file; select_tests.py
+# selects every test when it cannot follow the calls. The floor reads bin's code as text (a scan of every
+# file, the dispatch arms, the settings), so it names no function a change reaches.
+bin/swarm.sh bin/lib/*.sh bin/lib/*.py	reach tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh
 # loose_match_test.sh and timeouts_test.sh scan every tracked shell file under bin/ and hooks/.
 bin/gh-shim/gh	named tests/loose_match_test.sh tests/timeouts_test.sh
 # test.sh sets every test's environment, and the Makefile runs it.
