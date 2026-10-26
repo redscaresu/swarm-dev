@@ -133,7 +133,7 @@ Before you open a PR:
 
 ```bash
 make hooks                                  # once: the gitleaks pre-commit hook
-shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
+shellcheck bin/swarm.sh bin/lib/*.sh bin/gh-shim/gh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh scripts/select-tests.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py scripts/select_tests.py
 make check                                  # scripts/lint over tests/*_test.sh
 scripts/select-tests.sh --run               # before a push: the tests mapped to what the branch changed, at JOBS=4
@@ -150,7 +150,7 @@ want the whole suite locally.
 
 The machine-wide cap on `make test` is the file `~/.swarm/test-cap`, read only by `scripts/test.sh`.
 A whole number N lets at most N runs go at once on the machine, whatever their project. A run waits
-for a free slot under `~/.swarm/test-slots/`. A missing file, an empty file or 0 means no cap, and
+for a free slot under `~/.swarm/test-slots/`. The wait has no time limit: a holder that is stopped (Ctrl-Z) or hung keeps its slot until it ends or you `rm -r` the slot directory the waiting message names. A missing file, an empty file or 0 means no cap, and
 nothing is made under `~/.swarm`. A `make test` that a test starts inside another run is nested: it
 skips the cap and takes no slot. It is no `swarm.sh` setting, so it is not in `CONFIG_KEYS` or
 reference.md's settings table.
