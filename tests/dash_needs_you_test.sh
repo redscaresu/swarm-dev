@@ -183,6 +183,8 @@ litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
 litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
 # A costs: money merge: with merge = human the lead's, as any merge; with merge = agent the user's (below).
 litem stories/m-paid.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/5'
+# A story a close kept (kept:, its PR not reviewed): the lead's to review or drop, never a merge row.
+litem stories/k-kept.md '' 'status: review' 'prs: https://github.com/o/l/pull/6' 'kept: 2026-10-14 close (not reviewed)'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
 litem epics/d.md '' 'status: draft'
 litem hld/h.md '' 'status: draft'
@@ -230,6 +232,7 @@ joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s 
 YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft epic d: /epic d" "! agree draft HLD h: /hld h")
 LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
+  "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
   "! look at l-gone: session ended" "! look at l-stall: working 1")
 echo "lead = session" > "${L}/.claude/swarm/config"
@@ -285,6 +288,8 @@ out="$(ldash 100)"
 check "lead off: no lead's queue" lacks "lead's queue" "${out}"
 check "lead off: the legend says ! is needs you" has "! needs you (session gone or unknown)" "${out}"
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead off: needs you lists a kept story with its exits" \
+  has "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
 
 # An agreed HLD with no planned: is the lead's to plan (next's plan-hld), no row the user must act on;

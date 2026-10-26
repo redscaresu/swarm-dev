@@ -81,5 +81,13 @@ W="$(sw board-pr start scope-med)"
 mkdir -p "${W}/docs/stories"; printf -- '---\nkind: code\nstatus: ready\nepic: med\n---\n\n# med-a\n' > "${W}/docs/stories/med-a.md"
 is "a medium epic's board PR opens" "${URL}" "$(sw board-pr open scope-med "Plan med" "${ROOT}/body.md")"
 
+# The critic's brief comes from commands/plan-epic.md, which the stubs above do not read: pin its line,
+# in the large-epic paragraph, and the **Areas:** line it reads.
+large="$(tr '\n' ' ' < "$(dirname "${BASH_SOURCE[0]}")/../commands/plan-epic.md" | tr -s ' ' | grep -oE 'A large epic.*A medium epic' || true)"
+# shellcheck disable=SC2016 # the patterns hold literal backticks
+is "the split critic flags a child's bare-file Areas entry" yes "$(grep -qE "no child's \*\*Areas:\*\* line names a bare file where only part of it will change \(the finding names the .file:part. entries to write instead\)" <<< "${large}" && echo yes || echo no)"
+# shellcheck disable=SC2016
+is "the split instruction has each child write an Areas line" yes "$(grep -qE 'and an \*\*Areas:\*\* line naming the .file:part. areas it will change' <<< "${large}" && echo yes || echo no)"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
