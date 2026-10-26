@@ -5,6 +5,8 @@
 # names it as a backticked `<kind>: ` line. A kind on GAPS is a known gap, printed but not yet handled.
 # gh is a stub answering a green head; herdr a stub listing no agent.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"

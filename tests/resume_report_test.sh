@@ -25,6 +25,8 @@
 # nothing, with herdr in the background so one that hangs holds no prompt. start_agent runs sourced
 # with its helpers stubbed; herdr is a stub that logs each call's argv, %q-quoted.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

@@ -2,15 +2,16 @@
 # swarm.sh — run agents in herdr panes so every one can be watched.
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
-#   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same function or file, and with --strict refuse
+#   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
-#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or a green PR in review that waits on the user (merge = human, or merge holds it); print each new one
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story, a green PR in review that waits on the user (merge = human, or merge holds it), or a started story with no live agent (no-agent: <slug>, exit: <exit>); print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell and watch run it themselves
 #   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
+#   swarm.sh restart <slug>                                start a started story's builder again once herdr no longer lists it, in its worktree, branch and tab: it reopens the builder's last Claude session when its resume command names one that took its brief, else starts a fresh builder on the last model with a handover brief; holds the story's step-up lock; refused while the builder is listed, with no worktree or one off story/<slug> or holding a git step left unfinished, for a story not ready, kind: lead, held or escalated, with a PR merged or set to auto-merge, or with a step-up waiting (step-up --resume)
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not, and prompt one whose turn has ended to read it (once a minute at most, the rest a minute later)
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
@@ -51,7 +52,9 @@
 #
 # The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
 # .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
-# of the git repo you are in. Settings live in .claude/swarm/config (see config below). Must run
+# of the git repo you are in. With SWARM_FORBID_PROJECT naming a directory (the test runner and
+# tests/test_helpers.sh name the checkout the tests run from), that project and its worktrees are refused.
+# Settings live in .claude/swarm/config (see config below). Must run
 # inside herdr (HERDR_ENV=1). An epic gets a tab named for it: the conductor's pane, then a pane per
 # story, each named. A story outside any epic gets its own tab. Tabs hold at most four panes (a 2x2
 # grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
@@ -159,6 +162,20 @@ if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]
   PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
 else
   PROJECT_DIR="$(find_project)"
+fi
+# A test names the checkout it runs from in SWARM_FORBID_PROJECT (scripts/test.sh and tests/test_helpers.sh
+# set it to the main checkout): swarm.sh refuses to act on that project, named directly (a cd into it,
+# SWARM_PROJECT) or through a worktree of it (SWARM_PROJECT naming the worktree, which find_project
+# takes as given, so its main checkout is compared too). That covers swarm.sh calls; the hooks' own
+# event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log) are not swarm.sh calls and are not.
+if [[ -n "${SWARM_FORBID_PROJECT:-}" ]]; then
+  forbid_dir="$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" || forbid_dir=""
+  forbid_main="$(main_checkout "${PROJECT_DIR}" 2>/dev/null)" || forbid_main=""
+  [[ -z "${forbid_main}" ]] || forbid_main="$(cd "${forbid_main}" 2>/dev/null && pwd -P)" || forbid_main=""
+  if [[ -n "${forbid_dir}" ]] && [[ "$(cd "${PROJECT_DIR}" && pwd -P)" == "${forbid_dir}" || "${forbid_main}" == "${forbid_dir}" ]]; then
+    die "SWARM_FORBID_PROJECT: ${PROJECT_DIR} is the checkout the tests run from, or a worktree of it; a test cd's into a project of its own, or names one in SWARM_PROJECT"
+  fi
+  unset forbid_dir forbid_main
 fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 
@@ -506,6 +523,7 @@ dispatch() {
     step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
+    restart) require_herdr; [[ $# -eq 1 ]] || die "restart: takes one slug (swarm.sh restart <slug>)"; restart_build "$1" ;;
     unblock) if [[ "${1:-}" == --startable ]]; then
                [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
                unblock_startable "$2"
@@ -652,7 +670,7 @@ codex_story_prompt() {
 # group can miss a child forked while it is sent: STOP the group first). stop_codex stops it
 # after codex_minutes (SWARM_CODEX_SECONDS, a whole number of seconds, overrides it, for tests), or when this command is sent
 # TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
-# events.tsv's line says so; otherwise it exits as codex did. codex's output, stderr merged into
+# events.tsv's line says so, and it writes a reap line, target codex-<story or base>; otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
 # child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex whose last lines hold its own
 # limit message (CODEX_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a
@@ -724,6 +742,7 @@ codex_review() {
     return "${rc}"
   fi
   stop_codex "${pid}"
+  record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min"
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
 }
 
@@ -939,6 +958,8 @@ main() {
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
   elif [[ "${EV_CMD}" == close* ]] && stepped_up_since "${EV_TARGET}" "${EV_START}"; then
     :   # a step-up took the close's place (close_agent): its escalate line ends that build
+  elif [[ "${EV_CMD}" == restart ]]; then
+    :   # restart_build logged its own ok line, naming how it started the builder
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
   fi

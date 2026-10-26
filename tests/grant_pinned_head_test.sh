@@ -5,10 +5,12 @@
 # for by then, a file list cut short resolves to none, and an unmoved head still resolves to its HLD
 # and merges. A workflow file puts the PR under none (.github/ is a path only the user changes, and
 # the PR is epic g's, which no story lists, so a file off the board would too). The gh stub is
-# merge_test.sh's, trimmed to what a merge reads; its pr view serves the head from ${FX}/head.<n> on
+# merge_fixture.sh's, trimmed to what a merge reads; its pr view serves the head from ${FX}/head.<n> on
 # the nth read, else ${FX}/head (the base likewise), and compare/<base>...<sha> serves
 # ${FX}/compare.<sha>.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

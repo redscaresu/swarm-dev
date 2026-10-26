@@ -1,0 +1,40 @@
+# test-map.tsv — scripts/select-tests.sh's map from a changed path to the tests/*_test.sh files to run.
+# A row is <glob>[ <glob>...]<TAB><target>[ <target>...], and a path takes the first row with a glob
+# that matches it: ** spans directories, * and ? do not. A target is a test file, or one of:
+#   named  every test whose text names the path's basename, read at run time
+#   self   the path itself, a test file
+#   all    every test (alone)
+#   none   no test (alone)
+# A row with `named` or `self` and test files selects both: the files are its floor, the tests that
+# read every file the row covers through a glob or a directory, which name none of them. A path no
+# row matches selects every test, and so does a `named` that finds none. tests/select_tests_test.sh
+# fails on a tracked file under bin/, scripts/, commands/, hooks/ or docs/ that no row matches.
+
+# Every test that runs swarm.sh sources every bin/lib/*.sh: all, until select-tests-by-reach narrows it.
+bin/swarm.sh bin/lib/*.sh bin/lib/*.py	all
+# loose_match_test.sh and timeouts_test.sh scan every tracked shell file under bin/ and hooks/, and
+# removed_test.sh greps all of bin/ for a removed name.
+bin/gh-shim/gh	named tests/loose_match_test.sh tests/timeouts_test.sh tests/removed_test.sh
+# test.sh sets every test's environment, and the Makefile runs it.
+scripts/test.sh Makefile	all
+# The selector's own files. Its test's fixture names real paths, so select_tests.py never counts that
+# test as naming one; this row is how the selector's files reach it.
+scripts/select-tests.sh scripts/select_tests.py scripts/test-map.tsv	tests/select_tests_test.sh
+scripts/*	named
+# Every command file is read by the tests that check the docs' names, the roles, the codex lines, the
+# skill's links, the removed names, and the bare /swarm that command_names_test.sh greps every command for.
+commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex_test.sh tests/skill_test.sh tests/removed_test.sh tests/command_names_test.sh
+hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh
+# The docs: the tests that name the file, always the ones that check or read the real docs, and
+# command_names_test.sh, which greps README.md, three docs and all of docs/assets for a bare /swarm.
+README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh tests/llms_test.sh tests/config_test.sh tests/epic_codex_test.sh tests/board_pr_test.sh tests/merge_test.sh tests/skill_test.sh tests/removed_test.sh tests/flow_sections_test.sh tests/command_names_test.sh
+# A test, and the four tests that read every tests/*_test.sh: the mktemp-root checks of
+# sleep_scale_test.sh and test_cap_test.sh, removed_test.sh's grep and test_shard_test.sh's split.
+tests/*_test.sh	self tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh
+# A test helper: removed_test.sh greps every tests/*.sh.
+tests/*.sh	named tests/removed_test.sh
+tests/**	named
+# A board README is checked against its template under templates/docs/ (scripts/board-only.sh does
+# not count it as board-only for that reason); every other board file is skipped by CI's board-only gate.
+board/README.md board/*/README.md	tests/board_readme_test.sh
+board/**	none

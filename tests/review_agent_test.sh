@@ -6,6 +6,8 @@
 # timeout. The claude stub lists their sessions busy until then, idle after. gh's PR head is the
 # file ${ROOT}/head.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -50,6 +52,11 @@ case "$1 $2" in
                     unreadgone) [ -e "$H/quick" ] && echo "head: NEW-REVIEW" > "$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/[a-z0-9-]*\.md' | head -1)"
                                 awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.new" && mv "$H/agents.new" "$H/agents"; exit 1 ;;
                     unreadunlisted) touch "$H/listfail"; exit 1 ;;
+                    unreadlogged) # no reply read, and the agent's session log has the brief
+                                  sid=$(awk -v p="$3" '$2 == p { print $3 }' "$H/agents"); mkdir -p "$H/projects/p"
+                                  python3 -c 'import json, sys; print(json.dumps({"type": "user", "message": {"content": sys.argv[1]}}))' "$4" >> "$H/projects/p/$sid.jsonl"
+                                  exit 1 ;;
+                    latelog) touch "$H/sentprompt"; printf '%s' "$4" > "$H/lastbrief"; exit 1 ;;   # no reply read; the log has the brief once herdr lists agents
                     sent) exit 0 ;;
                   esac
                   # With quick, the agent writes its findings file while its brief is still being delivered.
@@ -65,6 +72,12 @@ case "$1 $2" in
   "agent get")    [ -e "$H/getidle" ] && echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "pane close")   awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.new" && mv "$H/agents.new" "$H/agents" ;;
   "agent list")   [ -e "$H/listfail" ] && { echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1; }
+                  if [ -e "$H/sentprompt" ] && [ ! -e "$H/latelogged" ]; then
+                    touch "$H/latelogged"; sid=$(awk '{ s = $3 } END { print s }' "$H/agents"); mkdir -p "$H/projects/p"
+                    python3 -c 'import json, sys; print(json.dumps({"type": "user", "message": {"content": sys.argv[1]}}))' "$(cat "$H/lastbrief")" >> "$H/projects/p/$sid.jsonl"
+                    # With authfail, the turn the brief started stopped on an expired login.
+                    [ ! -e "$H/authfail" ] || echo '{"type":"assistant","error":"authentication_failed","message":{"content":[{"type":"text","text":"Login expired · Please run /login"}]}}' >> "$H/projects/p/$sid.jsonl"
+                  fi
                   awk -v d="$H/done" 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { s = system("test -e " d "/" $1) == 0 ? "idle" : "working"
                       printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, s, $2 }
@@ -311,6 +324,32 @@ echo unreadunlisted > "${ROOT}/prompt"
 check "when herdr cannot list agents after review-s17's unclear start, review-agent fails, says its state is unknown, and keeps the old review aside" "1|yes|no|head: OLD-REVIEW" \
   "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s17 "${PR}")"; echo "$?|$(has "its state is unknown" "${o}")")|$([[ -e "${p}/.swarm/reviews/s17.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s17.md.prev" 2>/dev/null)"
 rm -f "${ROOT}/prompt" "${ROOT}/listfail"
+
+# An unclear start whose agent took the brief, though herdr never said so: the session's log has it,
+# and the agent sits idle (its codex runs). review-agent returns 0 and records the head. s18's session
+# is not listed (gone) while the brief goes, which is the old start reading's blind spot; s19's log
+# gets the brief only after the start's reads, so only the failure's own check finds it.
+for s in s18 s19 s20 s21; do
+  sed "s/s4/${s}/g" "${b}/stories/s4.md" > "${b}/stories/${s}.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${s}" "${ROOT}/svc-wt/${s}" origin/main
+  echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/${s}.md"
+done
+echo unreadlogged > "${ROOT}/prompt"; touch "${ROOT}/getidle" "${ROOT}/done/review-s18" "${ROOT}/gone/review-s18"
+check "when review-s18's session took the brief (it is in the log) though herdr read no reply, review-agent exits 0, closes nothing, records the head and drops the old findings" "0|no|${HEAD_SHA}|no" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s18 "${PR}")"; echo "$?|$(grep -qF 'is closed)' <<< "${o}" && echo yes || echo no)")|$(cat "${p}/.swarm/reviews/s18.head" 2>/dev/null)|$([[ -e "${p}/.swarm/reviews/s18.md" ]] && echo yes || echo no)"
+echo latelog > "${ROOT}/prompt"; touch "${ROOT}/done/review-s19"
+check "when review-s19 sits idle with the brief in its session log after the start's reads, review-agent exits 0 and records the head" "0|yes|${HEAD_SHA}" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s19 "${PR}")"; echo "$?|$(has "the agent is running" "${o}")")|$(cat "${p}/.swarm/reviews/s19.head" 2>/dev/null)"
+# The same idle agent whose log has no brief did not take it: that start still fails.
+rm -f "${ROOT}/sentprompt" "${ROOT}/latelogged"; echo unread > "${ROOT}/prompt"; touch "${ROOT}/done/review-s20"
+check "when review-s20 sits idle and its log has no brief, review-agent still fails, and records no head" "1|yes|no" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s20 "${PR}")"; echo "$?|$(has "may have its brief" "${o}")")|$([[ -e "${p}/.swarm/reviews/s20.head" ]] && echo yes || echo no)"
+# An idle agent that took the brief and then stopped on an expired login runs nothing: that start fails.
+echo latelog > "${ROOT}/prompt"; touch "${ROOT}/authfail" "${ROOT}/done/review-s21"
+check "when review-s21 took the brief and stopped on an expired login, review-agent fails, says so, and records no head" "1|yes|no" \
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s21 "${PR}")"; echo "$?|$(has "took its brief and stopped on an expired login" "${o}")")|$([[ -e "${p}/.swarm/reviews/s21.head" ]] && echo yes || echo no)"
+rm -f "${ROOT}/sentprompt" "${ROOT}/latelogged" "${ROOT}/authfail"
+rm -f "${ROOT}/prompt" "${ROOT}/getidle"
 
 # --- An agent that writes its findings before review-agent returns keeps them: only the last
 # review's file is removed.

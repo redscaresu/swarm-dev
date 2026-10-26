@@ -30,6 +30,12 @@
 #     <task-id> carrying a <status> since: the session
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
+#   test_running(info, stall_minutes) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read,
+#     a process under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk)
+#     runs a test suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh,
+#     or the script itself) and started less than TEST_RUN_STALLS times stall_minutes ago: the agent
+#     is working, however quiet. An older run may be hung, and is none. Never prints a command. Info
+#     or ps that cannot be read is no run.
 #   usage_limit(text) -> ("dialog", <option>) when the pane text, after its last reply (⏺ or ●), ends on
 #     Claude Code's live usage-limit dialog: its option lines ("Stop and wait for limit to reset" /
 #     "<option>. Wait here, then continue automatically") among the last USAGE_TAIL non-empty lines,
@@ -717,20 +723,23 @@ SLOW_PROMPT_TIMEOUT_MS=300000
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), and fails loudly rather than reporting success. It reports the
 # prompt taken on evidence: herdr's reply, or prompt_settle (working, blocked, a turn finished since,
-# or, for an agent whose Claude session read idle before the send, that session busy, waiting, or
-# with the prompt in its log since: DELIVER_LINE, else the file's first non-blank line). It sends it
+# or, for an agent with a Claude session on record, that session showing it: busy or waiting when it
+# read idle before the send, else only the prompt in its log since: DELIVER_LINE, else the file's
+# first non-blank line). herdr reading it idle or `unclear` does not outweigh that session: a new
+# review agent reads so through the turn it is on. It sends it
 # again only on evidence it was not taken: prompt_settle found the agent idle or done with no turn
-# finished since, and, if herdr sent it, that Claude session showed no sign of it. herdr's screen can
+# finished since, and, if herdr sent it, that Claude session, read idle before, showed no sign of it. herdr's screen can
 # read idle through a whole turn (plan-hld-command's four findings tells on 2026-10-24, each sent
-# twice), so a prompt herdr sent to an agent with no session to read (codex, a session Claude Code
-# does not list yet, or one it reads busy, waiting or not at all) is never sent again: when no turn
-# shows, it succeeds with a warning that herdr sent it the brief and did not show the turn start. A
+# twice), so a prompt herdr sent to any other agent (codex, or a session Claude Code does not list
+# yet, or reads busy, waiting or not at all) is never sent again: when prompt_settle finds it idle or
+# done with no turn finished since, it succeeds with a warning that herdr sent it the brief and did
+# not show the turn start. A
 # prompt herdr refused before sending fails at once, naming herdr's code. Anything else (no read
 # before the prompt, no status) fails saying it may or may not have it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before try sent=0 unread=0 sess="" mark="" line=""
+  local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before try sent=0 unread=0 sess="" mark="" line="" resend="" logonly="" was
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
@@ -738,11 +747,16 @@ deliver_prompt() {
     return
   fi
   read -r status before <<< "$(agent_info "${target}")"   # the baseline, before anything goes out
-  # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG) that
-  # Claude Code reads idle: the session to read.
-  if awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n && $4 == "claude" { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null \
-    && [[ "$(session_state "${name}")" == idle ]] && mark="$(session_mark "${name}")"; then
-    sess="${name}" line="${DELIVER_LINE:-$(awk 'NF { print; exit }' "${prompt_file}")}"
+  # Claude Code's own view, for an agent started with a Claude session on record (AGENTS_LOG): the
+  # session to read. Read idle before the send, its busy or waiting is the prompt's work, and the
+  # prompt may go again when nothing shows. Not listed yet (a new agent), busy, waiting or unreadable
+  # before, only its log can say: a new session can be busy on its own start-up, not the prompt.
+  if awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n && $4 == "claude" { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
+    was="$(session_state "${name}")"
+    if mark="$(session_mark "${name}")"; then
+      sess="${name}" line="${DELIVER_LINE:-$(awk 'NF { print; exit }' "${prompt_file}")}"
+      if [[ "${was}" == idle ]]; then resend=yes; else logonly=yes; fi
+    fi
   fi
   for try in 1 2; do
     reply="$(prompt_once "${target}" "${prompt_file}")"
@@ -756,10 +770,10 @@ deliver_prompt() {
       *) [[ $((sent + unread)) -gt 0 ]] || die "${name}: herdr did not send it the brief (${reply}); see herdr agent read ${name}"
          die "${name}: $(sent_note "${sent}" "${unread}"), then could not send it again (${reply}); see herdr agent read ${name}" ;;
     esac
-    verdict="$(prompt_settle "${target}" "${status}" "${before}" "${sess}" "${mark}" "${line}")"
+    verdict="$(prompt_settle "${target}" "${status}" "${before}" "${sess}" "${mark}" "${line}" "${logonly}")"
     case "${verdict}" in
       taken) return 0 ;;
-      again\ *) if [[ ${sent} -gt 0 && -z "${sess}" ]]; then
+      again\ *) if [[ ${sent} -gt 0 && -z "${resend}" ]]; then
           echo "warning: ${name}: $(sent_note "${sent}" "${unread}"), and herdr did not show the turn start (it reads it ${verdict#again } with no turn finished since); it was not sent again, see herdr agent read ${name}" >&2
           return 0
         fi ;;
@@ -831,13 +845,13 @@ agent_info() {
 # as a prompt has to be taken up, so a slow starter still idle after herdr's 5 s is not sent it again.
 SETTLE_READS=$((PROMPT_TIMEOUT_MS / 5000 > 1 ? PROMPT_TIMEOUT_MS / 5000 : 1))
 
-# prompt_settle <target> <status-before> <completion-before> [<name> <mark> <line>] — after a prompt
+# prompt_settle <target> <status-before> <completion-before> [<name> <mark> <line> [logonly]] — after a prompt
 # that went out (or may have) with no status in herdr's reply, read the agent (agent_info) until it
 # shows it took it, and print what came of it, against agent_info's read before the prompt (a status
 # of - or unknown there is no baseline). taken: working, blocked, a completion_seq that was not there
 # before (a turn finished since), or, given <name>, its Claude session showing it took the prompt
-# (session_took past <mark>, for <line>), so a turn herdr's screen misses, or a short one between two
-# reads, counts. "again <status>": no turn ran: idle before and on the last read with no
+# (session_took past <mark>, for <line>; with logonly, its log alone), so a turn herdr's screen misses
+# or reads as unclear, or a short one between two reads, counts. "again <status>": no turn ran: idle before and on the last read with no
 # completion_seq, or done with the same completion_seq. Else "unsure <why>": two failed reads in a
 # row (herdr down), no baseline, or anything else.
 prompt_settle() {
@@ -852,7 +866,7 @@ prompt_settle() {
     esac
     misses=0
     if [[ -n "${known}" && "${c}" != - && "${c}" != "$3" ]]; then echo taken; return; fi
-    if [[ -n "${4:-}" ]] && session_took "$4" "$5" "$6"; then echo taken; return; fi
+    if [[ -n "${4:-}" ]] && session_took "$4" "$5" "$6" "${7:-}"; then echo taken; return; fi
   done
   if [[ -n "${known}" && "${c}" == "$3" ]] && [[ ( "${s}" == idle && "$2" == idle ) || ( "${s}" == "done" && "${c}" != - ) ]]; then echo "again ${s}"
   elif [[ "${s}" == - ]]; then echo "unsure herdr gave no status for it"
@@ -870,17 +884,18 @@ sid = session_id(sys.argv[1], sys.argv[2]); path = session_log(sys.argv[3], sid)
 print(os.path.getsize(path) if path else 0)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
-# session_took <name> <mark> <line> — succeed when <name>'s Claude session shows it took a prompt:
-# Claude Code reads it busy or waiting (one claude_agents call), or its main log has, past byte
+# session_took <name> <mark> <line> [logonly] — succeed when <name>'s Claude session shows it took a
+# prompt: Claude Code reads it busy or waiting (one claude_agents call; not with logonly, for a session
+# that was not idle before the prompt, which makes no call), or its main log has, past byte
 # <mark>, a user prompt (panes.py's is_prompt, not a Task subagent's entry) whose text holds <line>
 # (whitespace aside). Not a tool result, an automated prompt or another tell's: a turn the prompt did
 # not start writes those too.
 session_took() {
-  { claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+  { [[ -n "${4:-}" ]] || claude_agents || true; } | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *; from report import session_log
-log, name, projects, mark, line = sys.argv[1:6]
-if (session_state(log, name, sys.stdin.read() or None) or ("",))[0] in ("busy", "waiting"):
+log, name, projects, mark, line, logonly = sys.argv[1:7]
+if not logonly and (session_state(log, name, sys.stdin.read() or None) or ("",))[0] in ("busy", "waiting"):
     sys.exit(0)
 want, sid = " ".join(line.split()), session_id(log, name)
 path = session_log(projects, sid) if sid else ""
@@ -900,7 +915,7 @@ with open(path, "rb") as f:
             c = " ".join(str(x.get("text") or "") for x in c if isinstance(x, dict) and x.get("type") == "text")
         if want in " ".join(str(c or "").split()):
             sys.exit(0)
-sys.exit(1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "$3" 2>/dev/null
+sys.exit(1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "$3" "${4:-}" 2>/dev/null
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
@@ -1042,6 +1057,17 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
+# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite started
+# less than TEST_RUN_STALLS times stall_minutes ago (panes.py's test_running, over herdr's process
+# info for the pane and one ps read).
+test_running() {
+  # shellcheck disable=SC2154 # assigned in another file
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
+sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)" "${CFG_stall_minutes}"
+}
+
 # usage_state <target> — print `dialog <option>` or `waiting` and succeed when the agent's pane is on
 # Claude Code's usage limit (panes.py's usage_limit); fail otherwise.
 usage_state() {
@@ -1068,8 +1094,8 @@ is_builder() {
 }
 
 # pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
-# old and the agent runs no background task (bg_running), setting the caller's state to `stuck: no
-# output for <N>m (<target>)`. An empty read says nothing.
+# old, the agent runs no background task (bg_running) and its pane runs no test suite (test_running),
+# setting the caller's state to `stuck: no output for <N>m (<target>)`. An empty read says nothing.
 pane_quiet() {
   local min
   [[ -n "${pane_at}" ]] || return 1
@@ -1077,6 +1103,7 @@ pane_quiet() {
   # shellcheck disable=SC2154 # assigned in another file
   [[ ${min} -ge ${CFG_stall_minutes} ]] || return 1
   ! bg_running "$1" || return 1
+  ! test_running "$2" || return 1
   state="stuck: no output for ${min}m ($2)"
 }
 
@@ -1152,12 +1179,12 @@ longest_child() {
   echo "${out:-longest-running: none named (its processes could not be read)}"
 }
 
-# agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
-# stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last commit
-# or edit (story_work_time) and its newest own work across its session log and its subagents' logs
-# (session_mtime) as signs, print how many
-# minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
-# stalled, so gh is rarely called.
+# agent_stalled <name> <since> <target> — when <name> is a story's builder that has shown no sign of
+# life for stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last
+# commit or edit (story_work_time) and its newest own work across its session log and its subagents'
+# logs (session_mtime) as signs, print how many minutes and succeed. Only once the rest already
+# looks stalled is pane <target> asked whether it runs a test suite (test_running), which is work, so
+# no stall; and only then are its PRs asked for their updatedAt, so gh is rarely called.
 agent_stalled() {
   local slug url age ct sl prs=()
   slug="$(stall_py story "$1")"
@@ -1166,6 +1193,7 @@ agent_stalled() {
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}")"
   # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
+  ! test_running "$3" || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
   done
@@ -1231,7 +1259,7 @@ herdr_wait() {
     [[ ${rc} -ne 0 ]] || { rm -f "${err}"; return 0; }
     [[ ${rc} -eq 1 ]] || { why="$(cat "${err}")"; left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
-    if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
+    if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; return
     fi
     pane_check "${name}" "${target}"
@@ -1300,7 +1328,7 @@ settle() {
     if [[ "${state}" == busy ]] && lim="$(usage_state "${target}")"; then state="usage-limit ${lim}"; break; fi
     [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
     if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
-    if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
+    if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
       state="stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; break
     fi
     if [[ "${state}" == busy ]] && pane_quiet "${name}" "${target}"; then break; fi
@@ -1360,8 +1388,8 @@ wait_agent() {
       record_event incident "${name}" "${status}"
       rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
-      # Another step-up still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
-      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"
+      # Another step-up or a restart still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
+      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up or a restart of it is running; wait on its builder again"
       if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
         echo "${out}"
         if [[ ${rc} != "${STEP_UP_BUSY}" && "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"
@@ -1628,7 +1656,7 @@ tell_agent() {
     rc=0; ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}" || rc=$?
     [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; list it for the lead"
-    [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up of it is running; wait on it, then tell it"
+    [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
   fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die

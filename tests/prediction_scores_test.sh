@@ -14,6 +14,8 @@
 # with no story says so. The fixture's two lines with no inputs and a line that is not JSON are counted
 # as left out. With no dataset file, the hint prints.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 TESTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 grep -qx 'fails=0' "${TESTS}/dataset_test.sh" || { echo "FAIL dataset_test.sh has no fails=0 line to end its fixture at"; exit 1; }
 root="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

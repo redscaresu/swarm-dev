@@ -26,6 +26,8 @@
 # loose_match_test.sh's); Python files are not scanned.
 # shellcheck disable=SC2016,SC1003 # the fixtures are shell text, not expansions
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

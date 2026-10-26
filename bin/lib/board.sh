@@ -181,7 +181,12 @@ epic_has_after() {
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
 #                     reset, or drops it
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
-#                     file outside the board (release_due): the lead cuts a release
+#                     file outside the board (release_due): the lead cuts a release. With epics that
+#                     carry stage: (release_stage), `release v<S>` once no epic of the next stage S
+#                     is left on the board; while one is, `release v<x.y.z+1> (patch)` when no
+#                     staged epic's story merged since the tag, else no release step. A held stage
+#                     sets RELEASE_HELD, its release-held: line, which next_lines and next_report
+#                     print after the step's lines
 #   plan-epic <epic>  (again) a later epic whose depends_on are listed and all done, with no stories
 #                     and no unasked plan yet (unblocked_epic): planning is read-only and its stories
 #                     wait for approval
@@ -193,7 +198,8 @@ epic_has_after() {
 #                     finish PRs, and PRs awaiting the user's merge (waiting_on_user)
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic story_epic buildable="" waiting="" when held n tag base sha stop
+  local f slug epic story_epic buildable="" waiting="" when held n tag base sha stop stage since
+  RELEASE_HELD=""
   # A red main's fix comes first while no one has started it: every merge waits on it. Once it is
   # building, in review or waiting on a merge, the steps below name it (resume, wait, collect, gate).
   # A base gone green another way (a revert, a re-run) is cleared by reconcile, which retires the fix.
@@ -280,7 +286,20 @@ next_step() {
   done < <(board stories)
   read -r n tag base <<< "$(release_due)"
   if [[ -n "${n}" ]]; then
-    echo "release"; echo "origin/${base} has ${n} commit(s) since ${tag} that change files outside the board: cut a release"; return
+    # The stage read only now: dash runs next every frame, and it costs a git log.
+    stage="$(release_stage "${tag}" "${base}")" || stage=""
+    RELEASE_HELD="$(sed -n 2p <<< "${stage}")"
+    since="origin/${base} has ${n} commit(s) since ${tag} that change files outside the board"
+    case "${stage%%$'\n'*}" in
+      "") echo "release"; echo "${since}: cut a release"; return ;;
+      "release "*)
+        echo "release v${stage#release }"
+        echo "${since}, and no epic of stage v${stage#release } is left on the board: cut v${stage#release }, the stage's release"; return ;;
+      "patch "*)
+        stage="${stage%%$'\n'*}"
+        echo "release v${stage#patch } (patch)"
+        echo "${since}, and no story of a staged epic has merged since it, while the next stage is held: cut v${stage#patch }, a patch"; return ;;
+    esac
   fi
   epic="$(unblocked_epic)"
   if [[ -n "${epic}" ]]; then
@@ -298,6 +317,13 @@ next_step() {
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
+}
+
+# next_lines — next_step's lines, then its release-held: line (RELEASE_HELD) when it has one: what
+# status and dash show.
+next_lines() {
+  next_step
+  [[ -z "${RELEASE_HELD}" ]] || echo "${RELEASE_HELD}"
 }
 
 # running_conductors — this project's conductors in herdr, a name a line, in herdr's order: conduct-*
@@ -383,7 +409,7 @@ idle_lines() {
 }
 
 # next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
-# conductors_queued's, after its why), then idle_lines' for it. Both are worked out first
+# conductors_queued's, after its why), its release-held: line, then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
@@ -407,6 +433,7 @@ next_report() {
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
   fi
+  [[ -z "${RELEASE_HELD}" ]] || step+=$'\n'"${RELEASE_HELD}"
   idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
@@ -536,6 +563,142 @@ release_due() {
   [[ ${BOARD_IN_REPO} != 1 ]] || ex=":(exclude)${BOARD#"${PROJECT_DIR}"/}"
   n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex:+"${ex}"})" || return 0
   [[ ${n} -eq 0 ]] || echo "${n} v${version} ${base}"
+}
+
+# release_stage <tag> <base> — which release the commits since <tag> (v<x.y.z>) on origin/<base> make,
+# given the epics' `stage: v<x.y.z>`; next_step runs it only once release_due is due. S is the lowest
+# stage above the tag among the epics on the board, whatever their status, the copies origin/<base>
+# has of epics an edit here deleted or changed before it reached the base (a release ships the base),
+# and the epic files deleted on origin/<base> since the tag, each read at its deleting commit's
+# parent. An
+# epic on the board, or still on the base, whose stage: is there but not v<x.y.z> holds the release
+# too; a deleted one's is ignored. Prints nothing when no epic carries a stage, the board is outside
+# the repo or the tag is not x.y.z: a release as today. Else its first line is
+#   release <S>        no epic file carrying stage S is left on the board or the base
+#   patch <x.y.z+1>    S is held, and above this patch of the tag's line, and no staged work merged
+#                      since the tag: what did merge, under an unstaged epic or none, goes out in
+#                      the patch (nothing checks that it is a fix)
+#   held               S is held and staged work merged since the tag: a story of a staged epic (its
+#                      epic: chain) deleted since the tag (a story's PR deletes its file), or kept on
+#                      the board at status: done when it was not done at the tag
+# and, unless release, the release-held: line next prints. One git log call.
+release_stage() {
+  local tag="${1#v}" pre f p c="" e v kind txt here="" map="" stories="" s="" open="" bad="" badl="" work="" held patch
+  [[ ${BOARD_IN_REPO} == 1 && "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  # map: "<epic> <stage> <parent>" a line, the epics here first, so a slug's first line wins; here:
+  # the epics that hold a stage. Both read slug, stage: and parent:, |-separated: IFS whitespace (a
+  # tab) would drop an empty stage: and read the parent as the stage.
+  while IFS='|' read -r e v p; do
+    here+="${e} $(stage_of "${v}")"$'\n'
+    [[ "$(stage_of "${v}")" != bad ]] || badl+="${e}"$'\t'"${v}"$'\n'
+    map+="${e} $(stage_of "${v}") $(first_slug "${p}")"$'\n'
+  done < <(
+    while IFS= read -r f; do
+      printf '%s|%s|%s\n' "$(basename "${f}" .md)" "$(get_fm "${f}" stage)" "$(get_fm "${f}" parent)"
+    done < <(board epics)
+    # The epics origin/<base> has that this checkout deleted or changed, in an edit not pushed yet,
+    # or not committed: the base still ships its copy, so that copy holds its stage too.
+    while IFS= read -r p; do
+      e="${p#"${pre}epics/"}"
+      [[ "${e}" == *.md && "${e}" != */* && "${e}" != README.md ]] || continue
+      txt="$(git -C "${PROJECT_DIR}" show "origin/$2:${p}" 2>/dev/null)" || continue
+      printf '%s|%s|%s\n' "${e%.md}" "$(fm_text stage <<< "${txt}")" "$(fm_text parent <<< "${txt}")"
+    done < <(git -C "${PROJECT_DIR}" diff --name-only --diff-filter=DM "origin/$2" -- "${pre}epics/" 2>/dev/null))
+  # The malformed ones named once each: an epic read here and on the base is one epic.
+  bad="$(awk -F'\t' -v q="'" '$1 != "" && !seen[$1]++ { printf " (%s%ss stage: %s%s%s is not v<x.y.z>)", $1, q, q, $2, q }' <<< "${badl}")"
+  # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
+  while IFS= read -r -d '' p; do
+    p="${p#$'\n'}"
+    [[ ! "${p}" =~ ^[0-9a-f]{40,}$ ]] || { c="${p}"; continue; }
+    e="${p#"${pre}"}"; kind="${e%%/*}"; e="${e#*/}"
+    [[ "${e}" == *.md && "${e}" != */* && "${e}" != README.md ]] || continue
+    txt="$(git -C "${PROJECT_DIR}" show "${c}^:${p}" 2>/dev/null)" || continue
+    if [[ "${kind}" == epics ]]; then
+      v="$(stage_of "$(fm_text stage <<< "${txt}")")"; [[ "${v}" != bad ]] || v=-   # a deleted one's malformed stage is ignored
+      map+="${e%.md} ${v} $(first_slug "$(fm_text parent <<< "${txt}")")"$'\n'
+    else
+      stories+="$(first_slug "$(fm_text epic <<< "${txt}")")"$'\n'
+    fi
+  done < <(git -C "${PROJECT_DIR}" log -z --first-parent --diff-merges=first-parent --no-renames --diff-filter=D --name-only \
+    --format=%H "refs/tags/$1..origin/$2" -- "${pre}epics/" "${pre}stories/" 2>/dev/null)
+  while read -r e v _; do
+    [[ "${v}" =~ ^[0-9] ]] || continue
+    version_gt "${v}" "${tag}" || continue
+    if [[ -z "${s}" ]] || version_gt "${s}" "${v}"; then s="${v}"; fi
+  done <<< "${map}"
+  [[ -n "${s}${bad}" ]] || return 0
+  # The epics that hold S, or are malformed, once each, whichever copy (here, the base) says so.
+  open="$(awk -v s="${s}" '$1 != "" && ($2 == "bad" || (s != "" && $2 == s)) && !seen[$1]++ { printf " %s", $1 }' <<< "${here}")"
+  if [[ -z "${open}" ]]; then echo "release ${s}"; return 0; fi
+  # Staged work merged since the tag: a deleted story under a staged epic, else a story the board
+  # keeps at status: done under one, unless it was done at the tag already (merged before it).
+  while IFS= read -r e; do
+    if staged_chain "${e}" "${tag}" "${map}"; then work=1; break; fi
+  done <<< "${stories}"
+  if [[ -z "${work}" ]]; then
+    while IFS= read -r f; do
+      [[ "$(get_fm "${f}" status)" == "done" ]] || continue
+      staged_chain "$(first_slug "$(get_fm "${f}" epic)")" "${tag}" "${map}" || continue
+      [[ "$(git -C "${PROJECT_DIR}" show "refs/tags/$1:${pre}stories/$(basename "${f}")" 2>/dev/null | fm_text status)" == "done" ]] || { work=1; break; }
+    done < <(board stories)
+  fi
+  held="release-held: v${s}"; [[ -n "${s}" ]] || held="release-held: no valid stage"
+  # The patch only below S: with S one patch above the tag, it would be the stage's own version.
+  patch="${tag%.*}.$((10#${tag##*.} + 1))"
+  if [[ -n "${s}" ]] && ! version_gt "${s}" "${patch}"; then work=1; fi
+  if [[ -z "${work}" ]]; then echo "patch ${patch}"; else echo held; fi
+  echo "${held}, open epics:${open}, patches only${bad}"
+}
+
+# staged_chain <epic> <tag x.y.z> <map> — true when <epic>, or an epic up its parent: chain in <map>
+# (release_stage's "<epic> <stage> <parent>" lines; 8 deep at most, so a cycle ends), carries a stage
+# above <tag>, or a malformed one.
+staged_chain() {
+  local e="$1" v p i
+  for i in 1 2 3 4 5 6 7 8; do
+    [[ -n "${e}" && "${e}" != - ]] || return 1
+    read -r _ v p <<< "$(awk -v s="${e}" '$1 == s { print; exit }' <<< "$3")"
+    if [[ "${v}" == bad ]] || { [[ "${v}" =~ ^[0-9] ]] && version_gt "${v}" "$2"; }; then return 0; fi
+    e="${p}"
+  done
+  return 1
+}
+
+# stage_of <stage: value> — x.y.z for v<x.y.z> (a trailing # comment and whitespace off, as slug_list
+# takes them, then a matching pair of quotes), - for none, bad for any other value, one with a quote
+# and no match included.
+stage_of() {
+  local v="$1" dq='^"(.*)"$' sq="^'(.*)'\$"
+  v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi
+  if [[ -z "${v}" ]]; then echo -
+  elif [[ "${v}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then echo "${BASH_REMATCH[1]}"
+  else echo bad; fi
+}
+
+# first_slug <value> — the first slug slug_list finds in a front-matter value, or - for none.
+first_slug() {
+  local v
+  read -r v _ <<< "$(slug_list "$1")" || true
+  echo "${v:--}"
+}
+
+# fm_text <key> — get_fm's value of <key>, read from the item text on stdin.
+fm_text() {
+  awk -v k="$1" '/^---$/ && ++n == 2 { exit }
+    n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }'
+}
+
+# version_gt <a> <b> — true when x.y.z <a> is above <b>, field by field (bash 3.2 has no sort -V).
+version_gt() {
+  local a b i
+  IFS=. read -r -a a <<< "$1"; IFS=. read -r -a b <<< "$2"
+  for i in 0 1 2; do
+    if ((10#${a[i]} > 10#${b[i]})); then return 0; fi
+    if ((10#${a[i]} < 10#${b[i]})); then return 1; fi
+  done
+  return 1
 }
 
 # is_escalated <story-file> — true for a story lead_block handed on: ready, kind: lead, with

@@ -24,6 +24,8 @@
 # (toolresult) or an automated prompt holding it (notice): sent once more, and the done read after
 # takes it. herdr idle on every read (never): sent twice, and the tell fails, not taken up.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

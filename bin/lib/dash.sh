@@ -264,10 +264,11 @@ dash_check() {
   drawn="$( { sed -n 's/^│ [^ ]* merge \([^ ]*#[0-9][0-9]*\) .*/\1/p' <<< "${x}"; dash_prs <<< "${x}"; } | dash_words)"
   got=""
   for x in ${want}; do
-    # Each kind has its own row: merge, or decide for an escalated or held story, which dash draws as a
-    # merge row once it is in review. A merge item counts by its slug or by any PR status lists for it.
-    v=merge; [[ "${x%%:*}" == merge ]] || v="(merge|decide escalated story)"
-    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: merge or an alternation
+    # Each kind has its own row: merge, review for a kept story, or decide for an escalated or held
+    # story, which dash draws as a merge row once it is in review. A merge item counts by its slug or by
+    # any PR status lists for it.
+    case "${x%%:*}" in merge) v=merge ;; kept) v="review kept story" ;; *) v="(merge|decide escalated story)" ;; esac
+    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi   # loose-match: ok v is a regex: a row's verb or an alternation
     [[ "${x%%:*}" == merge ]] || continue
     for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do
       if [[ " ${drawn} " == *" ${f} "* ]]; then got+=" ${x}"; break; fi
@@ -526,15 +527,32 @@ dash_fields() {
   if after_story "$1"; then printf '\tafter'; else printf '\t'; fi
 }
 
+# dash_no_agent_at <no-agent lines> — "<slug>\t<time>" for each no-agent: line's story: the time of the
+# event that explains its missing agent (no_agent_events' event: an ok close, a failed start or a
+# no-agent line), which its row waits from.
+dash_no_agent_at() {
+  local slug name rname e rows=""
+  while IFS= read -r slug; do
+    [[ -n "${slug}" ]] || continue
+    no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"
+    e="$(fm "${BOARD}/stories/${slug}.md" epic)"; rows+=" ${slug} ${name} ${rname} ${e:--}"
+  done < <(sed -n 's/^no-agent: \([^,]*\), exit: .*/\1/p' <<< "$1")
+  [[ -n "${rows}" ]] || return 0
+  # shellcheck disable=SC2086 # rows: space-separated 4-tuples
+  no_agent_events ${rows} | awk '$3 != "-" { print $1 "\t" $3 }'
+}
+
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
 # DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads. Claude
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
 # session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" f d r x
+  local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
+  local testing="" p
   if command -v herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
-    { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
+    # listed keeps the agent list whatever the pane list does: no_agent_lines needs only that one.
+    { agents="$(herdr agent list 2>/dev/null)" && listed="${agents}" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
     [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
@@ -577,6 +595,15 @@ for a in agents:
     n = a.get("name") if isinstance(a, dict) else None
     if n and a.get("pane_id") in own and agent_state(a, n, session_state(E["DASH_AGENTS_LOG"], n, E["DASH_SESSIONS"]))[0] == "working":
         print(story_for(n, rows) or "")' 2>/dev/null || true)
+  # The lead's no-agent: lines (no_agent_lines), from this frame's herdr list, asked only while a
+  # story could have one (ready, or review under merge = agent); in a subshell, so the list it is
+  # handed never reaches next_step's. Read-only: no record, so it writes no events.tsv line.
+  # shellcheck disable=SC2154 # CFG_merge is assigned in another file
+  if awk -F'\t' -v m="${CFG_merge}" '$1 == "stories" && ($3 == "ready" || ($3 == "review" && m == "agent")) { f = 1; exit } END { exit !f }' <<< "${board}"; then
+    # shellcheck disable=SC2034 # no_agent_lines (lifecycle.sh) reads them
+    noagent="$(LEAD_AGENTS="${listed}"; LEAD_AGENTS_OK="${listed:+1}"; LEAD_AGENTS_READ=1; no_agent_lines)" || noagent=""
+    noagent_at="$(dash_no_agent_at "${noagent}")"
+  fi
   # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.
   for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
   if [[ ${PROJECT_IS_GIT} == 1 ]]; then
@@ -592,17 +619,32 @@ for a in agents:
           f="${f:3}"; printf '%s\n' "${f#"${x}"}"
         done || true)"
   fi
-  # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
-  # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
+  # The working agents past stall_minutes (dash_age's stalled_panes, the rows' own rule): a test suite
+  # running under one's pane (test_running: herdr's process info, read here and never in the render,
+  # and one ps read) is work, and the render shows it working (DASH_TESTING). An agent under
+  # stall_minutes is never read; a read that fails leaves the agent stalled.
+  # shellcheck disable=SC2154 # assigned in another file
+  while IFS= read -r p; do
+    [[ -z "${p}" ]] || ! test_running "${p}" < /dev/null || testing+=" ${p}"
+  done < <(DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_STATE="${STATE_DIR}" SWARM_OWN="$(own_panes)" DASH_BOARD="${board}" \
+    DASH_COMMITS="${commits}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_EVENTS="${EVENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" \
+    DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_SESSIONS="${sessions}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys, time
+sys.path.insert(0, os.environ["SWARM_LIB"]); from dash_age import stalled_panes
+E = os.environ
+print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time()))))' 2>/dev/null || true)
+  # Taken whole, never through head: head exits after a line, and where SIGPIPE is ignored (CI) next's
+  # second echo prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
+  nx="$(next_lines)" || true
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
-  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
-  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
+  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
+  DASH_WAITING="$(waiting_on_user)" DASH_NO_AGENT="${noagent}" DASH_NO_AGENT_AT="${noagent_at}" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" DASH_CI="${DASH_CI:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
-  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" DASH_SESSIONS="${sessions}" \
+  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" DASH_SESSIONS="${sessions}" DASH_TESTING="${testing}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
   DASH_BUILDERS="${BUILDER_ROLES}" DASH_INTERVENE_KINDS="${INTERVENE_KINDS}" DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/dash_render.py"
 }

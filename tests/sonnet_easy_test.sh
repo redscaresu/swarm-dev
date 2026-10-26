@@ -3,6 +3,8 @@
 # 5, a slug that lands in the cksum sample is built as code-sonnet with easy: true (trailing spaces or
 # a CRLF's \r included) and as code without.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

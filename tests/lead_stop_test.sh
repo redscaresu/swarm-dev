@@ -6,6 +6,8 @@
 # .swarm/state panes and STUB_AGENTS together. Each stub records the command it ran; every case
 # checks the hook's stdout and, in run, the events.tsv line it left.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/hooks/lead-stop.sh"
 root="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

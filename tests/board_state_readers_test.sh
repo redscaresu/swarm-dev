@@ -7,6 +7,8 @@
 # (lead = session, so the lead's queue shows an escalated story), and only SET_FM_KEYS do. herdr is a stub
 # on PATH that lists no agents and fails anything else.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

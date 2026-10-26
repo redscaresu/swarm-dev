@@ -5,6 +5,8 @@
 # herdr on PATH printing a fixed agent list, and a stub gh. stty and tput are stubbed to fail, so the
 # width comes from COLUMNS (or the default 100), except in the pty tests.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -181,19 +183,28 @@ litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
 litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
 # A costs: money merge: with merge = human the lead's, as any merge; with merge = agent the user's (below).
 litem stories/m-paid.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/5'
+# A story a close kept (kept:, its PR not reviewed): the lead's to review or drop, never a merge row.
+litem stories/k-kept.md '' 'status: review' 'prs: https://github.com/o/l/pull/6' 'kept: 2026-10-14 close (not reviewed)'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
+# A started story whose builder's pane is gone (no_agent_lines' no-agent: line): the lead's, with its exit.
+litem stories/l-na.md '' 'status: ready' 'kind: code'
 litem epics/d.md '' 'status: draft'
 litem hld/h.md '' 'status: draft'
 printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
 printf '2026-10-13\tcode\t%s\tclaude\topus\thigh\t%s\n' l-auth lauth l-wait lwait l-gone lgone l-stall lstall > "${L}/.swarm/agents.tsv"
 cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/lauth.jsonl"
 printf '%s\tstory\tl-stall\tw4:p5\tok\n' "$(ago 120)" > "${L}/.swarm/events.tsv"
+printf '%s\t%s\tl-na\tw4:p6\tok\n' "$(ago 30)" story "$(ago 20)" no-agent >> "${L}/.swarm/events.tsv"
 printf '[{"sessionId":"lauth","status":"idle"},{"sessionId":"lwait","status":"waiting","waitingFor":"input"},{"sessionId":"lstall","status":"busy"}]' > "${ROOT}/l.json"
 cat > "${ROOT}/lbin/herdr" <<'STUB'
 #!/bin/sh
+# With NA_LISTED set, l-na's builder is listed in w4:p6. With PANE_FAIL set, the pane list fails.
+NA_AGENT=""; NA_PANE=""
+if [ -n "${NA_LISTED:-}" ]; then NA_AGENT=',{"name":"l-na","agent_status":"working","pane_id":"w4:p6"}'; NA_PANE=',{"pane_id":"w4:p6"}'; fi
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"l-auth","agent_status":"idle","pane_id":"w4:p1"},{"name":"l-wait","agent_status":"blocked","pane_id":"w4:p2"},{"name":"l-gone","agent_status":"idle","pane_id":"w4:p4"},{"name":"l-stall","agent_status":"working","pane_id":"w4:p5"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w4:p1"},{"pane_id":"w4:p2"},{"pane_id":"w4:p3"},{"pane_id":"w4:p4"},{"pane_id":"w4:p5"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"l-auth","agent_status":"idle","pane_id":"w4:p1"},{"name":"l-wait","agent_status":"blocked","pane_id":"w4:p2"},{"name":"l-gone","agent_status":"idle","pane_id":"w4:p4"},{"name":"l-stall","agent_status":"working","pane_id":"w4:p5"}'"${NA_AGENT}"']}}' ;;
+  "pane list") [ -z "${PANE_FAIL:-}" ] || exit 1
+    echo '{"result":{"panes":[{"pane_id":"w4:p1"},{"pane_id":"w4:p2"},{"pane_id":"w4:p3"},{"pane_id":"w4:p4"},{"pane_id":"w4:p5"}'"${NA_PANE}"']}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w4","label":"lead"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -228,6 +239,8 @@ joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s 
 YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft epic d: /epic d" "! agree draft HLD h: /hld h")
 LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
+  "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop"
+  "! no agent on story l-na: swarm.sh hold l-na <reason>"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
   "! look at l-gone: session ended" "! look at l-stall: working 1")
 echo "lead = session" > "${L}/.claude/swarm/config"
@@ -254,7 +267,29 @@ for cols in 100 160; do
   check "lead = session at ${cols} columns: the other **You:** step is not listed" lacks "rotate the key" "${out}"
   check "lead = session at ${cols} columns: a ready lead story with no **You:** line waits for the lead" \
     has "! run lead story no-you waits for: the lead" "$(joined "${queue}")"
+  check "lead = session at ${cols} columns: the no-agent row follows the kept row" \
+    grep -q "review kept story k-kept.*no agent on story l-na" <<< "$(joined "${queue}")"
+  # L has no commits, so no row's file gives a wait start: l-na's no-agent line is the only one.
+  check "lead = session at ${cols} columns: the oldest wait starts at the no-agent line" has "waiting on you or the lead, oldest " "${out}"
 done
+# With l-na's builder listed in a pane this project opened, no_agent_lines prints nothing: no row.
+echo "w4:p6 l-na" >> "${L}/.swarm/state/l"
+out="$(NA_LISTED=1 ldash 100)"
+check "lead = session: with the builder listed, no no-agent row" lacks "no agent on story l-na" "${out}"
+check "lead = session: and the lead's queue still has the kept row" has "review kept story k-kept" "$(joined "$(lbox "lead's queue" "${out}")")"
+sed -i.bak '/^w4:p6 l-na$/d' "${L}/.swarm/state/l"; rm -f "${L}/.swarm/state/l.bak"
+# herdr's pane list fails but its agent list answers: no_agent_lines needs only the agent list.
+check "lead = session: with herdr's pane list failing, the no-agent row stays" \
+  has "! no agent on story l-na: swarm.sh hold l-na <reason>" "$(joined "$(lbox "lead's queue" "$(PANE_FAIL=1 ldash 100)")")"
+# A no-agent row explained by a failed start (no no-agent line) waits from that start, 2h30m ago, not
+# from its file's last commit (L has none, so no age at all) or l-na's newer no-agent line.
+litem stories/l-nf.md '' 'status: ready' 'kind: code'
+printf '%s\t%s\tl-nf\t-\t%s\n' "$(ago 200)" story ok "$(ago 150)" restart failed >> "${L}/.swarm/events.tsv"
+out="$(ldash 100)"
+check "lead = session: a story whose restart failed is a no-agent row" \
+  has "! no agent on story l-nf: swarm.sh hold l-nf <reason>" "$(joined "$(lbox "lead's queue" "${out}")")"
+check "lead = session: and its row waits from the failed start" has "waiting on you or the lead, oldest 2h" "${out}"
+rm "${L}/docs/stories/l-nf.md"
 # With merge = agent swarm.sh merge holds a costs: money story for the user: no lead session can merge it.
 printf 'lead = session\nmerge = agent\n' > "${L}/.claude/swarm/config"; out="$(ldash 100)"
 check "lead = session, merge = agent: a costs: money merge is under needs you" \
@@ -266,6 +301,23 @@ litem epics/ep-paid.md '' 'status: review' 'prs: https://github.com/o/l/pull/5';
 check "lead = session, merge = agent: a held PR a story and its epic both list is one row" \
   test "$(grep -c 'l#5' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
 rm -f "${L}/docs/epics/ep-paid.md"
+# A review story with no live agent: under merge = agent no_agent_lines names it. With no passing review
+# its exit is review-agent, a row beside its merge row. Its merge row waits from its review line,
+# 3h20m ago, not from its newer no-agent line.
+litem stories/l-nr.md '' 'status: review' 'kind: code' 'prs: https://github.com/o/l/pull/9'
+printf '%s\t%s\tl-nr\t-\tok\n' "$(ago 240)" story "$(ago 200)" review "$(ago 10)" no-agent >> "${L}/.swarm/events.tsv"
+out="$(ldash 100)"; queue="$(joined "$(lbox "lead's queue" "${out}")")"
+check "lead = session, merge = agent: a review story with no agent has its merge row" has "! merge l-nr: https://github.com/o/l/pull/9" "${queue}"
+check "lead = session, merge = agent: with no passing review, a no-agent row with review-agent too" \
+  has "! no agent on story l-nr: swarm.sh review-agent l-nr https://github.com/o/l/pull/9" "${queue}"
+check "lead = session, merge = agent: its merge row waits from its review line" has "waiting on you or the lead, oldest 3h" "${out}"
+# A review that passed on its head: the exit is that merge, so the merge row is its one row.
+H=0123456789abcdef0123456789abcdef01234567
+mkdir -p "${L}/.swarm/reviews"; printf 'head: %s\n\n## Findings\n\nNone.\n' "${H}" > "${L}/.swarm/reviews/l-nr.md"
+out="$(ldash 100)"
+check "lead = session, merge = agent: with a passing review, the merge row is its one row" \
+  test "$(grep -c 'l-nr' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
+rm "${L}/docs/stories/l-nr.md" "${L}/.swarm/reviews/l-nr.md"
 echo "lead = session" > "${L}/.claude/swarm/config"
 # Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
 printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
@@ -283,7 +335,11 @@ out="$(ldash 100)"
 check "lead off: no lead's queue" lacks "lead's queue" "${out}"
 check "lead off: the legend says ! is needs you" has "! needs you (session gone or unknown)" "${out}"
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead off: needs you lists a kept story with its exits" \
+  has "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
+check "lead off: needs you lists the no-agent story with its exit" \
+  has "! no agent on story l-na: swarm.sh hold l-na <reason>" "$(joined "$(lbox "needs you" "${out}")")"
 
 # An agreed HLD with no planned: is the lead's to plan (next's plan-hld), no row the user must act on;
 # a draft one beside it keeps its row.

@@ -120,12 +120,23 @@ Repeat until a step below says stop:
      `next` names the running conductor first and would not get to it. For a
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
-     and no tell on the way. Run the exit it names: `swarm.sh hold <slug> <reason>` for a ready
-     story, saying why it waits, or the `swarm.sh merge` for a story in review under
-     `merge = agent`. Before that merge, run `swarm.sh wait-pr <PR URL>` in the background and
-     merge only once it exits 0; while it waits, the line stays quiet, and it comes back if the
-     checks go red. A hold only answers the line; if no agent is back by the next poll, it
-     comes back. Then start
+     and no tell on the way. Run the exit it names. For a ready story it is
+     `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
+     `swarm.sh hold <slug> <reason>` when it should wait, saying why. A hold only answers the line: if no
+     agent is back by the next poll, it comes back. For a story in review under `merge = agent`
+     it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
+     no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
+     background and act on its exit, not on the line, once per head. On 0, compare the head it
+     printed with the `<sha>` in the exit: the same, run the merge; different (pushed since the
+     review), run `swarm.sh review-agent <slug> <PR URL>` instead. On 1
+     (red), start a builder in the story's worktree (`swarm.sh agent`) with a brief naming the
+     failing checks, or, if you leave it, list it in your report with the reason:
+     `swarm.sh hold` takes only a ready story. On 2, read why it printed: on a conflict with the
+     base, have a builder in the story's worktree merge the base in and push; on a gh error or
+     the timeout, run wait-pr once more, and if it ends the same way, list the story in your
+     report with the reason. With no PR URL on the story, find its PR with the
+     `gh pr list -R <repo> --head story/<slug>` the exit names, and run the review-agent exit. The line is quiet while
+     wait-pr runs and may come back once after it ends; that needs nothing new. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
@@ -281,16 +292,24 @@ Repeat until a step below says stop:
 
      Then go back to 1.
    - `release`: the base has changes since the last release tag (`next`'s why names both), so cut
-     a release. If a PR from a `release/v<new>` branch is open, use it. Otherwise, ship the docs
+     a release. A stage release is a minor: cut it only when `next` prints `release v<S>`, and make
+     `<new>` that number without the `v` (`release v0.28.0` gives 0.28.0). For
+     `release v<x.y.z+1> (patch)`, `<new>` is likewise the number alone, without the `v` and without
+     ` (patch)` (0.28.1, never `v0.28.1 (patch)`). While `next` prints a
+     `release-held:` line, cut no minor: cut only the patch `next` names, if it names one. `merge --release` does not read the hold, so only this step keeps
+     it. If a PR from a `release/v<new>` branch is open, use it. Otherwise, ship the docs
      first: list the behaviour changes since the tag (`git log v<version>..origin/<base>`), and unless docs
      merged since the tag cover them, land a docs PR that covers each one in README.md, AGENTS.md, docs/reference.md, docs/method.md and
      commands/*.md as they apply, its prose run through the humanizer skill. It reaches the
      base the way a fix does, through a `kind: code` story or a lead PR; stop there, and
      go back to 1 once it is on the base. Then make a worktree
      of a new branch `release/v<new>` from `origin/<base>`, and in it bump only
-     `.claude-plugin/plugin.json`, to the next minor version (a patch when every change since the
-     tag is a fix). Commit with the brief's trailers, push, and open the PR titled
-     `Release v<new>`, listing the PRs merged since the tag and naming the docs PR. When nothing
+     `.claude-plugin/plugin.json`, to `<new>`: the version `next`
+     named, either the stage's v<S> or the patch it named. Only when `next` printed a bare `release`,
+     bump to the next minor version (a patch when every change since the tag is a fix). Commit with the brief's trailers, push, and open the PR titled
+     `Release v<new>`, listing the PRs merged since the tag and naming the docs PR. For swarm-dev's own repo, the body also
+     lists the behaviour changes every project gets on upgrade and names the infrafactory build they
+     were tried on, or says none. When nothing
      since the tag changes what a user runs, sees or has to do, skip the docs PR and put a
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
      release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md
