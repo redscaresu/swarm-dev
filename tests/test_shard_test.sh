@@ -6,6 +6,8 @@
 # shard says how many files it kept, one that keeps none fails, a SHARD that is not i/N with
 # 1 <= i <= N is refused, and a test does not see SHARD.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

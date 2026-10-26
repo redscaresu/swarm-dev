@@ -3,6 +3,8 @@
 # and its version is still a plain x.y.z (no comparison with main: CI checks out shallow, and the
 # release PR bumps it on purpose).
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

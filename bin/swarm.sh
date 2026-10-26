@@ -6,7 +6,7 @@
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
-#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or a green PR in review that waits on the user (merge = human, or merge holds it); print each new one
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story, a green PR in review that waits on the user (merge = human, or merge holds it), or a started story with no live agent (no-agent: <slug>, exit: <exit>); print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell and watch run it themselves
@@ -51,7 +51,9 @@
 #
 # The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
 # .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
-# of the git repo you are in. Settings live in .claude/swarm/config (see config below). Must run
+# of the git repo you are in. With SWARM_FORBID_PROJECT naming a directory (the test runner and
+# tests/test_helpers.sh name the checkout the tests run from), that project and its worktrees are refused.
+# Settings live in .claude/swarm/config (see config below). Must run
 # inside herdr (HERDR_ENV=1). An epic gets a tab named for it: the conductor's pane, then a pane per
 # story, each named. A story outside any epic gets its own tab. Tabs hold at most four panes (a 2x2
 # grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
@@ -159,6 +161,20 @@ if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]
   PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
 else
   PROJECT_DIR="$(find_project)"
+fi
+# A test names the checkout it runs from in SWARM_FORBID_PROJECT (scripts/test.sh and tests/test_helpers.sh
+# set it to the main checkout): swarm.sh refuses to act on that project, named directly (a cd into it,
+# SWARM_PROJECT) or through a worktree of it (SWARM_PROJECT naming the worktree, which find_project
+# takes as given, so its main checkout is compared too). That covers swarm.sh calls; the hooks' own
+# event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log) are not swarm.sh calls and are not.
+if [[ -n "${SWARM_FORBID_PROJECT:-}" ]]; then
+  forbid_dir="$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" || forbid_dir=""
+  forbid_main="$(main_checkout "${PROJECT_DIR}" 2>/dev/null)" || forbid_main=""
+  [[ -z "${forbid_main}" ]] || forbid_main="$(cd "${forbid_main}" 2>/dev/null && pwd -P)" || forbid_main=""
+  if [[ -n "${forbid_dir}" ]] && [[ "$(cd "${PROJECT_DIR}" && pwd -P)" == "${forbid_dir}" || "${forbid_main}" == "${forbid_dir}" ]]; then
+    die "SWARM_FORBID_PROJECT: ${PROJECT_DIR} is the checkout the tests run from, or a worktree of it; a test cd's into a project of its own, or names one in SWARM_PROJECT"
+  fi
+  unset forbid_dir forbid_main
 fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 

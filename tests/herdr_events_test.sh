@@ -3,6 +3,8 @@
 # event stream at HERDR_SOCKET_PATH: a fake socket server stands in for herdr's, and a herdr stub
 # on PATH logs every CLI call, so a wait that polled shows `agent wait` in the log.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

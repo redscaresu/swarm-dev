@@ -3,6 +3,8 @@
 # epic. Its brief (scope, waves, review, merge rule by merge mode), its refusal on a board with an
 # epics/backlog.md, and how `next` waits on it and collects it. herdr, gh and claude are stubs on PATH.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

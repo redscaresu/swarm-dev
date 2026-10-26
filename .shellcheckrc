@@ -1,0 +1,3 @@
+# Follow the files a script sources (tests/*_test.sh source tests/test_helpers.sh), so one file checks
+# alone as it does in the CI line, which names them all.
+external-sources=true
