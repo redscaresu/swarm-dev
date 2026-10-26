@@ -26,37 +26,43 @@ git init -q --bare "${ROOT}/origin.git"; git -C "${P}" remote add origin "${ROOT
 printf '#!/usr/bin/env bash\nFX="${STUB_FX:-%s}"; LOG="%s"; M="%s"\n' "${FX}" "${ROOT}/gh.log" "${M}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
+# get <var> <file> [default] — <var> is <file>'s first line, else <default>: a builtin read, so no
+# fork, as merge_test makes thousands of gh calls.
+get() { local v="${3-}"; if [ -e "$2" ]; then v=""; IFS= read -r v < "$2" || true; fi; printf -v "$1" '%s' "${v}"; }
+# put <file> — print <file>, as cat would but with no fork, ending its last line with a newline.
+put() { local l; while IFS= read -r l || [ -n "${l}" ]; do printf '%s\n' "${l}"; done < "$1"; }
 # serve <key> — the fixture <key>.<n> on the nth read of <key> when there is one, else <key>; with
 # <key>.fail, print that (a partial answer) and fail; with <key>.<n>.fail, fail the nth read only;
 # with <key>.404, a 404 with its message; with none of them, a 404 Not Found.
 serve() {
-  local n; n=$(( $(cat "${FX}/$1.n" 2>/dev/null || echo 0) + 1 )); echo "${n}" > "${FX}/$1.n"
-  if [ -e "${FX}/$1.fail" ]; then cat "${FX}/$1.fail"; echo "gh: HTTP 502" >&2; exit 1; fi
+  local n m; get n "${FX}/$1.n" 0; n=$((n + 1)); echo "${n}" > "${FX}/$1.n"
+  if [ -e "${FX}/$1.fail" ]; then put "${FX}/$1.fail"; echo "gh: HTTP 502" >&2; exit 1; fi
   if [ -e "${FX}/$1.${n}.fail" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
-  if [ -e "${FX}/$1.${n}" ]; then cat "${FX}/$1.${n}"
-  elif [ -e "${FX}/$1" ]; then cat "${FX}/$1"
-  elif [ -e "${FX}/$1.404" ]; then echo "gh: $(cat "${FX}/$1.404") (HTTP 404)" >&2; exit 1
+  if [ -e "${FX}/$1.${n}" ]; then put "${FX}/$1.${n}"
+  elif [ -e "${FX}/$1" ]; then put "${FX}/$1"
+  elif [ -e "${FX}/$1.404" ]; then get m "${FX}/$1.404"; echo "gh: ${m} (HTTP 404)" >&2; exit 1
   else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
 }
 case "$1 $2" in
   "pr view")
     [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
-    left="$(cat "${FX}/readback-left" 2>/dev/null || echo 0)"
+    get left "${FX}/readback-left" 0
     if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
+    get st "${FX}/state"; get st "${FX}/state.${3##*/}" "${st}"
+    get h "${FX}/head"; get b "${FX}/base"; get mc "${FX}/mergecommit"; get nf "${FX}/nfiles"; get bd "${FX}/body" null; get cm "${FX}/commits" '[{}]'
     printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s}\n' \
-      "$(cat "${FX}/state.${3##*/}" 2>/dev/null || cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" \
-      "$(cat "${FX}/body" 2>/dev/null || echo null)" "$(cat "${FX}/commits" 2>/dev/null || echo '[{}]')" ;;
+      "${st}" "${h}" "${b}" "${mc}" "${nf}" "${bd}" "${cm}" ;;
   "pr merge")
     case " $* " in *" --disable-auto "*) exit 0 ;; esac
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
-    [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
+    get h "${FX}/head"; [ "${want}" = "${h}" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
     # --auto enqueues (with ${FX}/auto-fails, then fails with a 5xx): the queue fixture
     # (serve queue) says what happens next.
     # With ${FX}/auto-sleeps the enqueue lasts until term_merge has sent its TERM (${FX}/termed), 5 s at most.
     case " $* " in *" --auto "*) [ ! -e "${FX}/auto-sleeps" ] || for _ in $(seq 50); do [ ! -e "${FX}/termed" ] || break; sleep 0.1; done
       [ ! -e "${FX}/auto-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }; exit 0 ;; esac
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
-    [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "$(cat "${FX}/oid" 2>/dev/null || echo "${M}")" > "${FX}/mergecommit"
+    get o "${FX}/oid" "${M}"; [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${o}" > "${FX}/mergecommit"
     [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
     # ${FX}/on-merge runs once the PR has merged: another command's work during merge's CI wait.
     [ ! -e "${FX}/on-merge" ] || sh "${FX}/on-merge"
@@ -89,15 +95,15 @@ case "$1 $2" in
       *"mergeQueue(branch"*) serve mq ;;   # whether the base has a merge queue
       # Turning auto-merge off and dequeuing: they succeed, unless ${FX}/mutation.fail.
       *"mutation("*) [ ! -e "${FX}/mutation.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"data":{}}' ;;
-      # With ${FX}/queue-sleeps the first read takes 5 s.
-      query=*) [ ! -e "${FX}/queue-sleeps" ] || { rm -f "${FX}/queue-sleeps"; sleep 5; }
+      # With ${FX}/queue-sleeps the first read lasts until term_merge has sent its TERM (${FX}/termed), 5 s at most.
+      query=*) [ ! -e "${FX}/queue-sleeps" ] || { rm -f "${FX}/queue-sleeps"; for _ in $(seq 50); do [ ! -e "${FX}/termed" ] || break; sleep 0.1; done; }
                out="$(serve queue)" || exit 1; echo "${out}"
                case "${out}" in *'"state":"MERGED"'*) echo MERGED > "${FX}/state"; printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit" ;; esac ;;
       */check-runs*) serve "${sha}.checks"
                      # The head moves once its checks are read, before the merge.
-                     [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head"
+                     get h "${FX}/head"; [ "${sha}" != "${h}" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head"
                      # ${FX}/on-checks runs once then: another PR landing on the base while merge runs.
-                     [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/on-checks" ] || { sh "${FX}/on-checks"; rm -f "${FX}/on-checks"; } ;;
+                     get h "${FX}/head"; [ "${sha}" != "${h}" ] || [ ! -e "${FX}/on-checks" ] || { sh "${FX}/on-checks"; rm -f "${FX}/on-checks"; } ;;
       */commits/*/status*) serve "${sha}.status" ;;
       *event=merge_group*) serve mgruns ;;
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;

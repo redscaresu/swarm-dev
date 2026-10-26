@@ -210,12 +210,20 @@ racer() { # <fixtures> <url> <out>
   (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 \
     SWARM_MERGE_CI_GRACE=0 SWARM_MERGE_CI_SECONDS=5 SWARM_LOCK_WAIT=30 STUB_FX="$1" bash "${SWARM}" merge "$2" > "$3" 2>&1) &
 }
+# perl, for these two races: state_lock tries a lock with perl's mkdir, so each try at a fix-main lock
+# is logged (with the racer's STUB_FX) to lock-tries before the real perl runs.
+# shellcheck disable=SC2016 # expanded when the spy runs
+printf '#!/bin/sh\ncase "$*" in *fix-main.*.lock*) echo "${STUB_FX:-}" >> "%s" ;; esac\nexec "%s" "$@"\n' "${ROOT}/lock-tries" "$(command -v perl)" > "${ROOT}/bin/perl"
+chmod +x "${ROOT}/bin/perl"; : > "${ROOT}/lock-tries"
 mkdir "${P}/.swarm/fix-main.o-r-main.lock"
 racer "${FX}" "${URL}" "${ROOT}/outa"; pa=$!; racer "${ROOT}/fxb" "${URL2}" "${ROOT}/outb"; pb=$!
-# Both have read CI on their merge commits (gh.log names the SHA before /check-runs), then 2 s for either to log a main-red.
-for _ in $(seq 100); do grep -qs "${M3}/check-runs" "${ROOT}/gh.log" && grep -qs "${M}/check-runs" "${ROOT}/gh.log" && break; sleep 0.1; done; sleep 2
+# all_wait <fixtures>... — each of those racers has tried the held lock twice: they all wait on it.
+all_wait() { local f; for f in "$@"; do [ "$(grep -cxF "${f}" "${ROOT}/lock-tries")" -ge 2 ] || return 1; done; }
+for _ in $(seq 100); do all_wait "${FX}" "${ROOT}/fxb" && break; sleep 0.1; done
+check "two red merges racing on one key: both wait on the key's lock" all_wait "${FX}" "${ROOT}/fxb"
 check "two red merges racing on one key: neither logs main-red while the key's lock is held" bash -c "! grep -q main-red '${P}/.swarm/events.tsv'"
-rmdir "${P}/.swarm/fix-main.o-r-main.lock"; wait "${pa}" "${pb}" || true
+# 2>/dev/null || true: with the lock broken a racer may have removed it, and the next race should still run.
+rmdir "${P}/.swarm/fix-main.o-r-main.lock" 2>/dev/null || true; wait "${pa}" "${pb}" || true
 last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
 check "two red merges racing on one key: both print fix-main:, and only the story logged last is left" \
   bash -c "grep -q '^fix-main:' '${ROOT}/outa' && grep -q '^fix-main:' '${ROOT}/outb' && [ \"\$(ls '${P}/docs/stories' | grep -c '^fix-main-')\" = 1 ] \
@@ -225,11 +233,11 @@ rm -rf "${ROOT}/fxb"
 fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; item t "status: review" "prs: ${URL2}"; item u "status: review" "prs: https://github.com/o/r/pull/9"
 for x in b:${M3} c:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; do d="${ROOT}/fx${x%%:*}"; o="${x#*:}"; rm -rf "${d}"; cp -R "${FX}" "${d}"; echo "${o}" > "${d}/oid"
   cp "${FX}/${M}.checks" "${d}/${o}.checks"; statuses "${d}/${o}.status"; wfruns "${d}/${o}.runs" "$(run ci completed success "${o}")"; done
-mkdir "${P}/.swarm/fix-main.o-r-main.lock"
+mkdir "${P}/.swarm/fix-main.o-r-main.lock"; : > "${ROOT}/lock-tries"
 racer "${FX}" "${URL}" "${ROOT}/outa"; pa=$!; racer "${ROOT}/fxb" "${URL2}" "${ROOT}/outb"; pb=$!; racer "${ROOT}/fxc" https://github.com/o/r/pull/9 "${ROOT}/outc"; pc=$!
-# All three have read CI on their merge commits, each red at its first read.
-for _ in $(seq 100); do [ "$(grep -cE "(${M}|${M3}|e{40})/check-runs" "${ROOT}/gh.log")" -ge 3 ] && break; sleep 0.1; done; sleep 2
-rmdir "${P}/.swarm/fix-main.o-r-main.lock"; wait "${pa}" "${pb}" "${pc}" || true
+for _ in $(seq 100); do all_wait "${FX}" "${ROOT}/fxb" "${ROOT}/fxc" && break; sleep 0.1; done
+check "three red merges in a row on one key: all three wait on the key's lock" all_wait "${FX}" "${ROOT}/fxb" "${ROOT}/fxc"
+rmdir "${P}/.swarm/fix-main.o-r-main.lock" 2>/dev/null || true; wait "${pa}" "${pb}" "${pc}" || true; rm "${ROOT}/bin/perl"
 last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
 check "three red merges in a row on one key: all print fix-main:, one story is left, the one logged last, and no lock" \
   bash -c "grep -q '^fix-main:' '${ROOT}/outa' && grep -q '^fix-main:' '${ROOT}/outb' && grep -q '^fix-main:' '${ROOT}/outc' \
