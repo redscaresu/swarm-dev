@@ -36,7 +36,7 @@ is one column, top to bottom:
   each `!` and lit when its count is above 0, `✓ 0` when not. The first counts what waits on you
   (or on you or the lead, with `lead = session`): every row in needs you and the lead's queue, plus
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
-  from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
+  from its newest `review`, `close:<cause>`, `escalated` or `no-agent` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
   (`--reviewer escaped` in `findings.tsv`). A third light shows only when someone had to step in on
   those 7 days: `! N interventions in 7 days`, the `swarm.sh intervene` lines (`lead-hand` and
@@ -78,15 +78,19 @@ is one column, top to bottom:
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
   by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story,
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
-  pane, nudges, resumes, incidents and failed tells excepted), `agree` a draft epic. A `lead` story's row ends with
+  pane, nudges, resumes, incidents and failed tells excepted), `agree` a draft epic, and `no agent
+  on story` for a started story that no agent works on any more. That last row is the `no-agent:`
+  line `swarm.sh wait --lead` wakes the lead with. It names the story and what to run:
+  `swarm.sh hold <slug> <reason>` for a ready story, `swarm.sh merge` for one in review. To draw it,
+  dash reads herdr's agent list once a frame; it writes no `events.tsv` line. A `lead` story's row ends with
   who it waits for: `waits for: you: create the read-only user`, with the text of its first
   **You:** line, or `waits for: the lead` when it has none. Only your next **You:** step is listed,
   the first ready `lead` story that has one, with `+N more` when other stories have one too. When
   nothing needs you, it is one line.
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
   you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic) and
-  everything else from the list above moves to this box under it: every `merge`, `answer`, `close`
-  and `look at` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
+  everything else from the list above moves to this box under it: every `merge`, `answer`, `close`,
+  `look at` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`). It is left out when empty.
 - **Running now**: one row per agent open in this project's panes (empty panes and retired agents
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`
