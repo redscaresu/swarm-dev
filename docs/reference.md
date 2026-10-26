@@ -165,9 +165,12 @@ while wait-pr runs and may come back once after it ends.
 
 **A review agent that never started, or started and went, wakes the lead too.** `wait --lead` prints
 `no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
-for a story that passes the `no-agent:` filters on status, kind, `held_for:`, `costs:` and upgrades,
-and whose review start is on record: a `review-agent <slug>` events line since its last ok `story`
-start or reopen. It comes whether or not the builder is listed. One of these must hold:
+for a story that passes the `no-agent:` filters on status, kind, `held_for:`, `kept:`, `costs:`,
+upgrades and a ready story's step-up marker, that has a build record as `no-agent:` needs it (an ok
+builder start no close ended, or its worktree or `story/<slug>` branch), and whose review start is
+on record: a `review-agent <slug>` events line since its last ok `story` start or reopen. A build a
+close cleared has no PR left to review. It comes whether or not the builder is listed. One of these
+must hold:
 
 - Never started: the newest `review-agent <slug>` line is not ok.
 - Started and went: that line is ok and `.swarm/reviews/<slug>.head` was written, but no findings
@@ -203,19 +206,23 @@ the line is
 A story whose `no-agent:` line printed in the same poll gets no `no-review:` line, because that
 line's exit comes first. In review it already names `swarm.sh review-agent`. For a ready story the
 restart brings the builder back, and the next poll prints `no-review:`. The exit starts `review-<slug>`, so the next poll
-is quiet. When no review agent can start, the fallback is `swarm.sh codex-review` run by the lead in
-the story's worktree with `SWARM_STORY=<slug>`: codex, or the fallback reviewer at codex's usage
-limit. The lead runs it only while the worktree is at the PR's head with nothing uncommitted, as
-`review-agent` checks; otherwise the builder is still at work. Its findings go to the builder with
-`swarm.sh tell <slug> findings <file>`. The line reads the
-same herdr list, events.tsv and `ps` as `no-agent:`, with one more read of events.tsv and no gh call.
+is quiet. When no review agent can start, the exit's `or the fallback reviewer` means the lead
+reviews the PR itself with `swarm.sh codex-review`, run from the story's worktree (codex-review
+reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex's usage limit the
+model `fallback_reviewer` names. The lead runs it only while the worktree is at the PR's head with
+nothing uncommitted, as `review-agent` checks; otherwise the builder is still at work. Its findings
+go to the builder with `swarm.sh tell <slug> findings <file>`, which is a round under way, so the
+line goes quiet. A clean run clears nothing: the line stays in `status` and on the dashboard until a
+review agent starts on the PR, findings go to the builder, or the PR merges and the story leaves the
+board. The line reads the same herdr list, events.tsv and `ps` as `no-agent:`, with one more read of
+events.tsv for the stories with a build record, and no gh call.
 With no PR known, it runs `git remote get-url` on the story's repo for the exit.
 
 Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
 hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
 events.tsv are read every poll; git only for a story with a start line and no current builder; herdr's
-JSON and `ps` once, whenever a story with a build record, a ready story with a step-up marker, or a
-story with a review start on record is left after those reads, before the listing is checked. No gh call is made for these lines. Outside
+JSON and `ps` once, whenever a story with a build record or a ready story with a step-up marker is
+left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
 everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines and
 `unsent brief:` lines on its first read.

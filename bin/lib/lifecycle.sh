@@ -2451,19 +2451,20 @@ no_agent_exit() {
 # line answers the alert until a new event: the next poll writes one. A ready story with a .step-up
 # marker gets `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` instead, unless its
 # step-up still runs (step_up_running), or a pane is listed under its builder's name while the marker
-# does not say the old builder was closed (step_up_closed). Each story that passes the filters before
-# the build record, whether its builder is listed or not, also gets no_review_line's `no-review:` line
-# when its review agent never started or started and went (no_review_events).
+# does not say the old builder was closed (step_up_closed). Each story with a build record, whether
+# its builder is listed or not, also gets no_review_line's `no-review:` line when its review agent
+# never started or started and went (no_review_events): a build a close cleared has no PR to review.
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
-# matter in one pass (stories_fm) and events.tsv twice (no_agent_events, no_review_events); per story only for one that passed those: its
+# matter in one pass (stories_fm) and events.tsv once (no_agent_events), then once more
+# (no_review_events) for the stories with a build record; per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder, or no-review: with no PR
-# known), then herdr's JSON and one ps once a started story, a marker or a review start is left. No gh. dash (dash_render) hands it its own herdr list
+# known), then herdr's JSON and one ps once a started story or a marker is left. No gh. dash (dash_render) hands it its own herdr list
 # instead, in LEAD_AGENTS and LEAD_AGENTS_OK with LEAD_AGENTS_READ set, so it runs from outside a herdr
 # pane too. Prints nothing and returns 2 when it could not check: no herdr list (outside a pane,
 # unless dash handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
 # with or without lines.
 no_agent_lines() {
-  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said="" has_build=""
+  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said=""
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 2
   if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
@@ -2482,7 +2483,7 @@ no_agent_lines() {
     e="${e:--}"
     [[ -z "${up}" || ( "${up}" != - && "${up}" != "${e}" && ! ( "${up}" == backlog && "${e}" == - ) ) ]] || continue
     no_agent_name name "${slug}"; no_agent_name rname "review-${slug}"; pr_words "${prs}"
-    rows+=" ${slug} ${name} ${rname} ${e}"; revs+=" ${slug} ${rname}"
+    rows+=" ${slug} ${name} ${rname} ${e}"
     data+="${slug}"$'\x1f'"${st}"$'\x1f'"${repo}"$'\x1f'"${PR_WORDS}"$'\n'
   done < <(stories_fm status kind held_for kept epic repo prs)
   [[ -n "${rows}${marked}" ]] || return 0
@@ -2497,11 +2498,13 @@ no_agent_lines() {
       src="$(repo_dir "${repo}")" || continue
       build_exists "${src}" "${slug}" || continue
     fi
-    built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'; has_build+=" ${slug}"
+    built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'; revs+=" ${slug} ${rname}"
   done < <(no_agent_events ${rows})
+  [[ -n "${built}${marked}" ]] || return 0
+  # The review case reads events.tsv once more, for the stories with a build record only: a build a
+  # close cleared (its worktree and branch removed) has no PR left to review.
   # shellcheck disable=SC2086 # revs: space-separated pairs
   [[ -z "${revs}" ]] || rv="$(no_review_events ${revs})"
-  [[ -n "${built}${marked}${rv:-}" ]] || return 0
   live="$(SWARM_PANES="$(own_panes)" json "'\n'.join(a.get('name') or '' for a in d['result']['agents'] if a.get('pane_id') in e['SWARM_PANES'].split())" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 2
   NO_AGENT_LIVE="${live}"
   # -ww: the whole command line, never cut at a width. With no process list a pending tell, wait-pr or
@@ -2526,8 +2529,7 @@ no_agent_lines() {
   done <<< "${built}"
   # The review case: whether the builder is listed or not.
   while read -r slug fields; do
-    # A build cleared since (a close that removed its worktree and branch) has no PR left to review.
-    [[ -n "${slug}" && " ${has_build} " == *" ${slug} "* ]] || continue
+    [[ -n "${slug}" ]] || continue
     d="$(awk -F $'\x1f' -v s="${slug}" '$1 == s { print; exit }' <<< "${data}")"
     IFS=$'\x1f' read -r _ st repo prs <<< "${d}"
     # One line per story: its no-agent: exit comes first (a restart, or in review the review-agent
