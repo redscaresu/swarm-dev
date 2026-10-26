@@ -17,11 +17,13 @@ hooks:
 TESTS ?= tests/*_test.sh
 SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_test.sh \
   tests/dash_stalls_test.sh tests/sleep_scale_test.sh
-# SLOW: files that take minutes on their own. In a CI test-shard job (2026-10-26) merge_test took about
-# 250 s, most of it the CPU of its few hundred swarm.sh merge calls; dash_check about 200 s; and wait_pr
-# about 125 s, most of it waiting out deadlines, graces and pauses with seconds of room. They start first, and
-# CI's SHARD=i/N split gives each SLOW and SERIAL file a shard of its own.
-SLOW ?= tests/merge_test.sh tests/dash_check_test.sh tests/wait_pr_test.sh
+# SLOW: the files long enough to need a CI shard of their own: dash_check, queue, wait_pr, and merge_test
+# with the two files split from it (merge_rules, merge_queue; all three on tests/merge_fixture.sh). They
+# start first, CI's SHARD=i/N split gives each SLOW and SERIAL file a shard of its own, so ci.yml's shard
+# count is at least the two lists' length (tests/test_shard_test.sh), and a SLOW file has three times
+# the TEST_FILE_TIMEOUT. A file joins SLOW when the shard it shares runs longer than the SLOW shards do.
+SLOW ?= tests/merge_test.sh tests/merge_rules_test.sh tests/merge_queue_test.sh tests/dash_check_test.sh \
+  tests/queue_test.sh tests/wait_pr_test.sh
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
 test:
