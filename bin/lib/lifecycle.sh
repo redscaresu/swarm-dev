@@ -2076,10 +2076,11 @@ lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "
 # heads pass's (lead_heads), wakes the lead (lead_head_wakes). Last, `no-agent: <slug>, exit: <exit>` for
 # a started story no agent works on (no_agent_lines record), which reads the poll's herdr list
 # (lead_agents) and one ps, and writes a `no-agent <slug>` events.tsv line for a story whose missing
-# agent no event explains yet. It never calls gh: a review item that entered review since the last pass
-# waits for the next.
+# agent no event explains yet. It never calls gh. It drops from LEAD_HEADS the verdict of an item no
+# longer in review, so a review item that entered review, or came back to it, since the last pass waits
+# for the next.
 lead_queue() {
-  local f held tag line v
+  local f held tag line v keep=""
   while IFS= read -r f; do
     held="$(get_fm "${f}" held_for)"
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
@@ -2088,8 +2089,11 @@ lead_queue() {
   while read -r tag line; do
     if [[ "${tag}" == kept: ]]; then echo "kept: ${line}"; continue; fi
     v="$(awk -v l="${line}" 'substr($0, index($0, " ") + 1) == l { print $1; exit }' "${LEAD_HEADS}" 2>/dev/null)" || v=""
+    [[ -z "${v}" ]] || keep+="${v} ${line}"$'\n'
     ! lead_head_wakes "${v}" "${line}" || echo "${line}"
   done < <(lead_review_items)
+  # A verdict on a head read before its item left review says nothing about the head it comes back with.
+  [[ ! -f "${LEAD_HEADS}" ]] || { printf '%s' "${keep}" > "${LEAD_HEADS}.tmp" && mv "${LEAD_HEADS}.tmp" "${LEAD_HEADS}"; }
   no_agent_lines record
 }
 

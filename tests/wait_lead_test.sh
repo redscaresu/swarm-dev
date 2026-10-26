@@ -269,6 +269,19 @@ check "it wakes on the next heads pass" returned 600
 check "the wake came from that pass, the head's second read, and printed merge:" test "$(reads)|$(out)|$(rc)" == "2|merge: r ${URL}|0"
 stop
 
+# A green verdict is dropped once its item leaves review: back in review with a red head before the next
+# pass, it waits for that pass instead of waking on the old verdict.
+fresh "merge = human"; item r "kind: code" "status: review" "prs: ${URL}"
+lead 1000   # a first run only records what it saw: merge: r is in LEAD_SEEN
+again; start SWARM_LEAD_HEADS_EVERY=30 90000
+check "the run's first heads pass found r green" grep -qxF "green merge: r ${URL}" "${P}/.swarm/lead/heads"
+item r "kind: code" "status: ready" "prs: ${URL}"
+must "a poll ended" first_read "$(seen_id)"; must "a poll ended" first_read "$(seen_id)"
+echo "${H2}" > "${FX}/head"; checks failure "${H2}"; item r "kind: code" "status: review" "prs: ${URL}"
+must "a poll ended" first_read "$(seen_id)"; must "a poll ended" first_read "$(seen_id)"
+check "an item back in review with a red head before the next pass does not wake it" nothing_yet
+stop
+
 # A story a close kept (kept:, its PR not reviewed) is listed as kept, never offered to merge, though
 # its head is green; once review clears kept:, it is.
 fresh "merge = human"; lead 1000   # a first run only records what it saw
