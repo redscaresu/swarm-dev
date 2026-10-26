@@ -2477,7 +2477,7 @@ resend_busy() {
 # agent this project opened that the poll's herdr list (lead_agents) shows idle, it takes the newest
 # events.tsv line that delivered it a prompt: story, escalate, step-up or tell for <slug> (not a note,
 # which goes to the inbox, its wake prompt one line that is never a collapsed paste), review-agent for
-# review-<slug>, conduct for conduct-<epic>, agent for an agent started by name, each mapped as
+# review-<slug>, conduct for conduct-<epic>, restart for <slug>, agent for an agent started by name, each mapped as
 # agent_name maps it. Its outcome is ok, or deliver_prompt's failure after herdr sent (or may have
 # sent) the prompt (a brief never taken up ends its command so); a tell that failed before sending
 # delivered nothing and is passed over, while a start that did skips its agent (it may have opened the
@@ -2521,12 +2521,18 @@ own = set(e["SWARM_PANES"].split())
 def name(x):
     x = re.sub(rb"[^a-z0-9_-]", b"-", x.encode().lower()).decode()
     return (x if re.match("[a-z]", x) else "s" + x)[:int(e["SWARM_NAME_MAX"])]
-# The brief stem and role an .unsent marker takes for a delivery: none for an agent started by name.
+# The brief stem and role an .unsent marker takes for a start: none for an agent started by name.
 def stem(c, t):
     if c == "agent": return "-", "-"
     s, r = (("review-" + t, "review") if c == "review-agent" else ("conduct-" + t.lstrip("-"), "conductor") if c == "conduct" else (t, "builder"))
     return (s, r) if re.fullmatch("[a-z0-9-]+", s) else ("-", "-")
-listed = {(a["name"], a["pane_id"]): a.get("agent_status") for a in json.loads(sys.stdin.read())["result"]["agents"]
+# A tell takes the role of the last start line of its agent, else of the name it was told by.
+def told(n, t):
+    if n == e["SWARM_BACKLOG"]: return "conduct-backlog", "conductor"
+    r = "conductor" if t.startswith("conduct-") else "review" if t.startswith("review-") else "builder"
+    return (t, r) if re.fullmatch("[a-z0-9-]+", t) else ("-", "-")
+# herdr lists an agent with no status too: that one is still listed.
+listed = {(a["name"], a["pane_id"]): a.get("agent_status") or "-" for a in json.loads(sys.stdin.read())["result"]["agents"]
           if a.get("name") and a.get("pane_id") in own}
 idle = {n: p for (n, p), s in listed.items() if s == "idle"}
 # Each .unsent marker: kept for an idle agent, whose pane is read below; gone once its agent took a turn
@@ -2539,32 +2545,36 @@ for path in glob.glob(os.path.join(glob.escape(e["SWARM_BRIEFS"]), "*.unsent")):
         continue
     if len(f) < 2:
         continue
-    s = listed.get((f[0], f[1]))
+    s = listed.get((f[0], f[1]), "gone")
     if s == "idle":
         marked[f[0]] = os.path.basename(path)[:-len(".unsent")]
-    elif s in (None, "working", "blocked", "done"):
+    elif s in ("gone", "working", "blocked", "done"):
         try:
             os.remove(path)
         except OSError:
             pass
-newest, alike = {}, {}
+newest, alike, started = {}, {}, {}
 try:
     for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
         f = l.rstrip("\n").split("\t")
         if len(f) != 5:
             continue
         c, t = f[1], f[2]
-        if c in ("story", "escalate", "step-up", "step-up:resume", "agent", "tell") or (c.startswith("tell:") and c != "tell:note"): n = name(t)
+        if c in ("story", "escalate", "step-up", "step-up:resume", "restart", "agent", "tell") or (c.startswith("tell:") and c != "tell:note"): n = name(t)
         elif c == "review-agent": n = name("review-" + t)
         elif c == "conduct": n = e["SWARM_BACKLOG"] if t in ("--backlog", "backlog") else name("conduct-" + t)
         else: continue
         if n not in idle:
             continue
+        if c.startswith("tell"):
+            sr = started.get(n) or told(n, t)
+        else:
+            sr = started[n] = stem(c, t)
         # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
         if f[4] == "ok" or f[4].startswith("ok (") or any(w in f[4] for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
             k = (n, f[0], c)
             alike[k] = alike.get(k, 0) + 1
-            newest[n] = (f[0], c, alike[k], t)
+            newest[n] = (f[0], c, alike[k]) + sr
         elif not c.startswith("tell"):
             # A start that failed before sending may still have opened the pane and recorded its session
             # (record_agent comes before deliver_prompt): whatever is in the box is not an older brief.
@@ -2577,11 +2587,11 @@ except OSError:
     seen = set()
 # mode: new, a line not yet checked; after, the first read after its Enter; - for a marked agent alone.
 for n in sorted(set(idle) & (set(n for n, v in newest.items() if v) | set(marked))):
-    t, c, k, g = newest.get(n) or ("-", "-", "-", "-")
+    t, c, k, g, r = newest.get(n) or ("-",) * 5
     key = "\t".join((n, t, c, str(k)))
     mode = "-" if not newest.get(n) else "new" if key not in seen else "after" if key + "\tresent" in seen and key + "\trechecked" not in seen else "-"
     if mode != "-" or n in marked:
-        print("\t".join((idle[n], n, t, c, str(k)) + stem(c, g) + (mode, marked.get(n, "-"))))' "${EVENTS_LOG}" "${LEAD_RESENT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+        print("\t".join((idle[n], n, t, c, str(k), g, r, mode, marked.get(n, "-"))))' "${EVENTS_LOG}" "${LEAD_RESENT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
   [[ -n "${rows}" ]] || return 0
   # An upgrade restarts agents in its own process and logs them only at its end, as no_agent_lines skips them.
   [[ ! -f "${UPGRADE_PID}" ]] || [[ -z "$(upgrade_holder)" ]] || return 0
@@ -2637,7 +2647,9 @@ sys.exit(12 if t is None else 13 if t else 10)' \
       # is tried again next poll, which reads the box again. A file it cannot write gets no Enter.
       printf '%s\tpending\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || continue
       if ! within "${RESEND_HERDR_WAIT}" herdr pane send-keys "${pane}" Enter </dev/null >/dev/null 2>&1; then
-        record_event resend "${name}" "herdr could not send Enter to ${pane}"; continue
+        record_event resend "${name}" "herdr could not send Enter to ${pane}"
+        size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))   # past its own line, as below
+        continue
       fi
       record_event resend "${name}"
       size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))   # past its own line
@@ -2656,11 +2668,12 @@ unsent_marker() {
   mkdir -p "${f%/*}" && printf '%s %s %s\npid %s\n' "$2" "$3" "$4" "$$" > "${f}.tmp" && mv "${f}.tmp" "${f}"
 }
 
-# unsent_lines — `unsent brief: <stem>, exit: <exit>` per .unsent marker (unsent_marker). The exit closes
-# the agent and starts it again. A builder's pane is closed with herdr, since swarm.sh close would count
-# a failed build and clear the worktree restart needs, then comes no_agent_exit's exit (restart, for a
-# ready story); a review agent gets swarm.sh close, then review-agent for each of its story's PRs; a
-# conductor swarm.sh close, then conduct. Like no_agent_lines' marker lines, printed only with the poll's
+# unsent_lines — `unsent brief: <stem>, exit: <exit>` per .unsent marker (unsent_marker). The exit starts
+# the agent again, or for a builder whose story is not ready, keeps it. A ready story's builder has its
+# pane closed with herdr, since swarm.sh close would count a failed build and clear the worktree restart
+# needs, then no_agent_exit's exit (restart); any other builder (a story in review, its findings left in
+# the box) is told a nudge, which herdr types after the paste and sends with it. A review agent gets
+# swarm.sh close, then review-agent for each of its story's PRs; a conductor swarm.sh close, then conduct. Like no_agent_lines' marker lines, printed only with the poll's
 # herdr list (LEAD_AGENTS_OK). wait --lead reads them after resend_pass, which writes and removes markers.
 unsent_lines() {
   local m stem agent pane role slug u out
@@ -2671,8 +2684,9 @@ unsent_lines() {
     stem="${m##*/}"; stem="${stem%.unsent}"
     case "${role}" in
       builder)
-        out="herdr pane close ${pane}"
-        [[ ! -f "${BOARD}/stories/${stem}.md" ]] || out+=" then $(no_agent_exit "${stem}")" ;;
+        if [[ ! -f "${BOARD}/stories/${stem}.md" ]]; then out="herdr pane close ${pane}"
+        elif [[ "$(fm "${BOARD}/stories/${stem}.md" status)" == ready ]]; then out="herdr pane close ${pane} then $(no_agent_exit "${stem}")"
+        else out="swarm.sh tell ${stem} nudge <a file asking it to act on the brief in its input box>"; fi ;;
       review)
         slug="${stem#review-}"; out=""
         [[ ! -f "${BOARD}/stories/${slug}.md" ]] || for u in $(story_prs "${BOARD}/stories/${slug}.md"); do

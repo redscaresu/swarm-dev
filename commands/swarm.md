@@ -154,10 +154,12 @@ Repeat until a step below says stop:
      the cause, tell the user. An
      `unsent brief: <stem>, exit: <exit>` line means an agent sat idle with its brief still in its
      input box after `wait --lead` had pressed Enter on it once. `<stem>` is the slug for a builder,
-     `review-<slug>` for a review agent and `conduct-<epic>` for a conductor. Run the exit. For a
-     builder it is `herdr pane close <pane>`, then the restart a `no-agent:` line would name. Do not
-     use `swarm.sh close` on a builder: it counts a failed attempt and clears the worktree that
-     restart needs. For a review agent the exit is `swarm.sh close review-<slug>`, then
+     `review-<slug>` for a review agent and `conduct-<epic>` for a conductor. Run the exit. For the
+     builder of a ready story it is `herdr pane close <pane>`, then the restart a `no-agent:` line
+     would name. Do not use `swarm.sh close` on a builder: it counts a failed attempt and clears the
+     worktree that restart needs. A builder whose story is not ready, such as one in review with its
+     findings in the box, is kept: the exit is `swarm.sh tell <slug> nudge <file>`, the file asking
+     it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
      then `swarm.sh conduct <epic>`. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
