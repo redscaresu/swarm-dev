@@ -145,7 +145,9 @@ Repeat until a step below says stop:
      checks.**), close the builder if one is open (`swarm.sh close <slug>`). Then run
      `swarm.sh review <slug>` with every PR URL on the line: it keeps only the PRs it is given.
      That clears the line and hands the PRs on to merge. Under `merge = agent`, merge each yourself
-     with `swarm.sh merge --head <sha> <PR URL>`, <sha> being the head its review passed on. Run `swarm.sh close <slug> --drop`
+     with `swarm.sh merge --head <sha> <PR URL>`, <sha> being the head its review passed on. When
+     merge refuses one as held for the user (`costs: money`, or a parent they merge), tell the user
+     it waits on their merge. Run `swarm.sh close <slug> --drop`
      only when the PRs are not worth saving. It counts the attempt, so the next build may move up a
      model or the story may become yours, then closes the PRs and sends the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
