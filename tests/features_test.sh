@@ -111,7 +111,7 @@ while IFS=$'\t' read -r feature landed metric baseline uses; do
   [[ "${uses}" == unlogged:* ]] && continue
   for u in ${uses}; do
     [[ "${u}" =~ ^(event|role|agent|reviewer):. ]] || bad+="${feature}: use ${u}; "
-    [[ "${u}" != role:* ]] || env -u HERDR_ENV bash "${SWARM}" policy "${u#role:}" >/dev/null 2>&1 || bad+="${feature}: ${u} unknown to policy; "
+    [[ "${u}" != role:* ]] || (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" policy "${u#role:}" >/dev/null 2>&1) || bad+="${feature}: ${u} unknown to policy; "
   done
 done < <(tail -n +2 "$(dirname "${SWARM}")/../docs/features.tsv")
 check "docs/features.tsv: a landed date or epic, a metric, uses and a baseline on every row, and roles policy accepts" "${bad}" ""
