@@ -81,8 +81,8 @@ check "make test TESTS=tests/events_test.sh passes in the copy" "exit ${rc}" "ex
 o="$(cd "${COPY}" && TEST_RUNS_LOG="" JOBS=1 bash scripts/test.sh "${FX}/checkout_test.sh" 2>&1 || true)"
 check "under the runner, a test that cd's into the checkout fails: swarm.sh refuses SWARM_FORBID_PROJECT" \
   "$(grep -cE "^FAIL .*/checkout_test\.sh [0-9]+s$|^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "2"
-o="$(cd "${COPY}" && bash "${FX}/checkout_test.sh" 2>&1)" && rc=0 || rc=$?
-check "run on its own, the prelude names the checkout and swarm.sh refuses it" "exit ${rc}|$(grep -c "^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "exit 1|1"
+o="$(cd "${COPY}" && bash "${FX}/checkout_test.sh" 2>&1)" && drc=0 || drc=$?   # its own status: rc is the copy's make test
+check "run on its own, the prelude names the checkout and swarm.sh refuses it" "exit ${drc}|$(grep -c "^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "exit 1|1"
 # A worktree of the copy, named in SWARM_PROJECT: find_project takes that path as given, so swarm.sh
 # compares its main checkout too and refuses it; the worktree's .swarm gains nothing.
 git -C "${COPY}" worktree add -q -b wt "${ROOT}/wt"

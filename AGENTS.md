@@ -150,9 +150,10 @@ into a project of its own, no `SWARM_PROJECT` on the call) stops at "not in a sw
 checkout the tests run from (its main checkout, from a worktree) in `SWARM_FORBID_PROJECT`, and `swarm.sh`
 refuses to act on that project, named directly or through a worktree of it, so such a `swarm.sh` call stops
 before it writes. That covers `swarm.sh` calls; the hooks' own event lines (`hooks/merge-guard.sh` `record`,
-`hooks/lead-stop.sh` `log`) append to the project under the call's cwd and are not covered. `tests/live_logs_test.sh` checks the source line in every file and the runner's check, and
-that `events_test.sh` and `wait_lead_test.sh`, which once reached a real project, leave a copy of the
-checkout's `findings.tsv`, `events.tsv` and `.swarm/lead/pid` as they were under `make test`.
+`hooks/lead-stop.sh` `log`) append to the project under the call's cwd and are not covered. `tests/live_logs_test.sh` checks the source line in every file and the runner's check, that
+`events_test.sh`, whose fixtures once reached the real logs, leaves a copy of the checkout's `findings.tsv`,
+`events.tsv` and `.swarm/lead/pid` as they were under `make test`, and that a test naming the copy, or a
+worktree of it, is refused and writes nothing there.
 
 A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
 the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
