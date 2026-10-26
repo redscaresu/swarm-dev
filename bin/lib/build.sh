@@ -641,7 +641,7 @@ review_start_failed() {
   # agent that took it and then stopped on an expired login is idle too, and runs nothing.
   if [[ "${unclear}:${state}" == yes:idle ]] \
     && session_took "${name}" 0 "$(awk 'NF { print; exit }' "${PROJECT_DIR}/.swarm/briefs/review-$1.md" 2>/dev/null)" logonly; then
-    if login_expired "${name}"; then state="idle on an expired login (only your /login clears it)"; else state=running; fi
+    if login_expired "${name}"; then state=auth; else state=running; fi
   fi
   case "${unclear}:${state}" in
     yes:unlisted)
@@ -650,6 +650,8 @@ review_start_failed() {
     yes:busy|yes:running|yes:waiting*|yes:herdr:working|yes:herdr:blocked)
       echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: wait for it with swarm.sh wait review-$1"
       return 0 ;;
+    yes:auth)
+      die "review-agent: review-$1 took its brief and stopped on an expired login${kept}; no head is on record. Only your /login clears it; then close it (herdr pane close ${pane}) and run swarm.sh review-agent $1 <PR URL>" ;;
     yes:*)
       die "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}; no head is on record. Look at it (herdr agent read ${name}); to review again, close it (herdr pane close ${pane}) and run swarm.sh review-agent $1 <PR URL>" ;;
   esac

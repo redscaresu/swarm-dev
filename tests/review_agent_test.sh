@@ -345,7 +345,7 @@ check "when review-s20 sits idle and its log has no brief, review-agent still fa
 # An idle agent that took the brief and then stopped on an expired login runs nothing: that start fails.
 echo latelog > "${ROOT}/prompt"; touch "${ROOT}/authfail" "${ROOT}/done/review-s21"
 check "when review-s21 took the brief and stopped on an expired login, review-agent fails, says so, and records no head" "1|yes|no" \
-  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s21 "${PR}")"; echo "$?|$(has "expired login" "${o}")")|$([[ -e "${p}/.swarm/reviews/s21.head" ]] && echo yes || echo no)"
+  "$(set +e; o="$(SWARM_SLEEP_SCALE=0.02 run review-agent s21 "${PR}")"; echo "$?|$(has "took its brief and stopped on an expired login" "${o}")")|$([[ -e "${p}/.swarm/reviews/s21.head" ]] && echo yes || echo no)"
 rm -f "${ROOT}/sentprompt" "${ROOT}/latelogged" "${ROOT}/authfail"
 rm -f "${ROOT}/prompt" "${ROOT}/getidle"
 

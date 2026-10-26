@@ -803,7 +803,7 @@ or `resume`) is required and goes in the audit log. `tell` sends only to an idle
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
 session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
 (a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
-session reads busy or waiting (when it read idle, or was not listed yet, before the send), or its log
+session reads busy or waiting (when it read idle before the send), or its log
 has the message as a new prompt (for a `tell`, the file's first line). herdr's own status, even
 `unclear`, does not outweigh that. When the session read idle before the send and shows no sign of it,
 the message goes once more, and the command fails if it still shows nothing. A message herdr sent to
