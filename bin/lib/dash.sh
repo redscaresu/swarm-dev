@@ -547,11 +547,12 @@ dash_no_agent_at() {
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
 # session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" noagent="" noagent_at="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
+  local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
   local testing="" p
   if command -v herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
-    { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
+    # listed keeps the agent list whatever the pane list does: no_agent_lines needs only that one.
+    { agents="$(herdr agent list 2>/dev/null)" && listed="${agents}" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
     [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
@@ -600,7 +601,7 @@ for a in agents:
   # shellcheck disable=SC2154 # CFG_merge is assigned in another file
   if awk -F'\t' -v m="${CFG_merge}" '$1 == "stories" && ($3 == "ready" || ($3 == "review" && m == "agent")) { f = 1; exit } END { exit !f }' <<< "${board}"; then
     # shellcheck disable=SC2034 # no_agent_lines (lifecycle.sh) reads them
-    noagent="$(LEAD_AGENTS="${agents}"; LEAD_AGENTS_OK="${agents:+1}"; LEAD_AGENTS_READ=1; no_agent_lines)" || noagent=""
+    noagent="$(LEAD_AGENTS="${listed}"; LEAD_AGENTS_OK="${listed:+1}"; LEAD_AGENTS_READ=1; no_agent_lines)" || noagent=""
     noagent_at="$(dash_no_agent_at "${noagent}")"
   fi
   # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.

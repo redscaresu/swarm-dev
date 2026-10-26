@@ -1969,7 +1969,9 @@ no_agent_exit() {
 # (no_agent_events); with record set, a story with none gets a `no-agent <slug>` events.tsv line, so the
 # next poll prints it. A hold line answers the alert until a new event: the next poll writes one.
 # Reads the poll's herdr list (lead_agents, read here when the poll has none), one ps and files; no gh.
-# Prints nothing outside herdr or when herdr's list or ps fails.
+# dash (dash_render) hands it its own herdr list instead, in LEAD_AGENTS and LEAD_AGENTS_OK with
+# LEAD_AGENTS_READ set, so it runs from outside a herdr pane too. Prints nothing when it has no herdr
+# list (outside a pane, unless dash handed it one) or when herdr's list or ps fails.
 no_agent_lines() {
   local live f slug st rows="" built="" build ev src name rname up="" e
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents

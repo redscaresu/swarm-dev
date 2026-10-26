@@ -196,12 +196,13 @@ printf '%s\t%s\tl-na\tw4:p6\tok\n' "$(ago 30)" story "$(ago 20)" no-agent >> "${
 printf '[{"sessionId":"lauth","status":"idle"},{"sessionId":"lwait","status":"waiting","waitingFor":"input"},{"sessionId":"lstall","status":"busy"}]' > "${ROOT}/l.json"
 cat > "${ROOT}/lbin/herdr" <<'STUB'
 #!/bin/sh
-# With NA_LISTED set, l-na's builder is listed in w4:p6.
+# With NA_LISTED set, l-na's builder is listed in w4:p6. With PANE_FAIL set, the pane list fails.
 NA_AGENT=""; NA_PANE=""
 if [ -n "${NA_LISTED:-}" ]; then NA_AGENT=',{"name":"l-na","agent_status":"working","pane_id":"w4:p6"}'; NA_PANE=',{"pane_id":"w4:p6"}'; fi
 case "$1 $2" in
   "agent list") echo '{"result":{"agents":[{"name":"l-auth","agent_status":"idle","pane_id":"w4:p1"},{"name":"l-wait","agent_status":"blocked","pane_id":"w4:p2"},{"name":"l-gone","agent_status":"idle","pane_id":"w4:p4"},{"name":"l-stall","agent_status":"working","pane_id":"w4:p5"}'"${NA_AGENT}"']}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w4:p1"},{"pane_id":"w4:p2"},{"pane_id":"w4:p3"},{"pane_id":"w4:p4"},{"pane_id":"w4:p5"}'"${NA_PANE}"']}}' ;;
+  "pane list") [ -z "${PANE_FAIL:-}" ] || exit 1
+    echo '{"result":{"panes":[{"pane_id":"w4:p1"},{"pane_id":"w4:p2"},{"pane_id":"w4:p3"},{"pane_id":"w4:p4"},{"pane_id":"w4:p5"}'"${NA_PANE}"']}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w4","label":"lead"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -275,6 +276,9 @@ out="$(NA_LISTED=1 ldash 100)"
 check "lead = session: with the builder listed, no no-agent row" lacks "no agent on story l-na" "${out}"
 check "lead = session: and the lead's queue still has the kept row" has "review kept story k-kept" "$(joined "$(lbox "lead's queue" "${out}")")"
 sed -i.bak '/^w4:p6 l-na$/d' "${L}/.swarm/state/l"; rm -f "${L}/.swarm/state/l.bak"
+# herdr's pane list fails but its agent list answers: no_agent_lines needs only the agent list.
+check "lead = session: with herdr's pane list failing, the no-agent row stays" \
+  has "! no agent on story l-na: swarm.sh hold l-na <reason>" "$(joined "$(lbox "lead's queue" "$(PANE_FAIL=1 ldash 100)")")"
 # A no-agent row explained by a failed start (no no-agent line) waits from that start, 2h30m ago, not
 # from its file's last commit (L has none, so no age at all) or l-na's newer no-agent line.
 litem stories/l-nf.md '' 'status: ready' 'kind: code'
