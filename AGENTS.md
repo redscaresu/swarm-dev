@@ -117,7 +117,8 @@ bin/gh-shim           the gh every agent runs: logs each call to .swarm/gh-calls
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
 hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
                       (an agent's state for herdr) and lead-stop.sh (the lead's turn ends only when next allows)
-scripts/              test.sh (the make test runner), pre-commit, board-only.sh
+scripts/              test.sh (the make test runner), lint (make check: JSON a test feeds must parse), pre-commit,
+                      board-only.sh
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
 docs/reference.md     every rule, setting, command and log
@@ -133,6 +134,7 @@ Before you open a PR:
 make hooks                                  # once: the gitleaks pre-commit hook
 shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py
+make check                                  # scripts/lint over tests/*_test.sh
 make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
                                             # it unsets the swarm env that points at a real project, and dash starts no detached refresh
