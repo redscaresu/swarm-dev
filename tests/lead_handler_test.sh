@@ -4,14 +4,15 @@
 # kind, reads the queue once (`swarm.sh wait --lead 0`), and checks the line came out and that the handler
 # names it as a backticked `<kind>: ` line. A kind on GAPS is a known gap, printed but not yet handled.
 # Both lists are |-separated, as a kind may hold a space.
-# gh is a stub answering a green head; herdr a stub listing no agent.
+# gh is a stub answering a green head; herdr a stub listing ${ROOT}/agents (no agent when it is missing),
+# whose agent read prints ${ROOT}/pane.txt.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|step-up failed"
+KINDS="held|escalated|merge|kept|no-agent|step-up failed|unsent brief"
 GAPS="kept"   # kept-handler-arm adds its arm and takes it off this list
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -32,10 +33,11 @@ case "$*" in
   *) exit 1 ;;
 esac
 STUB
-cat > "${ROOT}/bin/herdr" <<'STUB'
-#!/bin/sh
+printf '#!/bin/sh\nR="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
+cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[]}}' ;;
+  "agent list") printf '{"result":{"agents":[%s]}}\n' "$(cat "${R}/agents" 2>/dev/null)" ;;
+  "agent read") cat "${R}/pane.txt" 2>/dev/null ;;
   *) echo '{"result":{}}' ;;
 esac
 STUB
@@ -48,7 +50,8 @@ ev() { printf '%s\t%s\t%s\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "
 
 # board <kind> — a board on which lead_queue prints a line of <kind>, and nothing else.
 board() {
-  rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/briefs" "${ROOT}/proj-wt"
+  rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
+    "${ROOT}/agents" "${ROOT}/pane.txt" "${P}/.swarm/state/tab"
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
   echo "merge = human" > "${P}/.claude/swarm/config"
   case "$1" in
@@ -60,6 +63,11 @@ board() {
     # A failed step-up's marker, its pid (above every system's limit) gone.
     "step-up failed") story s "kind: code" "status: ready"; ev story s; mkdir -p "${ROOT}/proj-wt/s" "${P}/.swarm/briefs"
                       printf 'stalled opus fable code\npid 999999999\n' > "${P}/.swarm/briefs/s.step-up"; ev step-up:failed s "ok (start failed)" ;;
+    # A brief the resend did not send: its marker, and its builder idle in pane w:p1 with the paste in its box.
+    "unsent brief") story s "kind: code" "status: ready"; mkdir -p "${P}/.swarm/briefs"
+                    printf 's w:p1 builder\npid 999999999\n' > "${P}/.swarm/briefs/s.unsent"; echo "w:p1 s" > "${P}/.swarm/state/tab"
+                    echo '{"name":"s","agent_status":"idle","pane_id":"w:p1"}' > "${ROOT}/agents"
+                    printf '────────────────\n❯ [Pasted text #1 +40 lines]\n────────────────\n' > "${ROOT}/pane.txt" ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }

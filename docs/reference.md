@@ -76,8 +76,8 @@ any earlier one, so only one is ever watching. It never edits the board.
 pane as a collapsed paste (`[Pasted text #1 +40 lines]`), and an agent can sit idle with it still in
 its input box. On each read, `wait --lead` takes the agents this project opened that the read's one
 herdr list shows idle. For each one it finds the newest `events.tsv` line that gave the agent a
-prompt. That is `story`, `escalate` (a ladder step-up), `step-up` or a `tell` of any kind but `note`
-for the builder, `review-agent` for `review-<slug>`, `conduct` for a conductor, and `agent` for an
+prompt. That is `story`, `escalate` (a ladder step-up), `step-up`, `restart` or a `tell` of any kind
+but `note` for the builder, `review-agent` for `review-<slug>`, `conduct` for a conductor, and `agent` for an
 agent started by name. The line must end `ok`, or in deliver_prompt's error after herdr sent the
 prompt or may have (`herdr sent it the brief`, `may or may not have the brief`, `could not be
 read`), which is how a brief that was never taken up ends. A tell that failed before sending
@@ -99,7 +99,8 @@ with `goal` on the findings' `/goal` can wait two more. So a tell sent within 7 
 start is left alone: the log cannot tell that turn from one the tell started. An agent that took the
 brief has had a turn, so a later, unrelated paste is left alone. A paste in a prompt already
 submitted above the box does not count either. Each line it is done with goes in
-`.swarm/lead/resend`, and the pane is not read again until a newer line comes. Before the Enter the
+`.swarm/lead/resend`, and the pane is not read again until a newer line comes, except once after
+an Enter (the `.unsent` marker, below). Before the Enter the
 line goes in marked `pending`, which does not count as done, and a line it cannot write gets no
 Enter. A run stopped before its Enter is tried again by the next read, which reads the box first, so
 a brief that did go is not sent twice. A failed read, a check that fails unexpectedly, or an Enter
@@ -112,7 +113,8 @@ submit the brief it is sending. The process list is read again just before an En
 waits for the next read if `events.tsv` gained a line while the pane was read, since that line may
 be a newer delivery. While an upgrade runs, which restarts agents, no pane is read at all. It never
 resends through `tell`, which would log a second `tell:findings` line and count a review round
-twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines.
+twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines. A brief
+still in the box on the read after the Enter wakes the lead through an `.unsent` marker (below).
 
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
@@ -167,14 +169,16 @@ events.tsv are read every poll; git only for a story with a start line and no cu
 JSON and `ps` once, whenever a story with a build record, or a ready story with a step-up marker, is
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
-everything else and prints only these lines and `step-up failed:` lines on its first read.
+everything else and prints only these lines, `step-up failed:` lines and `unsent brief:` lines on
+its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
 `<kind>` says what it marks. Its first line holds the marker's own fields. A `pid <n>` line names the
 swarm.sh process that wrote it. A later one-word line, such as `closed`, records a step the writer
-got past. `wait --lead` reads markers in the same pass as its `no-agent:`
-lines, from the poll's one `herdr agent list`, events.tsv and one `ps`, with no gh call. Outside
+got past. `wait --lead` reads `.step-up` markers in the same pass as its `no-agent:`
+lines, from the poll's one `herdr agent list`, events.tsv and one `ps`, with no gh call. It reads
+`.unsent` markers just after the resend, which writes and removes them. Outside
 herdr, or while herdr's list or `ps` fails, it prints no marker line either: without the list it
 cannot tell whether the builder is still open. It prints `<what>: <stem>, exit: <exit>`. The
 `.step-up` marker works like this:
@@ -222,6 +226,41 @@ cannot tell whether the builder is still open. It prints `<what>: <stem>, exit: 
   waiting, naming it. A working one took up its brief, so the lead tells the user instead of
   resuming again, since no swarm.sh command records that rung. The conductor leaves the story
   alone and does not list it in its report.
+
+The `.unsent` marker works like this:
+
+- Path: `.swarm/briefs/<stem>.unsent`, where `<stem>` is the brief's file name without `.md`: the
+  slug for a builder, `review-<slug>` for a review agent, `conduct-<epic>` for a conductor and
+  `conduct-backlog` for the backlog's conductor. The resend writes it, on the first read after its
+  Enter, when the agent is idle, its input box still holds the paste and its session shows no turn
+  since the brief went out. That read is made once per Enter. As before an Enter, the process list
+  is read again first, and nothing is written while a `swarm.sh` command is delivering to the agent
+  or when `events.tsv` gained a line during the read, since that line may be a newer delivery. An agent started by name with
+  `swarm.sh agent` gets the resend but no marker: no command starts it again. deliver_prompt never
+  writes it, since it has returned before the resend. A tell's marker takes the role of the
+  agent's last start line (`story`, `review-agent` or `conduct`), or, with none, of the name it was
+  told by: `conduct-<epic>` or the backlog's conductor is a conductor, `review-<slug>` a review agent,
+  and any other name a builder.
+- First line: `<agent> <pane> <role>`, the agent's herdr name, its pane and `builder`, `review` or
+  `conductor`. Then `pid <n>`, the `wait --lead` that wrote it.
+- Lead line: `unsent brief: <stem>, exit: <exit>`.
+- Exit: for the builder of a ready story, `herdr pane close <pane> then <the no-agent: exit>`,
+  which is `swarm.sh restart <slug>, or swarm.sh hold <slug> <reason>`. Its pane is closed with
+  herdr, not `swarm.sh close`: on a ready story with no PR that close counts a failed attempt and
+  clears the worktree, and restart then refuses. A builder whose story is in any other state, such
+  as one in review whose findings sit in its box, is kept, since restart refuses a story that is not
+  ready: the exit is `swarm.sh tell <slug> nudge <a file asking it to act on the brief in its input
+  box>`, which herdr types after the paste and sends with it. With no story file the exit is
+  `herdr pane close <pane>` alone. For a review agent it is
+  `swarm.sh close review-<slug> then swarm.sh review-agent <slug> <PR URL>`, once per PR on the
+  story (`<PR URL>` itself when it has none). For a conductor it is
+  `swarm.sh close conduct-<epic> then swarm.sh conduct <epic>`, and for the backlog's,
+  `swarm.sh close <its agent name> then swarm.sh conduct --backlog`.
+- It goes on the read that finds its agent working, blocked or done, that finds herdr no longer
+  lists the agent in that pane (an agent herdr lists with no status is still listed), or that reads its box clear or finds a turn started in its session
+  since the brief went out (it took the brief, then got a new paste). Its line then leaves
+  `.swarm/lead/seen` too. While the agent stays idle, its pane is read once each poll. A failed read
+  leaves the marker as it is.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
@@ -2224,7 +2263,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), or a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), or a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |

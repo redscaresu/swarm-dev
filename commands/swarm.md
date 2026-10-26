@@ -151,7 +151,17 @@ Repeat until a step below says stop:
      waiting, naming it: read it with `herdr agent read <agent>`. A working one took up its
      brief, so do not resume again: tell the user, since no swarm.sh command records that rung.
      One waiting on a question gets its answer there, then the resume again. If you cannot fix
-     the cause, tell the user. Then start
+     the cause, tell the user. An
+     `unsent brief: <stem>, exit: <exit>` line means an agent sat idle with its brief still in its
+     input box after `wait --lead` had pressed Enter on it once. `<stem>` is the slug for a builder,
+     `review-<slug>` for a review agent and `conduct-<epic>` for a conductor. Run the exit. For the
+     builder of a ready story it is `herdr pane close <pane>`, then the restart a `no-agent:` line
+     would name. Do not use `swarm.sh close` on a builder: it counts a failed attempt and clears the
+     worktree that restart needs. A builder whose story is not ready, such as one in review with its
+     findings in the box, is kept: the exit is `swarm.sh tell <slug> nudge <file>`, the file asking
+     it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
+     `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
+     then `swarm.sh conduct <epic>`. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
