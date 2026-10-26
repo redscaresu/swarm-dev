@@ -642,6 +642,9 @@ step_up() {
     die "step-up: ${slug}'s builder pane could not be closed, so it may still be working in its worktree; nothing was stepped up"
   fi
   STEP_UP_CLOSED=1
+  # The old builder is gone: the marker says so, and a pane herdr lists under its name from here is
+  # the new rung's (step_up_closed).
+  step_up_marker "${b}.step-up" "${trigger} ${from} ${to} ${role}" closed
   start_rung "${slug}"
 }
 
@@ -681,9 +684,10 @@ step_up_resume() {
     || die "step-up --resume: no step-up of '${slug}' waits to start (no .swarm/briefs/${slug}.step-up)"
   # One step-up of a story at a time (ladder_step's lock): a refused resume leaves the marker as it is.
   step_lock "${lock}" || die "step-up --resume: another step-up of ${slug} is running; nothing was started"
-  # Its own pid next, so the lead's poll reads the resume as under way from here. From here a refusal
-  # is a failed resume too: it logs its step-up:failed line, and the lock goes on any exit.
-  step_up_marker "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" "$(head -1 "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up")"
+  # Its own pid next, and closed, since a resume only follows a close, so the lead's poll reads the
+  # resume as under way from here. From here a refusal is a failed resume too: it logs its
+  # step-up:failed line, and the lock goes on any exit.
+  step_up_marker "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" "$(head -1 "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up")" closed
   # shellcheck disable=SC2064 # expand now: the slug and lock are local
   trap "step_up_failed '${slug}'; rm -rf '${lock}'" EXIT
   STEP_UP_CLOSED=1   # the step-up that wrote the marker closed the builder
@@ -694,22 +698,20 @@ step_up_resume() {
   rm -rf "${lock}"
 }
 
-# step_up_marker <file> <first line> — write a .step-up marker: <first line> (<trigger> <from> <to>
-# <role>, which start_rung reads), then `pid <n>`, this swarm.sh's pid. While that process runs, the
-# step-up is under way; once it is gone and the marker is still there, the step-up failed
-# (no_agent_lines prints `step-up failed:`).
+# step_up_marker <file> <first line> [closed] — write a .step-up marker: <first line> (<trigger> <from>
+# <to> <role>, which start_rung reads), then `pid <n>`, this swarm.sh's pid, then `closed` once the old
+# builder is closed. While that process runs, the step-up is under way; once it is gone and the marker
+# is still there, the step-up failed (no_agent_lines prints `step-up failed:`), and with `closed` a
+# pane herdr lists under the builder's name is the new rung's, not the old builder (step_up_closed).
 step_up_marker() {
-  printf '%s\npid %s\n' "$2" "$$" > "$1.tmp" && mv "$1.tmp" "$1"
+  { printf '%s\npid %s\n' "$2" "$$"; [[ -z "${3:-}" ]] || echo closed; } > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
 # step_up_die <slug> <why> <message> — a step-up of <slug> stopped after its builder was closed: log
 # `step-up:failed <slug> ok (<why>)`, the line flow reads, then die with <message>. Its .step-up marker
 # stays for step-up --resume, and wait --lead tells the lead.
-# STEP_UP_CLOSED_WHYS: the <why>s step_up_die logs, one per call site (all in start_rung, so after the
-# old builder closed); step_up_closed reads them, so a new one goes on this list too.
 # STEP_UP_CLOSED: set once step_up has closed the old builder (and by a resume, whose step-up did).
 STEP_UP_LOGGED=""; STEP_UP_CLOSED=""
-STEP_UP_CLOSED_WHYS="worktree unreadable|git step unfinished: [^)]*|default branch unread|mktemp failed|start unclear|start failed"
 step_up_die() {
   STEP_UP_LOGGED=1; record_event step-up:failed "$1" "ok ($2)"
   die "$3"
@@ -767,7 +769,7 @@ start_rung() {
       # Its brief was not taken up: closed (it would sit idle with no brief), and not on record
       # until a resume starts it. A pane already gone is no reason to stop.
       rc=1; shut_agent "${slug}" >/dev/null 2>&1 || true
-      if [[ -n "${CLOSE_PANE_KEPT:-}" ]]; then echo "step-up: ${slug}'s ${to} builder's pane could not be closed: close it by hand" >&2
+      if [[ -n "${CLOSE_PANE_KEPT:-}" ]]; then echo "step-up: ${slug}'s ${to} builder's pane could not be closed: look at it (herdr agent read $(agent_name "${slug}")) before resuming; the resume retires an idle agent there and refuses one that works or waits" >&2
       else echo "step-up: ${slug}'s ${to} builder is closed" >&2; fi
       # Its line goes under the lock record_agent appends under, held from the read to the replace, so
       # a line another conductor records meanwhile is kept.
@@ -2068,7 +2070,8 @@ no_agent_exit() {
 # set, a story with none gets a `no-agent <slug>` events.tsv line, so the next poll prints it. A hold
 # line answers the alert until a new event: the next poll writes one. A ready story with a .step-up
 # marker gets `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` instead, unless its
-# step-up still runs (step_up_running) or its builder is still listed.
+# step-up still runs (step_up_running), or a pane is listed under its builder's name while the marker
+# does not say the old builder was closed (step_up_closed).
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
 # matter in one pass (stories_fm) and events.tsv once; per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder), then herdr's JSON and one ps
@@ -2122,8 +2125,8 @@ no_agent_lines() {
   # merge, or a running step-up, cannot be ruled out, so nothing is printed, as for herdr's list.
   NO_AGENT_PS="$(ps -A -ww -o pid=,command= 2>/dev/null)" || return 0
   for slug in ${marked}; do
-    # A pane listed under the builder's name is the old builder, never closed (a resume would start a
-    # second one), unless start_rung logged its failure: then it is the new rung's pane, kept.
+    # A pane listed under the builder's name may be the old builder, never closed, unless the marker
+    # says the close was done (step_up_closed): then it is the new rung's, kept or left behind.
     no_agent_name name "${slug}"
     ! grep -qxF -e "${name}" <<< "${live}" || step_up_closed "${slug}" || continue
     step_up_running "${slug}" || echo "step-up failed: ${slug}, exit: swarm.sh step-up --resume ${slug}"
@@ -2161,15 +2164,15 @@ step_up_running() {
   kill -0 "${pid}" 2>/dev/null
 }
 
-# step_up_closed <slug> — since <slug>'s newest ok escalate or ok story events.tsv line, a step-up:failed
-# line came from start_rung (STEP_UP_CLOSED_WHYS): a step-up got past closing the old builder, so a
-# pane listed under the builder's name is the new rung's. A later resume that failed in its checks
-# does not undo that.
+# step_up_closed <slug> — <slug>'s .step-up marker has a `closed` line: the step-up that wrote it got
+# past closing the old builder (step_up rewrites the marker then; a resume writes it, since a resume
+# only follows a close). A pane herdr lists under the builder's name is then the new rung's, kept by
+# start_rung or left by a step-up killed after start_agent opened it, and no reason to stay quiet: a
+# resume's start_agent refuses the name while that pane's agent works or waits and retires it when
+# idle (free_agent_name), so it starts no second builder beside a live one. Without the line the
+# step-up stopped inside the close, so that pane may be the old builder, and the alert waits.
 step_up_closed() {
-  awk -F'\t' -v s="$1" -v re="^ok [(](${STEP_UP_CLOSED_WHYS})[)]$" '$3 != s { next }
-    ($2 == "escalate" || $2 == "story") && $5 ~ /^ok/ { l = 0 }
-    $2 == "step-up:failed" && $5 ~ re { l = 1 }   # loose-match: ok re is anchored, built from STEP_UP_CLOSED_WHYS
-    END { exit !l }' "${EVENTS_LOG}" 2>/dev/null
+  grep -qx closed "${PROJECT_DIR}/.swarm/briefs/$1.step-up" 2>/dev/null
 }
 
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents),

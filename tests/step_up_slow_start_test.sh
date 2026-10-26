@@ -12,6 +12,7 @@
 # when it holds never); each `agent list` logs the clock. ${ROOT}/mode makes it fail: resend-fails
 # answers the second prompt server_unavailable; nobase gives no status before the first prompt;
 # blocked gives no reply to the first prompt, answers the second agent_blocked, and reads blocked from then on;
+# blocked-kept is blocked whose new pane herdr cannot close (a close of the old builder, pane w:1, still works);
 # hiccup gives no status once an `agent list` follows a prompt (rung_late's re-read).
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -43,13 +44,13 @@ case "$1 $2" in
   "tab create")   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"}]}}' ;;
-  "tab close"|"pane close") : > "$H/agents" ;;
+  "tab close"|"pane close") [ "$mode" != blocked-kept ] || grep -q ' w:1$' "$H/agents" || exit 1; : > "$H/agents" ;;
   "agent start")  echo 0 > "$H/ms"; echo 0 > "$H/prompts"; rm -f "$H/isblocked" "$H/reread"; echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent prompt") t=$(echo "$*" | grep -o -- '--timeout [0-9]*' | tail -1 | sed 's/.* //'); p=$(($(cat "$H/prompts") + 1)); echo "$p" > "$H/prompts"
                   case "$mode:$p" in
                     resend-fails:2) echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1 ;;
-                    blocked:1) echo $((now + t)) > "$H/ms"; exit 1 ;;
-                    blocked:2) touch "$H/isblocked"; echo '{"error":{"code":"agent_blocked"}}' >&2; exit 1 ;;
+                    blocked:1|blocked-kept:1) echo $((now + t)) > "$H/ms"; exit 1 ;;
+                    blocked:2|blocked-kept:2) touch "$H/isblocked"; echo '{"error":{"code":"agent_blocked"}}' >&2; exit 1 ;;
                   esac
                   if up $((now + t)); then echo "$late" > "$H/ms"; echo '{"result":{"agent":{"agent_status":"working"}}}'
                   else echo $((now + t)) > "$H/ms"; echo '{"error":{"code":"timeout"}}' >&2; exit 1; fi ;;
@@ -132,6 +133,14 @@ check "a rung blocked on a question before its brief went is closed at once, nev
   "1|yes|no||2|kept|code opus" \
   "${rc}|$(has "(agent_blocked)" "${out}")|$(grep -qF "${SAID}" <<< "${out}" && echo yes || echo no)|$(escalate)|$(closes)|$(marker)|$(newest)"
 check "and logs an ok step-up:failed line for the start that failed" "s1 ok (start failed)" "$(failed_lines)"
+
+# The kept pane is the only sign of itself: the failure line is the same ok (start failed), so the
+# step-up's output must name the agent to read and close it by.
+build_on opus 90000 blocked-kept
+out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?
+check "a closed-at-once rung whose pane could not be closed names the agent to look at before resuming, and what the resume does with it" \
+  "1|yes|kept|s1 ok (start failed)" \
+  "${rc}|$(has "s1's fable builder's pane could not be closed: look at it (herdr agent read s1) before resuming; the resume retires an idle agent there and refuses one that works or waits" "${out}")|$(marker)|$(failed_lines)"
 
 build_on opus never hiccup
 out="$(SWARM_PROMPT_TIMEOUT_MS=10000 run step-up s1 stalled)" && rc=0 || rc=$?

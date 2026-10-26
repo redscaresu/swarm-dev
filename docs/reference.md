@@ -120,19 +120,26 @@ everything else and prints only these lines and `step-up failed:` lines on its f
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
 `<kind>` says what it marks. Its first line holds the marker's own fields. A `pid <n>` line names the
-swarm.sh process that wrote it. `wait --lead` reads markers from files and one `ps`, with no herdr or
-gh call, and prints `<what>: <stem>, exit: <exit>`. The `.step-up` marker works like this:
+swarm.sh process that wrote it. A later one-word line, such as `closed`, records a step the writer
+got past. `wait --lead` reads markers in the same pass as its `no-agent:`
+lines, from the poll's one `herdr agent list`, events.tsv and one `ps`, with no gh call. Outside
+herdr, or while herdr's list or `ps` fails, it prints no marker line either: without the list it
+cannot tell whether the builder is still open. It prints `<what>: <stem>, exit: <exit>`. The
+`.step-up` marker works like this:
 
 - Path: `.swarm/briefs/<slug>.step-up`. A step-up writes it just before it closes the builder,
-  and removes it again if the close fails, since the builder may still be open.
-  A resume takes `.swarm/locks/step-up-<slug>` first, then writes it again with its own pid; a
-  resume refused because another step-up holds the lock leaves it as it is. It goes once the next
-  model's builder has started.
+  and removes it again if the close fails, since the builder may still be open. Once the builder
+  is closed it writes it again with a `closed` line. A resume takes `.swarm/locks/step-up-<slug>`
+  first, then writes it again with its own pid and `closed`, since a resume only follows a close.
+  A resume refused because another step-up holds the lock leaves it as it is. It goes once the
+  next model's builder has started.
 - First line: `<trigger> <from> <to> <role>`, which `step-up --resume` reads to start the rung.
 - Failure line: each point where a step-up stops after closing the builder logs
   `step-up:failed <slug>` with `ok (<why>)` in events.tsv. Those are an unreadable worktree, a git
   step left unfinished in it, an unread default branch, a failed `mktemp`, and a start that failed
-  or that herdr could not confirm. Any other failure after the close, or of a resume once it holds
+  or that herdr could not confirm. A start that failed logs `ok (start failed)` whether or not the
+  new builder's pane could be closed. Only the step-up's output says when the pane was kept, and
+  it names the agent to read it by. Any other failure after the close, or of a resume once it holds
   the lock, logs it too. A failure with a die message logs that message's first line. One with no
   message logs only `ok (exit <n>)`, whoever ran the step-up: a `set -e` failure, or any failure of
   a step-up swarm.sh ran itself (from `close`, `tell`, `wait --stall` or `watch`), which has no
@@ -144,17 +151,25 @@ gh call, and prints `<what>: <stem>, exit: <exit>`. The `.step-up` marker works 
   failure line or the `.swarm/locks/step-up-<slug>` lock says, so a step-up killed before it could
   log its failure line counts too. The process must name the slug, so a pid reused by another
   story's step-up does not count. While that process runs, the step-up is under way and the line
-  stays quiet. It stays quiet too while herdr still lists a pane under the builder's name, which
-  is the old builder when the step-up stopped before it closed it: a resume would start a second
-  one. When a failure from one of the points listed above, which all come after the close, is logged
-  after the story's newest ok `escalate` or ok `story` line, that pane is the new rung's, kept, and
-  the line is printed. A later resume that fails in its checks does not change that. A marker gone
+  stays quiet. It stays quiet too while herdr lists a pane under the builder's name and the marker
+  has no `closed` line: the step-up stopped inside the close, so that pane may be the old builder,
+  still at work. With the `closed` line that pane is the new rung's, kept by a start that failed
+  or that herdr could not confirm, or left by a step-up killed after it opened the pane, and the
+  line is printed. The resume's own start refuses the name while that pane's agent is working or
+  waiting and retires it when idle, so it starts no second builder beside a live one. A marker gone
   by the time its pid is read is a rung that started, not a failure. The story must be ready, since
   only a ready story steps up, and pass the `no-agent:` filters on kind and `held_for:`. A story in
   review keeps to the `no-agent:` line, marker or not.
-- Exit: fix the cause the failure line names, then run `swarm.sh step-up --resume <slug>`. With no
-  failure line, the step-up was killed partway, and the lead runs the exit. The conductor leaves
-  the story alone and does not list it in its report.
+- Exit: the lead first reads the output of whatever ran the step-up, in every case. For a step-up
+  swarm.sh ran itself that is the conductor's pane, and for one run by hand the command's own
+  output. The failure line says where it stopped, and the output says why. With no failure line,
+  the step-up was killed partway. With the cause fixed, the exit is
+  `swarm.sh step-up --resume <slug>`. A pane may still be open under the builder's name, kept by
+  the failed start or left by a killed step-up. The resume retires an idle agent in it and starts
+  the rung (`swarm.sh tidy` closes the retired pane), and refuses while that agent is working or
+  waiting, naming it. A working one took up its brief, so the lead tells the user instead of
+  resuming again, since no swarm.sh command records that rung. The conductor leaves the story
+  alone and does not list it in its report.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm

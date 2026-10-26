@@ -272,7 +272,8 @@ check "a fresh run with no .swarm/lead/seen prints the line on its first read" f
 
 # --- a failed step-up: its .step-up marker gets its own line, step-up failed:, once no step-up of it runs.
 # marker <slug> [pid] — the .step-up marker step_up writes, with a `pid [pid]` line when [pid] is given.
-marker() { mkdir -p "${P}/.swarm/briefs"; { echo "stalled opus fable code"; [[ -z "${2:-}" ]] || echo "pid $2"; } > "${P}/.swarm/briefs/$1.step-up"; }
+# marker <slug> [pid] [closed] — a .step-up marker: its rung, a pid line with [pid], and closed with [closed].
+marker() { mkdir -p "${P}/.swarm/briefs"; { echo "stalled opus fable code"; [[ -z "${2:-}" ]] || echo "pid $2"; [[ -z "${3:-}" ]] || echo closed; } > "${P}/.swarm/briefs/$1.step-up"; }
 DEAD=999999999   # above every system's pid limit, so no process has it
 step_fires() { [[ "$(out)|$(rc)" == "step-up failed: $1, exit: swarm.sh step-up --resume $1|0" ]]; }
 
@@ -323,11 +324,18 @@ busy _step-up na-other stalled; marker na-s "${busy_pid}"
 poll
 check "a marker whose pid is now another story's step-up fires" step_fires na-s
 unbusy
-# Killed before it closed the builder: the builder still listed, so a resume would start a second one.
+# Killed inside the close (no closed line on the marker): the pane listed under the builder's name may
+# be the old builder, so the alert waits.
 fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}"; listed na-s
 poll; poll
-check "a marker whose step-up is gone but whose builder is still listed is silent" never_woke na-s
-# A pane under the builder's name after start_rung logged its failure is the new rung's, kept: it fires.
+check "a marker without a closed line whose step-up is gone but whose builder is still listed is silent" never_woke na-s
+# The marker says the old builder was closed: a pane under its name is the new rung's. Left by a step-up
+# killed after start_agent opened it, before start_rung could log anything: it fires.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}" closed; listed na-s
+poll
+check "a closed marker with a dead pid and no failure line, its pane listed (killed after the new pane opened), fires" step_fires na-s
+# Or kept by start_rung, its failure logged: it fires.
+fresh; story na-s "kind: code" "status: ready"; ev story na-s; built na-s; marker na-s "${DEAD}" closed; listed na-s
 ev step-up:failed na-s "ok (start unclear)"
 poll
 check "a marker whose new rung's pane was kept (start unclear) fires, the pane listed" step_fires na-s

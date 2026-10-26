@@ -138,15 +138,19 @@ Repeat until a step below says stop:
      wait-pr runs and may come back once after it ends; that needs nothing new. A
      `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a step-up closed
      the story's builder and then could not start the next model's. Its conductor leaves the story
-     alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says why: fix that
-     cause, then run the exit. Three cases differ. `ok (exit <n>)` is a failure with no error
-     message. The error is in the output of whatever ran the step-up: the conductor's pane
-     (`herdr agent read conduct-<epic>`) for one swarm.sh ran itself, the command's own output for
-     one run by hand.
-     `ok (start unclear)` kept the new builder's pane: read it first (`herdr agent read <slug>`).
-     If it took up its brief it is working, so do not resume: tell the user, since no swarm.sh
-     command records that rung. With no such line, the step-up was killed partway: run the exit.
-     If you cannot fix the cause, tell the user. Then start
+     alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says where it stopped,
+     and sometimes why. The error is in the output of whatever ran the step-up: read that output
+     in every case before you resume. For a step-up swarm.sh ran itself, it is the
+     conductor's pane: `herdr agent read <conductor>`, the name `swarm.sh status` lists for the
+     story's epic or for the backlog. For one run by hand, it is the command's own output. With
+     no `step-up:failed` line, the step-up was killed partway. Fix the cause the output shows,
+     then run the exit. A pane may still be open under the builder's name, kept by the failed
+     start or left by a killed step-up. The resume retires an idle agent in it and starts the
+     rung (`swarm.sh tidy` closes the retired pane), and refuses while that agent is working or
+     waiting, naming it: read it with `herdr agent read <agent>`. A working one took up its
+     brief, so do not resume again: tell the user, since no swarm.sh command records that rung.
+     One waiting on a question gets its answer there, then the resume again. If you cannot fix
+     the cause, tell the user. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs

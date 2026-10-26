@@ -194,8 +194,8 @@ check "a start that fails stops at the failing step, logs no escalation and name
 check "and never carries on to a later step with no pane" "yes" "$(lacks "did not take the agent's environment" "${out}")"
 check "it logs an ok step-up:failed line naming the failed start" "ok (start failed)" "$(failed_lines s1)"
 mpid="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"
-check "its marker keeps the rung on its first line, and the pid of the step-up, now gone, on a pid line" "ci-red-2 opus fable escalate|gone" \
-  "$(head -1 "${P}/.swarm/briefs/s1.step-up")|$([[ "${mpid}" =~ ^[0-9]+$ ]] && ! kill -0 "${mpid}" 2>/dev/null && echo gone)"
+check "its marker keeps the rung on its first line, the pid of the step-up, now gone, on a pid line, and closed, since the old builder is" "ci-red-2 opus fable escalate|gone|closed" \
+  "$(head -1 "${P}/.swarm/briefs/s1.step-up")|$([[ "${mpid}" =~ ^[0-9]+$ ]] && ! kill -0 "${mpid}" 2>/dev/null && echo gone)|$(grep -x closed "${P}/.swarm/briefs/s1.step-up")"
 check "a story whose parents' PRs are no longer open has a diff from its merge-base with origin/main, though a stale origin/story/p1 still resolves" "yes|yes|yes" \
   "$(has "+PARENT-WORK" "${brief}")|$(lacks MAIN-ONLY "${brief}")|$(lacks "Merge after" "${brief}")"
 check "findings of an older head are not pasted as open, and the brief says why" "yes|yes" \
@@ -203,8 +203,8 @@ check "findings of an older head are not pasted as open, and the brief says why"
 sed -i.bak 's/^kind: code$/kind: lead/' "${P}/docs/stories/s1.md"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume of a story made kind: lead since refuses, starting nothing" "1|yes|1" "${rc}|$(has "s1 is kind: lead, which no agent builds" "${out}")|$(escalates)"
-check "a resume writes its own pid on the marker before its checks, so the lead's poll reads it as under way" "yes" \
-  "$(m="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"; [[ "${m}" =~ ^[0-9]+$ && "${m}" != "${mpid}" ]] && echo yes)"
+check "a resume writes its own pid on the marker before its checks, so the lead's poll reads it as under way, and keeps closed" "yes|closed" \
+  "$(m="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"; [[ "${m}" =~ ^[0-9]+$ && "${m}" != "${mpid}" ]] && echo yes)|$(grep -x closed "${P}/.swarm/briefs/s1.step-up")"
 # Another step-up holds the lock (a live pid): the resume is refused, and the marker keeps its pid.
 mpid="$(sed -n 's/^pid //p' "${P}/.swarm/briefs/s1.step-up")"; nf="$(failed_lines s1)"
 mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
