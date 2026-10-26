@@ -2,18 +2,14 @@
 # merge_fixture.sh — sourced by merge_test.sh and the merge_*_test.sh files that share its cases, so
 # each runs on a CI shard of its own: a project for swarm.sh merge, its stubs and the helpers the cases
 # use. gh and herdr are stubs on PATH: gh logs every call to gh.log and answers from ${FX} (see
-# serve); herdr lists the agents in ${ROOT}/agents ("<name> <pane>" lines). Each file that sources it
-# ends with `finish`.
+# serve); herdr lists the agents in ${ROOT}/agents ("<name> <pane>" lines). A file that sources it
+# first sets ROOT, its own mktemp root, and exports CLAUDE_CONFIG_DIR under it (sleep_scale_test reads
+# each test file for that), and ends with `finish`.
 # shellcheck disable=SC2034,SC2120 # the cases that source it use these variables, and pass fresh its config lines
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 REPO="$(dirname "${SWARM}")/.."
-tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
-[ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-ROOT="$(cd "${tmp}" && pwd -P)"
-trap 'chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
-export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; S="${P}/docs/stories/s.md"
 H1=1111111111111111111111111111111111111111; H2=2222222222222222222222222222222222222222
 M=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; URL=https://github.com/o/r/pull/7

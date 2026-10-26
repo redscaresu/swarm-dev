@@ -4,6 +4,13 @@
 # plugin's own upgrade), who may run it, a story marked costs, merge = human's HLD grant, and
 # merge --board's epic guard. On merge_fixture.sh, as merge_test.sh is.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
+set -euo pipefail
+
+tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+ROOT="$(cd "${tmp}" && pwd -P)"
+trap 'chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
 
