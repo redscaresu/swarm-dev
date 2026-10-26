@@ -30,11 +30,12 @@
 #     <task-id> carrying a <status> since: the session
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
-#   test_running(info) -> True when, in one `ps -A -o pid=,ppid=,command=` read, a process under the
-#     pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk) runs a test suite
-#     (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh, or the script
-#     itself): the agent is working, however quiet. Never prints a command. Info or ps that cannot be
-#     read is no run.
+#   test_running(info, stall_minutes) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read,
+#     a process under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk)
+#     runs a test suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh,
+#     or the script itself) and started less than TEST_RUN_STALLS times stall_minutes ago: the agent
+#     is working, however quiet. An older run may be hung, and is none. Never prints a command. Info
+#     or ps that cannot be read is no run.
 #   usage_limit(text) -> ("dialog", <option>) when the pane text, after its last reply (⏺ or ●), ends on
 #     Claude Code's live usage-limit dialog: its option lines ("Stop and wait for limit to reset" /
 #     "<option>. Wait here, then continue automatically") among the last USAGE_TAIL non-empty lines,
@@ -1047,13 +1048,15 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
-# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite
-# (panes.py's test_running, over herdr's process info for the pane and one ps read).
+# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite started
+# less than TEST_RUN_STALLS times stall_minutes ago (panes.py's test_running, over herdr's process
+# info for the pane and one ps read).
 test_running() {
+  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
-sys.exit(0 if test_running(sys.argv[1]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)"
+sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)" "${CFG_stall_minutes}"
 }
 
 # usage_state <target> — print `dialog <option>` or `waiting` and succeed when the agent's pane is on

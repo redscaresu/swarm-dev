@@ -152,20 +152,31 @@ def session_state(log, name, listing):
 TEST_RUN = re.compile(r"(\S*/)?g?make(\s+\S+)*?\s+(test|check)(\s|$)"
                       r"|(\S*/)?(ba|z|da|k)?sh(\s+-\S+)*\s+(\S*/)?scripts/test\.sh(\s|$)"
                       r"|(\S*/)?scripts/test\.sh(\s|$)")
-def test_running(info):
+# TEST_RUN_STALLS: how many stall_minutes a test run counts as work for; an older one may be hung.
+TEST_RUN_STALLS = 3
+def etime_secs(t):   # ps etime: [[dd-]hh:]mm:ss
+    d, _, hms = t.rpartition("-")
+    h = [0, 0] + [int(x) for x in hms.split(":")]
+    return int(d or 0) * 86400 + h[-3] * 3600 + h[-2] * 60 + h[-1]
+def test_running(info, stall_minutes):
     try:
         shell = int(json.loads(info)["result"]["process_info"]["shell_pid"])
-        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="], capture_output=True, text=True, timeout=10)
+        cap = TEST_RUN_STALLS * int(stall_minutes) * 60
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,etime=,command="], capture_output=True, text=True, timeout=10)
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         return False
     if out.returncode != 0:
         return False
     parent, runs = {}, set()
     for l in out.stdout.splitlines():
-        f = l.split(None, 2)
-        if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
+        f = l.split(None, 3)
+        if len(f) == 4 and f[0].isdigit() and f[1].isdigit():
             parent[int(f[0])] = int(f[1])
-            if TEST_RUN.match(f[2].strip()):
+            try:
+                young = etime_secs(f[2]) < cap
+            except ValueError:
+                young = False
+            if young and TEST_RUN.match(f[3].strip()):
                 runs.add(int(f[0]))
     for p in runs:
         for _ in parent:   # up to the pane's shell; a cycle or a process with no parent listed ends the walk
