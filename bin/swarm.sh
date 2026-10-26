@@ -51,7 +51,9 @@
 #
 # The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
 # .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
-# of the git repo you are in. Settings live in .claude/swarm/config (see config below). Must run
+# of the git repo you are in. With SWARM_FORBID_PROJECT naming a directory (the test runner and
+# tests/test_helpers.sh name the checkout the tests run from), that project is refused.
+# Settings live in .claude/swarm/config (see config below). Must run
 # inside herdr (HERDR_ENV=1). An epic gets a tab named for it: the conductor's pane, then a pane per
 # story, each named. A story outside any epic gets its own tab. Tabs hold at most four panes (a 2x2
 # grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
@@ -159,6 +161,12 @@ if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]
   PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
 else
   PROJECT_DIR="$(find_project)"
+fi
+# A test names the checkout it runs from in SWARM_FORBID_PROJECT (scripts/test.sh and tests/test_helpers.sh
+# set it to the main checkout): swarm.sh refuses to act on that project, so no test reaches its live
+# .swarm, whether it cd's into the checkout, names it in SWARM_PROJECT, or runs from a worktree of it.
+if [[ -n "${SWARM_FORBID_PROJECT:-}" && "$(cd "${PROJECT_DIR}" 2>/dev/null && pwd -P)" == "$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" ]]; then
+  die "SWARM_FORBID_PROJECT: ${PROJECT_DIR} is the checkout the tests run from; a test cd's into a project of its own, or names one in SWARM_PROJECT"
 fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 

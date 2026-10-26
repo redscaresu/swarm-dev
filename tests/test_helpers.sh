@@ -12,8 +12,16 @@
 # HERDR_SOCKET_PATH. It does not change directory: a test names its files from BASH_SOURCE, which a
 # direct run gives as a relative path. Each project a test makes is pinned by a cd into it, or by
 # SWARM_PROJECT on the call; make test runs every file from its TMPDIR, outside any git repo, where a
-# call left unpinned stops at "not in a swarm project", so no green test has one.
-# tests/live_logs_test.sh checks that every test sources this first.
+# call left unpinned stops at "not in a swarm project", so no green test has one. And it names the
+# checkout these tests run from (the main checkout, from a worktree) in SWARM_FORBID_PROJECT, which
+# swarm.sh refuses to act on: a call that resolves there, through a cd into the checkout, SWARM_PROJECT
+# naming it, or a story worktree, stops before it writes. tests/live_logs_test.sh checks that every
+# test sources this first.
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE|SWARM_NO_CI_REFRESH) ;; SWARM_*) unset "${v}" ;; esac; done
 unset HERDR_SOCKET_PATH
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"
+_th_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if _th_common="$(git -C "${_th_repo}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  export SWARM_FORBID_PROJECT; SWARM_FORBID_PROJECT="$(dirname "${_th_common}")"
+else export SWARM_FORBID_PROJECT="${_th_repo}"; fi
+unset _th_repo _th_common

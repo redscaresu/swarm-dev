@@ -44,7 +44,8 @@ stop_group() {
 # tests/test_helpers.sh, which every test sources first, drops it, and a file whose swarm.sh still
 # reaches the stand-in fails, naming what it left there; a call a test leaves unpinned (no cd into
 # its project, no SWARM_PROJECT) stops at "not in a swarm project" instead of reaching this
-# checkout's .swarm (tests/live_logs_test.sh). MAKEFLAGS, MFLAGS and MAKELEVEL are unset too, so a
+# checkout's .swarm, and one that names this checkout (a cd into it, SWARM_PROJECT) stops too:
+# SWARM_FORBID_PROJECT names it and swarm.sh refuses it (tests/live_logs_test.sh). MAKEFLAGS, MFLAGS and MAKELEVEL are unset too, so a
 # make a test runs starts clean, whatever make test was given (SHARD, TESTS).
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${v}" ;; esac; done
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
@@ -53,6 +54,9 @@ if [[ "${1:-}" == --one ]]; then
   run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd=""
   case " ${SLOW:-} " in *" ${f} "*) limit=$((limit * 3)) ;; esac   # the files that take minutes alone
   unset TEST_FILE_TIMEOUT JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH MAKEFLAGS MFLAGS MAKELEVEL
+  # The checkout this runner belongs to (its main checkout, from a worktree), found from this script, not
+  # the cwd (a test runs test.sh from its TMPDIR): swarm.sh refuses to act on it.
+  if forbid="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then SWARM_FORBID_PROJECT="$(dirname "${forbid}")"; export SWARM_FORBID_PROJECT; fi
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
   trap '[[ -z "${wd}" ]] || kill "${wd}" 2>/dev/null; [[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
   : > "${run}/jobs/$$"   # first, so the cleanup can find this job before its test starts

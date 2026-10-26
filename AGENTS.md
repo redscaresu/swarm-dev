@@ -146,7 +146,9 @@ Every `tests/*_test.sh` sources `tests/test_helpers.sh` as its first command aft
 drops the pane's `SWARM_*` settings and `HERDR_SOCKET_PATH`, which name the lead's real project and herdr.
 `make test` runs each file from its own `TMPDIR`, where a `swarm.sh` call a test leaves unpinned (no `cd`
 into a project of its own, no `SWARM_PROJECT` on the call) stops at "not in a swarm project", and with
-`SWARM_PROJECT` naming a stand-in project, failing a file whose `swarm.sh` reaches it. `tests/live_logs_test.sh` checks the source line in every file and the runner's check, and
+`SWARM_PROJECT` naming a stand-in project, failing a file whose `swarm.sh` reaches it. Both name the
+checkout the tests run from (its main checkout, from a worktree) in `SWARM_FORBID_PROJECT`, and `swarm.sh`
+refuses to act on that project, so a test that `cd`s into the checkout or names it stops before it writes. `tests/live_logs_test.sh` checks the source line in every file and the runner's check, and
 that `events_test.sh` and `wait_lead_test.sh`, which once reached a real project, leave a copy of the
 checkout's `findings.tsv`, `events.tsv` and `.swarm/lead/pid` as they were under `make test`.
 

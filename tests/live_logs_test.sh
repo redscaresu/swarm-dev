@@ -4,12 +4,13 @@
 # pipefail: it drops the pane's SWARM_* and HERDR_SOCKET_PATH, which name the lead's real project and
 # herdr. make test runs each file from its TMPDIR with SWARM_PROJECT naming a stand-in project of
 # the job's own, as a pane's names the real one, and fails a file whose swarm.sh reaches it: every
-# file is checked on every run. And the two files that once reached a real project (events_test.sh,
-# whose fixtures landed in findings.tsv and events.tsv; wait_lead_test.sh, whose wait --lead took the
-# lead's .swarm/lead/pid), run under make test from a copy of this repo, leave the copy's findings.tsv,
-# events.tsv and lead/pid as they were. A copy, not the main checkout: a conductor appends to the
-# real logs while the suite runs, and a failing guard would itself write fixtures into the log it
-# guards.
+# file is checked on every run. Both name the checkout the tests run from in SWARM_FORBID_PROJECT,
+# which swarm.sh refuses to act on: a test that cd's into the checkout or names it stops before it
+# writes, under make test and run on its own. And events_test.sh, whose fixtures once landed in the
+# real findings.tsv and events.tsv, run under make test from a copy of this repo, leaves the copy's
+# findings.tsv, events.tsv and .swarm/lead/pid (which wait_lead_test.sh's wait --lead once took on
+# the real checkout) as they were. A copy, not the main checkout: a conductor appends to the real
+# logs while the suite runs, and a failing guard would itself write fixtures into the log it guards.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -69,9 +70,18 @@ printf '2026-10-25T00:00:00Z\tseed\t-\tw:0\tok\n' > "${COPY}/.swarm/events.tsv"
 echo 99999999 > "${COPY}/.swarm/lead/pid"
 lines() { wc -l < "$1" | tr -d ' '; }
 state() { echo "findings $(lines "${COPY}/.swarm/findings.tsv")|events $(lines "${COPY}/.swarm/events.tsv")|lead/pid $(cat "${COPY}/.swarm/lead/pid" 2>&1)"; }
-rc=0; (cd "${COPY}" && make -s test TESTS="tests/events_test.sh tests/wait_lead_test.sh" JOBS=2 > "${ROOT}/make.out" 2>&1) || rc=$?
-check "make test TESTS=\"tests/events_test.sh tests/wait_lead_test.sh\" passes in the copy" "exit ${rc}" "exit 0"
-check "it adds no line to the copy's .swarm/findings.tsv or events.tsv and leaves its lead/pid as it was" "$(state)" "findings 1|events 1|lead/pid 99999999"
+rc=0; (cd "${COPY}" && make -s test TESTS=tests/events_test.sh JOBS=1 > "${ROOT}/make.out" 2>&1) || rc=$?
+check "make test TESTS=tests/events_test.sh passes in the copy" "exit ${rc}" "exit 0"
+# A test that names the copy itself, with the prelude: through the copy's runner and run on its own, as
+# from a pane. swarm.sh refuses the project both times, and the copy's logs stay as seeded.
+{ echo '#!/usr/bin/env bash'; echo 'set -euo pipefail'; echo "source \"${COPY}/tests/test_helpers.sh\""
+  echo "cd \"${COPY}\" || exit 1"; echo "env -u HERDR_ENV bash \"${COPY}/bin/swarm.sh\" log-finding vacuous-test https://github.com/o/r/pull/9 'a line'"; } > "${FX}/checkout_test.sh"
+o="$(cd "${COPY}" && TEST_RUNS_LOG="" JOBS=1 bash scripts/test.sh "${FX}/checkout_test.sh" 2>&1 || true)"
+check "under the runner, a test that cd's into the checkout fails: swarm.sh refuses SWARM_FORBID_PROJECT" \
+  "$(grep -cE "^FAIL .*/checkout_test\.sh [0-9]+s$|^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "2"
+o="$(cd "${COPY}" && bash "${FX}/checkout_test.sh" 2>&1)" && rc=0 || rc=$?
+check "run on its own, the prelude names the checkout and swarm.sh refuses it" "exit ${rc}|$(grep -c "^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "exit 1|1"
+check "the copy's .swarm/findings.tsv and events.tsv gained no line, and its lead/pid is as it was" "$(state)" "findings 1|events 1|lead/pid 99999999"
 [[ ${rc} -eq 0 ]] || { echo "---- make test in the copy: each file's line, then its first FAIL lines"; grep -E "^(ok|FAIL|TIMEOUT) +tests/" "${ROOT}/make.out"; grep "^FAIL" "${ROOT}/make.out" | grep -v " tests/" | head -n 10 || tail -n 20 "${ROOT}/make.out"; }
 [[ "$(state)" == "findings 1|events 1|lead/pid 99999999" ]] \
   || { echo "---- what the copy's logs gained"; tail -n +2 "${COPY}/.swarm/findings.tsv"; tail -n +2 "${COPY}/.swarm/events.tsv" | head -n 20; }
