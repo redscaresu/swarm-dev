@@ -1,6 +1,6 @@
 ---
 kind: code
-status: later
+status: ready
 epic: less-noise
 depends_on: []
 touches: [bin/lib/board.sh:idle_lines, bin/lib/touches_rows.py:--idle, bin/lib/lifecycle.sh:lead_queue, commands/swarm.md:idle and wait --lead handlers, tests/concurrency_check_test.sh (new), docs/reference.md:idle lines]
