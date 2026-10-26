@@ -137,9 +137,23 @@ python3 -m py_compile bin/lib/*.py
 make check                                  # scripts/lint over tests/*_test.sh
 make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
                                             # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
-                                            # it unsets the swarm env that points at a real project, and dash starts no detached refresh
+                                            # each file runs from its own TMPDIR with SWARM_PROJECT naming a stand-in project, and fails
+                                            # if its swarm.sh reaches it; an unpinned swarm.sh call stops there; dash starts no detached refresh
 claude plugin validate .
 ```
+
+Every `tests/*_test.sh` sources `tests/test_helpers.sh` as its first command after `set -euo pipefail`. It
+drops the pane's `SWARM_*` settings and `HERDR_SOCKET_PATH`, which name the lead's real project and herdr.
+`make test` runs each file from its own `TMPDIR`, where a `swarm.sh` call a test leaves unpinned (no `cd`
+into a project of its own, no `SWARM_PROJECT` on the call) stops at "not in a swarm project", and with
+`SWARM_PROJECT` naming a stand-in project, failing a file whose `swarm.sh` reaches it. Both name the
+checkout the tests run from (its main checkout, from a worktree) in `SWARM_FORBID_PROJECT`, and `swarm.sh`
+refuses to act on that project, named directly or through a worktree of it, so such a `swarm.sh` call stops
+before it writes. That covers `swarm.sh` calls; the hooks' own event lines (`hooks/merge-guard.sh` `record`,
+`hooks/lead-stop.sh` `log`) append to the project under the call's cwd and are not covered. `tests/live_logs_test.sh` checks the source line in every file and the runner's check, that
+`events_test.sh`, whose fixtures once reached the real logs, leaves a copy of the checkout's `findings.tsv`,
+`events.tsv` and `.swarm/lead/pid` as they were under `make test`, and that a test naming the copy, or a
+worktree of it, is refused and writes nothing there.
 
 A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
 the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to

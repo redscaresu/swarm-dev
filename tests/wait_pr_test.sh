@@ -14,6 +14,8 @@
 # the budget asked about, else ${FX}/reset ("<epoch> <time>" of a spent budget's reset), else nothing,
 # ${HANG}s late with ${FX}/reset.hang.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

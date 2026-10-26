@@ -3,6 +3,8 @@
 # in installed_plugins.json changes. Two installed copies, 0.1.0 and 0.2.0 (whose frame carries a
 # marker), a throwaway project with a board, and stub claude, herdr and gh on PATH.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

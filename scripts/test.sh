@@ -43,7 +43,15 @@ stop_group() {
 # test's made-up panes. Nor any SWARM_* but SWARM_SLEEP_SCALE: a builder's pane carries every SWARM_*
 # the lead exported, SWARM_PROJECT and SWARM_AGENT among them, which name its real project. And
 # SWARM_NO_CI_REFRESH is set, so a dash test starts no detached ci refresh, which outlives the test
-# and runs flow, and gh, on a project.
+# and runs flow, and gh, on a project. The file runs from its TMPDIR, outside any git repo, with
+# SWARM_PROJECT naming a stand-in project of the job's own, as a pane's names the lead's real one:
+# tests/test_helpers.sh, which every test sources first, drops it, and a file whose swarm.sh still
+# reaches the stand-in fails, naming what it left there; a call a test leaves unpinned (no cd into
+# its project, no SWARM_PROJECT) stops at "not in a swarm project" instead of reaching this
+# checkout's .swarm, and one that names this checkout, or a worktree of it, stops too: SWARM_FORBID_PROJECT
+# names it and swarm.sh refuses it (tests/live_logs_test.sh); the hooks' own event lines are not swarm.sh
+# calls and are not covered. MAKEFLAGS, MFLAGS and MAKELEVEL are unset too, so a
+# make a test runs starts clean, whatever make test was given (SHARD, TESTS).
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${v}" ;; esac; done
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
 limit="${TEST_FILE_TIMEOUT:-600}"
@@ -51,15 +59,20 @@ if [[ "${1:-}" == --one ]]; then
   run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd="" fields=() x="" reap_log=""
   case " ${SLOW:-} " in *" ${f} "*) limit=$((limit * 3)) ;; esac   # the files that take minutes alone
   reap_log="${TEST_REAP_LOG:-}"   # the run's events.tsv, or empty; the test never sees it
-  unset TEST_FILE_TIMEOUT TEST_REAP_LOG JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
+  unset TEST_FILE_TIMEOUT TEST_REAP_LOG JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH MAKEFLAGS MFLAGS MAKELEVEL
+  # The checkout this runner belongs to (its main checkout, from a worktree), found from this script, not
+  # the cwd (a test runs test.sh from its TMPDIR): swarm.sh refuses to act on it.
+  if forbid="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then SWARM_FORBID_PROJECT="$(dirname "${forbid}")"; export SWARM_FORBID_PROJECT; fi
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
   trap '[[ -z "${wd}" ]] || kill "${wd}" 2>/dev/null; [[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
   : > "${run}/jobs/$$"   # first, so the cleanup can find this job before its test starts
   echo "run  ${f}"
   # Inside the run dir, so it goes with it even if this job is KILLed.
   tmp="$(mktemp -d "${run}/tmp.XXXXXX")" || exit 1
+  case "${f}" in /*) abs="${f}" ;; *) abs="${PWD}/${f}" ;; esac   # the file, from the TMPDIR it runs in
+  pane="${tmp}/pane"; mkdir -p "${pane}/.claude/swarm" && : > "${pane}/.claude/swarm/config"   # the pane's SWARM_PROJECT
   set -m   # the job below leads a process group of its own
-  TMPDIR="${tmp}" bash "${f}" < /dev/null > "${log}" 2>&1 &
+  (cd "${tmp}" && TMPDIR="${tmp}" SWARM_PROJECT="${pane}" exec bash "${abs}") < /dev/null > "${log}" 2>&1 &
   pid=$!
   set +m
   echo "${pid}" > "${run}/jobs/$$"
@@ -79,6 +92,8 @@ if [[ "${1:-}" == --one ]]; then
   elapsed=$((SECONDS - t0))
   kill "${wd}" 2>/dev/null; wait "${wd}" 2>/dev/null; wd=""   # reaped, so no later kill can hit a recycled PID
   stop_group "${pid}" 2
+  # What the test left in the pane's project: anything but the config it started with.
+  reached="$(cd "${pane}" && find . -mindepth 1 ! -path ./.claude ! -path ./.claude/swarm ! -path ./.claude/swarm/config 2>/dev/null | LC_ALL=C sort)"
   rm -rf "${tmp}" "${run}/jobs/$$"
   if [[ -e "${log}.timeout" ]]; then
     : > "${log}.failed"
@@ -90,6 +105,10 @@ if [[ "${1:-}" == --one ]]; then
       { mkdir -p "${reap_log%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${reap_log}"; } 2>/dev/null || true
     fi
     exit 1
+  fi
+  if [[ -n "${reached}" ]]; then
+    printf "FAIL %s ran swarm.sh against the pane's SWARM_PROJECT (source tests/test_helpers.sh first); it left:\n%s\n" "${f}" "${reached}" >> "${log}"
+    rc=1
   fi
   if [[ ${rc} -eq 0 ]]; then : > "${log}.ok"; echo "ok   ${f} ${elapsed}s"; exit 0; fi
   : > "${log}.failed"

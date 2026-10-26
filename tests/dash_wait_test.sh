@@ -5,6 +5,8 @@
 # herdr on PATH printing a fixed agent list, and a stub gh. stty and tput are stubbed to fail, so the
 # width comes from COLUMNS (or the default 100), except in the pty tests.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

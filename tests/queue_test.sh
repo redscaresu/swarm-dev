@@ -8,6 +8,8 @@
 # is warned of, and the others still count, under bash 3.2 too. gh, herdr and claude are stubs on
 # PATH; gh logs every call to gh.log, and herdr lists the agents in agents ("<name> <pane>" lines).
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
