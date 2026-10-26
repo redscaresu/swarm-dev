@@ -130,10 +130,12 @@ Repeat until a step below says stop:
      finding, fixed or declined, with `--round <n>`. Findings to fix, red checks, and a worktree
      review-agent refuses go to a builder. If none is open, start one in the story's worktree with
      `swarm.sh agent`, its brief naming the story and its PR, and wait for it to go idle with
-     `swarm.sh wait <slug>`. Send them with `swarm.sh tell <slug> findings <file>`, which counts the
-     round and applies the ladder. Wait for the builder with `swarm.sh wait <slug>` in the
-     background, then run wait-pr and the review again on its new head. Once the latest head has
-     passed and wait-pr exits 0 on it,
+     `swarm.sh wait <slug>`. Send review findings with `swarm.sh tell <slug> findings <file>`, which
+     counts the round and applies the ladder, and the rest with `swarm.sh tell <slug> nudge <file>`,
+     which is not a round. Wait for the builder with `swarm.sh wait <slug>` in the background, then
+     run wait-pr and the review again on its new head. Once the latest head has passed, wait-pr
+     exits 0 on it and `swarm.sh findings <repo> <pr>` is triaged (§ The outer loop, **Green means
+     more than green checks.**),
      close the builder if one is open (`swarm.sh close <slug>`), then run the `swarm.sh review`
      above, which clears the line and hands the PR on to merge. Run `swarm.sh close <slug> --drop`
      only when the PR is not worth saving. It counts the attempt, so the next build may move up a
