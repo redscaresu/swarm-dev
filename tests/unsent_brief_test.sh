@@ -29,6 +29,8 @@ echo "$*" >> "${LOG}"
 case "$1 $2" in
   "agent list") printf '{"result":{"agents":[%s]}}\n' "$(cat "${FX}/agents" 2>/dev/null)" ;;
   "agent read") if [ -e "${FX}/read.fail" ]; then rm -f "${FX}/read.fail"; exit 1; fi
+                # A tell that starts between the pass's ps read and its Enter: the fake swarm.sh, left running.
+                if [ -e "${FX}/read.spawn" ]; then bash "$(cat "${FX}/read.spawn")" tell ubr-s1 findings /tmp/f.md >/dev/null 2>&1 & echo $! > "${FX}/spawn.pid"; fi
                 if [ -e "${FX}/read.hang" ]; then sleep 60; fi
                 cat "${FX}/$3.txt" 2>/dev/null ;;
   "pane send-keys") if [ -e "${FX}/keys.fail" ]; then rm -f "${FX}/keys.fail"; exit 1; fi ;;
@@ -212,6 +214,11 @@ fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; sess
 ev tell:findings ubr-s1 "$(ago 120)" "ubr-s1: herdr's reply to the brief could not be read once, then could not send it again (timeout); see herdr agent read ubr-s1"
 poll
 check "a tell whose herdr reply could not be read, the paste maybe in the box, is resent" test "$(enters)|$(resends)" == "1|1"
+
+fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; echo "${ROOT}/fake/swarm.sh" > "${FX}/read.spawn"
+poll
+spawned="$(cat "${FX}/spawn.pid" 2>/dev/null || true)"; [[ -z "${spawned}" ]] || { kill "${spawned}" 2>/dev/null || true; wait "${spawned}" 2>/dev/null || true; }
+check "a tell that starts while the pane is read gets no Enter from the pass" test "${spawned:+x}|$(reads)|$(enters)" == "x|1|0"
 
 # --- a pane that cannot be read.
 fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; touch "${FX}/read.fail"

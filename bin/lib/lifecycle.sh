@@ -2126,13 +2126,15 @@ resend_busy() {
 # fails: an unreadable pane, a paste with no session log to say whether a turn ran (sent nothing), or
 # an Enter herdr failed to send (logged as the resend's outcome), is tried again next poll. An agent
 # that a swarm.sh command is delivering to as the poll runs (resend_busy over one ps read) is skipped,
-# and while an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet,
-# and an Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a
-# second tell:findings line would count a review round twice. Prints nothing; outside herdr, or with no
-# list, it does nothing.
+# checked again with a fresh ps just before an Enter, and while an upgrade runs (upgrade_holder) the
+# pass reads nothing: its new line is not written yet, and an Enter could submit the brief
+# deliver_prompt is sending. Never a tell or deliver_prompt: a second tell:findings line would count a
+# review round twice. Prints nothing; outside herdr, or with no list, it does nothing.
 resend_pass() {
   local rows pane name at cmd k text since rc backlog line deadline=$((SECONDS + RESEND_PASS_WAIT))
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
+  # No idle agent in the list, no work: return before any process starts, as most polls do.
+  [[ "${LEAD_AGENTS}" == *idle* && -s "${EVENTS_LOG}" ]] || return 0
   backlog="$(conductor_name backlog)"
   rows="$(SWARM_PANES="$(own_panes)" SWARM_BACKLOG="${backlog}" SWARM_NAME_MAX="${AGENT_NAME_MAX}" python3 -I -c '
 import json, os, re, sys
@@ -2193,6 +2195,11 @@ t = turn_since(*sys.argv[1:6])
 sys.exit(12 if t is None else 11 if t else 10)' \
       "${AGENTS_LOG}" "${name}" "${CLAUDE_PROJECTS}" "${since}" "${RESEND_SLACK}" 2>/dev/null || rc=$?
     [[ ${rc} -eq 10 || ${rc} -eq 11 ]] || continue
+    if [[ ${rc} -eq 10 ]]; then
+      # A delivery that began after the first ps read would take this Enter: read ps again.
+      NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || continue
+      ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
+    fi
     line="${name}"$'\t'"${at}"$'\t'"${cmd}"$'\t'"${k}"
     # The line goes in first: with no record of it, the next poll could press Enter a second time.
     printf '%s\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || continue
