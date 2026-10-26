@@ -3,7 +3,8 @@
 # well-formed line (reconcile and unblock one per item), failures included, with no message
 # contents, and an unwritable .swarm never fails the command. gh and herdr are stubs on PATH.
 set -euo pipefail
-unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -141,7 +142,7 @@ read -r code took <<< "$(term_pid tell s1 findings findings.md)"
 check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
 check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
-sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 37[.]$$' >/dev/null"
+sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 37[.]$$\$' >/dev/null"
 read -r code took <<< "$(term_pid wait s1)"
 check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
 

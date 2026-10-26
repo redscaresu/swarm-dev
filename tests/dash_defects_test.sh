@@ -5,6 +5,8 @@
 # from a pane whose session is priced, and an active epic whose depends_on holds it up is named as
 # waiting on it, never under "no open story".
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

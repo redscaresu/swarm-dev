@@ -6,6 +6,8 @@
 # builders run on Opus, with Haiku and Opus subagents. archived.jsonl is only close's copy of a deleted
 # log, with an inline subagent turn, a builder has no log at all, and a conductor is no builder.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

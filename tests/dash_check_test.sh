@@ -10,6 +10,8 @@
 # draw is a frame line for each project. --check refuses --watch, and tells two projects with one
 # basename apart.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

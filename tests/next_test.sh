@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # next_test.sh — `swarm.sh next` against small throwaway boards, one per case.
 set -euo pipefail
-unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 fails=0

@@ -5,6 +5,8 @@
 # refuses it), and the conductor briefs say so. The repo is a local bare remote; herdr, gh and claude
 # are stubs on PATH. gh pr list answers from ${ROOT}/open/<branch>, one URL, or fails with ${ROOT}/ghfail.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

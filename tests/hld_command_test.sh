@@ -5,7 +5,8 @@
 # `bash tests/hld_command_test.sh <hld.md>`.
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
-unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

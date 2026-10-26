@@ -4,6 +4,8 @@
 # committed frames tests/fixtures/dash/golden-<cols>.txt. Any difference fails and prints the diff.
 # UPDATE_GOLDEN=1 rewrites the three files from this run instead: commit them with the change.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

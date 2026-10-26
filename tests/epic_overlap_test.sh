@@ -4,6 +4,8 @@
 # herdr is a stub on PATH that hands out pane ids in order and remembers tab labels; the repo is a
 # local bare remote. gh is a stub too, so a close's PR lookup never reaches the real gh.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

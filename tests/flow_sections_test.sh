@@ -5,6 +5,8 @@
 # the sections after it still run, and flow exits 1. So does one that calls sys.exit(3); one that
 # calls sys.exit(0) only ends itself.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

@@ -9,6 +9,8 @@
 # step-up running) nothing is held; a hold that fails after its block is written sends nothing. On opus
 # the findings tells go on as before: the second is sent and the third steps it up. herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

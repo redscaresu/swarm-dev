@@ -7,6 +7,8 @@
 # epic. Last, deliver_prompt reads an agent's own status when the prompt's reply can't be read, and
 # sends the brief again only to an agent idle or done there.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SWARM="${HERE}/../bin/swarm.sh"

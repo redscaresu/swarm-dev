@@ -13,6 +13,8 @@
 # median and p90, and no run on main or -, shard, interrupted run or torn line. With no log the section
 # prints nothing. TZ is UTC.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

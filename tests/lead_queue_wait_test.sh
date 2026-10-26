@@ -11,6 +11,8 @@
 # review of a story whose costs: is not none (any case, brackets or quotes, a block list, or a deleted
 # story's last version, or HEAD's; an unreadable story is money, an epic never) counts. held_story logs the held line.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

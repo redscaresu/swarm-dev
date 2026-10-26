@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# live_logs_test.sh — no test writes a project's live .swarm logs. events_test.sh once logged its
-# fixtures (o/r/pull/9) into the real .swarm/findings.tsv and events.tsv, which outcomes counted: run
-# on its own from a herdr pane (bash tests/<file>), a test inherits the lead's SWARM_PROJECT, which
-# names the real project, and swarm.sh takes that before the directory the test cd'd into. make test
-# drops SWARM_PROJECT; a direct run does not. So every test file that runs swarm.sh unsets it or sets
-# it itself; and events_test.sh, run both ways, adds no line to the checkout's logs or another
-# project's: make test TESTS=tests/events_test.sh, where a call left in the checkout would reach its
-# own .swarm, and a direct run with SWARM_PROJECT naming another project. A copy of this repo stands
-# in for the main checkout, and a bare directory for the other project: a conductor appends to the
-# real logs while the suite runs, and a guard that fails by writing fixtures into the log it guards
-# is none.
+# live_logs_test.sh — no test writes a project's live .swarm, run from make, a pane or a story
+# worktree. Every tests/*_test.sh sources tests/test_helpers.sh as its first command after set -euo
+# pipefail: it drops the pane's SWARM_* and HERDR_SOCKET_PATH, which name the lead's real project and
+# herdr. make test runs each file from its TMPDIR with SWARM_PROJECT naming a stand-in project of
+# the job's own, as a pane's names the real one, and fails a file whose swarm.sh reaches it: every
+# file is checked on every run. And the two files that once reached a real project (events_test.sh,
+# whose fixtures landed in findings.tsv and events.tsv; wait_lead_test.sh, whose wait --lead took the
+# lead's .swarm/lead/pid), run under make test from a copy of this repo, leave the copy's findings.tsv,
+# events.tsv and lead/pid as they were. A copy, not the main checkout: a conductor appends to the
+# real logs while the suite runs, and a failing guard would itself write fixtures into the log it
+# guards.
 set -euo pipefail
-unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
-export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"   # as make test runs them, so a direct run of this file takes as long
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -24,44 +24,57 @@ check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 
-# Every test file that runs swarm.sh unsets SWARM_PROJECT (unset, or env -u) or sets it per call.
-unpinned=""
+# Every test file's first command after set -euo pipefail is the source line; a comment is not a command.
+# shellcheck disable=SC2016 # the line as the files hold it
+SRC='source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"'
+unsourced=""
 for t in "${REPO}"/tests/*_test.sh; do
-  grep -qE 'swarm\.sh|\$\{SWARM\}' "${t}" || continue
-  grep -qE 'unset SWARM_PROJECT|-u SWARM_PROJECT|SWARM_PROJECT=' "${t}" || unpinned+="${t##*/} "
+  first="$(awk '/^set -euo pipefail$/ { s = 1; next } s && !/^[[:space:]]*(#|$)/ { print; exit }' "${t}")"
+  [[ "${first}" == "${SRC}" ]] || unsourced+="${t##*/} "
 done
-check "every tests/*_test.sh that runs swarm.sh unsets SWARM_PROJECT or sets it" "" "${unpinned}"
+check "every tests/*_test.sh sources tests/test_helpers.sh as its first command after set -euo pipefail" "${unsourced}" ""
 
-# The checkout: this repo but its .git and .swarm, a git repo and a swarm project of its own (its
-# .claude/swarm/config comes along, as in the real one). The other project: a bare directory. Each
-# holds a findings.tsv and an events.tsv of one line.
+# The runner's check, on a fixture that runs swarm.sh log-finding: with the prelude and a cd into a
+# project of its own, it passes and the finding lands there; without the prelude, the pane's
+# SWARM_PROJECT wins over its cd, the finding lands in the stand-in, and the file fails naming it;
+# with the prelude and no cd, the call stops: the runner's TMPDIR is in no project.
+FX="${ROOT}/fx"; mkdir -p "${FX}/proj/.claude/swarm"; : > "${FX}/proj/.claude/swarm/config"
+fixture() { # <name> <prelude: yes|no> <cd: yes|no>
+  { echo '#!/usr/bin/env bash'; echo 'set -euo pipefail'
+    [[ "$2" == no ]] || echo "source \"${REPO}/tests/test_helpers.sh\""
+    [[ "$3" == no ]] || echo "cd \"${FX}/proj\" || exit 1"
+    echo "env -u HERDR_ENV bash \"${REPO}/bin/swarm.sh\" log-finding vacuous-test https://github.com/o/r/pull/9 'a line'"
+  } > "${FX}/$1_test.sh"
+}
+fixture without no yes; fixture with yes yes; fixture unpinned yes no
+runner() { (cd "${REPO}" && TEST_RUNS_LOG="" JOBS=1 bash scripts/test.sh "$@" 2>&1) || true; }
+o="$(runner "${FX}/without_test.sh")"
+check "without the prelude, the file fails: the summary line, the runner's reason, and the finding it left in the stand-in" \
+  "$(grep -cE "^FAIL .*/without_test\.sh [0-9]+s$|ran swarm\.sh against the pane's SWARM_PROJECT|^\./\.swarm/findings\.tsv$" <<< "${o}")" "3"
+check "and nothing reached the project it cd'd into" "$(ls -A "${FX}/proj/.swarm" 2>/dev/null)" ""
+o="$(runner "${FX}/with_test.sh")"
+check "with the prelude, the file passes" "$(grep -cE "^ok   .*/with_test\.sh [0-9]+s$" <<< "${o}")" "1"
+check "and its finding landed in the project it cd'd into" "$(wc -l < "${FX}/proj/.swarm/findings.tsv" | tr -d ' ')" "1"
+o="$(runner "${FX}/unpinned_test.sh")"
+check "with the prelude and no cd, an unpinned call stops at not in a swarm project under the runner" "$(grep -c 'not in a swarm project' <<< "${o}")" "1"
+
+# The copy: this repo but its .git and .swarm, a git repo and a swarm project of its own (its
+# .claude/swarm/config comes along, as in the real one), with a findings.tsv and an events.tsv of one
+# line and a lead/pid no process holds.
 COPY="${ROOT}/repo"; mkdir -p "${COPY}"
 cp -R "${REPO}/." "${COPY}"; rm -rf "${COPY}/.git" "${COPY}/.swarm"; git -C "${COPY}" init -q
-LIVE="${ROOT}/live"; mkdir -p "${LIVE}/.claude/swarm"; : > "${LIVE}/.claude/swarm/config"
-seed() { # <project> — its two logs, a line each
-  mkdir -p "$1/.swarm"
-  printf '2026-10-25\tseed\thttps://github.com/o/r/pull/1\ta line\tfixed\tlead\n' > "$1/.swarm/findings.tsv"
-  printf '2026-10-25T00:00:00Z\tseed\t-\tw:0\tok\n' > "$1/.swarm/events.tsv"
-}
-seed "${COPY}"; seed "${LIVE}"
+mkdir -p "${COPY}/.swarm/lead"
+printf '2026-10-25\tseed\thttps://github.com/o/r/pull/1\ta line\tfixed\tlead\n' > "${COPY}/.swarm/findings.tsv"
+printf '2026-10-25T00:00:00Z\tseed\t-\tw:0\tok\n' > "${COPY}/.swarm/events.tsv"
+echo 99999999 > "${COPY}/.swarm/lead/pid"
 lines() { wc -l < "$1" | tr -d ' '; }
-logs() { echo "findings $(lines "$1/.swarm/findings.tsv")|events $(lines "$1/.swarm/events.tsv")"; }
-added() { # <project> — the lines its logs gained
-  tail -n +2 "$1/.swarm/findings.tsv"; tail -n +2 "$1/.swarm/events.tsv" | head -n 20
-}
-
-# events_test.sh both ways, from the copy, one after the other (its own timing checks have seconds of
-# room): under make test, and directly as a pane runs it, with SWARM_PROJECT naming the other project.
-(cd "${COPY}" || exit 1; rc=0; make -s test TESTS=tests/events_test.sh JOBS=1 > "${ROOT}/make.out" 2>&1 || rc=$?; echo "${rc}" > "${ROOT}/make.rc")
-(cd "${COPY}" || exit 1; rc=0; SWARM_PROJECT="${LIVE}" bash tests/events_test.sh > "${ROOT}/direct.out" 2>&1 || rc=$?; echo "${rc}" > "${ROOT}/direct.rc")
-check "make test TESTS=tests/events_test.sh passes" "exit 0" "exit $(cat "${ROOT}/make.rc")"
-check "events_test.sh, run directly with SWARM_PROJECT naming another project, passes" "exit 0" "exit $(cat "${ROOT}/direct.rc")"
-check "neither run adds a line to the checkout's .swarm/findings.tsv or events.tsv" "findings 1|events 1" "$(logs "${COPY}")"
-check "the direct run adds no line to the other project's findings.tsv or events.tsv" "findings 1|events 1" "$(logs "${LIVE}")"
-[[ "$(cat "${ROOT}/make.rc")" == 0 ]] || { echo "---- make test: its first FAIL lines"; grep "^FAIL" "${ROOT}/make.out" | head -n 10 || tail -n 20 "${ROOT}/make.out"; }
-[[ "$(cat "${ROOT}/direct.rc")" == 0 ]] || { echo "---- the direct run: its first FAIL lines"; grep "^FAIL" "${ROOT}/direct.out" | head -n 10 || tail -n 20 "${ROOT}/direct.out"; }
-[[ "$(logs "${COPY}")" == "findings 1|events 1" ]] || { echo "---- lines added to the checkout's logs"; added "${COPY}"; }
-[[ "$(logs "${LIVE}")" == "findings 1|events 1" ]] || { echo "---- lines added to the other project's logs"; added "${LIVE}"; }
+state() { echo "findings $(lines "${COPY}/.swarm/findings.tsv")|events $(lines "${COPY}/.swarm/events.tsv")|lead/pid $(cat "${COPY}/.swarm/lead/pid" 2>&1)"; }
+rc=0; (cd "${COPY}" && make -s test TESTS="tests/events_test.sh tests/wait_lead_test.sh" JOBS=2 > "${ROOT}/make.out" 2>&1) || rc=$?
+check "make test TESTS=\"tests/events_test.sh tests/wait_lead_test.sh\" passes in the copy" "exit ${rc}" "exit 0"
+check "it adds no line to the copy's .swarm/findings.tsv or events.tsv and leaves its lead/pid as it was" "$(state)" "findings 1|events 1|lead/pid 99999999"
+[[ ${rc} -eq 0 ]] || { echo "---- make test in the copy: each file's line, then its first FAIL lines"; grep -E "^(ok|FAIL|TIMEOUT) +tests/" "${ROOT}/make.out"; grep "^FAIL" "${ROOT}/make.out" | grep -v " tests/" | head -n 10 || tail -n 20 "${ROOT}/make.out"; }
+[[ "$(state)" == "findings 1|events 1|lead/pid 99999999" ]] \
+  || { echo "---- what the copy's logs gained"; tail -n +2 "${COPY}/.swarm/findings.tsv"; tail -n +2 "${COPY}/.swarm/events.tsv" | head -n 20; }
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -4,6 +4,8 @@
 # with its last output, within seconds, and nothing it started is left running. A file that finishes
 # inside the limit still passes.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -55,12 +57,15 @@ SWARM_SLEEP_SCALE=0.5 bash "${REPO}/scripts/test.sh" "${ROOT}/scale_test.sh" > /
 check "a SWARM_SLEEP_SCALE that is set is kept" "$(cat "${ROOT}/scale.seen")" 0.5
 
 # A test sees no SWARM_* the caller set (a builder's pane names its real project in them) but
-# SWARM_SLEEP_SCALE, and SWARM_NO_CI_REFRESH=1, so it starts no ci refresh.
+# SWARM_SLEEP_SCALE, and SWARM_NO_CI_REFRESH=1, so it starts no ci refresh; and SWARM_PROJECT names the
+# job's own stand-in, <its TMPDIR>/pane, never the caller's.
 printf '#!/usr/bin/env bash\nenv | grep "^SWARM_" | sort > "%s/env.seen"\n' "${ROOT}" > "${ROOT}/env_test.sh"
 SWARM_PROJECT=/real SWARM_AGENT=builder SWARM_GH_LOG=/real/.swarm/gh-calls.tsv SWARM_NO_CI_REFRESH='' SWARM_ANY_NEW=x SWARM_SLEEP_SCALE=0.01 \
   bash "${REPO}/scripts/test.sh" "${ROOT}/env_test.sh" > /dev/null 2>&1
-check "no SWARM_* the caller set reaches a test but SWARM_SLEEP_SCALE, and SWARM_NO_CI_REFRESH is 1" "$(cat "${ROOT}/env.seen")" \
+check "no SWARM_* the caller set reaches a test but SWARM_SLEEP_SCALE; SWARM_NO_CI_REFRESH is 1 and SWARM_PROJECT the job's pane stand-in" \
+  "$(sed -E 's#^SWARM_PROJECT=/.*/tmp\.[A-Za-z0-9]+/pane$#SWARM_PROJECT=<TMPDIR>/pane#' "${ROOT}/env.seen")" \
   "SWARM_NO_CI_REFRESH=1
+SWARM_PROJECT=<TMPDIR>/pane
 SWARM_SLEEP_SCALE=0.01"
 
 check "--list runs nothing, so a bad TEST_FILE_TIMEOUT does not stop it" "$(TEST_FILE_TIMEOUT=abc bash "${REPO}/scripts/test.sh" --list "${ROOT}/quick_test.sh" 2>&1; echo "rc=$?")" "${ROOT}/quick_test.sh

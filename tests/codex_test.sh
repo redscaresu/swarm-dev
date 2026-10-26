@@ -5,6 +5,8 @@
 # command dies with "codex skipped: timed out", which events.tsv records. With SWARM_STORY, a prompt
 # holding the story's touches and Done when replaces --base. codex is a stub on PATH.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

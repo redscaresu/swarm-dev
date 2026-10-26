@@ -6,6 +6,8 @@
 # print, since marked with the days it covers while fewer than 30 have passed.
 # Rows of 4, 6 and 7 fields count, a bogus reviewer's row does not, and a non-UTF-8 byte breaks nothing.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

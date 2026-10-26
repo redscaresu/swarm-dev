@@ -9,7 +9,8 @@
 # lists the stale references found when this landed (file, tab, text); they pass until fixed, and an
 # entry no longer found fails, so the list only shrinks.
 set -euo pipefail
-unset SWARM_PROJECT   # from a pane it names the real project, whose .swarm logs a direct run of this test would write (live_logs_test.sh)
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KNOWN="${REPO}/tests/doc_check_known.txt"

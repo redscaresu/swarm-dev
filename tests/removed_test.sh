@@ -9,6 +9,8 @@
 # lessons, its rule PRs and its rules check stay gone from bin/ and commands/, whose collect step
 # files a checks: story instead.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${iso}"' EXIT

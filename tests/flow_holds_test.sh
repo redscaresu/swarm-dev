@@ -10,6 +10,8 @@
 # deletion was committed on a branch at 14:30, before its 14:40 hold, and merged at 14:50: removed. s-q's
 # file is deleted in a commit that adds a near copy (a rename to git): removed, epic e1. TZ is UTC.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"

@@ -6,6 +6,8 @@
 # A throwaway board in git: the active epic alpha, whose stories are the lead story check and a code
 # story, and the active epic beta, which depends_on alpha. herdr and gh are stubbed to fail.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

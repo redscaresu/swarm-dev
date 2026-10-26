@@ -5,6 +5,8 @@
 # .swarm/big/split-critic.json), and only then does the board PR open. A medium epic's board PR opens
 # with no critic. herdr, gh and claude are stubs on PATH; origin is a local bare repo.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
