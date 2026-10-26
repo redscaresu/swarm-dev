@@ -1,6 +1,6 @@
 ---
 kind: lead
-status: ready
+status: blocked
 depends_on: [release-v0-28-0]
 touches: []
 ---
