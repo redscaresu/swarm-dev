@@ -125,7 +125,8 @@ counts a story only when all of these hold:
   `swarm.sh wait-pr` or `swarm.sh merge` runs on its PR.
 - No tell is pending. While a `tell`, `story`, `agent`, `review-agent`, `step-up` or `restart` command runs for
   the slug, its answer is still on the way: each writes its own events.tsv line when it exits.
-- It has no `.swarm/briefs/<slug>.step-up` marker. A failed step-up is reported apart.
+- A ready story has no `.swarm/briefs/<slug>.step-up` marker. A failed step-up has a line of its own
+  (below).
 
 Something must explain why no agent is there: an ok close of the builder or the review agent, or a
 failed start, with no later start, ok tell or hold. A story reconcile reopened (its PR closed
@@ -157,10 +158,64 @@ while wait-pr runs and may come back once after it ends.
 Each poll reads `herdr agent list` once, killed after `SWARM_LEAD_LIST_WAIT` seconds (default 30): a
 hung herdr counts as a failed list, and the other lines still wake the lead. Front matter and
 events.tsv are read every poll; git only for a story with a start line and no current builder; herdr's
-JSON and `ps` once, whenever a story with a build record is left after those reads, before the
-listing is checked. No gh call is made for these lines. Outside
-herdr, or when herdr's list or `ps` fails, it prints none. A run with no
-`.swarm/lead/seen` yet notes everything else and prints only these lines on its first read.
+JSON and `ps` once, whenever a story with a build record, or a ready story with a step-up marker, is
+left after those reads, before the listing is checked. No gh call is made for these lines. Outside
+herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
+everything else and prints only these lines and `step-up failed:` lines on its first read.
+
+**A failed step-up wakes the lead too, through a marker file.** A marker is
+`.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
+`<kind>` says what it marks. Its first line holds the marker's own fields. A `pid <n>` line names the
+swarm.sh process that wrote it. A later one-word line, such as `closed`, records a step the writer
+got past. `wait --lead` reads markers in the same pass as its `no-agent:`
+lines, from the poll's one `herdr agent list`, events.tsv and one `ps`, with no gh call. Outside
+herdr, or while herdr's list or `ps` fails, it prints no marker line either: without the list it
+cannot tell whether the builder is still open. It prints `<what>: <stem>, exit: <exit>`. The
+`.step-up` marker works like this:
+
+- Path: `.swarm/briefs/<slug>.step-up`. A step-up writes it just before it closes the builder,
+  and removes it again if the close fails, since the builder may still be open. Once the builder
+  is closed it writes it again with a `closed` line. A resume takes `.swarm/locks/step-up-<slug>`
+  first, then writes it again with its own pid and `closed`, since a resume only follows a close.
+  A resume refused because another step-up holds the lock leaves it as it is. It goes once the
+  next model's builder has started.
+- First line: `<trigger> <from> <to> <role>`, which `step-up --resume` reads to start the rung.
+- Failure line: each point where a step-up stops after closing the builder logs
+  `step-up:failed <slug>` with `ok (<why>)` in events.tsv. Those are an unreadable worktree, a git
+  step left unfinished in it, an unread default branch, a failed `mktemp`, and a start that failed
+  or that herdr could not confirm. A start that failed logs `ok (start failed)` whether or not the
+  new builder's pane could be closed. Only the step-up's output says when the pane was kept, and
+  it names the agent to read it by. Any other failure after the close, or of a resume once it holds
+  the lock, logs it too. A failure with a die message logs that message's first line. One with no
+  message logs only `ok (exit <n>)`, whoever ran the step-up: a `set -e` failure, or any failure of
+  a step-up swarm.sh ran itself (from `close`, `tell`, `wait --stall` or `watch`), which has no
+  message to log. Its error is in the output of whatever ran the step-up: the conductor's pane for
+  one swarm.sh ran itself, the command's own output for one run by hand. `flow` reads the line as
+  an ok line.
+- Lead line: `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`. It is printed for a
+  story whose marker's pid is no longer a running `swarm.sh step-up` or `_step-up`, whatever the
+  failure line or the `.swarm/locks/step-up-<slug>` lock says, so a step-up killed before it could
+  log its failure line counts too. The process must name the slug, so a pid reused by another
+  story's step-up does not count. While that process runs, the step-up is under way and the line
+  stays quiet. It stays quiet too while herdr lists a pane under the builder's name and the marker
+  has no `closed` line: the step-up stopped inside the close, so that pane may be the old builder,
+  still at work. With the `closed` line that pane is the new rung's, kept by a start that failed
+  or that herdr could not confirm, or left by a step-up killed after it opened the pane, and the
+  line is printed. The resume's own start refuses the name while that pane's agent is working or
+  waiting and retires it when idle, so it starts no second builder beside a live one. A marker gone
+  by the time its pid is read is a rung that started, not a failure. The story must be ready, since
+  only a ready story steps up, and pass the `no-agent:` filters on kind and `held_for:`. A story in
+  review keeps to the `no-agent:` line, marker or not.
+- Exit: the lead first reads the output of whatever ran the step-up, in every case. For a step-up
+  swarm.sh ran itself that is the conductor's pane, and for one run by hand the command's own
+  output. The failure line says where it stopped, and the output says why. With no failure line,
+  the step-up was killed partway. With the cause fixed, the exit is
+  `swarm.sh step-up --resume <slug>`. A pane may still be open under the builder's name, kept by
+  the failed start or left by a killed step-up. The resume retires an idle agent in it and starts
+  the rung (`swarm.sh tidy` closes the retired pane), and refuses while that agent is working or
+  waiting, naming it. A working one took up its brief, so the lead tells the user instead of
+  resuming again, since no swarm.sh command records that rung. The conductor leaves the story
+  alone and does not list it in its report.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
 `swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
@@ -2163,7 +2218,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, or a started story with no live agent (`no-agent: <slug>, exit: <exit>`), and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), or a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
@@ -2310,7 +2365,8 @@ logs nothing (a refusal is no sign of life), and leaves the command to carry on 
 does not try it again on the same head. A step-up whose new builder does not start, after the old one
 closed, prints `step-up failed: <slug>` and stops the command that ran it: a close counts nothing
 and clears nothing. The story is then the lead's to resume (`step-up --resume`), and no trigger tries
-that build again meanwhile.
+that build again meanwhile. `wait --lead` tells the lead within one poll (§ The lead), so the
+conductor leaves the story alone.
 
 A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the
 escalate role's model starts an escalate build, so `outcomes` pairs only those (and build_story's

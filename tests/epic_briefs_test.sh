@@ -256,6 +256,13 @@ run conduct f >/dev/null || true
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "with escalate_after = 0, the conductor stops retrying a story that failed twice and reports it to the lead" "yes|yes|no" \
   "$(has "model: escalation is off (escalate_after = 0), so once a story has failed twice" "${brief}")|$(has "do not start it again: report it to the lead." "${brief}")|$(grep -q "picks Fable for build" <<< "${brief}" && echo yes || echo no)"
+# With the ladder on, a failed step-up is the lead's through wait --lead: the conductor leaves it out of
+# its report. If the brief again says to list it for the lead, this goes red.
+printf '%s\n' "escalate_ladder = sonnet,opus,fable" > "${p}/.claude/swarm/config"
+run conduct f >/dev/null || true
+para="$(awk -v RS= '/step-up failed: <slug>/' "${p}/.swarm/briefs/conduct-f.md" | tr -s '[:space:]' ' ')"
+check "with escalate_ladder set, a failed step-up is left alone and out of the report: wait --lead tells the lead" "yes|no" \
+  "$(has "A \`step-up failed: <slug>\` line means the step-up stopped after closing the builder. Leave that story alone: \`wait --lead\` tells the lead, so it does not go in your report." "${para}")|$(grep -qiE "list[^.]*for the lead" <<< "${para}" && echo yes || echo no)"
 printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
 check "a builder gets AGENTS.md's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
