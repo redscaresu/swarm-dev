@@ -76,11 +76,11 @@ esac
 EOF
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 # ps, on PATH only where a case puts PS_BIN there: the builder's pane shell (100) runs claude, whose
-# tool shell runs make test.
+# tool shell runs make test, started 10 minutes ago.
 PS_BIN="${ROOT}/ps-bin"; mkdir -p "${PS_BIN}"
 cat > "${PS_BIN}/ps" <<'EOF'
 #!/bin/sh
-printf '%s\n' '100 1 -zsh' '200 100 claude' '300 200 /bin/zsh -c make test' '310 300 make test'
+printf '%s\n' '100 1 2:00:00 -zsh' '200 100 2:00:00 claude' '300 200 10:00 /bin/zsh -c make test' '310 300 10:00 make test'
 EOF
 chmod +x "${PS_BIN}/ps"
 

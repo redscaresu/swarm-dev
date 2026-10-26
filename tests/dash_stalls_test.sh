@@ -124,7 +124,7 @@ STUB
 # ps: the process list in PS_LIST when the test wrote one; any other call is the real ps.
 cat > "${ROOT}/bin/ps" <<'STUB'
 #!/bin/sh
-if [ "$*" = "-A -o pid=,ppid=,command=" ] && [ -n "${PS_LIST:-}" ]; then cat "${PS_LIST}"; exit 0; fi
+if [ "$*" = "-A -o pid=,ppid=,etime=,command=" ] && [ -n "${PS_LIST:-}" ]; then cat "${PS_LIST}"; exit 0; fi
 exec /bin/ps "$@"
 STUB
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/herdr"
@@ -167,7 +167,7 @@ printf '%s\tconduct\te1\tw1:p1\tok\n' "$(ago 4)" >> "${P}/.swarm/events.tsv"
 # PI_MAP, the read fails, and the stalls hold all the same.
 export PI_LOG="${ROOT}/process-info.log" PS_LIST="${ROOT}/ps.list"
 echo 'w1:p9 100' > "${ROOT}/pi.map"
-printf '%s\n' '  100     1 -zsh' '  200   100 claude' > "${ROOT}/ps.base"; cp "${ROOT}/ps.base" "${PS_LIST}"
+printf '%s\n' '  100     1  02:10:00 -zsh' '  200   100  02:09:00 claude' > "${ROOT}/ps.base"; cp "${ROOT}/ps.base" "${PS_LIST}"
 fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 read_panes() { cut -d' ' -f1 "${PI_LOG}" | sort -u | tr '\n' ' '; }
 check "only the stalled builder's pane is asked for its process info, not the conductor working under stall_minutes" \
@@ -185,13 +185,19 @@ mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "stall_minutes sets the threshold" lacks "look at s-three" "${out}"
 rm "${P}/.claude/swarm/config"
-# make test running under s-three's pane shell is work: working, not stalled, and not under needs you.
-# The frame is rendered once: herdr's agent read (shown_state's, AR_LOG) of s-three's pane runs once.
-{ cat "${ROOT}/ps.base"; printf '%s\n' '  300   200 /bin/zsh -c make test' '  310   300 make test'; } > "${PS_LIST}"
+# make test running under s-three's pane shell for 5 minutes is work: working, not stalled, and not
+# under needs you. The frame is rendered once: herdr's agent read (shown_state's, AR_LOG) of s-three's
+# pane runs once.
+{ cat "${ROOT}/ps.base"; printf '%s\n' '  300   200     05:00 /bin/zsh -c make test' '  310   300     05:00 make test'; } > "${PS_LIST}"
 fresh; out="$(cd "${P}" || exit 1; AR_LOG="${ROOT}/agent-read.log" PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a stalled builder running make test under its pane is working" grep -qE '● s-three .*working [0-9]+m' <<< "${out}"
 check "a builder running make test is not under needs you" lacks "look at s-three" "${out}"
 check "a frame with a test run reads each agent's pane once: one render" test "$(grep -cx 'w1:p9' "${ROOT}/agent-read.log")" = 1
+# The same run started 100 minutes ago, past 3 x stall_minutes (90), may be hung: stalled, and it needs you.
+{ cat "${ROOT}/ps.base"; printf '%s\n' '  300   200  01:40:00 /bin/zsh -c make test' '  310   300  01:40:00 make test'; } > "${PS_LIST}"
+fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a builder whose make test started past 3 x stall_minutes ago is stalled" grep -qE '! s-three .*stalled [0-9]+m' <<< "${out}"
+check "a builder whose make test started past 3 x stall_minutes ago needs you" grep -qE '! look at s-three: working [0-9]+ min' <<< "${out}"
 cp "${ROOT}/ps.base" "${PS_LIST}"
 # A file edited a minute ago in s-three's worktree (its last commit 2 hours old) is a sign of life:
 # working, not stalled. Aged past stall_minutes, it is not: stalled again.
@@ -230,7 +236,7 @@ check "a conductor past stall_minutes is stalled" grep -qE '! conduct-e1 +conduc
 check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working [45] min with no swarm action' <<< "${out}"
 # The same conductor with make check running under its pane shell (500) is working, and not under needs you.
 echo 'w1:p1 500' > "${ROOT}/pi.map"
-{ cat "${ROOT}/ps.base"; printf '%s\n' '  500     1 -zsh' '  510   500 claude' '  520   510 make check'; } > "${PS_LIST}"
+{ cat "${ROOT}/ps.base"; printf '%s\n' '  500     1     08:00 -zsh' '  510   500     07:00 claude' '  520   510     02:00 make check'; } > "${PS_LIST}"
 out="$(PI_MAP="${ROOT}/pi.map" COLUMNS=100 agedash)"
 check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working [0-9]+m +│$' <<< "${out}"
 check "a conductor running make check is not under needs you" lacks "look at conduct-e1" "${out}"
