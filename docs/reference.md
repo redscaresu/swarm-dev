@@ -65,6 +65,17 @@ The lead handles each line at once and starts it again. It keeps what it last sa
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
 
+**The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
+`swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
+missed. That rule lives only in the lead's prompt, and the lead forgot it: on 2026-10-25 the user
+caught three problems and none was logged until they asked how such things reach the retro. So a
+UserPromptSubmit hook (`hooks/user-caught-reminder.sh`) adds this line of context to each of your
+messages to the lead: `If this message points out a problem the swarm or the lead missed, log it
+first: swarm.sh intervene user-caught "<what they found>".` It runs only in the lead's session,
+found as the lead's Stop hook finds it (`hooks/lead-session.sh`): no `SWARM_AGENT` or
+`SWARM_GH_CALLER` in its environment (every agent has one), a cwd outside any worktree, and a swarm
+project. Anywhere else it prints nothing. It never blocks a message.
+
 ## Writing an HLD
 
 An HLD is a design for a release's worth of work, agreed with you before any epic is written. It
@@ -162,6 +173,13 @@ and line of code after it is for, so you write it with a co-author.
 **What a good epic has.** Four sections: Problem (with evidence), Goals, Non-goals and
 Constraints, and a **Your part** line. **Goals** are its **Done when**: checks that could fail,
 because the conductor stops when they hold. **Non-goals** keep the plan from growing.
+
+**Staged epics.** An epic in a staged HLD's Rollout carries `stage: v<x.y.0>`, the release that
+ships it. This is an exception to step 4: a draft epic with both `stage:` and `hld:`, under an
+HLD that grants `epics`, is set `active` by the lead, not by you through `/epic`, once the tag of the
+previous minor, `v<x.(y-1).0>`, exists. A `v<x>.0.0` stage has no previous minor; its drafts go through `/epic`. A staged
+draft with no `hld:`, or under an HLD without the `epics` grant, still goes through `/epic`. See
+[Releases](#releases) for when a stage's release is cut.
 
 **Stopping and resuming.** The epic is a file, so nothing is lost if you stop: run `/epic` on its
 own (or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress
@@ -1451,7 +1469,7 @@ removed when the next run counts. A write that fails is skipped and never change
 status. A `TEST_RUNS_LOG` that is set names the file instead (empty logs nothing); test.sh sets it
 empty for its jobs, so a run a test starts itself logs nothing and is never counted as going.
 The section reads the full runs (`all`) whose start falls in the window, by local day, less those
-interrupted (a status of 128 or more). Each end line pairs with its start line (the same start time and PID), and a run's at_once
+interrupted (a status of 128 or more) and torn lines (one cut short). Each end line pairs with its start line (the same start time and PID), and a run's at_once
 is the larger of the two lines' other runs, plus the run itself. It prints TSV `at_once runs
 median_s p90_s median_load`: the runs by at_once (1, 2, 3-4 and 5+), each with its median and p90
 (nearest rank) seconds and the median load at the start (`-` with no run). After a blank line, TSV
