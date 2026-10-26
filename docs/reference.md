@@ -188,14 +188,16 @@ It stays quiet while a round is under way:
 - that start was refused because the builder is still at work (its worktree not at the PR's head,
   or with uncommitted changes), and a `tell:findings` line is on record;
 - a process answers for the story, as for `no-agent:`: a `tell`, `story`, `agent`, `review-agent`,
-  `step-up` or `restart` naming it, or a `swarm.sh wait-pr` or `swarm.sh merge` on its PR.
+  `step-up` or `restart` naming it, or a `swarm.sh wait-pr` or `swarm.sh merge` on its PR, on
+  `prs:` or on the PR its review brief names.
 
-The PR comes first from a failed start's message, since a preflight that fails before the brief is
-written leaves no brief. That URL must end where a URL cannot go on, and counts only when `prs:` is
-empty or holds it. Next comes the first line of `.swarm/briefs/review-<slug>.md`, if that brief was
-written since the build started or was reopened and `prs:` is empty or holds it. Last comes `prs:`
-when it holds one URL. A story with several PRs whose failed start names none has no PR, since its
-brief may be for another of them. With no PR, the line is
+The PR comes first from a failed start's message, unless that message refused it as not a PR URL.
+It counts only when `prs:` is empty or holds it. Next comes the first line of
+`.swarm/briefs/review-<slug>.md`, but only when the newest start wrote that brief: an ok start, or
+one that failed after it (did not start, a start that was unclear, a brief taken before an expired
+login, or a failed `mktemp`). A preflight that fails before the brief is written leaves an earlier
+attempt's brief, which may be for another PR. Last comes `prs:` when it holds one URL. With no PR,
+the line is
 `no-review: <slug>, exit: gh pr list -R <the story's repo's origin> --head story/<slug>, then swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`.
 
 A story whose `no-agent:` line printed in the same poll gets no `no-review:` line, because that
@@ -327,7 +329,9 @@ frame. `status` and `dash` hand `next` the lines they have already read, so neit
 `ps` twice, and dash's Next row agrees with its No agent rows from outside a herdr pane too.
 
 `status` prints a `No agent` section before its agents, one line per story: `<slug>, exit: <exit>`,
-or `<slug> (step-up failed), exit: swarm.sh step-up --resume <slug>` for a failed step-up. With no
+`<slug> (step-up failed), exit: swarm.sh step-up --resume <slug>` for a failed step-up, or the
+`no-review: <slug> <PR URL>, exit: <exit>` line as `wait --lead` prints it for a PR whose review
+agent never started or went, whose builder may still be at work. With no
 such story it prints no section. It needs only herdr's agent list, so a failed pane list still shows
 it, and the Agents line then says herdr gave no pane list. Outside herdr, or when herdr gives no agent
 list, it says it did not check. It says so too when a started story is left to check and herdr's list
@@ -972,7 +976,8 @@ with its time, and waits on the builder again. It never closes or tells a builde
 a dialog is not an attempt. Any other dialog, and every permission or tool prompt, it leaves alone.
 `/swarm-dev:swarm` does the same for the lead's one-off stories.
 
-**Watching it.** `swarm.sh status` first lists, under No agent, each started story no agent works on,
+**Watching it.** `swarm.sh status` first lists, under No agent, each started story no agent works on
+and each PR whose review agent never started or went,
 with its exit (§ The lead). Then it lists the agents that need a look (waiting on a prompt, an empty
 pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose login expired,
 which only your `/login` clears), what waits on you, and the next step. A Stacked section, shown
@@ -2353,7 +2358,7 @@ changes merge's exit code.
 | `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh init` | Set a project up, from its git root: the board templates, `.claude/swarm/` with a commented `commit_trailers` line, the `.gitignore` lines, a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch, and fails when make has no `check` target, with a gate (`.github/swarm-board-only.sh`) that skips a PR or push changing only the board's own files (with workflows already there, it writes the gate and prints the step to add; a board outside the repo gets no gate; when origin's default branch can't be found, no CI), and a pre-commit hook that runs `make check` except on a commit that changes only the board's own files (when a hook exists or `core.hooksPath` is set, it writes none and prints the lines to add before any `exec`, or, for a global `core.hooksPath`, says to add them nowhere there). It ends by listing the files it wrote that git does not track yet, to commit. A second run changes nothing. |
-| `swarm.sh status` | Show started stories with no live agent (No agent, with each one's exit), agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
+| `swarm.sh status` | Show started stories with no live agent and PRs whose review agent never started or went (No agent, with each one's exit), agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights, and a third when someone had to step in. `swarm.sh dash --project <dir>` (repeatable) draws several projects. `swarm.sh dash --check` compares each figure with the command that owns it and exits 1 naming each one that differs. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |

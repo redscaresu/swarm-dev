@@ -2249,13 +2249,14 @@ no_agent_busy() {
 }
 
 # no_review_events <slug review-name>... — per slug with a review start on record since its newest ok
-# `story` start or reopen, from one read of events.tsv: "<slug> <ok> <url> <under> <bs>". ok is 1 when
+# `story` start or reopen, from one read of events.tsv: "<slug> <ok> <url> <under> <wrote>". ok is 1 when
 # the newest `review-agent <slug>` line is ok, else 0. url is the PR URL a failed line's message names,
-# ending at a character a URL cannot hold there, else -. under is 1 when a round is under way by the
+# when review_agent took it as one (never from its "is not a PR URL" refusal), else -. under is 1 when a round is under way by the
 # events: an ok tell:findings line came after that line (the builder fixing what it was told), or that
 # line is a start refused because the builder is still at work (its worktree not at the PR's head, or
-# with uncommitted changes) with an ok tell:findings line on record. bs is the newest ok story or
-# reopen line's time, - for none. A refusal that leaves an earlier ok start of this build, not closed since, in place
+# with uncommitted changes) with an ok tell:findings line on record. wrote is 1 when that start wrote
+# .swarm/briefs/review-<slug>.md: an ok one, or one that failed after the brief (review_start_failed's
+# messages, or its mktemp), else 0: a preflight that fails leaves an earlier attempt's brief. A refusal that leaves an earlier ok start of this build, not closed since, in place
 # (review-<slug> still reviewing, or its name still held: free_agent_name's refusals name it) changes
 # nothing; with no such start, the name is held by something else, and the refusal is a failed start. A slug whose
 # ok start an ok close of review-<slug> (full or cut name) followed is left out: the close is the
@@ -2270,14 +2271,19 @@ no_review_events() {
     }
     NF != 5 { next }
     ($3 in me) && (($2 == "story" && $5 ~ /^ok/) || ($2 == "reconcile" && $5 == "ok (reopened)")) {
-      s = $3; on[s] = 0; told[s] = 0; bs[s] = $1; next
+      s = $3; on[s] = 0; told[s] = 0; next
     }
     ($3 in me) && $2 == "review-agent" {
       s = $3; ok1 = $5 ~ /^ok/
       if (!ok1 && on[s] && ok[s] && !shut[s] && (index($5, " is still reviewing ") || index($5, rn[s] ": ") == 1 || index($5, "review-" s ": ") == 1)) next
       on[s] = 1; ok[s] = ok1; shut[s] = 0; url[s] = "-"; after[s] = 0
+      wrote[s] = ok1 || $5 == "review-agent: mktemp failed; nothing was started" ||
+        index($5, "review-agent: review-" s " did not start") == 1 || index($5, "review-agent: review-" s q "s start was unclear") == 1 ||
+        index($5, "review-agent: review-" s " took its brief") == 1
       atwork[s] = !ok1 && ($5 ~ /worktree is at .*, not the PR.s head/ || $5 ~ /worktree has uncommitted changes/)
-      if (!ok1 && match($5, pr) && substr($5, RSTART + RLENGTH, 1) !~ /[A-Za-z0-9_\/]/)
+      # Only a URL review_agent took as one: every message but its "is not a PR URL" refusal names
+      # a URL that passed its check.
+      if (!ok1 && !index($5, " is not a PR URL") && match($5, pr))
         url[s] = substr($5, RSTART, RLENGTH)
       next
     }
@@ -2286,21 +2292,24 @@ no_review_events() {
     END {
       for (i = 1; i <= k; i++) {
         s = order[i]
-        if (on[s] && !(ok[s] && shut[s])) print s, ok[s] + 0, url[s], (after[s] || (atwork[s] && told[s])) ? 1 : 0, (bs[s] == "" ? "-" : bs[s])
+        if (on[s] && !(ok[s] && shut[s])) print s, ok[s] + 0, url[s], (after[s] || (atwork[s] && told[s])) ? 1 : 0, wrote[s] + 0
       }
     }' "${log}" 2>/dev/null || true
 }
 
-# no_review_pr <slug> <bs> <prs> — the PR a review of <slug> is for, when no failed start named one:
-# the URL on the first line of .swarm/briefs/review-<slug>.md when that brief was written since the
-# build's start or reopen <bs> and <prs> is empty or holds it, else <prs> when it holds one URL, else nothing: with
-# several, a start that failed before its brief cannot be tied to one of them.
+# review_brief_url <slug> — the PR URL on the first line of .swarm/briefs/review-<slug>.md (review_brief
+# writes `Review <PR URL>, the PR of story <slug>, ...`), or nothing.
+review_brief_url() {
+  sed -n '1s/^Review \(https:[^ ,]*\), the PR of story .*/\1/p' "${PROJECT_DIR}/.swarm/briefs/review-$1.md" 2>/dev/null || true
+}
+
+# no_review_pr <slug> <wrote> <prs> — the PR a review of <slug> is for, when no failed start named one:
+# the URL on the first line of .swarm/briefs/review-<slug>.md when the newest start wrote that brief
+# (<wrote> 1), else <prs> when it holds one URL, else nothing: a preflight that failed cannot be tied
+# to an earlier attempt's brief, and with several PRs, not to one of them.
 no_review_pr() {
-  local brief="${PROJECT_DIR}/.swarm/briefs/review-$1.md" u="" at
-  if [[ -f "${brief}" ]] && at="$(date -u -r "${brief}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" && [[ "$2" == - || ! "${at}" < "$2" ]]; then
-    u="$(sed -n '1s/^Review \(https:[^ ,]*\), the PR of story .*/\1/p' "${brief}")"
-  fi
-  [[ -z "${u}" || -z "$3" || " $3 " == *" ${u} "* ]] || u=""
+  local u=""
+  [[ "$2" != 1 ]] || u="$(review_brief_url "$1")"
   [[ -n "${u}" || "$3" == *" "* ]] || u="$3"
   printf '%s' "${u}"
 }
@@ -2310,13 +2319,13 @@ no_review_pr() {
 # went (no_agent_lines' review case), from <fields>, its no_review_events line past the slug, and the
 # poll's NO_AGENT_LIVE list and NO_AGENT_PS. Nothing while a round is under way: review-<slug> listed,
 # a round the events show (no_review_events' under), or a process that answers for the story: a tell,
-# a start, or a wait-pr or merge on its PR (no_agent_busy). Nothing either for an ok start with no
+# a start, or a wait-pr or merge on its PR, on prs:, or on its review brief's (no_agent_busy). Nothing either for an ok start with no
 # .swarm/reviews/<slug>.head, or with a findings file that passes on that head (review_pass). A URL a
 # failed line names counts only when <prs> is empty or holds it. With no PR known, the exit finds it
 # first, as no_agent_exit's does.
 no_review_line() {
-  local slug="$1" ok url under bs prs repo rname f="${PROJECT_DIR}/.swarm/reviews/$1.md" head origin
-  read -r ok url under bs <<< "$2"; read -r repo prs <<< "$3"
+  local slug="$1" ok url under wrote prs repo rname f="${PROJECT_DIR}/.swarm/reviews/$1.md" head origin
+  read -r ok url under wrote <<< "$2"; read -r repo prs <<< "$3"
   [[ "${repo}" != - ]] || repo=""
   no_agent_name rname "review-${slug}"
   ! grep -qxF -e "${rname}" <<< "${NO_AGENT_LIVE}" || return 0
@@ -2327,10 +2336,9 @@ no_review_line() {
     ! review_pass "${slug}" "${head}" || return 0
   fi
   [[ "${url}" == - || -z "${prs}" || " ${prs} " == *" ${url} "* ]] || url=-
-  # With several PRs, a start that failed before its brief may have been for another PR than the brief's.
-  if [[ "${url}" == - && "${ok}" == 0 && "${prs}" == *" "* ]]; then url=""
-  elif [[ "${url}" == - ]]; then url="$(no_review_pr "${slug}" "${bs}" "${prs}")"; fi
-  ! no_agent_busy "${slug}" "${rname}" "${prs}${url:+ ${url}}" || return 0
+  [[ "${url}" != - ]] || url="$(no_review_pr "${slug}" "${wrote}" "${prs}")"
+  # A wait-pr or merge on the PR of any earlier start of this review answers for the story too.
+  ! no_agent_busy "${slug}" "${rname}" "${prs} ${url} $(review_brief_url "${slug}")" || return 0
   if [[ -z "${url}" ]]; then
     origin="$(git -C "$(repo_dir "${repo}")" remote get-url origin 2>/dev/null)" || origin="<its repo's origin>"
     echo "no-review: ${slug}, exit: gh pr list -R ${origin} --head story/${slug}, then swarm.sh review-agent ${slug} <PR URL>, or the fallback reviewer"
@@ -2455,7 +2463,7 @@ no_agent_exit() {
 # unless dash handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
 # with or without lines.
 no_agent_lines() {
-  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said=""
+  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said="" has_build=""
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 2
   if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
@@ -2489,7 +2497,7 @@ no_agent_lines() {
       src="$(repo_dir "${repo}")" || continue
       build_exists "${src}" "${slug}" || continue
     fi
-    built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'
+    built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'; has_build+=" ${slug}"
   done < <(no_agent_events ${rows})
   # shellcheck disable=SC2086 # revs: space-separated pairs
   [[ -z "${revs}" ]] || rv="$(no_review_events ${revs})"
@@ -2518,10 +2526,10 @@ no_agent_lines() {
   done <<< "${built}"
   # The review case: whether the builder is listed or not.
   while read -r slug fields; do
-    [[ -n "${slug}" ]] || continue
+    # A build cleared since (a close that removed its worktree and branch) has no PR left to review.
+    [[ -n "${slug}" && " ${has_build} " == *" ${slug} "* ]] || continue
     d="$(awk -F $'\x1f' -v s="${slug}" '$1 == s { print; exit }' <<< "${data}")"
     IFS=$'\x1f' read -r _ st repo prs <<< "${d}"
-    ! no_agent_theirs "${slug}" "${st}" "${prs}" || continue
     # One line per story: its no-agent: exit comes first (a restart, or in review the review-agent
     # exit already), and the next poll brings no-review: once the builder is back.
     [[ " ${said} " != *" ${slug} "* ]] || continue

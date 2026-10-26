@@ -520,13 +520,14 @@ poll
 check "and so does one that could not read the PR's head" rev_fires nr-2 "${URL}"
 
 # A start refused while the conductor waits on CI (a wait-pr on the PR) is the normal handoff.
-fresh; story nr-w "kind: code" "status: ready"; ev story nr-w; built nr-w; listed nr-w
+fresh; story nr-w "kind: code" "status: ready" "repo: na-sib"; ev story nr-w; built nr-w; listed nr-w
 rbrief nr-w "${URL}"; ev review-agent nr-w "review-agent: nr-w's worktree has uncommitted changes, so it is not the PR's head; nothing was started"
 busy wait-pr "${URL}"
 poll
-check "a swarm.sh wait-pr on the brief's PR running is silent" silent
+check "a swarm.sh wait-pr on the PR of an earlier attempt's brief running is silent" silent
 unbusy; poll
-check "once the wait-pr ends, it fires" rev_fires nr-w "${URL}"
+check "once the wait-pr ends, it fires, finding the PR first (a preflight is not tied to that brief)" test "$(out)|$(rc)" == \
+  "no-review: nr-w, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-w, then swarm.sh review-agent nr-w <PR URL>, or the fallback reviewer|0"
 
 # A refusal that leaves the earlier start running changes nothing: that review's own end decides.
 fresh; story nr-v "kind: code" "status: ready"; ev story nr-v; built nr-v; listed nr-v review-nr-v
@@ -543,11 +544,11 @@ poll; poll
 check "and so is one refused because review-nr-v still held its name" never_woke nr-v
 
 # With no earlier start in this build, a name held elsewhere is a start that failed.
-fresh; story nr-x "kind: code" "status: ready"; ev story nr-x; built nr-x; listed nr-x; rbrief nr-x "${URL}"
+fresh; story nr-x "kind: code" "status: ready" "prs: ${URL}"; ev story nr-x; built nr-x; listed nr-x
 ev review-agent nr-x "review-nr-x: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list); it is never retired from here. Wait for it to finish, or close its pane"
 poll
 check "a first start refused because another project's agent holds review-nr-x fires" rev_fires nr-x "${URL}"
-fresh; story nr-x "kind: code" "status: ready"; ev story nr-x; built nr-x; listed nr-x; rbrief nr-x "${URL}"
+fresh; story nr-x "kind: code" "status: ready" "prs: ${URL}"; ev story nr-x; built nr-x; listed nr-x; rbrief nr-x "${URL}"
 ev review-agent nr-x; rhead nr-x; ev close review-nr-x
 ev review-agent nr-x "review-nr-x: an agent with this name is still working; wait for it, or use another name"
 poll
@@ -563,10 +564,16 @@ poll
 check "once restart brings the builder back, the next poll brings the no-review: line" rev_fires nr-b "${URL}"
 
 # A failed line's URL ends where a URL cannot go on, and counts only when prs: is empty or holds it.
-fresh; story nr-u "kind: code" "status: ready"; ev story nr-u; built nr-u; listed nr-u; rbrief nr-u "${URL}"
+fresh; story nr-u "kind: code" "status: ready" "repo: na-sib"; ev story nr-u; built nr-u; listed nr-u
 ev review-agent nr-u "review-agent: '${URL2}x' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
 poll
-check "a refused '.../pull/42x' is no URL: the brief's PR" rev_fires nr-u "${URL}"
+check "a refused '.../pull/42x' is no URL: the exit finds the PR first" test "$(out)|$(rc)" == \
+  "no-review: nr-u, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-u, then swarm.sh review-agent nr-u <PR URL>, or the fallback reviewer|0"
+fresh; story nr-u "kind: code" "status: ready" "repo: na-sib"; ev story nr-u; built nr-u; listed nr-u
+ev review-agent nr-u "review-agent: '${URL2}.patch' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
+poll
+check "a refused '.../pull/42.patch' is no URL either" test "$(out)|$(rc)" == \
+  "no-review: nr-u, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-u, then swarm.sh review-agent nr-u <PR URL>, or the fallback reviewer|0"
 fresh; story nr-u "kind: code" "status: ready" "prs: ${URL}"; ev story nr-u; built nr-u; listed nr-u
 ev review-agent nr-u "review-agent: could not read ${URL2}'s head (gh pr view --json headRefOid)"
 poll
@@ -604,20 +611,25 @@ ev review-agent nr-g "review-agent: nr-g's worktree is at ${H}, not the PR's hea
 rbrief nr-g "${URL}"; : > "${P}/.swarm/lead/seen"; poll
 check "with two PRs and a brief for one, a failed start naming none still finds the PR first" test "$(out)|$(rc)" == \
   "no-review: nr-g, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-g, then swarm.sh review-agent nr-g <PR URL>, or the fallback reviewer|0"
-# A brief older than the build's start is an earlier build's PR: the exit finds the PR first.
+# A preflight that failed for PR B leaves PR A's brief from this build: it names no PR, so the exit
+# finds the PR first rather than send the lead to review A.
 fresh; story nr-o "kind: code" "status: ready" "repo: na-sib"; ev story nr-o; built nr-o; listed nr-o
-rbrief nr-o "${URL}"; touch -t 202001010000 "${P}/.swarm/briefs/review-nr-o.md"
-ev review-agent nr-o "review-agent: nr-o's worktree has uncommitted changes"
-poll
-check "with only a brief older than the build's start, the exit finds the PR first" test "$(out)|$(rc)" == \
-  "no-review: nr-o, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-o, then swarm.sh review-agent nr-o <PR URL>, or the fallback reviewer|0"
-# A reopen (its PR closed unmerged) makes the brief before it an old PR's too, its builder kept.
-fresh; story nr-o "kind: code" "status: ready" "repo: na-sib"; ev story nr-o 2026-01-01T00:00:00Z; built nr-o; listed nr-o
-rbrief nr-o "${URL}"; touch -t 202601020000 "${P}/.swarm/briefs/review-nr-o.md"; ev reconcile nr-o "ok (reopened)"
+rbrief nr-o "${URL}"; ev review-agent nr-o; rhead nr-o
+printf 'head: %s\n\n## Findings\n\nNone.\n' "${H}" > "${P}/.swarm/reviews/nr-o.md"
 ev review-agent nr-o "review-agent: nr-o's worktree is at ${H}, not the PR's head; nothing was started"
 poll
-check "after a reopen, a brief from before it is not the PR: the exit finds the PR first" test "$(out)|$(rc)" == \
+check "a preflight failure naming no PR, an earlier attempt's brief and prs: empty, finds the PR first" test "$(out)|$(rc)" == \
   "no-review: nr-o, exit: gh pr list -R https://github.com/na-owner/na-sib.git --head story/nr-o, then swarm.sh review-agent nr-o <PR URL>, or the fallback reviewer|0"
+# A start that failed after writing its brief (unclear, here) is for the brief's PR.
+fresh; story nr-o "kind: code" "status: ready" "repo: na-sib"; ev story nr-o; built nr-o; listed nr-o
+rbrief nr-o "${URL}"; ev review-agent nr-o "review-agent: review-nr-o's start was unclear: it reads idle and may have its brief; no head is on record"
+poll
+check "a start that was unclear, after writing its brief, names the brief's PR" rev_fires nr-o "${URL}"
+# A build that a close cleared (builder closed, worktree and branch gone) has no PR left to review.
+fresh; story nr-d "kind: code" "status: ready"; ev story nr-d; built nr-d; rbrief nr-d "${URL}"
+ev review-agent nr-d "review-agent: review-nr-d did not start"; ev close nr-d "ok (dropped)"; rm -rf "${ROOT}/proj-wt/nr-d"
+poll; poll
+check "a failed review start whose build a close cleared is silent" never_woke nr-d
 # In review under merge = agent with no agent at all, its no-agent: line already names review-agent.
 fresh "merge = agent"; story nr-r "kind: code" "status: review" "prs: ${URL}"; ev story nr-r; built nr-r
 rbrief nr-r "${URL}"; ev review-agent nr-r "review-agent: review-nr-r did not start"
