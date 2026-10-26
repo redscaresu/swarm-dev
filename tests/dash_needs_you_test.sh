@@ -188,6 +188,10 @@ litem stories/k-kept.md '' 'status: review' 'prs: https://github.com/o/l/pull/6'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
 litem epics/d.md '' 'status: draft'
 litem hld/h.md '' 'status: draft'
+# A staged draft (stage: and an hld: naming an agreed HLD that grants epics) waits on v1.3.0's tag and
+# then the lead's stage step: a lead's-queue row, no agree row.
+litem hld/hg.md '' 'status: agreed' 'grants: [epics]'
+litem epics/c.md '' 'status: draft' 'stage: v1.4.0' 'hld: hg'
 printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
 printf '2026-10-13\tcode\t%s\tclaude\topus\thigh\t%s\n' l-auth lauth l-wait lwait l-gone lgone l-stall lstall > "${L}/.swarm/agents.tsv"
 cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/lauth.jsonl"
@@ -234,7 +238,7 @@ LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs 
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
   "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
-  "! look at l-gone: session ended" "! look at l-stall: working 1")
+  "! look at l-gone: session ended" "! look at l-stall: working 1" "! staged epic c: stage v1.4.0, after v1.3.0")
 echo "lead = session" > "${L}/.claude/swarm/config"
 for cols in 100 160; do
   out="$(ldash "${cols}")"
@@ -251,6 +255,7 @@ for cols in 100 160; do
     check "lead = session at ${cols} columns: the lead's queue holds '${want}'" has "${want}" "$(joined "${queue}")"
     check "lead = session at ${cols} columns: needs you lacks '${want}'" lacks "${want}" "$(joined "${needs}")"
   done
+  check "lead = session at ${cols} columns: a staged draft has no agree draft epic row" lacks "agree draft epic c" "${out}"
   check "lead = session at ${cols} columns: a draft HLD is one needs-you row, not also a waiting line" \
     test "$(grep -c 'draft HLD h\|draft hld' <<< "${out}")" -eq 1
   check "lead = session at ${cols} columns: the legend says ! is needs you or the lead" has "! needs you or the lead (session gone or unknown)" "${out}"

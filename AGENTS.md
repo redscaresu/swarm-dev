@@ -68,7 +68,7 @@ Useful while it runs:
 - `swarm.sh status [--all]`: agents that need a look (including empty panes where a start failed), stacked builds whose parent moved or merged, and what waits on the user; `--all` lists idle agents and blocked stories too.
 - `swarm.sh dash [--watch [seconds]]`, and `swarm.sh dash --project <dir>` (repeatable): the board, agents, running-now box, merges-per-day speedometer, model ladder and recent events on one read-only screen; each `--project` draws another project.
 - `swarm.sh tidy [--yes]`: close empty panes and retired agents' panes; lists them first.
-- `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag, and `idle:` lines for capacity nothing uses (`dash` shows them too).
+- `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag, `stage v<T>` when staged draft epics can go active because the minor before their stage is tagged, and `idle:` lines for capacity nothing uses (`dash` shows them too).
 - `swarm.sh conduct <epic>|--backlog`: a fresh conductor for one epic, or for the ready stories with no epic; `swarm.sh watch [--epic <slug>|--backlog] [repo...]` returns when a story PR needs the lead.
 - `swarm.sh wait --lead`: returns when the lead's queue gains a held or escalated story or a green PR that waits on the user.
 - `swarm.sh wait-pr <pr-url>`: wait for a PR's checks; exit 0 green, 1 red, 2 on a gh error, a conflict with the base, or the timeout. Every CI wait goes through it; the guard refuses a hand-written `gh pr checks` loop.

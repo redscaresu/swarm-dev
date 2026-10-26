@@ -302,7 +302,7 @@ for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
 # for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft epic) and
 # the rest goes to the lead's queue (lq); with lead off, lq is needs you. Of the stories with a
 # **You:** step only the first is listed, with +N more for the rest (more).
-need, blocked, later, green, need_slugs, held_seen = [], 0, 0, 0, set(), set()
+need, blocked, later, green, need_slugs, held_seen, staged = [], 0, 0, 0, set(), set(), set()
 LEAD = E.get("DASH_LEAD") == "session"
 queue = []
 lq = queue if LEAD else need
@@ -329,6 +329,12 @@ for l in lines("DASH_WAITING"):
         continue
     if l.startswith(("draft epic: ", "draft hld: ")):
         continue  # the board's draft epics and HLDs have their own needs-you row below
+    # A staged draft waits on its stage's tag, then on the lead's stage step: no agree row.
+    m = re.match(r"staged epic: (\S+), (stage \S+, after \S+)$", l)
+    if m:
+        staged.add(m.group(1))
+        add(lq, bang + [(f"staged epic {m.group(1)}: ", ""), (m.group(2), "dim")], ("epics", m.group(1)))
+        continue
     m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
     if m:
         # With merge = agent, swarm.sh merge holds a costs: money story for the user, so no lead
@@ -401,7 +407,7 @@ for r in recs:
         add(lq, bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")], item)
 lq += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
 for b in board:
-    if b[0] == "epics" and b[2] == "draft":
+    if b[0] == "epics" and b[2] == "draft" and b[1] not in staged:
         add(need, bang + [(f"agree draft epic {b[1]}: ", ""), (f"/epic {b[1]}", "dim")], ("epics", b[1]))
     if b[0] == "hld" and b[2] == "draft":
         add(need, bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")], ("hld", b[1]))
