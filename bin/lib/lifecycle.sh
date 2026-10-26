@@ -1764,6 +1764,9 @@ LEAD_DIR="${PROJECT_DIR}/.swarm/lead"
 LEAD_SEEN="${LEAD_DIR}/seen"          # the lead's queue at wait --lead's last read, kept across runs
 LEAD_GREEN="${LEAD_DIR}/green"        # "<PR URL> <sha>" per head ci_gate passed, so it runs once per head
 LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one takes over from
+LEAD_HEADS="${LEAD_DIR}/heads"        # each review item's verdict from the last heads pass (lead_heads)
+LEAD_HEADS_EVERY="${SWARM_LEAD_HEADS_EVERY:-300}"   # seconds between heads passes, at least 1
+LEAD_HEADS_AT=""                      # SECONDS at this run's last heads pass, empty before the first
 
 # heads_green <pr-url>... — 0 when there is at least one PR and every one's head is green, 1 when one is
 # not or a URL is not a PR, 2 when none is red but gh or ci_gate could not read one. ci_gate head is
@@ -1790,19 +1793,12 @@ heads_green() {
   return "${rc}"
 }
 
-# lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
-# for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human (or
-# for a costs: money story, under merge = agent too) `merge: <slug> <PR URL>...` for a story or epic in
-# review (waiting_on_user) whose every PR head is green.
-# A review item whose heads could not be read stays as LEAD_SEEN has it, so a gh error wakes no one.
-lead_queue() {
-  local f held line slug prs rc urls="" tag u new seen=" " red="|"
-  while IFS= read -r f; do
-    held="$(get_fm "${f}" held_for)"
-    if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
-    elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
-  done < <(board stories)
-  : > "${LEAD_GREEN}.new"
+# lead_review_items — waiting_on_user's review items as the lead's queue weighs them: a `kept: <slug>
+# <PR URL>... (not reviewed)` line as it is, and with merge = human (or for a costs: money item, under
+# merge = agent too) `<tag> merge: <slug> <PR URL>...` for a story or epic awaiting a merge, <tag> 1 for
+# a costs: money one, else -. It reads files only.
+lead_review_items() {
+  local line tag
   # waiting_on_user's last line has no newline.
   while IFS= read -r line || [[ -n "${line}" ]]; do
     # A kept story (a give-up's PR, not reviewed) is the lead's to look at, never one to merge.
@@ -1810,12 +1806,26 @@ lead_queue() {
     # With merge = agent only a costs: money item waits on the user: merge holds it for them.
     # shellcheck disable=SC2154 # assigned in another file
     [[ "${CFG_merge}" == human || "${line}" == "  awaiting your merge (costs money): "* ]] || continue
-    tag=""; [[ "${line}" != "  awaiting your merge (costs money): "* ]] || tag=1
+    tag=-; [[ "${line}" != "  awaiting your merge (costs money): "* ]] || tag=1
     line="${line/#  awaiting your merge (costs money): /  awaiting your merge: }"
     [[ "${line}" == "  awaiting your merge: "* ]] || continue
     line="${line#  awaiting your merge: }"; line="${line#epic }"
-    slug="${line%% *}"; prs="${line#"${slug}"}"; line="merge: ${slug}${prs}"; rc=0; urls+="${prs}"
-    if [[ -n "${tag}" ]]; then
+    echo "${tag} merge: ${line}"
+  done < <(waiting_on_user)
+}
+
+# lead_heads — the heads pass: read the PR heads of each review item lead_review_items lists
+# (heads_green) and write its verdict to LEAD_HEADS, `<verdict> merge: <slug> <PR URL>...`: green when
+# every head is, unread when none is red but one could not be read, red otherwise. wait_lead runs it on a
+# run's first read and then at most once every LEAD_HEADS_EVERY seconds, so the polls between make no gh
+# call. A costs: money PR an earlier item already reports is not read again, and that item gets no verdict.
+lead_heads() {
+  local tag line slug prs rc v urls="" u new seen=" " red="|"
+  : > "${LEAD_GREEN}.new"; : > "${LEAD_HEADS}.new"
+  while read -r tag line; do
+    [[ "${tag}" != kept: ]] || continue
+    slug="${line#merge: }"; slug="${slug%% *}"; prs="${line#merge: "${slug}"}"; urls+="${prs}"; rc=0
+    if [[ "${tag}" == 1 ]]; then
       # A held PR is reported once, under the first item listing it (a story and its epic both may).
       new=""; for u in ${prs}; do [[ "${seen}" == *" ${u} "* ]] || new=1; done
       [[ -n "${new}" ]] || continue
@@ -1826,21 +1836,45 @@ lead_queue() {
       # About to wake the lead: a cached head can have gone red on a re-run since, so read each one again.
       # shellcheck disable=SC2086 # as above
       LEAD_FRESH=1 heads_green ${prs} || rc=$?
-      # A cached head the re-read found red or pending leaves the cache, or every poll reads it fresh again.
+      # A cached head the re-read found red or pending leaves the cache, or every pass reads it fresh again.
       [[ -z "${LEAD_RED}" ]] || red+="${LEAD_RED}|"
     fi
-    if [[ ${rc} -eq 0 ]] || { [[ ${rc} -eq 2 ]] && grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; }; then
-      # Seen once reported: a later item listing the PR still wakes the lead when this one was not green.
-      echo "${line}"; [[ -z "${tag}" ]] || seen+="${prs# } "
-    fi
-  done < <(waiting_on_user)
-  # A green head this read did not reach (gh failed, or an earlier PR of its item was red) stays cached
-  # while its PR is still in review. A head this read's fresh re-read found red or pending (red) goes.
+    case "${rc}" in 0) v=green ;; 2) v=unread ;; *) v=red ;; esac
+    echo "${v} ${line}" >> "${LEAD_HEADS}.new"
+    # Seen once reported: a later item listing the PR still wakes the lead when this one was not green.
+    [[ "${tag}" != 1 ]] || ! lead_head_wakes "${v}" "${line}" || seen+="${prs# } "
+  done < <(lead_review_items)
+  mv "${LEAD_HEADS}.new" "${LEAD_HEADS}"
+  # A green head this pass did not reach (gh failed, or an earlier PR of its item was red) stays cached
+  # while its PR is still in review. A head this pass's fresh re-read found red or pending (red) goes.
   touch "${LEAD_GREEN}"
   awk -v keep="${urls} " -v red="${red}" 'index(red, "|" $0 "|") { next }
     FILENAME == ARGV[1] { if (!($1 in got)) print; got[$1] = 1; next }
     !($1 in got) && index(keep, " " $1 " ") { print }' "${LEAD_GREEN}.new" "${LEAD_GREEN}" > "${LEAD_GREEN}.tmp"
   mv "${LEAD_GREEN}.tmp" "${LEAD_GREEN}"; rm -f "${LEAD_GREEN}.new"
+}
+
+# lead_head_wakes <verdict> <merge: line> — true when a review item with that verdict is in the lead's
+# queue: green, or unread while LEAD_SEEN has it, so a gh error wakes no one.
+lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "$2" "${LEAD_SEEN}" 2>/dev/null; }; }
+
+# lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
+# for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
+# (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
+# heads pass's (lead_heads), wakes the lead (lead_head_wakes), and the no-agent: lines. It reads files and
+# herdr's list, never gh: a review item that entered review since the last pass waits for the next.
+lead_queue() {
+  local f held tag line v
+  while IFS= read -r f; do
+    held="$(get_fm "${f}" held_for)"
+    if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
+    elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
+  done < <(board stories)
+  while read -r tag line; do
+    if [[ "${tag}" == kept: ]]; then echo "kept: ${line}"; continue; fi
+    v="$(awk -v l="${line}" 'substr($0, index($0, " ") + 1) == l { print $1; exit }' "${LEAD_HEADS}" 2>/dev/null)" || v=""
+    ! lead_head_wakes "${v}" "${line}" || echo "${line}"
+  done < <(lead_review_items)
   no_agent_lines record
 }
 
@@ -1988,13 +2022,17 @@ no_agent_lines() {
   done <<< "${built}"
 }
 
-# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents),
-# and save it as LEAD_SEEN. Print each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
+# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
+# and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
+# since its last (lead_heads), and save it as LEAD_SEEN. Print each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
 # no-agent: items and saves the rest.
 lead_wake() {
   local now line new="" slug
   lead_agents
+  if [[ -z "${LEAD_HEADS_AT}" ]] || (( SECONDS - LEAD_HEADS_AT >= LEAD_HEADS_EVERY )); then
+    LEAD_HEADS_AT=${SECONDS}; lead_heads
+  fi
   now="$(lead_queue)"
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || [[ -n "${1:-}" && "${line}" != "no-agent: "* ]] || new+="${line}"$'\n'
@@ -2056,7 +2094,8 @@ lead_lock() {
 
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
-# (lead_wake). The first read of a run reports what landed since the last run; with no LEAD_SEEN yet
+# (lead_wake). The PR heads behind its merge: lines are read only in a heads pass (lead_heads), on its
+# first read and then at most once every LEAD_HEADS_EVERY seconds. The first read of a run reports what landed since the last run; with no LEAD_SEEN yet
 # it notes the queue and reports only no-agent: items. At the timeout (default an hour) it fails with
 # nothing printed. It nudges no one and edits no board file.
 wait_lead() {
@@ -2064,6 +2103,7 @@ wait_lead() {
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
   timeout=$((10#${timeout}))   # 090000 is not octal
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
+  [[ "${LEAD_HEADS_EVERY}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1, not '${LEAD_HEADS_EVERY}'"
   lead_lock
   start=${SECONDS}
   if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else ! lead_wake quiet || return 0; fi

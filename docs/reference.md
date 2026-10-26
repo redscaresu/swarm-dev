@@ -62,6 +62,11 @@ lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seco
 waits on the lead's user: every one with `merge = human`, and with `merge = agent` only a PR
 `swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv,
 with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
+The PR heads are read with gh only on a run's first read and then at most once every 5 minutes
+(`SWARM_LEAD_HEADS_EVERY`, 300 seconds). Each of those reads writes every review item's result to
+`.swarm/lead/heads`. The polls in between read only that file and make no gh call. A PR in review
+therefore wakes the lead up to 5 minutes after its head turns green, and a story that enters review
+waits for the next read of the heads.
 The lead handles each line at once and starts it again. It keeps what it last saw in
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.

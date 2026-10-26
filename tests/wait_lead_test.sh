@@ -81,11 +81,12 @@ fresh() {
 # again — forget the last run's output and exit code, keeping what it saw.
 again() { rm -f "${ROOT}/out" "${ROOT}/rc"; }
 # lead [VAR=value]... <timeout-ms> — swarm.sh wait --lead in the foreground, polling every second, inside
-# herdr; output in ${ROOT}/out, exit code in ${ROOT}/rc.
+# herdr; output in ${ROOT}/out, exit code in ${ROOT}/rc. Every poll is a heads pass (SWARM_LEAD_HEADS_EVERY=1),
+# so the gh counts below are a pass's, unless a case sets it longer.
 lead() {
   local envs=()
   while [[ "$1" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
-  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 \
+  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
     ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$1" > "${ROOT}/out" 2>&1) 2>/dev/null && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
 }
 # must <what> <command>... — count a FAIL when the command is false, and say nothing when it is true.
@@ -219,6 +220,8 @@ check "a timeout with a leading zero is decimal, not octal" test "$(out)|$(rc)" 
 # --- SWARM_LEAD_POLL and the timeout.
 fresh; lead SWARM_LEAD_POLL=0 1000
 check "SWARM_LEAD_POLL=0 is refused" grep -q 'SWARM_LEAD_POLL is whole seconds, at least 1' "${ROOT}/out"
+fresh; lead SWARM_LEAD_HEADS_EVERY=0 1000
+check "SWARM_LEAD_HEADS_EVERY=0 is refused" grep -q 'SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1' "${ROOT}/out"
 fresh; t0=${SECONDS}; lead SWARM_LEAD_POLL=30 2000
 check "the last sleep stops at the timeout, not a full poll later" test $((SECONDS - t0)) -le 4 -a "$(rc)" == 1
 
@@ -249,6 +252,19 @@ check "a new head is read again" test "$(grep -c "${H2}/check-runs" "${ROOT}/gh.
 touch "${FX}/view.fail"; must "it polled" polls 2; rm -f "${FX}/view.fail"; must "it polled" polls 2
 check "a green review item whose head cannot be read for a poll does not wake it after" nothing_yet
 check "a cached green head outlives a poll that could not read it" test "$(grep -c "${H2}/check-runs" "${ROOT}/gh.log")" == 1
+stop
+
+# The heads pass: PR heads are read on a run's first read and then once every SWARM_LEAD_HEADS_EVERY
+# seconds (30 here: room for two polls on a loaded runner), and the polls between read only .swarm/lead/heads.
+fresh "merge = human"; checks failure; item r "kind: code" "status: review" "prs: ${URL}"
+start SWARM_LEAD_HEADS_EVERY=30 90000
+n=$(grep -c '' "${ROOT}/gh.log")
+checks success
+must "a poll ended" first_read "$(seen_id)"; must "a poll ended" first_read "$(seen_id)"
+check "the polls between two heads passes make no gh call" test "$(grep -c '' "${ROOT}/gh.log")" == "${n}"
+check "a head that turned green after a heads pass does not wake it before the next pass" nothing_yet
+check "it wakes on the next heads pass" returned 600
+check "the wake came from that pass, the head's second read, and printed merge:" test "$(reads)|$(out)|$(rc)" == "2|merge: r ${URL}|0"
 stop
 
 # A story a close kept (kept:, its PR not reviewed) is listed as kept, never offered to merge, though
