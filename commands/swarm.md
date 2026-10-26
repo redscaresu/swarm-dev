@@ -292,16 +292,24 @@ Repeat until a step below says stop:
 
      Then go back to 1.
    - `release`: the base has changes since the last release tag (`next`'s why names both), so cut
-     a release. If a PR from a `release/v<new>` branch is open, use it. Otherwise, ship the docs
+     a release. A stage release is a minor: cut it only when `next` prints `release v<S>`, and make
+     `<new>` that number without the `v` (`release v0.28.0` gives 0.28.0). For
+     `release v<x.y.z+1> (patch)`, `<new>` is likewise the number alone, without the `v` and without
+     ` (patch)` (0.28.1, never `v0.28.1 (patch)`). While `next` prints a
+     `release-held:` line, cut no minor: cut only the patch `next` names, if it names one. `merge --release` does not read the hold, so only this step keeps
+     it. If a PR from a `release/v<new>` branch is open, use it. Otherwise, ship the docs
      first: list the behaviour changes since the tag (`git log v<version>..origin/<base>`), and unless docs
      merged since the tag cover them, land a docs PR that covers each one in README.md, AGENTS.md, docs/reference.md, docs/method.md and
      commands/*.md as they apply, its prose run through the humanizer skill. It reaches the
      base the way a fix does, through a `kind: code` story or a lead PR; stop there, and
      go back to 1 once it is on the base. Then make a worktree
      of a new branch `release/v<new>` from `origin/<base>`, and in it bump only
-     `.claude-plugin/plugin.json`, to the next minor version (a patch when every change since the
-     tag is a fix). Commit with the brief's trailers, push, and open the PR titled
-     `Release v<new>`, listing the PRs merged since the tag and naming the docs PR. When nothing
+     `.claude-plugin/plugin.json`, to `<new>`: the version `next`
+     named, either the stage's v<S> or the patch it named. Only when `next` printed a bare `release`,
+     bump to the next minor version (a patch when every change since the tag is a fix). Commit with the brief's trailers, push, and open the PR titled
+     `Release v<new>`, listing the PRs merged since the tag and naming the docs PR. For swarm-dev's own repo, the body also
+     lists the behaviour changes every project gets on upgrade and names the infrafactory build they
+     were tried on, or says none. When nothing
      since the tag changes what a user runs, sees or has to do, skip the docs PR and put a
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
      release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md

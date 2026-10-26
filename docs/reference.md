@@ -380,7 +380,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `lead_epics` (default `off`): `on`: the lead may set an epic `active` on its own. `off`: an epic goes `active` only through the user or a grant. Any other value stops `swarm.sh` with the file and line
 - `commit_trailers` (default empty): one or more trailers, `;` between them, such as `commit_trailers = Co-Authored-By: Ann <ann@example.com> ; Signed-off-by: Bo <bo@example.com>`. Each is a `Token: value` pair; anything else is refused. A `#` starts a comment, so no trailer can hold one. Every builder's brief tells it to end each commit message with them, one per line, and `swarm.sh board-pr` adds them to its commit, ahead of the trailers the brief names. `swarm.sh init` writes the line commented out
 - `agent_env` (default empty): variable names, separated by spaces, that every agent gets with the values of the session that starts it, such as a provider's key (§ Building, **The agents' environment.**)
-- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines and appending a `reap` line to `.swarm/events.tsv` (see the audit log). A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set
+- `TEST_FILE_TIMEOUT` (default `600`; not a `swarm.sh config` key, an environment variable of `scripts/test.sh`, which `make test` runs): a whole number of seconds a test file may run. Past it, `test.sh` stops the file's process group (TERM, KILL after 2 s) and fails it as `TIMEOUT <file> after <n>s`, printing its last 20 lines and appending a `reap` line to `.swarm/events.tsv` (see the audit log). A file in the Makefile's `SLOW` gets three times the limit. Anything but a whole number of 1 or more is refused. `SWARM_SLEEP_SCALE` defaults to `0.01` in `test.sh`, as in the Makefile. `test.sh` unsets every other `SWARM_*` variable, so a test never sees the `SWARM_PROJECT` that points a builder's pane at its real project. It also sets `SWARM_NO_CI_REFRESH=1`, and dash starts no detached ci refresh while `SWARM_SLEEP_SCALE` is set. Each file runs from its own `TMPDIR`, outside any git repo, with `SWARM_PROJECT` naming a stand-in project of the job's own; `tests/test_helpers.sh`, which every test sources first, drops it, and a file whose `swarm.sh` still reaches the stand-in fails, naming what it left there. A `swarm.sh` call a test leaves unpinned (no `cd` into its project, no `SWARM_PROJECT`) stops at "not in a swarm project" instead of reaching the checkout's `.swarm` logs. `MAKEFLAGS`, `MFLAGS` and `MAKELEVEL` are unset for the file, so a `make` a test runs starts clean. `SWARM_FORBID_PROJECT` (set by `test.sh` and by `tests/test_helpers.sh` to the checkout the tests run from, its main checkout from a worktree) names a project `swarm.sh` refuses to act on, named directly or through a worktree of it, with `SWARM_FORBID_PROJECT: <dir> is the checkout the tests run from, or a worktree of it`, so such a `swarm.sh` call stops before it writes; the hooks' own event lines (`hooks/merge-guard.sh` `record`, `hooks/lead-stop.sh` `log`) are not `swarm.sh` calls and are not covered
 
 ## Scoping an epic
 
@@ -2042,11 +2042,14 @@ No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the 
 release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
 `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
 outside the board. It reads local refs only, since reconcile has just pulled. The lead opens a PR
-from `release/v<new>` that bumps only that file, to the next minor version (a patch when every
-change since the tag is a fix), and lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
+from `release/v<new>` that bumps only that file, to the version `next` named (the stage's v<S>, or the patch it named). Only
+when `next` printed a bare `release` does it bump to the next minor version (a patch when every
+change since the tag is a fix). It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
 every behaviour change since the tag, and the release PR names it. When nothing since the tag
 changes what a user runs, sees or has to do, a `Docs: none — <why>` line in the release PR body
-stands in for the docs PR. With `merge = agent` the
+stands in for the docs PR. For swarm-dev's own repo, the release PR body also lists the behaviour
+changes every project gets on upgrade and names the infrafactory build they were tried on, or says
+none. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
@@ -2063,7 +2066,8 @@ epic, or under no epic, goes out in that patch: nothing checks that it is a fix.
 one whose file was deleted since the tag (a story's PR deletes its file), or one the board keeps at
 `status: done` that was not done at the tag. Otherwise there is no release step, and `next` goes on
 to the steps after it. An epic on the board whose `stage:` is not
-`v<x.y.z>` holds the release too, and the line names it. A board where no epic has `stage:`
+`v<x.y.z>` holds the release too, and the line names it. `merge --release` does not read the hold, so the lead cuts a
+release only when `next` prints it. A board where no epic has `stage:`
 releases as before, with a plain `release`. So does a board outside the project's repo, since git
 can't list its deleted epics.
 

@@ -6,6 +6,8 @@
 # edits through board-pr. gh is a stub on PATH that logs to gh.log and creates a PR, which pr list
 # then lists as open on its head; origin is a local bare repo.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 REPO="$(dirname "${SWARM}")/.."

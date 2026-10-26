@@ -7,6 +7,8 @@
 # none for a stalled, paused, cleared-on-error or impossible close or a build with an open PR. Then flow's incidents section over a
 # fixture events.tsv holding six kinds on two days prints the per-day count of each.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

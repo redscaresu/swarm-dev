@@ -11,6 +11,8 @@
 # let through. make check runs it over LINT_FILES and fails on a finding.
 # The fixture holds only JSON that parses, so this file passes the lint too; sed breaks the copies.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LINT="${REPO}/scripts/lint"

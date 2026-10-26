@@ -3,6 +3,8 @@
 # body lacks, as rules-unchecked, and mutation_rule tells builders to paste that line. gh is a stub
 # on PATH: the PR's body (with its URL) comes from ${FX}/pr.json and its diff from ${FX}/diff.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }

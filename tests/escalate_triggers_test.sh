@@ -5,6 +5,8 @@
 # With the ladder empty none does. conduct_brief names the step-ups only with the ladder on. herdr, gh
 # and claude (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
 set -euo pipefail
+# shellcheck source=tests/test_helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
