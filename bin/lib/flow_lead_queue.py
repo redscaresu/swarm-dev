@@ -180,3 +180,140 @@ for day, items in sorted(days.items()):
     mins = [m for m, _ in items]
     still = ",".join(sorted(s for _, s in items if s)) or "-"
     print(f"{day}\t{len(items)}\t{statistics.median(mins):.0f}\t{max(mins):.0f}\t{still}")
+
+# No-agent items: a started story no agent works on, a failed step-up and a review agent that never
+# started, named no-agent, step-up-failed and no-review after wait --lead's no-agent: and step-up
+# failed: lines and the no-review: line story no-agent-review-gone adds. Until it lands, nothing wakes
+# the lead as ok (no-review): a failed review-agent start is woken as ok (no-agent) and filed under
+# no-agent, so no-review wakes come only from fixture lines, and a no-review item is only ever open. An
+# item's clock starts at the events that explain the missing agent, as no_agent_events reads them, and
+# runs to its lead-woken line, whose outcome names the kind; a wake with nothing waiting measures
+# nothing. Each ok close of the builder or review agent starts it afresh (the newest close, as the poll
+# times its row; an earlier close may be a handover to review long before any alert was due), and so do
+# a review or kept line while an item waits, a step-up:failed line, and a review agent's failed start
+# unless a no-review item already waits. A no-agent line or another failed start keeps the time it
+# finds. A failed start while the builder is running starts the clock only when nothing waits (its pane
+# may have gone with no close) and never opens the item, as the poll stays quiet while herdr lists the
+# builder; a failed step-up or _step-up line enters nothing either (refused before it closed anything,
+# or followed by step-up:failed). The wait ends unmeasured on a sign of a live agent (an ok start of the
+# builder or review agent, an ok tell, a hold, or an ok upgrade naming the story's epic, backlog for
+# none, or - for all, except for a failed step-up, whose marker the poll reports whatever an upgrade
+# restarts) and on a reconcile that reopened the story (its PR closed unmerged), which keeps it out
+# until its next ok start, as no_agent_events leaves it to unblock --startable. An item not woken is
+# open only once a no-agent, step-up:failed or failed start line came since its newest close (that close
+# may have cleared the build, and a plain close is how every build ends), and only while its story is
+# ready, of a kind an agent builds, not held and with an ok builder start on record (a first start that
+# failed leaves no build to alert on): a review story's alert depends on its PRs' costs and merge =
+# agent, which only the poll reads, so it counts once woken and is never open. Per local day it entered:
+# items, the median and maximum minutes to the wake (- when no item entered that day), and open; and per
+# local day of the wake, woken_while_working: no-agent wakes whose slug had a builder started (an ok
+# start other than review-agent) with no close or step-up:failed line since (step-up logs that line once
+# it has closed the builder). A builder whose pane died with no close line looks the same in events.tsv,
+# so a nonzero count is either an alert while the builder worked or a real one for a pane that went with
+# no close; the story's events and herdr's record tell which. Printed under the table above only when
+# the window has an item or a wake.
+STARTS = set(os.environ.get("SWARM_NO_AGENT_STARTS", "").split())
+NAME_MAX = int(os.environ.get("SWARM_AGENT_NAME_MAX") or 32)
+AGENT_KINDS = os.environ.get("SWARM_AGENT_KINDS", "").split()
+WOKEN = {"ok (no-agent)": "no-agent", "ok (step-up failed)": "step-up-failed", "ok (no-review)": "no-review"}
+
+def agent_name(s):
+    # As swarm.sh's agent_name: the name a close or herdr line gives <s>'s agent, cut to its limit.
+    n = re.sub(r"[^a-z0-9_-]", "-", s.lower())
+    return (n if re.match("[a-z]", n) else "s" + n)[:NAME_MAX]
+
+def alert_waiting(slug):
+    f = os.path.join(board, "stories", slug + ".md")
+    if not os.path.isfile(f):
+        return False
+    state = os.path.join(project, ".swarm/board-state/stories", slug)
+    status, k, held = (fm(f, state, x) for x in ("status", "kind", "held_for"))
+    return status == "ready" and not held and (not k or k in AGENT_KINDS)
+
+# Each agent name a line may give, to its story and whether it is the review agent's; a story's own slug
+# first, so a story named review-<x> is never taken for x's review agent.
+slugs = {f[2] for f in rows if f[1] in ("lead-woken", "no-agent", "step-up:failed", "review-agent")}
+if os.path.isdir(os.path.join(board, "stories")):
+    slugs |= {n[:-3] for n in os.listdir(os.path.join(board, "stories")) if n.endswith(".md")}
+own = {s: (s, False) for s in slugs}
+for s in sorted(slugs):
+    for n, rev in ((agent_name(s), False), ("review-" + s, True), (agent_name("review-" + s), True)):
+        own.setdefault(n, (s, rev))
+# pending: slug -> (when it entered, its kind once a no-agent, step-up:failed or failed start line came).
+pending, builder, built, reopened, alerts, working = {}, {}, set(), set(), [], []
+def story_epic(slug):
+    f = os.path.join(board, "stories", slug + ".md")
+    return fm(f, os.path.join(project, ".swarm/board-state/stories", slug), "epic") if os.path.isfile(f) else ""
+
+for f in rows:
+    if f[1] == "upgrade" and f[4].startswith("ok"):
+        for slug in [s for s in pending if pending[s][1] != "step-up-failed" and f[2] in ("-", story_epic(s) or "backlog")]:
+            del pending[slug]
+        continue
+    if f[2] not in own:
+        continue
+    try:
+        at = datetime.datetime.fromisoformat(f[0].replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        continue
+    (slug, rev), cmd, ok = own[f[2]], f[1], f[4].startswith("ok")
+    base = cmd.split(":")[0]
+    if cmd == "lead-woken":
+        kind = WOKEN.get(f[4])
+        if kind == "no-agent" and builder.get(slug):
+            working.append(at)
+        if kind and slug in pending:
+            alerts.append((pending.pop(slug)[0], at, f"{kind}:{slug}"))
+    elif base in ("step-up", "_step-up") and not ok and cmd != "step-up:failed":
+        continue
+    elif cmd == "reconcile" and f[4] == "ok (reopened)":
+        pending.pop(slug, None)
+        reopened.add(slug)
+    elif cmd in ("no-agent", "step-up:failed") or (base in STARTS and not ok):
+        if cmd == "step-up:failed":
+            builder[slug] = False
+        if slug in reopened:
+            continue
+        if cmd not in ("no-agent", "step-up:failed") and builder.get(slug):
+            pending.setdefault(slug, (at, None))
+            continue
+        kind = "step-up-failed" if cmd == "step-up:failed" else "no-review" if rev or cmd == "review-agent" else "no-agent"
+        start, was = pending.get(slug, (at, None))
+        if kind != "no-agent" and was != kind:
+            start, was = at, kind
+        pending[slug] = (start, was or kind)
+    elif base in STARTS:
+        pending.pop(slug, None)
+        reopened.discard(slug)
+        if not rev and cmd != "review-agent":
+            builder[slug] = True
+            built.add(slug)
+    elif base == "close" and ok:
+        if slug not in reopened:
+            pending[slug] = (at, None)
+        if not rev:
+            builder[slug] = False
+    elif cmd in ("review", "kept") and ok and slug in pending:
+        pending[slug] = (at, None)
+    elif (base == "tell" and ok) or cmd == "hold":
+        pending.pop(slug, None)
+for slug, (start, kind) in pending.items():
+    if kind and slug in built and alert_waiting(slug):
+        alerts.append((start, None, f"{kind}:{slug}"))
+
+nd = {}
+for start, end, name in alerts:
+    day = datetime.datetime.fromtimestamp(start).date().isoformat()
+    if since <= day <= until:
+        nd.setdefault(day, ([], []))[0].append(((min(end or stop, stop) - start) / 60, name if not end or end > stop else None))
+for at in working:
+    day = datetime.datetime.fromtimestamp(at).date().isoformat()
+    if since <= day <= until:
+        nd.setdefault(day, ([], []))[1].append(at)
+if nd:
+    print("no_agent_day\titems\tmedian_min\tmax_min\twoken_while_working\topen")
+for day, (items, woke) in sorted(nd.items()):
+    mins = [m for m, _ in items]
+    still = ",".join(sorted(s for _, s in items if s)) or "-"
+    med, top = (f"{statistics.median(mins):.0f}", f"{max(mins):.0f}") if mins else ("-", "-")
+    print(f"{day}\t{len(items)}\t{med}\t{top}\t{len(woke)}\t{still}")
