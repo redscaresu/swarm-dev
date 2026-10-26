@@ -146,7 +146,7 @@ claude plugin validate .
 ```
 
 Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate: `test` is the
-required check, and it passes when its 8 `test-shard` jobs do. The full `make test` is for when you
+required check, and it passes when its 12 `test-shard` jobs do. The full `make test` is for when you
 want the whole suite locally.
 
 The machine-wide cap on `make test` is the file `~/.swarm/test-cap`, read only by `scripts/test.sh`.
