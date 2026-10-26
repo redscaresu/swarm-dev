@@ -12,10 +12,12 @@
 # changed line of bin/swarm.sh or bin/lib/*.sh, at the merge base and now, as <file>:<function>, or
 # <file>:arm <cmd> in an arm of bin/swarm.sh's dispatch case; for a changed bin/lib/*.py, each
 # function whose body names it or a .py that imports it. It prints `full` alone, and says why on
-# stderr, for a line in no function (top level, a setting), a .py no function names or a script runs,
-# or a git command that fails.
-# Both read the map and tests/ of the git checkout the current directory is in, and exit 2 on a map
-# that does not parse or lists a test file that is not there.
+# stderr, for a line in no function (top level, a setting), a function it cannot parse, a .py no
+# function names or a hook, script or test runs, or a git command that fails. It prints nothing, and
+# says so on stderr, when no change reaches those files.
+# The default mode and --check-map read the map and tests/ of the git checkout the current directory
+# is in, and exit 2 on a map that does not parse or lists a test file that is not there; --functions
+# reads no map.
 import glob
 import os
 import re
@@ -38,7 +40,7 @@ FULL = "full"
 SHELL_FILES = ("bin/swarm.sh", "bin/lib/*.sh")
 PY_FILES = "bin/lib/*.py"
 # Run a bin/lib .py outside the bin/ functions --functions names, so one they name gives full.
-OTHER_RUNNERS = ("hooks/*", "scripts/*", "bin/gh-shim/*")
+OTHER_RUNNERS = ("hooks/*", "scripts/*", "bin/gh-shim/*", "tests/*")
 DISPATCH = ("bin/swarm.sh", "dispatch")
 DEF = re.compile(r"([A-Za-z_][\w-]*)\(\)\s*([{(])")
 CASE = re.compile(r"\s*case .* in$")
@@ -149,27 +151,47 @@ def changed(root, base):
     return sorted({p for p in paths if p})
 
 
-# owners(path, text) — per line of a bin shell file, (labels, body). labels: the function the line is
-# in; `arm <cmd>` per command of the dispatch arm it is in (bin/swarm.sh's dispatch); none for a
-# blank line outside any function, which runs nothing; else FULL. A comment block that runs straight
-# into a function is that function's; body is False for it and for any other comment outside one.
+# code_of(line) — a shell line without its comment, which starts at a # that begins a word outside
+# quotes.
+def code_of(line):
+    quote, k = None, 0
+    while k < len(line):
+        ch = line[k]
+        if ch == "\\" and quote != "'":
+            k += 1
+        elif quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (k == 0 or line[k - 1].isspace()):
+            return line[:k]
+        k += 1
+    return line
+
+
+# owners(path, text) — per line of a bin shell file, its labels: the function the line is in;
+# `arm <cmd>` per command of the dispatch arm it is in (bin/swarm.sh's dispatch); none for a blank
+# line outside any function, which runs nothing; else FULL. A comment block that runs straight into a
+# function is that function's. A function whose end it cannot find before the next one starts makes
+# FULL of every line from there on.
 def owners(path, text):
     lines, out, doc, i = text.split("\n"), [], [], 0
     while i < len(lines):
         m, line = DEF.match(lines[i]), lines[i].strip()
         if not m:
-            out.append(((), False) if not line else ((FULL,), not line.startswith("#")))
+            out.append((FULL,) if line else ())
             doc = doc + [i] if line.startswith("#") else []
             i += 1
             continue
         name, closer = m.group(1), ")" if m.group(2) == "(" else "}"
-        end = i if line.endswith(closer) else next((j for j in range(i + 1, len(lines)) if lines[j].startswith(closer)), None)
-        if end is None:   # never closed: no line after it can be placed
-            return out + [((FULL,), True)] * (len(lines) - i)
+        end = i if code_of(line).rstrip().endswith(closer) else \
+            next((j for j in range(i + 1, len(lines)) if lines[j].startswith(closer) or DEF.match(lines[j])), None)
+        if end is None or (end > i and DEF.match(lines[end])):
+            return out + [(FULL,)] * (len(lines) - i)
         for j in doc:
-            out[j] = ((name,), False)
+            out[j] = (name,)
         body = lines[i:end + 1]
-        out += arms(body, name) if (path, name) == DISPATCH else [((name,), True)] * len(body)
+        out += arms(body, name) if (path, name) == DISPATCH else [(name,)] * len(body)
         doc, i = [], end + 1
     return out
 
@@ -177,7 +199,7 @@ def owners(path, text):
 # arms(body, name) — owners' entries for the dispatch function's body: a line in an arm of its case
 # (a comment just above an arm included) is the arm's commands; any other line is the function's.
 def arms(body, name):
-    out = [((name,), True)] * len(body)
+    out = [(name,)] * len(body)
     start = next((k for k, line in enumerate(body) if CASE.match(line)), None)
     if start is None:
         return out
@@ -190,13 +212,13 @@ def arms(body, name):
         if m:
             arm = tuple("arm " + c for c in m.group(1).split("|"))
             for j in doc:
-                out[j] = (arm, True)
+                out[j] = arm
             doc = []
         elif indent_of(line) == indent and line.strip().startswith("#"):
             doc.append(k)
             continue
         if arm:
-            out[k] = (arm, True)
+            out[k] = arm
     return out
 
 
@@ -229,7 +251,7 @@ def at_base(root, base, path):
 def shell_changes(root, base, path):
     old, new = at_base(root, base, path), read(root, path)
     if old is None:
-        return {f"{path}:{c}" for labels, body in owners(path, new or "") if body for c in labels if c != FULL}, None
+        return {f"{path}:{c}" for labels in owners(path, new or "") for c in labels if c != FULL}, None
     diff = git(root, "diff", "-U0", "--no-ext-diff", "--no-renames", base, "--", path)
     sides = [(old, "at the base", []), (new or "", "now", [])]
     for m in HUNK.finditer(diff):
@@ -241,31 +263,32 @@ def shell_changes(root, base, path):
     for text, when, nums in sides:
         lines = owners(path, text)
         for n in nums:
-            labels = lines[n - 1][0]
+            labels = lines[n - 1]
             if FULL in labels:
                 return None, f"{path}:{n} {when} is in no function"
             got.update(f"{path}:{c}" for c in labels)
     return got, None
 
 
-# names_py(text, path) — whether text names a .py's file or imports it as a module.
+# names_py(text, path) — whether text names a .py's file or imports it as a module, in a statement
+# that starts a line or follows a ;.
 def names_py(text, path):
     name = os.path.basename(path)
     module = re.escape(name[:-len(".py")])
     return bool(re.search(BEFORE + re.escape(name) + AFTER, text)
-                or re.search(rf"^\s*(from|import)\s.*(?<![\w.]){module}(?!\w)", text, re.M))
+                or re.search(rf"(^|;)\s*(from|import)\s.*(?<![\w.]){module}(?!\w)", text, re.M))
 
 
-# runners(root, path) — (the functions whose bodies name a bin/lib .py, or one that imports or names it
-# in turn, None), or (None, why) for full: one of those a file outside bin's shell runs, or one no
-# function and no other .py names.
+# runners(root, path) — (the functions whose code, comments aside, names a bin/lib .py, or one that
+# imports or names it in turn, None), or (None, why) for full: one of those a hook, script or test
+# runs, or one no function and no other .py names.
 def runners(root, path):
     pys = {p: read(root, p) for p in in_tree(root, (PY_FILES,))}
     shells = {}
     for sh in in_tree(root, SHELL_FILES):
         text = read(root, sh)
         shells[sh] = list(zip(text.split("\n"), owners(sh, text)))
-    others = {p: read(root, p) for p in in_tree(root, OTHER_RUNNERS)}
+    others = {p: read(root, p) for p in in_tree(root, OTHER_RUNNERS) if p not in NOT_NAMERS}
     reach, todo, got = {path}, [path], set()
     while todo:
         x = todo.pop()
@@ -276,8 +299,8 @@ def runners(root, path):
     for x in sorted(reach):
         named = set()
         for sh, lines in shells.items():
-            for n, (line, (labels, body)) in enumerate(lines, 1):
-                if body and names_py(line, x):
+            for n, (line, labels) in enumerate(lines, 1):
+                if names_py(code_of(line), x):
                     if FULL in labels:
                         return None, f"{x}: {sh}:{n} runs it outside any function"
                     named.update(f"{sh}:{c}" for c in labels)
@@ -320,9 +343,12 @@ def check_map(rows, paths):
 
 
 def main(argv):
+    if argv[1:] not in ([], ["--check-map"], ["--functions"]):
+        print("usage: select_tests.py [--check-map | --functions]", file=sys.stderr)
+        return 2
     try:
         root = subprocess.run(("git", "rev-parse", "--show-toplevel"), check=True, capture_output=True, text=True).stdout.strip()
-        rows = load_map(root)
+        rows = None if argv[1:] == ["--functions"] else load_map(root)
     except (subprocess.CalledProcessError, OSError, MapError) as e:
         why = e.stderr.strip() if isinstance(e, subprocess.CalledProcessError) else e
         print(f"select-tests: {why}", file=sys.stderr)
@@ -341,12 +367,12 @@ def main(argv):
         if labels is None:
             print(f"select-tests: full: {why}", file=sys.stderr)
             labels = [FULL]
+        elif not labels:
+            print("select-tests: no bin/ function: no change reaches a function in bin/swarm.sh, bin/lib/*.sh or bin/lib/*.py",
+                  file=sys.stderr)
         for label in labels:
             print(label)
         return 0
-    if argv[1:]:
-        print("usage: select_tests.py [--check-map | --functions]", file=sys.stderr)
-        return 2
     try:
         base = merge_base(root)
         picked, why = select(root, rows, changed(root, base))

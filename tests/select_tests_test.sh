@@ -51,8 +51,9 @@ echo 'bin/gh-shim/gh api' > "${G}/tests/names_shim_test.sh"
 echo 'cat commands/renamed.md' > "${G}/tests/names_renamed_test.sh"
 echo 'echo plan-swarm.md old-board-only.sh merge-guard.shx' > "${G}/tests/x_test.sh"   # near misses
 # --functions' fixture: a dispatch case in bin/swarm.sh, and functions of both forms in bin/lib/x.sh,
-# one of which runs named.py, which imports helper.py, which imports util.py; lone.py is named only
-# in a comment.
+# one of which runs named.py, which imports helper.py, which imports util.py; another imports
+# inline.py after a ;. lone.py is named only in a top-level comment, quiet.py only in a comment in a
+# function. noted is a one-liner with a comment.
 cat > "${G}/bin/swarm.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -84,14 +85,24 @@ run_named() {
 }
 
 sub_two() (
+  # quiet.py is not run here
   echo two
 )
 gone() { echo gone; }
+run_inline() {
+  python3 -c 'import sys; sys.path.insert(0, "bin/lib"); from inline import X'
+}
+noted() { echo noted; }  # a one-liner with a comment
+after() {
+  echo after
+}
 EOF
 printf 'import helper\nprint(helper.X)\n' > "${G}/bin/lib/named.py"
 printf 'import util\nX = util.Y\n' > "${G}/bin/lib/helper.py"
 echo 'Y = 1' > "${G}/bin/lib/util.py"
 echo 'print(1)' > "${G}/bin/lib/lone.py"
+echo 'X = 1' > "${G}/bin/lib/inline.py"
+echo 'print(2)' > "${G}/bin/lib/quiet.py"
 git -C "${G}" add -A; git -C "${G}" commit -qm base
 git -C "${G}" update-ref refs/remotes/origin/main HEAD
 BASE="$(git -C "${G}" rev-parse HEAD)"
@@ -162,10 +173,23 @@ check "a mode change to a bin file gives full" "$(fn "chmod +x bin/lib/x.sh; ${c
 check "an edit to a .py gives the shell functions whose bodies name it" "$(fn 'echo 1 >> bin/lib/named.py')" bin/lib/x.sh:run_named
 check "an edit to a .py two imports away gives the functions that run the first" \
   "$(fn "echo 'Z = 2' >> bin/lib/util.py; ${commit}")" bin/lib/x.sh:run_named
-check "a .py no function names gives full" "$(fn "echo 1 >> bin/lib/lone.py; ${commit}")" full
+check "an edit to a .py imported after a ; gives the function that imports it" \
+  "$(fn "echo 'Y = 2' >> bin/lib/inline.py; ${commit}")" bin/lib/x.sh:run_inline
+check "a .py named only in a top-level comment gives full" "$(fn "echo 1 >> bin/lib/lone.py; ${commit}")" full
+check "a .py named only in a comment in a function gives full" "$(fn "echo 1 >> bin/lib/quiet.py; ${commit}")" full
 check "a .py a script runs gives full" \
   "$(fn "echo 'python3 bin/lib/named.py' >> scripts/board-only.sh; echo 1 >> bin/lib/named.py")" full
+check "a .py a test runs gives full" \
+  "$(fn "echo 'python3 bin/lib/named.py' > tests/direct_test.sh; echo 1 >> bin/lib/named.py")" full
+check "an edit after a one-liner with a comment gives the next function" \
+  "$(fn "perl -pi -e 's/echo after/echo later/' bin/lib/x.sh; ${commit}")" bin/lib/x.sh:after
+check "a function it cannot parse gives full" \
+  "$(fn "printf 'odd() { echo x; } ; echo y\\nlater() {\\n  :\\n}\\n' >> bin/lib/x.sh; ${commit}")" full
+check "--functions reads no map" \
+  "$(fn "echo bad > scripts/test-map.tsv; perl -pi -e 's/echo two/echo 2/' bin/lib/x.sh")" bin/lib/x.sh:sub_two
 check "a change outside bin/ gives no function" "$(fn "echo 1 >> docs/method.md; ${commit}")" ""
+check "--functions says so on stderr when it gives no function" "$(cd "${G}" && bash "${SEL}" --functions 2>&1 >/dev/null)" \
+  "select-tests: no bin/ function: no change reaches a function in bin/swarm.sh, bin/lib/*.sh or bin/lib/*.py"
 check "no origin/main gives full" \
   "$(fn "echo 1 >> bin/lib/named.py; git update-ref -d refs/remotes/origin/main")" full
 git -C "${G}" update-ref refs/remotes/origin/main "${BASE}"
@@ -182,6 +206,9 @@ want="$(lines "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" tests/names_method_test.sh tes
 check "--run runs make test on the whole selection, JOBS=4, with no SHARD" "${out}|$(cat "${tmp}/make.args")" \
   "|$(printf '%s\n' test "TESTS=${want% }" JOBS=4 "SHARD unset")"
 rm -f "${tmp}/make.args"
+out="$(cd "${G}" && PATH="${tmp}/bin:${PATH}" bash "${SEL}" --run --functions 2>&1)" && rc=0 || rc=$?
+check "--run with --functions is refused and runs nothing" "${out}|${rc}|$([[ -e "${tmp}/make.args" ]] && echo ran)" \
+  "select-tests: --run takes no other option, so it cannot run --functions' or --check-map's output|2|"
 out="$(PATH="${tmp}/bin:${PATH}" sel "echo 1 >> board/stories/a.md; ${commit}" --run)"
 check "--run on an empty selection runs nothing and says so" "${out}|$([[ -e "${tmp}/make.args" ]] && echo ran)" \
   "select-tests: nothing to run|"
