@@ -37,9 +37,9 @@ has depends-on-names 'what it needs from each `depends_on`: the file or the func
 has report-chain 'longest chain'
 has touches-file-part 'touches. entries are `file:part`, the part starting with the function or section name' "$step2"
 has touches-bare-clash 'a bare file clashes only with the same bare file' "$step2"
-has critic-bare-file 'a bare-file `touches` entry in a story that changes only one function or section \(the finding names the `file:part` to write instead\)' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
+has critic-bare-file 'a bare-file `touches` entry in a story that changes only part of the file \(the finding names the `file:part` entries to write instead\)' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
 step0=$(awk '/^\*\*0\. /{on=1} /^\*\*1\. /{on=0} on' "$F" | tr '\n' ' ' | tr -s ' ')
-has small-path-bare-file 'Check every story.s `touches` yourself.*a bare file where the story changes one function or section gets a `file:part` instead' "$step0"
+has small-path-bare-file 'Check every story.s `touches` yourself.*a bare file where the story changes only part of the file gets one `file:part` entry per part instead' "$step0"
 has large-epic-arm 'A large epic, one you judge at more than 8 stories \(too big for one full run\) whose \*\*Done when\*\* holds goals that can ship apart, becomes child epics instead of stories' "$step0"
 has large-epic-outside-board 'for a board outside the project.s repo, where it is, with no worktree and no commit' "$step0"
 has child-epic-shape '`docs/epics/<child>\.md` per goal, with front matter `status: active` \(`status: later` when \$1 is `later`[^)]*\), `parent: \$1`.* its own \*\*Done when\*\*' "$step0"
