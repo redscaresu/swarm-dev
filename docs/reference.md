@@ -766,7 +766,8 @@ findings file (idle while its codex runs, not finished). It moves the last revie
 before the new agent's brief goes, puts it back if herdr cannot start the agent, and deletes it once
 the agent has started. When the start fails, `review-agent` first reads the error. If herdr may
 have sent the brief (its reply could not be read, or the brief was sent and not taken up) and
-`review-<slug>`'s session reads busy or waiting (herdr's working or blocked for codex), it says the
+`review-<slug>`'s session reads busy or waiting (herdr's working or blocked for codex), or reads idle
+with the brief in its log (a review agent sits idle while its codex runs), it says the
 agent is running, records the head, keeps the file aside as `<slug>.md.prev` and exits 0; `wait
 review-<slug>` then waits for a new file. If herdr may have sent the brief to an agent that is not
 running, it keeps the file aside, records no head and fails, saying how to close the pane and start the
@@ -801,12 +802,14 @@ or `resume`) is required and goes in the audit log. `tell` sends only to an idle
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
 session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
 (a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
-session reads busy or waiting, or its log has the message as a new prompt (for a `tell`, the file's
-first line). When the session read idle before the send and shows no sign of it, the message goes
-once more, and the command fails if it still shows nothing. With no session to read (codex, a session
-Claude Code does not list yet, or one it reads busy or not at all), a message herdr sent is never
-sent again: when herdr shows no turn, the command succeeds and warns that herdr sent it the brief and
-did not show the turn start. To reach a busy conductor, the lead runs
+session reads busy or waiting (when it read idle, or was not listed yet, before the send), or its log
+has the message as a new prompt (for a `tell`, the file's first line). herdr's own status, even
+`unclear`, does not outweigh that. When the session read idle before the send and shows no sign of it,
+the message goes once more, and the command fails if it still shows nothing. A message herdr sent to
+an agent whose session was not idle before the send (not listed yet, busy, or unreadable) is never
+sent again, and neither is one to an agent with no session to read (codex): when nothing shows a
+turn, the command succeeds if herdr shows the agent idle or done, and warns that herdr sent it the
+brief and did not show the turn start. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
 `.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
 whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a

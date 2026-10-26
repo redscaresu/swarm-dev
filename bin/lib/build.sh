@@ -620,7 +620,8 @@ review_round() {
 # <err> (its stderr), the last findings file moved aside to <slug>.md.prev when <moved> is non-empty.
 # Returns, so review_agent records the head, only when the start was unclear and the agent runs: <err>
 # says the brief may have gone out (deliver_prompt's sent or unread tries) and read_state calls it busy
-# or waiting (herdr's working or blocked for codex). The file stays aside. Dies otherwise. When the
+# or waiting (herdr's working or blocked for codex), or idle with its session log showing the brief
+# (a review agent sits idle while its codex runs). The file stays aside. Dies otherwise. When the
 # brief may have reached an agent that is not running, or herdr cannot list its agents, the file stays
 # aside and the message says what to do. In any other case (herdr surely sent nothing, no pane, a
 # session that is gone or that herdr has no status for), it closes the pane and puts back the file
@@ -635,11 +636,16 @@ review_start_failed() {
   case "$3" in
     *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) unclear=yes ;;
   esac
+  # Idle is no sign of a brief that was not taken: its session log has the brief when it was.
+  if [[ "${unclear}:${state}" == yes:idle ]] \
+    && session_took "${name}" 0 "$(awk 'NF { print; exit }' "${PROJECT_DIR}/.swarm/briefs/review-$1.md" 2>/dev/null)" logonly; then
+    state=running
+  fi
   case "${unclear}:${state}" in
     yes:unlisted)
       die "review-agent: review-$1's start was unclear and herdr could not list its agents, so its state is unknown${kept}; no head is on record. Once herdr answers, look at it (herdr agent read ${name}); to review again, close it and run swarm.sh review-agent $1 <PR URL>" ;;
     yes:none|yes:gone|yes:herdr:) ;;   # nothing runs to have the brief
-    yes:busy|yes:waiting*|yes:herdr:working|yes:herdr:blocked)
+    yes:busy|yes:running|yes:waiting*|yes:herdr:working|yes:herdr:blocked)
       echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: wait for it with swarm.sh wait review-$1"
       return 0 ;;
     yes:*)

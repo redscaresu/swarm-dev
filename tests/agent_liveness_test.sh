@@ -314,17 +314,30 @@ check "a Task subagent's 5-minute-old tool call is a sign of life" test "${rc}:$
 # completion_seq; - is no answer. SWARM_PROMPT_TIMEOUT_MS is ${PTO:-15000}, so prompt_settle reads 3
 # times by default. With POSIX=1 deliver_prompt runs under set -o posix. dp prints "<rc>|<prompts
 # sent>|<own reads>|<die message>", and leaves deliver_prompt's stderr in ${ROOT}/dp/err (dpwarn).
-# The agent has no Claude session on record, so herdr alone answers.
+# Unless ${SESS} is set, the agent has no Claude session on record, so herdr alone answers. SESS is
+# "<before> <after>": the status Claude Code lists for its session (sess-a) on the first listing, before
+# the prompt goes, then on every later one (busy, idle, or gone: not listed). SLOG=1 has the prompt
+# appear in the session's log when it is sent.
 dp() {
-  local D="${ROOT}/dp"; rm -rf "${D}"; mkdir -p "${D}"; : > "${D}/prompts"; : > "${D}/gets"
-  PROJECT_DIR="${D}" SWARM_SLEEP_SCALE=0.01 SWARM_PROMPT_TIMEOUT_MS="${PTO:-15000}" bash -c 'source "$1/../bin/lib/agents.sh"
+  local D="${ROOT}/dp"; rm -rf "${D}"; mkdir -p "${D}"; : > "${D}/prompts"; : > "${D}/gets"; : > "${D}/lists"
+  if [[ -n "${SESS:-}" ]]; then
+    mkdir -p "${D}/.swarm" "${D}/projects/p"; : > "${D}/projects/p/sess-a.jsonl"
+    printf '2026-10-25\treview\ta\tclaude\topus\thigh\tsess-a\n' > "${D}/.swarm/agents.tsv"
+  fi
+  PROJECT_DIR="${D}" SWARM_HOME="${HERE}/.." CLAUDE_PROJECTS_DIR="${D}/projects" SWARM_SLEEP_SCALE=0.01 SWARM_PROMPT_TIMEOUT_MS="${PTO:-15000}" bash -c 'source "$1/../bin/lib/agents.sh"
     die() { echo "$*" > "${PROJECT_DIR}/died"; exit 1; }
     json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
     nth() { echo $2 | awk -v n="$1" "{ print (n <= NF ? \$n : \$NF) }"; }
+    claude() {
+      local n w; echo x >> "${PROJECT_DIR}/lists"; n="$(wc -l < "${PROJECT_DIR}/lists" | tr -d " ")"; w="$(nth "${n}" "${SESS}")"
+      if [[ "${w}" == gone ]]; then echo "[]"; else echo "[{\"sessionId\":\"sess-a\",\"status\":\"${w}\"}]"; fi
+    }
     herdr() {
       local w n
       case "$1 $2" in
-        "agent prompt") echo x >> "${PROJECT_DIR}/prompts"; w="$(nth "$(wc -l < "${PROJECT_DIR}/prompts")" "${PROMPT_REPLY}")"
+        "agent prompt") echo x >> "${PROJECT_DIR}/prompts"
+          [[ -z "${SLOG:-}" ]] || echo "{\"type\":\"user\",\"message\":{\"content\":\"brief\"}}" >> "${PROJECT_DIR}/projects/p/sess-a.jsonl"
+          w="$(nth "$(wc -l < "${PROJECT_DIR}/prompts")" "${PROMPT_REPLY}")"
           if [[ "${w}" == warn:* ]]; then echo "warning: server_binary_stale" >&2; w="${w#warn:}"; fi
           case "${w}" in
             junk) echo "not json" ;;
@@ -422,6 +435,20 @@ check "a prompt whose reply could not be read, then agent_not_found, says so" \
 check "prompt_settle reads for SWARM_PROMPT_TIMEOUT_MS: 10 s is 2 reads a try" \
   test "$(PTO=10000 PROMPT_REPLY=fail OWN=idle dp)" = "1|2|5|${idle2}"
 check "under set -o posix the failure still counts the prompts in words" test "$(POSIX=1 PROMPT_REPLY=fail OWN=idle dp)" = "1|2|7|${idle2}"
+# A review agent's brief, read through its Claude session. herdr reads a new agent unclear or idle through
+# its turn, and Claude Code does not list its session until the turn starts (gone before the prompt).
+check "a brief to an agent herdr reads unclear, whose session reads busy after it (not listed before), is taken" \
+  test "$(SESS='gone busy' PROMPT_REPLY=junk OWN='unclear unclear' dp)" = "0|1|2|"
+check "a brief to an agent herdr reads idle with no baseline, whose session has the brief in its log, is taken" \
+  test "$(SESS='gone idle' SLOG=1 PROMPT_REPLY=junk OWN='- idle' dp)" = "0|1|2|"
+check "a brief to an agent herdr reads unclear whose session never took it fails, sent nothing more" \
+  test "$(SESS='gone idle' PROMPT_REPLY=junk OWN='idle unclear' dp)" = "1|1|4|${unsure} herdr sent it the brief once, then herdr reads it unclear with no turn finished since; ${notagain}"
+check "a brief to an agent herdr reads idle with no baseline whose session never took it fails" \
+  test "$(SESS='gone idle' PROMPT_REPLY=junk OWN='- idle' dp)" = "1|1|4|${unsure} herdr sent it the brief once, then herdr reads it idle, ${nobase}"
+check "a session busy before the prompt and after it is no sign the brief was taken: only its log is" \
+  test "$(SESS='busy busy' PROMPT_REPLY=junk OWN='- idle' dp)" = "1|1|4|${unsure} herdr sent it the brief once, then herdr reads it idle, ${nobase}"
+check "a session busy before the prompt whose log has the brief since took it" \
+  test "$(SESS='busy busy' SLOG=1 PROMPT_REPLY=junk OWN='- unclear' dp)" = "0|1|2|"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
