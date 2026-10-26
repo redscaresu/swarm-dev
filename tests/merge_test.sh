@@ -1940,8 +1940,14 @@ check "merge.sh refuses a release the grant does not cover with 'waits on the us
   grep -qF "waits on the user's merge (merge = human" "${REPO}/bin/lib/merge.sh"
 check "commands/swarm.md's release arm keys the outcome on merged:, and leaves a refused PR waiting on the user" \
   grep -qE 'by whether merge printed .merged:.,.* Any other refusal: under .merge = human. the release-grant refusal .* Tell the user what the refusal printed and that the PR waits on their merge' <<< "${arm}"
-check "commands/swarm.md's release arm says a stage release is a minor at v<S>" \
+check "commands/swarm.md's release arm says a stage release is a minor" \
   grep -qF 'A stage release is a minor: cut it only when' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm sets <new> from the version next named, without the v" \
+  grep -qF 'make `<new>` that number without the `v`' <<< "${arm}"
+# shellcheck disable=SC2016 # the backticks are markdown
+check "commands/swarm.md's release arm bumps to the version next named, a minor only on a bare release" \
+  grep -qF 'to `<new>`: the version `next` named, either the stage' <<< "${arm}"
 # shellcheck disable=SC2016 # the backticks are markdown
 check "commands/swarm.md's release arm cuts only on release v<S>" \
   grep -qF 'cut it only when `next` prints `release v<S>`' <<< "${arm}"

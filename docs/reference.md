@@ -1987,11 +1987,12 @@ No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the 
 release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
 `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
 outside the board. It reads local refs only, since reconcile has just pulled. The lead opens a PR
-from `release/v<new>` that bumps only that file, to the next minor version (a patch when every
-change since the tag is a fix), and lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
+from `release/v<new>` that bumps only that file, to the version `next` named (the stage's v<S>, or the patch it named). Only
+when `next` printed a bare `release` does it bump to the next minor version (a patch when every
+change since the tag is a fix). It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
 every behaviour change since the tag, and the release PR names it. When nothing since the tag
 changes what a user runs, sees or has to do, a `Docs: none — <why>` line in the release PR body
-stands in for the docs PR. The release PR body also lists the behaviour
+stands in for the docs PR. For swarm-dev's own repo, the release PR body also lists the behaviour
 changes every project gets on upgrade and names the infrafactory build they were tried on, or says
 none. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
