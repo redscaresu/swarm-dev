@@ -1516,7 +1516,9 @@ queued_sent() {
 }
 
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
-# needs the lead, print one line saying which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
+# needs the lead, print one line saying which and why, and exit 0. With --epic or --backlog, a story PR
+# first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>), before
+# anything else about it. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # when its head has had no check at all for WATCH_STALL_SECS (default 600), or when its head, its
 # checks reported finished, has waited green for a review (queued_line). An agent of this
@@ -1556,6 +1558,11 @@ watch_prs() {
       while read -r n sha br age; do
         [[ -n "${n}" ]] || continue
         [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
+        # A conductor's watch (heads set) says once that a story PR opened, so it starts the review
+        # agent; from the list alone, before any read of the PR. The lead's bare watch leaves that to it.
+        if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}"; then
+          echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"; return 0
+        fi
         mergeable=""
         # No conflict read on a head already reported conflicting, or finished and queued: nothing
         # more is said of it.

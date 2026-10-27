@@ -102,6 +102,8 @@ fresh() {
   printf '2026-10-01\tcode-sonnet\ts1\tclaude\t%s\thigh\tsess-1\n' "${3:-sonnet}" > "${P}/.swarm/agents.tsv"
   : > "${P}/.swarm/events.tsv"
   echo "w:1 s1" > "${P}/.swarm/state/s1"; echo "s1 w:1" > "${ROOT}/agents"
+  # The PR is already reported opened, on either repo, so a watch here goes on to its red heads.
+  printf 'opened %s#5\n' o/proj o/other > "${P}/.swarm/state/watch-seen"
   echo "[{\"sessionId\":\"sess-1\",\"status\":\"$2\"}]" > "${CLAUDE_STUB_AGENTS}"
   echo "escalate_ladder = $1" > "${P}/.claude/swarm/config"
 }
