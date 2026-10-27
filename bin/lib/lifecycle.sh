@@ -2463,9 +2463,9 @@ for f in sys.argv[1:]:
       login) out="the user runs /login, then swarm.sh tell ${name} resume <file>" ;;
       api-error) out="herdr agent read ${name}, then tell the user what it shows" ;;
       manual)
-        # The builder's story, through agent_name: a slug past AGENT_NAME_MAX is cut in the agent's name.
-        slug=""; ! is_builder "${name}" || slug="$(stall_py story "${name}")"
-        if [[ -n "${slug}" && "$(fm "${BOARD}/stories/${slug}.md" status)" == ready ]]; then
+        # The builder's story: the one full name its cut agent name maps to (cut_record), none when two share it.
+        slug=""; ! is_builder "${name}" || slug="$(cut_record "${name}")" || slug=""
+        if [[ -n "${slug}" && -f "${BOARD}/stories/${slug}.md" && "$(fm "${BOARD}/stories/${slug}.md" status)" == ready ]]; then
           out="herdr pane close ${pane} then $(no_agent_exit "${slug}")"
         else out="the user turns manual mode off in pane ${pane}"; fi ;;
       unread) awk -v p="prompt: ${name} (" 'index($0, p) == 1 { print; exit }' "${LEAD_SEEN}" 2>/dev/null || true; continue ;;

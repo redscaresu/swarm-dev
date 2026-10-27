@@ -186,12 +186,17 @@ check "manual mode on a ready story's builder closes its pane, then holds it (no
 
 # The same for a story whose slug is past AGENT_NAME_MAX (32): its builder's name is the slug cut short.
 LONG=sww-a-story-whose-slug-runs-past-the-name-cap; A="${LONG:0:32}"
-fresh; agent blocked manual.txt; echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
+fresh; agent blocked manual.txt; echo "w:p1 ${LONG}" > "${P}/.swarm/state/tab"
 { echo ---; echo "kind: code"; echo "status: ready"; echo ---; echo; echo "# ${LONG}"; } > "${B}/${LONG}.md"
 printf '2026-10-27\tcode\t%s\tclaude\topus\t-\tsession-2\n' "${A}" >> "${P}/.swarm/agents.tsv"
 out="$(run)"
 check "manual mode on a long-slug story's builder holds the story by its full slug" \
   grep -qxF "prompt: ${A} (manual), exit: herdr pane close w:p1 then swarm.sh hold ${LONG} <reason>" <<< "${out}"
+# Two stories whose slugs share the cut: herdr's name says neither, so no story is named.
+{ echo ---; echo "kind: code"; echo "status: ready"; echo ---; echo; echo "# ${LONG}-2"; } > "${B}/${LONG}-2.md"
+fresh; agent blocked manual.txt
+check "manual mode on a cut name two stories share names no story" \
+  grep -qxF "prompt: ${A} (manual), exit: the user turns manual mode off in pane w:p1" <<< "$(run)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
