@@ -117,12 +117,25 @@ gate="$(awk '/^   - `gate`: / { s = 1 } s && /^   - `done`: / { exit } s' "${HOM
 check "the gate handler is found in commands/swarm.md" test -n "${gate}"
 rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv"; mkdir -p "${P}/docs/epics"
 printf -- '---\nstatus: later\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+# Agreed and parked today: its agreed: date is at the base already, so it is no ticket.
+printf -- '---\nstatus: later\nagreed: %s\n---\n\n# p\n' "$(date +%F)" > "${P}/docs/epics/p.md"
 out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
 check "next's gate line for a later epic says to set it active with agreed: <today>" \
   grep -qxF '  later epic: e (set it active with agreed: <today> to start it)' <<< "${out}"
+check "next's gate line for a later epic agreed today says to drop its agreed: line in a board PR first" \
+  grep -qxF '  later epic: p (it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next)' <<< "${out}"
 # shellcheck disable=SC2016 # the backticks are the Markdown's own
 check "the gate handler tells the lead to write agreed: <today> as it sets a later epic active" \
   grep -qF 'a later epic: on the user'"'"'s go, set it `active` and write `agreed: <today>` (today'"'"'s date) in the same edit' <<< "${gate}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler says what to do for a later epic agreed and parked today" \
+  grep -qF 'If it already has `agreed: <today>` (agreed and parked today) on a board in the repo, that date is no ticket: drop the line in one board PR, then set it `active` with `agreed: <today>` in the next' <<< "${gate}"
+# A board outside a repo has no board PR and no epic guard: the same epic gets the plain line.
+X="${ROOT}/nogit"; mkdir -p "${X}/.claude/swarm" "${X}/docs/stories" "${X}/docs/epics"; : > "${X}/.claude/swarm/config"
+cp "${P}/docs/epics/p.md" "${X}/docs/epics/p.md"
+out="$(cd "${X}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
+check "next's gate line for a later epic agreed today, on a board outside a repo, names no board PR" \
+  grep -qxF '  later epic: p (set it active with agreed: <today> to start it)' <<< "${out}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

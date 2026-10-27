@@ -531,7 +531,9 @@ Repeat until a step below says stop:
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story: set it `ready` to start it; a later epic: on the user's go,
      set it `active` and write `agreed: <today>` (today's date) in the same edit, as /epic does,
-     since board-pr refuses a later epic set active with no ticket, as it does a draft; a draft epic:
+     since board-pr refuses a later epic set active with no ticket, as it does a draft. If it already
+     has `agreed: <today>` (agreed and parked today) on a board in the repo, that date is no ticket: drop
+     the line in one board PR, then set it `active` with `agreed: <today>` in the next; a draft epic:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
      The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
      `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or
