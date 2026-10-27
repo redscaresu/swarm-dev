@@ -68,7 +68,13 @@ case "$1 $2" in
   "agent read") echo "${TQ_CALLER:--} | $*" >> "$F/reads.log" ;;   # TQ_CALLER: lead for wait --lead's own reads
 esac
 EOF
-chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
+# ps: the real one, except that a process list (-A) keeps only this run's processes (their command
+# lines name ${ROOT}): another test on the machine telling its own b1 would make b1 here look busy to
+# wait --lead's resend_busy.
+# shellcheck disable=SC2016 # the stub's own shell expands $*
+printf '#!/bin/sh\ncase " $* " in *" -A "*) %s "$@" | grep -F "%s"; exit 0 ;; esac\nexec %s "$@"\n' \
+  "$(command -v ps)" "${ROOT}" "$(command -v ps)" > "${ROOT}/bin/ps"
+chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/claude" "${ROOT}/bin/ps"
 
 mkdir -p "${p}/.claude/swarm" "${p}/docs/epics" "${p}/docs/stories" "${p}/.swarm/state"
 : > "${p}/.claude/swarm/config"
