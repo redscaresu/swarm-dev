@@ -28,7 +28,10 @@ except OSError:
     pass
 stories = prefix + "stories/"
 BOOKKEEPING = re.compile(r"(^|[\s/])(board|close|epic)/")   # a board, close or epic branch, never a story's own work
-BOARD_OWN = tuple(prefix + f for f in ("stories/", "epics/", "hld/", "Board.base", "README.md", ".obsidian/"))   # the board's own files
+BOARD_OWN = [prefix + f for f in ("stories/", "epics/", "hld/", "Board.base", "README.md", ".obsidian/")]   # the board's own files
+def board_own(p):
+    # As on_board_paths (merge.sh) has it: a directory by its prefix, a file exactly (Board.base, not Board.base.py).
+    return any(p.startswith(o) if o.endswith("/") else p == o for o in BOARD_OWN)
 tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
 log = git(["log", "--first-parent", "--diff-merges=first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
 todo = []   # (slug, cat-file spec, closed by its commit), newest first
@@ -37,7 +40,7 @@ for chunk in log.decode("utf-8", "replace").split("\0")[1:]:
     commit, _, subject = head.partition("\t")
     paths = [c.partition("\t")[2] for c in changes.splitlines() if "\t" in c]
     work = not BOOKKEEPING.search(subject) and any(
-        not p.startswith(BOARD_OWN) and ("/" in p or not p.endswith(".md")) for p in paths)
+        not board_own(p) and ("/" in p or not p.endswith(".md")) for p in paths)
     for c in changes.splitlines():
         st, _, path = c.partition("\t")
         if st != "D" or not path.startswith(stories) or not path.endswith(".md") or "/" in path[len(stories):]:
