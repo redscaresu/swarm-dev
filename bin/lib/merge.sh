@@ -597,11 +597,12 @@ live_at() {
 # them. A herdr that cannot list its agents, or a tell that fails, is a warning: it never fails. It
 # runs after the PR has merged, so its herdr calls, the list here and those tell_agent makes, are
 # bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), so a read that
-# fails after it is the tell's warning, never a conductor taken for gone.
+# fails after it is the tell's warning, never a conductor taken for gone. Without [slugs] a warning
+# says the conductor was not told "of the merge", or NOTE_WHAT when the call sets it (as review_note does).
 conductor_note() {
   local name list what="that ${3:-} are ready" later="it finds them on its next pass"
   name="$(group_conductor "$1")"
-  [[ -n "${3:-}" ]] || { what="of the merge"; later="it reads the board on its next pass"; }
+  [[ -n "${3:-}" ]] || { what="${NOTE_WHAT:-of the merge}"; later="it reads the board on its next pass"; }
   (
     bound_herdr
     if ! list="$(herdr agent list </dev/null 2>/dev/null)"; then

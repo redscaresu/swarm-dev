@@ -1685,6 +1685,8 @@ get_fm() {
 # review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge. A story
 # whose depends_on parents are still open is held instead: back to blocked with held_by: <parents> and
 # its prs: line, its builder, worktree and branch kept, so no merge reaches a child before its parents.
+# A story put in review that the user merges (merge = human, or it costs money) is then noted to its
+# conductor (review_note). An epic's review sends no note.
 mark_review() {
   local f url held
   f="$(item_file "${1:?slug}")"; shift
@@ -1699,6 +1701,23 @@ mark_review() {
     die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
   echo "review: $(basename "${f}" .md) $*"
+  # shellcheck disable=SC2154 # load_config assigns it with printf -v
+  if [[ "${f}" == "${BOARD}/stories/"* ]] && { [[ "${CFG_merge}" == human ]] || costs_money "${f}"; }; then
+    review_note "$(basename "${f}" .md)" "$(fm "${f}" epic)" "$*"
+  fi
+}
+
+# review_note <slug> <epic> <pr-urls> — note the running conductor of <epic> (the backlog's when it is
+# empty) that story <slug> and its PRs now wait for the user (conductor_note). With none running it
+# writes no inbox; a failed tell is a warning and never fails the review.
+review_note() {
+  local note prs="its PR $3 now waits"
+  [[ "$3" != *" "* ]] || prs="its PRs $3 now wait"
+  note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" \
+    || { echo "warning: could not write a note, so no conductor was told that $1 waits for the user"; return 0; }
+  printf 'Story %s is in review: %s for the user to merge.\n' "$1" "${prs}" > "${note}"
+  NOTE_WHAT="that $1 waits for the user" conductor_note "${2:--}" "${note}"
+  rm -f "${note}"
 }
 
 # review_state <file> <kept> <pr-url>... — mark_review's state: the item in review with prs:

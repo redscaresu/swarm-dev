@@ -2094,6 +2094,12 @@ by then, each herdr call the note makes stops after `SWARM_NOTE_HERDR_WAIT` seco
 default). The conductor's pane is read from the note's one list of agents, so a herdr read that
 fails after it is the note's warning, never a conductor taken for gone. A herdr that cannot list its
 agents in that time, or a note that fails, is a warning and never fails the merge.
+`swarm.sh review <slug> <PR URL>...` sends that conductor a note too when it puts a story in review
+that the user merges: with `merge = human`, or a `costs: money` story with `merge = agent`. The note
+says the story and its PRs now wait for the user. No note goes for a review held on an open parent,
+for an epic's review, or for a story the swarm merges itself with `merge = agent`. With no conductor
+running, none is written. A herdr that cannot list its agents, or a note that fails, is a warning
+and never fails the review.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
 has not started building, and has a file the board PR itself changes that wasn't buildable on the
