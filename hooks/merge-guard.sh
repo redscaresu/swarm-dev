@@ -23,14 +23,14 @@ input="$(cat)"
 # no command string to find is read whole, so it still fails closed if it says merge.
 command="${input}"
 re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
-[[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"
+[[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"   # loose-match: ok re is a fixed regex
 # Fast path: a command that never says merge, nor git, cd or a kill as a word, nor both gh and checks, not even through quotes and
 # backslashes (mer"ge, me''rge, mer\ge; JSON's \n and \t split words), has nothing to block.
 plain="$(printf '%s' "${command}" | sed 's/\\[nrt]/ /g' | tr -d "\"'\\\\")"
 word='(^|[^[:alnum:]_])(git|cd|kill|pkill|killall)([^[:alnum:]_]|$)'
 gh='(^|[^[:alnum:]_])gh([^[:alnum:]_]|$)'; checks='(^|[^[:alnum:]_])checks([^[:alnum:]_]|$)'
 if [[ ${plain} == *[Mm][Ee][Rr][Gg][Ee]* ]]; then says=merge
-elif [[ ${plain} =~ ${word} ]] || [[ ${plain} =~ ${gh} && ${plain} =~ ${checks} ]]; then says=other
+elif [[ ${plain} =~ ${word} ]] || [[ ${plain} =~ ${gh} && ${plain} =~ ${checks} ]]; then says=other   # loose-match: ok word, gh and checks are fixed regexes
 else exit 0
 fi
 # A command that says merge fails closed: anything but the guard's own verdict refuses it. One that

@@ -227,10 +227,10 @@ check "with the waiting epic quiet, --check names the epics waiting" names "${B}
   env SWARM_PROJECT="${B}" "${M}" dash --check
 # shellcheck disable=SC2016
 check "mutant: status lists one more working agent" \
-  mutant status swarm.sh 's/^    status) status_report "${1:-}" ;;$/    status) status_report "${1:-}"; echo "  ghost  working  [x w9:p9]" ;;/'
+  mutant status swarm.sh 's/^    status) timed status status_report "${1:-}" ;;$/    status) timed status status_report "${1:-}"; echo "  ghost  working  [x w9:p9]" ;;/'
 check "with that status, --check names agents working" names "${A}" "agents working" env SWARM_PROJECT="${A}" "${M}" dash --check
 # shellcheck disable=SC2016
-check "mutant: status fails" mutant nostatus swarm.sh 's/^    status) status_report "${1:-}" ;;$/    status) exit 3 ;;/'
+check "mutant: status fails" mutant nostatus swarm.sh 's/^    status) timed status status_report "${1:-}" ;;$/    status) exit 3 ;;/'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 check "with status failing, --check says status could not be read" unread "alpha: agents and Waiting on you: status could not be read"
 nostatus() { ! grep -qE "^alpha: (agents working|running|PRs waiting for a merge|stories only you or the lead can run|agents waiting on a prompt): " <<< "${out}"; }
