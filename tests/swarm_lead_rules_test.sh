@@ -28,12 +28,18 @@ check "plan independent epics at the same time, each in its own pane" yes \
   "$(has "${DOC}" 'Plan epics whose plans do not depend on each other at the same time, not one after another.*run `/plan-epic <epic>` for each independent epic at once, each in its own pane')"
 check "cross-epic order goes in depends_on through board-pr" yes \
   "$(has "${DOC}" 'put that order in a story.s `depends_on` once the other epic.s plan exists.*`swarm.sh board-pr`')"
-check "restart at the first API-error stop, naming the route" yes \
-  "$(has "${DOC}" 'Restart an agent at its first .Request timed out. or API-error stop that its own retries did not clear.*`swarm.sh restart <slug>`.*tells the agent to write its output as it goes')"
-check "the stuck: api error arm follows the restart rule" yes \
-  "$(has "${DOC}" 'prints .stuck: api error. .exit 4.*restart the agent as the first rule at the end of this file says')"
-check "alive from events.tsv, status and the stall wait, never a pane read alone" yes \
-  "$(has "${DOC}" 'whether an agent is alive from .\.swarm/events\.tsv.*`swarm.sh status` or `swarm.sh wait --stall <slug>`, never from a pane read alone')"
+check "restart at the first API-error stop, naming each route" yes \
+  "$(has "${DOC}" 'Restart an agent at its first .Request timed out. or API-error stop that its own retries did not clear.*`swarm.sh restart <slug>`.*`swarm.sh review-agent <slug> <PR URL>`.*`swarm.sh conduct --backlog`')"
+check "the restart is followed by a tell, since restart and conduct take no brief" yes \
+  "$(has "${DOC}" 'take no brief.*to write its output as it goes: `swarm.sh tell <slug> nudge <file>` for a builder, `swarm.sh tell conduct-<epic> note <file>` for a conductor')"
+check "the stuck: api error arm follows the restart rule by name" yes \
+  "$(has "${DOC}" 'prints .stuck: api error. .exit 4.*restart the agent as the restart rule under "Three more rules for the lead" says')"
+check "a conductor is closed only when the restart rule says so" yes \
+  "$(has "${DOC}" 'Never close a conductor that has not reported, unless the restart rule under "Three more rules for the lead" says to')"
+check "alive from events.tsv, status and dash, never a pane read alone" yes \
+  "$(has "${DOC}" 'whether an agent is alive from .\.swarm/events\.tsv.*`swarm.sh status` or `swarm.sh dash`, never from a pane read alone')"
+check "wait --stall is not a liveness check" yes \
+  "$(has "${DOC}" 'Do not use `swarm.sh wait --stall` as a check')"
 
 if (( fails > 0 )); then echo "${fails} failed"; exit 1; fi
 echo "all passed"

@@ -115,7 +115,8 @@ Repeat until a step below says stop:
      gone), or prints `auth` or `stuck: ...`, not each time it idles on its own background work.
      `wait` nudges a conductor only to resume a turn that stopped on an API error. When it returns,
      go back to 1. Never
-     close a conductor that has not reported.
+     close a conductor that has not reported, unless the restart rule under "Three more rules for
+     the lead" says to.
 
      `next` itself starts a conductor for ready work that has none, and prints what it did after
      the why. A `started: <conductor> (swarm.sh conduct <arg>)` line is a conductor now working:
@@ -263,7 +264,7 @@ Repeat until a step below says stop:
 
      If any `wait` here or below prints `stuck: api error` (exit 4: the agent's turn stopped on an
      API error three times in a row, and `wait` already told it to carry on each time), restart the
-     agent as the first rule at the end of this file says. If it prints `stuck: no output for <N>m
+     agent as the restart rule under "Three more rules for the lead" says. If it prints `stuck: no output for <N>m
      (<pane>)`, read the pane (`herdr agent read <agent>`), tell the user what it shows, and stop
      for them.
 
@@ -528,14 +529,24 @@ Three more rules for the lead:
   `swarm.sh board-pr`, as for every board edit of yours.
 - Restart an agent at its first `Request timed out` or API-error stop that its own retries did not
   clear. `wait` telling it to carry on counts as its retries, so a `stuck: api error` line is
-  that stop. For a builder of a ready story, run `herdr pane close <pane>` if herdr still lists it
-  (`swarm.sh restart` refuses a listed builder), then `swarm.sh restart <slug>`. For a planner or
-  co-author, run its command again. For a conductor, `swarm.sh close conduct-<epic>`, then
-  `swarm.sh conduct <epic>`. Give the restart a brief that tells the agent to write its output as it
-  goes.
+  that stop. The route depends on the agent:
+  - A builder of a ready story: `herdr pane close <pane>` if herdr still lists it (`swarm.sh restart`
+    refuses a listed builder), then `swarm.sh restart <slug>`.
+  - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so send
+    `swarm.sh tell <slug> nudge <file>`.
+  - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
+  - A planner or co-author: run its command again.
+  - A conductor: `swarm.sh close conduct-<epic>`, then the same `swarm.sh conduct <epic>` or
+    `swarm.sh conduct --backlog` that started it.
+
+  `swarm.sh restart` and `swarm.sh conduct` take no brief and write their own prompt. Once the agent
+  is back, tell it to write its output as it goes: `swarm.sh tell <slug> nudge <file>` for a builder,
+  `swarm.sh tell conduct-<epic> note <file>` for a conductor. A planner or co-author gets no such
+  note.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
-  `swarm.sh status` or `swarm.sh wait --stall <slug>`, never from a pane read alone. A planner or
-  conductor has no PR, and the `stall_minutes` check also counts worktree commits, edits, session-log
-  activity and a running suite.
+  `swarm.sh status` or `swarm.sh dash`, never from a pane read alone. Both show `working <N>m` or
+  `stalled <N>m` and act on nothing. A planner or conductor has no PR, and the `stall_minutes` check
+  also counts worktree commits, edits, session-log activity and a running suite. Do not use
+  `swarm.sh wait --stall` as a check: it blocks, nudges and resumes the agent, and can step a build up.
 
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.
