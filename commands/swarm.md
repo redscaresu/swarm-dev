@@ -194,8 +194,8 @@ Repeat until a step below says stop:
      and no tell on the way. Run the exit it names. For a ready story it is
      `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
      `swarm.sh hold <slug> <reason>` when it should wait, saying why. A hold only answers the line: if no
-     agent is back by the next poll, it comes back. For a story in review under `merge = agent`
-     it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
+     agent is back by the next poll, it comes back. For a story in review under `merge = agent`,
+     or under a `merge` grant, it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
      no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
      background and act on its exit, not on the line, once per head. On 0, compare the head it
      printed with the `<sha>` in the exit: the same, run the merge; different (pushed since the
