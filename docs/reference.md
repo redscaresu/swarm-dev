@@ -818,8 +818,9 @@ epic's, or the backlog's for a story with no epic). It runs from an ok `conduct`
 of its agent or a `report` line, and not while its report file is there (`conduct` removes the last
 one before it starts). With none running the exit is
 `swarm.sh story --strict <slug>`, which refuses a clash with a builder herdr lists. The check reads the board, its state, events.tsv and
-one git ref per story that would get the line, with no gh or herdr call. A git read that takes more
-than 5 seconds counts as the branch being there, so the line stays quiet rather than hold the poll.
+one git read of the `story/*` branches per checkout that has a story that would get the line, with no
+gh or herdr call. A git read that takes more than 5 seconds counts every branch as there and ends git
+reads for that run, so the check stays quiet and waits on git at most once.
 Because it never asks herdr, a conductor that went with none of those lines and no report (herdr
 restarted, it crashed, or its pane was closed by hand) still counts as running. The line then keeps
 naming its note, which nobody reads. When a note gets no answer, check the conductor with

@@ -427,7 +427,8 @@ one_off_started() {
 # idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
 # is not in its needs, and per ready story with no build past queue_minutes (touches_rows.py --idle,
 # given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR), from the board, its state
-# and events.tsv alone (and one git ref read per ready story about to get a line): no gh or herdr call.
+# and events.tsv alone (and one git read of the story branches per checkout with a ready story about to
+# get a line, 5 s at most in all): no gh or herdr call.
 # next (idle_lines), wait --lead (lead_queue), status and dash each call it on every read, so a blocked
 # story's line goes once its dependency is in review or done, and a ready story's once its build starts.
 # Fails when the check does, on either kind of line: a story file reconcile removes between the

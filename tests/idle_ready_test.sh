@@ -76,10 +76,11 @@ check "in a project with no git repo, a story's repo of the project's name is un
 board; git -C "${CASE}" init -q && git -C "${CASE}" -c user.name=t -c user.email=t -c commit.gpgsign=false commit -q --allow-empty -m init \
   && git -C "${CASE}" branch story/a
 check "a story whose story/<slug> branch is left (build_exists) gives no line" "" "$(idle)"
-# A git that hangs: the branch read gives up after GIT_WAIT (5 s) and counts the branch as there.
+# A git that hangs: the branch read gives up once, after GIT_WAIT (5 s), and counts every branch as there.
 board; mkdir -p "${CASE}/bin"; printf '#!/bin/sh\nexec sleep 30\n' > "${CASE}/bin/git"; chmod +x "${CASE}/bin/git"
+story b "status: ready" "repo: other" "touches: [y.sh]"   # a second story, in a second checkout
 start=${SECONDS}; got="$(PATH="${CASE}/bin:${PATH}" idle)"
-check "a git read that hangs gives no line, within its wait" "|yes" "${got}|$( (( SECONDS - start < 20 )) && echo yes)"
+check "a git read that hangs gives no line, within one wait for two stories in two checkouts" "|yes" "${got}|$( (( SECONDS - start < 10 )) && echo yes)"
 board; event story a "${NOW}"
 check "a story with a story event since it went ready gives no line" "" "$(idle)"
 
