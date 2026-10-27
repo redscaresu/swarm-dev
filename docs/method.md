@@ -32,8 +32,8 @@ each step is in [`reference.md`](reference.md).
 step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD or epic, a plan or finish PR
 awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
-`depends_on` story (one an agent builds, not in review) shares no file in `touches` with it and has no `needs:` line naming what it uses
-(the lead drops the dependency or adds the line). When the step leaves the builders idle and no
+`depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
+(the lead drops the dependency or names it in the story's `needs:` line). When the step leaves the builders idle and no
 story is buildable, it also prints the project with up to five candidates for a one-off: the findings
 declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
@@ -45,7 +45,7 @@ only once every epic it `depends_on` is done or has only stories in `review` lef
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
 When `next` says to wait on a conductor, it also lists each ready `lead` story that a blocked story
-depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no conductor will build them.
+depends on (`also: lead <slug> blocks <slugs>`). It also lists a story that is blocked with no `depends_on`, if its kind is one no agent builds: only the lead can ready it. A blocked story of a kind an agent builds gets no `also:` line. The lead runs the listed stories while it waits, since no conductor will build them. `status` reads a blocked story's line as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds. That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step like `operator:<x>`.
 
 ## Who does what
 
