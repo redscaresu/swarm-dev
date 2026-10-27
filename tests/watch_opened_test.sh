@@ -72,10 +72,11 @@ unsee() { { grep -vx "opened o/svc#$1" "${seen}" || true; } > "${ROOT}/seen"; cp
 # watch_for <watch args...> — what watch printed (stdout and stderr), a |, then how it ended: its exit
 # code, "polling" once it has listed the PRs three times (so two whole polls said nothing), or "timeout"
 # when neither comes within WATCH_SECS, swarm.sh's start included. It polls every 0.12 s; calls then holds
-# only this run's gh calls. A watch still running is stopped, then its children (its sleep).
+# only this run's gh calls. A watch still running is stopped, then its children (its sleep); what it
+# printed is read before that, as a pipe the stop cuts can print an error (head: Broken pipe) after it.
 WATCH_SECS=60
 watch_for() {
-  local pid i end=timeout kids k
+  local pid i end=timeout kids k out
   : > "${ROOT}/calls"; rm -f "${ROOT}/watch.out"
   (cd "${p}" && exec env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${ROOT}/bin:${PATH}" \
     bash "${SWARM}" watch "$@" > "${ROOT}/watch.out" 2>&1) &
@@ -85,11 +86,12 @@ watch_for() {
     if [[ $(grep -c 'pulls?state=open' "${ROOT}/calls" || true) -ge 3 ]]; then end=polling; break; fi
     sleep 0.2
   done
+  out="$(cat "${ROOT}/watch.out")"
   if [[ "${end}" == polling || "${end}" == timeout ]]; then
     kids="$(pgrep -P "${pid}" || true)"; kill "${pid}" 2>/dev/null || true; { wait "${pid}"; } 2>/dev/null || true
     for k in ${kids}; do kill "${k}" 2>/dev/null || true; done
   fi
-  printf '%s|%s' "$(cat "${ROOT}/watch.out")" "${end}"
+  printf '%s|%s' "${out}" "${end}"
 }
 
 check "watch --epic says its own story's PR opened, skipping another epic's, and exits 0" "o/svc #2 story/a opened|0" "$(watch_for --epic e)"
