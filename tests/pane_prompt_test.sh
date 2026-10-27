@@ -17,6 +17,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="${HERE}/../bin/lib"
 FX="${HERE}/fixtures/panes"
+ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "${ROOT}"' EXIT
+export HOME="${ROOT}/home"
 
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
