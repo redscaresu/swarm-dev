@@ -6,7 +6,7 @@
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
-#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story, a green PR in review that waits on the user (merge = human, or merge holds it), or a started story with no live agent (no-agent: <slug>, exit: <exit>); print each new one
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), or a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ..., as next prints it); print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell and watch run it themselves
@@ -448,6 +448,48 @@ agent_name() {
   n=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')
   [[ "${n}" =~ ^[a-z] ]] || n="s${n}"
   printf '%s' "${n:0:${AGENT_NAME_MAX}}"
+}
+
+# cut_record <herdr-name> [names] — the one full name this project's records hold (cut_names; <names>
+# is their lines read once, for a caller that asks about many) whose agent name is <herdr-name>. Fails,
+# printing nothing: 1 when none does, 2 when more than one does, since names that share their first
+# AGENT_NAME_MAX characters share herdr's name, which then never says whose it is.
+cut_record() {
+  local n c hit="" k=0
+  while IFS= read -r n; do
+    [[ -n "${n}" ]] || continue
+    # A slug, the usual name, is its own agent name up to the cut; only another name pays agent_name's forks.
+    if [[ "${n}" =~ ^[a-z][a-z0-9_-]*$ ]]; then c="${n:0:${AGENT_NAME_MAX}}"; else c="$(agent_name "${n}")"; fi
+    [[ "${c}" == "$1" ]] || continue
+    hit="${n}"; k=$((k + 1))
+  done < <(printf '%s\n' "${2-$(cut_names)}" | sort -u)
+  [[ ${k} -gt 0 ]] || return 1
+  [[ ${k} -eq 1 ]] || return 2
+  echo "${hit}"
+}
+
+# cut_names — the full names this project's records hold, one a line: the tab records' pane names
+# (.swarm/state; a conductor's line names its role, and its brief its name), the briefs'
+# (.swarm/briefs/<name>.md; <name>.held-findings.md and the like are a build's other files) and the
+# board's stories'. Of .swarm/state it reads the tab records alone, whose names are labels with no
+# dot: a file whose name has one is skipped, since codex's brief copies there (brief-<name>.md) hold
+# prose that can be shaped like a tab record's line, and codex-review.<pid> markers, .tmp files and
+# watch-seen's temporary files are no pane's. An epic named brief-<x> keeps its record brief-<x>,
+# with no dot, so only the dot tells them apart. Like own_panes, it reads only lines shaped like a
+# tab record, and always succeeds.
+cut_names() {
+  local f b files=()
+  for f in "${STATE_DIR}"/*; do
+    b="${f##*/}"
+    [[ -f "${f}" && "${b}" != *.* ]] || continue
+    files+=("${f}")
+  done
+  [[ ${#files[@]} -eq 0 ]] \
+    || awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ && $2 != "conductor" { print $2 }' "${files[@]}" 2>/dev/null || true
+  for f in "${PROJECT_DIR}/.swarm/briefs"/*.md "${BOARD}/stories"/*.md; do
+    f="${f##*/}"; f="${f%.md}"
+    [[ "${f}" == *[.*]* ]] || echo "${f}"
+  done
 }
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }

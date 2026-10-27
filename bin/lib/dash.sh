@@ -580,7 +580,7 @@ dash_no_agent() {
 # session is unknown.
 dash_render() {
   local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
-  local testing="" p
+  local testing="" p idle
   if command -v herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
     # listed keeps the agent list whatever the pane list does: no_agent_lines needs only that one.
@@ -663,9 +663,11 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # Taken whole, never through head: head exits after a line, and where SIGPIPE is ignored (CI) next's
   # second echo prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
   nx="$(next_lines)" || true
+  # next's idle: lines (idle_now), read each frame: board and state only.
+  idle="$(idle_now 2>/dev/null)" || idle=""
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
-  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
+  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_IDLE="${idle}" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_NO_AGENT="${noagent}" DASH_NO_AGENT_AT="${noagent_at}" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
