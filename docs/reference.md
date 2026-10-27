@@ -794,8 +794,9 @@ escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Del
 where it is (`reconcile`, `finish` or `drop`, on a board outside the repo) deletes its state file
 and escalated block too. `reconcile` also deletes them when an item's PR marked it `done`, and, on
 a board in the repo, for each story or epic a commit deleted (its PR or a board PR), whether
-reconcile pulled that commit or you did: the file is in neither `HEAD` nor the main checkout. A file
-removed only by hand, or never committed, keeps its state.
+reconcile pulled that commit or you did: the file is in neither `HEAD` nor the main checkout. A story
+there still in review whose PR gh cannot read, or whose builder's pane could not be closed, keeps its
+state until a later reconcile can finish it (§ Merging). A file removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories that do not clash. Two stories clash only when their
 `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name
@@ -1877,7 +1878,12 @@ repo, reconcile never deletes a tracked file in the main checkout. An item whose
 its file on the board is marked `done` in its state after a pull, or at once when the checkout's
 branch has no upstream (there is nothing to pull), and stays on the board until
 `swarm.sh finish <slug>` takes it off through a board PR. When reconcile holds the pull because it
-cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged.
+cannot read a PR in review, the item stays in review until a later reconcile pulls. A story whose
+file a pull already took off the board before reconcile saw its PRs merge (you pulled by hand, or a
+reconcile stopped after its pull) is finished after the pull in the same way: its builder closed,
+its build cleared in the repo the deleted file named, and `reconcile <slug> ok (finished)` logged.
+When its builder's pane cannot be closed, its build and state stay, and the next reconcile tries
+again. One whose PRs did not all merge, such as a story a board PR dropped, only loses its state. On a board outside the repo it deletes the file of the item that merged.
 Reconciles in one project run one at a time (merges through a merge queue run side by side): one
 waits up to 300 seconds (`SWARM_RECONCILE_WAIT`) for `.swarm/reconcile.lock`, then stops naming it. `swarm.sh unblock` then readies a
 blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
