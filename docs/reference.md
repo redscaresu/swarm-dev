@@ -2227,6 +2227,26 @@ story's CI output, and among merge's, says that the rerun failed too, or why Git
 names any rerun still under way. `swarm.sh reconcile` clears a red main by the same rule: once each required check
 has a run, only those must pass. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
+For a story's PR it then sends the story's running conductor (the backlog conductor, for a story with
+no epic) one note: the PR merged, and these stories of its epic are ready now. They are the blocked
+stories whose `depends_on` names the merged story and has nothing open left, which the conductor's
+`swarm.sh unblock` readies. It asks the conductor to start only those `unblock --startable` would
+print, so a `kind: lead` story or one whose build is already there is left out. A held child review
+among them is named apart: unblock readies it as held, so the conductor merges its base in and
+reviews it again, and never starts a build for it.
+When reconcile fails, when it leaves the story in review (it held the pull, or could not read the
+PR), when CI on the base is not green (red, timed out or an error), or when the merge queue merged a
+head nobody checked, the note says so in place of those stories. After a base that is not green, or
+that queue merge, it also asks the conductor to start none of them, as a `--board` merge tells no
+conductor on a red main. That note says it overrides the startable pass its wake prompt asks for:
+reconcile has finished the story, so `unblock` would ready them. Merge still exits non-zero after each of these but a story left in review.
+A conductor that has written its report counts as not running; with none running, merge prints a
+`ready now:` line for those stories instead, a held one marked `(held)`. Since the PR has merged
+by then, each herdr call the note makes stops after `SWARM_NOTE_HERDR_WAIT` seconds (30 by
+default). The conductor's pane is read from the note's one list of agents, so a herdr read that
+fails after it is the note's warning, never a conductor taken for gone. A herdr that cannot list its
+agents in that time, or gives a list that does not parse, or a note that fails, is a warning and
+never fails the merge.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
 has not started building, and has a file the board PR itself changes that wasn't buildable on the
@@ -2242,7 +2262,9 @@ When no conductor runs, it prints a `ready now:` line, then starts one (§ The b
 when). It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged
 as a `reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
 cannot list its agents, or when a note or a start fails. After the first two it starts no conductor
-either, since the board was not pulled. It
+either, since the board was not pulled. After a failed reconcile, each running conductor still gets
+a note that the board PR merged, naming the failure, since which stories it made ready is not known.
+Its herdr calls stop after `SWARM_NOTE_HERDR_WAIT` seconds, as a story merge's note does. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
 one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
 `touches: [.]`: the fix may change whatever turns the base green) into
@@ -2391,7 +2413,8 @@ builders wait while its handover is not written or it is not idle, read again ea
 conductor whose turn ended can be woken by a background watch. A conductor that got the request in its
 inbox and is idle with no handover is asked again by prompt, and one whose session is gone is named
 at once. Each round restarts every builder that Claude Code reports idle, or whose turn stopped on an API
-error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
+error, reading the session herdr has in the pane now (a `/clear` moves it), or the one `agents.tsv`
+recorded when herdr lists none, as herdr 0.9.5 does; herdr's wait only wakes
 it to check. Claude Code also reports `busy` for a session whose turn is over but whose background
 shells (a `make test`, a `wait-pr`, a conductor's `watch`) still run, so a session reported busy is
 read from its log too: when its last assistant entry has ended its turn, with no tool call waiting
