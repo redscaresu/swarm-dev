@@ -27,22 +27,25 @@ trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111; OLD=2222222222222222222222222222222222222222
+# The PRs' owner, this run's own: wait --lead reads every process for a swarm.sh merge of a PR's URL, and
+# the merge this test starts must not reach another run of it.
+O="ucl-$$"
 QM=600; OLD_MIN=1200   # queue_minutes, and the age of an old PR or review, in minutes
 mkdir -p "${P}/.claude/swarm" "${B}" "${P}/.swarm/state" "${ROOT}/bin"
 git -C "${P}" init -q
-git -C "${P}" remote add origin https://github.com/ucl-owner/ucl-repo.git
+git -C "${P}" remote add origin https://github.com/${O}/ucl-repo.git
 # A second repo beside the project, where repos_dir finds it: story x's (repo: other).
 git -C "${ROOT}" init -q other
-git -C "${ROOT}/other" remote add origin git@github.com:ucl-owner/ucl-other.git
+git -C "${ROOT}/other" remote add origin git@github.com:${O}/ucl-other.git
 
-printf '#!/bin/sh\nR="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
+printf '#!/bin/sh\nR="%s"\nO="%s"\n' "${ROOT}" "${O}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${R}/gh.log"
 case "$*" in
-  "repo view "*ucl-other*) echo ucl-owner/ucl-other ;;
-  "repo view "*) echo ucl-owner/ucl-repo ;;
+  "repo view "*ucl-other*) echo "${O}/ucl-other" ;;
+  "repo view "*) echo "${O}/ucl-repo" ;;
   # open_story_prs' list, told apart by its fields from other reads of the open PRs (close_heads').
-  "pr list -R ucl-owner/ucl-other "*"--json url,headRefName,headRefOid,"*) cat "${R}/prs-other.json" ;;
+  "pr list -R ${O}/ucl-other "*"--json url,headRefName,headRefOid,"*) cat "${R}/prs-other.json" ;;
   "pr list"*"--json url,headRefName,headRefOid,"*)
     [ ! -e "${R}/gh-fail" ] || exit 1
     if [ -e "${R}/gh-slow" ]; then sleep 20; touch "${R}/slow-done"; fi
@@ -64,7 +67,7 @@ LISTS='^pr list .*--json url,headRefName,headRefOid,'   # open_story_prs' gh pr 
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
 ago() { perl -MPOSIX -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - 60 * shift))' "$1"; }
-url() { echo "https://github.com/ucl-owner/ucl-repo/pull/$1"; }
+url() { echo "https://github.com/${O}/ucl-repo/pull/$1"; }
 # findings <slug> <head> <minutes ago> [finding] — a findings file that passes on <head>, written that long
 # ago, its findings none or the one given.
 findings() {
@@ -90,7 +93,7 @@ prs() {
     "$(pr 1 a "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 2 c "${H}" "${1:-CONFLICTING}" SUCCESS "${OLD_MIN}")" \
     "$(pr 3 o "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 4 n "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 5 y "${H}" MERGEABLE SUCCESS 5)" \
     "$(pr 6 r "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 9 gone "${H}" CONFLICTING SUCCESS "${OLD_MIN}")" \
-    '{"url":"https://github.com/ucl-owner/ucl-repo/pull/10","headRefName":"fix/x","headRefOid":"'"${H}"'","mergeable":"CONFLICTING","createdAt":"'"$(ago "${OLD_MIN}")"'","statusCheckRollup":[]}' \
+    '{"url":"'"$(url 10)"'","headRefName":"fix/x","headRefOid":"'"${H}"'","mergeable":"CONFLICTING","createdAt":"'"$(ago "${OLD_MIN}")"'","statusCheckRollup":[]}' \
     > "${ROOT}/prs.json"
 }
 
@@ -206,8 +209,8 @@ printf '[%s,%s]\n' "$(pr 1 x "${H}" CONFLICTING SUCCESS "${OLD_MIN}")" "$(pr 2 a
   | sed 's|/ucl-repo/|/ucl-other/|g' > "${ROOT}/prs-other.json"
 out="$(lead)"
 check "conflict: names a PR in its story's own repo, not the project's" \
-  has "conflict: x https://github.com/ucl-owner/ucl-other/pull/1, exit: tell its builder to merge the base in" "${out}"
-check "a story/<slug> PR in another repo than its story's gives no line" none "conflict: a https://github.com/ucl-owner/ucl-other/" "${out}"
+  has "conflict: x https://github.com/${O}/ucl-other/pull/1, exit: tell its builder to merge the base in" "${out}"
+check "a story/<slug> PR in another repo than its story's gives no line" none "conflict: a https://github.com/${O}/ucl-other/" "${out}"
 check "the project's repo still gives its lines" has "${UA}" "${out}"
 check "one gh pr list per repo a heads pass, for two repos" test "$(grep -c "${LISTS}" "${ROOT}/gh.log")" -eq 2
 
