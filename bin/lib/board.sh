@@ -965,7 +965,7 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 # line; README.md excepted) that goes active with no ticket, one per line: status: active at the head
 # (raw_status), absent at the base or at any status there but active (later, split, review and done
 # too, as a draft, none or a typo), and none of an agreed: date the base did not already have
-# (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
+# (epic_ticket_agreed), a parent: naming another epic that is active or split at both ends
 # (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics at both ends
 # (hld_ticket). Nothing with lead_epics = on. <reader>
 # base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
@@ -1015,16 +1015,18 @@ epic_ticket_agreed() {
 
 # epic_ticket_parent <reader> <head bytes> <slug> <epics prefix> — epic_unticketed's parent: ticket:
 # true when the epic's parent: at the head names another epic (not <slug>), read through <reader> at
-# <epics prefix><parent>.md, that is active or split at the base, so a PR cannot name a parent it
-# adds, or a draft; fails 1 when not (absent at the base too); prints why and fails 2 on a read error.
+# <epics prefix><parent>.md, that is active or split at both the base, so a PR cannot name a parent
+# it adds, or a draft, and the head, so it cannot set the parent back to a draft either; fails 1 when
+# not (absent at either end too); prints why and fails 2 on a read error.
 epic_ticket_parent() {
-  local p was rc=0
+  local p end bytes rc
   p="$(slug_list "$(get_fm - parent <<< "$2")")"
   [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "$3" ]] || return 1
-  was="$("$1" base "$4${p}.md")" || rc=$?
-  [[ ${rc} -le 1 ]] || { echo "cannot read $4${p}.md at the base"; return 2; }
-  case "$(raw_status <<< "${was}")" in active|split) return 0 ;; esac   # absent: no status
-  return 1
+  for end in base head; do
+    rc=0; bytes="$("$1" "${end}" "$4${p}.md")" || rc=$?
+    [[ ${rc} -le 1 ]] || { echo "cannot read $4${p}.md at the ${end}"; return 2; }
+    case "$(raw_status <<< "${bytes}")" in active|split) ;; *) return 1 ;; esac   # absent: no status
+  done
 }
 
 # hld_ticket <reader> <hld path> <tmp> — epic_unticketed's hld: ticket: true when the HLD is status:

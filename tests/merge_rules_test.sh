@@ -590,11 +590,16 @@ epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.main"; : > "${
 refused "--board, a 502 on the epic's read at the base" "--board: gh cannot read docs/epics/e1.md at main, so whether ${URL} sets e1 ${UK} e1"
 epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: 2026-01-01"; merge --board "${URL}"
 board_merged "--board, an epic set active with agreed:"
-# A parent: is a ticket only when it names another epic, active or split at the base (wf.<parent>.md.main).
+# A parent: is a ticket only when it names another epic, active or split at the base
+# (wf.<parent>.md.main) and at the head (wf.<parent>.md.<head SHA>).
 parent_read() { grep -qF "repos/o/r/contents/docs/epics/$1.md?ref=main" "${ROOT}/gh.log"; }
-epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"; merge --board "${URL}"
-board_merged "--board, parent: an epic on main"
-check "--board, parent: an epic on main: reads it at the base branch" parent_read old
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"; fx_at old.md "${H1}" "status: active"
+merge --board "${URL}"; board_merged "--board, parent: an epic active at the base and the head"
+check "--board, parent: an epic active at the base and the head: reads it at the base branch" parent_read old
+epr "e1 old"; fx_at e1.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"; fx_at old.md "${H1}" "status: draft"
+merge --board "${URL}"; guarded "--board, parent: an active epic the head sets back to a draft" e1
+epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"; : > "${FX}/wf.old.md.${H1}"; : > "${FX}/wf.old.md.${H1}.fail"
+merge --board "${URL}"; refused "--board, parent: a 502 on the parent's read at the head" "--board: gh cannot read docs/epics/old.md at 1111111, so whether ${URL} sets e1 ${UK} e1"
 epr e1; fx_at e1.md "${H1}" "status: active" "parent: bogus"; merge --board "${URL}"; guarded "--board, parent: an epic on no branch" e1
 check "--board, parent: an epic on no branch: reads it at the base branch" parent_read bogus
 epr "e1 kid"; fx_at e1.md "${H1}" "status: active" "parent: kid"; fx_at kid.md "${H1}" "status: draft"; merge --board "${URL}"
