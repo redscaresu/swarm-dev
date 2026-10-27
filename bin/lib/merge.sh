@@ -928,17 +928,21 @@ queue_stopped() {
 # <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
 # its children. Else the command's own status (128+N for a signal). <seconds> is often a deadline's time
 # left, below 0 once a read ran past it: -- keeps perl from taking -1 for a switch of its own (exit 25).
-# @<epoch> in place of <seconds> is a deadline to the millisecond (report_read's), with no floor: at or
-# past it the command never runs, and within exits 142 at once.
+# @<epoch> in place of <seconds> is a deadline to the millisecond (report_read's), with no floor: under
+# a millisecond before it the command never runs, and within exits 142 at once. A HUP, INT or TERM to
+# within KILLs the command too, exiting 128+N: in a group of its own, it would run on with no alarm.
 within() {
   perl -MTime::HiRes -e 'my $t = shift;
-    if ($t =~ s/^@//) { $t -= Time::HiRes::time(); exit 142 if $t <= 0 } else { $t = 1 if $t < 1 }
+    if ($t =~ s/^@//) { $t -= Time::HiRes::time(); exit 142 if $t < 0.001 } else { $t = 1 if $t < 1 }
     defined(my $p = fork) or exit 127;
     if (!$p) { setpgrp; exec @ARGV or exit 127 }
     # The parent sets the group too, before the alarm: one that fires first would KILL no group.
-    # It fails harmlessly once the child has run exec, by then in its group.
+    # It fails harmlessly once the child has run exec, by then in its group. The KILL names the
+    # pid as well, for a signal that lands before either setpgrp.
     setpgrp $p, $p;
-    $SIG{ALRM} = sub { kill "KILL", -$p; exit 142 };
+    my %n = (HUP => 1, INT => 2, TERM => 15);
+    for my $s (keys %n) { $SIG{$s} = sub { kill "KILL", -$p, $p; exit 128 + $n{$s} } }
+    $SIG{ALRM} = sub { kill "KILL", -$p, $p; exit 142 };
     Time::HiRes::alarm($t); waitpid $p, 0;
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
 }
@@ -946,17 +950,19 @@ within() {
 # report_start — a report (status, next, dash) starts: its reads have REPORT_SECONDS from now, and no
 # read is skipped yet. REPORT_END is that deadline as an epoch to the millisecond: bash's SECONDS counts
 # whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
-# is often run in a $( ) subshell.
+# is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
+# has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
 report_start() {
-  REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
-  REPORT_SKIP_FILE="$(mktemp "${TMPDIR:-/tmp}/swarm-report.XXXXXX")" || return 1
+  REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
+  REPORT_SKIP_FILE="${TMPDIR:-/tmp}/swarm-report.$$.${REPORT_END}"
 }
 
 # report_read <name> <command>... — a read that can block (a herdr list or read, a gh call, a git
 # fetch), run within the time the report has left, with its output and status. One cut off there
 # (142, keeping what it printed), or that would start at or past the deadline (142 at once, not run),
 # is recorded as <name> for report_skipped. Reads only: no write and no agent start goes through it.
+# With no report_start it ends the shell it runs in (bash's ${:?}), which a caller's || cannot catch.
 report_read() {
   local name="$1" rc=0; shift
   within "@${REPORT_END:?report_read: no report_start}" "$@" || rc=$?
@@ -965,12 +971,12 @@ report_read() {
 }
 
 # report_skipped — print `skipped (over <REPORT_SECONDS> s): <names>`, each skipped read named once in
-# the order it was first skipped, or nothing when none was; the report ends, its names forgotten.
+# the order it was first skipped, or nothing when none was, and forget those names by removing the file:
+# so it works in a $( ) as well, and a read skipped after it is named alone by the next call.
 report_skipped() {
   local names
   names="$(awk '!seen[$0]++ { printf "%s%s", (n++ ? ", " : ""), $0 }' "${REPORT_SKIP_FILE:-/dev/null}" 2>/dev/null)" || names=""
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
-  REPORT_SKIP_FILE=""
   [[ -z "${names}" ]] || echo "skipped (over ${REPORT_SECONDS} s): ${names}"
 }
 
