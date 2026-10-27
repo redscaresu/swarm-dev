@@ -45,7 +45,7 @@ only once every epic it `depends_on` is done or has only stories in `review` lef
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
 When `next` says to wait on a conductor, it also lists each ready `lead` story that a blocked story
-depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no conductor will build them.
+depends on (`also: lead <slug> blocks <slugs>`). It lists a story blocked with no `depends_on` the same way: only the lead readies it. The lead runs those while it waits, since no conductor will build them. `status` says so on a blocked story whose open parents are all such stories: `blocked: <slug> (by <parents>, which no agent builds)`.
 
 ## Who does what
 
