@@ -116,15 +116,15 @@ check "with reads past the limit, dash still draws its frame" has "swarm-dev" "$
 is "with reads past the limit, dash names the reads it skipped, last" \
   "skipped (over ${LIMIT} s): gh PR states, herdr agent list" "$(tail -n 1 <<< "${out}")"
 
-# --- dash_slow.py as dash runs it, with its deadline (DASH_READ_END) 10 s away, a SIGALRM to it alone
-# then (report_read's cut, which KILLs it but not its gh calls, each in a session of its own), and
-# every gh call sleeping past it: it stops its own gh calls a second short of the deadline and exits
-# 142, so none outlives it. Stopped after 30 s.
+# --- dash_slow.py as dash runs it, with its deadline (DASH_READ_END) 10 s away and every gh call
+# sleeping past it: it stops its own gh calls (each in a session of its own, which report_read's KILL
+# of the group would miss) a second short of the deadline and exits 142 itself, so none outlives it.
+# Stopped (TERM, 143) after 30 s, so a 142 is its own exit.
 : > "${GH_PIDS}"
 urls=(); for i in $(seq 1 "${PRS}"); do urls+=("https://github.com/o/r/pull/${i}"); done
 start="$(now)"
 (exec env SLOW="${SLOW_SECONDS}" SWARM_PAIRS="" SWARM_NO_CI_REFRESH=1 DASH_READ_END="$(perl -MTime::HiRes=time -e 'printf "%.3f", time + 10')" \
-  perl -e 'alarm shift; exec @ARGV' 10 python3 -u "${REPO}/bin/lib/dash_slow.py" "${urls[@]}") > "${ROOT}/py.out" 2>&1 &
+  python3 -u "${REPO}/bin/lib/dash_slow.py" "${urls[@]}") > "${ROOT}/py.out" 2>&1 &
 pid=$!; pids+=("${pid}")
 while kill -0 "${pid}" 2>/dev/null && (( $(now) - start < 30 )); do sleep 0.2; done
 kill "${pid}" 2>/dev/null || true
