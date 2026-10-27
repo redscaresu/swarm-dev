@@ -399,17 +399,29 @@ whose HLD grants `epics` (§ The lead, § Merging).
 ## Decomposing an HLD
 
 `swarm.sh next` names `plan-hld <hld>` for an agreed HLD with no `planned:` line, no epic carrying
-its `hld:` and no plan worktree. `/plan-hld <hld>` (the file name without `.md`) then:
+its `hld:` and no plan worktree. On a board outside the project's repo, `/plan-hld` writes epics in
+place with no PR, so an interrupted run leaves epics naming the HLD and no `planned:`. Before it
+writes any epic, it writes `<project>/.swarm/<hld>/writing-epics`, one slug per epic it writes, and
+it removes the file once `planned:` is set. `next` names `plan-hld <hld>` again while that file
+lists every epic naming the HLD and no story's `epic:` or epic's `parent:` names one of them. The
+rerun overwrites those epics. An epic the file does not list (an older or hand-written one), or one
+that work has started on, leaves the HLD alone, and so does a board inside the repo. Work has started
+once a story or child epic names the epic, or the project's `events.tsv` logs a conductor for it or
+a `finish` of it. Until the rerun, `next` plans none of those epics. A run interrupted before
+`writing-epics` existed stays stuck until you write the file by hand, one slug per epic naming the
+HLD, after checking that none of those epics has work on it.
+`/plan-hld <hld>` (the file name without `.md`) then:
 
 1. Works on origin's copy of the board in `<repo>-wt/_board-plan-<hld>`, never the main checkout.
    It stops when a plan PR for the HLD is open, and when the HLD is not agreed, has a `planned:`
-   value or already has epics naming it. A leftover worktree from an interrupted run is resumed,
+   value or already has epics naming it, except the epics of an interrupted run on a board outside
+   the repo, as above. A leftover worktree from an interrupted run is resumed,
    or removed with `board-pr done` once its PR merged.
 2. Runs a swarm: three surveys (`survey-code`, `survey-constraints`, `survey-overlaps`), one
    `hld-lead` that decomposes the HLD into epics (each independently shippable, with a **Done when**
    that could fail, its `areas`, and its **Your part**), a `skeptic-<slug>` per epic (at most five),
    one `codex` and one `critic`. Agents write JSON to `.swarm/<hld>/`, and a rerun reuses those newer
-   than the worktree.
+   than the worktree, or, on a board outside the repo, newer than the HLD file.
 3. Writes one `epics/<slug>.md` per epic with `hld: <hld>`, sets the HLD's `planned: <today>` and
    fills its `## Epics` section with one link per epic. It changes nothing else.
 4. Opens the board PR (`board-pr open plan-<hld>`) after one codex pass, with each epic `active`
@@ -688,7 +700,7 @@ collect it first`: a new start would delete that report before the lead reads it
 pane is gone (closed by hand, a herdr restart, a crash) and whose report nobody collected (no `close`
 of it in `events.tsv` since the report, as collect's `swarm.sh close` logs) gets `no conductor started:
 <conductor> is gone, and nobody collected <report>; read it, then delete it`. When another
-project's agent holds the conductor's name, it says so and starts none. A draft, `later` or `split` epic's stories start nothing, and
+project's agent holds the conductor's name, it says so and starts none. While a conductor works, `next` prints `also: lead <slug> blocks <slugs>` after the wait's why. It names each story that a blocked story an agent builds depends on, when no agent builds the named story: a ready story of a kind no agent builds (a `lead` story), or such a story that is blocked with no `depends_on` (only the lead can ready it). A story of a kind an agent builds, blocked with no `depends_on`, gets no `also:` line, because `finish` would close it unbuilt. A story in a draft or `later` epic gets none, and neither does one with `after:`. `status` reads a blocked story's line, of any kind, as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds. That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step such as `operator:<x>`. With an open parent an agent builds, or an open epic, it reads `blocked: <slug> (by <parents>)`. A draft, `later` or `split` epic's stories start nothing, and
 neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
 for an epic or the backlog, and it says why, while that conductor's report is newer than every story
 and epic file, and than the state files swarm.sh keeps in `.swarm/board-state` for that epic and its
@@ -807,8 +819,11 @@ escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Del
 where it is (`reconcile`, `finish` or `drop`, on a board outside the repo) deletes its state file
 and escalated block too. `reconcile` also deletes them when an item's PR marked it `done`, and, on
 a board in the repo, for each story or epic a commit deleted (its PR or a board PR), whether
-reconcile pulled that commit or you did: the file is in neither `HEAD` nor the main checkout. A file
-removed only by hand, or never committed, keeps its state.
+reconcile pulled that commit or you did: the file is in neither `HEAD` nor the main checkout. A story
+there still in review whose PR gh cannot read, or whose builder's pane could not be closed, keeps its
+state until a later reconcile can finish it (§ Merging). When gh can never read that PR (its repo
+deleted or renamed, a bad URL), reconcile says so each time: remove
+`.swarm/board-state/stories/<slug>`, and `.swarm/escalated/<slug>` if it is there, by hand. A file removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories that do not clash. Two stories clash only when their
 `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name
@@ -976,6 +991,13 @@ declined with a reason in the reply, and the builder has sent the reply its brie
 more turns have passed. `tell` fails and names the story unless the session log shows that goal set
 after the tell began, and its message says the findings were delivered. A nudge or resume tell sends
 no goal.
+The text `tell` sends starts `From the conductor:`. Run from `review-<slug>`'s pane, by the exact
+record `merge` goes by (the pane's tab records name `review-<slug>` and no retired name, the newest
+`agents.tsv` line for that name has role `review`, and herdr's agent in the pane holds the name), it
+starts `From the review agent:`, and the goal names the review agent's findings. The sender is read
+once per tell, so the header and the goal agree. The builder of a story slugged `review-<x>` is not
+x's review agent, and tells as the conductor. Findings from either count the same: as a round, toward
+a step-up and toward a top-rung hold.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or
@@ -1895,7 +1917,12 @@ repo, reconcile never deletes a tracked file in the main checkout. An item whose
 its file on the board is marked `done` in its state after a pull, or at once when the checkout's
 branch has no upstream (there is nothing to pull), and stays on the board until
 `swarm.sh finish <slug>` takes it off through a board PR. When reconcile holds the pull because it
-cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged.
+cannot read a PR in review, the item stays in review until a later reconcile pulls. A story whose
+file a pull already took off the board before reconcile saw its PRs merge (you pulled by hand, or a
+reconcile stopped after its pull) is finished after the pull in the same way: its builder closed,
+its build cleared in the repo the deleted file named, and `reconcile <slug> ok (finished)` logged.
+When its builder's pane cannot be closed, its build and state stay, and the next reconcile tries
+again. One whose PRs did not all merge, such as a story a board PR dropped, only loses its state. On a board outside the repo it deletes the file of the item that merged.
 Reconciles in one project run one at a time (merges through a merge queue run side by side): one
 waits up to 300 seconds (`SWARM_RECONCILE_WAIT`) for `.swarm/reconcile.lock`, then stops naming it. `swarm.sh unblock` then readies a
 blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges, apart from a story's review agent, which may merge that story's own PR. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
@@ -2458,7 +2485,7 @@ changes merge's exit code.
 | `swarm.sh restart <slug>` | Start a builder again when its pane is gone. It runs on a ready story that has a worktree and whose builder herdr no longer lists, and it uses the same worktree, branch and tab. If the builder's last Claude session left a resume command, and that session took its brief, restart reopens it and tells the builder to carry on. A resume command moved to a new session by `/clear` reopens the new one. If not, it starts a fresh builder on the last model, with a handover brief like a step-up's. It refuses, and starts nothing, while herdr still lists the builder, when the story has no worktree, a worktree with a git step left unfinished (a merge, rebase, cherry-pick or revert, or an `index.lock`) or one off `story/<slug>`, is not ready, is `kind: lead`, held or escalated, has a PR that merged or is set to auto-merge, or has a step-up waiting (run `swarm.sh step-up --resume <slug>` for that). It holds the story's step-up lock while it runs: a second restart of the story is refused, and an automatic step-up of it is skipped. A restart is refused, too, while an automatic step-up holds that lock. Its reads of herdr's agent list and of the story's PRs each stop after `SWARM_RESTART_READ_WAIT` seconds (30 by default), and a read that fails or stops refuses the restart and lets the lock go. When herdr sends the brief or the prompt to carry on but does not show the builder taking it up, restart reads the builder once more. If that read does not show it either, restart fails without an ok line, keeps the pane, and says what to send the builder. It logs `restart <slug> ok (...)`. The story's `attempts:`, its review round and the build the step-up triggers count from stay as they were. In `outcomes`, a resumed session is the same build row, and a fresh builder is a new row with the next attempt number, as for any new builder. |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
 | `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
-| `swarm.sh grants <story \| epic \| PR URL>` | Print the agreed HLD over a story or epic and its grants, one per line, or `none`. A story goes to its `epic:`, then each `parent:`, up to the first epic with `hld:`; a draft or superseded HLD, a missing one, a missing epic, a story with no epic and a `parent:` cycle all give `none`. A name that is no story or epic but an HLD in the board's `hld/` is that HLD: an agreed one prints itself and its grants, any other gives `none`; a story or epic of the same name wins. A story PR is its stories' (their `prs:` lines); a board PR is the epics and stories it touches, each as the board has it and as the PR's head has it, and a PR that touches `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile` (in any repo, since each changes what checks a merge or what the agents may do) or the board's `hld/`, or a PR no story lists that touches anything but the board's epics and stories, gives `none`. /plan-hld's board PR is the exception: a PR that modifies one agreed HLD that is due a plan (no epic on the board names it, and its `planned:` value is empty once quotes, brackets and a trailing comment are gone), setting its single `planned: YYYY-MM-DD` line and changing it otherwise only after its last `## Epics` line, and adds at least one epic and changes nothing else, each epic under that HLD at the PR's head, is under that HLD, with the grants of the board's copy. The HLD's last section must be `## Epics`: after that line, both the board's copy and the PR's may hold only blank lines and list items whose whole content is one markdown link to an epic file in the board's `epics/`, or to one the PR adds, with the epic's slug as the link text. Without the `epics` grant each added epic must be a `draft` at the PR's head. Deleting the HLD, or any other change to it, gives `none`. Items under two HLDs give `none`. A grant other than `epics`, `stories`, `merge` or `release`, a `[` with no `]` on its line, or a `grants:` written as a YAML block list, stops it with the HLD's file and line. `/plan-epic` runs it before asking, and skips the question when it lists `stories`. |
+| `swarm.sh grants <story \| epic \| hld \| PR URL>` | Print the agreed HLD over a story, epic or HLD and its grants, one per line, or `none`. A story goes to its `epic:`, then each `parent:`, up to the first epic with `hld:`; a draft or superseded HLD, a missing one, a missing epic, a story with no epic and a `parent:` cycle all give `none`. A name that is no story or epic but an HLD in the board's `hld/` is that HLD: an agreed one prints itself and its grants, any other gives `none`; a story or epic of the same name wins. A story PR is its stories' (their `prs:` lines); a board PR is the epics and stories it touches, each as the board has it and as the PR's head has it, and a PR that touches `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile` (in any repo, since each changes what checks a merge or what the agents may do) or the board's `hld/`, or a PR no story lists that touches anything but the board's epics and stories, gives `none`. /plan-hld's board PR is the exception: a PR that modifies one agreed HLD that is due a plan (no epic on the board names it, and its `planned:` value is empty once quotes, brackets and a trailing comment are gone), setting its single `planned: YYYY-MM-DD` line and changing it otherwise only after its last `## Epics` line, and adds at least one epic and changes nothing else, each epic under that HLD at the PR's head, is under that HLD, with the grants of the board's copy. The HLD's last section must be `## Epics`: after that line, both the board's copy and the PR's may hold only blank lines and list items whose whole content is one markdown link to an epic file in the board's `epics/`, or to one the PR adds, with the epic's slug as the link text. Without the `epics` grant each added epic must be a `draft` at the PR's head. Deleting the HLD, or any other change to it, gives `none`. Items under two HLDs give `none`. A grant other than `epics`, `stories`, `merge` or `release`, a `[` with no `]` on its line, or a `grants:` written as a YAML block list, stops it with the HLD's file and line. `/plan-epic` runs it before asking, and skips the question when it lists `stories`. |
 | `swarm.sh plan-unasked [--declined] <epic>` | Record, in board state, that a `later` epic `next` offered (its dependencies done) has had its unasked plan. The lead runs it before that `/plan-epic`. `next` offers the epic no more. The gate lists it as planned unasked on that date: with no stories yet, run `/plan-epic <epic>` again if that plan stopped; with stories, set it `active` to start it. With `--declined`, the user declined the plan, and the gate says that instead. |
 | `swarm.sh log-finding [--declined <reason> \| --filed] [--reviewer <who>] [--round <n>] <kind> <PR URL> <text>` | Log a review finding by kind. `--round <n>` records the review round it came from (0 for a plan or board PR). `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). `--filed` records that the lead filed a declined out-of-scope finding as a story, so `swarm.sh next` stops offering it; no report counts a filed row. The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic (the check on a large epic's split), or escaped for a defect found after its PR merged; a gap in a split that a later plan or build finds is logged `--reviewer escaped split-gap` against the split's board PR. |
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |

@@ -1446,10 +1446,11 @@ failed_build() {
 # CLOSE_DROP set (close --drop), each step that succeeds is printed as dropped:, with the head SHA of
 # each branch (read before it goes) and each PR. A step that fails
 # is said on stderr, and the rest still run. A held child (held_by:) loses the hold and its prs: line,
-# so it no longer counts as open in touches_rows.
+# so it no longer counts as open in touches_rows. A story a pulled commit took off the board is
+# cleared in the repo its deleted copy names (fm_gone), and has no hold left to lose.
 clear_build() {
   local slug="$1" b="story/$1" src wt url head sha
-  src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
+  src="$(repo_dir "$(fm_gone "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
   wt="$(worktree_for "${src}" "${slug}")"
   if [[ -e "${wt}" ]]; then
     git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2
@@ -1477,6 +1478,7 @@ clear_build() {
       echo "swarm: ${slug}: could not delete ${b} on origin" >&2
     fi
   fi
+  [[ -f "${BOARD}/stories/$1.md" ]] || return 0
   # A held child's hold goes with its build, and so does the prs: line the hold kept; so does a kept: line.
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" held_by)" ]]; then
     state_set "${BOARD}/stories/$1.md" held_by "" prs ""

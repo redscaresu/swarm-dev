@@ -1,13 +1,17 @@
 # shellcheck shell=bash
 
-# findings_goal <slug> <since> <goal-file> — send the builder a fresh /goal mid-turn, once its findings
+# findings_goal <slug> <since> <goal-file> <from> — send the builder a fresh /goal mid-turn, once its findings
 # are taken up, so the goal drives the fix (sent after the turn, the judge would find it met at once): the
 # findings addressed, the reply its brief asks for in its mode, and the turn bound. Mid-turn it sets at
 # once and costs one extra short turn, as build_story's does. send_goal confirms it from entries newer
 # than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story.
+# <from> is who sent the tell, review or conductor, as tell_agent read it (tell_from) for the header:
+# the goal names the review agent's findings, or the conductor's review findings, to match.
 findings_goal() {
+  local what="the conductor's review findings"
+  [[ "$4" != review ]] || what="the review agent's findings"
   # shellcheck disable=SC2154 # assigned in another file
-  printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
+  printf '%s %s %s\n' "The goal: ${what}, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
     "$(reply_sentence)" "It is met once both hold, or stop after ${CFG_goal} more turns." > "$3"
   send_goal "$1" "$3" findings "$2"
 }
