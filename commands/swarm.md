@@ -248,7 +248,7 @@ Repeat until a step below says stop:
      a ready story's builder it closes the pane and then restarts or holds the story, as a
      `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
      pane. The line comes once per stop, and again only after the agent has moved on. An
-     `idle: <story> waits on <dep> but shares no touches with it` line is capacity no step uses,
+     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` line is capacity no step uses,
      the line `next` prints after its step: handle it as step 1's `idle:` list says. It comes once,
      and again only after it has gone from the queue. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
