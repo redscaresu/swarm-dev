@@ -266,7 +266,7 @@ Repeat until a step below says stop:
      it, which lets you run the merge (a `costs: money` PR, or one stacked on one, stays the
      user's, grant or not). Then run `swarm.sh reconcile`, and leave
      `swarm.sh unblock` to the conductor: after each wait it runs `swarm.sh unblock --startable`
-     and builds every ready story of its own with no build yet. Act on each `also:` story once. It stays `ready`, and
+     and builds every ready story of its own with no build yet. Act on each `also:` story once. It stays on the board, and
      `next` names it again, until its `finish-<slug>` board PR merges, so skip one you have
      already asked about or run, or whose finish PR is open.
 

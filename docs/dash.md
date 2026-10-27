@@ -141,8 +141,8 @@ is one column, top to bottom:
   counted from the board repo's history: story files deleted on its base branch (and on HEAD) whose
   front matter named the epic, once per slug, when any deletion closed the story: its own PR's
   merge (the commit names `story/<slug>`), its own work (a squash merge: the commit also changes a
-  file that is neither the board's own, its `stories/`, `epics/`, `Board.base` and `README.md`, nor
-  a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
+  file that is neither the board's own, its `stories/`, `epics/`, `hld/`, `.obsidian/`, `Board.base`
+  and `README.md`, nor a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
   the swarm's logged `finish`, or a last status of `done` or `review` or a `prs:` line. A story
   still on the board here is open, and a re-scope counts as nothing. The row's symbol is ○
   when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. A working
