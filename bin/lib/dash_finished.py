@@ -28,7 +28,7 @@ except OSError:
     pass
 stories = prefix + "stories/"
 BOOKKEEPING = re.compile(r"(^|[\s/])(board|close|epic)/")   # a board, close or epic branch, never a story's own work
-BOARD_OWN = tuple(prefix + f for f in ("stories/", "epics/", "Board.base", "README.md"))   # the board's own files
+BOARD_OWN = tuple(prefix + f for f in ("stories/", "epics/", "hld/", "Board.base", "README.md", ".obsidian/"))   # the board's own files
 tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
 log = git(["log", "--first-parent", "--diff-merges=first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
 todo = []   # (slug, cat-file spec, closed by its commit), newest first

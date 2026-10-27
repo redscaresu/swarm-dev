@@ -1186,12 +1186,12 @@ pr_hld() (
   } | one_hld
 )
 
-# grants <story | epic | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
+# grants <story | epic | hld | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
 # PR) and its grants (hld_grants), one per line, or none. A name that is no story or epic but an HLD
 # in ${BOARD}/hld is that HLD: an agreed one prints itself and its grants, any other none.
 grants() {
   local h g
-  [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | PR URL>"
+  [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | hld | PR URL>"
   if [[ "$1" == https://* ]]; then h="$(pr_hld "$1")" || exit 1
   # Keep this slug check and the story/epic lookups in step with item_file's.
   elif [[ "$1" =~ ^[a-z0-9-]+$ && ! -f "${BOARD}/stories/$1.md" && ! -f "${BOARD}/epics/$1.md" && -f "${BOARD}/hld/$1.md" ]]; then

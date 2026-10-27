@@ -115,6 +115,11 @@ grants bad
 if [[ ${rc} -ne 0 ]] && grep -qF "${B}/hld/bad.md:4: grants must be epics, stories, merge or release" "${ROOT}/out"; then
   echo "ok   hld-arg-bad-grant-dies-with-file-and-line"
 else echo "FAIL hld-arg-bad-grant-dies-with-file-and-line (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
+# No argument: the usage line names every kind of argument, an HLD's name among them.
+rc=0; (cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" \
+  bash "${SWARM}" grants > "${ROOT}/out" 2>&1) || rc=$?
+if [[ ${rc} -ne 0 ]] && grep -qF "usage: swarm.sh grants <story | epic | hld | PR URL>" "${ROOT}/out"; then echo "ok   no-arg-usage-names-hld"
+else echo "FAIL no-arg-usage-names-hld (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi
 grants ../epics/x
 if [[ ${rc} -ne 0 ]] && grep -qF "bad slug" "${ROOT}/out"; then echo "ok   path-arg-dies-bad-slug"
 else echo "FAIL path-arg-dies-bad-slug (exit ${rc}):"; sed 's/^/     /' "${ROOT}/out"; fails=$((fails + 1)); fi

@@ -400,7 +400,7 @@ dash_box() {
 # counted once, and not at all while its file is on the board here (an unpulled checkout, or a slug
 # added again): it is open. It counts when any of its deletions closed the story: the deleting commit
 # names story/<slug> (its own PR's merge), or is the story's own work (it also changes a file that is
-# not the board's own (its stories/, epics/, Board.base and README.md) nor a repo-root *.md, and its
+# not the board's own (its stories/, epics/, hld/, .obsidian/, Board.base and README.md) nor a repo-root *.md, and its
 # subject names no board/, close/ or epic/ branch: a squash-merged story PR, whose work may sit beside
 # the board, as docs/operations.md does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
 # the deleted file's last status was done or review (reconcile finishes only items in review) or it
