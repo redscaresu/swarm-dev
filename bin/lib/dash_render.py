@@ -930,6 +930,10 @@ if E.get("DASH_HELD"):
 left = box("needs you", [l for r in need for l in wrap(r, LW - 4)], LW, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], LW)]
 if queue:
     left += box("lead's queue", [l for r in queue for l in wrap(r, LW - 4)], LW, "warn")
+# next's idle: lines (DASH_IDLE, idle_now's), as next and wait --lead print them: capacity no step uses.
+idle_rows = [[(l.strip(), "")] for l in lines("DASH_IDLE")]
+if idle_rows:
+    left += box("idle capacity", [l for r in idle_rows for l in wrap(r, LW - 4)], LW, "warn")
 if E.get("DASH_TREE") == "1":
     left += box("agents by workspace and tab", tree_view(), LW)
 elif epic_view:

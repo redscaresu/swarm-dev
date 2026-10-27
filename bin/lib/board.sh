@@ -424,9 +424,27 @@ one_off_started() {
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
 }
 
-# idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
-# per blocked story whose depends_on story shares no touches part with it and is not in its needs:
-# (touches_rows.py --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
+# is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS), from the board and its state
+# alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each call it
+# on every read, so a line goes once its dependency is in review or done. Fails when the check does: a
+# story file reconcile removes between the script's glob and its read is one way.
+idle_now() {
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+}
+
+# idle_warned [<tail>] — idle_now's lines. When the check fails: no line, one `warning: the
+# idle-dependency check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
+# traceback, and exit 1, so a caller can keep what it last saw. next, wait --lead and status read it;
+# dash reads idle_now, a frame having no place for a warning.
+idle_warned() {
+  local out
+  out="$(idle_now 2>/dev/null)" || { echo "warning: the idle-dependency check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
+}
+
+# idle_lines <step> — what next prints after its step <step>: capacity no step uses. idle_now's
+# lines. And when the step leaves the builders idle (gate, done, escalated, release: no planning
 # step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
 # finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
 # quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.
@@ -434,9 +452,8 @@ one_off_started() {
 IDLE_CANDIDATES=5
 idle_lines() {
   local f found
-  # Advisory: a failed check warns, and never fails next.
-  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories" \
-    || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
+  # Advisory: a failed check warns (idle_warned), and never fails next.
+  idle_warned "next's step above stands" || true
   case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
   while IFS= read -r f; do
     if buildable_story "${f}"; then return 0; fi
@@ -765,7 +782,7 @@ staged_chain() {
 stage_of() {
   local v="$1" dq='^"(.*)"$' sq="^'(.*)'\$"
   v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
-  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi
+  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi   # loose-match: ok dq and sq are fixed regexes
   if [[ -z "${v}" ]]; then echo -
   elif [[ "${v}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then echo "${BASH_REMATCH[1]}"
   else echo bad; fi
@@ -1142,7 +1159,7 @@ epic_links() {
   local l re='^- \[([A-Za-z0-9._-]+)\]\(\.\./epics/([A-Za-z0-9._-]+)\.md\)$'
   while IFS= read -r l || [[ -n "${l}" ]]; do
     [[ -z "${l//[[:blank:]]/}" ]] && continue
-    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1
+    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1   # loose-match: ok re is a fixed regex
   done
 }
 
@@ -1164,7 +1181,7 @@ epics_last() {
 plan_head() {
   local h n re='^planned: [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   h="$(planned_lines "$2")"
-  [[ "${h}" =~ ${re} ]] || return 1
+  [[ "${h}" =~ ${re} ]] || return 1   # loose-match: ok re is a fixed regex
   [[ "$(hld_due "$1")" == plan ]] || return 1
   n=$(( $(hld_top "$1" | wc -l) ))
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links "$3"
