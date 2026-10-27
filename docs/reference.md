@@ -2002,11 +2002,13 @@ else in these files, since they can hold tokens under `env`, and it never writes
 
 **The conduct preflight.** Under `merge = agent`, no conductor starts while those three files lack
 the rules init checks for, since Claude Code would refuse the conductor every merge. `swarm.sh conduct`
-exits 1 before it writes a brief or opens a workspace or tab. `swarm.sh next` starts none for ready
-work, logs no `conduct` line, and prints the same line once, however many epics wait:
+(an epic's or `--backlog`) exits 1 with this line before it writes a brief or opens a workspace or tab:
 `no conductor started: merge = agent and no allow rule for swarm.sh merge in <files read>; add
-"Bash(swarm.sh merge *)" to permissions.allow in one of them (swarm.sh init checks it)`. The line
-names every file it read, so a rule written in a form swarm.sh does not read (a full path to
+"Bash(swarm.sh merge *)" to permissions.allow in one of them (swarm.sh init checks it)`. While
+`swarm.sh next` waits on a working conductor, it starts none for other ready work, logs no `conduct`
+line, and prints the same line once, however many epics wait. With no conductor working, `next` names
+the `conduct` (or `story`) step, and the line comes from the `swarm.sh conduct` that step runs. The
+line names every file it read, so a rule written in a form swarm.sh does not read (a full path to
 `swarm.sh`, say) still shows why no conductor starts. Under `merge = human` nothing is checked.
 
 **Merge queue.** With `merge_admin` off, `merge` asks GitHub whether the base has a merge queue

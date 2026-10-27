@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # conduct_preflight_test.sh — under merge = agent, no conductor starts while Claude Code's settings have
 # no allow rule for swarm.sh merge: next (its conduct_ready, behind a working conductor) prints why,
-# starts none and logs no failed conduct line, and swarm.sh conduct dies with the same line before
-# herdr opens a workspace or tab. With the rule, or under merge = human, both start one. A rule
+# starts none and logs no failed conduct line, and swarm.sh conduct (an epic's or --backlog) dies with
+# the same line before herdr opens a workspace or tab. With no conductor working, next names the conduct
+# step and prints no line. With the rule, or under merge = human, both start one. A rule
 # merge_allowed does not read still gets the line, naming the files read and the rule looked for.
 # herdr, gh and claude are stubs on PATH; CLAUDE_CONFIG_DIR is a stub dir, never the real one.
 set -euo pipefail
@@ -85,6 +86,19 @@ out="$(run conduct e; echo "exit $?")"
 check "merge = agent, no rule: conduct exits non-zero with the line" "exit 1|yes" "$(tail -1 <<< "${out}")|$(has "swarm: ${LINE}" "${out}")"
 check "merge = agent, no rule: conduct opens no workspace or tab, starts no agent and writes no brief" "0|no" \
   "$(herdr_did 'workspace create|tab create|agent start')|$([[ -e "${P}/.swarm/briefs/conduct-e.md" ]] && echo yes || echo no)"
+
+# --- conduct --backlog refuses the same way, for a ready story with no epic.
+fresh agent; item stories/b1.md "status: ready" "kind: code"
+out="$(run conduct --backlog; echo "exit $?")"
+check "merge = agent, no rule: conduct --backlog exits non-zero with the line, opens no workspace or tab and writes no brief" "exit 1|yes|0|no" \
+  "$(tail -1 <<< "${out}")|$(has "swarm: ${LINE}" "${out}")|$(herdr_did 'workspace create|tab create|agent start')|$([[ -e "${P}/.swarm/briefs/conduct-backlog.md" ]] && echo yes || echo no)"
+
+# --- With no conductor working, next names the conduct step and leaves the line to the
+# swarm.sh conduct that step runs: it prints no line, starts none and logs no conduct line.
+fresh agent; rm "${P}/.swarm/state/tab"; : > "${ROOT}/agents"
+out="$(run next || echo "exit $?")"
+check "merge = agent, no rule, no conductor working: next names the conduct step, with no line, and starts none" "conduct e|no|0|0" \
+  "$(head -1 <<< "${out}")|$(grep -qF 'no allow rule' <<< "${out}" && echo yes || echo no)|$(herdr_did 'agent start|tab create|workspace create')|$(conduct_events)"
 
 # --- The same with the rule, or under merge = human with none: both get past the check.
 for setup in "agent|Bash(swarm.sh merge *)" "human|"; do
