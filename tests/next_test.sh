@@ -626,7 +626,7 @@ grep -qF '`idle: <story> waits on <dep> but shares no touches part with it and n
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
 grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
-grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
+grep -qF 'a `depends_on` story that shares no `touches` part with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
 }
 if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's critic checks disjoint touches"
 else echo "FAIL${got}"; fails=$((fails + 1)); fi
