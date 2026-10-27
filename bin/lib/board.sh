@@ -415,11 +415,11 @@ one_off_started() {
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
 }
 
-# idle_now — an idle: line per blocked story whose depends_on story shares no file in touches with it
-# (touches_rows.py --idle, given SWARM_AGENT_KINDS and SWARM_QUEUE_MINUTES), from the board and its
-# state alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each
-# call it on every read, so a line goes once its dependency's merge is reconciled. Fails when the
-# check does.
+# idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
+# is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS and SWARM_QUEUE_MINUTES), from
+# the board and its state alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status
+# and dash each call it on every read, so a line goes once its dependency's merge is reconciled. Fails
+# when the check does.
 idle_now() {
   # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
   SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" \
@@ -1064,15 +1064,16 @@ epics_last() {
 
 # plan_head <hld file> <head copy> <epics dir> — true when <head copy> only plans <hld file>: one
 # planned: line, exactly `planned: YYYY-MM-DD` (what /plan-hld writes, and planned as next reads it,
-# hld_planned) and the same as the board's when the board is planned (an empty planned: there is
-# unplanned, as next reads it, and may be set), the board's hld_top as its first lines, and after
-# them only blank lines and links to epics in <epics dir>, the board's with the PR's added ones over
-# them (epic_links): the head adds links under the board's last ## Epics and nothing else.
+# hld_planned), on an HLD the board has due a plan as next reads it (hld_due): no epic on the board
+# names it and its planned: is empty there. A planned HLD, or one an epic carries, is never due a
+# plan, so a second plan PR rides no grant. The board's hld_top as its first lines, and after them
+# only blank lines and links to epics in <epics dir>, the board's with the PR's added ones over them
+# (epic_links): the head adds links under the board's last ## Epics and nothing else.
 plan_head() {
   local h n re='^planned: [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   h="$(planned_lines "$2")"
   [[ "${h}" =~ ${re} ]] || return 1
-  ! hld_planned "$1" || [[ "$(planned_lines "$1")" == "${h}" ]] || return 1
+  [[ "$(hld_due "$1")" == plan ]] || return 1
   n=$(( $(hld_top "$1" | wc -l) ))
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links "$3"
 }
@@ -1126,7 +1127,7 @@ plan_hld() {
 # PR_MOVED.
 PR_MOVED=3
 pr_hld() (
-  local s url repo n own="" info="" st="" head="" count base pre p q view="" err plan="" g pin="${2:-}" at=()
+  local s url repo n own="" info="" st="" head="" count base pre p rc view="" err plan="" g pin="${2:-}" at=()
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
@@ -1170,10 +1171,10 @@ pr_hld() (
     [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
     p="${p#"${pre}"}"
     [[ "${p}" =~ ^(epics|stories|hld)/[^/]+\.md$ ]] || continue
-    # Quoted, so a # or ? in a name is read as itself; a 404 is then a file the head does not have.
-    q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "${pre}${p}")"
-    if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
-    grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
+    # A 404 is a file the head does not have.
+    rc=0; pr_contents "${repo}" "${head}" "${pre}${p}" > "${view}/${p}" 2> "${err}" || rc=$?
+    [[ ${rc} -ne 0 ]] || continue
+    [[ ${rc} -eq 1 ]] || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
     [[ -z "${plan}" ]] || return 0   # the plan PR deletes its HLD or an epic: under none
     rm -f "${view}/${p}"
   done <<< "${info}"
