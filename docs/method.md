@@ -19,8 +19,8 @@ each step is in [`reference.md`](reference.md).
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
-   one at a time. Two stories clash only when their `touches` name the same file in the
-   same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
+   one at a time. A PR whose base gained code since its CI ran gets the base merged in on GitHub
+   (by its builder on a conflict) and runs CI again before it merges. Two stories clash only when their `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
    file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
@@ -80,7 +80,7 @@ your share of the work before you approve it. A step found during the build that
 `lead` story, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
-step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories and for ready stories with no build wake the lead while a conductor works, and `status` and `dash` show them.
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories and for ready stories with no build wake the lead while a conductor works, and `status` and `dash` show them. Stuck agents wake the lead the same way: an agent on a prompt, a dialog, an expired login, an API error no `wait` is resuming, or manual mode gives a `prompt:` line that names who clears it.
 
 ## The board
 
