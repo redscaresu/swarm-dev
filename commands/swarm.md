@@ -62,7 +62,10 @@ Repeat until a step below says stop:
    what was closed unmerged; an item whose PR left its file on a board in the repo is marked done
    instead, so run the `swarm.sh finish <slug>` it prints), then `swarm.sh unblock` (it readies stories whose blockers have
    merged), then `swarm.sh next`.
-   Its first line is the step, the rest is why. Tell the user both in one line. Lines that
+   Its first line is the step, the rest is why. Tell the user both in one line. A `skipped (over
+   30 s): <reads>` line names the reads next cut to stay within its time limit, and its step was
+   worked out without them, so it may have missed a working conductor, or one stopped on an expired
+   login or an API error. Run `swarm.sh next` again before acting on a step with that line. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
    - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
@@ -130,8 +133,8 @@ Repeat until a step below says stop:
      `no backlog conductor started:` says why none did: a conductor that has reported (collect it
      first), a report nobody collected, an expired login or API error, another project's agent
      holding the name, a report newer than every story and epic file (the board must change
-     first), or, under `merge = agent`, no allow rule for `swarm.sh merge` (the user adds the rule the
-     line names). The backlog's can also say its report lists a story under `not started:` whose worktree
+     first), a read it needed cut at next's deadline (run `swarm.sh next` again), or, under
+     `merge = agent`, no allow rule for `swarm.sh merge` (the user adds the rule the line names). The backlog's can also say its report lists a story under `not started:` whose worktree
      is still there, so that build died: clear it first, as the line says. A `warning: ... failed`
      line means the start failed: run the `swarm.sh conduct` it names yourself once the cause is
      fixed. `warning: herdr cannot list its agents ...` means none was started because which

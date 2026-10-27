@@ -24,7 +24,11 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
-REPORT_SECONDS=30       # how long a report (status, next, dash) may spend on reads that can block (report_read)
+# REPORT_SECONDS: how long a report (status, next, dash) may spend on reads that can block (report_read):
+# SWARM_REPORT_SECONDS when it is a whole number above 0, else 30. A 0, a negative or a word would put
+# the deadline at the start, so every read would be skipped unrun.
+REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
+[[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -509,10 +513,16 @@ group_of() { if [[ "$1" == - ]]; then echo "with no epic"; else echo "of epic $1
 # fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
+# Under a report's deadline (next runs it with next_reads on), its reads are cut there too, and it
+# fails closed: once a read made since it began is cut (report_cuts), no conductor starts, and each it
+# would have started is named with a line telling the lead to run next again. A cut read could hide a
+# conductor stopped on an expired login or an API error. The start itself runs without next_reads'
+# forms, so it is never cut.
 conduct_ready() {
-  local e name arg ready log c why todo report stop said="" rc=0
+  local e name arg ready log c why todo report stop said="" rc=0 cuts
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
+  cuts="$(report_cuts)"
   if ! herdr agent list >/dev/null 2>&1; then
     echo "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"; return 0
   fi
@@ -542,8 +552,11 @@ conduct_ready() {
       [[ "${stop}" == "${said}" ]] || echo "${stop}"; said="${stop}"; continue
     fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
+    if [[ "$(report_cuts)" != "${cuts}" ]]; then
+      echo "no conductor started: ${name}: a read it needs was cut at the report's deadline; run swarm.sh next again"; continue
+    fi
     log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
-    ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
+    ( set -e; unset -f herdr gh claude; start_conductor "${arg}" ) > "${log}" 2>&1 &
     # Logged as a dispatched swarm.sh conduct logs it, with its die line on a failure: outcomes builds
     # its conductor runs from these lines.
     if wait $!; then
@@ -631,14 +644,16 @@ live_at() {
 # ready. One that has written its report has finished (conductors_queued): nobody reads its inbox.
 # With none running, or only that one, print the ready now: line for [slugs], or nothing without
 # them. A herdr that cannot list its agents, or a tell that fails, is a warning: it never fails. It
-# runs after the PR has merged, so its herdr calls, the list here and those tell_agent makes, are
-# bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), checked to parse
-# (note_agents), so a list that does not, or a read that fails after it, is a warning, never a
-# conductor taken for gone.
+# runs after merge has merged the PR, or after review has set the story's state, so its herdr calls,
+# the list here and those tell_agent makes, are bounded (bound_herdr): neither command hangs on herdr.
+# The conductor's pane is read from that one list (herdr_from), checked to parse (note_agents), so a
+# list that does not, or a read that fails after it, is a warning, never a conductor taken for gone.
+# Without [slugs] a warning says the conductor was not told "of the merge", or NOTE_WHAT when the call
+# sets it (as review_note does).
 conductor_note() {
   local name list what="that ${3:-} are ready" later="it finds them on its next pass"
   name="$(group_conductor "$1")"
-  [[ -n "${3:-}" ]] || { what="of the merge"; later="it reads the board on its next pass"; }
+  [[ -n "${3:-}" ]] || { what="${NOTE_WHAT:-of the merge}"; later="it reads the board on its next pass"; }
   (
     bound_herdr
     if ! list="$(note_agents)"; then
@@ -656,7 +671,7 @@ conductor_note() {
 # bound_herdr — from here on in this shell, `herdr` is a function that cuts each herdr call off after
 # SWARM_NOTE_HERDR_WAIT seconds (default HERDR_LIST_WAIT): the caller's own and those of the functions
 # it calls (within runs the program, not the function). Call it in a subshell: a note goes after the
-# PR has merged, and merge must not hang on herdr.
+# PR has merged or the story is in review, and neither merge nor review may hang on herdr.
 bound_herdr() {
   # shellcheck disable=SC2329 # called by name, by what runs after it
   herdr() { within "${SWARM_NOTE_HERDR_WAIT:-${HERDR_LIST_WAIT}}" herdr "$@"; }
@@ -1247,6 +1262,13 @@ report_read() {
   return "${rc}"
 }
 
+# report_cuts — how many reads report_read has cut or skipped since report_start or the last
+# report_skipped, 0 outside a report: a count that changed between two calls means a read between
+# them was cut.
+report_cuts() {
+  if [[ -n "${REPORT_SKIP_FILE:-}" && -f "${REPORT_SKIP_FILE}" ]]; then wc -l < "${REPORT_SKIP_FILE}" | tr -d ' '; else echo 0; fi
+}
+
 # report_skipped — print `skipped (over <REPORT_SECONDS> s): <names>`, each skipped read named once in
 # the order it was first skipped, or nothing when none was, and forget those names by removing the file:
 # so it works in a $( ) as well, and a read skipped after it is named alone by the next call.
@@ -1775,12 +1797,14 @@ watch_scope() {
 }
 
 # repo_slug <name> — the repo's owner/name, from its own origin: repos on one board need not share an
-# owner. Prints why and fails when there is no such repo or it has no GitHub origin.
+# owner. Prints why and fails when there is no such repo, it has no GitHub origin, or the read was cut
+# at a report's deadline (report_read's 142, under next's next_reads), which says nothing of the origin.
 repo_slug() {
-  local src
+  local src rc=0
   src="$(repo_dir "$1")" || { echo "watch $1: ${src}"; return 1; }
-  gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner \
-    || { echo "no GitHub origin for ${src}"; return 1; }
+  gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner || rc=$?
+  (( rc != 142 )) || { echo "the read of ${src}'s GitHub origin was cut at the report's deadline"; return 1; }
+  (( rc == 0 )) || { echo "no GitHub origin for ${src}"; return 1; }
 }
 
 # watch_repos die|warn — set WATCH_REPOS to WATCH_NAMES resolved (repo_slug), each owner/name once: a
@@ -2163,7 +2187,7 @@ stacked_lines() {
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
-# Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS in its place, for a
+# Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS sets another, for a
 # test): status_reads routes every herdr, gh and claude call, and git's fetch and ls-remote, through
 # report_read, its own and those of the functions it calls; status_report.py's pane reads (one herdr
 # agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
@@ -2171,8 +2195,6 @@ stacked_lines() {
 # report_skipped's line, printed last, names it.
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent
-  # Local, so report_start and report_skipped, called from here, read it.
-  local REPORT_SECONDS="${SWARM_REPORT_SECONDS:-${REPORT_SECONDS}}"
   report_start || die "status: cannot start the report deadline"
   status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
