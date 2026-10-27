@@ -607,6 +607,11 @@ review_b1 busy
 WAIT_MS=300 upgrade e
 check "a review agent busy past the wait is left and named, and holds its idle builder, named for it" "1|1|1|" \
   "${rc}|$(grep -cx 'review-b1: left on 0.21.0: still busy at the end of the wait' "${H}/out")|$(grep -cx 'b1: left on 0.21.0: its review agent review-b1 stayed busy' "${H}/out")|$(calls 'agent start')"
+# A builder whose Claude session is gone is named for that at once, though its review agent is busy.
+review_b1 busy; sed -i.bak 's/{"sessionId":"s1","status":"idle"},//' "${H}/claude.json"
+WAIT_MS=300 upgrade e
+check "a gone builder is named for its session, not held by its busy review agent" "1|1|0|" \
+  "${rc}|$(grep -cx "b1: left on 0.21.0: its Claude session is gone, so it is not restarted" "${H}/out")|$(grep -c '^b1: .*review agent' "${H}/out")|$(calls 'agent start')"
 # A review agent busy through the one round that reads idle at the end, from Claude Code's 6th read
 # on, still names idle b1, which it held.
 review_b1 busy; echo '5 s/"sr","status":"busy"/"sr","status":"idle"/' > "${H}/flip"

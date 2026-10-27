@@ -3660,9 +3660,10 @@ upgrade_status() {
 # is asked for its handover (upgrade_ask); while one is idle with it written, the agents are read
 # again, so a builder it started before it paused, or after a watch woke it, counts. Then each idle
 # builder whose conductor is idle with its handover in, and whose Claude review agent is not busy
-# (upgrade_hold), is restarted (upgrade_restart,
-# waiting one round at most, upgrade_round_end), one whose session is gone or unknown is left, a busy
-# one waits; last, each conductor whose builders are all moved or left is moved (upgrade_conductor).
+# (upgrade_hold, read after the builder's own state, so a gone one is left at once), is restarted
+# (upgrade_restart, waiting one round at most, upgrade_round_end), one whose session is gone or
+# unknown is left, a busy one waits; last, each conductor whose builders are all moved or left is
+# moved (upgrade_conductor).
 # Fails while any agent waits, and when herdr's list cannot be read, so that round counts as waiting
 # rather than as one with nothing left to move. A conductor paused here that a good list no longer
 # holds is left.
@@ -3690,14 +3691,17 @@ upgrade_round() {
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
-    h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
     rm -f "${UPGRADE_DIR}/rheld-${name}"
-    case "${h}" in
+    case "$(upgrade_hold "${e}" "${list}")" in
       left) upgrade_left "${name}" "$(upgrade_held_why "${e}" left)"; continue ;;
       wait) held+="${e} "; continue ;;
-      review\ *) echo "${h}" > "${UPGRADE_DIR}/rheld-${name}"; held+="${e} "; continue ;;
     esac
     st="$(upgrade_state "${name}" "${pane}")"
+    # Its review agent holds it only once its own session is known to be there: a gone one is left now.
+    if [[ "${st}" != gone ]]; then
+      h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
+      if [[ "${h}" == "review "* ]]; then echo "${h}" > "${UPGRADE_DIR}/rheld-${name}"; held+="${e} "; continue; fi
+    fi
     case "${st}" in
       idle) rc=0; upgrade_restart "${name}" "${pane}" "${role}" "$2" "$(upgrade_round_end "$3")" || rc=$?
             [[ ${rc} -ne 2 ]] || held+="${e} " ;;
