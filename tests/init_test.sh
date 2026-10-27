@@ -111,7 +111,7 @@ check "the output names it as left" "yes" "$(has "${out}" "left   docs/stories/R
 check "a missing one is copied back" "yes" "$(has "${out}" "copied docs/Board.base")"
 
 # --- Board.base: every past template in git history, unedited, becomes the current one; an edited one is
-# left with a note. Run against every version, so a template change that leaves its old cksum out of
+# left with a note. Run against every version, so a template change that leaves its old sha256 out of
 # BOARD_BASE_PAST goes red here.
 repo="$(dirname "${SWARM}")/.."
 current="$(cat "${TEMPLATES}/Board.base")"
@@ -146,6 +146,21 @@ rm "${p}/docs/Board.base" && ln -s "${ROOT}/shared.base" "${p}/docs/Board.base"
 out="$(run "${p}" init || true)"
 check "a symlinked Board.base is left, and the file it names keeps its bytes" "yes|same" \
   "$(has "${out}" "left   docs/Board.base (it exists)")|$(cmp -s "${ROOT}/past.base" "${ROOT}/shared.base" && echo same || echo differs)"
+# A dangling symlink is left too, and nothing is written through it to where it points.
+rm "${p}/docs/Board.base" && ln -s "${ROOT}/absent.base" "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+check "a dangling symlinked Board.base is left, and nothing is created where it points" "yes|link|absent" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$([[ -L "${p}/docs/Board.base" ]] && echo link || echo file)|$([[ -e "${ROOT}/absent.base" ]] && echo created || echo absent)"
+# A directory, or a file that cannot be read, is left unread with the same line, not called edited.
+rm "${p}/docs/Board.base" && mkdir "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+check "a directory Board.base is left, as it exists" "yes|no|dir" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$(grep -q '(edited)' <<< "${out}" && echo yes || echo no)|$([[ -d "${p}/docs/Board.base" ]] && echo dir || echo gone)"
+rmdir "${p}/docs/Board.base" && cp "${ROOT}/past.base" "${p}/docs/Board.base" && chmod 000 "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+chmod 644 "${p}/docs/Board.base"
+check "an unreadable Board.base is left, as it exists, with its bytes" "yes|no|same" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$(grep -q '(edited)' <<< "${out}" && echo yes || echo no)|$(cmp -s "${ROOT}/past.base" "${p}/docs/Board.base" && echo same || echo differs)"
 # A hard link to a past template elsewhere: the board's entry becomes a new file, and the other link
 # keeps its bytes; a cp over the old file would write through the link. A Board.base.tmp beside it is
 # not the replacement's scratch file, and the new file has the mode init's other copies have.
@@ -159,6 +174,12 @@ check "a Board.base.tmp beside it keeps its bytes" "mine" "$(cat "${p}/docs/Boar
 mode() { python3 -I -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$1"; }
 check "the new Board.base has the mode of a file init copied" "$(mode "${p}/docs/epics/README.md")" "$(mode "${p}/docs/Board.base")"
 rm "${p}/docs/Board.base.tmp"
+# Under umask 002 too, the new file has the mode a cp of the template gets there, as init's other copies do.
+cp "${ROOT}/past.base" "${p}/docs/Board.base"
+out="$( (umask 002 && run "${p}" init) || true)"
+(umask 002 && cp "${TEMPLATES}/Board.base" "${ROOT}/mode002.base")
+check "under umask 002, the new Board.base has the mode cp gives" "yes|$(mode "${ROOT}/mode002.base")" \
+  "$(has "${out}" "updated docs/Board.base (an older template nobody edited, now the current one)")|$(mode "${p}/docs/Board.base")"
 # A board directory init cannot write to: init stops, naming the file, which keeps its bytes.
 cp "${ROOT}/past.base" "${p}/docs/Board.base"; chmod u-w "${p}/docs"
 out="$(run "${p}" init || echo "exit=$?")"

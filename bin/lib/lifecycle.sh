@@ -2036,23 +2036,25 @@ BOARD_BASE_PAST='2da305247898d622618058c62cd705560ea90b83ce9b225687e565080f25510
 9956edaf77067f1c503bbc52572022998ba127a653c5960ce164a8a8fa6ed102
 ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9'
 
-# init_board_base <rel> — init's line for the board's Board.base, which exists: replaced with the
-# current template when it is a regular file holding a past one nobody edited (BOARD_BASE_PAST);
-# otherwise left, with how to compare when it differs from the template. A symlink is left as it is:
-# replacing it would drop what the board linked to. The replacement is a file of its own (mktemp),
-# moved over the old one: a hard link to the old one keeps its bytes, and no file beside it is written.
-# Fails when it left the file; init stops when the replacement cannot be written.
+# init_board_base <rel> — init's line for the board's Board.base, which exists (a dangling symlink too):
+# replaced with the current template when it is a regular file, not a symlink, holding a past one nobody
+# edited (BOARD_BASE_PAST); otherwise left, with how to compare when it is an edited file. A symlink is
+# left as it is: replacing it would drop what the board linked to. A directory, a fifo or a file that
+# cannot be read is left unread, since cmp or a hash would block on a fifo. The replacement is cp's copy
+# into a directory of its own beside the file (mktemp -d), moved over the old one: a hard link to the old
+# one keeps its bytes, no file beside it is written, and the new file has the mode cp gives init's other
+# copies. Fails when it left the file; init stops when the replacement cannot be written.
 init_board_base() {
-  local have="${BOARD}/Board.base" want="${SWARM_HOME}/templates/docs/Board.base" sum="" tmp=""
-  if [[ -L "${have}" ]] || cmp -s "${have}" "${want}"; then echo "left   $1Board.base (it exists)"; return 1; fi
-  # Empty for a file that is not regular or cannot be read: left, as edited.
-  [[ ! -f "${have}" ]] \
-    || sum="$(python3 -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${have}" 2>/dev/null)" \
-    || sum=""
-  if [[ -n "${sum}" ]] && grep -qxF -- "${sum}" <<< "${BOARD_BASE_PAST}"; then
-    # chmod =rw: the mode a new file gets under the umask, as cp gives the other templates, not mktemp's 600.
-    { tmp="$(mktemp "${have}.XXXXXX")" && cp "${want}" "${tmp}" && chmod '=rw' "${tmp}" && mv -f "${tmp}" "${have}"; } \
-      || { [[ -z "${tmp}" ]] || rm -f "${tmp}"; die "init: could not replace $1Board.base with the current template"; }
+  local have="${BOARD}/Board.base" want="${SWARM_HOME}/templates/docs/Board.base" sum="" dir=""
+  if [[ -L "${have}" || ! -f "${have}" || ! -r "${have}" ]] || cmp -s "${have}" "${want}"; then
+    echo "left   $1Board.base (it exists)"; return 1
+  fi
+  sum="$(python3 -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${have}" 2>/dev/null)" \
+    || { echo "left   $1Board.base (it exists)"; return 1; }
+  if grep -qxF -- "${sum}" <<< "${BOARD_BASE_PAST}"; then
+    { dir="$(mktemp -d "${have}.XXXXXX")" && cp "${want}" "${dir}/Board.base" && mv -f "${dir}/Board.base" "${have}"; } \
+      || { [[ -z "${dir}" ]] || rm -rf "${dir}"; die "init: could not replace $1Board.base with the current template"; }
+    rmdir "${dir}"
     echo "updated $1Board.base (an older template nobody edited, now the current one)"
     return
   fi
@@ -2070,7 +2072,7 @@ init_project() {
   # The board's path from the root with a trailing /, or empty when the board is the root.
   rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}/"}/"
   while IFS= read -r f; do
-    if [[ "${f}" == Board.base && -e "${BOARD}/${f}" ]]; then
+    if [[ "${f}" == Board.base && ( -e "${BOARD}/${f}" || -L "${BOARD}/${f}" ) ]]; then
       if init_board_base "${rel}"; then n=$((n + 1)); fi
       continue
     fi
