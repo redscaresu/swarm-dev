@@ -187,7 +187,8 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this (then unblocked_epic's, below) comes before its wait
 #   plan-hld <hld>    an agreed HLD with no planned: (hld_planned), no epic carrying its hld:
-#                     (hld_epics), and no plan board PR's worktree
+#                     (hld_epics) or, on a board outside the repo, only epics an interrupted run of
+#                     /plan-hld wrote and no work has started on (hld_resumable), and no plan board PR's worktree
 #                     (<repo>-wt/_board-plan-<hld>); with one, this falls through to the steps below
 #                     and the gate lists it (plan PR awaiting merge: <hld>)
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
@@ -523,11 +524,13 @@ epic_held() {
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
 # (epic_holding_deps), or nothing. A split epic (status: split) is never planned: its child epics are.
+# An epic an interrupted /plan-hld's rerun will overwrite (hld_resuming) waits for that rerun.
 plannable_epic() {
   local f held
   while IFS= read -r f; do
     held="$(epic_holding_deps "${f}")" || continue
     [[ -z "${held}" ]] || continue
+    ! hld_resuming "${f}" || continue
     basename "${f}" .md; return
   done < <(board epics)
 }
@@ -1008,32 +1011,51 @@ hld_planned() { local v; v="$(fm_list "$1" planned)"; [[ -n "${v//[[:space:]]/}"
 # (hld_planned), finish with it. Else nothing: an epic carrying its hld: means it was decomposed (an
 # HLD planned through /epic before planned: existed too), and is not planned again. One exception, on
 # a board outside the repo (BOARD_IN_REPO is not 1), where /plan-hld writes epics in place with no PR:
-# an interrupted run leaves epics naming the HLD and no planned:, and when that run wrote them
-# (hld_resumable) that is plan again, which overwrites the epics naming the HLD.
+# an interrupted run leaves epics naming the HLD and no planned:, and when its marker says it wrote
+# them and no work has started on them (hld_resumable) that is plan again, which overwrites them.
 hld_due() {
   local name; name="$(basename "$1" .md)"
   [[ "$(get_fm "$1" status)" == agreed ]] || return 0
   if [[ -z "$(hld_epics "${name}" -1)" ]]; then
     if hld_planned "$1"; then echo finish; else echo plan; fi
-  elif [[ ${BOARD_IN_REPO} != 1 ]] && ! hld_planned "$1" && hld_resumable "$1"; then
+  elif [[ ${BOARD_IN_REPO} != 1 ]] && ! hld_planned "$1" && hld_resumable "${name}"; then
     echo plan
   fi
   return 0
 }
 
-# hld_resumable <hld file> — true when an interrupted /plan-hld wrote the epics naming the HLD: its
-# decomposition, <project>/.swarm/<hld name>/hld-lead.json, is newer than the HLD (the answers a rerun
-# reuses; an older one is a previous plan's) and lists every such epic's slug. A survey answer alone, or
-# an epic the plan never had (an older or hand-written one), is not the run's.
+# The marker /plan-hld writes in <project>/.swarm/<hld name>/ on a board outside the repo: one epic
+# slug per line, every epic the run writes, before it writes any; it removes it once planned: is set.
+HLD_MARKER="writing-epics"
+
+# hld_resumable <hld name> — true when an interrupted /plan-hld wrote the epics naming the HLD and a
+# rerun may overwrite them: its marker (HLD_MARKER) is there and lists each of them, and no story names
+# one in epic: and no epic in parent:, done or not (work on it has started). An epic the marker does not
+# list (an older or hand-written one) is not the run's.
 hld_resumable() {
-  local name lead slugs f; name="$(basename "$1" .md)"; lead="${PROJECT_DIR}/.swarm/${name}/hld-lead.json"
-  [[ "${lead}" -nt "$1" ]] || return 1
-  slugs="$(python3 -c 'import json, sys
-for e in json.load(open(sys.argv[1]))["epics"]: print(e["slug"])' "${lead}" 2>/dev/null)" || return 1
+  local marker f e slugs=" "; marker="${PROJECT_DIR}/.swarm/$1/${HLD_MARKER}"
+  [[ -f "${marker}" ]] || return 1
   while IFS= read -r f; do
-    grep -qxF -- "$(basename "${f}" .md)" <<< "${slugs}" || return 1
-  done < <(hld_epics "${name}")
+    f="$(basename "${f}" .md)"
+    grep -qxF -- "${f}" "${marker}" || return 1
+    slugs+="${f} "
+  done < <(hld_epics "$1")
+  while IFS= read -r f; do
+    e="$(fm_list "${f}" epic)"; [[ -z "${e}" || "${slugs}" != *" ${e} "* ]] || return 1
+  done < <(board stories)
+  while IFS= read -r f; do
+    e="$(fm_list "${f}" parent)"; [[ -z "${e}" || "${slugs}" != *" ${e} "* ]] || return 1
+  done < <(board epics)
   return 0
+}
+
+# hld_resuming <epic file> — true when the epic's hld: names an HLD that a rerun of an interrupted
+# /plan-hld will overwrite (hld_due says plan): plannable_epic leaves it to that rerun.
+hld_resuming() {
+  local hld
+  [[ ${BOARD_IN_REPO} != 1 ]] || return 1
+  hld="$(slug_list "$(get_fm "$1" hld)")"
+  [[ -n "${hld}" && -f "${BOARD}/hld/${hld}.md" && "$(hld_due "${BOARD}/hld/${hld}.md")" == plan ]]
 }
 
 # hld_pr_open <hld name> <plan|finish> — true while the HLD's plan or finish board PR's worktree

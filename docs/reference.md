@@ -400,23 +400,25 @@ whose HLD grants `epics` (§ The lead, § Merging).
 
 `swarm.sh next` names `plan-hld <hld>` for an agreed HLD with no `planned:` line, no epic carrying
 its `hld:` and no plan worktree. On a board outside the project's repo, `/plan-hld` writes epics in
-place with no PR, so an interrupted run leaves epics naming the HLD and no `planned:`. `next` names
-`plan-hld <hld>` again when that run wrote those epics: `<project>/.swarm/<hld>/hld-lead.json` is
-newer than the HLD file and lists each epic's slug. The rerun overwrites the epics that carry the
-HLD's name. `next` names nothing for a survey answer alone, for an answer older than the HLD (a
-previous plan's), or when an epic is missing from the answer (an older or hand-written one). Inside
-the repo this case cannot arise.
+place with no PR, so an interrupted run leaves epics naming the HLD and no `planned:`. Before it
+writes any epic, it writes `<project>/.swarm/<hld>/writing-epics`, one slug per epic it writes, and
+it removes the file once `planned:` is set. `next` names `plan-hld <hld>` again while that file
+lists every epic naming the HLD and no story's `epic:` or epic's `parent:` names one of them. The
+rerun overwrites those epics. An epic the file does not list (an older or hand-written one), or one
+that work has started on, leaves the HLD alone, and so does a board inside the repo. Until the rerun,
+`next` plans none of those epics.
 `/plan-hld <hld>` (the file name without `.md`) then:
 
 1. Works on origin's copy of the board in `<repo>-wt/_board-plan-<hld>`, never the main checkout.
    It stops when a plan PR for the HLD is open, and when the HLD is not agreed, has a `planned:`
-   value or already has epics naming it. A leftover worktree from an interrupted run is resumed,
+   value or already has epics naming it, except the epics of an interrupted run on a board outside
+   the repo, as above. A leftover worktree from an interrupted run is resumed,
    or removed with `board-pr done` once its PR merged.
 2. Runs a swarm: three surveys (`survey-code`, `survey-constraints`, `survey-overlaps`), one
    `hld-lead` that decomposes the HLD into epics (each independently shippable, with a **Done when**
    that could fail, its `areas`, and its **Your part**), a `skeptic-<slug>` per epic (at most five),
    one `codex` and one `critic`. Agents write JSON to `.swarm/<hld>/`, and a rerun reuses those newer
-   than the worktree.
+   than the worktree, or, on a board outside the repo, newer than the HLD file.
 3. Writes one `epics/<slug>.md` per epic with `hld: <hld>`, sets the HLD's `planned: <today>` and
    fills its `## Epics` section with one link per epic. It changes nothing else.
 4. Opens the board PR (`board-pr open plan-<hld>`) after one codex pass, with each epic `active`
