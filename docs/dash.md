@@ -9,6 +9,17 @@ so it asks herdr for the agents whenever `herdr` is on your PATH. It never chang
 state or the logs, and never opens or closes a pane. In a folder with no board it stops with one line
 naming `swarm.sh init`.
 
+Each frame gives its reads of herdr, Claude Code's session list and GitHub 30 seconds in all
+(`SWARM_REPORT_SECONDS` sets another number). A read still running at that point is stopped, and a
+read that comes later is skipped. dash draws the frame from what the other reads gave, then names
+the stopped and skipped reads on its last line: `skipped (over 30 s): gh PR states, herdr agent
+list`. So `--watch` draws its first frame within about 30 seconds, even when herdr or GitHub hangs.
+When the PR states are cut short, dash keeps the ones it got for the next minute, and the rest
+show as their URLs. The 30 seconds cover those reads only: dash's own work on a busy machine, and
+its read of each agent's pane for a usage-limit dialog (10 seconds at most each), come on top. With
+`--project` the projects share one 30 seconds. `dash --check` reads everything in full, like the
+commands it compares with.
+
 To watch more than one project, name each with `--project <dir>`: `swarm.sh dash --project
 ~/src/app --project ~/src/infra` draws app's screen and then infra's, each headed by its project's
 name, with the legend once at the bottom. `--watch` on a terminal redraws them together as one
