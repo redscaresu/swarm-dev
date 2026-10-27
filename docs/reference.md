@@ -2050,8 +2050,10 @@ after the check stops the merge. It never passes `--auto`, except to join a merg
 
 **A base that moved.** A PR's CI ran against its base as the base was then. Two PRs can each pass
 alone and break the base together: in v0.28.0, #527 and #530 each passed CI before #529 landed, and
-main went red. So, on a base with no merge queue, a story PR's `merge` compares the head with the
-base (`compare <head>...<base>`) once the head is green, just before `gh pr merge`. When the base has
+main went red. So, on the direct path, a story PR's `merge` compares the head with the base
+(`compare <head>...<base>`) once the head is green, just before `gh pr merge`. The direct path is
+every merge that does not join a merge queue: a base with no queue, and every merge under
+`merge_admin = on`, which never reads whether the base has one. When the base has
 commits the head lacks and any of them changes a path off the board, it refuses with `the base
 <base> moved past <sha>'s CI (<n> commits it lacks): merge origin/<base> in, push, and merge the new
 head`. The board's paths are `board_paths`' entries, which the board-only CI gate from `swarm.sh
@@ -2066,8 +2068,9 @@ reads in all; any other read error refuses at once. The check is cautious on pur
 on a merge ref, which may already hold some of those commits, and the price is one more CI run.
 Nothing locks the compare against the `gh pr merge` that lands the PR. Two merges into one base, such
 as two epics' conductors, can both read the base as unchanged and both land seconds apart. Only a
-merge queue closes that window. `--board` and `--release` skip the check. A base with a merge queue
-skips it too, since the queue tests each PR on top of the base.
+merge queue closes that window. `--board` and `--release` skip the check. A PR that joins a merge
+queue skips it too, since the queue tests each PR on top of the base. Under `merge_admin = on` no PR
+joins one, so the check runs on every story merge.
 Under `merge_admin = on`, a base that requires PRs to be up to date is still `ci_gate admin`'s to
 refuse. Most refusals go to the lead, but the conductor handles this one. It nudges the builder to
 merge origin/<base> in, re-run the tests and push. Then it waits with `swarm.sh wait-pr`, reviews the

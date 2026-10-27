@@ -298,8 +298,9 @@ base_moved() {
 # project's own repo and every path it changes is .claude-plugin/plugin.json, release_check's, and
 # with merge = human release_check also finds at least one story merged since the last tag, each
 # under an agreed HLD granting release), and ci_gate passes on the head. A story PR on the direct path
-# (no merge queue) is refused too when its base has commits the head lacks that change a path off the
-# board (base_moved): the head's CI never ran with them.
+# (it joins no merge queue: the base has none, or merge_admin = on, which never reads one) is refused
+# too when its base has commits the head lacks that change a path off the board (base_moved): the
+# head's CI never ran with them.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
