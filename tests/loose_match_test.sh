@@ -33,7 +33,6 @@ SHELL_VAR = re.compile(r"\$(?:\{[^}]*\}|\([^)]*\)|\w+|[@*#?!$-])")
 AWK_RE = re.compile(r"""(?<![=!~])!?~\s*(?:(?:""|//)\s*)*(?=[A-Za-z_$(@])""")   # ~ p, ~ $2, ~ "^" p
 REGEX_BEFORE = set("~(,{;!&|}") | {""}   # what a /regex/ literal follows in awk, not a division
 REGEX_TEST = re.compile(r"\s=~\s+")   # [[ ... =~ <regex> ]]
-REGEX_WORD = re.compile(r"""(?:\$'(?:[^'\\]|\\.)*'|'[^']*'|"(?:[^"\\]|\\.)*"|\$\{[^}]*\}|\\.|[^\s'"\\])+""")   # ( and | too
 STRINGS = re.compile(r"""\$'(?:[^'\\]|\\.)*'|'[^']*'|"(?:[^"\\]|\\.)*"|\\.""")
 
 def interpolates(word):
@@ -108,14 +107,23 @@ def glob_loose(line):
             return True
     return False
 
+# regex_word <line> <i> — the =~ regex that starts at <i>: up to a blank outside quotes and outside
+# ( ), since bash keeps a blank inside a group as part of the regex: (foo ${v}).
+def regex_word(line, i):
+    start, depth = i, 0
+    while i < len(line):
+        if q := QUOTED.match(line, i):
+            i = q.end(); continue
+        if line[i].isspace() and depth == 0:
+            break
+        depth = max(0, depth + (line[i] == "(") - (line[i] == ")"))
+        i += 1
+    return line[start:i]
+
 # regex_loose <line> — a [[ ... =~ <regex> ]] whose <regex> expands a variable outside quotes: ^${slug}-,
 # ${re}. Bash matches a quoted part, ^"${slug}"-, as plain text.
 def regex_loose(line):
-    for m in REGEX_TEST.finditer(line):
-        w = REGEX_WORD.match(line, m.end())
-        if w and VAR.search(STRINGS.sub("", w.group(0))):
-            return True
-    return False
+    return any(VAR.search(STRINGS.sub("", regex_word(line, m.end()))) for m in REGEX_TEST.finditer(line))
 
 def skip_blanks(s, i):
     while i < len(s) and s[i] in " \t": i += 1
@@ -308,6 +316,8 @@ awk -v p="$1" '{ s = "it'\''s" } $1 ~ p' "${f}"
 [[ $x =~ ^${slug}- ]]
 [[ $x =~ ${re} ]]
 [[ -n "${v}" && "${v}" =~ ^(a|${b})$ ]]
+[[ $x =~ (foo ${v}) ]]
+[[ $x =~ $re ]]
 EOF
 cat > "${tmp}/tight.sh" <<'EOF'
 grep -qxF -- "${name}" "${list}"
@@ -344,6 +354,9 @@ grep "${x}" is text in a heredoc, and it's not code
 NOTE
 [[ $x =~ ${re} ]]   # loose-match: ok a fixture
 [[ "${x}" =~ ^"${slug}"-[0-9]+$ ]]
+[[ $x =~ "${re}" ]]
+[[ $x =~ ^\${re}$ ]]
+[[ $x =~ (a b)c ]] && echo ${v}
 EOF
 # shellcheck disable=SC2016 # the fixture's ${x} is for the scanner, not this shell
 printf 'grep -q "${x}" list.txt\n# \xff\n' > "${tmp}/bytes.sh"
@@ -354,7 +367,7 @@ g='grep pattern from a variable without -F, -x or -w' a='awk ~ built from a vari
 r='=~ regex from a variable outside quotes'
 want="$(printf '%s\n' "1 ${g}" "2 ${b}" "3 ${a}" "4 ${g}" "5 ${g}" "7 ${a}" "9 ${g}" "10 ${g}" "11 ${g}" "12 ${g}" \
   "14 ${g}" "16 ${g}" "20 ${a}" "21 ${g}" "22 ${g}" "23 ${b}" "24 ${b}" "25 ${b}" "26 ${b}" "27 ${a}" "28 ${g}" "30 ${a}" "35 ${a}" "36 ${g}" \
-  "37 ${a}" "38 ${a}" "39 ${a}" "40 ${a}" "41 ${b}" "43 ${g}" "44 ${a}" "45 ${r}" "46 ${r}" "47 ${r}")"
+  "37 ${a}" "38 ${a}" "39 ${a}" "40 ${a}" "41 ${b}" "43 ${g}" "44 ${a}" "45 ${r}" "46 ${r}" "47 ${r}" "48 ${r}" "49 ${r}")"
 if [[ "${got}" == "${want}" ]]; then
   echo "ok   a fixture with each loose shape fails"
 else
