@@ -507,7 +507,7 @@ check "a story slugged review-a keeps its open builder through a's merge, with n
 
 # --- review-a working when a's PR merged (its own merge waiting on CI, or a round still running): the
 # lead's reconcile finishes a and closes its builder, but leaves review-a open, and says so.
-setup vw; lay "${HV}" "${ROOT}/vw" a; sed -i '' 's/^review-a w:r idle$/review-a w:r working/' "${HV}/h/agents"
+setup vw; lay "${HV}" "${ROOT}/vw" a; perl -pi -e 's/^review-a w:r idle$/review-a w:r working/' "${HV}/h/agents"
 rc=0; out="$(hat vw w:lead reconcile)" || rc=$?
 check "a working review-a is left open, and said, while a is finished and its builder closed" "0|yes|lead@lead review-a@a|yes" \
   "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a is working, so it was left open; close it once it is done with swarm.sh close review-a" "${out}")"
