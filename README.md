@@ -125,9 +125,11 @@ lists them all.
 
 ### Workspace labels
 
-Every herdr workspace swarm.sh opens is labelled with the project first, so two swarms on one
-machine never share one:
+Every herdr workspace swarm.sh opens or works from is labelled with its project, so two swarms on
+one machine never share one:
 
+- `swarm-lead · <project>`: the lead's own workspace and tab, relabelled by the first swarm.sh
+  command the lead runs there after `swarm.sh init`.
 - `<project> · <epic>`: an epic's conductor and its builders.
 - `<project> · backlog`: the backlog conductor and the one-off stories it builds.
 

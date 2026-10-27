@@ -2138,6 +2138,63 @@ LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one
 LEAD_HEADS="${LEAD_DIR}/heads"        # each review item's verdict from the last heads pass (lead_heads)
 LEAD_HEADS_EVERY="${SWARM_LEAD_HEADS_EVERY:-300}"   # seconds between heads passes, at least 1
 LEAD_HEADS_AT=""                      # SECONDS at this run's last heads pass, empty before the first
+LEAD_WORKSPACE="${LEAD_DIR}/workspace"   # "<herdr workspace id>\t<the label it got, or refused>" per line (lead_rename)
+
+# The plugin ships hooks/ beside bin/; a copy of bin/ alone (a test's stand-in plugin) has no lead.
+# shellcheck source=hooks/lead-session.sh
+[[ ! -f "${SWARM_HOME}/hooks/lead-session.sh" ]] || source "${SWARM_HOME}/hooks/lead-session.sh"
+
+# lead_caller — true when the lead's own session runs this command, as hooks/lead-session.sh's
+# lead_project tells it: no agent's environment (SWARM_AGENT, SWARM_GH_CALLER), a cwd outside any
+# worktree, and a swarm project. False without the hook.
+lead_caller() { declare -F lead_project > /dev/null && lead_project "${PWD}" > /dev/null; }
+
+# lead_rename — the lead's first command in a herdr workspace labels that workspace and its tab
+# `swarm-lead · <project_label>` and adds the workspace to LEAD_WORKSPACE, so a later command from
+# any workspace there sends herdr nothing; a workspace herdr no longer lists drops out of it then.
+# Another lead's workspace (a swarm-lead one not in the record) counts towards project_label as
+# another dir's `<name> · ...` does, so the second lead of one dir name gets a label of its own. A
+# rename herdr refuses, or no workspace list, is said once on stderr and recorded all the same, so
+# it is not tried on every command. It sends nothing outside herdr, without herdr's socket
+# (HERDR_SOCKET_PATH, which the tests drop), from a swarm.sh another one runs (NESTED_CALL: dash
+# --project and upgrade name other projects), or from anyone but the lead (lead_caller). It runs
+# before every command, so the record is read before any of that.
+lead_rename() {
+  local ws="${HERDR_WORKSPACE_ID:-}" id rest kept="" mine=" " lead="swarm-lead${WORKSPACE_SEP}" own list ids label="" why="" out rec tmp
+  [[ "${HERDR_ENV:-}" == 1 && -n "${ws}" && -z "${NESTED_CALL}" && -S "${HERDR_SOCKET_PATH:-}" ]] || return 0
+  if [[ -f "${LEAD_WORKSPACE}" ]]; then
+    while IFS=$'\t' read -r id rest; do
+      [[ "${id}" != "${ws}" ]] || return 0
+      kept+="${id}"$'\t'"${rest}"$'\n'; mine+="${id} "
+    done < "${LEAD_WORKSPACE}"
+  fi
+  lead_caller || return 0
+  # From one project's folder, a command for another (SWARM_PROJECT) is not that project's lead; a
+  # folder in no project (a board kept outside the repo) is the lead's of SWARM_PROJECT's.
+  own="$(SWARM_PROJECT="" lead_project "${PWD}")" && [[ "${own}" != "${PROJECT_DIR}" ]] && return 0
+  if list="$(herdr_workspaces)"; then
+    ids=" $(cut -f1 <<< "${list}" | tr '\n' ' ')"
+    kept="$(I="${ids}" awk -F'\t' 'index(ENVIRON["I"], " " $1 " ")' <<< "${kept}")"
+    [[ -z "${kept}" ]] || kept+=$'\n'
+    list="$(P="${lead}" S="${WORKSPACE_SEP}" M="${mine}${ws} " awk -F'\t' -v OFS='\t' 'index($2, ENVIRON["P"]) == 1 && index(ENVIRON["M"], " " $1 " ") == 0 {
+      $2 = substr($2, length(ENVIRON["P"]) + 1) ENVIRON["S"] "lead"; $3 = "-" } 1' <<< "${list}")"
+    label="${lead}$(project_label "${list}")"
+    out="$(herdr workspace rename "${ws}" "${label}" 2>&1 > /dev/null < /dev/null)" || why="workspace ${ws}: ${out%%$'\n'*}"
+    if [[ -n "${HERDR_TAB_ID:-}" ]]; then
+      out="$(herdr tab rename "${HERDR_TAB_ID}" "${label}" 2>&1 > /dev/null < /dev/null)" \
+        || why+="${why:+; }tab ${HERDR_TAB_ID}: ${out%%$'\n'*}"
+    fi
+  else
+    label="${lead}<project>"; why="herdr gave no workspace or pane list"
+  fi
+  rec="${label}"
+  if [[ -n "${why}" ]]; then
+    rec=refused
+    echo "swarm: herdr would not label the lead's workspace ${label} (${why}); swarm.sh will not try again in this workspace" >&2
+  fi
+  mkdir -p "${LEAD_DIR}" 2>/dev/null && tmp="$(mktemp "${LEAD_WORKSPACE}.XXXXXX" 2>/dev/null)" || return 0
+  { printf '%s%s\t%s\n' "${kept}" "${ws}" "${rec}" > "${tmp}" && mv -f "${tmp}" "${LEAD_WORKSPACE}"; } 2>/dev/null || rm -f "${tmp}"
+}
 
 # heads_green <pr-url>... — 0 when there is at least one PR and every one's head is green, 1 when one is
 # not or a URL is not a PR, 2 when none is red but gh or ci_gate could not read one. ci_gate head is

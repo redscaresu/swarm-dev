@@ -707,8 +707,9 @@ status. The warning says to run the `swarm.sh conduct` yourself, or, when an age
 started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
 
 **Workspace labels.** herdr's workspaces span every project on the machine, so each label swarm.sh
-gives one starts with the project's label, then ` · `:
+gives one carries the project's label, joined to the rest by ` · `:
 
+- `swarm-lead · <project>`: the lead's own workspace, and the tab the lead's session runs in.
 - `<project> · <epic>`: an epic's conductor, its stories' builders and their review agents. For a
   child epic of a split one, `<epic>` is its `parent:`, so the children share the workspace.
 - `<project> · backlog`: the backlog conductor and the one-offs it builds.
@@ -725,6 +726,24 @@ one under the bare `<epic>` or `backlog` label an older swarm.sh gave, so a cond
 the upgrade keeps its workspace and never takes another project's. Otherwise it makes a new one.
 `close` and `tidy` find tabs and panes from `.swarm/state`, not from labels, so a relabelled
 workspace closes as before.
+
+The first `swarm.sh` command the lead runs in a workspace, whatever the command, once the project is
+set up (the `init` that sets it up comes before there is a lead), labels that workspace and its tab
+(`herdr workspace rename`, `herdr tab rename`) and adds the workspace's id to
+`.swarm/lead/workspace`, one line per workspace. A later command from any workspace listed there
+sends herdr nothing, so a lead that moves to another workspace and back has only the new one
+labelled. Each time it labels one, it drops from the record any workspace herdr no longer lists.
+When herdr refuses a rename, swarm.sh says so once, on stderr, and records the workspace as
+`refused`, so it does not try again there; delete `.swarm/lead/workspace` to try again. The lead's
+`<project>` also gets the hash when herdr lists a `swarm-lead · <that name>` workspace the record
+does not hold: another project's lead, so the second lead of one name gets a label of its own.
+swarm.sh tells the lead the way the plugin's Stop hook does: a session with no agent's environment
+(no `SWARM_AGENT` or `SWARM_GH_CALLER`), in a swarm project, from a folder that is not a worktree. A
+lead whose folder is in no project, such as a board kept outside the repo, belongs to the project
+`SWARM_PROJECT` names. Nothing is renamed from an agent's pane, outside herdr, without herdr's
+socket (`HERDR_SOCKET_PATH`), by a `swarm.sh` another one runs (`dash --project` runs one for each
+project it draws), by a command run from one project's folder for another (`SWARM_PROJECT`), or by a
+test hook (a command starting `_`, as the Stop hook's `_step` does).
 
 **`next`'s idle dependency line.** After its step, `next` prints `idle: <story> waits on <dep> but
 shares no touches part with it and needs nothing from it` for each blocked story an agent builds,
