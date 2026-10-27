@@ -1,21 +1,17 @@
 ---
 kind: code
-status: later
+status: ready
+epic: fixes-027
 depends_on: []
-touches: [tests/review_test.sh, bin/lib/agents.sh:start reading, bin/lib/flow_lead_queue.py, scripts/lint loose-match, bin/lib/dash_finished.py:BOARD_OWN, bin/lib/init.sh:Board.base]
-estimate_lines: 150
-easy: false
+touches: [bin/lib/dash_finished.py:BOARD_OWN, tests/dash_finished_test.sh:hld and obsidian fixtures, bin/lib/board.sh:grants usage, bin/lib/merge.sh:ci_gate files-status comment, tests/grants_test.sh:usage case]
+estimate_lines: 60
+easy: true
 ---
 
-# Small fixes from the 0.27 retro
+# dash_finished treats hld/ and .obsidian/ as the board's own; grants' usage and the files-status comment
 
-For 0.28 (0.27 retro, 2026-10-25). Split this when it is planned if it runs over one PR.
-- The review_test watch test dies on "Broken pipe" on stdout, then passes on a rerun (a flake).
-- herdr reports a review agent's start as "unclear" while the agent runs and writes its review.
-- A builder hit a permission prompt on `rm -rf "$SP/$m"`.
-- Older items: the lead_queue keep rule; the loose-match lint missing `=~`; commands/epic.md and hld.md step 5 lacking a board-pr worktree; dash_finished's BOARD_OWN missing hld/; init never updating an existing Board.base.
-- Remove the stale `swarm-dev-wt/fix-pin-ubuntu` worktree and its branch `fix/pin-ubuntu-24`. #334 made CI pass on ubuntu-latest, so the pin is obsolete.
+(1) BOARD_OWN (bin/lib/dash_finished.py:31) lists stories/, epics/, Board.base and README.md. So a commit that changes only hld/ or .obsidian/ counts as work (:39-40), and a story it removes reads as finished. Add hld/ and .obsidian/, the board's own paths in bin/lib/merge.sh:791 and docs/reference.md:1963. No test covers dash_finished.py today. (2) grants()' usage line (bin/lib/board.sh:1194) names an HLD: `<story | epic | hld | PR URL>`. (3) The ci_gate files-status comment (bin/lib/merge.sh:73-75) lists every file status GitHub returns, not four.
 
 **Done when:**
-- A test for each code fix fails before the fix and passes after it. The flake does not fail in 20 runs.
-- `make test` passes.
+- A fixture-repo test: a commit that deletes a story file and changes only board/hld/ is not counted as the story finishing with work, and neither is one that changes only board/.obsidian/. A commit that also changes code is. The hld and .obsidian cases fail on the base.
+- `swarm.sh grants` with no argument prints a usage line that names hld. A test pins it and fails on the base.
