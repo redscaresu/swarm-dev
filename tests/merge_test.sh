@@ -182,7 +182,7 @@ check "a green merge into o/r.x leaves o/rxx's red main" bash -c "! grep -q main
 # is newer is read from the commits in P's clone, so here H2 and M2 are real ones, M2 a child of H2.
 GP=(git -C "${P}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false); h2_fake="${H2}"
 H2="$("${GP[@]}" commit-tree -m h2 "$("${GP[@]}" mktree < /dev/null)")"; M2="$("${GP[@]}" commit-tree -p "${H2}" -m m2 "$("${GP[@]}" mktree < /dev/null)")"
-failed_job 'x\ty\tz FAIL one\n'; red_main "o/r main"; echo "${M2:=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" > "${FX}/oid"
+failed_job 'x\ty\tz FAIL one\n'; red_main "o/r main"; echo "${M2}" > "${FX}/oid"
 cp "${FX}/${M}.checks" "${FX}/${M2}.checks"; statuses "${FX}/${M2}.status"; wfruns "${FX}/${M2}.runs" "$(run ci completed success "${M2}")"
 merge "${URL}"
 check "a second red main: the older unstarted fix-main story is retired, the newer written" and_logged "^fix-main fix-main-${H2:0:7} retired: superseded by fix-main-${M2:0:7}$" \

@@ -2086,15 +2086,17 @@ repo lowercased), and retires each fix-main story of the same repo and base that
 and whose red commit another red of that repo and base descends from, its own story included. Merge
 reads which red is newer from the commits. The order the reds were logged in can mislead, since CI
 on an older commit can finish later. The retired story's `fix-main` line says `retired: superseded by
-fix-main-<sha>`, naming a red that no other red descends from. Only a red whose fix-main story is
-still on the board counts, started or not: a cleared red's story is gone and covers nothing. Merge reads the commits in the
-project's clone, after fetching the base, and only when the repo is that clone's origin. A red in
+fix-main-<sha>`, naming a red that no other red descends from. Only a red that no `main-green` has
+cleared, and whose fix-main story is still on the board (started or not), counts. Merge reads the
+commits in the project's clone, and only when the repo is that clone's origin. Before it takes the
+lock below, it asks gh which repo the clone is and fetches the base if a red's commit is missing. A red in
 another repo, a red whose commit the clone lacks, and two reds where neither descends from the
 other retire nothing. At worst one story too many stays on the board, and no fix is lost. One merge at a time per
 repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`. Merge then prints
 `fix-main: <checks> on <short sha>` with the same lines, then `story:` and the story that covers the
 red. When its own story retired at once, that is the newer red's story, and `next` and a clearing
-green treat the newer red as the base's red.
+green treat the newer red as the base's red. When another merge's run retired it since, the line is
+`story: none` and says so.
 When it cannot write the story it says so in a line that does not start `fix-main:`, and leaves the
 red main and fix before it as they were. A red main clears, logging `main-green` and retiring its
 fix-main story if nobody has started it, only on a commit that shows it fixed and has the red
