@@ -62,9 +62,11 @@ lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seco
 waits on the lead's user: every one with `merge = human`, and with `merge = agent` only a PR
 `swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv,
 with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
-It also prints `next`'s `idle:` lines for blocked stories (`idle: <story> waits on <dep> but shares
-no touches with it`). Each poll works them out again from the board and its state, with no gh call,
-so a line wakes the lead once and goes once its dependency's merge is reconciled. It wakes the lead
+It also prints `next`'s `idle:` lines: for blocked stories (`idle: <story> waits on <dep> but shares
+no touches part with it and needs nothing from it`) and for ready stories with no build (`idle: <story> is ready with no build,
+exit: <exit>`). Each poll works them out again from the board, its state and events.tsv, with no gh
+or herdr call, so a line wakes the lead once and goes once its dependency's merge is reconciled, or
+once its build starts. It wakes the lead
 again only if it comes back. `status` lists the same lines under its Next section, and `dash` in an
 `idle capacity` box.
 The PR heads are read with gh only on a run's first read and then at most once every 5 minutes
@@ -720,6 +722,23 @@ part when they name the same file and the same first word of the part (past a le
 line stays quiet when a word of the story's `needs:` line is the dependency's slug, so
 `needs: <dep> (its --flag)` keeps a dependency the check calls over-broad. The lead
 either drops the dependency or names it in `needs:` (step 1 of `/swarm-dev:swarm`).
+
+**`next`'s idle ready line.** `next` also prints `idle: <story> is ready with no build, exit: <exit>`
+for a story it would build (`status: ready`, a kind an agent builds, no `held_by:`, and no epic or an
+active one) whose build has not started and that has been ready for `queue_minutes`. A build has
+started when the story's worktree exists, or an ok `story <slug>` line in events.tsv is no older than
+its ready time. A `story/<slug>` branch left with no worktree also silences the line, since
+`swarm.sh story` refuses to build over it. The ready time is the newest of the story file's mtime, its board-state file's mtime
+and its ok `unblock`, `reset`, `reset:held`, `reconcile` and `close` lines. A later edit restarts the
+clock, so the line errs towards silence. The story must also share no `touches` part (by the rule
+above) with a running build: a story in review, or one whose build has started (a held stacked
+story keeps its worktree). A story it
+depends on, or one that depends on it, does not count, since a stacked story starts on its parent's
+branch. The exit is `swarm.sh tell <conductor> note <file>` while the story's conductor runs (the
+epic's, or the backlog's for a story with no epic). It runs from an ok `conduct` line until a close
+of its agent, a `report` line or its report file. With none running the exit is
+`swarm.sh story --strict <slug>`, which refuses a clash with a builder herdr lists. The check reads the board, its state and events.tsv, with no gh or herdr
+call.
 
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
@@ -2461,7 +2480,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. Under `merge = agent` it refuses while Claude Code's settings have no allow rule for `swarm.sh merge` (§ Merging, the conduct preflight). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches with it`, as `next` prints it), and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), as `next` prints them, and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |

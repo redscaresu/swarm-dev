@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # idle_queue_test.sh — next's idle: line reaches wait --lead, status and dash (idle_now). A blocked story
-# whose dependency, still to build, shares no file in touches with it gives the same idle: line in
+# whose dependency, still to build, shares no touches part with it gives the same idle: line in
 # `swarm.sh wait --lead 0` (once: the next poll is quiet), in `swarm.sh status` and in dash. Once the
 # dependency's PR merges and reconcile and unblock run, the line is gone from all three, and the story
 # that merge readied, with no build, shows in status's next and in dash's idle gauge.
@@ -18,7 +18,7 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
 P="${ROOT}/proj"; B="${P}/docs/stories"; URL=https://github.com/na-owner/na-repo/pull/7
-LINE="idle: s waits on d but shares no touches with it"
+LINE="idle: s waits on d but shares no touches part with it and needs nothing from it"
 mkdir -p "${P}/.claude/swarm" "${B}" "${P}/.swarm/lead" "${ROOT}/bin" "${ROOT}/projects" "${TMPDIR}"
 git -C "${P}" init -q
 echo "merge = human" > "${P}/.claude/swarm/config"

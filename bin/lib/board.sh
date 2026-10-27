@@ -416,13 +416,14 @@ one_off_started() {
 }
 
 # idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it
-# and is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS and SWARM_QUEUE_MINUTES),
-# from the board and its state alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each
+# and is not in its needs, and per ready story with no build past queue_minutes (touches_rows.py
+# --idle, given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR), from the board,
+# its state and events.tsv alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each
 # call it on every read, so a line goes once its dependency's merge is reconciled. Fails when the
 # check does.
 idle_now() {
   # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
-  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" \
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
     python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
 }
 
