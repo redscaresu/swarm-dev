@@ -58,7 +58,7 @@ one-repo epic; the review in step 3 is where the plan's bugs turn up.
 
 **2. Decompose** — one agent, `lead`, role `lead`, given the survey files. Output
 `{stories:[{slug, title, kind, risk, costs, repo, scope, done_when, needs, touches, depends_on, estimate_lines, easy}], waves, contradictions}`.
-`needs` names each `depends_on` story with what the story uses from it (the file or the function), empty when it has none; the scope's opening line is written from it, so the two agree.
+`needs` names each `depends_on` story with what the story uses from it (the file, the function, or a `kind: lead` story's **You:** step), empty when it has none; the scope's opening line is written from it, so the two agree.
 `touches` entries are `file:part`, the part starting with the function or section name the story changes. Write a bare file only when the story changes the whole file: a bare file clashes only with the same bare file, so a bare file hides a clash with a story that names a part.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
@@ -70,7 +70,7 @@ and a merge is never a story of its own; `risk: high` only for real-cloud, teard
 credentials and safety paths; `costs: money` on any story whose merge can spend money (it adds or
 changes a CI job or schedule that runs against real cloud, raises a spend cap, or turns on something
 billed): with `merge = agent`, `swarm.sh merge` holds its PR for the user; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
-check files `AGENTS.md` names as shared) in more than one story; give a story `depends_on` only when it uses something the other adds (named in `needs`) or shares a `touches` part, never for ordering alone (waiting on a `lead` story's **You:** step is a real need): maximise concurrency by default; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file or the function;
+check files `AGENTS.md` names as shared) in more than one story; give a story `depends_on` only when it uses something the other adds (named in `needs`) or shares a `touches` part, never for ordering alone (waiting on a `lead` story's **You:** step is a real need): maximise concurrency by default; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file, the function, or a `kind: lead` story's **You:** step;
 reuse existing
 stories by slug; record every disagreement with the epic under `contradictions`. If a survey
 failed, it says what it could not check. A check that several stories repeat (a freeze, a pinned

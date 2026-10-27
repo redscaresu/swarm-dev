@@ -35,7 +35,8 @@ risk=$(printf '%s' "$flat" | grep -oE 'risk: high` only[^;]*;' || true)
 has small-epic 'at most 3 stories with no `risk: high` is planned by the lead alone' "$flat"
 has small-epic-codex 'one `swarm.sh codex-review` pass over them' "$flat"
 has chain-depth 'at most 3 stories deep' "$flat"
-has depends-on-names 'what it needs from each `depends_on`: the file or the function' "$flat"
+has depends-on-names 'what it needs from each `depends_on`: the file, the function, or a `kind: lead` story.s \*\*You:\*\* step;' "$flat"
+has needs-lead-step 'with what the story uses from it \(the file, the function, or a `kind: lead` story.s \*\*You:\*\* step\), empty when it has none' "$flat"
 has report-chain 'longest chain'
 has touches-file-part 'touches. entries are `file:part`, the part starting with the function or section name' "$step2"
 has touches-bare-clash 'a bare file clashes only with the same bare file' "$step2"
