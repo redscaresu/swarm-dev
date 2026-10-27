@@ -1383,7 +1383,7 @@ open_pr() {
 # it is readied plainly, without held_by: or the prs: line the hold kept, to be built fresh. An old
 # blocked_by line stays; nothing reads it. Prints each story it flips.
 unblock() {
-  local story slug deps open on why rc drop
+  local story slug deps open on why src rc drop
   while IFS= read -r story; do
     [[ "$(fm "${story}" status)" == blocked ]] || continue
     drop=()
@@ -1396,22 +1396,17 @@ unblock() {
       [[ ${rc} -ne 2 ]] || echo "not stacked: ${slug} (its worktree or story/${slug} is already there, so it cannot start on ${open}; remove them, or let it wait until they merge)"
       [[ ${rc} -eq 0 ]] || continue
       why="stacked on ${on}"
-    elif held_kept "${story}"; then
-      why="held: merge origin/$(story_base "${story}"), review again"
     elif [[ -n "$(get_fm "${story}" held_by)" ]]; then
-      drop=(held_by "" prs "")
+      if src="$(repo_dir "$(fm "${story}" repo)")" && [[ -d "$(worktree_for "${src}" "${slug}")" ]]; then
+        why="held: merge origin/$(story_base "${story}"), review again"
+      else
+        drop=(held_by "" prs "")
+      fi
     fi
     state_set "${story}" ${drop[@]+"${drop[@]}"} status ready
     record_event unblock "${slug}"
     echo "ready: ${slug}${why:+ (${why})}"
   done < <(board stories)
-}
-
-# held_kept <story> — true for a child review held (held_by:) whose build is still there (its
-# worktree): unblock readies it as held, to merge its base in and be reviewed again, never built anew.
-held_kept() {
-  local src
-  [[ -n "$(get_fm "$1" held_by)" ]] && src="$(repo_dir "$(fm "$1" repo)")" && [[ -d "$(worktree_for "${src}" "$(basename "$1" .md)")" ]]
 }
 
 # unblock_startable <epic>|--backlog — unblock, then a startable: line per story of that epic (--backlog:

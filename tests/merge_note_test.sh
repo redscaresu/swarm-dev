@@ -4,8 +4,10 @@
 # it and has nothing open left), a held child review among them named apart, never to start. When
 # reconcile fails after the merge (its lock held), the note still goes, naming the failure, and the
 # merge still exits non-zero; after a --board merge too, whose running conductors each get it. When
-# reconcile leaves the story in review (it held the pull), or the merge queue merged a head nobody
-# checked, the note says so and names no story to start. With no conductor running, or one that has
+# reconcile leaves the story in review (it held the pull), CI on main is red, or the merge queue
+# merged a head nobody checked, the note says so and names no story to start. Each herdr call the
+# note makes once the PR has merged is cut off after SWARM_NOTE_HERDR_WAIT, so a herdr that hangs,
+# at once or after one answer, never hangs merge. With no conductor running, or one that has
 # written its report, no inbox is written and the ready now: line says no conductor runs. A failed
 # tell is a warning. On merge_fixture.sh, whose herdr stub lists conduct-e in a pane this project
 # opened.
@@ -24,6 +26,17 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" SWARM_NOTE_WAKE_SECS=1
 # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
 
+# herdr: the fixture's, except that while ${ROOT}/herdr.hang exists `agent list` first sleeps 20 s,
+# once ${ROOT}/herdr.pass1 has let one call through (it is removed by that call).
+mv "${ROOT}/bin/herdr" "${ROOT}/bin/herdr-fixture"
+cat > "${ROOT}/bin/herdr" <<STUB
+#!/bin/sh
+if [ "\$1 \$2" = "agent list" ] && [ -e "${ROOT}/herdr.hang" ]; then
+  if [ -e "${ROOT}/herdr.pass1" ]; then rm -f "${ROOT}/herdr.pass1"; else sleep 20; fi
+fi
+exec "${ROOT}/bin/herdr-fixture" "\$@"
+STUB
+chmod +x "${ROOT}/bin/herdr"
 INBOX="${P}/.swarm/inbox/conduct-e.md"; LOCK="${P}/.swarm/reconcile.lock"
 mkdir -p "${P}/docs/epics"; printf -- '---\nstatus: active\n---\n' > "${P}/docs/epics/e.md"
 notes() { grep -c '^From the lead' "${INBOX}" 2>/dev/null || true; }
@@ -76,6 +89,33 @@ is "a queue merge of another head: exits non-zero" 1 "${rc}"
 check "a queue merge of another head: the note names it" \
   noted "The PR ${URL} of story s just merged, but the merge queue merged a head nobody checked (#7 merged at head 2222222"
 check "a queue merge of another head: the note starts nothing" bash -c "! grep -q 'ready now' '${INBOX}'"
+check "a queue merge of another head: the note overrides the startable pass" \
+  noted "This overrides the startable pass after this note: do not start any story whose depends_on names s."
+
+# --- CI on main is red at the merge commit: merge fails as before, and the note names the red main
+# and asks for no start.
+story_pr; checks "${FX}/${M}.checks" "$(run test completed success)" "$(run e2e completed failure)"; merge "${URL}"
+is "a story merge onto a red main: exits non-zero" 1 "${rc}"
+check "a story merge onto a red main: the note names it" \
+  noted "The PR ${URL} of story s just merged, but CI on main at ${M:0:7} is not green (red), so start none of the stories waiting on it until it is."
+check "a story merge onto a red main: the note starts nothing" bash -c "! grep -q 'Start them now' '${INBOX}'"
+check "a story merge onto a red main: the note overrides the startable pass" \
+  noted "This overrides the startable pass after this note: do not start any story whose depends_on names s."
+
+# --- herdr hangs once the PR has merged: the note's first list is cut off after
+# SWARM_NOTE_HERDR_WAIT, which is a warning, and merge still exits 0.
+story_pr; echo "touch '${ROOT}/herdr.hang'" > "${FX}/on-merge"; merge SWARM_NOTE_HERDR_WAIT=1 "${URL}"; rm -f "${ROOT}/herdr.hang"
+is "a story merge while herdr hangs: exits 0" 0 "${rc}"
+check "a story merge while herdr hangs: warns that conduct-e was not told" said "warning: herdr cannot list its agents, so conduct-e was not told that s2 are ready"
+# herdr answers that first list, then hangs: the conductor is found in that list, the tell's own read
+# is cut off, so no note goes, merge warns, and it still exits 0 (left to hang, herdr would answer
+# after 20 s and the note would go).
+story_pr; echo "touch '${ROOT}/herdr.pass1' '${ROOT}/herdr.hang'" > "${FX}/on-merge"; merge SWARM_NOTE_HERDR_WAIT=1 "${URL}"
+rm -f "${ROOT}/herdr.hang" "${ROOT}/herdr.pass1"
+is "a story merge while herdr hangs after one answer: exits 0" 0 "${rc}"
+check "a story merge while herdr hangs after one answer: no note goes" no_inbox
+check "a story merge while herdr hangs after one answer: warns that the note failed, not that no conductor runs" \
+  said "warning: could not note conduct-e that s2 are ready"
 
 # --- reconcile fails after the merge (its lock held): the note still goes, naming the PR and the
 # failure, and merge still exits non-zero.
@@ -133,5 +173,12 @@ check "a board merge whose reconcile fails: warns" said "warning: reconcile fail
 is "a board merge whose reconcile fails: one note to conduct-e" 1 "$(notes)"
 check "a board merge whose reconcile fails: the note names the PR and the failure" \
   noted "The board PR ${URL} just merged, but reconcile failed after it (board state: ${P}/.swarm/reconcile is locked"
+# The same while herdr hangs once the PR has merged: the list of running conductors is cut off after
+# SWARM_NOTE_HERDR_WAIT, a warning, and merge still exits 0.
+story_pr; rm -f "${P}"/docs/stories/*.md; mkdir "${LOCK}"; echo "touch '${ROOT}/herdr.hang'" > "${FX}/on-merge"
+merge SWARM_RECONCILE_WAIT=0 SWARM_NOTE_HERDR_WAIT=1 --board "${URL}"; rmdir "${LOCK}"; rm -f "${ROOT}/herdr.hang"
+is "a board merge whose reconcile fails while herdr hangs: exits 0" 0 "${rc}"
+check "a board merge whose reconcile fails while herdr hangs: warns that no conductor was told" \
+  said "warning: herdr cannot list its agents, so no conductor was told that ${URL} merged"
 
 finish merge-note
