@@ -537,7 +537,7 @@ Repeat until a step below says stop:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
      The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
      `parent:` naming an epic that is active or split, an agreed HLD grants `epics` through its
-     `hld:`, or `swarm.sh config lead_epics` prints `on`. `next` lists such a draft as
+     `hld:`, or `lead_epics` is `on` (`swarm.sh config lead_epics` prints it). `next` lists such a draft as
      `draft epic: <slug>, the lead sets it active (<why>)`: set it active through a board PR without
      asking. An `agreed:` already on a draft is stale (an epic set back to draft by hand) and does
      not count.

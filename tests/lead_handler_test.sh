@@ -144,7 +144,7 @@ out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}"
 check "next's gate line for a draft under lead_epics = on says the lead sets it active" \
   grep -qxF '  draft epic: e, the lead sets it active (lead_epics = on)' <<< "${out}"
 # shellcheck disable=SC2016 # the backticks are the Markdown's own
-check "the gate handler reads lead_epics with swarm.sh config" grep -qF '`swarm.sh config lead_epics` prints `on`' <<< "${gate}"
+check "the gate handler reads lead_epics with swarm.sh config" grep -qF '`lead_epics` is `on` (`swarm.sh config lead_epics` prints it)' <<< "${gate}"
 # shellcheck disable=SC2016 # the backticks are the Markdown's own
 check "the gate handler names next's lead line for a draft" grep -qF '`draft epic: <slug>, the lead sets it active (<why>)`' <<< "${gate}"
 
