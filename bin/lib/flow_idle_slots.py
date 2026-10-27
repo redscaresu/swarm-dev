@@ -33,7 +33,7 @@
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
 import collections, datetime, functools, glob, os, subprocess, sys, time
 import touches_rows
-from report import AGENT_NAME_MAX, cut_records
+from report import agent_name, cut_records
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
 project_dir = os.path.dirname(os.path.dirname(findings))
 board, repos_dir = os.environ.get("SWARM_BOARD", ""), os.environ.get("SWARM_REPOS_DIR", "")
@@ -103,22 +103,25 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
         evs.append((t, e))
 
 # Stories are keyed by their full slug, conductors by their exact name. A close may name an agent by
-# herdr's name and a build with no session log has only agents.tsv's, both cut by agent_name to
-# AGENT_NAME_MAX characters: full gives such a name the one full name the records hold under it
-# (cut_records over the board's stories, the briefs, each ok conduct event's conduct-<epic>, each slug
-# a session log names, and the agents' names in events.tsv and outcomes' rows that are not that long,
-# so are no cut), and keeps it as it is when none or two do. Two slugs that share their first 32
-# characters stay two keys.
-def names_agent(e):
-    # An events.tsv line whose target is an agent's name (a story's or a conductor's), not an epic's.
-    return e[1] in ("unblock", "reset", "reset:held", "reconcile", "review", "kept") or e[1].split(":")[0] == "close"
-
+# herdr's name, and a build with no session log has only agents.tsv's: agent_name's, which may be cut
+# to AGENT_NAME_MAX characters or start with an added s. full gives such a name the one record whose
+# agent_name it is (cut_records), and keeps it as it is when none or two are. Records are names whole
+# by how they were written: the board's stories, those its history deleted, the briefs, conduct-<epic>
+# for each ok conduct event, each slug a session log names that is no agent name, and the targets of
+# the events a command logs under the slug it was given (all but close). Two slugs that share their
+# first 32 characters stay two keys.
 recorded = [os.path.basename(f)[:-3] for d in ([os.path.join(board, "stories")] if board else []) + [os.path.join(os.path.dirname(events), "briefs")]
             for f in glob.glob(os.path.join(glob.escape(d), "*.md")) if "." not in os.path.basename(f)[:-3]]
-recorded += [n for n in {e[2] for _, e in evs if names_agent(e)} | {r["slug"] for r in rows} if len(n) != AGENT_NAME_MAX]
-# Whole, whatever their length: a conductor's name from its epic, and a build's slug from its session log.
-recorded += ["conduct-" + e[2] for _, e in evs if e[1] == "conduct" and e[2] != "--backlog"] + [r["slug"] for r in rows if r["started"]]
+recorded += [os.path.basename(f)[:-3] for f in (git("log", "--diff-filter=D", "--name-only", "--format=", "--", "stories/", quiet=True) if board else "").split()
+             if f.endswith(".md")]
+recorded += ["conduct-" + e[2] for _, e in evs if e[1] == "conduct" and e[2] != "--backlog"]
+recorded += [r["slug"] for r in rows if r["started"] and agent_name(r["slug"]) != r["slug"]]   # else maybe agents.tsv's name (slug_of)
+recorded += [e[2] for _, e in evs if e[1] in ("unblock", "reset", "reset:held", "reconcile", "review", "kept")]
+recorded = set(recorded) - {"README", "-"}
 cuts = cut_records(recorded)
+under = collections.defaultdict(set)   # agent_name -> the records it is, for a build keyed by a shared one
+for n in recorded:
+    under[agent_name(n)].add(n)
 
 def full(n):
     return cuts.get(n) or n
@@ -227,9 +230,18 @@ def known(s):
         files[s], needs[s] = entries(fm, project_dir, repos_dir), {d for d in front_deps(fm) if d}
     return files[s]
 
+# The keys of builds with no session log whose agents.tsv name two or more records are: such a build
+# may be any of their stories'.
+shared = {r["slug"] for r in rows if not r["started"] and len(under[r["slug"]]) > 1}
+
 @functools.lru_cache(maxsize=None)
 def clashes(a, b):
-    return a != b and any(overlap(x, y) for x in known(a) for y in known(b)) and a not in needs[b] and b not in needs[a]
+    # Whether waiting story a clashes with running build b. A shared build clashes with what any of its
+    # stories but a touches, and no depends_on spares it.
+    xs = known(a)
+    if b in shared:
+        return a != b and any(overlap(x, y) for x in xs for n in sorted(under[b] - {a}) for y in known(n))
+    return a != b and any(overlap(x, y) for x in xs for y in known(b)) and a not in needs[b] and b not in needs[a]
 
 runs = {k: conductor_runs(k) for k in {epic_of[s] or "--backlog" for s, _, _ in ready}}
 points = sorted({min(max(t, lo), hi) for _, s, e in ready + builds for t in (s, e)}

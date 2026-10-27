@@ -7,8 +7,11 @@
 # conductor name is the cut itself), it is not reported, even when the cut without conduct- names a
 # third epic with a report: the cut is no epic. 2. flow: two stories whose slugs share their
 # first 32 characters, each readied and built at its own time, give idle_slots minutes to each one's
-# epic, not to one merged key. Both parts fail with the old guesses (the cut without conduct-, and
-# idle_slots' agent_name keys).
+# epic, not to one merged key. agents.tsv's name for a build with no session log maps to a story only
+# through a record: a slug starting with a digit (agent_name adds an s) is its story's, a merged
+# 32-character slug is not a longer slug's, and a name two stories share clashes with what either
+# touches. Both parts fail with the old guesses (the cut without conduct-, and idle_slots'
+# agent_name keys).
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -90,6 +93,36 @@ idle() { (cd "${I}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=idl
   bash "${SWARM}" flow "$@" 2>&1 | grep -v -e '^## idle_slots$' -e '^sed: '); }   # sed warns on a byte that is not UTF-8
 check "idle_slots: two slugs that share their first 32 characters give each its own epic's minutes" \
   "$(idle --until 2026-10-01)" $'epic\tidle_min\tno_conductor_min\tmost_ready\nea\t0\t60\t1\neb\t0\t120\t1\nall\t0\t180\t1'
+ist() { printf -- '---\nkind: code\nstatus: %s\nepic: %s\ntouches: [%s]\n---\n' "$3" "$2" "$4" > "${I}/docs/stories/$1.md"; }   # <slug> <epic> <status> <touches>
+ag() { printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\t-\n' "$1" >> "${I}/.swarm/agents.tsv"; }   # a build with no session log, under agents.tsv's <name>
+ev() { printf '2026-10-01T%s:00Z\t%s\t%s\tw:1\tok\n' "$1" "$2" "$3" >> "${I}/.swarm/events.tsv"; }   # <HH:MM> <command> <target>
+commit() { git -C "${I}" -c user.name=t -c user.email=t@t commit -qm "$1"; }   # unsigned: the fixture's GIT_CONFIG_GLOBAL is /dev/null
+for e in ef el es ep ew; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
+# A slug starting with a digit: agents.tsv names its build s2fa-login. Unblocked at 10:00 and built
+# with no session log, it is built, not waiting.
+ist 2fa-login ef ready src/f.sh; ag s2fa-login; ev 10:00 unblock 2fa-login
+check "idle_slots: agents.tsv's s-prefixed name for a slug starting with a digit is that story's build" \
+  "$(idle --until 2026-10-01 --epic ef)" "no story of epic ef was ready in the window"
+# A merged story whose slug is exactly 32 characters, built with no session log, and a ready story whose
+# slug runs on from it, unblocked at 09:00 and never built: the merged one's build is not its build.
+s32="a-merged-story-with-32-character"; [[ ${#s32} -eq 32 ]] || { echo "s32 is ${#s32} long" >&2; exit 1; }
+ist "${s32}" es review src/s.sh; ist "${s32}-and-more" el ready src/l.sh; ag "${s32}"; ev 09:00 unblock "${s32}-and-more"
+git -C "${I}" add "docs/stories/${s32}.md"; commit "${s32}"; git -C "${I}" rm -q "docs/stories/${s32}.md"; commit "${s32} merged"
+check "idle_slots: a merged 32-character slug's build is not the build of a longer slug that starts with it" \
+  "$(idle --until 2026-10-01 --epic el)" $'epic\tidle_min\tno_conductor_min\tmost_ready\nel\t0\t900\t1'
+# Two long stories share a cut, and one of them builds all day with no session log under it. ww,
+# touching the first one's file, waits from 11:00: the build may be that story's, so ww clashes.
+cut2="two-long-stories-that-share-a-cu"
+ist "${cut2}t-one" ep review src/p.sh; ist "${cut2}t-two" ep blocked src/q.sh; ist ww ew ready src/p.sh; ag "${cut2}"; ev 11:00 unblock ww
+check "idle_slots: a build under a cut two stories share clashes with what either touches" \
+  "$(idle --until 2026-10-01 --epic ew)" $'epic\tidle_min\tno_conductor_min\tmost_ready\new\t0\t0\t1'
+# The same when one of the two is itself 32 characters: wy, touching only the longer one's file and
+# waiting from 11:00, clashes with the build under the shorter one's name.
+sx="a-story-of-exactly-32-characters"; [[ ${#sx} -eq 32 ]] || { echo "sx is ${#sx} long" >&2; exit 1; }
+for e in ex ey; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/${e}.md"; done
+ist "${sx}" ex review src/x.sh; ist "${sx}-and-longer" ex review src/y.sh; ist wy ey ready src/y.sh; ag "${sx}"; ev 11:00 unblock wy
+check "idle_slots: a build under a 32-character slug a longer slug shares clashes with what the longer one touches" \
+  "$(idle --until 2026-10-01 --epic ey)" $'epic\tidle_min\tno_conductor_min\tmost_ready\ney\t0\t0\t1'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
