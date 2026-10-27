@@ -527,7 +527,8 @@ Three more rules for the lead:
 - Plan epics whose plans do not depend on each other at the same time, not one after another.
   Do not wait for one epic's approval or build before planning the next independent one: once a
   plan's agents have finished and it waits for the user's approval, start the next independent
-  epic's `/plan-epic <epic>`. Never run two plans' agents at once: they share agent names and brief
+  epic's `/plan-epic <epic>`, for an `active` epic whose `depends_on` are done (a `later` one only
+  after `swarm.sh plan-unasked <epic>`, as the `plan-epic` arm says), never a `draft` one. Never run two plans' agents at once: they share agent names and brief
   files, so the second plan's agents fail to start. When one epic must come before another, put
   that order in a story's `depends_on` once the other epic's plan exists. Make the edit in a board
   PR with `swarm.sh board-pr`, as for every board edit of yours.
@@ -553,13 +554,14 @@ Three more rules for the lead:
   is back, tell it to write its output as it goes. A builder comes back working, and `tell` refuses a
   working builder, so run `swarm.sh wait <slug>` in the background first and send
   `swarm.sh tell <slug> nudge <file>` once it returns idle. A conductor's
-  `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets no such
-  note.
+  `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets the line
+  in the brief you write for its rerun, before it starts.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
   `swarm.sh status` or `swarm.sh dash`, never from a pane read alone. `dash` shows `working <N>m` or
-  `stalled <N>m`, `status` shows the agent's state, and neither acts on anything. A planner or
-  conductor has no PR, and the `stall_minutes` check also counts worktree commits, edits,
-  session-log activity and a running suite. Do not use
+  `stalled <N>m`, `status` shows the agent's state, and neither acts on anything. For
+  `stall_minutes`, a story's builder shows life through worktree commits, edits and PR updates, an
+  agent with no story (a planner or conductor) through its own `events.tsv` lines, and any agent
+  through its session log and a test suite running in its pane. Do not use
   `swarm.sh wait --stall` as a check: it blocks, nudges and resumes the agent, and can step a build up.
 
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.
