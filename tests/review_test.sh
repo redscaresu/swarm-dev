@@ -655,17 +655,21 @@ wsession() { # <mine-builder's session status> [its waitingFor]; mine-two's sess
 }
 # watchstart — start watch --epic mine in the background, writing to watch.out, its pid in wpid
 # (Claude's sessions from $WATCH_SESSIONS, else watch-sessions.json; $WATCH_PRE first on its PATH).
-# SIGPIPE is ignored, as on CI, so a write into a closed pipe prints "Broken pipe" here too.
+# SIGPIPE is ignored, as on CI, so a write into a closed pipe prints "Broken pipe" here too. watch.out
+# is removed first, so a writer an earlier watch left (see watchstop) writes to that run's unlinked
+# file, never this one's.
 watchstart() {
-  : > "${ROOT}/herdr.log"
+  : > "${ROOT}/herdr.log"; rm -f "${ROOT}/watch.out"
   (trap '' PIPE; cd "${w}" && exec env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${WATCH_SESSIONS:-${ROOT}/watch-sessions.json}" PATH="${WATCH_PRE:+${WATCH_PRE}:}${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
   wpid=$!
 }
 # watchstop <pid> — stop a watch and everything under it: STOP each process, parents first, and read
-# the children of all of them again until no new one shows (a stopped process forks no more), then
-# KILL them all. Killing only swarm.sh and its children leaves a grandchild, such as fm's head inside
-# a $(...), to write into a closed pipe after the stop, and its "Broken pipe" into the next watch's
-# output (CI, 2026-10-27).
+# the children of all of them again until no new one shows, then KILL them all. Killing only swarm.sh
+# and its children leaves a deeper descendant, such as fm's head (swarm.sh, queued_line's $(...),
+# fm's $(...), head), to write into a closed pipe after the stop, and its "Broken pipe" into the next
+# watch's output (CI, 2026-10-27). kill(2) returns while a STOP is pending, so a fork already under
+# way can still finish after the last read and outlive the KILL; watchstart's fresh watch.out keeps
+# such a writer out of the next watch's output.
 watchstop() {
   local all="" new="$1" p c i
   for ((i = 0; i < 20 && ${#new} > 0; i++)); do
@@ -679,15 +683,16 @@ watchstop() {
   kill -KILL ${all} ${new} 2>/dev/null || true
   { wait "$1"; } 2>/dev/null || true
 }
-# watchrun — run a watch (watchstart) for at most 10 seconds and print what it printed, or "(still
-# watching)" once it has read the agents and not returned, so a watch that wrongly polls on fails
-# rather than hangs.
+# watchrun [<file>] — run a watch (watchstart) for at most 10 seconds and print what it printed, or
+# "(still watching)" once it has read the agents and not returned, or once <file> exists, so a watch
+# that wrongly polls on fails rather than hangs.
 watchrun() {
   local wpid grace=-1
   watchstart
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 1
     kill -0 "${wpid}" 2>/dev/null || break
+    [[ -z "${1:-}" || ! -e "${1:-}" ]] || break
     [[ ${grace} -ne 0 ]] || break   # two seconds after it first read the agents
     if [[ ${grace} -gt 0 ]]; then grace=$((grace - 1)); elif grep -q '^agent list' "${ROOT}/herdr.log"; then grace=2; fi
   done
@@ -726,21 +731,25 @@ check "watch does not report a wait twice across a failed read" "(still watching
 # So does a failed Claude Code list, which would read every Claude session unknown, so not waiting.
 check "watch is quiet on a poll whose Claude Code list fails" "(still watching)" "$(WATCH_SESSIONS="${ROOT}/no-such-file" watchrun)"
 check "watch does not report a wait twice across a failed Claude Code list" "(still watching)" "$(watchrun)"
-# The stop leaves nothing to write after it. head is held inside fm (queued_line reads story a's kind
-# on every poll) from the first poll, so the watch never reads the agents and watchrun stops it at its
-# bound with head still held; head is let go after: had it outlived the stop, its write into the
-# closed $(...) pipe would print "Broken pipe" into watch.out.
+# The stop leaves nothing to write after it. A head shim records its pid, then holds inside fm
+# (queued_line reads story a's kind on every poll); watchrun stops the watch as soon as it holds. Had
+# the shim outlived the stop, it would go on to run head, whose write into the closed $(...) pipe
+# prints "Broken pipe". Once checked, it is let go.
 mkdir -p "${ROOT}/held-bin"
 cat > "${ROOT}/held-bin/head" <<EOF
 #!/bin/sh
-echo "\$*" >> "${ROOT}/head-held"; i=0
+echo \$\$ > "${ROOT}/head-pid"; echo "\$*" >> "${ROOT}/head-held"; i=0
 while [ ! -e "${ROOT}/head-go" ] && [ \$i -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
 exec $(command -v head) "\$@"
 EOF
-chmod +x "${ROOT}/held-bin/head"; rm -f "${ROOT}/head-held" "${ROOT}/head-go"
-out="$(WATCH_PRE="${ROOT}/held-bin" watchrun)"; touch "${ROOT}/head-go"; sleep 1
-check "a watch stopped while fm's head runs leaves nothing writing into its output after the stop" "(still watching)|-1|" \
-  "${out}|$(head -n 1 "${ROOT}/head-held" 2>/dev/null)|$(cat "${ROOT}/watch.out")"
+chmod +x "${ROOT}/held-bin/head"; rm -f "${ROOT}/head-pid" "${ROOT}/head-held" "${ROOT}/head-go"
+# A killed shim can read alive until it is reaped, so gone is waited for, up to 2 s; one that outlived
+# the stop holds for 30 s.
+out="$(WATCH_PRE="${ROOT}/held-bin" watchrun "${ROOT}/head-held")"; held="$(cat "${ROOT}/head-pid" 2>/dev/null)"
+for _ in {1..20}; do kill -0 "${held}" 2>/dev/null || break; sleep 0.1; done
+check "a watch stopped while fm's head runs leaves no process behind to write after the stop" "(still watching)|-1|gone|" \
+  "${out}|$(head -n 1 "${ROOT}/head-held" 2>/dev/null)|$(kill -0 "${held}" 2>/dev/null && echo alive || echo gone)|$(cat "${ROOT}/watch.out")"
+touch "${ROOT}/head-go"
 rm -f "${ROOT}/agents.json"
 
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.
