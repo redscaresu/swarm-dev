@@ -796,7 +796,9 @@ and escalated block too. `reconcile` also deletes them when an item's PR marked 
 a board in the repo, for each story or epic a commit deleted (its PR or a board PR), whether
 reconcile pulled that commit or you did: the file is in neither `HEAD` nor the main checkout. A story
 there still in review whose PR gh cannot read, or whose builder's pane could not be closed, keeps its
-state until a later reconcile can finish it (§ Merging). A file removed only by hand, or never committed, keeps its state.
+state until a later reconcile can finish it (§ Merging). When gh can never read that PR (its repo
+deleted or renamed, a bad URL), reconcile says so each time: remove
+`.swarm/board-state/stories/<slug>`, and `.swarm/escalated/<slug>` if it is there, by hand. A file removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories that do not clash. Two stories clash only when their
 `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name

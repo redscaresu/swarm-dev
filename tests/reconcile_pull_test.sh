@@ -14,7 +14,8 @@
 # state of the stories the pulled commits deleted, and of an epic whose deletion took docs/epics, and
 # finishes a story in review whose PR merged: its builder closed, its build cleared (in its own repo
 # too) and `reconcile <slug> ok (finished)` logged; a builder whose pane cannot be closed keeps it, and
-# the story its state, until a later reconcile can close it.
+# the story its state, until a later reconcile can close it. One whose PR is open, or whose file a later
+# commit took out of review, only loses its state; one whose PR gh cannot read keeps it.
 # gh and herdr are stubs on PATH; origin is a local bare repo.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -46,7 +47,7 @@ case "$1 $2" in
 esac
 EOF
 chmod +x "${ROOT}/bin/gh"
-printf '%s\n' "${U}/1 MERGED" "${U}/2 OPEN" "${U}/3 MERGED" > "${ROOT}/prs"
+printf '%s\n' "${U}/1 MERGED" "${U}/2 OPEN" "${U}/3 MERGED" "${U}/4 OPEN" "${U}/5 MERGED" > "${ROOT}/prs"
 # herdr logs each call to herdr.log; agent list gives the agents in ROOT/agents ("<name> <pane>"
 # lines), and pane close drops the pane's agent, or fails while ROOT/stuck is there. Only the cases
 # that set HERDR_ENV=1 reach it.
@@ -287,13 +288,18 @@ item "${ROOT}/hp/docs/stories/d.md" "status: ready" "kind: code"
 check "and a new story d reads as written: ready, kind code" "ready|code" \
   "$(val "${ROOT}/hp/docs/stories/d.md" status)|$(val "${ROOT}/hp/docs/stories/d.md" kind)"
 
-# pulled <name> — setup <name>, with a built as story builds it (its worktree <name>-wt/a on story/a,
-# pushed to origin) and its builder open in herdr on pane w:1, recorded in a tab beside w:0.
+# built <name> <slug> — <slug> built in <name> as story builds it: its worktree <name>-wt/<slug> on
+# story/<slug>, pushed to origin.
+built() {
+  local d="${ROOT}/$1"
+  "${GIT[@]}" -C "${d}" worktree add -q -b "story/$2" "${d}-wt/$2"
+  "${GIT[@]}" -C "${d}-wt/$2" commit -q --allow-empty -m "$2" && "${GIT[@]}" -C "${d}-wt/$2" push -q origin "story/$2"
+}
+# pulled <name> — setup <name>, with a built and its builder open in herdr on pane w:1, recorded in a
+# tab beside w:0.
 pulled() {
   local d="${ROOT}/$1"
-  setup "$1"
-  "${GIT[@]}" -C "${d}" worktree add -q -b story/a "${d}-wt/a"
-  "${GIT[@]}" -C "${d}-wt/a" commit -q --allow-empty -m a && "${GIT[@]}" -C "${d}-wt/a" push -q origin story/a
+  setup "$1"; built "$1" a
   mkdir -p "${d}/.swarm/state"; printf '%s\n' "w:0" "w:1 a" > "${d}/.swarm/state/a"
   echo "a w:1" > "${ROOT}/agents"; : > "${ROOT}/herdr.log"; rm -f "${ROOT}/stuck"
 }
@@ -306,16 +312,24 @@ finished() { awk -F'\t' '$2 == "reconcile" && $5 == "ok (finished)" { printf "%s
 # --- The base pulled by hand after the PRs of a and b merged and deleted them, before reconcile saw
 # either: reconcile finishes both after the fact. a's builder is closed and its build cleared here and
 # on origin; b's build is cleared in svc, the repo its deleted file named. d, dropped by a board PR,
-# only loses its state, and e, whose PR is open, keeps its.
+# only loses its state, and e, still on the board, keeps its. Three more, each built or in review, go
+# in the same pull: c, its PR open, dropped by a board PR; f, its PR merged, but set later by a commit
+# before another removed it; and g, whose PR gh cannot read.
 pulled pf
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"; "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
 "${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m init && "${GIT[@]}" -C "${ROOT}/svc" push -q origin main
 "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/b "${ROOT}/svc-wt/b"
 "${GIT[@]}" -C "${ROOT}/svc-wt/b" commit -q --allow-empty -m b && "${GIT[@]}" -C "${ROOT}/svc-wt/b" push -q origin story/b
 item "${ROOT}/pf-up/docs/stories/b.md" "status: ready" "kind: code" "repo: svc"
-"${GIT[@]}" -C "${ROOT}/pf-up" add docs && "${GIT[@]}" -C "${ROOT}/pf-up" commit -q -m "add b" && "${GIT[@]}" -C "${ROOT}/pf-up" push -q origin main
-git -C "${ROOT}/pf" pull -q --ff-only; at pf review b "${U}/3" >/dev/null
-"${GIT[@]}" -C "${ROOT}/pf-up" rm -q docs/stories/b.md && "${GIT[@]}" -C "${ROOT}/pf-up" commit -q -m "b's PR" && "${GIT[@]}" -C "${ROOT}/pf-up" push -q origin main
+for x in c f g; do item "${ROOT}/pf-up/docs/stories/${x}.md" "status: ready" "kind: code"; done
+"${GIT[@]}" -C "${ROOT}/pf-up" add docs && "${GIT[@]}" -C "${ROOT}/pf-up" commit -q -m "add b c f g" && "${GIT[@]}" -C "${ROOT}/pf-up" push -q origin main
+git -C "${ROOT}/pf" pull -q --ff-only
+at pf review b "${U}/3" >/dev/null; at pf review c "${U}/4" >/dev/null; at pf review f "${U}/5" >/dev/null; at pf review g "${U}/6" >/dev/null
+built pf c; built pf f
+perl -pi -e 's|^status: ready$|status: later|' "${ROOT}/pf-up/docs/stories/f.md"
+"${GIT[@]}" -C "${ROOT}/pf-up" commit -q -am "f later"
+for x in b c f g; do "${GIT[@]}" -C "${ROOT}/pf-up" rm -q "docs/stories/${x}.md" && "${GIT[@]}" -C "${ROOT}/pf-up" commit -q -m "take ${x} off"; done
+"${GIT[@]}" -C "${ROOT}/pf-up" push -q origin main
 git -C "${ROOT}/pf" pull -q --ff-only
 rc=0; out="$(in_herdr pf reconcile)" || rc=$?
 check "a merged story whose file a pull already removed: its builder is closed and its build cleared" "0|yes|yes|  " \
@@ -324,6 +338,12 @@ check "one in another repo has its build cleared there, and both are logged fini
   "$(left svc b)|$(finished pf)|$(has "merged: b, its file already pulled off the board" "${out}")"
 check "and the state goes: a's and b's, and d's, dropped with no finish; e keeps its" "gone|gone|gone|there" \
   "$(state pf a)|$(state pf b)|$(state pf d)|$(state pf e)"
+check "c, its PR open and dropped by a board PR, only loses its state: its build stays, and it is not finished" "gone|worktree branch origin|a b " \
+  "$(state pf c)|$(left pf c)|$(finished pf)"
+check "f, which a later commit set later before another removed it, reads later, so it only loses its state" "gone|worktree branch origin" \
+  "$(state pf f)|$(left pf f)"
+check "g, whose PR gh cannot read, keeps its state, and reconcile names what to remove if gh never can" "there|yes" \
+  "$(state pf g)|$(has "remove ${ROOT}/pf/.swarm/board-state/stories/g, and ${ROOT}/pf/.swarm/escalated/g if it is there, by hand" "${out}")"
 
 # --- The same, but a's builder pane cannot be closed: it may still be working there, so its worktree
 # and story/a stay, here and on origin, and reconcile says so. a keeps its state and its escalated
@@ -332,8 +352,8 @@ pulled pk; git -C "${ROOT}/pk" pull -q --ff-only; touch "${ROOT}/stuck"
 mkdir -p "${ROOT}/pk/.swarm/escalated"; echo "**Escalated.** a failed twice." > "${ROOT}/pk/.swarm/escalated/a"
 rc=0; out="$(in_herdr pk reconcile)" || rc=$?
 rm -f "${ROOT}/stuck"
-check "a builder whose pane cannot be closed keeps its worktree and branch, and reconcile says so" "0|worktree branch origin|yes|a w:1" \
-  "${rc}|$(left pk a)|$(has "build kept: a's builder pane is still open, so its worktree and story/a stay" "${out}")|$(cat "${ROOT}/agents")"
+check "a builder whose pane cannot be closed keeps its worktree and branch, and reconcile says once that the next one clears them" "0|worktree branch origin|1|yes|a w:1" \
+  "${rc}|$(left pk a)|$(grep -c '^build kept:' <<< "${out}")|$(has "build kept: a's builder pane is still open, so its worktree and story/a stay, and so does its state; the next reconcile clears them once that pane closes" "${out}")|$(cat "${ROOT}/agents")"
 check "and a keeps its state and escalated block for the next reconcile, not yet finished, its pane tried once" "there|there||1" \
   "$(state pk a)|$([[ -e "${ROOT}/pk/.swarm/escalated/a" ]] && echo there || echo gone)|$(finished pk)|$(grep -c '^pane close w:1$' "${ROOT}/herdr.log")"
 rc=0; in_herdr pk reconcile >/dev/null || rc=$?

@@ -43,13 +43,20 @@ state_value() {
   state_path "$1" "$2"
   [[ -f "${STATE_PATH}" ]] || return 1
   [[ -r "${STATE_PATH}" ]] || die "board state: cannot read ${STATE_PATH}; make it readable, or remove it to read $1 as committed"
-  awk -v k="$2" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+  state_read "${STATE_PATH}" "$1" "$2"
+}
+
+# state_read <state-file> <item-file> <key> — state_value's read of <key> from <state-file>, against
+# <item-file>'s front matter (- for stdin): its value, failing when it has no line for <key> or its
+# <key>@base: is no longer the item's value.
+state_read() {
+  awk -v k="$3" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
     FILENAME == ARGV[1] { if (!h && index($0, k ":") == 1) { v = val($0, length(k) + 1); h = 1 }
       if (!hb && index($0, k "@base:") == 1) { b = val($0, length(k) + 6); hb = 1 }
       next }
     /^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { t = val($0, length(k) + 1); exit }
-    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "${STATE_PATH}" "$1"
+    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "$1" "$2"
 }
 
 # board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
@@ -1734,16 +1741,13 @@ builder_state() {
 # merged_build <slug> — clear a merged story's build (clear_build), after closing its builder if one
 # is open (still in review, so close counts nothing), and saying so when herdr cannot tell whether one
 # is. A builder whose pane could not be closed (close_pane) may still be working in the worktree, so
-# then the build is kept, and that is said.
+# then the build is kept, with CLOSE_PANE_KEPT set; the caller says what happens to it.
 merged_build() {
   local builder
   builder="$(builder_state "$1")"; CLOSE_PANE_KEPT=""
   [[ "${builder}" != open ]] || close_agent "$1"
-  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
-    echo "build kept: $1's builder pane is still open, so its worktree and story/$1 stay; clear them once it is closed"
-  else
-    clear_build "$1" "the PR of $1 merged" "[]"
-  fi
+  [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
+  clear_build "$1" "the PR of $1 merged" "[]"
   [[ "${builder}" != unknown ]] \
     || echo "build cleared: $1's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close $1"
 }
@@ -1797,7 +1801,11 @@ reconcile_board() {
       record_event reconcile "${slug}" "ok (reopened)"
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
-      [[ "${f}" != "${BOARD}/stories/"* ]] || merged_build "${slug}" </dev/null   # stdin is this loop's list
+      if [[ "${f}" == "${BOARD}/stories/"* ]]; then
+        merged_build "${slug}" </dev/null   # stdin is this loop's list
+        [[ -z "${CLOSE_PANE_KEPT}" ]] \
+          || echo "build kept: ${slug}'s builder pane is still open, so its worktree and story/${slug} stay; clear them once it is closed"
+      fi
       merged+=("${slug}"); merged_files+=("${f}")
     fi
   done < <(board stories; board epics)
@@ -1885,7 +1893,7 @@ drop_gone_state() {
       if [[ "${merged}" == merged ]]; then
         merged_build "${n}"
         if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
-          echo "merged: ${n}, its file already pulled off the board; it keeps its state, so the next reconcile clears its build once its builder's pane closes"
+          echo "build kept: ${n}'s builder pane is still open, so its worktree and story/${n} stay, and so does its state; the next reconcile clears them once that pane closes"
           continue
         fi
         record_event reconcile "${n}" "ok (finished)"; echo "merged: ${n}, its file already pulled off the board"
@@ -1899,13 +1907,14 @@ drop_gone_state() {
 # reads one in review (fm_gone, pr_state): merged when it is in review and every PR on its prs: line
 # merged, unread when gh cannot read one of them (said on stderr, naming it), else nothing.
 gone_merged() {
-  local url st out=merged urls
+  local url st out=merged urls slug="${1##*/}"
+  slug="${slug%.md}"
   [[ "$(fm_gone "$1" status)" == review ]] || return 0
   read -r -a urls <<< "$(fm_gone "$1" prs)"
   [[ ${#urls[@]} -gt 0 ]] || return 0
   for url in "${urls[@]}"; do
     if ! st="$(pr_state "${url}")"; then
-      echo "cannot read ${url}; $(basename "$1" .md), pulled off the board, keeps its state until reconcile can read it" >&2
+      echo "cannot read ${url}; ${slug}, pulled off the board, keeps its state until reconcile can read it; if gh never can (its repo deleted or renamed, a bad URL), remove ${BOARD_STATE_DIR}/stories/${slug}, and ${PROJECT_DIR}/.swarm/escalated/${slug} if it is there, by hand" >&2
       echo unread; return 0
     fi
     [[ "${st}" == MERGED ]] || out=""
@@ -1914,17 +1923,15 @@ gone_merged() {
 }
 
 # fm_gone <item-file> <key> — fm, also for an item a pulled commit took off a board in the repo: then
-# its board state's line for <key> (state_name), else the line in the copy that commit deleted
-# (gone_copy), or nothing.
+# its board state's value for <key> (state_name), read as state_value reads it against the copy that
+# commit deleted (gone_copy), so a later commit's value in that copy wins; else that copy's, or nothing.
 fm_gone() {
+  local copy
   [[ ! -f "$1" ]] || { fm "$1" "$2"; return; }
+  copy="$(gone_copy "$1")"
   state_name "$1" "$2"
-  # The state's line, when it has one (an empty one clears the key, as in state_value).
-  if [[ -n "${STATE_PATH}" ]] && awk -v k="$2" 'index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; f = 1; exit }
-    END { exit !f }' "${STATE_PATH}" 2>/dev/null; then
-    return 0
-  fi
-  gone_copy "$1" | get_fm - "$2"
+  if [[ -f "${STATE_PATH}" ]] && state_read "${STATE_PATH}" - "$2" <<< "${copy}" 2>/dev/null; then return 0; fi
+  get_fm - "$2" <<< "${copy}"
 }
 
 # gone_copy <item-file> — an item file missing from the main checkout as git last had it: HEAD's copy,
