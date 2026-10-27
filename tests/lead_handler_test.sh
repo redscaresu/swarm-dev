@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -76,6 +76,10 @@ board() {
     # A blocked story whose dependency, still to build, shares no file in touches with it.
     idle) story s "kind: code" "status: blocked" "depends_on: [d]" "touches: [a.sh]"
           story d "kind: code" "status: ready" "touches: [b.sh]" ;;
+    # An agent blocked on a permission prompt in pane w:p1.
+    prompt) story s "kind: code" "status: ready"; echo "w:p1 s" > "${P}/.swarm/state/tab"
+            echo '{"name":"s","agent_status":"blocked","pane_id":"w:p1"}' > "${ROOT}/agents"
+            cp "${HOME_DIR}/tests/fixtures/panes/prompt.txt" "${ROOT}/pane.txt" ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }
@@ -99,6 +103,12 @@ while IFS= read -r kind; do
     check "the wait --lead handler has an arm for ${kind}: lines" grep -qF '`'"${kind}"': ' <<< "${handler}"
   fi
 done < <(tr '|' '\n' <<< "${KINDS}")
+
+# The plan-hld arm reads grants from origin's copy (the plan worktree), after the step that makes it.
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+planarm="$(tr '\n' ' ' < "${HOME_DIR}/commands/swarm.md" | tr -s ' ' | sed -n 's/.*\(- `plan-hld <hld>`: follow\)/\1/p' | cut -c1-1200)"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the plan-hld arm reads grants from origin's copy, after /plan-hld makes its worktree" grep -qE 'Read the grants from origin.s copy of the HLD, never the main checkout.s.* once `/plan-hld` has made its plan worktree `<wt>` .* run `SWARM_PROJECT=<wt> swarm\.sh grants <hld>`' <<< "${planarm}"
 
 # The gate handler: the `gate` arm of commands/swarm.md, its lines joined. next's gate line for a later
 # epic says to write agreed: <today> as it goes active, and the arm tells the lead the same, since the

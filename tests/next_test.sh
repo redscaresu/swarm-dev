@@ -609,7 +609,7 @@ else echo "FAIL beside plan-epic the project is named idle: ${out}"; fails=$((fa
 dir="$(mktemp -d)/my proj" || { echo "mktemp -d failed" >&2; exit 1; }
 mkdir -p "${dir}" && (cd "${dir}" && git init -q && mkdir -p docs/stories .swarm/board-state/stories/a && item stories/a.md 'status: ready' 'kind: code')
 got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2>"${dir}.err"; echo "exit $?")"
-if [[ "${got}" == "story a"*"exit 0" ]] && grep -q '^warning: the idle-dependency check failed' "${dir}.err"; then echo "ok   a failed idle check warns and next still exits 0"
+if [[ "${got}" == "story a"*"exit 0" ]] && grep -q '^warning: the idle check failed' "${dir}.err"; then echo "ok   a failed idle check warns and next still exits 0"
 else echo "FAIL a failed idle check: ${got} $(cat "${dir}.err")"; fails=$((fails + 1)); fi
 (cd "${dir}" && rm -rf .swarm && item stories/a.md 'status: later' 'kind: code' && mkdir .swarm \
   && printf '%s\tk\to/r#1\tone to file\tdeclined\tcodex\tout-of-scope\n' "$(date +%F)" > .swarm/findings.tsv)
