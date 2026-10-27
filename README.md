@@ -49,10 +49,12 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
    the agreed HLD over its work lists `merge` in its `grants:`.
    With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
-   waits for you. After a merge, main is judged by the checks it requires, and any other red check
-   prints a `warning:` line. A required check that fails in GitHub Actions is rerun once; if it
-   passes then, merge prints a `flaky:` line. If main is still red, the swarm writes a story to fix
-   it and builds that first.
+   waits for you. In that mode no conductor starts until your Claude Code settings allow
+   `swarm.sh merge` (step 3 of Getting started names the rule). `swarm.sh conduct` prints the rule
+   to add, and so does `swarm.sh next` while it waits on a working conductor. After a merge, main is
+   judged by the checks it requires, and any other red check prints a `warning:` line. A required
+   check that fails in GitHub Actions is rerun once; if it passes then, merge prints a `flaky:`
+   line. If main is still red, the swarm writes a story to fix it and builds that first.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and does the
 stories no agent may: real cloud, credentials and anything hard to undo. Your steps in those are
@@ -79,8 +81,13 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name, since a shorter one can run
    a different command. After your yes, it runs `swarm.sh init`, which adds the board
    (`docs/epics/` and `docs/stories/`), `.claude/swarm/config`, and a CI workflow and pre-commit
-   hook that run `make check`. It then stops and tells you to run `claude` in the project once and
-   accept the trust prompt (step 2, if you have not).
+   hook that run `make check`. If your Claude Code settings have no rule that allows `swarm.sh merge`,
+   it names the rule and the file to add it to: `"Bash(swarm.sh merge *)"` in `permissions.allow`.
+   Without it, under `merge = agent` or an HLD that grants `merge`, Claude Code refuses every
+   `swarm.sh merge` an agent runs. Until auto mode has learned your environment, it asks you to run
+   `/auto-mode-setup` once in `claude`, so no agent's pane stops on the 'Teach auto mode' dialog, and
+   then `swarm.sh init --auto-mode-done`, which records that you did. It then stops and tells you to
+   run `claude` in the project once and accept the trust prompt (step 2, if you have not).
 4. Run `/swarm-dev:swarm` again. The first time, it asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.
@@ -110,7 +117,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | Command | What it shows |
 |---|---|
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
-| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories. |
 | `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, and how long ready work sat with no build while its conductor ran), how each model did, how well the planner guessed which stories were easy and how big, what each review round found, which agents spend GitHub's API budget, and how long local `make test` runs take by how many ran at once. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
@@ -162,6 +169,10 @@ Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
 
+On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
+`next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
+starts on one of those epics, `next` stops offering it.
+
 ## More
 
 - [The method](docs/method.md): how planning, building and merging work, in short.
@@ -173,6 +184,7 @@ by hand.
 - `make test` and `scripts/test.sh` refuse to run under codex, where `CODEX_SANDBOX` or
   `CODEX_THREAD_ID` is set.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
+- Each `swarm.sh status`, `next` and `dash` run adds a row to `.swarm/run-times.tsv`: when it started, the command, the seconds it took and the load average. A `dash --watch` adds one, for its first frame. `swarm.sh flow` reads it in its `run_times` section: per command, the runs, the median and p90 seconds, and the share that took over a minute.
 - `make test` runs each test file from its own `TMPDIR` with `SWARM_PROJECT` naming a stand-in project, and fails a file whose `swarm.sh` reaches it: one that does not source `tests/test_helpers.sh` first, and run on its own from a pane would reach the lead's real project. `swarm.sh` also refuses to act on the checkout the tests run from, or a worktree of it, while `SWARM_FORBID_PROJECT` names it, which the runner and the prelude set.
 - To cap how many `make test` runs go at once on your machine, across all projects, write a whole number to `~/.swarm/test-cap`. There is no cap by default: no file, an empty file and 0 all mean none. Each run holds a slot in `~/.swarm/test-slots/` while it goes. A run past the cap prints that it is waiting, with the PID and slot of each run ahead of it, and starts when one of them ends. The wait has no time limit: a run that is stopped (Ctrl-Z) or hung keeps its slot. To free a slot by hand, `rm -r` the slot path the message names. A `make test` that a test starts inside another run takes no slot.
 - `scripts/select-tests.sh` prints the test files that cover this branch's changes against `origin/main`,

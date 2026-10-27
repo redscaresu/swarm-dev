@@ -96,6 +96,55 @@ expect "an agreed HLD with no planned: and an epic carrying its hld: is not plan
   "item epics/e1.md 'status: later' 'hld: h'"
 if [[ "${out}" != *"plan-hld"* ]]; then echo "ok   an HLD with an epic carrying its hld: gets no plan-hld"
 else echo "FAIL an HLD with an epic carrying its hld: gets plan-hld: ${out}"; fails=$((fails + 1)); fi
+# On a board outside the repo /plan-hld writes epics in place with no PR, so an interrupted run leaves
+# epics naming the HLD and no planned:. Its marker, .swarm/<hld>/writing-epics (one slug per line, there
+# until planned: is set), is the evidence it wrote them: then it is planned again, unless work started.
+HLDEXT="${STUB_BIN}/hld-ext-board"
+OUT_HLD=("item hld/h.md 'status: agreed'" "item epics/e1.md 'status: later' 'hld: h'")
+OUT_MOVE="mv docs '${HLDEXT}' && mkdir -p .claude/swarm && echo 'board_dir = ${HLDEXT}' > .claude/swarm/config"
+OUT_MARK="mkdir -p .swarm/h && echo e1 > .swarm/h/writing-epics"
+# The decomposition answer alone, even one newer than the HLD, is no evidence the run wrote an epic.
+OUT_LEAD="mkdir -p .swarm/h && echo '{\"epics\": [{\"slug\": \"e1\"}]}' > .swarm/h/hld-lead.json && touch -t 202601010000 docs/hld/h.md"
+expect "outside the repo, epics naming the HLD, no planned: and the run's marker listing them: plan again" "plan-hld h" \
+  "${OUT_HLD[@]}" "${OUT_MARK}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, epics naming the HLD and no .swarm/<hld>/ output: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, an hld-lead answer proposing the epic but no marker: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_LEAD}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, an epic naming the HLD that the marker does not list: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_MARK}" "item epics/e2.md 'status: later' 'hld: h'" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, the run's epic agreed and built (a done story): not planned again" "done" \
+  "item hld/h.md 'status: agreed'" "item epics/e1.md 'status: active' 'hld: h'" \
+  "item stories/s1.md 'status: done' 'epic: e1'" "${OUT_MARK}" "${OUT_LEAD}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+# finish deletes a story's file on a board outside the repo, so the project's log is what says work started.
+expect "outside the repo, the run's epic built and its only story finished (file gone): not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_MARK}" \
+  "printf '2026-10-01T00:00:00Z\tconduct\te1\t-\tok\n2026-10-02T00:00:00Z\tfinish\ts1\t-\tok\n' > .swarm/events.tsv" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, an epic the marker lists finished (file gone): not planned again" "gate" \
+  "${OUT_HLD[@]}" "mkdir -p .swarm/h && printf 'e1\ne2\n' > .swarm/h/writing-epics" \
+  "printf '2026-10-02T00:00:00Z\tfinish\te2\t-\tok\n' > .swarm/events.tsv" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, a story naming the run's epic in a quoted epic: with a comment: not planned again" "gate" \
+  "${OUT_HLD[@]}" "item stories/s1.md 'status: done' 'epic: \"e1\" # built'" "${OUT_MARK}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, the run's epic split into a child epic: not planned again" "gate" \
+  "item hld/h.md 'status: agreed'" "item epics/e1.md 'status: split' 'hld: h'" \
+  "item epics/e1a.md 'status: later' 'parent: e1'" "${OUT_MARK}" "${OUT_LEAD}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, the run's epic active with no stories: the resume comes before plan-epic" "plan-hld h" \
+  "item hld/h.md 'status: agreed'" "item epics/e1.md 'status: active' 'hld: h'" "${OUT_MARK}" "${OUT_LEAD}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, a planned: HLD with the marker still there: not planned again" "gate" \
+  "item hld/h.md 'status: agreed' 'planned: 2026-10-24'" "item epics/e1.md 'status: later' 'hld: h'" "${OUT_MARK}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "inside the repo, epics naming the HLD, no planned: and the marker listing them: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_MARK}"
 # planned: with no value once quotes, brackets and a comment are gone is not planned.
 expect "planned: \"\" is not planned" "plan-hld h" \
   "item hld/h.md 'status: agreed' 'planned: \"\"'"
@@ -407,21 +456,24 @@ expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
 expect "a later epic with an empty depends_on is a gate" "gate" \
   "item epics/e1.md 'status: later' 'depends_on: []'"
-# A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
-# A shared file (another function in it counts), a needs: line, or a hold by review keeps it quiet.
+# A blocked story whose dependency shares no touches part waits for nothing it uses: next names it.
+# A shared part (the same file and first word), a needs: line naming the dependency, or a hold by
+# review keeps it quiet; another part of a shared file does not.
 # idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]
 idle_case() {
   local got=no
   expect "idle dependency, $1" "story a" \
     "item stories/a.md 'status: ready' 'kind: code' 'touches: [x.sh:f, y.sh]'" \
     "item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [$2]' ${4:+"'$4'"}"
-  grep -qxF "idle: b waits on a but shares no touches with it" <<< "${out}" && got=yes
+  grep -qxF "idle: b waits on a but shares no touches part with it and needs nothing from it" <<< "${out}" && got=yes
   if [[ "${got}" == "$3" ]]; then echo "ok   idle dependency, $1: named $3"
   else echo "FAIL idle dependency, $1: want named $3: ${out}"; fails=$((fails + 1)); fi
 }
 idle_case disjoint c.sh yes
-idle_case "shared file" x.sh:g no
-idle_case "needs line" c.sh no "needs: a.sh"
+idle_case "shared part" "x.sh:f check" no
+idle_case "shared file, other part" x.sh:g yes
+idle_case "needs names it" c.sh no "needs: a (its f)"
+idle_case "needs names another" c.sh yes "needs: a.sh"
 idle_case "held by review" c.sh no "held_by: review"
 # A multi-word kind is no kind an agent builds: it stays with the lead.
 expect "a multi-word kind stays with the lead" "gate" \
@@ -557,7 +609,7 @@ cmds="$(dirname "${SWARM}")/../commands"
 got=""
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
 {
-grep -qF '`idle: <story> waits on <dep> but shares no touches with it`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-dependency line"
+grep -qF '`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-dependency line"
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
 grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
