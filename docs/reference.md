@@ -2414,13 +2414,13 @@ waiting on a tool call's result, one waiting on a prompt, and one whose log cann
 busy, are never interrupted and wait for a later round. A builder that goes busy between the round's
 read and its restart is waited for one round (60 seconds) at most, then waits for the next, so a
 round never stalls and the paused conductors' markers stay fresh. One whose session is gone or unknown is named at once and not restarted.
-A builder also waits while its story's review agent (`review-<slug>`), which tells it findings and
-merges or hands over its PR, is a Claude agent on the old version that is not idle. The review agent
-is restarted once it is idle, as any agent is. One left on the old version (its restart failed) still
-holds its builder while it is busy. One still busy at the end of the wait is named as
-left, and so is its builder, with the reason `its review agent review-<slug> stayed busy`. A codex
-review agent holds nothing. A restart
-sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
+A builder also waits while its story's review agent (`review-<slug>`), which reviews its PR, is a
+Claude agent on the old version that is not idle. The review agent is restarted once it is idle, as
+any agent is. One left on the old version (its restart failed) still holds its builder while it is
+busy. One still busy at the end of the wait is named as left, and so is its builder, with the reason
+`its review agent review-<slug> stayed busy`; so is a builder its review agent held in the last
+round, though that agent reads idle by the end. A codex review agent holds nothing.
+A restart sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
 <session>` with the flags its claude ran with (`herdr pane process-info`; the session from `herdr

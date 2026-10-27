@@ -3195,7 +3195,8 @@ UPGRADE_GRACE_MS="${SWARM_UPGRADE_GRACE_MS:-300000}"
 # per project. UPGRADE_DIR: that run's own records, a file per agent name: epic- (upgrade_epic), hand-
 # (its handover file), asked- (prompt or note), ready- (idle with its handover in, this round), done-
 # (moved, or a conductor already on the version told to carry on), left- (left on its old version),
-# kept- (already on the version, with a problem), busy- (busy when its restart came), hint- (how to
+# kept- (already on the version, with a problem), busy- (busy when its restart came), rheld- (the
+# review-agent hold that kept a builder back in its last round, upgrade_hold's), hint- (how to
 # resume it, while a restart is under way); summary, the lines it prints at the end; and why, a failed
 # restart's. UPGRADE_SAID: how upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's
 # agent list, read once per round (upgrade_herdr). UPGRADE_WANT and UPGRADE_NEW: the run's agents
@@ -3412,7 +3413,7 @@ upgrade_status() {
 # rather than as one with nothing left to move. A conductor paused here that a good list no longer
 # holds is left.
 upgrade_round() {
-  local list name pane role cur e st rc f olds=" " held=" " waits="" fresh=""
+  local list name pane role cur e h st rc f olds=" " held=" " waits="" fresh=""
   upgrade_reread "$1" "$2" || return 1
   list="$(upgrade_open < "${UPGRADE_DIR}/list")"
   while IFS=$'\t' read -r name pane role cur; do
@@ -3435,9 +3436,12 @@ upgrade_round() {
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
-    case "$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")" in
+    h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
+    rm -f "${UPGRADE_DIR}/rheld-${name}"
+    case "${h}" in
       left) upgrade_left "${name}" "$(upgrade_held_why "${e}" left)"; continue ;;
-      wait|review\ *) held+="${e} "; continue ;;
+      wait) held+="${e} "; continue ;;
+      review\ *) echo "${h}" > "${UPGRADE_DIR}/rheld-${name}"; held+="${e} "; continue ;;
     esac
     st="$(upgrade_state "${name}" "${pane}")"
     case "${st}" in
@@ -3527,6 +3531,7 @@ upgrade_end() {
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
     h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
+    [[ -n "${h}" ]] || h="$(cat "${UPGRADE_DIR}/rheld-${name}" 2>/dev/null)" || h=""   # held by it in the last round
     if [[ -z "${h}" ]]; then upgrade_left "${name}" "still busy at the end of the wait"
     else upgrade_left "${name}" "$(upgrade_held_why "${e}" "${h}")"; fi
   done <<< "${list}"
@@ -3587,8 +3592,8 @@ upgrade_epic() {
 # was left (or kept) with no handover, wait while the conductor is in <list> (upgrade_list, not yet
 # moved) and not idle with its handover in this round (ready-); else, as when the conductor left
 # herdr's list (gone-), so none is left to act on them, `review <reviewer>` while the builder's
-# review agent (upgrade_reviewer), which tells it and merges its PR, is busy (upgrade_review_busy),
-# left or not; else nothing.
+# review agent (upgrade_reviewer), which reviews its PR, is busy (upgrade_review_busy), left or not;
+# else nothing.
 upgrade_hold() {
   local c
   if [[ "$1" != - ]]; then
@@ -3619,7 +3624,7 @@ upgrade_reviewer() {
 
 # upgrade_review_busy <reviewer> — succeed while <reviewer> is in the run's last read of its agents
 # (list, a Claude agent) on its old version, not moved since, and neither idle nor gone (upgrade_state).
-# One left on its old version still holds: it still tells its builder and merges. A codex review agent
+# One left on its old version still holds: it is still reviewing its builder's PR. A codex review agent
 # is in no list, so it holds nothing.
 upgrade_review_busy() {
   local name pane role cur

@@ -607,6 +607,12 @@ review_b1 busy
 WAIT_MS=300 upgrade e
 check "a review agent busy past the wait is left and named, and holds its idle builder, named for it" "1|1|1|" \
   "${rc}|$(grep -cx 'review-b1: left on 0.21.0: still busy at the end of the wait' "${H}/out")|$(grep -cx 'b1: left on 0.21.0: its review agent review-b1 stayed busy' "${H}/out")|$(calls 'agent start')"
+# A review agent busy through the one round that reads idle at the end, from Claude Code's 6th read
+# on, still names idle b1, which it held.
+review_b1 busy; echo '5 s/"sr","status":"busy"/"sr","status":"idle"/' > "${H}/flip"
+WAIT_MS=1 upgrade e
+check "a builder its review agent held in the last round is named for it, though that agent reads idle at the end" "1|1|" \
+  "${rc}|$(grep -cx 'b1: left on 0.21.0: its review agent review-b1 stayed busy' "${H}/out")|$(calls 'agent start')"
 # A review agent left on its old version (it could not be told the new path) that then goes busy
 # still holds b1, busy at first and idle from then on.
 review_b1 idle; sed -i.bak 's/"s1","status":"idle"/"s1","status":"busy"/' "${H}/claude.json"; touch "${H}/promptfail"
