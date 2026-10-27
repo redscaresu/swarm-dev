@@ -226,8 +226,12 @@ rm -rf "${project}/.git"
 
 # A plan PR that closed unmerged: the real swarm.sh board-pr done, in a project of its own with a
 # local bare origin and a gh stub listing ${root}/prs, clears its critic's answer, so the hook no
-# longer counts that plan as drafted. The run() above checks the project it names.
+# longer counts that plan as drafted; a merged plan PR, a start with no PR, a name that is no plan and
+# an answer newer than the branch's tip (a re-plan) keep it. The run() above checks the project it
+# names. SWARM_SLEEP_SCALE=1 gives the hook a 45 s deadline, so a slow machine cannot turn a block
+# into an allow.
 lead_project="${project}" project="${root}/bp"
+export SWARM_SLEEP_SCALE=1
 mkdir -p "${project}/.claude/swarm" "${project}/docs/epics" "${project}/docs/hld" "${root}/bp-bin"
 : > "${project}/.claude/swarm/config"
 echo .swarm/ > "${project}/.gitignore"
@@ -238,35 +242,72 @@ g init -q -b main && g add -A && g commit -q -m init && g remote add origin "${r
 # shellcheck disable=SC2016 # $1 and $2 are the stub's
 printf '#!/usr/bin/env bash\ncase "$1 $2" in "pr list") cat "%s" ;; *) exit 1 ;; esac\n' "${root}/prs" > "${root}/bp-bin/gh"
 chmod +x "${root}/bp-bin/gh"
-# bpr <args> — the real swarm.sh board-pr on this project; its exit status in bpr_rc.
+# bpr <args> — the real swarm.sh board-pr on this project; its exit status in bpr_rc, stdout in bpr_out.
 bpr() {
   bpr_rc=0
-  (cd "${project}" && env -u HERDR_PANE_ID PATH="${root}/bp-bin:${PATH}" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
-    GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$(dirname "${HOOK}")/../bin/swarm.sh" board-pr "$@" >/dev/null 2>&1) || bpr_rc=$?
+  bpr_out="$(cd "${project}" && env -u HERDR_PANE_ID PATH="${root}/bp-bin:${PATH}" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
+    GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$(dirname "${HOOK}")/../bin/swarm.sh" board-pr "$@" 2>/dev/null)" || bpr_rc=$?
 }
-# closed_plan <step> <name> <subject> — a plan drafted on board/<name>, reported (the critic's answer
-# in .swarm/<subject>), its PR closed unmerged, then board-pr done.
-closed_plan() {
-  local wt="${root}/bp-wt/_board-$2"
-  bpr start "$2"
-  echo plan > "${wt}/docs/plan.md"; git -C "${wt}" add -A; git -C "${wt}" -c user.name=t -c user.email=t@t commit -q -m plan
-  mkdir -p "${project}/.swarm/$3"; echo '{}' > "${project}/.swarm/$3/critic.json"
-  printf '[{"state":"CLOSED","headRefOid":"%s"}]\n' "$(g rev-parse "board/$2")" > "${root}/prs"
-  bpr "done" "$2"
+# plan_pr <name> <subject> <state> [<commit date>] — board-pr start <name>; unless <state> is NONE (a
+# start abandoned with no PR), a plan committed on board/<name> (at <commit date>, else now) and its
+# one PR in <state> on that tip; the critic's answer in .swarm/<subject>, dated 2022 (after the board's
+# files, before a commit made now); then board-pr done <name>.
+plan_pr() {
+  local wt="${root}/bp-wt/_board-$1"
+  bpr start "$1"
+  echo '[]' > "${root}/prs"
+  if [[ "$3" != NONE ]]; then
+    echo plan > "${wt}/docs/plan.md"; git -C "${wt}" add -A
+    ( [[ -z "${4:-}" ]] || export GIT_COMMITTER_DATE="$4"; git -C "${wt}" -c user.name=t -c user.email=t@t commit -q -m plan )
+    printf '[{"state":"%s","headRefOid":"%s"}]\n' "$3" "$(g rev-parse "board/$1")" > "${root}/prs"
+  fi
+  mkdir -p "${project}/.swarm/$2"; echo '{}' > "${project}/.swarm/$2/critic.json"
+  touch -t 202201010000 "${project}/.swarm/$2/critic.json"
+  bpr "done" "$1"
 }
 export STUB_BOARD="${project}/docs"
 mkdir -p "${project}/.swarm/x"; echo '{}' > "${project}/.swarm/x/critic.json"
 STUB_NEXT="plan-epic x" run "lead-stop plan-epic allowed"
 check "plan-epic with a reported plan and no board PR yet allows" [ -z "${out}" ]
-closed_plan plan-epic scope-x x
+
+plan_pr scope-x x CLOSED
 check "board-pr done scope-x after its PR closed exits 0" [ "${bpr_rc}" -eq 0 ]
+check "and names the critic's answer it removed" \
+  [ "${bpr_out}" = "removed ${root}/bp-wt/_board-scope-x, board/scope-x and .swarm/x/critic.json" ]
 STUB_NEXT="plan-epic x" run "lead-stop plan-epic blocked"
 check "plan-epic after its plan PR closed and board-pr done blocks" blocked "plan-epic x"
-closed_plan plan-hld plan-h h
+plan_pr plan-h h CLOSED
 check "board-pr done plan-h after its PR closed exits 0" [ "${bpr_rc}" -eq 0 ]
 STUB_NEXT="plan-hld h" run "lead-stop plan-hld blocked"
 check "plan-hld after its plan PR closed and board-pr done blocks" blocked "plan-hld h"
-project="${lead_project}"; export STUB_BOARD="${project}/docs"
+
+plan_pr scope-x x MERGED
+check "board-pr done scope-x after its PR merged exits 0" [ "${bpr_rc}" -eq 0 ]
+check "and names no critic's answer" [ "${bpr_out}" = "removed ${root}/bp-wt/_board-scope-x and board/scope-x" ]
+STUB_NEXT="plan-epic x" run "lead-stop plan-epic allowed"
+check "plan-epic after its plan PR merged and board-pr done still allows" [ -z "${out}" ]
+plan_pr scope-x x NONE
+check "board-pr done scope-x on a start with no PR exits 0" [ "${bpr_rc}" -eq 0 ]
+STUB_NEXT="plan-epic x" run "lead-stop plan-epic allowed"
+check "plan-epic after board-pr done on a start with no PR still allows" [ -z "${out}" ]
+plan_pr scope-x x CLOSED 2021-01-01T00:00:00
+check "board-pr done scope-x on a closed PR older than the answer exits 0" [ "${bpr_rc}" -eq 0 ]
+STUB_NEXT="plan-epic x" run "lead-stop plan-epic allowed"
+check "plan-epic with a re-plan's answer newer than the closed PR's tip still allows" [ -z "${out}" ]
+plan_pr scope-creep creep CLOSED
+check "board-pr done scope-creep (no epic creep: no plan) keeps .swarm/creep/critic.json" \
+  [ "${bpr_rc}" -eq 0 -a -f "${project}/.swarm/creep/critic.json" ]
+
+# An epic y on origin that the main checkout has not pulled: the PR's worktree, which board-pr start
+# makes from origin, names it, so scope-y is a plan PR.
+git clone -q "${root}/bp-origin.git" "${root}/bp-clone"
+echo "# y" > "${root}/bp-clone/docs/epics/y.md"
+git -C "${root}/bp-clone" add -A && git -C "${root}/bp-clone" -c user.name=t -c user.email=t@t commit -q -m y \
+  && git -C "${root}/bp-clone" push -q origin main
+plan_pr scope-y y CLOSED
+check "board-pr done scope-y, an epic only on origin, removes .swarm/y/critic.json" \
+  [ "${bpr_rc}" -eq 0 -a ! -e "${project}/.swarm/y/critic.json" -a ! -e "${project}/docs/epics/y.md" ]
+project="${lead_project}"; export STUB_BOARD="${project}/docs" SWARM_SLEEP_SCALE=0.05
 
 agents conduct-e safer working
 STUB_NEXT="collect conduct-e" run "lead-stop collect blocked"
