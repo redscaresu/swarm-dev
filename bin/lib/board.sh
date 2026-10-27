@@ -439,7 +439,8 @@ idle_now() {
 idle_warned() {
   local out
   out="$(idle_now 2>/dev/null)" || { echo "warning: the idle-dependency check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
-  printf '%s\n' ${out:+"${out}"}
+  # printf with no argument still prints its format once, a blank line: so a check with no line prints nothing.
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
 }
 
 # idle_lines <step> — what next prints after its step <step>: capacity no step uses. idle_now's
