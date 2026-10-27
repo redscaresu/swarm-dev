@@ -255,7 +255,7 @@ check "a CRLF .gitignore with every line is left as it is" "${crlf}" "$(cksum < 
 q="${ROOT}/claude-rule"; "${GIT[@]}" init -q "${q}"; mkdir -p "${CLAUDE_CONFIG_DIR}" "${q}/.claude"
 S_USER="${CLAUDE_CONFIG_DIR}/settings.json" S_PROJ="${q}/.claude/settings.json" S_LOCAL="${q}/.claude/settings.local.json"
 printf '{"projects": {}}\n' > "${CLAUDE_CONFIG_DIR}/.claude.json"
-STEP="Your step: add \"Bash(swarm.sh merge *)\" to permissions.allow in ${S_USER}. Under merge = agent, Claude Code refuses conductors every merge without it, and you merge each PR by hand."
+STEP="Your step: add \"Bash(swarm.sh merge *)\" to permissions.allow in ${S_USER}. Under merge = agent, or an HLD that grants merge, Claude Code refuses every swarm.sh merge an agent runs without it, and you merge each PR by hand."
 TOKEN=ghp_initTestToken0123456789
 # sums — the checksum of each settings file and .claude.json under the stub config dir and the project.
 sums() { find "${CLAUDE_CONFIG_DIR}" "${q}/.claude" \( -name 'settings*.json' -o -name .claude.json \) -type f -exec cksum {} + | LC_ALL=C sort; }
@@ -280,15 +280,32 @@ check "with no rule that lets swarm.sh merge run, init names the rule, the user'
 rule_init local '{"permissions": {"allow": ["Bash(git status)"]}}' '{"permissions": {"allow": []}}' '{"permissions": {"allow": ["Bash(swarm.sh merge *)"]}}'
 check "with the rule only in .claude/settings.local.json, init prints no merge-rule step" "no" \
   "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
-rule_init split '{"permissions": {"allow": ["Bash(swarm.sh merge --head *)"]}}' "" '{"permissions": {"allow": ["Bash(swarm.sh merge --board *)"]}}'
-check "a --head rule in one file and a --board rule in another count as the rule together" "no" \
+rule_init split '{"permissions": {"allow": ["Bash(swarm.sh merge --head *)", "Bash(swarm.sh merge --release *)"]}}' "" '{"permissions": {"allow": ["Bash(swarm.sh merge --board *)", "Bash(swarm.sh merge https://*)"]}}'
+check "a rule for each form, split across two files, counts as the rule together" "no" \
   "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
+rule_init no-release '{"permissions": {"allow": ["Bash(swarm.sh merge --head *)", "Bash(swarm.sh merge --board *)", "Bash(swarm.sh merge https://*)"]}}' "" ""
+no_release="$(has "${out}" "${STEP}")"
+rule_init no-plain '{"permissions": {"allow": ["Bash(swarm.sh merge --*)"]}}' "" ""
+check "rules that let --head and --board through but not the lead's --release, or not its plain form, print the step" "yes|yes" \
+  "${no_release}|$(has "${out}" "${STEP}")"
+rule_init one-pr '{"permissions": {"allow": ["Bash(swarm.sh merge */pull/1)"]}}' "" ""
+one_pr="$(has "${out}" "${STEP}")"
+rule_init one-sha '{"permissions": {"allow": ["Bash(swarm.sh merge --head 0123abc *)", "Bash(swarm.sh merge --release --head 0123abc *)", "Bash(swarm.sh merge --board *)", "Bash(swarm.sh merge https://*)"]}}' "" ""
+check "rules tied to one PR number, or to one head SHA, print the step" "yes|yes" "${one_pr}|$(has "${out}" "${STEP}")"
+rule_init broad '{"permissions": {"allow": ["Bash", "Bash(*)"]}}' "" ""
+check "Bash and Bash(*) alone, which auto mode sets aside, print the step" "yes" "$(has "${out}" "${STEP}")"
 rule_init legacy "" '{"permissions": {"allow": ["Bash(swarm.sh merge:*)"]}}' ""
 check "the older :* form in .claude/settings.json counts as the rule" "no" \
   "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
 rule_init token "{\"env\": {\"GITHUB_TOKEN\": \"${TOKEN}\"}, \"permissions\": {\"allow\": [\"Bash(curl -u ${TOKEN} *)\"]}}" "{\"env\": {\"API_KEY\": \"${TOKEN}\"" ""   # vacuous-test: ok, the project's file is not JSON on purpose
 check "a settings file's env token never reaches init's output, and a broken file counts as no rule" "yes|no" \
   "$(has "${out}" "${STEP}")|$(grep -qF "${TOKEN}" <<< "${out}" && echo yes || echo no)"
+# A rule scoped to the project's own GitHub repo counts; its origin/HEAD is cached, so init asks no network.
+"${GIT[@]}" -C "${q}" commit -q --allow-empty --no-verify -m seed && git -C "${q}" remote add origin https://github.com/acme/widgets.git
+git -C "${q}" update-ref refs/remotes/origin/main HEAD && git -C "${q}" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+rule_init repo '{"permissions": {"allow": ["Bash(swarm.sh merge --* https://github.com/acme/widgets/pull/*)", "Bash(swarm.sh merge https://github.com/acme/widgets/pull/*)"]}}' "" ""
+check "a rule scoped to the project's GitHub origin counts as the rule" "no" \
+  "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
 check "init changes no settings file and adds none" "" "${changed}"
 
 # --- Refusals: a subdirectory names the root; outside git names that.

@@ -1975,18 +1975,24 @@ and any gh error or answer it cannot read is a refusal. It merges with the repo'
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
 after the check stops the merge. It never passes `--auto`, except to join a merge queue (below). It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).
 
-**init's Claude Code checks.** A conductor's `swarm.sh merge` runs only when a `permissions.allow`
-rule in Claude Code's settings allows it. Without one, Claude Code refuses the conductor every merge
-under `merge = agent`. In v0.28.0 that left 8 approved PRs for the user to merge by hand.
-`swarm.sh init` reads `permissions.allow` in three files: your settings (`settings.json` under
-`CLAUDE_CONFIG_DIR`, or `~/.claude/settings.json`), and the project's `.claude/settings.json` and
-`.claude/settings.local.json`. The rules count when, taken together, they allow both forms a
-conductor runs, `swarm.sh merge --head <sha> <PR URL>` and `swarm.sh merge --board <PR URL>`. One rule
-that covers both is `Bash`, `Bash(swarm.sh merge *)`, the older `Bash(swarm.sh merge:*)`, or a wider
-pattern such as `Bash(swarm.sh *)`. When they do not, init names the files it read and prints your step: add
-`"Bash(swarm.sh merge *)"` to `permissions.allow` in your settings file, which it names. A file that
-is missing or is not JSON counts as having no rule. init reads nothing else in these files, since
-they can hold tokens under `env`, and it never writes them or `~/.claude.json`.
+**init's Claude Code checks.** An agent's `swarm.sh merge` runs only when a `permissions.allow`
+rule in Claude Code's settings allows it. Without one, under `merge = agent` or an HLD that grants
+`merge`, Claude Code refuses every `swarm.sh merge` an agent runs. In v0.28.0 that left 8 approved
+PRs for the user to merge by hand. `swarm.sh init` reads `permissions.allow` in three files: your
+settings (`settings.json` under `CLAUDE_CONFIG_DIR`, or `~/.claude/settings.json`), and the
+project's `.claude/settings.json` and `.claude/settings.local.json`. It pools their rules and checks
+every form an agent runs, on two PR numbers and head SHAs of the project's GitHub origin, so a rule
+tied to one PR or SHA does not count: a conductor's
+`swarm.sh merge --head <sha> <PR URL>` and `swarm.sh merge --board <PR URL>`, and the lead's
+`swarm.sh merge --release --head <sha> <PR URL>` and `swarm.sh merge <PR URL>`. One rule that covers
+them all is `Bash(swarm.sh merge *)`, the older `Bash(swarm.sh merge:*)`, or a wider one such as
+`Bash(swarm.sh *)`. `Bash` alone and `Bash(*)` do not count: agents run in auto mode, which sets
+such broad rules aside. When the rules miss a form, init names the files it read and prints your
+step: add `"Bash(swarm.sh merge *)"` to `permissions.allow` in your settings file, which it names. A
+file that is missing or is not JSON counts as having no rule. init reads only these allow lists, so
+a deny or ask rule, or managed settings, can still block a merge it found allowed. It reads nothing
+else in these files, since they can hold tokens under `env`, and it never writes them or
+`~/.claude.json`.
 
 **Merge queue.** With `merge_admin` off, `merge` asks GitHub whether the base has a merge queue
 (GraphQL `repository.mergeQueue(branch:)`, which covers a ruleset's `merge_queue` rule and classic

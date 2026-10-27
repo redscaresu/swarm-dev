@@ -1927,8 +1927,8 @@ init_config() {
 }
 
 # MERGE_RULE: the Claude Code permissions.allow rule that lets an agent run swarm.sh merge as the
-# conductor's brief writes it. Without one, Claude Code refuses a conductor every merge (v0.28.0: the
-# user merged 8 approved PRs by hand).
+# conductor's and the lead's briefs write it. Without one, Claude Code refuses an agent every merge
+# (v0.28.0: the user merged 8 approved PRs by hand).
 MERGE_RULE='Bash(swarm.sh merge *)'
 
 # claude_settings — the Claude Code settings files that can hold MERGE_RULE, one per line: the user's
@@ -1939,22 +1939,31 @@ claude_settings() {
   echo "${PROJECT_DIR}/.claude/settings.local.json"
 }
 
-# merge_allowed — true when the permissions.allow rules in claude_settings, taken together as Claude
-# Code takes them, let both forms of swarm.sh merge a conductor runs (--head and --board) through: Bash,
-# or Bash(<command>) with * for any text and the older :* suffix. It reads only that list and prints
-# nothing: these files can hold tokens under env. A missing or broken file counts as no rule. It writes
-# no file.
+# merge_allowed — true when the permissions.allow lists of the claude_settings files, pooled, let
+# through every form of swarm.sh merge an agent runs: --head and --board (a conductor), --release
+# --head and the plain form (the lead), each on two PRs and SHAs of the project's GitHub origin (o/r
+# with none), so a rule tied to one PR or SHA does not count.
+# A rule is Bash(<command>), with * for any text and the older :* suffix. Bash alone, or a pattern of
+# only *, does not count: agents run in auto mode, which sets such broad rules aside. It reads only
+# those allow lists, so a deny or ask rule, or managed settings, can still block a merge it passes.
+# It prints nothing (these files can hold tokens under env) and writes no file. A missing or broken
+# file counts as no rule.
 merge_allowed() {
+  local origin
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || origin=""
   claude_settings | python3 -I -c '
 import json, re, sys
-CMDS = ("swarm.sh merge --head 0123abc https://github.com/o/r/pull/1", "swarm.sh merge --board https://github.com/o/r/pull/1")
+m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/*$", sys.argv[1])
+prs = "https://github.com/%s/%s/pull/" % (m.groups() if m else ("o", "r"))
+FORMS = ("--head {0} ", "--board ", "--release --head {0} ", "")
+CMDS = ["swarm.sh merge %s%s%d" % (f.format(sha), prs, n) for sha, n in (("0123abc", 1), ("fedcba9", 98765)) for f in FORMS]
 def allows(rule, cmd):
-    if rule == "Bash":
-        return True
     m = re.fullmatch(r"Bash\((.*)\)", rule, re.S) if isinstance(rule, str) else None
     if not m:
         return False
     pat = m.group(1)[:-2] + "*" if m.group(1).endswith(":*") else m.group(1)
+    if not pat.strip("*"):
+        return False
     return re.fullmatch(".*".join(re.escape(p) for p in pat.split("*")), cmd, re.S) is not None
 rules = []
 for f in sys.stdin.read().splitlines():
@@ -1963,7 +1972,7 @@ for f in sys.stdin.read().splitlines():
     except (OSError, ValueError, LookupError, TypeError):
         continue
     rules += allow if isinstance(allow, list) else []
-sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)'
+sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)' "${origin}"
 }
 
 # init_claude — the Claude Code setting only the user can add: when merge_allowed finds no rule, the
@@ -1976,7 +1985,7 @@ init_claude() {
     files+="${files:+, }${f#"${PROJECT_DIR}/"}"
   done < <(claude_settings)
   echo "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${files})."
-  echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, Claude Code refuses conductors every merge without it, and you merge each PR by hand."
+  echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, or an HLD that grants merge, Claude Code refuses every swarm.sh merge an agent runs without it, and you merge each PR by hand."
 }
 
 # init_project — set the project up from the installed plugin, from its git root: the board templates
