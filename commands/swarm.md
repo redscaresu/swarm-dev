@@ -353,7 +353,9 @@ Repeat until a step below says stop:
      when it exits 0, then go back to 1; if it does not, or merge refuses, tell the user what it
      printed and stop. Under `merge = human` with no `merge` grant, it is the user's: stop.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
-     that is the user's decision: stop and wait for it. On approval, finish the command and go on.
+     that is the user's decision: wait for it. Before you stop, start the next independent epic's
+     plan, as the planning rule under "Three more rules for the lead" says; stop once no other
+     plan can start. On approval, finish the command and go on.
      When its why says a `later` epic's dependencies are done (offered before the gate), run it
      unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`, so `next` offers it no more:
      the gate lists it as planned unasked, and with no stories yet says to run `/plan-epic <epic>`
@@ -523,30 +525,41 @@ is the user's to merge whatever the grant says. Never give a `lead` story to an 
 Three more rules for the lead:
 
 - Plan epics whose plans do not depend on each other at the same time, not one after another.
-  `next` offers one `plan-epic` at a time, so run `/plan-epic <epic>` for each independent epic at
-  once, each in its own pane. When one epic must come before another, put that order in a story's
-  `depends_on` once the other epic's plan exists. Make the edit in a board PR with
-  `swarm.sh board-pr`, as for every board edit of yours.
+  Do not wait for one epic's approval or build before planning the next independent one: once a
+  plan's agents have finished and it waits for the user's approval, start the next independent
+  epic's `/plan-epic <epic>`. Never run two plans' agents at once: they share agent names and brief
+  files, so the second plan's agents fail to start. When one epic must come before another, put
+  that order in a story's `depends_on` once the other epic's plan exists. Make the edit in a board
+  PR with `swarm.sh board-pr`, as for every board edit of yours.
 - Restart an agent at its first `Request timed out` or API-error stop that its own retries did not
   clear. `wait` telling it to carry on counts as its retries, so a `stuck: api error` line is
-  that stop. The route depends on the agent:
+  that stop. With `goal` on, a builder is never restarted: its conductor closes it
+  `cleared-on-error`, which holds the story for you. The route depends on the agent:
   - A builder of a ready story: `herdr pane close <pane>` if herdr still lists it (`swarm.sh restart`
     refuses a listed builder), then `swarm.sh restart <slug>`.
   - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so send
     `swarm.sh tell <slug> nudge <file>`.
   - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
-  - A planner or co-author: run its command again.
-  - A conductor: `swarm.sh close conduct-<epic>`, then the same `swarm.sh conduct <epic>` or
-    `swarm.sh conduct --backlog` that started it.
+  - A planner or co-author: `swarm.sh close <agent>`, since its name stays taken while its pane
+    shows it working, then run its command again.
+  - A conductor: copy whichever of `.swarm/inbox/<conductor>.reading.md` and
+    `.swarm/inbox/<conductor>.md` exist into one file aside, since a new conductor deletes both.
+    Then `swarm.sh close <conductor>`, then the same `swarm.sh conduct <epic>` or
+    `swarm.sh conduct --backlog` that started it. If you saved any notes, send the copy again with
+    `swarm.sh tell <conductor> note <copy>`. `<conductor>` is its agent name as `next` or `status`
+    prints it: `conduct-<epic>`, or `conduct-backlog-<dir>-<hash>` for the backlog's.
 
   `swarm.sh restart` and `swarm.sh conduct` take no brief and write their own prompt. Once the agent
-  is back, tell it to write its output as it goes: `swarm.sh tell <slug> nudge <file>` for a builder,
-  `swarm.sh tell conduct-<epic> note <file>` for a conductor. A planner or co-author gets no such
+  is back, tell it to write its output as it goes. A builder comes back working, and `tell` refuses a
+  working builder, so run `swarm.sh wait <slug>` in the background first and send
+  `swarm.sh tell <slug> nudge <file>` once it returns idle. A conductor's
+  `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets no such
   note.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
-  `swarm.sh status` or `swarm.sh dash`, never from a pane read alone. Both show `working <N>m` or
-  `stalled <N>m` and act on nothing. A planner or conductor has no PR, and the `stall_minutes` check
-  also counts worktree commits, edits, session-log activity and a running suite. Do not use
+  `swarm.sh status` or `swarm.sh dash`, never from a pane read alone. `dash` shows `working <N>m` or
+  `stalled <N>m`, `status` shows the agent's state, and neither acts on anything. A planner or
+  conductor has no PR, and the `stall_minutes` check also counts worktree commits, edits,
+  session-log activity and a running suite. Do not use
   `swarm.sh wait --stall` as a check: it blocks, nudges and resumes the agent, and can step a build up.
 
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.
