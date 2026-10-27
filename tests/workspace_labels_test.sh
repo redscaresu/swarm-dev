@@ -92,12 +92,12 @@ json.dump(s, open(f, "w"))
 EOF
 }
 
-A="${ROOT}/a/app"; B="${ROOT}/b/app"; C="${ROOT}/c/web"
-for p in "${A}" "${B}" "${C}"; do
+A="${ROOT}/a/app"; B="${ROOT}/b/app"; C="${ROOT}/c/web"; E="${ROOT}/e/cart"
+for p in "${A}" "${B}" "${C}" "${E}"; do
   mkdir -p "${p}/.claude/swarm" "${p}/docs/stories" "${p}/docs/epics"; : > "${p}/.claude/swarm/config"
   git -C "${p}" init -q
   : > "${p}/docs/stories/README.md"
-  for e in x y keep old r z; do printf -- '---\nstatus: active\n---\n\n# %s\n' "${e}" > "${p}/docs/epics/${e}.md"; done
+  for e in x y keep old r z x2; do printf -- '---\nstatus: active\n---\n\n# %s\n' "${e}" > "${p}/docs/epics/${e}.md"; done
 done
 run() { local p="$1"; shift; (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 # conduct <project> <epic>|--backlog — start its conductor, then mark it finished (herdr renames it
@@ -138,6 +138,24 @@ check "a bare-label workspace whose cwd is the project is reused, and none is ma
 a_old="$(conduct "${A}" old)"
 check "a bare-label workspace whose cwd is another project is not taken: <project> · old is made" "app${SEP}old|yes" \
   "${a_old%|*}|$([[ "${a_old#*|}" != "${old_ws}" ]] && echo yes || echo no)"
+
+# --- A bare-label workspace an older swarm.sh shared: its first pane is the project's, but another
+# project's pane is in it too, so it is not reused.
+seed x2 "${A}" "${C}"
+x2_ws="$(herdr_q "next(w['workspace_id'] for w in s['workspaces'] if w['label'] == 'x2')")"
+a_x2="$(conduct "${A}" x2)"
+check "a bare-label workspace that also holds another project's pane is not reused: <project> · x2 is made" "app${SEP}x2|yes" \
+  "${a_x2%|*}|$([[ "${a_x2#*|}" != "${x2_ws}" ]] && echo yes || echo no)"
+
+# --- The conductor's tab record still lists a live pane (a retired conductor's) in a bare backlog
+# workspace another project's pane heads: the conductor opens in its own new workspace, not beside it.
+e_name="$(run "${E}" _conductor backlog)"
+seed backlog "${C}" "${E}"
+old_bl="$(herdr_q "[w['workspace_id'] for w in s['workspaces'] if w['label'] == 'backlog'][-1]")"
+mkdir -p "${E}/.swarm/state"; echo "${old_bl}:p01 ${e_name}-done" > "${E}/.swarm/state/${e_name}"
+e_b="$(conduct "${E}" --backlog)"
+check "a conductor whose tab record lists a live pane in another workspace opens in its own, cart · backlog" "cart${SEP}backlog|yes" \
+  "${e_b%|*}|$([[ "${e_b#*|}" != "${old_bl}" ]] && echo yes || echo no)"
 
 # --- A project's workspace under its hashed label is still its own once the plain one is free:
 # with only a/app's own app · ... workspaces, a/app's label is app, and it still finds this one.

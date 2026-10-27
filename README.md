@@ -125,14 +125,16 @@ lists them all.
 
 ### Workspace labels
 
-Every herdr workspace swarm.sh opens is labelled with the project first, so two swarms on one
-machine never share one:
+Every herdr workspace swarm.sh opens for a conductor is labelled with the project first:
 
 - `<project> · <epic>`: an epic's conductor and its builders.
 - `<project> · backlog`: the backlog conductor and the one-off stories it builds.
 
 `<project>` is the project folder's name, with a short hash of its path after it when another folder
-of the same name already has a workspace ([reference.md § Building](docs/reference.md#building)).
+of the same name already has a workspace. A conductor reuses a workspace only when its panes say it
+is this project's. Two folders of the same name can still get the same label: when both start a
+conductor at the same moment, or when one sits in a folder whose name ends in `-wt`
+([reference.md § Building](docs/reference.md#building)).
 
 ## Cost and safety
 

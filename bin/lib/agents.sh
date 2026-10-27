@@ -184,7 +184,9 @@ else:
   esac
 }
 
-# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
+# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed. With
+# NEXT_PANE_WS set (a conductor's start), a tab whose recorded panes are in another workspace has no
+# room, so the pane opens in that workspace.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
 prune_dead_panes() {
@@ -201,6 +203,10 @@ next_pane() {
     state="${STATE_DIR}/${tab_label}"
     [[ -f "${state}" ]] && prune_dead_panes "${state}"
     count=0; [[ -f "${state}" ]] && count=$(wc -l < "${state}" | tr -d ' ')
+    if [[ -n "${NEXT_PANE_WS:-}" && ${count} -gt 0 ]]; then
+      pane="$(awk 'NR == 1 { print $1 }' "${state}")"
+      [[ "${pane%%:*}" == "${NEXT_PANE_WS}" ]] || count=${PANES_PER_TAB}
+    fi
     if [[ ${count} -lt ${PANES_PER_TAB} ]]; then
       if [[ ${count} -eq 0 ]]; then
         pane=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID}" --cwd "${cwd}" --label "${tab_label}" --no-focus \

@@ -733,8 +733,15 @@ directory is that of its first pane in `herdr pane list`, the conductor's or a r
 builder's pane in the project's own story worktree (`<project>-wt/<slug>`) counts as the project's;
 one in any other repo's (`<repo>-wt/<slug>`) is skipped, since its path does not say whose it is. `conduct` takes a
 workspace only when its directory is the project's: one under either form of the project's label, or
-one under the bare `<epic>` or `backlog` label an older swarm.sh gave, so a conductor started before
-the upgrade keeps its workspace and never takes another project's. Otherwise it makes a new one.
+one under the bare `<epic>` or `backlog` label an older swarm.sh gave with no other project's pane in
+it, so a conductor started before the upgrade keeps its workspace and never takes one another project
+shares. Otherwise it makes a new one. When the conductor's tab record still lists a live pane in
+another workspace (a retired conductor's, in a workspace an older swarm.sh shared), the conductor
+opens a tab `<tab>-2` in its own workspace. Labels can still repeat: two projects of one name that
+start a conductor at the same moment both make `<name> · <epic>`, and a project inside a folder
+whose name ends in `-wt` is skipped like a story worktree, so another project of its name takes the
+plain label too. Each still reuses only its own workspace. A workspace left with only other repos'
+builders has no directory, so the next conductor makes a second one.
 `close` and `tidy` find tabs and panes from `.swarm/state`, not from labels, so a relabelled
 workspace closes as before.
 
