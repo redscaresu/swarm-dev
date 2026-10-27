@@ -31,8 +31,8 @@ stage: v<x.y.0>           # only on an epic in a staged HLD's Rollout: the relea
 **Your part:** the steps you or your own session will do (go-aheads, logins, hand steps), or none.
 ```
 
-A new or draft epic goes `active` only with `agreed:`, a `parent:`, an `hld:` whose agreed HLD grants `epics`, or `lead_epics = on`. `agreed:` counts only when /epic writes it in the same edit that sets
-`status: active`; one left on a draft does not. A `later` epic needs none of these to go `active`.
+An epic that is not `active` yet (new, draft, `later`, `split`, `review` or `done`) goes `active` only with `agreed:`, a `parent:`, an `hld:` whose agreed HLD grants `epics`, or `lead_epics = on`. `agreed:` counts only when it is written in the same edit that sets
+`status: active`: /epic writes it for a draft, and the lead, on your go, for a `later` epic. One left from before does not count.
 
 An epic in a staged HLD's Rollout carries its stage in `stage: v<x.y.0>`. A draft epic with both
 `stage:` and `hld:`, under an HLD that grants `epics`, is set `active` by the lead once the stage
