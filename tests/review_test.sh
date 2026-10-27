@@ -13,6 +13,8 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"

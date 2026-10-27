@@ -23,6 +23,7 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
+REPORT_SECONDS=30       # how long a report (status, next, dash) may spend on reads that can block (report_read)
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -89,14 +90,16 @@ ci_gate() {
   python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@"
 }
 
-# merge_caller — why the pane running this may not merge, or nothing when it may. Outside herdr it
-# is the lead's own session, which merges under merge = human too, where merge_grant allows. Inside
-# herdr the pane must be one this project did not start (the lead's), or, with merge = agent, a conductor's; when the
-# pane cannot be identified (no HERDR_PANE_ID, an unreadable tab record, herdr cannot list its
-# agents) it may not. start_agent's guard blocks only a bare `gh pr merge`, so this is what stops a
-# builder merging through swarm.sh.
+# merge_caller <pr-url> [--board|--release] — why the pane running this may not merge <pr-url>, or
+# nothing when it may. Outside herdr it is the lead's own session, which merges under merge = human
+# too, where merge_grant allows. Inside herdr the pane must be one this project did not start (the
+# lead's); with merge = agent, a conductor's; or, under either mode, review-<slug>'s (review_pane) for
+# a PR on story <slug>'s prs: line (pr_stories), with no --board or --release. merge = human's
+# merge_grant then runs for it as for the lead. When the pane cannot be identified (no HERDR_PANE_ID,
+# an unreadable tab record, herdr cannot list its agents) it may not. start_agent's guard blocks
+# only a bare `gh pr merge`, so this is what stops a builder merging through swarm.sh.
 merge_caller() {
-  local f agents panes
+  local f agents panes slug s
   [[ -n "${HERDR_ENV:-}" ]] || return 0
   [[ -n "${HERDR_PANE_ID:-}" ]] || { echo "inside herdr with no HERDR_PANE_ID, the pane running this is unknown"; return 0; }
   [[ ! -e "${STATE_DIR}" || ( -r "${STATE_DIR}" && -x "${STATE_DIR}" ) ]] || { echo "cannot read ${STATE_DIR}, so whose pane this is is unknown"; return 0; }
@@ -112,13 +115,42 @@ merge_caller() {
   if [[ "${CFG_merge}" == agent ]] && [[ "$(SWARM_PANE="${HERDR_PANE_ID}" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name', '').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') for a in d['result']['agents'])" <<< "${agents}" 2>/dev/null)" == True ]]; then
     return 0
   fi
-  echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
+  slug="$(review_pane "${agents}")"
+  if [[ -n "${slug}" ]]; then
+    [[ -z "${2:-}" ]] || { echo "review-${slug} merges only story ${slug}'s PR, never with $2"; return 0; }
+    s="$(pr_stories "$1")" || { echo "a story on the board cannot be read, so whether $1 is story ${slug}'s is unknown"; return 0; }
+    grep -qxF -- "${slug}" <<< "${s}" || echo "review-${slug} merges only a PR on story ${slug}'s prs: line, and $1 is not on it"
+    return 0
+  fi
+  echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent, or review-<slug> for story <slug>'s PR, merges from one"
 }
 
-# merge_grant <pr-url> <head> <base> — under merge = human, why the lead may not merge the PR, or
-# nothing when the one agreed HLD over it at <head> into <base>, the head and base merge pinned
-# (pr_hld), grants merge (hld_grants). A PR whose head or base moved off them, a PR it cannot
-# resolve, or an HLD whose grants: cannot be read (hld_grants' own line says why), waits on the user too.
+# review_pane <agents> — <slug> when the pane running this (HERDR_PANE_ID) is review-<slug>'s by exact
+# record: every tab record for the pane names review-<slug>, not a retired name (-done, -done<N>),
+# the newest agents.tsv line for its agent name (agent_name) has role review, and in <agents>
+# (herdr's agent list) the agent in the pane holds that name. Else nothing: the builder of a story
+# slugged review-x has its tab record named review-x too, but its role there is a builder's; and a
+# record left stale (the agent exited, or retire_agent renamed it in herdr but could not rewrite
+# the record) has no such agent in the pane.
+review_pane() {
+  local f tabs=() name role
+  for f in "${STATE_DIR}"/*; do
+    [[ ! -f "${f}" || "${f}" == *.tmp ]] || tabs+=("${f}")
+  done
+  [[ ${#tabs[@]} -gt 0 ]] || return 0
+  name="$(awk -v p="${HERDR_PANE_ID}" 'NF == 2 && $1 == p { print $2 }' "${tabs[@]}" | sort -u)"
+  [[ "${name}" =~ ^review-[a-z0-9-]+$ && ! "${name}" =~ -done[0-9]*$ ]] || return 0
+  role="$(awk -F'\t' -v n="$(agent_name "${name}")" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)"
+  [[ "${role}" == review ]] || return 0
+  [[ "$(SWARM_PANE="${HERDR_PANE_ID}" SWARM_NAME="$(agent_name "${name}")" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" <<< "$1" 2>/dev/null)" != True ]] \
+    || echo "${name#review-}"
+}
+
+# merge_grant <pr-url> <head> <base> — under merge = human, why the lead, or review-<slug> for its
+# story's PR (merge_caller), may not merge the PR, or nothing when the one agreed HLD over it at
+# <head> into <base>, the head and base merge pinned (pr_hld), grants merge (hld_grants). A PR whose
+# head or base moved off them, a PR it cannot resolve, or an HLD whose grants: cannot be read
+# (hld_grants' own line says why), waits on the user too.
 merge_grant() {
   local h g="" rc=0 now base
   h="$(pr_hld "$1" "$2" "$3")" || rc=$?
@@ -133,23 +165,38 @@ merge_grant() {
   [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
 }
 
+# pr_contents <owner/repo> <ref> <path> — <path> at <ref> (a branch or a SHA), its bytes on stdout,
+# through gh's contents API, both URL-quoted; fails 1 when it is absent there (HTTP 404) and 2 on any
+# other failure, with gh's error on stderr and nothing on stdout (gh prints the error's JSON body
+# there). The shell's reader of a file at a PR's ref: merge_read, pr_hld and release_check read
+# through it (ci_gate.py's expected has its own).
+pr_contents() {
+  local q out err rc=0
+  # Quoted, so a # or ? in a name, or a + or & in a ref, is read as itself.
+  q="$(python3 -c 'import sys, urllib.parse as u; print(u.quote(sys.argv[1]) + "?ref=" + u.quote(sys.argv[2], safe=""))' "$3" "$2")" || return 2
+  # The bytes go to a file, printed only on success; gh's stderr into err, to tell a 404 from the rest.
+  out="$(mktemp)" || return 2
+  err="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/${q}" 2>&1 > "${out}")" || rc=$?
+  if [[ ${rc} -eq 0 ]]; then cat "${out}" || rc=2; rm -f "${out}"; return "${rc}"; fi
+  rm -f "${out}"
+  [[ "${err}" != *"HTTP 404"* ]] || return 1
+  [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2
+  return 2
+}
+
 # merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
-# branch or head SHA (merge_pr's locals base, head, repo and n), through gh's contents API as
-# release_check reads it; fails 1 when it is absent and 2 on any other failure. At the head a 404 is
-# absent only for a path the PR removes or renames away (merge_gone): one it keeps there means gh
-# cannot read the head (a fork's), where every epic would read as deleted.
+# branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
+# is absent and 2 on any other failure. At the head a 404 is absent only for a path the PR removes or
+# renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
+# epic would read as deleted.
 merge_read() {
-  local ref="${head}" q err rc=0
+  local ref="${head}" gone rc=0
   [[ "$1" == head ]] || ref="${base}"
-  # Quoted, as pr_hld quotes it, so a # or ? in a name is read as itself.
-  q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$2")" || return 2
-  # The file's bytes go to stdout (fd 3); gh's stderr into err, to tell a 404 from the rest.
-  { err="$(gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${ref}" 2>&1 >&3)" || rc=$?; } 3>&1
-  [[ ${rc} -ne 0 ]] || return 0
-  [[ "${err}" == *"HTTP 404"* ]] || return 2
-  [[ "$1" == head ]] || return 1
-  err="$(merge_gone)" || return 2
-  grep -qxF -- "$2" <<< "${err}" || return 2
+  # gh's error is left out: epic_guard's line names the file and the ref it could not read.
+  pr_contents "${repo}" "${ref}" "$2" 2>/dev/null || rc=$?
+  [[ ${rc} -eq 1 && "$1" == head ]] || return "${rc}"
+  gone="$(merge_gone)" || return 2
+  grep -qxF -- "$2" <<< "${gone}" || return 2
   return 1
 }
 
@@ -242,7 +289,7 @@ merge_pr() {
   [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
-  why="$(merge_caller)" || why="cannot tell whose pane this is"
+  why="$(merge_caller "${url}" "${only}")" || why="cannot tell whose pane this is"
   [[ -z "${why}" ]] || merge_fail "${why}"
   info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles \
     | json "'%s %s %s %d' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'])")" \
@@ -437,12 +484,12 @@ group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conduc
 # one first, and next names it. Nothing starts while herdr cannot list
 # its agents, since what runs is not known, nor while a working conductor stopped on an expired login
 # or an API error (conductor_stop), which would stop a new one too. No conductor starts for a group
-# while conduct_stop says why not, and none outside herdr: it prints what to run instead. A start that
+# while conduct_stop says why not (a why the group before gave is not said again), and none outside herdr: it prints what to run instead. A start that
 # fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
 conduct_ready() {
-  local e name arg ready log c why todo report rc=0
+  local e name arg ready log c why todo report stop said="" rc=0
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
   if ! herdr agent list >/dev/null 2>&1; then
@@ -469,7 +516,10 @@ conduct_ready() {
       echo "no conductor started: ${name} is gone, and nobody collected ${report}; read it, then delete it"; continue
     fi
     # shellcheck disable=SC2046 # slugs, [a-z0-9-]
-    if conduct_stop "${e}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"); then continue; fi
+    if stop="$(conduct_stop "${e}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"))"; then
+      # The merge rule's line is the same for every group: once is enough.
+      [[ "${stop}" == "${said}" ]] || echo "${stop}"; said="${stop}"; continue
+    fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
     log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
     ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
@@ -497,8 +547,22 @@ report_collected() {
   awk -F'\t' -v n="$1" -v t="${t}" '$2 ~ /^close/ && $3 == n && $5 == "ok" && $1 >= t { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
+# merge_rule_stop — prints why no conductor may start and returns 0 under merge = agent when Claude
+# Code's settings have no allow rule for swarm.sh merge (merge_allowed): Claude Code would refuse the
+# conductor every merge. The line names the files read (claude_settings) and the rule to add, so a rule
+# merge_allowed misreads still says why rather than stopping conductors silently. Returns 1 with
+# merge = human or with the rule there.
+merge_rule_stop() {
+  local f files=""
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ "${CFG_merge}" == agent ]] && ! merge_allowed || return 1
+  while IFS= read -r f; do files+="${files:+, }${f#"${PROJECT_DIR}/"}"; done < <(claude_settings)
+  echo "no conductor started: merge = agent and no allow rule for swarm.sh merge in ${files}; add \"${MERGE_RULE}\" to permissions.allow in one of them (swarm.sh init checks it)"
+}
+
 # conduct_stop <epic> <slug>... — prints why no conductor may start for these ready stories of <epic>
-# (board_ready's column: - for the backlog) and returns 0, as /swarm-dev:swarm's story and resume
+# (board_ready's column: - for the backlog) and returns 0: under merge = agent, no allow rule for
+# swarm.sh merge (merge_rule_stop); or, as /swarm-dev:swarm's story and resume
 # steps stop (docs/reference.md § The backlog conductor): its conductor's report (conductor_report) is
 # newer than every story and epic file, and than the state files (BOARD_STATE_DIR) of the group's epic
 # and of <slug>..., so a new one would stop as the last did; or, for the backlog, the
@@ -506,6 +570,7 @@ report_collected() {
 # when one may start.
 conduct_stop() {
   local report what="conductor for epic $1" s newer=""
+  merge_rule_stop && return 0
   report="$(conductor_report "$(group_conductor "$1")")"
   [[ "$1" != - ]] || what="backlog conductor"
   [[ -f "${report}" ]] || return 1
@@ -927,13 +992,60 @@ queue_stopped() {
 # <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
 # its children. Else the command's own status (128+N for a signal). <seconds> is often a deadline's time
 # left, below 0 once a read ran past it: -- keeps perl from taking -1 for a switch of its own (exit 25).
+# @<epoch> in place of <seconds> is a deadline to the millisecond (report_read's), with no floor: under
+# a millisecond before it the command never runs, and within exits 142 at once. A HUP, INT or TERM to
+# within KILLs the command too, exiting 128+N: in a group of its own, it would run on with no alarm.
 within() {
-  perl -e 'my $t = shift; $t = 1 if $t < 1;
+  perl -MTime::HiRes -e 'my $t = shift;
+    if ($t =~ s/^@//) { $t -= Time::HiRes::time(); exit 142 if $t < 0.001 } else { $t = 1 if $t < 1 }
     defined(my $p = fork) or exit 127;
     if (!$p) { setpgrp; exec @ARGV or exit 127 }
-    $SIG{ALRM} = sub { kill "KILL", -$p; exit 142 };
-    alarm $t; waitpid $p, 0;
+    # The parent sets the group too, before the alarm: one that fires first would KILL no group.
+    # It fails harmlessly once the child has run exec, by then in its group. The KILL names the
+    # pid as well, for a signal that lands before either setpgrp.
+    setpgrp $p, $p;
+    my %n = (HUP => 1, INT => 2, TERM => 15);
+    for my $s (keys %n) { $SIG{$s} = sub { kill "KILL", -$p, $p; exit 128 + $n{$s} } }
+    $SIG{ALRM} = sub { kill "KILL", -$p, $p; exit 142 };
+    Time::HiRes::alarm($t); waitpid $p, 0;
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
+}
+
+# report_start — a report (status, next, dash) starts: its reads have REPORT_SECONDS from now, and no
+# read is skipped yet. REPORT_END is that deadline as an epoch to the millisecond: bash's SECONDS counts
+# whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
+# is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
+# has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+report_start() {
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
+  REPORT_SKIP_FILE="${TMPDIR:-/tmp}/swarm-report.$$.${REPORT_END}"
+}
+
+# report_read <name> <command>... — a read that can block (a herdr list or read, a gh call, a git
+# fetch), run within the time the report has left, with its output and status. One cut off there
+# (142, keeping what it printed), or that would start at or past the deadline (142 at once, not run),
+# is recorded as <name> for report_skipped. Reads only: no write and no agent start goes through it.
+# With no report_start it ends the shell it runs in (bash's ${:?}), which a caller's || cannot catch.
+# <command> must be a program: within runs it with perl's exec, so a shell function (a gh or herdr
+# wrapper of swarm.sh's), a builtin or a pipeline is not found, exits 127 and is never named as
+# skipped. Pass the program itself (gh, herdr, git), or `bash -c '<script>' bash <args>` with what the
+# script needs inside it: a function it calls is defined or sourced there.
+report_read() {
+  local name="$1" rc=0; shift
+  within "@${REPORT_END:?report_read: no report_start}" "$@" || rc=$?
+  (( rc != 142 )) || [[ -z "${REPORT_SKIP_FILE:-}" ]] || echo "${name}" >> "${REPORT_SKIP_FILE}"
+  return "${rc}"
+}
+
+# report_skipped — print `skipped (over <REPORT_SECONDS> s): <names>`, each skipped read named once in
+# the order it was first skipped, or nothing when none was, and forget those names by removing the file:
+# so it works in a $( ) as well, and a read skipped after it is named alone by the next call.
+report_skipped() {
+  local names
+  names="$(awk '!seen[$0]++ { printf "%s%s", (n++ ? ", " : ""), $0 }' "${REPORT_SKIP_FILE:-/dev/null}" 2>/dev/null)" || names=""
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  [[ -z "${names}" ]] || echo "skipped (over ${REPORT_SECONDS} s): ${names}"
 }
 
 # rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
@@ -1246,15 +1358,18 @@ release_parent() {
 # finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes. It
 # fetches origin/<base> once, first, and sets RELEASE_BASE to the commit it fetched, which every check
 # reads (gh at that SHA, git at it), so a base that moves after the fetch reads as moved (release_moved).
+# It reads plugin.json at RELEASE_BASE and <head> through pr_contents, and says which: absent, or unreadable.
 release_check() {
-  local want old new why body was tag
+  local want old new why body was tag rc=0
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
   RELEASE_BASE="$(release_base "$2")" || merge_fail "--release: cannot fetch origin/$2 to check the release against"
-  old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=${RELEASE_BASE}")" \
-    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
-  new="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$3")" \
-    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
+  old="$(pr_contents "$1" "${RELEASE_BASE}" .claude-plugin/plugin.json)" || rc=$?
+  [[ ${rc} -ne 1 ]] || merge_fail "--release: there is no .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
+  [[ ${rc} -eq 0 ]] || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
+  rc=0; new="$(pr_contents "$1" "$3" .claude-plugin/plugin.json)" || rc=$?
+  [[ ${rc} -ne 1 ]] || merge_fail "--release: there is no .claude-plugin/plugin.json at ${3:0:7}"
+  [[ ${rc} -eq 0 ]] || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
   why="$(OLD="${old}" NEW="${new}" BASE="$2" python3 -c 'import json,os,re
 e = os.environ
 o, n = json.loads(e["OLD"]), json.loads(e["NEW"])
