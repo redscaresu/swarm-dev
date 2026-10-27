@@ -692,16 +692,18 @@ to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, i
 `/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
 background work. When it starts, an epic still `later` is set `active` (in
 `.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
-stop listing it as waiting on you. It runs in a herdr workspace named for the epic's `parent:` if it has one (epics with the same
-parent share it), or else for the epic, in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
-that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
+stop listing it as waiting on you. It runs in a herdr workspace labelled for its project and the epic's `parent:` if it has one (epics with the same
+parent share it), or else for the epic (see **Workspace labels** below), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
+that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane always
+opens in the workspace of the agent that starts it: a tab whose panes are in another workspace
+counts as full, so that pane opens `<epic>-2` there instead. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
 **The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
 first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
-`story --strict`, the same review, and the same handover or merge. It runs in a workspace named
-`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
+`story --strict`, the same review, and the same handover or merge. It runs in its project's
+`<project> · backlog` workspace and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
 names span every project, so naming it for the project's path lets two projects each run one at once,
 even two directories with the same name. A name another project's agent holds is refused before the
 old report or brief is touched, and the refusal says where that agent runs. An epic whose
@@ -751,6 +753,35 @@ still the step, and logs a `conduct` line in `events.tsv` as `swarm.sh conduct` 
 fails prints a warning, logs its error as that line's outcome, and changes neither command's exit
 status. The warning says to run the `swarm.sh conduct` yourself, or, when an agent's own board merge
 started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
+
+**Workspace labels.** herdr's workspaces span every project on the machine, so each label swarm.sh
+gives one starts with the project's label, then ` · `:
+
+- `<project> · <epic>`: an epic's conductor, its stories' builders and their review agents. For a
+  child epic of a split one, `<epic>` is its `parent:`, so the children share the workspace.
+- `<project> · backlog`: the backlog conductor and the one-offs it builds.
+
+`<project>` is the project directory's name. When herdr already lists a workspace labelled
+`<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
+of the project's path (the hash the backlog conductor's name ends with), so `/a/app` gets `app`
+and `/b/app` gets `app-<hash>`. herdr gives a workspace no directory of its own, so a workspace's
+directory is that of its first pane in `herdr pane list`, the conductor's or a review agent's. A
+builder's pane in the project's own story worktree (`<project>-wt/<slug>`) counts as the project's;
+one in any other repo's (`<repo>-wt/<slug>`) is skipped, since its path does not say whose it is. `conduct` takes a
+workspace only when its directory is the project's: one under either form of the project's label, or
+one under the bare `<epic>` or `backlog` label an older swarm.sh gave with no other project's pane in
+it, so a conductor started before the upgrade keeps its workspace and never takes one another project
+shares. Otherwise it makes a new one. A tab record that still lists a live pane in a workspace an
+older swarm.sh shared counts as full (see above), so the conductor, its builders and its review
+agents open a new tab in the project's own workspace. Labels can still repeat, for example: two
+projects of one name that start a conductor at the same moment both make `<name> · <epic>`; a
+project inside a folder whose name ends in `-wt` is skipped like a story worktree, so another
+project of its name takes the plain label too; and a project's workspace with only its builders
+left (in `<project>-wt/<slug>`) has no directory for another project, which makes the plain label
+as well. Each still reuses only its own workspace. A workspace left with only other repos' builders
+has no directory, so the next conductor makes a second one.
+`close` and `tidy` find tabs and panes from `.swarm/state`, not from labels, so a relabelled
+workspace closes as before.
 
 **`next`'s idle dependency line.** After its step, `next` prints `idle: <story> waits on <dep> but
 shares no touches part with it and needs nothing from it` for each blocked story an agent builds,
