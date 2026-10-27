@@ -438,7 +438,8 @@ check "a reconcile while another holds the lock waits, then stops naming it" "1|
 # herdr_stub <dir> — a herdr and a claude in <dir>/bin, herdr's state in <dir>/h: tabs ("<tab>
 # <label>"), panes ("<pane> <tab>") and agents ("<name> <pane> <status>"). A pane close takes its
 # agent, and its tab once no pane is left there, as herdr does; a tab close takes its panes and their
-# agents. claude lists no session (claude_stub.sh), so herdr's status answers for each agent.
+# agents. agent list fails while h/listfail is there, and a close of the pane h/closefail names, or
+# of its tab, fails. claude lists no session (claude_stub.sh), so herdr's status answers for each agent.
 herdr_stub() {
   mkdir -p "$1/bin" "$1/h"
   printf '#!/bin/sh\nH="%s"\n' "$1/h" > "$1/bin/herdr"
@@ -451,12 +452,14 @@ list() { f="$1"; shift; awk -v w="${f}" -v k="$*" 'BEGIN { n = split(k, key, " "
 case "$1 $2" in
   "tab list") list tabs tab_id label ;;
   "pane list") list panes pane_id tab_id ;;
-  "agent list") list agents name pane_id agent_status ;;
+  "agent list") [ ! -e "$H/listfail" ] || exit 1; list agents name pane_id agent_status ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
-  "pane close") t="$(awk -v p="$3" '$1 == p { print $2 }' "$H/panes")"; [ -n "$t" ] || exit 1
+  "pane close") [ "$(cat "$H/closefail" 2>/dev/null)" != "$3" ] || exit 1
+                t="$(awk -v p="$3" '$1 == p { print $2 }' "$H/panes")"; [ -n "$t" ] || exit 1
                 drop panes "$3" 1; drop agents "$3" 2
                 if ! awk -v t="$t" '$2 == t { f = 1 } END { exit !f }' "$H/panes"; then drop tabs "$t" 1; fi ;;
-  "tab close") for p in $(awk -v t="$3" '$2 == t { print $1 }' "$H/panes"); do drop agents "$p" 2; done
+  "tab close") ! grep -qx "$(cat "$H/closefail" 2>/dev/null) $3" "$H/panes" || exit 1
+               for p in $(awk -v t="$3" '$2 == t { print $1 }' "$H/panes"); do drop agents "$p" 2; done
                drop panes "$3" 2; drop tabs "$3" 1 ;;
 esac
 STUB
@@ -502,6 +505,24 @@ rc=0; out="$(hat vb w:lead reconcile)" || rc=$?
 check "a story slugged review-a keeps its open builder through a's merge, with no attempt counted" "0|lead@lead review-a@a|w:r review-a|" \
   "${rc}|$(panes_in "${HV}")|$(cat "${ROOT}/vb/.swarm/state/a" 2>/dev/null)|$(val "${ROOT}/vb/docs/stories/review-a.md" attempts)"
 
+# --- review-a working when a's PR merged (its own merge waiting on CI, or a round still running): the
+# lead's reconcile finishes a and closes its builder, but leaves review-a open, and says so.
+setup vw; lay "${HV}" "${ROOT}/vw" a; sed -i '' 's/^review-a w:r idle$/review-a w:r working/' "${HV}/h/agents"
+rc=0; out="$(hat vw w:lead reconcile)" || rc=$?
+check "a working review-a is left open, and said, while a is finished and its builder closed" "0|yes|lead@lead review-a@a|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a is working, so it was left open; close it once it is done with swarm.sh close review-a" "${out}")"
+
+# --- review-a's pane cannot be closed, or herdr cannot list its agents: reconcile still finishes a,
+# and says review-a may be open, naming the close.
+setup vc; lay "${HV}" "${ROOT}/vc" a; echo w:r > "${HV}/h/closefail"
+rc=0; out="$(hat vc w:lead reconcile)" || rc=$?; rm -f "${HV}/h/closefail"
+check "a review pane that cannot be closed is said, with the close to run" "0|yes|lead@lead review-a@a|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a was left open (exit 1); close it with swarm.sh close review-a" "${out}")"
+setup vl; lay "${HV}" "${ROOT}/vl" a; touch "${HV}/h/listfail"
+rc=0; out="$(hat vl w:lead reconcile)" || rc=$?; rm -f "${HV}/h/listfail"
+check "herdr with no agent list: reconcile says review-a may still be open" "0|yes|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(has "review-a may still be open (herdr cannot list its agents); close its pane with swarm.sh close review-a" "${out}")"
+
 # --- drop_gone_state's arm: a's file already pulled off the board by hand, its PR merged.
 setup vd; git -C "${ROOT}/vd" pull -q --ff-only; lay "${HV}" "${ROOT}/vd" a
 rc=0; out="$(hat vd w:lead reconcile)" || rc=$?
@@ -521,9 +542,10 @@ check "and tidy --yes from the lead's pane closes it, leaving no tab of a" "0|le
 # --- swarm.sh merge run from review-s's pane, on merge_fixture.sh's project, in a subshell, since its
 # helpers share these names: the merge's reconcile closes s's builder and leaves review-s open,
 # retired, and tidy --yes from the lead's pane closes it. An epic story's tab keeps its conductor; a
-# backlog story's own tab goes.
+# backlog story's own tab goes. In the background, so set -e holds inside it and a failed setup step
+# fails the file; it exits with its count of failed checks.
 merged_review_fails=0
-(
+( set -e
   ROOT="${ROOT}/m"; mkdir -p "${ROOT}"
   # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
   . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
@@ -541,7 +563,8 @@ merged_review_fails=0
       "0|${epic:+conduct-e@e }lead@lead|${epic:+w:c conduct-e}" "${rc}|$(panes_in "${ROOT}")|$(cat "${P}/.swarm/state/${label}" 2>/dev/null)"
   done
   exit "${fails}"
-) || merged_review_fails=$?
+) &
+wait $! || merged_review_fails=$?
 fails=$((fails + merged_review_fails))
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

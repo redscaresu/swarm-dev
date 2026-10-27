@@ -1944,21 +1944,34 @@ merged_build() {
 }
 
 # merged_review <slug> — close review-<slug>, a merged story's review agent, when this project has it
-# open in herdr: its pane only (shut_agent), never a builder's close. Only when the newest agents.tsv
-# line for that name has role review, as review_pane checks: the builder of a story slugged
-# review-<slug> holds the same name. When its pane is the one running this
-# command (a merge from the review pane, whose reconcile runs there), it is retired instead
-# (retire_agent), so the pane stays open under review-<slug>-done until tidy closes it. It never
-# fails the caller: it runs in the background, so set -e holds inside it, and a failure is said.
+# open in herdr and idle: its pane only (shut_agent), never a builder's close. Only when the newest
+# agents.tsv line for that name has role review, as review_pane checks: the builder of a story slugged
+# review-<slug> holds the same name. A working or waiting one is left open, and said: it may be
+# running its own swarm.sh merge, whose reconcile retires it, or reviewing still. When its pane is
+# the one running this command (a merge from the review pane, whose reconcile runs there), it is
+# retired instead (retire_agent), whatever its state, so the pane stays open under a -done name until
+# tidy closes it; its session is archived then. Its ZDOTDIR stays: the agent is still running there.
+# It never fails the caller: it runs in the background, so set -e holds inside it, and a pane that
+# could not be closed, or herdr with no agent list, is said.
 merged_review() {
-  local name pane
+  local name pane state
   [[ "${HERDR_ENV:-}" == 1 ]] || return 0
   name="$(agent_name "review-$1")"
   [[ "$(awk -F'\t' -v n="${name}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" == review ]] || return 0
+  herdr agent list >/dev/null 2>&1 \
+    || { echo "review-$1 may still be open (herdr cannot list its agents); close its pane with swarm.sh close review-$1"; return 0; }
   pane="$(agent_field "${name}" pane_id)"
   [[ -n "${pane}" ]] || return 0
+  if [[ "${pane}" != "${HERDR_PANE_ID:-}" ]]; then
+    state="$(read_state "${name}")"
+    case "${state}" in
+      idle|gone|herdr:idle|herdr:done) ;;
+      *) echo "review-$1 is ${state#herdr:}, so it was left open; close it once it is done with swarm.sh close review-$1" >&2; return 0 ;;
+    esac
+  fi
   ( set -e
-    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; else shut_agent "review-$1"; fi ) </dev/null &
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"
+    else shut_agent "review-$1"; [[ -z "${CLOSE_PANE_KEPT}" ]]; fi ) </dev/null &
   wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh close review-$1"
 }
 
