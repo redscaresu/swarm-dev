@@ -128,25 +128,27 @@ case "$1 $2" in
       */branches/*) serve branch ;;
       # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind (as serve
       # reads it, so behind.<n>.fail fails the nth read and behind.404 is a 404), else nothing (ahead_by
-      # 0); with ${FX}/behind.hang it first sleeps a minute. compare/<base>...<head>: compare.<base>, else compare, else for a branch
+      # 0); with ${FX}/behind.hang it first sleeps a minute. compare/<base>...<head>: compare.<base>...<head>,
+      # else compare.<base>, else compare, else for a branch
       # base the PR's files (the grant's read at the pinned head, failing as files does), else for a
       # commit base the head holds it (fix-main's compare of a red commit with a green one).
       */compare/*) c="${path##*/compare/}"; to="${c#*...}"; c="${c%%...*}"
                    if [ "${#c}" = 40 ] && [ "${#to}" != 40 ]; then
                      [ ! -e "${FX}/behind.hang" ] || sleep 60
                      if [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ] || [ -e "${FX}/behind.404" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
+                   elif [ -e "${FX}/compare.${c}...${to}" ]; then serve "compare.${c}...${to}"   # one pair of commits
                    elif [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
                    elif [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then serve compare
                    elif [ "${#c}" != 40 ]; then out="$(serve files)" || exit 1; echo "{\"files\":${out}}"
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       # PUT pulls/<n>/update-branch, merge's request to merge the base in: ${FX}/update as serve reads it,
-      # and ${FX}/update.422 a 422 with its message; with ${FX}/update.hang it first sleeps a minute. Once
-      # it answers, the PR's head becomes ${FX}/update-head, when there is one, after ${FX}/update-lag
-      # more pr views (none by default).
+      # and ${FX}/update.422 a 422 with its message; with ${FX}/update.hang it first sleeps a minute.
+      # Whatever it answers, the PR's head becomes ${FX}/update-head, when there is one, after
+      # ${FX}/update-lag more pr views (none by default): with update.422, another merge's request went first.
       */update-branch) [ ! -e "${FX}/update.hang" ] || sleep 60
+                       [ ! -e "${FX}/update-head" ] || { cp "${FX}/update-head" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; }
                        if [ -e "${FX}/update.422" ]; then get m "${FX}/update.422"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
-                       serve update
-                       [ ! -e "${FX}/update-head" ] || { cp "${FX}/update-head" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; } ;;
+                       serve update ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       # ${FX}/on-contents runs once first: another process's fetch while release_check reads.

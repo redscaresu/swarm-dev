@@ -98,6 +98,11 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # gh error is read again, three reads in all, <wait> apart. A read that fails otherwise fails (3); a
 # compare listing 300 files or more (GitHub lists no more), or no file for its commits, fails
 # BEHIND_UNLISTED (4), which merging the base in clears.
+# ci_gate merged <owner/repo> <head> <new> <second> — succeed when every file <new>, a merge of <second>
+# into <head>, changes is <second>'s version of a file the PR left alone: compare <head>...<new> lists
+# the files compare <head>...<second> does, each with the same status, old path and blob, and none that
+# compare <second>...<head> (the PR's own changes) lists. Else print those paths (five, then how many
+# more) and fail (1); a read that fails, or a list of 300 files or more, fails (3).
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
@@ -325,12 +330,17 @@ base_moved() {
 # MERGE_READ_WAIT apart, until it moves, and accept the new head only when GitHub made it (committer
 # web-flow and a verified signature, as on GitHub's own merges: a pusher can name web-flow but cannot sign
 # as GitHub, and a builder's own merge of the base, pushed in that moment, has the same parents and may
-# hold more) and its parents are <head>, then a commit on <base> (the base's head, or behind it), so its
-# only new content is the base's. Then log `base-merged <new head>` and stop with a `base merged:` line
-# naming the wait-pr and merge --head that land it. A 422 (a conflict), another failed request and no
-# new head in time refuse with base_moved's line, ending as it does in merging the base in; any other
-# head, or a read of it that fails, refuses as `base merge unchecked:`, for a review of the new head.
-# Each read stops after BASE_MOVED_WAIT, as base_moved's do. It never returns, and never merges.
+# hold more), its parents are <head>, then a commit on <base> (the base's head, or behind it), and every
+# file it changes is that commit's own version of a file the PR left alone (ci_gate merged: GitHub's web
+# editor also makes such commits, with a conflict resolved by hand; a file the PR changed too goes to
+# review), so its only new content is the base's. Then log
+# `base-merged <new head>` and stop with a `base merged:` line naming the wait-pr and merge --head that
+# land it. A 422 while the head is still <head> is a conflict; a 422 once it has moved (a push since
+# merge read it, or GitHub's merge for another merge of this PR) sends that head through the same
+# checks. A conflict, another failed request, a request with no answer in time and a head that never
+# moves refuse with base_moved's line, ending as it does in merging the base in; any other head, or a
+# read of it that fails, refuses as `base merge unchecked:`, for a review of the new head. Each read
+# stops after BASE_MOVED_WAIT, as base_moved's do. It never returns, and never merges.
 merge_base_update() {
   local repo="$1" n="$2" head="$3" base="$4" url="https://github.com/$1/pull/$2" wait out i new="" seen="" ps who sig p1 p2 more tip st why rc=0
   local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head"
@@ -341,16 +351,23 @@ merge_base_update() {
     merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s: pull the branch first (GitHub may yet push its merge), then ${fix}"
   elif [[ ${rc} -ne 0 ]]; then
     out="${out##*$'\n'}"; out="${out#gh: }"
-    [[ "${out}" != *"(HTTP 422)"* ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out% (HTTP 422)}): ${fix}"
-    merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${fix}"
+    [[ "${out}" == *"(HTTP 422)"* ]] || merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${fix}"
+    # A 422 is a conflict while the head is still <head>. GitHub gives one too once the head has moved:
+    # a push since merge read it, or GitHub's merge for another merge of this PR. That head is checked below.
+    out="${out% (HTTP 422)}"
+    new="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null | json "d['headRefOid']")" && [[ -n "${new}" ]] \
+      || merge_fail "${why}, and GitHub would not merge it in (HTTP 422: ${out}), and gh cannot read the head again to tell a conflict from a branch that moved: pull the branch first, then ${fix}"
+    [[ "${new}" != "${head}" ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out}): ${fix}"
   fi
   # GitHub merges in the background: the head moves a moment after it says yes.
-  for ((i = 1; i <= MERGE_UPDATE_READS; i++)); do
-    if out="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null | json "d['headRefOid']")"; then
-      seen=1; [[ "${out}" == "${head}" ]] || { new="${out}"; break; }
-    fi
-    [[ ${i} -eq ${MERGE_UPDATE_READS} ]] || sleep "${wait}"
-  done
+  if [[ -z "${new}" ]]; then
+    for ((i = 1; i <= MERGE_UPDATE_READS; i++)); do
+      if out="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null | json "d['headRefOid']")"; then
+        seen=1; [[ "${out}" == "${head}" ]] || { new="${out}"; break; }
+      fi
+      [[ ${i} -eq ${MERGE_UPDATE_READS} ]] || sleep "${wait}"
+    done
+  fi
   if [[ -z "${new}" ]]; then
     out="its head was still ${head:0:7}"; [[ -n "${seen}" ]] || out="gh could not read its head"
     merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart: pull the branch first (GitHub may yet push its merge), then ${fix}"
@@ -375,6 +392,15 @@ merge_base_update() {
     [[ "${st}" == ahead || "${st}" == identical ]] \
       || merge_fail "${why}, whose second parent ${p2:0:7} is not on ${base} (compared with ${base}'s head ${tip:0:7}: ${st}): review the new head as for any new head"
   fi
+  # Who made it and its parents say nothing of what it holds: a conflict resolved in GitHub's web
+  # editor is a web-flow merge of these two parents too.
+  rc=0; out="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" merged "${repo}" "${head}" "${new}" "${p2}" < /dev/null)" || rc=$?
+  case ${rc} in
+    0) ;;
+    1) merge_fail "${why}, which cannot be shown to bring only ${base}'s ${p2:0:7}: ${out} (a file the PR changes too, or not as ${p2:0:7} has it): review the new head as for any new head" ;;
+    142) merge_fail "${why}, and gh did not say within ${limit}s what it changes: review the new head as for any new head" ;;
+    *) merge_fail "${why}, and what it changes cannot be read (${out#error }): review the new head as for any new head" ;;
+  esac
   record_event merge "${MERGE_TARGET}" "base-merged ${new}"
   die "merge: base merged: ${url} is now ${new:0:7} (${head:0:7} with ${base} merged in); wait-pr ${url}, then merge --head ${new} ${url}"
 }
@@ -399,9 +425,11 @@ short_shas() {
 # (it joins no merge queue: the base has none, or merge_admin = on, which never reads one) is refused
 # too when its base has commits the head lacks that change a path off the board (base_moved): the
 # head's CI never ran with them. Then merge_base_update has GitHub merge the base into the PR's branch,
-# checks the new head's parents (the old head, then a commit on the base), logs base-merged <new head>
-# and stops with a base merged: line, merging nothing: the conductor waits for that head's CI and
-# merges it with --head. A conflict, a failed request, no new head in time or other parents refuse.
+# checks the new head (GitHub made it, its parents are the old head and a commit on the base, and every
+# file it changes is that commit's version of a file the PR left alone), logs base-merged <new head> and stops with a base merged:
+# line, merging nothing: the conductor waits for that head's CI and merges it with --head. It refuses
+# on a conflict (a 422 while the head has not moved), any other failed request, a request GitHub does
+# not answer in time, a head that never moves, and a new head that fails a check or cannot be read.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with

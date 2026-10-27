@@ -184,13 +184,15 @@ PR's branch and checked that the new head's only new content is <base>'s. That h
 review. Run the \`swarm.sh wait-pr <PR URL>\` the line names in the background and, once it exits 0,
 the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of the findings file's head: line.
 If that CI goes red, handle it as a red check, telling the builder to pull its branch first
-(\`git pull --ff-only\`): GitHub's merge commit is not in its worktree.
+(\`git pull --ff-only origin story/<slug>\`, naming the branch: its worktree tracks origin/<base>, or
+nothing when stacked): GitHub's merge commit is not in its worktree.
 When \`swarm.sh merge\` refuses with a line that ends \`merge origin/<base> in, push, and merge the new
 head\` (\`the base <base> moved past <sha>'s CI\` when GitHub could not merge it in, or a compare that
 cannot list what the base gained), it merged nothing: code may have landed on <base> after that head's
 CI ran, so the two were never tested together. This refusal is yours to handle, not the lead's. Send
 the builder a nudge with \`swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review
-round) telling it to pull its branch, merge origin/<base> in, re-run the tests and push; with no
+round) telling it to pull its branch (\`git pull --ff-only origin story/<slug>\`), merge origin/<base>
+in, re-run the tests and push; with no
 builder, start one as the clash rule says for a conflict. Wait for the new
 head's CI with \`swarm.sh wait-pr <PR URL>\` in the background, review the new head as for any new
 head, and merge the head that review passed with \`swarm.sh merge --head <sha> <PR URL>\`, as below.

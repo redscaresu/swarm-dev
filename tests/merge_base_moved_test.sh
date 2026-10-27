@@ -33,6 +33,11 @@ updates() {
   echo '{"message":"Updating pull request branch."}' > "${FX}/update"; echo "${H3}" > "${FX}/update-head"
   printf '{"committer":{"login":"web-flow"},"commit":{"verification":{"verified":true}},"parents":[{"sha":"%s"},{"sha":"%s"}]}\n' "${1:-${H1}}" "${B}" > "${FX}/commit.${H3}"
   printf '{"commit":{"sha":"%s"}}\n' "${B}" > "${FX}/basehead"
+  # What the merge changes is what main brings.
+  local x='{"files":[{"filename":"bin/x.sh","status":"modified","sha":"b1","patch":"@@ -1 +1 @@\n-a\n+b"}]}'
+  echo "${x}" > "${FX}/compare.${1:-${H1}}...${H3}"; echo "${x}" > "${FX}/compare.${1:-${H1}}...${B}"
+  # The PR's own change, which the merge leaves alone.
+  echo '{"files":[{"filename":"bin/pr.sh","status":"modified","sha":"p1"}]}' > "${FX}/compare.${B}...${1:-${H1}}"
 }
 updated() { grep -qxF "api -X PUT -f expected_head_sha=${H1} repos/$1/pulls/7/update-branch" "${ROOT}/gh.log"; }
 MOVED="base merged: ${URL} is now 3333333 (1111111 with main merged in); wait-pr ${URL}, then merge --head ${H3} ${URL}"
