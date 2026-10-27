@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # escalate_triggers_test.sh — with escalate_ladder set, swarm.sh runs step-up itself on each of the four
 # triggers: a close of a builder with no PR (no-pr), a wait --stall that finds it stalled (stalled), a
-# third findings tell (findings-3), and checks finishing red on a second head of its PR (ci-red-2).
-# With the ladder empty none does. conduct_brief names the step-ups only with the ladder on. herdr, gh
-# and claude (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
+# third findings tell (findings-3), and checks finishing red on a second head of its PR (ci-red-2),
+# seen by a conductor's watch or by wait-pr run from the story's review pane. With the ladder empty
+# none does. conduct_brief names the step-ups only with the ladder on. herdr, gh and claude
+# (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -23,9 +24,9 @@ check() { # <name> <want> <got>
 }
 
 # herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until the
-# tab closes; agent wait returns at once. With quick, a started session's first turn has ended by the
-# time anyone reads it: the brief writes an assistant entry in its log, a second passes, and Claude
-# Code lists it idle; a /goal writes its goal_status set entry. process-info prints pi when it exists.
+# tab closes, or its own pane does; agent wait returns at once. With quick, a started session's first
+# turn has ended by the time anyone reads it: the brief writes an assistant entry in its log, a second
+# passes, and Claude Code lists it idle (or as the file after says); a /goal writes its goal_status set entry. process-info prints pi when it exists.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -36,6 +37,7 @@ case "$1 $2" in
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"}]}}' ;;
   "tab close")    : > "$H/agents" ;;
+  "pane close")   grep -v " $3\$" "$H/agents" > "$H/agents.x" || true; mv "$H/agents.x" "$H/agents" ;;
   "agent start")  [ -e "$H/startfail" ] && { echo "start refused" >&2; exit 1; }
                   echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p' > "$H/sid"
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
@@ -48,7 +50,7 @@ if t.startswith("/goal "):
     print(json.dumps({"type": "attachment", "timestamp": now, "attachment": {"type": "goal_status", "met": False, "sentinel": True, "condition": t[6:]}}))
 else:
     print(json.dumps({"type": "assistant", "timestamp": now, "message": {"model": "m", "content": []}}))' "$4" >> "$CLAUDE_PROJECTS_DIR/p/$sid.jsonl"
-                    case "$4" in "/goal "*) ;; *) sleep 1; echo "[{\"sessionId\":\"$sid\",\"status\":\"idle\"}]" > "$CLAUDE_STUB_AGENTS" ;; esac
+                    case "$4" in "/goal "*) ;; *) sleep 1; echo "[{\"sessionId\":\"$sid\",\"status\":\"$(cat "$H/after" 2>/dev/null || echo idle)\"}]" > "$CLAUDE_STUB_AGENTS" ;; esac
                   fi
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "pane process-info") [ -e "$H/pi" ] && cat "$H/pi" ;;
@@ -57,15 +59,19 @@ else:
                     END { print "]}}" }' "$H/agents" ;;
 esac
 EOF
-# gh: story/s1 has no PR for close (prs.json), and one open PR whose head is the sha in head for
-# watch. A head's one check run failed unless runs-<sha> says otherwise, and it has a commit status
-# only when status-<sha> names its state.
+# gh: story/s1 has no PR for close (prs.json), and one open PR, #5 on story/s1, whose head is the sha
+# in head for watch and wait-pr. A head's one check run failed unless runs-<sha> says otherwise, it
+# has a commit status only when status-<sha> names its state, and a commit date only when commit-<sha>
+# holds one (else the scan notes it at its own time).
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/gh"
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$*" in
   "pr list"*"--state all"*) cat "$H/prs.json" ;;
+  "pr view 5 "*headRefName*) echo "$(cat "$H/head") MERGEABLE main OPEN - story/s1" ;;
+  "pr view 5 "*"--json headRefOid "*) cat "$H/head-now" 2>/dev/null || cat "$H/head" ;;
   "api --paginate repos/"*"/pulls?"*) echo "5 $(cat "$H/head") story/s1 $(($(date +%s) - 10))" ;;
   "api repos/"*"/pulls/5 "*) echo MERGEABLE ;;
+  "api repos/"*"/commits/"*" --jq .commit.committer.date") sha=$(echo "$*" | sed 's|.*/commits/\([^ /]*\).*|\1|'); cat "$H/commit-$sha" 2>/dev/null || true ;;
   "repo view"*other*) echo o/other ;;
   "repo view"*) echo o/proj ;;
   "api --paginate"*check-runs*) sha=$(echo "$*" | sed 's|.*/commits/\([^/]*\)/.*|\1|'); c=$(cat "$H/runs-$sha" 2>/dev/null || echo failure)
@@ -90,7 +96,7 @@ P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
 # (one commit, 2 hours old) on [model] (sonnet), its builder open in pane w:1, and escalate_ladder = <ladder>.
 fresh() {
-  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid"; : > "${ROOT}/run.log"
+  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}"/commit-* "${ROOT}/head-now" "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid" "${ROOT}/after" "${ROOT}/projects/p/sess-1.jsonl"; : > "${ROOT}/run.log"
   "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
   "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
   mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/state"
@@ -102,6 +108,8 @@ fresh() {
   printf '2026-10-01\tcode-sonnet\ts1\tclaude\t%s\thigh\tsess-1\n' "${3:-sonnet}" > "${P}/.swarm/agents.tsv"
   : > "${P}/.swarm/events.tsv"
   echo "w:1 s1" > "${P}/.swarm/state/s1"; echo "s1 w:1" > "${ROOT}/agents"
+  # The PR is already reported opened, on either repo, so a watch here goes on to its red heads.
+  printf 'opened %s#5\n' o/proj o/other > "${P}/.swarm/state/watch-seen"
   echo "[{\"sessionId\":\"sess-1\",\"status\":\"$2\"}]" > "${CLAUDE_STUB_AGENTS}"
   echo "escalate_ladder = $1" > "${P}/.claude/swarm/config"
 }
@@ -114,9 +122,34 @@ run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWAR
 stepped() { { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv"; sed -n 's/^swarm: step-up: /refused: step-up: /p' "${ROOT}/run.log"; } | paste -sd, -; }
 closes() { grep -c $'\tclose\t' "${P}/.swarm/events.tsv" || true; }
 findings_tells() { printf '2026-10-18T10:0%s:00Z\ttell:findings\ts1\tw:1\tok\n' 1 2 >> "${P}/.swarm/events.tsv"; echo "fix it" > "${ROOT}/f.md"; }
+# review_open — s1's review agent (review-s1) open in pane w:2, as review-agent leaves it: its tab record,
+# its agents.tsv line with role review, and herdr listing it there.
+review_open() {
+  echo "w:2 review-s1" >> "${P}/.swarm/state/s1"; echo "review-s1 w:2" >> "${ROOT}/agents"
+  printf '2026-10-18\treview\treview-s1\tclaude\tsonnet\thigh\tsess-r\n' >> "${P}/.swarm/agents.tsv"
+}
 heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
 attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
 escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+# wait-pr's PR (#5, s1's) and its heads, full SHAs as wait-pr reads them.
+URL=https://github.com/o/proj/pull/5
+RA="$(printf '%040d' 0 | tr 0 a)"; RB="$(printf '%040d' 0 | tr 0 b)"; RC="$(printf '%040d' 0 | tr 0 c)"
+# review_pane — review-s1 open in pane w:2 of s1's tab, beside its builder in w:1, with role review in
+# agents.tsv: the record review_pane (merge's, tell's and now wait-pr's) goes by.
+review_pane() {
+  echo "review-s1 w:2" >> "${ROOT}/agents"; echo "w:2 review-s1" >> "${P}/.swarm/state/s1"
+  printf '2026-10-01\treview\treview-s1\tclaude\topus\thigh\tsess-r\n' >> "${P}/.swarm/agents.tsv"
+}
+# waits <pane> <head>... — wait-pr on s1's PR from <pane> (HERDR_PANE_ID), with no watch running, once
+# per head; WAIT_RCS: each one's exit status, space-separated.
+waits() {
+  local pane="$1" h rc; shift; WAIT_RCS=""
+  for h in "$@"; do
+    echo "${h}" > "${ROOT}/head"; rc=0; HERDR_PANE_ID="${pane}" run wait-pr "${URL}" >/dev/null || rc=$?
+    WAIT_RCS+="${WAIT_RCS:+ }${rc}"
+  done
+}
+red_heads() { [[ -e "${P}/.swarm/red-heads.tsv" ]] && echo yes || echo no; }
 # failed_lines — the outcomes of s1's step-up:failed events.tsv lines, comma-separated.
 failed_lines() { awk -F'\t' '$2 == "step-up:failed" && $3 == "s1" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 
@@ -151,6 +184,36 @@ for ladder in sonnet,opus,fable ""; do
     out="$(run tell s1 findings "${ROOT}/f.md")" || true
     check "ladder '${ladder}': with step_up_findings = 2, the second findings tell steps it up" \
       "ok (findings-2: sonnet -> opus)|yes" "$(stepped)|$(grep -q 'was not told: these were findings round 2' <<< "${out}" && echo yes)"
+    # From review-s1's pane (w:2) the findings tells count as the conductor's do: rounds 1 and 2 are
+    # sent, saying they are from the review agent, and the third steps the build up.
+    fresh "${ladder}" idle; review_open; echo "fix it" > "${ROOT}/f.md"
+    for _ in 1 2; do HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md" >/dev/null || true; done
+    check "ladder '${ladder}': review pane: findings tells 1 and 2 are sent from the review agent and logged ok" \
+      "tell:findings s1 w:2 ok|tell:findings s1 w:2 ok|2" \
+      "$(awk -F'\t' '$2 ~ /^tell/ { printf "%s %s %s %s|", $2, $3, $4, $5 }' "${P}/.swarm/events.tsv")$(grep -c '^agent prompt w:1 From the review agent:$' "${ROOT}/herdr.log")"
+    out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
+    check "ladder '${ladder}': review pane: the third findings tell steps the build up and fails, saying so" \
+      "ok (findings-3: sonnet -> opus)|1|yes" \
+      "$(stepped)|${rc}|$(grep -q 'was not told: these were findings round 3 of its build, so it was stepped up' <<< "${out}" && echo yes)"
+    # With goal on, the /goal sent mid-turn after them (sess-1 busy) names the review agent's findings.
+    fresh "${ladder}" idle; review_open; echo "fix it" > "${ROOT}/f.md"; echo "goal = 4" >> "${P}/.claude/swarm/config"
+    touch "${ROOT}/quick"; echo sess-1 > "${ROOT}/sid"; echo busy > "${ROOT}/after"
+    out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
+    check "ladder '${ladder}': review pane, goal on: the /goal names the review agent's findings" "0|1" \
+      "${rc}|$(grep -c "^agent prompt w:1 /goal The goal: the review agent's findings, sent to you just before this goal, are addressed" "${ROOT}/herdr.log")"
+    fresh "${ladder}" idle; review_open; echo "fix it" > "${ROOT}/f.md"
+    HERDR_PANE_ID=w:9 run tell s1 findings "${ROOT}/f.md" >/dev/null || true
+    check "ladder '${ladder}': from a pane that is not review-s1's, the tell is from the conductor" "1|0" \
+      "$(grep -c '^agent prompt w:1 From the conductor:$' "${ROOT}/herdr.log")|$(grep -c 'From the review agent' "${ROOT}/herdr.log" || true)"
+    # A pane holding a review-like name that is not s1's live review agent: the builder of a story
+    # slugged review-s1 has a tab record naming review-s1 and herdr lists it so, but its newest
+    # agents.tsv role is a builder's, so its tell is the conductor's.
+    fresh "${ladder}" idle; echo "fix it" > "${ROOT}/f.md"
+    echo "w:3 review-s1" >> "${P}/.swarm/state/review-s1"; echo "review-s1 w:3" >> "${ROOT}/agents"
+    printf '2026-10-18\tcode\treview-s1\tclaude\tsonnet\thigh\tsess-3\n' >> "${P}/.swarm/agents.tsv"
+    HERDR_PANE_ID=w:3 run tell s1 findings "${ROOT}/f.md" >/dev/null || true
+    check "ladder '${ladder}': from the pane of the builder of a story slugged review-s1, the tell is from the conductor" "1|0" \
+      "$(grep -c '^agent prompt w:1 From the conductor:$' "${ROOT}/herdr.log")|$(grep -c 'From the review agent' "${ROOT}/herdr.log" || true)"
   else
     check "ladder '${ladder}': a third findings tell is sent" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
     # With the ladder off a step-up lock means nothing: a close goes on and counts the attempt.
@@ -166,6 +229,18 @@ for ladder in sonnet,opus,fable ""; do
   check "ladder '${ladder}': one red head steps nothing, a second steps up only with the ladder on" "|${want}" "${first}|$(stepped)"
   check "ladder '${ladder}': watch keeps red heads only with the ladder on" "$([[ -n "${ladder}" ]] && echo yes || echo no)" \
     "$([[ -s "${P}/.swarm/red-heads.tsv" ]] && echo yes || echo no)"
+  # With no watch running, the review agent's own wait-pr from review-s1's pane counts the red heads.
+  fresh "${ladder}" idle; review_pane
+  waits w:2 "${RA}"; first="$(stepped)"; rcs="${WAIT_RCS}"; waits w:2 "${RB}"
+  check "ladder '${ladder}': wait-pr from review-s1's pane steps up on the second red head only with the ladder on, exiting 1 (red) each time" \
+    "|${want}|1 1|$([[ -n "${ladder}" ]] && echo yes || echo no)" "${first}|$(stepped)|${rcs} ${WAIT_RCS}|$(red_heads)"
+  # The same red heads seen by wait-pr from the builder's pane, or the lead's (a pane this project did
+  # not open), step nothing up and leave no red-heads.tsv.
+  for pane in w:1 w:0; do
+    fresh "${ladder}" idle; review_pane; waits "${pane}" "${RA}" "${RB}"
+    check "ladder '${ladder}': wait-pr from pane ${pane}, not review-s1's, on two red heads steps nothing up and writes no red-heads.tsv" \
+      "1 1||no" "${WAIT_RCS}|$(stepped)|$(red_heads)"
+  done
 
   if [[ -n "${ladder}" ]]; then
     # A red head of an earlier build (before its newest story line) counts nothing for this one.
@@ -186,6 +261,32 @@ for ladder in sonnet,opus,fable ""; do
     printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
     heads aaaa1111 bbbb2222
     check "a head pending at the step-up, red after it, is not the new build's red head" "ok (stalled: haiku -> sonnet)" "$(stepped)"
+    # With no watch polling, a head is first seen only when the review pane's wait-pr ends red on it, so
+    # its commit time, not that sighting, says which build it is: one the rung before committed, first
+    # seen after the step-up, is never this build's, and is noted (seen) but never judged.
+    fresh "${ladder}" idle; review_pane
+    printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
+    echo 2026-10-01T10:30:00Z > "${ROOT}/commit-${RA}"
+    waits w:2 "${RA}" "${RB}"; first="$(stepped)"; waits w:2 "${RC}"
+    check "a head committed before the build, first seen red by the review pane's wait-pr after it, is not this build's; the two after it are" \
+      "ok (stalled: haiku -> sonnet)|ok (stalled: haiku -> sonnet),ok (ci-red-2: sonnet -> opus)|1" "${first}|$(stepped)|$(grep -c " ${RA} " "${P}/.swarm/red-heads.tsv")"
+    # wait-pr reads the head once and may wait half an hour: a red on a head the builder has since
+    # replaced (head-now: the PR's head when the scan reads it again) is not scanned from the review
+    # pane, as the PR's head may be green by then; the same head, still the PR's, is.
+    fresh "${ladder}" idle; review_pane
+    waits w:2 "${RA}"; echo "${RC}" > "${ROOT}/head-now"; waits w:2 "${RB}"
+    first="$(stepped)|$(grep -c " ${RB} " "${P}/.swarm/red-heads.tsv" || true)"; rm -f "${ROOT}/head-now"; waits w:2 "${RB}"
+    check "a red head the PR has moved past by the time wait-pr ends is not scanned from the review pane; the same head, still the PR's, is" \
+      "|0|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
+    # The review agent has none of the story's env: names, so a step-up from its pane would be refused
+    # before the close and the head noted refused, which would stop the conductor's watch, which has
+    # the names, from stepping up on it: a story with env: is left to the watch.
+    fresh "${ladder}" idle; review_pane
+    printf '%s\n' --- "status: ready" "kind: code" "env: [OWG_ENV_NAME]" --- "" "# s1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/s1.md"
+    waits w:2 "${RA}" "${RB}"; first="$(stepped)|$(red_heads)"
+    export OWG_ENV_NAME=x; heads "${RA}" "${RB}"; unset OWG_ENV_NAME
+    check "with an env: name the review pane lacks, its wait-pr steps nothing up and notes no refused head, so a watch with the name steps up on the same heads" \
+      "|no|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
     # A step-up refused after ladder_step's check (here the story is no longer ready) is said, is not
     # logged (a refusal is no sign of life), and is not tried again on the same head.
     fresh "${ladder}" idle; sed -i.bak 's/^status: ready$/status: review/' "${P}/docs/stories/s1.md"
@@ -239,6 +340,10 @@ for ladder in sonnet,opus,fable ""; do
     fresh "${ladder}" idle
     for h in aaaa1111 bbbb2222; do echo "${h}" > "${ROOT}/head"; run watch >/dev/null || true; done
     check "a bare watch steps up nothing" "" "$(stepped)"
+    # A green head from the review pane, after one red head, adds no line and steps nothing up.
+    fresh "${ladder}" idle; review_pane; echo success > "${ROOT}/runs-${RB}"; waits w:2 "${RA}" "${RB}"
+    check "a green head from review-s1's pane writes no red line and steps nothing up" "1 0||1|0" \
+      "${WAIT_RCS}|$(stepped)|$(grep -c ' red$' "${P}/.swarm/red-heads.tsv")|$(grep -c " ${RB} " "${P}/.swarm/red-heads.tsv" || true)"
     # A head whose checks finished with a commit status still pending is judged once the status is in.
     fresh "${ladder}" idle; echo success > "${ROOT}/runs-aaaa1111"; echo pending > "${ROOT}/status-aaaa1111"
     heads aaaa1111; first="$(stepped)"; echo failure > "${ROOT}/status-aaaa1111"; heads bbbb2222
