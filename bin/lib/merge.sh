@@ -2012,8 +2012,14 @@ stacked_lines() {
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
+# Its reads share one REPORT_SECONDS deadline (report_start): status_reads routes every herdr, gh and
+# claude call, and git's fetch, ls-remote and remote, through report_read, its own and those of the
+# functions it calls. A read cut there, or due after it, fails as it would on an error, and
+# report_skipped's line, printed last, names it.
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent
+  report_start || die "status: cannot start the report deadline"
+  status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
   if [[ "${HERDR_ENV:-}" != 1 ]]; then
     echo "No agent: not checked; it needs herdr's agent list, so run status inside a herdr pane"
@@ -2064,6 +2070,30 @@ status_report() {
   echo; echo "Next"
   next_lines | sed 's/^/  /'
   idle_now | sed 's/^/  /' || true
+  local skipped; skipped="$(report_skipped)"
+  [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"
+}
+
+# status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status
+# calls it, and nothing runs after it): each of these reads goes through report_read, named by its
+# command and subcommand (gh api by `gh api` alone), with git's other commands, which stay local,
+# run as they are. A call that already runs under within execs the program itself and keeps its own wait.
+# shellcheck disable=SC2329 # status's callers call these functions by name: herdr, gh, claude, git
+status_reads() {
+  herdr() { report_read "herdr $1 $2" herdr "$@"; }
+  claude() { report_read "claude $1" claude "$@"; }
+  gh() { if [[ "$1" == api ]]; then report_read "gh api" gh "$@"; else report_read "gh $1 $2" gh "$@"; fi; }
+  git() {
+    local i=1
+    # The subcommand is the first word past git's own options; -C and -c take a value.
+    while (( i <= $# )); do
+      case "${!i}" in -C|-c) i=$((i + 2)) ;; -*) i=$((i + 1)) ;; *) break ;; esac
+    done
+    case "${!i:-}" in
+      fetch|ls-remote|remote) report_read "git ${!i}" git "$@" ;;
+      *) command git "$@" ;;
+    esac
+  }
 }
 
 # stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no build yet can
