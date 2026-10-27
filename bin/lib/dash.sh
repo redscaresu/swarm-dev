@@ -457,6 +457,7 @@ dash_watch() {
       printf '\033[H%s\033[K' "${frame%%$'\n'*}"
     fi
     last="${tpl}"; winch=0
+    run_time_end   # the watch's row times its first frame only
     for ((i = 0; i < every; i++)); do
       if [[ ${tty} == 1 ]]; then
         key=""; read -rsn1 -t 1 key </dev/tty || true

@@ -67,7 +67,8 @@ chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 # The lead: its own FAKE_SECRET (the value a story's env: passes on), LEAD_SECRET (a lead story's) and
 # REVIEW_SECRET (a story in review's), config paths, bash as its SHELL, and a HOME whose zsh and bash
 # startup files export ZSH_LEAK and BASH_LEAK, proxy, CA, git ssh and gpg settings, and a swarm.sh
-# setting (SWARM_MERGE_CI_SECONDS), in the project. A stray AGENT_ENV_NAMES names nothing.
+# setting (SWARM_MERGE_CI_SECONDS), in the project. A stray AGENT_ENV_NAMES names nothing. SWARM_RUN_TIMED
+# is set as a timed next (which starts conductors) sets it.
 NET=(HTTPS_PROXY=http://proxy:1 HTTP_PROXY=http://proxy:2 NO_PROXY=a.example https_proxy=http://proxy:3 http_proxy=http://proxy:4
   no_proxy=b.example SSL_CERT_FILE="${ROOT}/ca.pem" NODE_EXTRA_CA_CERTS="${ROOT}/extra.pem" GIT_SSH_COMMAND="ssh -F /dev/null"
   GNUPGHOME="${ROOT}/gnupg")
@@ -83,7 +84,7 @@ for f in bashrc bash_profile; do echo "export BASH_LEAK=${f}" > "${TEST_HOME}/.$
 run() {
   (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
     XDG_CONFIG_HOME="${ROOT}/xdg" GH_CONFIG_DIR="${ROOT}/gh" GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" \
-    "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET PROVIDER_KEY=provider-key \
+    "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SWARM_RUN_TIMED=1 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET PROVIDER_KEY=provider-key \
     SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
 }
 # agent_env <agent> — its recorded environment, one NAME=value per line, into the array a.
@@ -127,6 +128,8 @@ check "PATH (gh-shim first), HOME and TERM reach it with swarm.sh's values" "${S
   "$(var conduct-plain PATH)|$(var conduct-plain HOME)|$(var conduct-plain TERM)"
 check "gh-shim logs its gh calls under its own name, not as the command that started it" "conduct-plain|${p}/.swarm/gh-calls.tsv|" \
   "$(var conduct-plain SWARM_GH_CALLER)|$(var conduct-plain SWARM_GH_LOG)|$(var conduct-plain SWARM_GH_VIA)"
+check "a timed run's marker (SWARM_RUN_TIMED) does not reach it, so its own status, next and dash log their rows" "" \
+  "$(var conduct-plain SWARM_RUN_TIMED)"
 check "the swarm.sh variables reach it: HERDR_ENV, and herdr's own for its pane" "1|$(pane_of conduct-plain)|w|${ROOT}/sock" \
   "$(var conduct-plain HERDR_ENV)|$(var conduct-plain HERDR_PANE_ID)|$(var conduct-plain HERDR_WORKSPACE_ID)|$(var conduct-plain HERDR_SOCKET_PATH)"
 check "XDG_CONFIG_HOME, GH_CONFIG_DIR and GIT_CONFIG_GLOBAL reach it, so gh and git find their config" \

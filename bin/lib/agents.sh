@@ -333,8 +333,9 @@ launch_file() {
     done
     printf 'export SHELL=%q ZDOTDIR=%q\n' "${AGENT_SHELL%% *}" "$4"
     # The agent's name (its ZDOTDIR's): gh-shim logs its calls under it, and not as the starting
-    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry).
-    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA\n' "${4##*/}"
+    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry). Nor does the agent keep a
+    # timed run's SWARM_RUN_TIMED (next starts conductors), so its own status, next and dash log rows.
+    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA SWARM_RUN_TIMED\n' "${4##*/}"
     # shellcheck disable=SC2016 # the wrapper's own bash expands them
     printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
       "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done"
