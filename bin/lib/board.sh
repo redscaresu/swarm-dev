@@ -426,7 +426,7 @@ one_off_started() {
 # idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
 # is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS), from the board and its state
 # alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each call it
-# on every read, so a line goes once its dependency's merge is reconciled. Fails when the check does: a
+# on every read, so a line goes once its dependency is in review or done. Fails when the check does: a
 # story file reconcile removes between the script's glob and its read is one way.
 idle_now() {
   SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
@@ -439,7 +439,6 @@ idle_now() {
 idle_warned() {
   local out
   out="$(idle_now 2>/dev/null)" || { echo "warning: the idle-dependency check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
-  # printf with no argument still prints its format once, a blank line: so a check with no line prints nothing.
   [[ -z "${out}" ]] || printf '%s\n' "${out}"
 }
 
