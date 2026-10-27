@@ -1931,10 +1931,13 @@ init_config() {
 # user merged 8 approved PRs by hand).
 MERGE_RULE='Bash(swarm.sh merge *)'
 
+# user_settings — the user's Claude Code settings file.
+user_settings() { echo "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"; }
+
 # claude_settings — the Claude Code settings files that can hold MERGE_RULE, one per line: the user's
 # first, then the project's shared and local ones.
 claude_settings() {
-  echo "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"
+  user_settings
   echo "${PROJECT_DIR}/.claude/settings.json"
   echo "${PROJECT_DIR}/.claude/settings.local.json"
 }
@@ -1966,22 +1969,53 @@ for f in sys.stdin.read().splitlines():
 sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)'
 }
 
-# init_claude — the Claude Code setting only the user can add: when merge_allowed finds no rule, the
-# step that adds MERGE_RULE to the user's settings, naming the files it read.
+# AUTO_MODE_DONE — the user's word that auto mode's setup ran, the date swarm.sh init --auto-mode-done
+# wrote. v0.28.0: the 'Teach auto mode' dialog and permission prompts froze builder panes for hours.
+AUTO_MODE_DONE="${PROJECT_DIR}/.swarm/auto-mode-done"
+
+# auto_mode_set_up — true when auto mode's setup has run: the user said so (AUTO_MODE_DONE), or the
+# user's settings hold a non-empty autoMode.environment, the list /auto-mode-setup writes. Claude Code
+# offers the 'Teach auto mode' dialog only while that list is empty, and takes autoMode from no
+# project settings file. It reads only that list, prints nothing and writes no file.
+auto_mode_set_up() {
+  [[ -f "${AUTO_MODE_DONE}" ]] && return
+  python3 -I -c '
+import json, sys
+try:
+    env = json.load(open(sys.argv[1], encoding="utf-8"))["autoMode"]["environment"]
+except (OSError, ValueError, LookupError, TypeError):
+    sys.exit(1)
+sys.exit(0 if isinstance(env, list) and env else 1)' "$(user_settings)"
+}
+
+# auto_mode_done — swarm.sh init --auto-mode-done: record the user's word that auto mode's setup ran,
+# today's date in AUTO_MODE_DONE, so init stops printing that step. It writes nothing else.
+auto_mode_done() {
+  { mkdir -p "${PROJECT_DIR}/.swarm" && date +%F > "${AUTO_MODE_DONE}"; } || die "init: cannot write ${AUTO_MODE_DONE}"
+  echo "recorded that auto mode's setup ran, in ${AUTO_MODE_DONE#"${PROJECT_DIR}/"}; init no longer prints that step"
+}
+
+# init_claude — the Claude Code steps only the user can take: when merge_allowed finds no rule, the
+# step that adds MERGE_RULE to the user's settings, naming the files it read; until auto_mode_set_up,
+# the step that runs /auto-mode-setup, and the command that records it ran.
 init_claude() {
   local f user="" files=""
-  merge_allowed && return
-  while IFS= read -r f; do
-    [[ -n "${user}" ]] || user="${f}"
-    files+="${files:+, }${f#"${PROJECT_DIR}/"}"
-  done < <(claude_settings)
-  echo "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${files})."
-  echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, Claude Code refuses conductors every merge without it, and you merge each PR by hand."
+  if ! merge_allowed; then
+    while IFS= read -r f; do
+      [[ -n "${user}" ]] || user="${f}"
+      files+="${files:+, }${f#"${PROJECT_DIR}/"}"
+    done < <(claude_settings)
+    echo "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${files})."
+    echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, Claude Code refuses conductors every merge without it, and you merge each PR by hand."
+  fi
+  auto_mode_set_up && return
+  echo "Auto mode has not learned your environment: $(user_settings) has no autoMode.environment, and nobody ran swarm.sh init --auto-mode-done here."
+  echo "Your step: run /auto-mode-setup once in claude, so no agent's pane stops on the 'Teach auto mode' dialog. Then run swarm.sh init --auto-mode-done here, and init stops printing this step."
 }
 
 # init_project — set the project up from the installed plugin, from its git root: the board templates
 # (never over a file that exists), .claude/swarm/ with a commented commit_trailers line, the .gitignore
-# lines, a CI workflow and a pre-commit hook, then the Claude Code setting the user must add
+# lines, a CI workflow and a pre-commit hook, then the Claude Code steps the user must take
 # (init_claude). A second run changes nothing.
 init_project() {
   local rel board f line n=0

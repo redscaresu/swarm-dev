@@ -43,7 +43,7 @@
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
 #   swarm.sh watch [repo...]                                wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
-#   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
+#   swarm.sh init [--auto-mode-done]                        from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines, and print the Claude Code steps left to you; --auto-mode-done: record (in .swarm/auto-mode-done) that you ran /auto-mode-setup, and nothing else
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
 #   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, a read-only agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once
@@ -559,7 +559,11 @@ dispatch() {
     board-pr) board_pr "$@" ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
     config) show_config "${1:-}" ;;
-    init)   init_project ;;
+    init)   case "$*" in
+              "") init_project ;;
+              --auto-mode-done) auto_mode_done ;;
+              *) die "usage: swarm.sh init [--auto-mode-done]" ;;
+            esac ;;
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     codex-review) codex_review "${1:-}" ;;
     review-agent) require_herdr; review_agent "${1:-}" "${2:-}" ;;
