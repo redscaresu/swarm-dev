@@ -1,0 +1,9 @@
+⏺ If the CLI says Please run /login, sign in again. The dialog read:
+  ❯ 1. Yes
+    2. No
+
+────────────────────────────────────────
+❯ answer it with
+  ❯ 1. Yes
+────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
