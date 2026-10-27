@@ -963,6 +963,10 @@ report_start() {
 # (142, keeping what it printed), or that would start at or past the deadline (142 at once, not run),
 # is recorded as <name> for report_skipped. Reads only: no write and no agent start goes through it.
 # With no report_start it ends the shell it runs in (bash's ${:?}), which a caller's || cannot catch.
+# <command> must be a program: within runs it with perl's exec, so a shell function (a gh or herdr
+# wrapper of swarm.sh's), a builtin or a pipeline is not found, exits 127 and is never named as
+# skipped. Pass the program itself (gh, herdr, git), or `bash -c '<script>' bash <args>` with what the
+# script needs inside it: a function it calls is defined or sourced there.
 report_read() {
   local name="$1" rc=0; shift
   within "@${REPORT_END:?report_read: no report_start}" "$@" || rc=$?
