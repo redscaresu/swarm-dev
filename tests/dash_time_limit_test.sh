@@ -71,8 +71,9 @@ STUB
 for b in stty tput; do printf '#!/bin/sh\nexit 1\n' > "${ROOT}/bin/${b}"; done
 chmod +x "${ROOT}/bin/"*
 unset COLUMNS LINES DASH_COLOR DASH_W DASH_H NO_COLOR
+export CLAUDE_CONFIG_DIR="${ROOT}/config"   # under its own root, so parallel runs share no ~/.claude
 export PATH="${ROOT}/bin:${PATH}" TMPDIR="${ROOT}/tmp" CLAUDE_PROJECTS_DIR="${ROOT}/projects" \
-  CLAUDE_CONFIG_DIR="${ROOT}/config" SWARM_REPORT_SECONDS="${LIMIT}" GH_PIDS="${ROOT}/gh.pids"
+  SWARM_REPORT_SECONDS="${LIMIT}" GH_PIDS="${ROOT}/gh.pids"
 # fresh — drop dash's one-minute cache of gh and cost, so the next run asks gh again.
 fresh() { rm -rf "${TMPDIR}"/swarm-dash-*; }
 
