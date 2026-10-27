@@ -185,6 +185,15 @@ fresh fable 2; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable: a later round holds it, naming that round" "yes|no|ok (top-rung: findings round 3 on fable)|yes" \
   "$(grep -q 'these were findings round 3 on or above' <<< "${out}" && echo yes)|$(told "${out}")|$(held)|$(grep -q 'drew review findings round 3 there' "${block}" && echo yes)"
 
+# From review-s1's pane (w:2) the rounds count as the conductor's: the 1st since the step-up is sent,
+# from the review agent, and the 2nd holds the story.
+fresh fable 0; echo "w:2 review-s1" >> "${P}/.swarm/state/s1"; echo "review-s1 w:2" >> "${ROOT}/agents"
+out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" || true
+check "fable, review pane: the 1st findings tell since the step-up is sent, from the review agent" "yes|1|" \
+  "$(told "${out}")|$(grep -c '^agent prompt w:1 From the review agent:$' "${ROOT}/herdr.log")|$(held)"
+out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" || true
+check "fable, review pane: the 2nd holds the story for the lead" "no|lead|top-rung|${HELD}" "$(told "${out}")|$(kind)|$(fm_of held_for)|$(held)"
+
 fresh fable 1; echo "top_rung_rounds = 3" >> "${P}/.claude/swarm/config"; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "fable, top_rung_rounds = 3: the 2nd findings tell since the step-up is sent" "yes|" "$(told "${out}")|$(held)"
 fresh fable 2; echo "top_rung_rounds = 3" >> "${P}/.claude/swarm/config"; out="$(run tell s1 findings "${ROOT}/f.md")" || true

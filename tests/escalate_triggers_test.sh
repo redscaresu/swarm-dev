@@ -23,9 +23,9 @@ check() { # <name> <want> <got>
 }
 
 # herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until the
-# tab closes; agent wait returns at once. With quick, a started session's first turn has ended by the
-# time anyone reads it: the brief writes an assistant entry in its log, a second passes, and Claude
-# Code lists it idle; a /goal writes its goal_status set entry. process-info prints pi when it exists.
+# tab closes, or its own pane does; agent wait returns at once. With quick, a started session's first
+# turn has ended by the time anyone reads it: the brief writes an assistant entry in its log, a second
+# passes, and Claude Code lists it idle (or as the file after says); a /goal writes its goal_status set entry. process-info prints pi when it exists.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -36,6 +36,7 @@ case "$1 $2" in
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"}]}}' ;;
   "tab close")    : > "$H/agents" ;;
+  "pane close")   grep -v " $3\$" "$H/agents" > "$H/agents.x" || true; mv "$H/agents.x" "$H/agents" ;;
   "agent start")  [ -e "$H/startfail" ] && { echo "start refused" >&2; exit 1; }
                   echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p' > "$H/sid"
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
@@ -48,7 +49,7 @@ if t.startswith("/goal "):
     print(json.dumps({"type": "attachment", "timestamp": now, "attachment": {"type": "goal_status", "met": False, "sentinel": True, "condition": t[6:]}}))
 else:
     print(json.dumps({"type": "assistant", "timestamp": now, "message": {"model": "m", "content": []}}))' "$4" >> "$CLAUDE_PROJECTS_DIR/p/$sid.jsonl"
-                    case "$4" in "/goal "*) ;; *) sleep 1; echo "[{\"sessionId\":\"$sid\",\"status\":\"idle\"}]" > "$CLAUDE_STUB_AGENTS" ;; esac
+                    case "$4" in "/goal "*) ;; *) sleep 1; echo "[{\"sessionId\":\"$sid\",\"status\":\"$(cat "$H/after" 2>/dev/null || echo idle)\"}]" > "$CLAUDE_STUB_AGENTS" ;; esac
                   fi
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "pane process-info") [ -e "$H/pi" ] && cat "$H/pi" ;;
@@ -90,7 +91,7 @@ P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
 # (one commit, 2 hours old) on [model] (sonnet), its builder open in pane w:1, and escalate_ladder = <ladder>.
 fresh() {
-  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid"; : > "${ROOT}/run.log"
+  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid" "${ROOT}/after" "${ROOT}/projects/p/sess-1.jsonl"; : > "${ROOT}/run.log"
   "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
   "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
   mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/state"
@@ -114,6 +115,8 @@ run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWAR
 stepped() { { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv"; sed -n 's/^swarm: step-up: /refused: step-up: /p' "${ROOT}/run.log"; } | paste -sd, -; }
 closes() { grep -c $'\tclose\t' "${P}/.swarm/events.tsv" || true; }
 findings_tells() { printf '2026-10-18T10:0%s:00Z\ttell:findings\ts1\tw:1\tok\n' 1 2 >> "${P}/.swarm/events.tsv"; echo "fix it" > "${ROOT}/f.md"; }
+# review_pane — s1's review agent (review-s1) open in pane w:2, a pane of this project, as review-agent leaves it.
+review_pane() { echo "w:2 review-s1" >> "${P}/.swarm/state/s1"; echo "review-s1 w:2" >> "${ROOT}/agents"; }
 heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
 attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
 escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
@@ -151,6 +154,27 @@ for ladder in sonnet,opus,fable ""; do
     out="$(run tell s1 findings "${ROOT}/f.md")" || true
     check "ladder '${ladder}': with step_up_findings = 2, the second findings tell steps it up" \
       "ok (findings-2: sonnet -> opus)|yes" "$(stepped)|$(grep -q 'was not told: these were findings round 2' <<< "${out}" && echo yes)"
+    # From review-s1's pane (w:2) the findings tells count as the conductor's do: rounds 1 and 2 are
+    # sent, saying they are from the review agent, and the third steps the build up.
+    fresh "${ladder}" idle; review_pane; echo "fix it" > "${ROOT}/f.md"
+    for _ in 1 2; do HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md" >/dev/null || true; done
+    check "ladder '${ladder}': review pane: findings tells 1 and 2 are sent from the review agent and logged ok" \
+      "tell:findings s1 w:2 ok|tell:findings s1 w:2 ok|2" \
+      "$(awk -F'\t' '$2 ~ /^tell/ { printf "%s %s %s %s|", $2, $3, $4, $5 }' "${P}/.swarm/events.tsv")$(grep -c '^agent prompt w:1 From the review agent:$' "${ROOT}/herdr.log")"
+    out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
+    check "ladder '${ladder}': review pane: the third findings tell steps the build up and fails, saying so" \
+      "ok (findings-3: sonnet -> opus)|1|yes" \
+      "$(stepped)|${rc}|$(grep -q 'was not told: these were findings round 3 of its build, so it was stepped up' <<< "${out}" && echo yes)"
+    # With goal on, the /goal sent mid-turn after them (sess-1 busy) names the review agent's findings.
+    fresh "${ladder}" idle; review_pane; echo "fix it" > "${ROOT}/f.md"; echo "goal = 4" >> "${P}/.claude/swarm/config"
+    touch "${ROOT}/quick"; echo sess-1 > "${ROOT}/sid"; echo busy > "${ROOT}/after"
+    out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
+    check "ladder '${ladder}': review pane, goal on: the /goal names the review agent's findings" "0|1" \
+      "${rc}|$(grep -c "^agent prompt w:1 /goal The goal: the review agent's findings, sent to you just before this goal, are addressed" "${ROOT}/herdr.log")"
+    fresh "${ladder}" idle; review_pane; echo "fix it" > "${ROOT}/f.md"
+    HERDR_PANE_ID=w:9 run tell s1 findings "${ROOT}/f.md" >/dev/null || true
+    check "ladder '${ladder}': from a pane that is not review-s1's, the tell is from the conductor" "1|0" \
+      "$(grep -c '^agent prompt w:1 From the conductor:$' "${ROOT}/herdr.log")|$(grep -c 'From the review agent' "${ROOT}/herdr.log" || true)"
   else
     check "ladder '${ladder}': a third findings tell is sent" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
     # With the ladder off a step-up lock means nothing: a close goes on and counts the attempt.

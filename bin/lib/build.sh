@@ -4,10 +4,13 @@
 # are taken up, so the goal drives the fix (sent after the turn, the judge would find it met at once): the
 # findings addressed, the reply its brief asks for in its mode, and the turn bound. Mid-turn it sets at
 # once and costs one extra short turn, as build_story's does. send_goal confirms it from entries newer
-# than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story.
+# than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story. It
+# names the findings as its tell did (tell_from): the review agent's, or the conductor's review findings.
 findings_goal() {
+  local what="the conductor's review findings"
+  [[ "$(tell_from "$1")" != "the review agent" ]] || what="the review agent's findings"
   # shellcheck disable=SC2154 # assigned in another file
-  printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
+  printf '%s %s %s\n' "The goal: ${what}, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
     "$(reply_sentence)" "It is met once both hold, or stop after ${CFG_goal} more turns." > "$3"
   send_goal "$1" "$3" findings "$2"
 }

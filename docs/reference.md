@@ -963,6 +963,9 @@ declined with a reason in the reply, and the builder has sent the reply its brie
 more turns have passed. `tell` fails and names the story unless the session log shows that goal set
 after the tell began, and its message says the findings were delivered. A nudge or resume tell sends
 no goal.
+The text `tell` sends starts `From the conductor:`. Run from the pane of the story's review agent
+(`review-<slug>`), it starts `From the review agent:`, and the goal names the review agent's
+findings. Findings from either count the same: as a round, toward a step-up and toward a top-rung hold.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or
