@@ -1263,9 +1263,9 @@ from the findings `tell` sent the builder since the story's last build started (
 restarted builder does not start it again).
 After each review the agent triages its own findings. It never edits the code: a finding that is
 real and inside the story goes to the builder to fix. It declines the rest, each with a reason (nit,
-wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in one PR comment. It logs
-each declined finding with `log-finding --round <n>` at once, and each one to fix once the builder has
-pushed its fix. Then it writes its review file. A round with nothing
+wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in one PR comment. It logs each declined finding at once, with
+`log-finding --declined <reason> --reviewer <who> --round <n>`, and each one to fix once the builder
+has pushed its fix. Then it writes its review file. A round with nothing
 to fix is a pass: the agent replies with the file and stops, and the conductor takes the PR from
 there. With findings to fix, it runs `swarm.sh wait <slug>` and then `swarm.sh tell <slug> findings
 <file>`, since `tell` refuses a builder that is still working. When `tell` says the build was
