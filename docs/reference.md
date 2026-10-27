@@ -224,8 +224,8 @@ events.tsv are read every poll; git only for a story with a start line and no cu
 JSON and `ps` once, whenever a story with a build record or a ready story with a step-up marker is
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
-everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines and
-`unsent brief:` lines on its first read.
+everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines,
+`unsent brief:` lines and `tell undelivered:` lines (§ A tell to a busy agent is queued) on its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
@@ -1007,6 +1007,40 @@ and clearing a dialog fires no hook that would change that. So when herdr refuse
 `tell` reads the pane again. If it is clear, `tell` reports a Claude agent idle to herdr, with its
 session and resume command, as the agent's Stop hook would, and sends the tell once more.
 
+**A tell to a busy agent is queued.** On 2026-10-27 a builder never got its review findings: herdr
+listed it as working, `tell` refused, nothing tried again, and the builder waited over an hour. A
+findings, nudge or resume tell to an agent mid-turn (Claude Code lists its session busy, or herdr
+lists it working) is now queued. `tell` saves the file as `.swarm/tells/<agent>.<kind>`, prints
+`queued: <agent> (busy); delivered when its turn ends, so do not tell it again`, and exits 0.
+events.tsv logs that line as the tell's outcome instead of `ok`, so queued findings are not yet a
+review round. A newer tell of the same kind replaces a queued one that has not been sent. So does a
+tell of that kind sent at once after the agent goes idle.
+
+Each agent with a queue has one check running in the background (`<agent>.later`). Once a minute
+(`SWARM_NOTE_WAKE_SECS`, the same minute a note's wake uses), the check reads the agent as `tell`
+does. When the agent is idle, it sends the oldest queued tell through its own `swarm.sh tell`, from
+the same sender, and only to the pane the tell was queued for. That tell is logged like any other,
+so findings count as one round when they are delivered. While the check sends it, the tell is
+`<agent>.<kind>.sending`, and a newer tell of its kind can still replace it until the check's tell
+has read the agent idle and claimed it. A tell replaced that way prints `replaced: <agent>'s queued
+<kind> tell, by a newer one; not sent`, sends nothing, and is logged with that line. If the agent
+is no longer idle by then, the tell goes back in the queue. Findings that find the story's step-up
+lock held (by a step-up, a restart or a hold) go back in the queue too. A step-up or a top-rung
+hold that takes queued findings has delivered them: the handover or the lead's block holds them,
+and `wait --lead` names a step-up that failed. The check ends when the queue is empty. A check
+whose last look is more than twice that minute plus 60 seconds old (three minutes by default)
+counts as dead, and the next queued tell to that agent starts a new one.
+
+The check drops a queued tell when the agent's pane has closed, another pane holds its name or its
+Claude session has ended. It also drops one whose tell fails after claiming it. It keeps the text
+of each tell it drops in `.swarm/tells/<agent>.<kind>.undelivered.md`. A tell dropped before any
+`swarm.sh tell` ran for it is logged as `tell:<kind>` with `undelivered: <why>`. A delivery that
+failed already has its own tell's line, and a second line would count findings herdr sent as two
+rounds. `wait --lead` then prints `tell undelivered: <slug> <kind> (<why>), exit: if it still
+applies, swarm.sh tell <slug> <kind> <file>; then rm <marker> <file>` as an alert, like
+`no-agent:`. When the why says herdr may have sent it, the exit is `it may have arrived, so do as
+that says and never send it again as <kind>`, because findings herdr sent count as a round already.
+
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or
 when review has not converged in the rounds it allows. It runs `swarm.sh close <slug> --drop`, which, on a
@@ -1145,9 +1179,10 @@ a PR's latest head has passed, it merges it (or hands it over) at once, never ho
 while other reviews run. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
-or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
-refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
+or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. A tell
+to a builder that is still working is queued and sent when its turn ends (§ A tell to a busy
+agent is queued). `tell` refuses a
+builder waiting on a prompt (it names what the prompt is), or whose session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
 (a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
 session reads busy or waiting (when it read idle before the send), or its log
 has the message as a new prompt (for a `tell`, the file's first line). herdr's own status, even

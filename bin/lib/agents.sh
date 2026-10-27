@@ -1605,10 +1605,13 @@ note_lock() {
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
 # main logs it as tell:<kind>). A header line comes first, so findings that begin with '-' are never
-# read as a flag. Only an idle agent is told (read_state; a busy one whose turn stopped on an API
-# error, api_stopped, counts as idle): it refuses one mid-turn (findings sent then
-# would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
-# or of unknown state, rather than waiting on it. A dialog the user cleared can leave an agent listed
+# read as a flag. Only an idle agent is told (tell_state): one mid-turn (findings sent then would be
+# counted as taken up at once) has the tell queued for its next idle instead (tell_queue), and a tell
+# sent at once replaces a queued one of its kind (tell_unqueue). It refuses one waiting on a prompt
+# (the text would land in the dialog), gone, or of unknown state, rather than waiting on it. A
+# delivery from the queue (tell_queue_send) names the pane it was queued for, sent to no other, and
+# its sender (SWARM_TELL_QUEUED), and sends nothing once a newer tell replaced it (tell_claim). A
+# dialog the user cleared can leave an agent listed
 # as waiting or blocked, so for those it reads the pane once (pane_clear) and refuses only when the
 # pane is not clear. herdr refusing the tell itself as blocked is tell_deliver's to clear (tell_unblock).
 # With goal on, findings get a fresh goal (findings_goal).
@@ -1626,7 +1629,9 @@ note_lock() {
 # review agent from review-<slug>'s pane, else the conductor. Either counts the same: rounds, step-ups
 # and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n from who
+  local kind="$2" f="$3" name msg state since inbox rc pane line n from who qpane qfrom
+  # Unset once read, so no agent this tell starts (a step-up) inherits it.
+  read -r qpane qfrom <<< "${SWARM_TELL_QUEUED:-}"; unset SWARM_TELL_QUEUED
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1647,18 +1652,24 @@ tell_agent() {
     note_wake "${name}" "${inbox%.md}" "${pane}"
     echo "noted ${name}"; return
   fi
-  state="$(read_state "${name}")"
-  # A turn that stopped on an API error has ended, though open background shells keep its session busy.
-  [[ "${state}" != busy ]] || ! api_stopped "${name}" "${pane}" || state=idle
+  [[ -z "${qpane}" || "${pane}" == "${qpane}" ]] || die "${name}: its queued ${kind} tell was for pane ${qpane}, and ${name} is in ${pane} now; it is not sent to another pane"
+  state="$(tell_state "${name}" "${pane}")"
   case "${state}" in
     idle|herdr:idle|herdr:done) ;;
-    busy|herdr:working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
+    busy|herdr:working) tell_queue "$1" "${name}" "${kind}" "${f}" "${pane} ${qfrom:-$(tell_from "$1")}" "${qpane}"; return ;;
     waiting*|herdr:blocked) pane_clear "${pane}" || die "${name} is waiting on $(waiting_for "${state}"); answer it (herdr agent read ${name}), then tell it" ;;
     gone) die "${name}: its Claude session has ended (gone); there is no one to tell" ;;
     unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
+  if [[ -z "${qpane}" ]]; then
+    tell_unqueue "${name}" "${kind}" || die "tell: ${name} was not told: its ${kind} tell queued earlier could not be replaced (${TELL_QUEUE}/${name}.lock is held); tell it again"
+  elif ! tell_claim "${name}" "${kind}"; then
+    if [[ -e "${TELL_QUEUE}/${name}.${kind}.sending" ]]; then tell_outcome "queued: ${name} (its queue's lock is held); sent at the next look"
+    else tell_outcome "replaced: ${name}'s queued ${kind} tell, by a newer one; not sent"; fi
+    return
+  fi
   if [[ "${kind}" == findings ]] && top_rung "$1"; then
     n=$(( $(findings_told "$1" "$(top_rung_since "$1")") + 1 ))
     if (( n >= TOP_RUNG_FINDINGS )); then
@@ -1673,22 +1684,230 @@ tell_agent() {
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
     [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
   fi
-  from="$(tell_from "$1")"; who="the conductor"; [[ "${from}" != review ]] || who="the review agent"
+  from="${qfrom:-$(tell_from "$1")}"; who="the conductor"; [[ "${from}" != review ]] || who="the review agent"
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
   { echo "From ${who}:"; echo; cat "${f}"; } > "${msg}"
   # The file's own first line is what its session log is read for: every tell starts with the header.
   line="$(awk 'NF { print; exit }' "${f}")"
-  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"; echo "told ${name}"; return; fi
+  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" TELL_PANE="${qpane}" tell_deliver "${name}" "${msg}" "${kind}"; echo "told ${name}"; return; fi
   since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
-  DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"
+  DELIVER_LINE="${line}" TELL_PANE="${qpane}" tell_deliver "${name}" "${msg}" "${kind}"
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
   trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
   findings_goal "$1" "${since}" "${msg}.goal" "${from}"
   echo "told ${name}"
+}
+
+# TELL_QUEUE: tells queued for busy agents (tell_queue). <name>.<kind> holds one: a line `<slug> <pane>
+# <from>` (what it was told as, the pane it was for, tell_from's word), then the file told; it is
+# <name>.<kind>.sending while its check sends it. Beside them <name>.lock (note_lock) and <name>.later
+# (its pending check); and for a tell no check delivered, <name>.<kind>.undelivered (the line wait
+# --lead prints) and <name>.<kind>.undelivered.md (its text).
+TELL_QUEUE="${PROJECT_DIR}/.swarm/tells"
+
+# tell_state <name> <pane> — read_state's word for <name>, busy read as idle when its turn stopped on
+# an API error (api_stopped): the turn has ended, though open background shells keep its session busy.
+tell_state() {
+  local s
+  s="$(read_state "$1")"
+  [[ "${s}" != busy ]] || ! api_stopped "$1" "$2" || s=idle
+  echo "${s}"
+}
+
+# tell_queue <slug> <name> <kind> <file> <pane from> [queued] — queue <file> for <name>, busy in
+# <pane>, as TELL_QUEUE/<name>.<kind>, replacing one of that kind not yet sent, queued or on its way
+# (.sending, tell_take's): the newer goes. Under the queue's lock, so one check stays pending
+# (tell_queue_later). [queued], a delivery that found <name> busy again, writes nothing: its check
+# puts the tell back (tell_queue_send). Either way it ends with the queued: line (tell_outcome), so
+# findings count as a round only once they are sent.
+tell_queue() {
+  local q="${TELL_QUEUE}/$2" tmp=""
+  if [[ -z "${6:-}" ]]; then
+    if ! { mkdir -p "${TELL_QUEUE}" && tmp="$(mktemp "${q}.$3.XXXXXX")" && { echo "$1 $5"; cat "$4"; } > "${tmp}"; }; then
+      rm -f "${tmp}"; die "tell: $2 is busy, and its tell could not be queued in ${TELL_QUEUE}"
+    fi
+    note_lock "${q}" || { rm -f "${tmp}"; die "tell: $2 is busy, and its queue's lock (${q}.lock) is held; tell it again"; }
+    rm -f "${q}.$3.sending"
+    mv -f "${tmp}" "${q}.$3" || { rm -f "${tmp}"; rmdir "${q}.lock"; die "tell: $2 is busy, and its tell could not be queued as ${q}.$3"; }
+    tell_queue_later "$2"
+    rmdir "${q}.lock"
+  fi
+  tell_outcome "queued: $2 (busy); delivered when its turn ends, so do not tell it again"
+}
+
+# tell_outcome <line> — print <line>, the end of a tell that sent nothing, and leave it in DIE_FILE for
+# main to log in place of ok, so findings it held count as no round.
+tell_outcome() { { printf '%s\n' "$1" > "${DIE_FILE:-/dev/null}"; } 2>/dev/null || true; echo "$1"; }
+
+# tell_unqueue <name> <kind> — drop <name>'s tell of <kind> queued or on its way (.sending, not yet
+# claimed by its delivery): a tell sent at once is the newer, and the queued one sent after it would
+# count a findings round twice. Fails when it cannot take the queue's lock, so nothing is sent.
+tell_unqueue() {
+  [[ -e "${TELL_QUEUE}/$1.$2" || -e "${TELL_QUEUE}/$1.$2.sending" ]] || return 0
+  note_lock "${TELL_QUEUE}/$1" || return 1
+  rm -f "${TELL_QUEUE}/$1.$2" "${TELL_QUEUE}/$1.$2.sending"
+  rmdir "${TELL_QUEUE}/$1.lock"
+}
+
+# tell_claim <name> <kind> — for a delivery from the queue, once <name> reads idle: take its
+# <name>.<kind>.sending away under the queue's lock, so no tell after this replaces it; fails when a
+# newer tell replaced it first (tell_queue, tell_unqueue), or the lock is held (its check puts it back).
+tell_claim() {
+  local rc=1
+  note_lock "${TELL_QUEUE}/$1" || return 1
+  if [[ -e "${TELL_QUEUE}/$1.$2.sending" ]] && rm -f "${TELL_QUEUE}/$1.$2.sending"; then rc=0; fi
+  rmdir "${TELL_QUEUE}/$1.lock"
+  return "${rc}"
+}
+
+# tell_queued <name> — the paths of <name>'s queued tells, oldest first.
+tell_queued() { ls -1tr "${TELL_QUEUE}/$1".{findings,nudge,resume} 2>/dev/null || true; }
+
+# tell_queue_later <name> — with <name>'s queue lock held: unless a check is pending (<name>.later, the
+# time it last looked and its token; one that has not looked for twice NOTE_WAKE_SECS and a minute
+# was killed), start one in the background, its output dropped. Every NOTE_WAKE_SECS, the note wake's
+# minute, it looks at the queue (tell_queue_pass), until the queue is empty (tell_queue_look).
+tell_queue_later() {
+  local later="${TELL_QUEUE}/$1.later" was tok
+  was="$(cut -d' ' -f1 "${later}" 2>/dev/null)" || was=""
+  [[ "${was}" =~ ^[0-9]+$ ]] && (( $(date +%s) - was <= 2 * NOTE_WAKE_SECS + 60 )) && return 0
+  tok="$$.${RANDOM}"
+  echo "$(date +%s) ${tok}" > "${later}" || return 0
+  ( trap '[[ "$(cut -d" " -f2 "${later}" 2>/dev/null)" != "${tok}" ]] || rm -f "${later}"' EXIT
+    while sleep "${NOTE_WAKE_SECS}" && tell_queue_look "$1" "${tok}"; do tell_queue_pass "$1" || true; done ) </dev/null >/dev/null 2>&1 &
+}
+
+# tell_queue_look <name> <token> — under <name>'s queue lock, succeed while <name>.later holds <token>
+# and a tell is queued, stamping the time there; else fail, ending the check, and remove <name>.later
+# when it holds <token>. A lock held past note_lock's wait skips the stamp, not the look.
+tell_queue_look() {
+  local later="${TELL_QUEUE}/$1.later" rc=0
+  if ! note_lock "${TELL_QUEUE}/$1"; then [[ -d "${TELL_QUEUE}" ]]; return; fi
+  if [[ "$(cut -d' ' -f2 "${later}" 2>/dev/null)" != "$2" ]]; then rc=1
+  elif [[ -z "$(tell_queued "$1")" ]]; then rm -f "${later}"; rc=1
+  else echo "$(date +%s) $2" > "${later}" || true; fi
+  rmdir "${TELL_QUEUE}/$1.lock"
+  return "${rc}"
+}
+
+# tell_queue_pass <name> — one look at <name>'s queued tells, from one read of herdr's list (none, when
+# that read fails). Each queued for a pane that no longer holds <name> (closed, or a new agent of the
+# name in another), or every one once its Claude session has ended (gone), goes to the lead
+# (tell_drop), never to another pane. Else, once <name> reads idle
+# as tell reads it (tell_state; waiting or blocked over a clear pane, pane_clear), the oldest is sent
+# (tell_queue_send); busy, waiting on a prompt or unknown, they wait for the next look.
+tell_queue_pass() {
+  local list pane state="" f at
+  # A list herdr failed to give drops nothing: the agent may still be there.
+  list="$(herdr agent list 2>/dev/null)" && [[ "${list}" == *'"agents"'* ]] || return 0
+  pane="$(list_field "$1" pane_id <<< "${list}")"
+  [[ -z "${pane}" ]] || state="$(tell_state "$1" "${pane}")"
+  while IFS= read -r f; do
+    read -r _ at _ < "${f}" 2>/dev/null || continue
+    if [[ -z "${pane}" || "${at}" != "${pane}" ]]; then tell_drop "$1" "${f}" "${at}" "$1 is no longer in pane ${at}"
+    elif [[ "${state}" == gone ]]; then tell_drop "$1" "${f}" "${at}" "$1's Claude session in pane ${at} has ended (gone)"; fi
+  done < <(tell_queued "$1")
+  case "${state}" in
+    idle|herdr:idle|herdr:done) tell_queue_send "$1" "${pane}" ;;
+    waiting*|herdr:blocked) ! pane_clear "${pane}" || tell_queue_send "$1" "${pane}" ;;
+  esac
+}
+
+# tell_take <name> <entry> <body> <pane> [sending] — under <name>'s queue lock, copy a queued tell's
+# text to <body>, take it out of the queue and print its line (`<slug> <pane> <from>`). With
+# [sending] it becomes <entry>.sending, on its way, which a newer tell of its kind can still replace
+# until the delivery claims it (tell_claim). Fails when it is gone (sent, or dropped for a tell sent
+# at once) or, replaced meanwhile, is for another pane than <pane>.
+tell_take() {
+  local top="" at rc=1
+  note_lock "${TELL_QUEUE}/$1" || return 1
+  if top="$(head -1 "$2" 2>/dev/null)" && read -r _ at _ <<< "${top}" && [[ "${at}" == "$4" ]] \
+     && tail -n +2 "$2" > "$3"; then
+    if [[ -n "${5:-}" ]]; then mv -f "$2" "$2.sending" && rc=0; else rm -f "$2" && rc=0; fi
+  fi
+  rmdir "${TELL_QUEUE}/$1.lock"
+  [[ ${rc} -ne 0 ]] || echo "${top}"
+  return "${rc}"
+}
+
+# tell_drop <name> <entry> <pane> <why> — take a queued tell for <pane> (tell_take) and hand it to the
+# lead (tell_undelivered) with <why>.
+tell_drop() {
+  local body top slug
+  body="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || return 0
+  if top="$(tell_take "$1" "$2" "${body}" "$3")"; then
+    read -r slug _ _ <<< "${top}"
+    tell_undelivered "$1" "${slug}" "${2##*.}" "${body}" "$4" log
+  fi
+  rm -f "${body}"
+}
+
+# tell_queue_send <name> <pane> — send <name>'s oldest queued tell, if it is for <pane>, through a tell
+# of its own (swarm.sh tell, logged as any tell, so findings count as a round now) to <pane> alone,
+# from the sender that queued it (SWARM_TELL_QUEUED). It is on its way meanwhile (tell_take's
+# .sending). One that tell never claimed (tell_claim: it read <name> busy again, or not idle) goes
+# back in the queue for the next look, and so does one it claimed while a step-up, restart or hold
+# of its story held the story's lock. One a step-up or top-rung hold took (its handover or lead block
+# holds the findings), or a step-up that failed partway (wait --lead names it), is done. One it
+# claimed and failed otherwise goes to the lead (tell_undelivered) with its error, which that tell
+# logged itself; one a newer tell replaced on its way is gone, and that tell sent nothing.
+tell_queue_send() {
+  local f top slug from body out rc=0 why
+  f="$(tell_queued "$1" | head -1)"
+  [[ -n "${f}" ]] || return 0
+  body="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || return 0
+  if ! top="$(tell_take "$1" "${f}" "${body}" "$2" sending)"; then rm -f "${body}"; return 0; fi
+  read -r slug _ from <<< "${top}"
+  out="$(SWARM_TELL_QUEUED="$2 ${from}" SWARM_PROJECT="${PROJECT_DIR}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" tell "${slug}" "${f##*.}" "${body}" 2>&1)" || rc=$?
+  if [[ -e "${f}.sending" ]]; then
+    tell_requeue "$1" "${f}"
+  elif [[ ${rc} -ne 0 ]]; then
+    why="$(grep '^swarm: ' <<< "${out}" | tail -1)" || why=""
+    why="${why#swarm: }"
+    case "${why}" in
+      *" was not told: another step-up or a restart of it is running"*|*" was not told: a step-up, restart or hold of it is running"*)
+        { echo "${top}"; cat "${body}"; } > "${f}.sending" && tell_requeue "$1" "${f}" ;;
+      *"so it was stepped up, with them in its handover brief"*|*"is held for the lead (held_for: top-rung"*|*"its step-up failed partway, after its builder was closed"*) ;;
+      *) tell_undelivered "$1" "${slug}" "${f##*.}" "${body}" "${why:-its tell failed (exit ${rc})}" ;;
+    esac
+  fi
+  rm -f "${body}"
+}
+
+# tell_requeue <name> <entry> — under <name>'s queue lock, put <entry>.sending back as <entry>, keeping
+# its age, unless a newer tell of its kind is queued there now, or replaced it meanwhile (tell_unqueue
+# took it away under the lock). A lock held past note_lock's wait is left alone, and the tell put back
+# all the same: mv -n never moves it over a newer one.
+tell_requeue() {
+  local locked=""
+  ! note_lock "${TELL_QUEUE}/$1" || locked=1
+  mv -n "$2.sending" "$2" 2>/dev/null || true
+  rm -f "$2.sending"
+  [[ -z "${locked}" ]] || rmdir "${TELL_QUEUE}/$1.lock"
+}
+
+# tell_undelivered <name> <slug> <kind> <body> <why> [log] — hand the lead a queued tell no check delivered:
+# its text, moved from <body>, as TELL_QUEUE/<name>.<kind>.undelivered.md, and the line wait --lead
+# prints as <name>.<kind>.undelivered; a later one of the kind replaces both. Its exit sends it again,
+# unless <why> says herdr may have sent it (as resend_pass reads a failed delivery), where findings
+# count as a round already: then it follows <why> and never sends it again as <kind>. With [log] (a
+# drop, which no tell ran for) it logs tell:<kind> <slug> with `undelivered: <why>`, not ok, so it
+# counts as no round; a failed delivery's tell logged its own line, which a second would count twice.
+tell_undelivered() {
+  local m="${TELL_QUEUE}/$1.$3.undelivered" q act
+  mv -f "$4" "${m}.md" 2>/dev/null || return 0
+  q="$(printf '%q' "${m}")"
+  case "$5" in
+    *"herdr sent it the brief"*|*"may or may not have the brief"*|*"could not be read"*)
+      act="it may have arrived, so do as that says and never send it again as $3" ;;
+    *) act="if it still applies, swarm.sh tell $2 $3 ${q}.md" ;;
+  esac
+  printf 'tell undelivered: %s %s (%s), exit: %s; then rm %s %s\n' "$2" "$3" "$5" "${act}" "${q}" "${q}.md" > "${m}" 2>/dev/null || true
+  [[ -z "${6:-}" ]] || record_event "tell:$3" "$2" "undelivered: $5"
 }
 
 # tell_from <slug> — who a tell to <slug>'s builder is from: review when the pane running it
@@ -1754,13 +1973,14 @@ herdr_idle() {
 # not have the brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice)
 # herdr may have dropped both, so the pane says whether to send them again, as a nudge: a nudge is
 # not a round. When herdr refused it as blocked before sending anything, and tell_unblock cleared that,
-# it is delivered once more ([again] marks that try).
+# it is delivered once more ([again] marks that try). With TELL_PANE set (a delivery from the queue) it
+# goes to that pane, the one tell checked, and not to whatever pane holds the name by then.
 tell_deliver() {
   local err why rc
   # Not `{ ...; } || rc=$?`: on the left of || set -e is ignored inside deliver_prompt too, so an
   # own_target die in `target="$(own_target ...)"` would not stop it, and it would prompt an empty target.
   # The bare set -e after is the state tell_agent, its one caller, runs in: dispatch's set -e.
-  set +e; { err="$( set -e; deliver_prompt "$1" "$2" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+  set +e; { err="$( set -e; deliver_prompt "$1" "$2" "${TELL_PANE:-}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
   # A success keeps its stderr too: deliver_prompt warns when herdr sent the brief and did not show the turn start.
   if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; return 0; fi
   if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; exit "${rc}"; fi
@@ -1815,8 +2035,12 @@ free_agent_name() {
 # agent_field <name> <field> [any] — <field> (agent_status, pane_id) of this project's agent called
 # <name> (its pane is one own_panes recorded), or nothing. With "any", of whichever project's agent
 # holds the name: herdr names are unique across all workspaces.
-agent_field() {
-  herdr agent list 2>/dev/null | SWARM_NAME="$1" SWARM_FIELD="$2" SWARM_ANY="${3:-}" SWARM_PANES="$(own_panes)" json "next((a.get(e['SWARM_FIELD']) or ('unknown' if e['SWARM_FIELD']=='agent_status' else '') for a in d['result']['agents'] if a.get('name')==e['SWARM_NAME'] and (e['SWARM_ANY'] or a.get('pane_id') in e['SWARM_PANES'].split())),'')" 2>/dev/null || true
+agent_field() { herdr agent list 2>/dev/null | list_field "$@"; }
+
+# list_field <name> <field> [any] — agent_field over herdr's agent list on stdin, read once by a caller
+# that must tell a failed read from an agent that is gone (tell_queue_pass).
+list_field() {
+  SWARM_NAME="$1" SWARM_FIELD="$2" SWARM_ANY="${3:-}" SWARM_PANES="$(own_panes)" json "next((a.get(e['SWARM_FIELD']) or ('unknown' if e['SWARM_FIELD']=='agent_status' else '') for a in d['result']['agents'] if a.get('name')==e['SWARM_NAME'] and (e['SWARM_ANY'] or a.get('pane_id') in e['SWARM_PANES'].split())),'')" 2>/dev/null || true
 }
 
 # agent_status <name> — herdr's status for this project's agent called <name>, or nothing if there is none.
