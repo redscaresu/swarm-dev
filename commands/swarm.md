@@ -122,8 +122,9 @@ Repeat until a step below says stop:
      `wait --until-report` it too. A line that begins `no conductor started:`, `no conductor for epic <e> started:` or
      `no backlog conductor started:` says why none did: a conductor that has reported (collect it
      first), a report nobody collected, an expired login or API error, another project's agent
-     holding the name, or a report newer than every story and epic file (the board must change
-     first). The backlog's can also say its report lists a story under `not started:` whose worktree
+     holding the name, a report newer than every story and epic file (the board must change
+     first), or, under `merge = agent`, no allow rule for `swarm.sh merge` (the user adds the rule the
+     line names). The backlog's can also say its report lists a story under `not started:` whose worktree
      is still there, so that build died: clear it first, as the line says. A `warning: ... failed`
      line means the start failed: run the `swarm.sh conduct` it names yourself once the cause is
      fixed. `warning: herdr cannot list its agents ...` means none was started because which
@@ -294,7 +295,10 @@ Repeat until a step below says stop:
      so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
-   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
+   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When it
+     (or the story step's `swarm.sh conduct --backlog`) stops with `no conductor started: merge = agent
+     and no allow rule for swarm.sh merge ...`, adding that rule is the user's step: tell them the rule
+     and the files the line names, then stop.
    - `resume <slug>`: a one-off that an earlier run started (its worktree exists). If the last
      `.swarm/conduct-backlog.report.md` lists `<slug>` under `not started:` (a build that died
      leaves a worktree with no builder and no PR), start no new conductor: `next` names it again for

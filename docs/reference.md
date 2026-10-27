@@ -696,6 +696,8 @@ Another epic's state writes do not count. Nor does a backlog conductor start whi
 lists a one-off whose worktree is still there under `not started:` (the stops above). Nothing starts
 while a working conductor has stopped on an expired login or an API error, which would stop a new one
 too, or while herdr cannot list its agents, since what runs is then not known; each prints why.
+Under `merge = agent`, none starts without an allow rule for `swarm.sh merge` (§ Merging, the conduct
+preflight).
 Outside herdr it starts nothing and prints the `swarm.sh conduct` to run. Each start prints `started:
 <conductor> (swarm.sh conduct <arg>)`, which `next` puts after the wait's why, so its first line is
 still the step, and logs a `conduct` line in `events.tsv` as `swarm.sh conduct` does. A start that
@@ -1988,6 +1990,15 @@ pattern such as `Bash(swarm.sh *)`. When they do not, init names the files it re
 is missing or is not JSON counts as having no rule. init reads nothing else in these files, since
 they can hold tokens under `env`, and it never writes them or `~/.claude.json`.
 
+**The conduct preflight.** Under `merge = agent`, no conductor starts while those three files have
+no rule that allows `swarm.sh merge`, since Claude Code would refuse it every merge. `swarm.sh conduct`
+exits 1 before it writes a brief or opens a workspace or tab. `swarm.sh next` starts none for ready
+work, logs no `conduct` line, and prints the same line once, however many epics wait:
+`no conductor started: merge = agent and no allow rule for swarm.sh merge in <files read>; add
+"Bash(swarm.sh merge *)" to permissions.allow in one of them (swarm.sh init checks it)`. The line
+names every file it read, so a rule written in a form swarm.sh does not read (a full path to
+`swarm.sh`, say) still shows why no conductor starts. Under `merge = human` nothing is checked.
+
 **Merge queue.** With `merge_admin` off, `merge` asks GitHub whether the base has a merge queue
 (GraphQL `repository.mergeQueue(branch:)`, which covers a ruleset's `merge_queue` rule and classic
 branch protection alike) before it merges. When it has one, `merge` enqueues the head with
@@ -2381,7 +2392,7 @@ changes merge's exit code.
 | `swarm.sh status` | Show started stories with no live agent and PRs whose review agent never started or went (No agent, with each one's exit), agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights, and a third when someone had to step in. `swarm.sh dash --project <dir>` (repeatable) draws several projects. `swarm.sh dash --check` compares each figure with the command that owns it and exits 1 naming each one that differs. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
-| `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
+| `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. Under `merge = agent` it refuses while Claude Code's settings have no allow rule for `swarm.sh merge` (§ Merging, the conduct preflight). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
 | `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), or a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
