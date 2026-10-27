@@ -2199,7 +2199,9 @@ lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
 # after closing its builder, `no-agent: <slug>, exit: <exit>` for a started story no agent works
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
-# events.tsv line for a story whose missing agent no event explains yet. wait --lead adds `unsent brief:
+# events.tsv line for a story whose missing agent no event explains yet. After them, `prompt: <agent>
+# (<kind>), exit: <exit>` for an agent stuck on a prompt, a dialog, a login, an API error or manual mode
+# (prompt_lines), off the same herdr list. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers.
 # It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
@@ -2224,6 +2226,78 @@ lead_queue() {
   idle_now || true
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
+  prompt_lines || true
+}
+
+# prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
+# (own_panes) that the poll's herdr list (lead_agents) shows blocked, idle or done, and whose pane
+# panes.py's stuck_kind finds stuck: on a prompt or dialog (prompt), an expired login (login), an API
+# error (api-error) or manual mode (manual). Only those agents' panes are read, once each, with
+# resend_pass's limits: RESEND_HERDR_WAIT seconds a read, and none started RESEND_PASS_WAIT seconds
+# into the pass. A retired agent (<name>-done) is skipped. An api-error line comes only while no
+# `swarm.sh wait` naming the agent runs (one ps read): a running wait resumes it, and ends once it
+# stops resuming. A pane it could not read, or a ps that failed, keeps the agent's line from LEAD_SEEN,
+# and a herdr list that failed keeps every prompt: line there, so a missed read neither drops a line
+# nor wakes the lead with it again on the next poll. The exit:
+# for a prompt, the user answers it in its pane; for login, the user runs /login, then a resume tell;
+# for api-error, read the pane and tell the user; for manual, a ready story's builder has its pane
+# closed and then no_agent_exit's restart (restart refuses a builder herdr still lists), and any other
+# agent has the user turn manual mode off in its pane.
+prompt_lines() {
+  local rows name pane kind ps="" out slug
+  [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+  # No list to read: the last poll's lines stand, as for a pane it could not read.
+  [[ -n "${LEAD_AGENTS_OK}" ]] || { awk 'index($0, "prompt: ") == 1' "${LEAD_SEEN}" 2>/dev/null || true; return 0; }
+  # No agent herdr shows blocked, idle or done: no process starts, as on most polls while agents work.
+  [[ "${LEAD_AGENTS}" =~ \"(blocked|idle|done)\" ]] || return 0
+  rows="$(SWARM_PANES="$(own_panes)" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import json, os, re, subprocess, sys, time
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import stuck_kind
+own = set(os.environ["SWARM_PANES"].split())
+each, end = float(sys.argv[1]), time.monotonic() + float(sys.argv[2])
+for a in json.loads(sys.stdin.read())["result"]["agents"]:
+    n, p = a.get("name") or "", a.get("pane_id")
+    if p not in own or a.get("agent_status") not in ("blocked", "idle", "done") \
+            or not re.fullmatch("[a-z][a-z0-9_-]*", n) or re.search(r"-done\d*$", n):
+        continue
+    k = "unread"
+    if time.monotonic() < end:
+        try:
+            r = subprocess.run(["herdr", "agent", "read", p, "--source", "recent-unwrapped"],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=each)
+            if r.returncode == 0 and r.stdout.strip():
+                k = stuck_kind(r.stdout) or "-"
+        except (OSError, subprocess.SubprocessError):
+            pass
+    print("\t".join((n, p, k)))' "${RESEND_HERDR_WAIT}" "${RESEND_PASS_WAIT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
+  while IFS=$'\t' read -r name pane kind; do
+    [[ -n "${name}" ]] || continue
+    if [[ "${kind}" == api-error ]]; then
+      [[ -n "${ps}" ]] || ps="$(ps -A -ww -o command= 2>/dev/null)" || kind=unread
+      # A wait naming it, as agent_name makes a name (resend_busy), is still resuming it. A flag or a
+      # timeout is no name: agent_name makes `--lead` s--lead.
+      [[ "${kind}" == unread ]] || ! awk -v n="${name}" -v max="${AGENT_NAME_MAX}" '
+        function nm(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, max) }
+        { m = split($0, w, " ")
+          for (i = 1; i < m; i++) if (w[i] ~ /(^|\/)swarm\.sh$/ && w[i + 1] == "wait")
+            for (j = i + 2; j <= m; j++) if (w[j] !~ /^(-|[0-9]+$)/ && nm(w[j]) == n) { f = 1; exit } }
+        END { exit !f }' <<< "${ps}" || continue
+    fi
+    case "${kind}" in
+      prompt) out="the user answers it in pane ${pane}" ;;
+      login) out="the user runs /login, then swarm.sh tell ${name} resume <file>" ;;
+      api-error) out="herdr agent read ${name}, then tell the user what it shows" ;;
+      manual)
+        # The builder's story, through agent_name: a slug past AGENT_NAME_MAX is cut in the agent's name.
+        slug=""; ! is_builder "${name}" || slug="$(stall_py story "${name}")"
+        if [[ -n "${slug}" && "$(fm "${BOARD}/stories/${slug}.md" status)" == ready ]]; then
+          out="herdr pane close ${pane} then $(no_agent_exit "${slug}")"
+        else out="the user turns manual mode off in pane ${pane}"; fi ;;
+      unread) awk -v p="prompt: ${name} (" 'index($0, p) == 1 { print; exit }' "${LEAD_SEEN}" 2>/dev/null || true; continue ;;
+      *) continue ;;
+    esac
+    echo "prompt: ${name} (${kind}), exit: ${out}"
+  done <<< "${rows}"
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
@@ -2914,7 +2988,8 @@ unsent_lines() {
 # (unsent_lines) after it, and save the queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
-# alerts (`no-agent:`, `no-review:`, `step-up failed:` and `unsent brief:` lines) and saves the rest.
+# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:` and `prompt:` lines) and saves the
+# rest.
 lead_wake() {
   local now line new="" slug u
   lead_agents
@@ -2928,7 +3003,8 @@ lead_wake() {
   now="${now}${now:+${u:+$'\n'}}${u}"
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
-      || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* ]] || new+="${line}"$'\n'
+      || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* \
+            && "${line}" != "prompt: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
@@ -2990,7 +3066,7 @@ lead_lock() {
 # (lead_wake). The PR heads behind its merge: lines are read only in a heads pass (lead_heads), on its
 # first read and then at most once every LEAD_HEADS_EVERY seconds. The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts
-# (no-agent:, step-up failed:, unsent brief:). At the timeout (default an hour) it fails with nothing printed. It edits
+# (no-agent:, step-up failed:, unsent brief:, prompt:). At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file, and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
