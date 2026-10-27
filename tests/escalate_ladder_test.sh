@@ -53,7 +53,7 @@ case "$1 $2" in
                   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane run"|"pane wait-output") [ -n "$3" ] || exit 1 ;;   # herdr fails with no pane
-  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"},{"tab_id":"w:t10","label":"f1"},{"tab_id":"w:t11","label":"f2"},{"tab_id":"w:t12","label":"f3"},{"tab_id":"w:t13","label":"f4"},{"tab_id":"w:t14","label":"f5"},{"tab_id":"w:t15","label":"f6"},{"tab_id":"w:t16","label":"f7"},{"tab_id":"w:t17","label":"f8"},{"tab_id":"w:t18","label":"f9"},{"tab_id":"w:t19","label":"f10"},{"tab_id":"w:t20","label":"f11"},{"tab_id":"w:t21","label":"f12"}]}}' ;;
+  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"},{"tab_id":"w:t10","label":"f1"},{"tab_id":"w:t11","label":"f2"},{"tab_id":"w:t12","label":"f3"},{"tab_id":"w:t13","label":"f4"},{"tab_id":"w:t14","label":"f5"},{"tab_id":"w:t15","label":"f6"},{"tab_id":"w:t16","label":"f7"},{"tab_id":"w:t17","label":"f8"},{"tab_id":"w:t18","label":"f9"},{"tab_id":"w:t19","label":"f10"},{"tab_id":"w:t20","label":"f11"},{"tab_id":"w:t21","label":"f12"},{"tab_id":"w:t22","label":"f13"},{"tab_id":"w:t23","label":"f14"}]}}' ;;
   "tab close")    [ ! -e "$H/closefail" ] || exit 1
                   cp "$H/keep" "$H/agents" 2>/dev/null || : > "$H/agents"; [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
   "pane close")   [ ! -e "$H/closefail" ] || exit 1
@@ -460,9 +460,11 @@ check "a findings tell herdr sent to a builder with no session to read, showing 
 # --- A failed step-up notes the story's conductor. f10 (epic rl) has had two findings rounds, and its
 # review agent tells it a third from its own pane (w:r10): the step-up closes f10's builder and its
 # start fails. conduct-rl, this project's (its tab recorded) and idle in w:c1, gets a note through
-# tell's note arm: a tell:note line, the note in its inbox, and note_wake's prompt. f11's has no
-# conductor listed: nothing is sent, and wait --lead still shows it. f12's close dies (a refusal):
-# nothing is sent either. SWARM_NOTE_WAKE_SECS=1 keeps note_wake's later check short.
+# tell's note arm: a tell:note line, the note in its inbox, and note_wake's prompt. The lead's own
+# step-up --resume of f10, failing the same way, notes no one. f11's has no conductor listed: nothing
+# is sent, and wait --lead still shows it. f13's conductor has written its report: nothing is sent.
+# f14 has no epic, so the backlog's conductor gets the note. f12's close dies (a refusal): nothing is
+# sent either. SWARM_NOTE_WAKE_SECS=1 keeps note_wake's later check short.
 # rl_story <slug> — f_story, in epic rl, with a second findings round, its review agent in w:r<n>.
 rl_story() {
   f_story "$1"
@@ -483,12 +485,15 @@ check "a review agent's tell whose step-up fails after closing f10's builder kee
   "1|yes|kept|ok (start failed)|ok" \
   "${rc}|$(has "its step-up failed partway" "${out}")|$([[ -e "${P}/.swarm/briefs/f10.step-up" ]] && echo kept || echo none)|$(failed_lines f10)|$(notes_to_rl)"
 inbox="$(cat "${P}/.swarm/inbox/conduct-rl.md" 2>/dev/null || true)"
-check "the note in conduct-rl's inbox names f10, the failure and step-up --resume" "yes|yes|yes" \
-  "$(has "f10's step-up failed after its builder was closed (start failed)" "${inbox}")|$(has "swarm.sh step-up --resume f10" "${inbox}")|$(has "From the lead" "${inbox}")"
+check "the note in conduct-rl's inbox says swarm.sh sent it, and names f10, the failure and step-up --resume" "yes|yes|yes" \
+  "$(has "swarm.sh sent this note itself, on a failed step-up" "${inbox}")|$(has "f10's step-up failed after its builder was closed (start failed)" "${inbox}")|$(has "swarm.sh step-up --resume f10" "${inbox}")"
 check "conduct-rl, idle, gets note_wake's prompt to process its inbox" "yes" \
   "$(grep -q '^agent prompt w:c1 From swarm: the lead left you a note in .*Process your inbox now' "${ROOT}/herdr.log" && echo yes || echo "no, got: $(grep '^agent prompt w:c1' "${ROOT}/herdr.log")")"
 settle_rl; rm -f "${P}/.swarm/inbox/conduct-rl".*
 n="$(notes_to_rl)"; np="$(prompts_to_rl)"
+out="$(SWARM_NOTE_WAKE_SECS=1 run step-up --resume f10)" && rc=0 || rc=$?
+check "the lead's step-up --resume of f10, failing too, notes no one" "1|ok (start failed),ok (start failed)|${n}|${np}|none" \
+  "${rc}|$(failed_lines f10)|$(notes_to_rl)|$(prompts_to_rl)|$(ls "${P}/.swarm/inbox/conduct-rl.md" 2>/dev/null || echo none)"
 rl_story f11; echo "review-f11 w:r11" > "${ROOT}/keep"; cat "${ROOT}/keep" >> "${ROOT}/agents"
 out="$(HERDR_PANE_ID=w:r11 SWARM_NOTE_WAKE_SECS=1 run tell f11 findings "${ROOT}/f.md")" && rc=0 || rc=$?
 # wait --lead reads every story on the board, so the others are set aside for its one read.
@@ -498,6 +503,17 @@ mv "${ROOT}/aside/"*.md "${P}/docs/stories/"; rmdir "${ROOT}/aside"
 check "with no conductor listed, f11's failed step-up sends nothing, and wait --lead still shows it" \
   "1|ok (start failed)|${n}|${np}|none|yes" \
   "${rc}|$(failed_lines f11)|$(notes_to_rl)|$(prompts_to_rl)|$(ls "${P}/.swarm/inbox/conduct-rl.md" 2>/dev/null || echo none)|$(has "step-up failed: f11, exit: swarm.sh step-up --resume f11" "${lead}")"
+rl_story f13; printf '%s\n' "conduct-rl w:c1" > "${ROOT}/keep"; cat "${ROOT}/keep" >> "${ROOT}/agents"; echo reported > "${P}/.swarm/conduct-rl.report.md"
+out="$(SWARM_NOTE_WAKE_SECS=1 run step-up f13 findings-3)" && rc=0 || rc=$?; rm "${P}/.swarm/conduct-rl.report.md"
+check "with conduct-rl's report written, f13's failed step-up sends nothing" "1|ok (start failed)|${n}|${np}|none" \
+  "${rc}|$(failed_lines f13)|$(notes_to_rl)|$(prompts_to_rl)|$(ls "${P}/.swarm/inbox/conduct-rl.md" 2>/dev/null || echo none)"
+# The backlog conductor's name, as conductor_name makes it: the project dir's name and 6 hex of its path.
+bl="conduct-backlog-proj-$(printf '%06x' $(( $(printf '%s' "${P}" | cksum | cut -d' ' -f1) % 16777216 )))"
+f_story f14; echo "w:c2 ${bl}" > "${P}/.swarm/state/backlog"; printf '%s\n' "${bl} w:c2" > "${ROOT}/keep"; cat "${ROOT}/keep" >> "${ROOT}/agents"
+out="$(SWARM_NOTE_WAKE_SECS=1 run step-up f14 findings-3)" && rc=0 || rc=$?
+settle_bl() { local i; for ((i = 0; i < 100; i++)); do [[ -e "${P}/.swarm/inbox/${bl}.later" ]] || return 0; sleep 0.2; done; }; settle_bl
+check "f14, with no epic, has its failed step-up noted to the backlog's conductor" "1|ok|yes|${n}" \
+  "${rc}|$(awk -F'\t' -v c="${bl}" '$2 == "tell:note" && $3 == c { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -)|$(has "f14's step-up failed after its builder was closed" "$(cat "${P}/.swarm/inbox/${bl}.md" 2>/dev/null || true)")|$(notes_to_rl)"
 rm "${ROOT}/startfail"
 rl_story f12; echo "w:2 renamed" > "${P}/.swarm/state/f12"; printf '%s\n' "conduct-rl w:c1" > "${ROOT}/keep"; cat "${ROOT}/keep" >> "${ROOT}/agents"
 touch "${ROOT}/closefail"; out="$(HERDR_PANE_ID=w:r12 SWARM_NOTE_WAKE_SECS=1 run step-up f12 findings-3)" && rc=0 || rc=$?; rm "${ROOT}/closefail"
