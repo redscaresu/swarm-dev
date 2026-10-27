@@ -115,8 +115,12 @@ run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWAR
 stepped() { { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv"; sed -n 's/^swarm: step-up: /refused: step-up: /p' "${ROOT}/run.log"; } | paste -sd, -; }
 closes() { grep -c $'\tclose\t' "${P}/.swarm/events.tsv" || true; }
 findings_tells() { printf '2026-10-18T10:0%s:00Z\ttell:findings\ts1\tw:1\tok\n' 1 2 >> "${P}/.swarm/events.tsv"; echo "fix it" > "${ROOT}/f.md"; }
-# review_pane — s1's review agent (review-s1) open in pane w:2, a pane of this project, as review-agent leaves it.
-review_pane() { echo "w:2 review-s1" >> "${P}/.swarm/state/s1"; echo "review-s1 w:2" >> "${ROOT}/agents"; }
+# review_open — s1's review agent (review-s1) open in pane w:2, as review-agent leaves it: its tab record,
+# its agents.tsv line with role review, and herdr listing it there.
+review_open() {
+  echo "w:2 review-s1" >> "${P}/.swarm/state/s1"; echo "review-s1 w:2" >> "${ROOT}/agents"
+  printf '2026-10-18\treview\treview-s1\tclaude\tsonnet\thigh\tsess-r\n' >> "${P}/.swarm/agents.tsv"
+}
 heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
 attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
 escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
@@ -156,7 +160,7 @@ for ladder in sonnet,opus,fable ""; do
       "ok (findings-2: sonnet -> opus)|yes" "$(stepped)|$(grep -q 'was not told: these were findings round 2' <<< "${out}" && echo yes)"
     # From review-s1's pane (w:2) the findings tells count as the conductor's do: rounds 1 and 2 are
     # sent, saying they are from the review agent, and the third steps the build up.
-    fresh "${ladder}" idle; review_pane; echo "fix it" > "${ROOT}/f.md"
+    fresh "${ladder}" idle; review_open; echo "fix it" > "${ROOT}/f.md"
     for _ in 1 2; do HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md" >/dev/null || true; done
     check "ladder '${ladder}': review pane: findings tells 1 and 2 are sent from the review agent and logged ok" \
       "tell:findings s1 w:2 ok|tell:findings s1 w:2 ok|2" \
@@ -166,14 +170,23 @@ for ladder in sonnet,opus,fable ""; do
       "ok (findings-3: sonnet -> opus)|1|yes" \
       "$(stepped)|${rc}|$(grep -q 'was not told: these were findings round 3 of its build, so it was stepped up' <<< "${out}" && echo yes)"
     # With goal on, the /goal sent mid-turn after them (sess-1 busy) names the review agent's findings.
-    fresh "${ladder}" idle; review_pane; echo "fix it" > "${ROOT}/f.md"; echo "goal = 4" >> "${P}/.claude/swarm/config"
+    fresh "${ladder}" idle; review_open; echo "fix it" > "${ROOT}/f.md"; echo "goal = 4" >> "${P}/.claude/swarm/config"
     touch "${ROOT}/quick"; echo sess-1 > "${ROOT}/sid"; echo busy > "${ROOT}/after"
     out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
     check "ladder '${ladder}': review pane, goal on: the /goal names the review agent's findings" "0|1" \
       "${rc}|$(grep -c "^agent prompt w:1 /goal The goal: the review agent's findings, sent to you just before this goal, are addressed" "${ROOT}/herdr.log")"
-    fresh "${ladder}" idle; review_pane; echo "fix it" > "${ROOT}/f.md"
+    fresh "${ladder}" idle; review_open; echo "fix it" > "${ROOT}/f.md"
     HERDR_PANE_ID=w:9 run tell s1 findings "${ROOT}/f.md" >/dev/null || true
     check "ladder '${ladder}': from a pane that is not review-s1's, the tell is from the conductor" "1|0" \
+      "$(grep -c '^agent prompt w:1 From the conductor:$' "${ROOT}/herdr.log")|$(grep -c 'From the review agent' "${ROOT}/herdr.log" || true)"
+    # A pane holding a review-like name that is not s1's live review agent: the builder of a story
+    # slugged review-s1 has a tab record naming review-s1 and herdr lists it so, but its newest
+    # agents.tsv role is a builder's, so its tell is the conductor's.
+    fresh "${ladder}" idle; echo "fix it" > "${ROOT}/f.md"
+    echo "w:3 review-s1" >> "${P}/.swarm/state/review-s1"; echo "review-s1 w:3" >> "${ROOT}/agents"
+    printf '2026-10-18\tcode\treview-s1\tclaude\tsonnet\thigh\tsess-3\n' >> "${P}/.swarm/agents.tsv"
+    HERDR_PANE_ID=w:3 run tell s1 findings "${ROOT}/f.md" >/dev/null || true
+    check "ladder '${ladder}': from the pane of the builder of a story slugged review-s1, the tell is from the conductor" "1|0" \
       "$(grep -c '^agent prompt w:1 From the conductor:$' "${ROOT}/herdr.log")|$(grep -c 'From the review agent' "${ROOT}/herdr.log" || true)"
   else
     check "ladder '${ladder}': a third findings tell is sent" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"

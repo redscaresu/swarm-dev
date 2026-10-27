@@ -188,6 +188,7 @@ check "fable: a later round holds it, naming that round" "yes|no|ok (top-rung: f
 # From review-s1's pane (w:2) the rounds count as the conductor's: the 1st since the step-up is sent,
 # from the review agent, and the 2nd holds the story.
 fresh fable 0; echo "w:2 review-s1" >> "${P}/.swarm/state/s1"; echo "review-s1 w:2" >> "${ROOT}/agents"
+printf '2026-10-18\treview\treview-s1\tclaude\tfable\thigh\tsess-r\n' >> "${P}/.swarm/agents.tsv"
 out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" || true
 check "fable, review pane: the 1st findings tell since the step-up is sent, from the review agent" "yes|1|" \
   "$(told "${out}")|$(grep -c '^agent prompt w:1 From the review agent:$' "${ROOT}/herdr.log")|$(held)"
