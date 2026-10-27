@@ -1927,8 +1927,8 @@ init_config() {
 }
 
 # MERGE_RULE: the Claude Code permissions.allow rule that lets an agent run swarm.sh merge as the
-# conductor's brief writes it. Without one, Claude Code refuses a conductor every merge (v0.28.0: the
-# user merged 8 approved PRs by hand).
+# conductor's and the lead's briefs write it. Without one, Claude Code refuses an agent every merge
+# (v0.28.0: the user merged 8 approved PRs by hand).
 MERGE_RULE='Bash(swarm.sh merge *)'
 
 # user_settings — the user's Claude Code settings file.
@@ -1942,22 +1942,31 @@ claude_settings() {
   echo "${PROJECT_DIR}/.claude/settings.local.json"
 }
 
-# merge_allowed — true when the permissions.allow rules in claude_settings, taken together as Claude
-# Code takes them, let both forms of swarm.sh merge a conductor runs (--head and --board) through: Bash,
-# or Bash(<command>) with * for any text and the older :* suffix. It reads only that list and prints
-# nothing: these files can hold tokens under env. A missing or broken file counts as no rule. It writes
-# no file.
+# merge_allowed — true when the permissions.allow lists of the claude_settings files, pooled, let
+# through every form of swarm.sh merge an agent runs: --head and --board (a conductor), --release
+# --head and the plain form (the lead), each on two PRs and SHAs of the project's GitHub origin (o/r
+# with none), so a rule tied to one PR or SHA does not count.
+# A rule is Bash(<command>), with * for any text and the older :* suffix. Bash alone, or a pattern of
+# only *, does not count: agents run in auto mode, which sets such broad rules aside. It reads only
+# those allow lists, so a deny or ask rule, or managed settings, can still block a merge it passes.
+# It prints nothing (these files can hold tokens under env) and writes no file. A missing or broken
+# file counts as no rule.
 merge_allowed() {
+  local origin
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || origin=""
   claude_settings | python3 -I -c '
 import json, re, sys
-CMDS = ("swarm.sh merge --head 0123abc https://github.com/o/r/pull/1", "swarm.sh merge --board https://github.com/o/r/pull/1")
+m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/*$", sys.argv[1])
+prs = "https://github.com/%s/%s/pull/" % (m.groups() if m else ("o", "r"))
+FORMS = ("--head {0} ", "--board ", "--release --head {0} ", "")
+CMDS = ["swarm.sh merge %s%s%d" % (f.format(sha), prs, n) for sha, n in (("0123abc", 1), ("fedcba9", 98765)) for f in FORMS]
 def allows(rule, cmd):
-    if rule == "Bash":
-        return True
     m = re.fullmatch(r"Bash\((.*)\)", rule, re.S) if isinstance(rule, str) else None
     if not m:
         return False
     pat = m.group(1)[:-2] + "*" if m.group(1).endswith(":*") else m.group(1)
+    if not pat.strip("*"):
+        return False
     return re.fullmatch(".*".join(re.escape(p) for p in pat.split("*")), cmd, re.S) is not None
 rules = []
 for f in sys.stdin.read().splitlines():
@@ -1966,7 +1975,7 @@ for f in sys.stdin.read().splitlines():
     except (OSError, ValueError, LookupError, TypeError):
         continue
     rules += allow if isinstance(allow, list) else []
-sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)'
+sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)' "${origin}"
 }
 
 # AUTO_MODE_DONE — the user's word that auto mode's setup ran, the date swarm.sh init --auto-mode-done
@@ -1974,9 +1983,11 @@ sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)'
 AUTO_MODE_DONE="${PROJECT_DIR}/.swarm/auto-mode-done"
 
 # auto_mode_set_up — true when auto mode's setup has run: the user said so (AUTO_MODE_DONE), or the
-# user's settings hold a non-empty autoMode.environment, the list /auto-mode-setup writes. Claude Code
-# offers the 'Teach auto mode' dialog only while that list is empty, and takes autoMode from no
-# project settings file. It reads only that list, prints nothing and writes no file.
+# user's settings hold a non-empty autoMode.environment, the list /auto-mode-setup writes there. Claude
+# Code offers the 'Teach auto mode' dialog only while that list, merged from the user's, flag and
+# managed policy settings, is empty; it takes autoMode from no project settings file. This reads only
+# the user's settings file, so a user whose org sets the list in managed settings runs
+# init --auto-mode-done. It reads only that list, prints nothing and writes no file.
 auto_mode_set_up() {
   [[ -f "${AUTO_MODE_DONE}" ]] && return
   python3 -I -c '
@@ -1989,7 +2000,8 @@ sys.exit(0 if isinstance(env, list) and env else 1)' "$(user_settings)"
 }
 
 # auto_mode_done — swarm.sh init --auto-mode-done: record the user's word that auto mode's setup ran,
-# today's date in AUTO_MODE_DONE, so init stops printing that step. It writes nothing else.
+# today's date in AUTO_MODE_DONE, so init stops printing that step. With main's line for the command
+# in .swarm/events.tsv, that is all it writes: nothing outside .swarm/.
 auto_mode_done() {
   { mkdir -p "${PROJECT_DIR}/.swarm" && date +%F > "${AUTO_MODE_DONE}"; } || die "init: cannot write ${AUTO_MODE_DONE}"
   echo "recorded that auto mode's setup ran, in ${AUTO_MODE_DONE#"${PROJECT_DIR}/"}; init no longer prints that step"
@@ -2006,7 +2018,7 @@ init_claude() {
       files+="${files:+, }${f#"${PROJECT_DIR}/"}"
     done < <(claude_settings)
     echo "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${files})."
-    echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, Claude Code refuses conductors every merge without it, and you merge each PR by hand."
+    echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, or an HLD that grants merge, Claude Code refuses every swarm.sh merge an agent runs without it, and you merge each PR by hand."
   fi
   auto_mode_set_up && return
   echo "Auto mode has not learned your environment: $(user_settings) has no autoMode.environment, and nobody ran swarm.sh init --auto-mode-done here."
