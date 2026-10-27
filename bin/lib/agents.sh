@@ -1787,7 +1787,7 @@ tell_deliver() {
     if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; exit "${rc}"; fi
     why="${err##*swarm: }"; err="${err%swarm: *}"
     [[ -z "${err}" ]] || printf '%s' "${err}" >&2
-    [[ ${try} -eq 1 && "${why}" == *"${HERDR_BLOCKED_UNSENT}"* ]] || break
+    [[ ${try} -eq 1 && "${why}" == *"${HERDR_BLOCKED_UNSENT}"* ]] || break   # loose-match: ok quoted, so a literal substring of deliver_prompt's own message
     note="$(tell_unblock "$1" "$4")"
     [[ "${note}" == reported ]] || break
     note="it was sent again after its pane read clear and it was reported idle to herdr"
