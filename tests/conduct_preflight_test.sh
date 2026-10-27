@@ -14,8 +14,8 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
-P="${ROOT}/p"; CC="${ROOT}/cc"
-export CLAUDE_CONFIG_DIR="${CC}" CLAUDE_PROJECTS_DIR="${ROOT}/projects"
+export CLAUDE_CONFIG_DIR="${ROOT}/cc" CLAUDE_PROJECTS_DIR="${ROOT}/projects"
+P="${ROOT}/p"; CC="${CLAUDE_CONFIG_DIR}"
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
 fails=0
