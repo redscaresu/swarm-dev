@@ -31,7 +31,7 @@ board() {
 # story <slug> <front-matter line>... — write a story file dated OLD.
 story() {
   local f="${CASE}/docs/stories/$1.md"; shift
-  { echo "---"; echo "kind: code"; printf '%s\n' "$@"; printf -- '---\n\n# story\n'; } > "${f}"
+  { echo "---"; printf '%s\n' "$@"; echo "kind: code"; printf -- '---\n\n# story\n'; } > "${f}"   # a kind: given wins
   touch -t "${OLD}" "${f}"
 }
 
@@ -46,6 +46,10 @@ LINE="idle: a is ready with no build, exit: swarm.sh story --strict a"
 
 board
 check "a ready story with no build past queue_minutes gives the line" "${LINE}" "$(idle)"
+board; story a "status: ready" "held_by: a review" "touches: [x.sh:f run]"
+check "a ready story with held_by: gives no line" "" "$(idle)"
+board; story a "status: ready" "kind: lead" "touches: [x.sh:f run]"
+check "a ready kind: lead story gives no line" "" "$(idle)"
 
 board; story b "status: review" "touches: [x.sh:f check]"
 check "a ready story clashing by part with a story in review gives no line" "" "$(idle)"
@@ -72,9 +76,15 @@ check "in a project with no git repo, a story's repo of the project's name is un
 board; git -C "${CASE}" init -q && git -C "${CASE}" -c user.name=t -c user.email=t -c commit.gpgsign=false commit -q --allow-empty -m init \
   && git -C "${CASE}" branch story/a
 check "a story whose story/<slug> branch is left (build_exists) gives no line" "" "$(idle)"
+# A git that hangs: the branch read gives up after GIT_WAIT (5 s) and counts the branch as there.
+board; mkdir -p "${CASE}/bin"; printf '#!/bin/sh\nexec sleep 30\n' > "${CASE}/bin/git"; chmod +x "${CASE}/bin/git"
+start=${SECONDS}; got="$(PATH="${CASE}/bin:${PATH}" idle)"
+check "a git read that hangs gives no line, within its wait" "|yes" "${got}|$( (( SECONDS - start < 20 )) && echo yes)"
 board; event story a "${NOW}"
 check "a story with a story event since it went ready gives no line" "" "$(idle)"
 
+board; story a "status: ready" "epic: gone" "touches: [x.sh:f run]"
+check "a story whose epic: has no file gives no line" "" "$(idle)"
 board; story a "status: ready" "epic: e" "touches: [x.sh:f run]"
 printf -- '---\nstatus: draft\n---\n\n# e\n' > "${CASE}/docs/epics/e.md"
 check "a story of an epic not yet active gives no line" "" "$(idle)"

@@ -105,6 +105,7 @@ def mtimes(*paths):
 
 # The events that put a story back to ready, or may have: its board edits are dated by the files' mtimes.
 READIES = ("unblock", "reset", "reset:held", "reconcile", "close")
+GIT_WAIT = 5   # seconds the --idle check's git read of a story branch may take
 
 if __name__ == "__main__":
     stories, me, project_dir, repos_dir, state = sys.argv[1:]
@@ -155,8 +156,12 @@ if __name__ == "__main__":
 
         def branched(slug, fm):
             # build_exists's other half, read only for a story about to get the line: its story/<slug> branch.
-            return subprocess.run(["git", "-C", checkout(fm), "show-ref", "-q", "--verify", "refs/heads/story/" + slug],
-                                  capture_output=True).returncode == 0
+            # A read past GIT_WAIT counts as the branch being there, so a hung git costs a line, not the poll.
+            try:
+                return subprocess.run(["git", "-C", checkout(fm), "show-ref", "-q", "--verify", "refs/heads/story/" + slug],
+                                      capture_output=True, timeout=GIT_WAIT).returncode == 0
+            except subprocess.TimeoutExpired:
+                return True
 
         def conductor(epic):
             # The running conductor's agent name, else None. The backlog's is SWARM_BACKLOG_CONDUCTOR
