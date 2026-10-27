@@ -2250,7 +2250,10 @@ no_agent_busy() {
 
 # no_review_events <slug review-name>... — per slug with a review start on record since its newest ok
 # `story` start or reopen, from one read of events.tsv: "<slug> <ok> <url> <under> <wrote>". ok is 1 when
-# the newest `review-agent <slug>` line is ok, else 0. url is the PR URL a failed line's message names,
+# the newest `review-agent <slug>` line is ok, else 0. An ok `review-agent:next` line (review-<slug>'s next
+# round, run in its own session) counts as an ok start: the review agent owns the PR again, so a findings
+# tell before it says nothing about this round, and the brief on record is the one that agent started
+# with. A failed one started no round and changes nothing. url is the PR URL a failed line's message names,
 # when review_agent took it as one (never from its "is not a PR URL" refusal), else -. under is 1 when a round is under way by the
 # events: an ok tell:findings line came after that line (the builder fixing what it was told), or that
 # line is a start refused because the builder is still at work (its worktree not at the PR's head, or
@@ -2273,7 +2276,7 @@ no_review_events() {
     ($3 in me) && (($2 == "story" && $5 ~ /^ok/) || ($2 == "reconcile" && $5 == "ok (reopened)")) {
       s = $3; on[s] = 0; told[s] = 0; next
     }
-    ($3 in me) && $2 == "review-agent" {
+    ($3 in me) && ($2 == "review-agent" || ($2 == "review-agent:next" && $5 ~ /^ok/)) {
       s = $3; ok1 = $5 ~ /^ok/
       if (!ok1 && on[s] && ok[s] && !shut[s] && (index($5, " is still reviewing ") || index($5, rn[s] ": ") == 1 || index($5, "review-" s ": ") == 1)) next
       on[s] = 1; ok[s] = ok1; shut[s] = 0; url[s] = "-"; after[s] = 0
@@ -2438,8 +2441,18 @@ no_agent_exit() {
   echo "${out}"
 }
 
+# no_agent_granted <slug> — true when the agreed HLD over the story (item_hld) grants merge (hld_grants):
+# under merge = human its PR waits on its review agent's merge, not the user's. Board files only, no gh;
+# a grants: that cannot be read grants nothing.
+no_agent_granted() {
+  local h g
+  h="$(item_hld "${BOARD}/stories/$1.md")"
+  [[ -n "${h}" ]] && g="$(hld_grants "${h}" 2>/dev/null)" && grep -qxF merge <<< "${g}"
+}
+
 # no_agent_lines [record] — `no-agent: <slug>, exit: <exit>` (no_agent_exit) for each started story that
-# no agent works on and that is not the user's to move: status ready, or review under merge = agent;
+# no agent works on and that is not the user's to move: status ready, or review under merge = agent or
+# under an HLD that grants merge (no_agent_granted, read once per story in review);
 # of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money
 # (waiting_on_user hands those to the user); with a build record (an ok builder start no close ended,
 # or, for a slug with a start line, its worktree or story/<slug> branch, build_exists); not in the
@@ -2455,7 +2468,8 @@ no_agent_exit() {
 # its builder is listed or not, also gets no_review_line's `no-review:` line when its review agent
 # never started or started and went (no_review_events): a build a close cleared has no PR to review.
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
-# matter in one pass (stories_fm) and events.tsv once (no_agent_events), then once more
+# matter in one pass (stories_fm), a review story's epic chain and HLD under merge = human
+# (no_agent_granted), and events.tsv once (no_agent_events), then once more
 # (no_review_events) for the stories with a build record; per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder, or no-review: with no PR
 # known), then herdr's JSON and one ps once a started story or a marker is left. No gh. dash (dash_render) hands it its own herdr list
@@ -2472,7 +2486,8 @@ no_agent_lines() {
     # shellcheck disable=SC2154 # CFG_merge is assigned in another file
     case "${st}" in
       ready) ;;
-      review) [[ "${CFG_merge}" == agent && -z "${kept}" ]] || continue ;;
+      review) [[ -z "${kept}" ]] || continue
+              [[ "${CFG_merge}" == agent ]] || no_agent_granted "${slug}" || continue ;;
       *) continue ;;
     esac
     # Not kind: lead, which every escalated story is (lead_block), and a held one too.

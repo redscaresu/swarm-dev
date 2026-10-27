@@ -554,6 +554,29 @@ ev review-agent nr-x "review-nr-x: an agent with this name is still working; wai
 poll
 check "so does one refused after the earlier review agent was closed" rev_fires nr-x "${URL}"
 
+# The review agent owns its PR across rounds: review-agent --next (its next round, in the same session)
+# logs review-agent:next <slug> ok (round <n>), moves the last findings aside and records the new head.
+fresh; story ro-a "kind: code" "status: ready"; ev story ro-a; built ro-a; listed ro-a review-ro-a
+rbrief ro-a "${URL}"; ev review-agent ro-a; rhead ro-a
+printf 'head: %s\n\n## Findings\n\n- [P2] a finding\n' "${H}" > "${P}/.swarm/reviews/ro-a.md"
+ev tell:findings ro-a
+ev review-agent:next ro-a "ok (round 2)"; mv "${P}/.swarm/reviews/ro-a.md" "${P}/.swarm/reviews/ro-a.md.prev"; rhead ro-a
+poll; poll
+check "review-ro-a listed in round 2 is silent" never_woke ro-a
+listed ro-a; poll
+check "review-ro-a gone in round 2 (started, told findings, ran --next), its PR open, fires" rev_fires ro-a "${URL}"
+fresh; story ro-b "kind: code" "status: ready"; ev story ro-b; built ro-b; listed ro-b review-ro-b
+rbrief ro-b "${URL}"; ev review-agent ro-b; rhead ro-b; ev tell:findings ro-b
+listed ro-b; poll; poll
+check "review-ro-b gone after an ok tell:findings with no --next since (the builder fixing) is silent" never_woke ro-b
+ev review-agent:next ro-b "ok (round 2)"; rhead ro-b; ev tell:findings ro-b
+poll; poll
+check "and so is one gone after round 2's own tell:findings" never_woke ro-b
+# A --next that failed started no round: the builder is still fixing round 2's findings.
+ev review-agent:next ro-b "review-agent --next: could not read ${URL}'s head (gh pr view --json headRefOid)"
+poll; poll
+check "a failed --next after that tell changes nothing: silent" never_woke ro-b
+
 # One line per story: a ready story with its builder gone gets the restart first, then no-review:.
 fresh; story nr-b "kind: code" "status: ready"; ev story nr-b; built nr-b; ev close nr-b
 rbrief nr-b "${URL}"; ev review-agent nr-b "review-agent: review-nr-b did not start"
