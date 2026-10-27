@@ -27,7 +27,10 @@ outside the repo is edited where it is, since `board-pr` refuses it. A conductor
 edit to a story goes through `swarm.sh board-pr` too (its brief says so). `swarm.sh finish` and
 `swarm.sh drop` open their own board PR, `finish-<slug>` or `drop-<slug>`, and print the
 `swarm.sh merge --board <url>` that lands it: run that, or with `merge = human` hand the PR to the
-user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. A `costs: money`
+user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. An edit, a hold
+(`hold-<slug>`) or a finish PR gets no `swarm.sh codex-review`: it lands on green CI alone. Only a
+plan PR (`plan-<hld>`, `scope-<epic>`) or an agreement PR (`agree-<hld or epic>`) gets one codex-review
+pass before it merges; `board-pr open` names the PR's kind on stderr. A `costs: money`
 PR, or one stacked on one, stays the user's to merge, grant or not. Once it has merged, `swarm.sh board-pr done <that name>` clears its worktree away.
 
 `swarm.sh board-pr start <name>` prints the worktree's path, `<repo>-wt/_board-<name>` (beside the
@@ -247,8 +250,8 @@ Repeat until a step below says stop:
      `herdr agent read <agent>` and tell the user what it shows. For `(manual)`, run the exit: for
      a ready story's builder it closes the pane and then restarts or holds the story, as a
      `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
-     pane. The line comes once per stop: again once the agent has moved on, or after a turn that
-     ends on the same stop. An
+     pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
+     on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
      `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` line is
      capacity no step uses, the line `next` prints after its step: handle it as step 1's `idle:` list
      says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
