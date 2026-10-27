@@ -29,8 +29,9 @@ B0=cccccccccccccccccccccccccccccccccccccccc   # a commit behind it
 X='{"filename":"bin/x.sh","status":"modified","sha":"b1","patch":"@@ -1 +1 @@\n-a\n+b"}'
 # changes <to> <file>... — compare ${H1}...<to> lists <file>s, compare entries.
 changes() { local to="$1" IFS=,; shift; echo "{\"files\":[$*]}" > "${FX}/compare.${H1}...${to}"; }
-# P — the PR's own change, to bin/pr.sh. pr_changes <since> <file>... — compare <since>...${H1} lists <file>s.
-P='{"filename":"bin/pr.sh","status":"modified","sha":"p1","patch":"@@ -1 +1 @@\n-c\n+d"}'
+# PRX — the PR's own change, to bin/pr.sh (P is merge_fixture.sh's project). pr_changes <since> <file>... —
+# compare <since>...${H1} lists <file>s.
+PRX='{"filename":"bin/pr.sh","status":"modified","sha":"p1","patch":"@@ -1 +1 @@\n-c\n+d"}'
 pr_changes() { local since="$1" IFS=,; shift; echo "{\"files\":[$*]}" > "${FX}/compare.${since}...${H1}"; }
 # moved — fresh, and main gained bin/x.sh after ${H1}'s CI ran; update-branch answers, the PR's head
 # becomes ${H3}, a merge of ${H1} and ${B} that changes what ${B} brings (X), and main is at ${B}.
@@ -39,7 +40,7 @@ moved() {
   echo '{"ahead_by":1,"files":[{"filename":"bin/x.sh","status":"modified"}]}' > "${FX}/behind"
   echo '{"message":"Updating pull request branch."}' > "${FX}/update"; echo "${H3}" > "${FX}/update-head"
   parents "${H1}" "${B}"; printf '{"commit":{"sha":"%s"}}\n' "${B}" > "${FX}/basehead"
-  changes "${H3}" "${X}"; changes "${B}" "${X}"; pr_changes "${B}" "${P}"
+  changes "${H3}" "${X}"; changes "${B}" "${X}"; pr_changes "${B}" "${PRX}"
 }
 # parents <sha>... — ${H3}'s parents, as gh reads the commit, which GitHub made (committer web-flow,
 # signature verified) unless ${COMMITTER} names another committer or ${VERIFIED} is false.
@@ -68,7 +69,7 @@ moved; echo 3 > "${FX}/update-lag"; merge "${URL}"
 refused "a head that moves on the fourth read" "${MERGED_LINE}"
 is "a head that moves on the fourth read: read four times" 4 "$(views_after_put)"
 # The second parent behind main's head is still a commit on main.
-moved; parents "${H1}" "${B0}"; echo '{"status":"ahead","behind_by":0}' > "${FX}/compare.${B0}"; changes "${B0}" "${X}"; pr_changes "${B0}" "${P}"; merge "${URL}"
+moved; parents "${H1}" "${B0}"; echo '{"status":"ahead","behind_by":0}' > "${FX}/compare.${B0}"; changes "${B0}" "${X}"; pr_changes "${B0}" "${PRX}"; merge "${URL}"
 refused "a second parent behind main's head" "${MERGED_LINE}"
 check "a second parent behind main's head: compares it with main's head" grep -qxF "api repos/o/r/compare/${B0}...${B}" "${ROOT}/gh.log"
 # The update goes to the PR's own repo.
@@ -117,13 +118,13 @@ refused "a web-flow merge with another blob of a file with no patch" "${UNCHECKE
 # A file both sides changed: its merged blob is not main's, though the added and removed lines match
 # (main's change, or the same lines changed at another place). It goes to review.
 moved; changes "${H3}" '{"filename":"bin/x.sh","status":"modified","sha":"n1","patch":"@@ -10,3 +10,3 @@\n the PR line\n-a\n+b\n end"}'
-pr_changes "${B}" "${P}" '{"filename":"bin/x.sh","status":"modified","sha":"p2","patch":"@@ -10 +10 @@\n-x\n+the PR line"}'; merge "${URL}"
+pr_changes "${B}" "${PRX}" '{"filename":"bin/x.sh","status":"modified","sha":"p2","patch":"@@ -10 +10 @@\n-x\n+the PR line"}'; merge "${URL}"
 refused "a merge of a file both sides changed" "${UNCHECKED}, which cannot be shown to bring only main's bbbbbbb: bin/x.sh (a file the PR changes too, or not as bbbbbbb has it): review the new head as for any new head"
 check "a merge of a file both sides changed: no base-merged line" no_base_merged
 check "a merge of a file both sides changed: compares the merge with the head, and main with the head" \
   grep -qxF "api repos/o/r/compare/${H1}...${B}" "${ROOT}/gh.log"
 # A resolution that took main's version of a file the PR changed: main's blob, and the PR's edit gone.
-moved; pr_changes "${B}" "${P}" "${X}"; merge "${URL}"
+moved; pr_changes "${B}" "${PRX}" "${X}"; merge "${URL}"
 refused "a merge that drops the PR's edit for main's version" "${UNCHECKED}, which cannot be shown to bring only main's bbbbbbb: bin/x.sh (a file the PR changes too"
 check "a merge that drops the PR's edit for main's version: compares main with the head, for the PR's own changes" \
   grep -qxF "api repos/o/r/compare/${B}...${H1}" "${ROOT}/gh.log"
