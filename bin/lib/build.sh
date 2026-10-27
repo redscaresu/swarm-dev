@@ -178,6 +178,15 @@ under Waits on the user. When \`swarm.sh merge\` refuses any other PR with \`hel
 it\` (a parent it stacks on costs money, or another \`costs:\` value), do the same: close its builder,
 leave the PR for the user and list it.
 
+When \`swarm.sh merge\` refuses with a line that ends \`merge origin/<base> in, push, and merge the new
+head\` (\`the base <base> moved past <sha>'s CI\`, or a compare that cannot list what the base gained),
+it merged nothing: code may have landed on <base> after that head's CI ran, so the two were never
+tested together. This refusal is yours to handle, not the lead's. Send the builder a nudge with \`swarm.sh tell <slug> nudge <file>\`
+(never findings, which count as a review round) telling it to merge origin/<base> in, re-run the
+tests and push; with no builder, start one as the clash rule says for a conflict. Wait for the new
+head's CI with \`swarm.sh wait-pr <PR URL>\` in the background, review the new head as for any new
+head, and merge the head that review passed with \`swarm.sh merge --head <sha> <PR URL>\`, as below.
+
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
