@@ -2380,8 +2380,9 @@ open_story_prs() {
   # names: " <repo>=<owner/repo or -> " per repo: name, each resolved once; homes: " <slug>=<owner/repo> ".
   while IFS=$'\x1f' read -r slug repo; do
     repo="${repo//[\"\']/}"; repo="${repo:-${own}}"
-    [[ -n "${slug}" && -n "${repo}" ]] || continue
-    if [[ "${names}" != *" ${repo}="* ]]; then
+    # A name repo_dir takes, so the glob below matches it as itself.
+    [[ -n "${slug}" && "${repo}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+    if [[ "${names}" != *" ${repo}="* ]]; then   # loose-match: ok repo is checked to a plain repo name above
       nwo=-
       if src="$(repo_dir "${repo}")" && url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
         && [[ "${url}" =~ github\.com[:/]([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)$ ]]; then nwo="${BASH_REMATCH[1]%.git}"; fi
@@ -2396,15 +2397,18 @@ open_story_prs() {
 import datetime, json, sys
 OK = ("SUCCESS", "SKIPPED", "NEUTRAL")
 now = datetime.datetime.now(datetime.timezone.utc)
-for p in json.load(sys.stdin):
-    ref = p.get("headRefName") or ""
+prs = json.load(sys.stdin)
+if not isinstance(prs, list):
+    sys.exit(1)
+for p in prs:
+    ref = (p.get("headRefName") or "") if isinstance(p, dict) else ""
     if not ref.startswith("story/"):
         continue
     roll = p.get("statusCheckRollup") or []
     green = any(c.get("__typename") == "CheckRun" for c in roll) and all(((c.get("state") or "") if c.get("__typename") == "StatusContext" else (c.get("conclusion") or "") if (c.get("status") or "") == "COMPLETED" else "").upper() in OK for c in roll)
     opened = datetime.datetime.fromisoformat(p["createdAt"].replace("Z", "+00:00"))
     print(ref[6:], p["url"], p["headRefOid"], p.get("mergeable") or "UNKNOWN", "green" if green else "not", max(int((now - opened).total_seconds() // 60), 0))
-')" || { echo "- ${nwo}"; continue; }
+' 2>/dev/null)" || { echo "- ${nwo}"; continue; }
     while read -r slug rest; do
       [[ -n "${slug}" && "${homes}" == *" ${slug}=${nwo} "* ]] && echo "${slug} ${rest}"
     done <<< "${rows}"
@@ -2417,12 +2421,11 @@ for p in json.load(sys.stdin):
 # its head (review_pass), open and reviewed queue_minutes or more ago (the findings file's mtime). A PR
 # whose mergeable state GitHub is still working out (UNKNOWN), and every PR of a repo gh could not list,
 # keeps its lines from LEAD_SEEN, so a lapse in the read neither drops a line nor wakes the lead with it
-# again; a repo it could not list is warned of on stderr, one line per poll.
+# again. A gh error prints nothing, as in lead_heads.
 pr_lines() {
   local slug url head mg ck age m lost=""
   while read -r slug url head mg ck age; do
     if [[ "${slug}" == - ]]; then
-      echo "warning: gh cannot list ${url}'s open PRs, so its unmerged: and conflict: lines stand as last seen" >&2
       lost+="https://github.com/${url}/pull/"$'\n'; continue
     fi
     if [[ "${mg}" == UNKNOWN ]]; then

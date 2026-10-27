@@ -139,8 +139,8 @@ done
 # the lines; a conflict that clears and comes back wakes the lead again.
 board agent review; lead >/dev/null
 silent "a second read of the same queue prints neither line again"
-touch "${ROOT}/gh-fail"; out="$(lead)"
-check "a repo gh cannot list is warned of" grep -q "^warning: gh cannot list o/r's open PRs" <<< "${out}"
+touch "${ROOT}/gh-fail"
+silent "a repo gh cannot list wakes no one"
 check "its lines stand in the queue through the failure" has "${UA}" "$(cat "${P}/.swarm/lead/seen")"
 rm "${ROOT}/gh-fail"
 silent "once gh answers again, neither line wakes the lead again"

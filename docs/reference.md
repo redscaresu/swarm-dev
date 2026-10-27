@@ -119,8 +119,8 @@ A red `main` is not one of these: `swarm.sh merge` writes a `fix-main-<sha>` sto
 the lead once, and again only after a poll finds it gone and it comes back. Both are alerts: a run that
 starts with no `.swarm/lead/seen` prints them on its first read, since nothing else shows them. A PR
 whose mergeable state GitHub has not worked out yet keeps the lines it had in `.swarm/lead/seen`. So does every PR of a repo
-gh could not list, and that poll prints `warning: gh cannot list <owner/repo>'s open PRs, ...` on
-stderr. A repo with no clone or no GitHub origin is not listed.
+gh could not list, and the poll prints nothing about the failure, as for the PR heads. A repo with no
+clone or no GitHub origin is not listed.
 
 **A brief left in an idle agent's input box is submitted once.** herdr types a long brief into the
 pane as a collapsed paste (`[Pasted text #1 +40 lines]`), and an agent can sit idle with it still in
