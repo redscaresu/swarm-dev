@@ -6,6 +6,7 @@ CI_OK, CI_RED, CI_TIMEOUT, CI_ERROR = 0, 1, 2, 3   # ci_gate main's exit codes (
 TRANSIENT = re.compile(r"\b(rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|no such host|network is unreachable|stream error|HTTP (408|429|50[0234]))\b")
 RUN_ID = re.compile(r"https://github\.com/[^ ;]+/actions/runs/([0-9]+)")   # an Actions run's id in a check's URL
 FIXED_WALK = 20  # board-only commits fixed steps back over to the commit it judges
+COMPARE_FILES = 300  # the most files the compare API lists; the PR files API lists 3000
 
 class Err(Exception):
     """gh failed, or answered something unreadable: main_ci reads again."""
@@ -362,8 +363,8 @@ def flow(v):
         raise Unread("%s: a quoted entry holding a comma is not read" % v)
     return [unq(x) for x in v.strip("[]").split(",") if unq(x)]
 
-def push_filters(text):
-    """on: push's filters ({} for none), or None when there is no push trigger. Reads the forms
+def on_filters(text, event):
+    """on: <event>'s filters ({} for none), or None when there is no such trigger. Reads the forms
     workflows use: on: push, on: [push, ...], and a block of events with block or [flow] lists."""
     lines = [re.sub(r"(^|\s)#.*", "", l).rstrip() for l in text.splitlines()]
     top = [i for i, l in enumerate(lines) if re.match(r"""^(on|"on"|'on'|true)\s*:""", l)]
@@ -371,7 +372,7 @@ def push_filters(text):
         raise Unread("no on: key")
     v = lines[top[0]].split(":", 1)[1]
     if v.strip():
-        return {} if "push" in flow(v) else None
+        return {} if event in flow(v) else None
     block = []
     for l in lines[top[0] + 1:]:
         if l and not l[0].isspace() and not l.startswith("-"):
@@ -384,14 +385,14 @@ def push_filters(text):
         if ind(l) != ind(block[0]):
             continue
         if k.startswith("-"):
-            if unq(k[1:]) == "push":
+            if unq(k[1:]) == event:
                 return {}
             continue
         key, _, rest = k.partition(":")
-        if unq(key) != "push":
+        if unq(key) != event:
             continue
         if rest.strip() not in ("", "{}", "null", "~"):
-            raise Unread("push: %s is not read" % rest.strip())
+            raise Unread("%s: %s is not read" % (event, rest.strip()))
         f, key = {}, None
         for c in block[j + 1:]:
             if ind(c) <= ind(l):
@@ -404,7 +405,7 @@ def push_filters(text):
                 key = unq(key)
                 f[key] = flow(rest)
             else:
-                raise Unread("push: %s is not read" % c)
+                raise Unread("%s: %s is not read" % (event, c))
         return f
     return None
 
@@ -468,7 +469,8 @@ def pr_files(repo, n, changed, status=False, base=None, sha=None):
     except (KeyError, TypeError, AttributeError) as e:
         raise Err("unreadable files for #%s: %r" % (n, e))
 
-def expected(repo, sha, base, n, changed):
+def workflows(repo, sha):
+    """Each workflow file in .github/workflows at sha, as (path, text); none when there is no such folder."""
     try:
         out = gh("api", "repos/%s/contents/.github/workflows?ref=%s" % (repo, sha))
     except Err as e:
@@ -480,15 +482,103 @@ def expected(repo, sha, base, n, changed):
         paths = [w["path"] for w in json.loads(out) if w["type"] == "file" and w["name"].endswith((".yml", ".yaml"))]
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise Err("unreadable .github/workflows listing at %s: %r" % (sha[:7], e))
-    want, files = [], pr_files(repo, n, changed)
-    for path in paths:
-        text = gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, path, sha))
+    return [(path, gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, path, sha)))
+            for path in paths]
+
+def expected(repo, sha, base, n, changed):
+    texts = workflows(repo, sha)
+    want, files = [], pr_files(repo, n, changed) if texts else None
+    for path, text in texts:
         try:
-            if covers(push_filters(text), base, files):
+            if covers(on_filters(text, "push"), base, files):
                 want.append(path)
         except Unread as e:
             raise Unread("%s: %s" % (path, e))
     return want
+
+def pr_tree(repo, sha, n):
+    """The commit GitHub runs PR n's pull_request workflows from, its merge commit (refs/pull/<n>/merge)
+    once that merges sha, else sha. A ref that is missing (GitHub has not made it, 404 or 422) or stale
+    (it merges an older head) gives sha, the workflows the PR's own files name; any other failed or odd
+    read is an Err, read again as any other. The ref is read as it is now, but the runs came from the
+    merge commit at push time, and GitHub rebuilds the ref when the base moves: a base commit since the
+    push that adds a pull_request workflow, or widens one's branches or paths, is waited on though it
+    never ran, and the wait ends with exit 2 after the grace until the base is merged in and pushed."""
+    try:
+        d = json.loads(gh("api", "repos/%s/commits/refs/pull/%s/merge" % (repo, n)))
+        parents = [p.get("sha") for p in d["parents"][1:]]
+        merge = d["sha"]
+    except Err as e:
+        if re.search(r"HTTP (404|422)", str(e)):
+            return sha
+        raise
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        raise Err("unreadable refs/pull/%s/merge: %r" % (n, e))
+    return merge if sha in parents else sha
+
+def inactive(repo):
+    """The workflow files Actions has disabled (by hand, for inactivity, on a fork): it runs none of them."""
+    return {w.get("path") for w in pages("repos/%s/actions/workflows?per_page=100" % repo, "workflows")
+            if w.get("state") != "active"}
+
+def pr_expected(repo, sha, base, n, changed):
+    """The workflows a pull_request into base with PR n's files at sha runs, read at pr_tree (their
+    branches and paths filters; none Actions has disabled); a line for each whose triggers are not read,
+    which is not waited on, so the wait is no stricter than with none expected. A head may be the PR's
+    first (opened) or a later one (synchronize), so a types list without both is not waited on either."""
+    texts = workflows(repo, pr_tree(repo, sha, n))
+    want, unread, files = [], [], None
+    if texts:
+        off = inactive(repo)
+        texts = [(p, t) for p, t in texts if p not in off]
+        files = pr_files(repo, n, changed, False, *((base, sha) if changed <= COMPARE_FILES else ()))
+    for path, text in texts:
+        try:
+            f = on_filters(text, "pull_request")
+            if covers(f, base, files) and {"opened", "synchronize"} <= set(f.get("types", ["opened", "synchronize"])):
+                want.append(path)
+        except (Unread, re.error) as e:
+            unread.append("%s (triggers not read: %s)" % (path, e))
+    return want, unread
+
+def run_path(r):
+    """A workflow run's file, without the @<ref> a reusable workflow's path carries."""
+    return (r.get("path") or "").split("@")[0]
+
+def sha_runs(repo, sha):
+    """The workflow runs on sha."""
+    return [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
+            if r.get("head_sha") == sha]
+
+def head_expected(repo, sha, args):
+    """head's red and pending lines for the expected workflows (pr_expected), and its unread lines. Only
+    the newest pull_request run of each counts (a push run on sha is not the PR's, and a run a reopen
+    or a newer run replaced is over): none is pending, as is one not finished, and one that finished
+    other than green is red, check run or not. args are <base> <pr> <changed> and, optionally, a file
+    that keeps pr_expected's answer, so a wait reads the workflows once, at the merge commit or the head
+    as pr_tree found it on the first read."""
+    memo = args[3] if len(args) > 3 else None
+    try:
+        with open(memo) as fh:
+            want, unread = json.load(fh)
+    except (TypeError, OSError, ValueError):
+        want, unread = pr_expected(repo, sha, args[0], args[1], int(args[2]))
+        if memo:
+            with open(memo, "w") as fh:
+                json.dump([want, unread], fh)
+    if not want:
+        return [], [], unread
+    newest = {}
+    for r in sha_runs(repo, sha):
+        p = run_path(r)
+        if r.get("event") == "pull_request" and (r.get("id") or 0) >= (newest.get(p, {}).get("id") or 0):
+            newest[p] = r
+    red, wait = [], []
+    for p in want:
+        if p not in newest:
+            wait.append("%s (no run on %s)" % (p, sha[:7]))
+        judge([dict(newest[p], name=p)] if p in newest else [], red, wait, [])
+    return red, wait, unread
 
 def required(repo, base):
     """The status checks base requires, as base_rules reads them (context, the app that must report
@@ -507,8 +597,7 @@ def is_req(r, req):
 def ci_items(repo, sha):
     """sha's workflow runs, and its check runs and commit statuses, each status as a check run (its
     target_url the html_url, its updated_at the completed_at)."""
-    runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
-            if r.get("head_sha") == sha]
+    runs = sha_runs(repo, sha)
     items = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     items += [{"name": s.get("context"), "status": "pending" if s.get("state") == "pending" else "completed",
                "conclusion": s.get("state"), "html_url": s.get("target_url"), "completed_at": s.get("updated_at")}
@@ -566,14 +655,14 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             # Once every expected push workflow has finished (with none expected, once grace is over), a
             # required check with no run will not get one: every check counts then, as with none required.
             if absent and (want or time.time() >= settled) and all(
-                    any((r.get("path") or "").split("@")[0] == p and r.get("status") == "completed" for r in runs) for p in want):
+                    any(run_path(r) == p and r.get("status") == "completed" for r in runs) for p in want):
                 mine, rest = items + runs, []
             red, rwait, wait, warn = [], [], [], []
             judge(mine, red, rwait, [])
             judge(rest, warn, wait, [])
             if absent:
                 wait, warn = wait + ["%s, held until every required check has a run" % w for w in warn], []
-            have = {(r.get("path") or "").split("@")[0] for r in runs}
+            have = {run_path(r) for r in runs}
             wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
             bad = [r for r in mine if r.get("status") == "completed" and r.get("conclusion") not in OK]   # red's, in order
             ids = [int(m.group(1)) if m else None for m in (RUN_ID.search(r.get("html_url") or "") for r in bad)]
@@ -672,7 +761,12 @@ try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
         red, wait, ok = checks(repo, args[0])
+        # A red head is red whatever has run, so the expected workflows are read only when there is none.
+        bad, more, unread = head_expected(repo, args[0], args[1:]) if args[1:] and not red else ([], [], [])
+        red, wait = red + bad, wait + more
         print("; ".join(red + wait or ok))
+        if unread:
+            print("not waited on: " + "; ".join(unread))
         if red or wait:
             sys.exit(1 if red else 2)
     elif mode == "fixed":

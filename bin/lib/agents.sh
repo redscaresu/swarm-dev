@@ -184,7 +184,9 @@ else:
   esac
 }
 
-# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
+# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed, in
+# HERDR_WORKSPACE_ID: a tab whose recorded panes are in another workspace (<workspace>:<pane>) has no
+# room, so a stale record in a workspace an older swarm.sh shared between projects is never split.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
 prune_dead_panes() {
@@ -201,6 +203,10 @@ next_pane() {
     state="${STATE_DIR}/${tab_label}"
     [[ -f "${state}" ]] && prune_dead_panes "${state}"
     count=0; [[ -f "${state}" ]] && count=$(wc -l < "${state}" | tr -d ' ')
+    if [[ -n "${HERDR_WORKSPACE_ID:-}" && ${count} -gt 0 ]]; then
+      pane="$(awk 'NR == 1 { print $1 }' "${state}")"
+      [[ "${pane}" != *:* || "${pane%%:*}" == "${HERDR_WORKSPACE_ID}" ]] || count=${PANES_PER_TAB}
+    fi
     if [[ ${count} -lt ${PANES_PER_TAB} ]]; then
       if [[ ${count} -eq 0 ]]; then
         pane=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID}" --cwd "${cwd}" --label "${tab_label}" --no-focus \
@@ -622,6 +628,15 @@ SESSIONS_DIR="${PROJECT_DIR}/.swarm/sessions"
 # session_for_pane <pane> — the Claude session id herdr reports for the agent in <pane>, or nothing.
 session_for_pane() {
   herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
+}
+
+# recorded_session <name> — <name>'s Claude session id as agents.tsv recorded it (panes.py's
+# session_id), or nothing: none, or a codex agent.
+recorded_session() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import session_id
+print(session_id(*sys.argv[1:3]) or "")' "${AGENTS_LOG}" "$1" 2>/dev/null || true
 }
 
 # claude_agents [err-file] — Claude Code's own list of its sessions, as JSON; fails when it cannot be
