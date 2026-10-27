@@ -2917,7 +2917,7 @@ step_up_closed() {
 LEAD_RESENT="${LEAD_DIR}/resend"
 RESEND_SLACK=$(( 7 * PROMPT_TIMEOUT_MS / 1000 ))
 RESEND_HERDR_WAIT=10   # seconds each herdr read or key press of resend_pass may take, as pane_text gives a read
-RESEND_PASS_WAIT=20    # seconds into a poll's reads (LEAD_READ_DEADLINE) after which resend_pass and prompt_lines start no more
+RESEND_PASS_WAIT=20    # seconds after which resend_pass starts no more pane reads, leaving them for the next poll
 
 # resend_busy <name> [backlog] — true while a swarm.sh command that may deliver <name> a prompt runs:
 # one of NO_AGENT_ASKS or conduct, with an argument that is <name> once made an agent name
