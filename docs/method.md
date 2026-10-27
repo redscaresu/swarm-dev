@@ -60,8 +60,7 @@ Three parties do the work, and the plan decides which one does each step, not th
   reviews and runs `lead` stories, never the agents' work. Its messages to agents go through
   `swarm.sh tell`, never a bare `herdr agent prompt`, and when the board is in the project's repo its
   board edits go through `swarm.sh board-pr`, each in its own worktree, never the main checkout
-  (reference.md § The lead). A board PR that edits a story's scope, holds a story or finishes an
-  item lands on green CI with no codex review; only a plan or agreement PR gets one. If it stops while `next` names a step it has not started, a hook sends it back once.
+  (reference.md § The lead). Only a plan or agreement board PR gets a codex review; an edit, a hold or a finish lands on green CI. If it stops while `next` names a step it has not started, a hook sends it back once.
 - **Agents** plan, conduct and build everything else, each in its own pane, builders in a worktree too.
 
 A story is `kind: lead`, never an agent's, when it:
