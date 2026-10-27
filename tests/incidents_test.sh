@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # incidents_test.sh — the incident events, their helpers stubbed: wait_agent's timeout writes one
-# wait-timeout line (not for an agent still working, busy or herdr:working, nor for a conductor's hour
-# slice, nor for herdr's wait failing early); an expired
+# wait-timeout line (not for an agent still working: a busy session, or herdr's route timing out with
+# nothing printed and read_state saying herdr:working; nor for a conductor's hour slice, nor for
+# herdr's wait failing early); an expired
 # login one login line however often it is waited on, and one more after a resume (matched through
 # agent_name, so a long slug's counts) or a new start, but not after a note or a failed tell; a close
 # that ends a stuck builder's build with no open or merged PR one idle-no-pr line (its waits none), and
@@ -52,6 +53,7 @@ sites() (
   slow_timeout() { sleep 1; echo "${st}"; return 1; }
   case "$1" in
     timeout) settle() { slow_timeout; }; wait_agent a 1000 ;;
+    herdr-timeout) settle() { sleep 1; return 1; }; read_state() { echo "${st}"; }; wait_agent a 1000 ;;
     slice) settle() { slow_timeout; }; SWARM_WAIT_SLICE=1 wait_agent conduct-e 1000 ;;
     herdr-fails) settle() { echo busy; return 1; }; wait_agent a 60000 ;;
     login) settle() { echo idle; }; login_expired() { return 0; }
@@ -73,7 +75,9 @@ sites() (
 
 check "wait_agent's timeout on a blocked agent writes one wait-timeout line" "$(sites timeout blocked)" $'incident\ta\twait-timeout: blocked'
 check "wait_agent's timeout on a busy agent writes none" "$(sites timeout busy)" ""
-check "wait_agent's timeout on a herdr:working agent writes none" "$(sites timeout herdr:working)" ""
+check "herdr's wait timing out on an agent herdr says is working writes none" "$(sites herdr-timeout herdr:working)" ""
+check "herdr's wait timing out on an agent herdr says is blocked writes its state" "$(sites herdr-timeout herdr:blocked)" \
+  $'incident\ta\twait-timeout: herdr:blocked'
 check "a conductor's hour slice running out (SWARM_WAIT_SLICE) writes none" "$(sites slice)" ""
 check "herdr's wait failing before the timeout writes none" "$(sites herdr-fails)" ""
 check "an expired login waited on twice writes one login line, and a resume then another" "$(sites login)" \
