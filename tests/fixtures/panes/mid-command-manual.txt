@@ -1,0 +1,9 @@
+⏺ Bash(make test)
+  ⎿  Running…
+
+✻ Running…
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt

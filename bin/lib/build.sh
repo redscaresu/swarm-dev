@@ -1,13 +1,17 @@
 # shellcheck shell=bash
 
-# findings_goal <slug> <since> <goal-file> — send the builder a fresh /goal mid-turn, once its findings
+# findings_goal <slug> <since> <goal-file> <from> — send the builder a fresh /goal mid-turn, once its findings
 # are taken up, so the goal drives the fix (sent after the turn, the judge would find it met at once): the
 # findings addressed, the reply its brief asks for in its mode, and the turn bound. Mid-turn it sets at
 # once and costs one extra short turn, as build_story's does. send_goal confirms it from entries newer
 # than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story.
+# <from> is who sent the tell, review or conductor, as tell_agent read it (tell_from) for the header:
+# the goal names the review agent's findings, or the conductor's review findings, to match.
 findings_goal() {
+  local what="the conductor's review findings"
+  [[ "$4" != review ]] || what="the review agent's findings"
   # shellcheck disable=SC2154 # assigned in another file
-  printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
+  printf '%s %s %s\n' "The goal: ${what}, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
     "$(reply_sentence)" "It is met once both hold, or stop after ${CFG_goal} more turns." > "$3"
   send_goal "$1" "$3" findings "$2"
 }
@@ -417,7 +421,9 @@ Implement ${story_ref}. Its **Done when** is the acceptance.
 Title your commit and PR with a plain description of the change.
 
 Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
-credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}" "${slug}")\` before
+credentials. Open the PR against \`${base}\`. Before you push, for each function, command-line flag
+or error message the diff changes, re-read its header comment, error text and every README, doc, command
+or skill line that names it, and fix each one that no longer matches. Run \`$(codex_review_cmd "${base}" "${slug}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
@@ -742,7 +748,6 @@ Hold the PR to these as well:
 - A new code path must enforce every rule the existing paths enforce.
 - A zero or empty value shown to a person must say what it means.
 - A repair path that changes something must say what it did.
-- For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it.
 - An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches.
 - For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding.
 EOF
@@ -896,12 +901,12 @@ touches_rows() {
 }
 
 # board_pr_merge_rule — who lands a conductor's board PR: the conductor with merge = agent, the user
-# with merge = human.
+# with merge = human. A story-scope edit, a hold or a finish PR gets no codex-review under either.
 board_pr_merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then
-    echo "With merge = human you cannot land that PR: list it in your report for the user."
+    echo "Run no \`swarm.sh codex-review\` on it. With merge = human you cannot land that PR: list it in your report for the user."
   else
-    echo "Land it with \`swarm.sh merge --board <url>\` once its checks are green."
+    echo "Run no \`swarm.sh codex-review\` on it: land it with \`swarm.sh merge --board <url>\` once its checks are green."
   fi
 }
 
@@ -1283,8 +1288,9 @@ epic_env() {
 
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
+# Under merge = agent with no allow rule for swarm.sh merge, it dies with merge_rule_stop's line first.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name report
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name report why
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; label=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -1299,6 +1305,7 @@ start_conductor() {
     [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
+  if why="$(merge_rule_stop)"; then die "${why}"; fi
   require_claude
   if [[ "$1" == --backlog ]]; then names="$(epic_env "")"; else names="$(epic_env "${epic}")"; fi || die "${names}"
   name="$(conductor_name "${epic}")"; free_agent_name "${name}"   # a name held elsewhere leaves the report be

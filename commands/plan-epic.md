@@ -103,7 +103,7 @@ did that. Without it, ask. (The small path has already written and committed the
 `swarm.sh board-pr open scope-$1 "<title>" <body-file>`, and runs `swarm.sh board-pr done scope-$1` once the PR
 has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no `touches` part, `touches`, `estimate_lines`, `easy`, `risk` when
-high, `costs: money` when set; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
+high, `costs: money` when set; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open the board PR `scope-$1` with one `swarm.sh codex-review` pass, and `swarm.sh close
 scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
 `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and
 `swarm.sh log-finding --declined <reason> --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when it did not.

@@ -1,0 +1,7 @@
+❯ Read the brief and follow it.
+⏺ Login expired · Please run /login
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

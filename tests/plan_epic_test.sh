@@ -27,7 +27,7 @@ hasnt() { # <name> <pattern> [text]
 
 step3=$(awk '/^\*\*3\. /{on=1} /^\*\*4\. |^\*\*Then report/{on=0} on' "$F")
 step2=$(awk '/^\*\*2\. /{on=1} /^\*\*3\. /{on=0} on' "$F" | tr '\n' ' ' | tr -s ' ')
-approval=$(printf '%s' "$(tr '\n' ' ' < "$F" | tr -s ' ')" | grep -oE 'On approval write one.*open a PR with' || true)
+approval=$(printf '%s' "$(tr '\n' ' ' < "$F" | tr -s ' ')" | grep -oE 'On approval write one.*open the board PR `scope-\$1` with' || true)
 # The file with line breaks folded to spaces, so a phrase wrapped over two lines still matches.
 flat=$(tr '\n' ' ' < "$F" | tr -s ' ')
 risk=$(printf '%s' "$flat" | grep -oE 'risk: high` only[^;]*;' || true)
@@ -121,7 +121,7 @@ has epic-path 'docs/epics/<slug>\.md' "$e"
 has epic-draft '^ *status: draft$' "$e"
 for h in Problem Goals Non-goals Constraints; do has "epic-section-$h" "^ *## $h$" "$e"; done
 has epic-active-on-agreement '[Oo]nly then, on the user.s agreement, set `status: active`; nothing plans a draft epic' "$eflat"
-has epic-resume-draft-only 'is `status: draft`, resume it\. If it exists with any other status, it is live .* stop' "$eflat"
+has epic-resume-draft-only 'is `status: draft`, resume it\. If the epic exists with any other status, it is live .* stop' "$eflat"
 has epic-slug-chars 'every run of characters other than `a-z` and `0-9` into one `-`' "$eflat"
 has epic-slug-backlog 'If the slug is empty or `backlog`.* stop' "$eflat"
 has epic-file-name-first 'If `docs/epics/<argument>.md` exists, that file is the epic and its name is the slug' "$eflat"
