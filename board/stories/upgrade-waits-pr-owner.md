@@ -2,7 +2,7 @@
 kind: code
 status: blocked
 epic: conductor-hands-off
-depends_on: [owner-merge-handoff, next-review-round]
+depends_on: [next-review-round]
 needs: [review-loop's pr-owner-brief: the review agent tells its builder and merges or hands over its PR (bin/lib/build.sh:review_brief), review-loop's next-review-round: the review agent loops in its own session, so it is a long-lived Claude agent upgrade must wait for]
 touches: [bin/lib/lifecycle.sh:upgrade_round, bin/lib/lifecycle.sh:upgrade_hold, bin/lib/lifecycle.sh:upgrade_held_why, bin/swarm.sh:upgrade usage line, docs/reference.md:upgrade paragraph, README.md:upgrade lines, tests/upgrade_test.sh:review agent cases]
 estimate_lines: 160

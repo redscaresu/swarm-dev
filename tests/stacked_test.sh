@@ -15,6 +15,8 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/projects"
+# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # swarm.sh's own merges commit too: a known identity, and none of the user's settings (signing).
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' > "${ROOT}/gitconfig"
 export GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" GIT_CONFIG_NOSYSTEM=1

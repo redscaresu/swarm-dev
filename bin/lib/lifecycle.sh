@@ -1928,9 +1928,109 @@ init_config() {
   echo "added a commented commit_trailers line to ${f}"
 }
 
+# MERGE_RULE: the Claude Code permissions.allow rule that lets an agent run swarm.sh merge as the
+# conductor's and the lead's briefs write it. Without one, Claude Code refuses an agent every merge
+# (v0.28.0: the user merged 8 approved PRs by hand).
+MERGE_RULE='Bash(swarm.sh merge *)'
+
+# user_settings — the user's Claude Code settings file.
+user_settings() { echo "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"; }
+
+# claude_settings — the Claude Code settings files that can hold MERGE_RULE, one per line: the user's
+# first, then the project's shared and local ones.
+claude_settings() {
+  user_settings
+  echo "${PROJECT_DIR}/.claude/settings.json"
+  echo "${PROJECT_DIR}/.claude/settings.local.json"
+}
+
+# merge_allowed — true when the permissions.allow lists of the claude_settings files, pooled, let
+# through every form of swarm.sh merge an agent runs: --head and --board (a conductor), --release
+# --head and the plain form (the lead), each on two PRs and SHAs of the project's GitHub origin (o/r
+# with none), so a rule tied to one PR or SHA does not count.
+# A rule is Bash(<command>), with * for any text and the older :* suffix. Bash alone, or a pattern of
+# only *, does not count: agents run in auto mode, which sets such broad rules aside. It reads only
+# those allow lists, so a deny or ask rule, or managed settings, can still block a merge it passes.
+# It prints nothing (these files can hold tokens under env) and writes no file. A missing or broken
+# file counts as no rule.
+merge_allowed() {
+  local origin
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || origin=""
+  claude_settings | python3 -I -c '
+import json, re, sys
+m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/*$", sys.argv[1])
+prs = "https://github.com/%s/%s/pull/" % (m.groups() if m else ("o", "r"))
+FORMS = ("--head {0} ", "--board ", "--release --head {0} ", "")
+CMDS = ["swarm.sh merge %s%s%d" % (f.format(sha), prs, n) for sha, n in (("0123abc", 1), ("fedcba9", 98765)) for f in FORMS]
+def allows(rule, cmd):
+    m = re.fullmatch(r"Bash\((.*)\)", rule, re.S) if isinstance(rule, str) else None
+    if not m:
+        return False
+    pat = m.group(1)[:-2] + "*" if m.group(1).endswith(":*") else m.group(1)
+    if not pat.strip("*"):
+        return False
+    return re.fullmatch(".*".join(re.escape(p) for p in pat.split("*")), cmd, re.S) is not None
+rules = []
+for f in sys.stdin.read().splitlines():
+    try:
+        allow = json.load(open(f, encoding="utf-8"))["permissions"]["allow"]
+    except (OSError, ValueError, LookupError, TypeError):
+        continue
+    rules += allow if isinstance(allow, list) else []
+sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)' "${origin}"
+}
+
+# AUTO_MODE_DONE — the user's word that auto mode's setup ran, the date swarm.sh init --auto-mode-done
+# wrote. v0.28.0: the 'Teach auto mode' dialog and permission prompts froze builder panes for hours.
+AUTO_MODE_DONE="${PROJECT_DIR}/.swarm/auto-mode-done"
+
+# auto_mode_set_up — true when auto mode's setup has run: the user said so (AUTO_MODE_DONE), or the
+# user's settings hold a non-empty autoMode.environment, the list /auto-mode-setup writes there. Claude
+# Code offers the 'Teach auto mode' dialog only while that list, merged from the user's, flag and
+# managed policy settings, is empty; it takes autoMode from no project settings file. This reads only
+# the user's settings file, so a user whose org sets the list in managed settings runs
+# init --auto-mode-done. It reads only that list, prints nothing and writes no file.
+auto_mode_set_up() {
+  [[ -f "${AUTO_MODE_DONE}" ]] && return
+  python3 -I -c '
+import json, sys
+try:
+    env = json.load(open(sys.argv[1], encoding="utf-8"))["autoMode"]["environment"]
+except (OSError, ValueError, LookupError, TypeError):
+    sys.exit(1)
+sys.exit(0 if isinstance(env, list) and env else 1)' "$(user_settings)"
+}
+
+# auto_mode_done — swarm.sh init --auto-mode-done: record the user's word that auto mode's setup ran,
+# today's date in AUTO_MODE_DONE, so init stops printing that step. With main's line for the command
+# in .swarm/events.tsv, that is all it writes: nothing outside .swarm/.
+auto_mode_done() {
+  { mkdir -p "${PROJECT_DIR}/.swarm" && date +%F > "${AUTO_MODE_DONE}"; } || die "init: cannot write ${AUTO_MODE_DONE}"
+  echo "recorded that auto mode's setup ran, in ${AUTO_MODE_DONE#"${PROJECT_DIR}/"}; init no longer prints that step"
+}
+
+# init_claude — the Claude Code steps only the user can take: when merge_allowed finds no rule, the
+# step that adds MERGE_RULE to the user's settings, naming the files it read; until auto_mode_set_up,
+# the step that runs /auto-mode-setup, and the command that records it ran.
+init_claude() {
+  local f user="" files=""
+  if ! merge_allowed; then
+    while IFS= read -r f; do
+      [[ -n "${user}" ]] || user="${f}"
+      files+="${files:+, }${f#"${PROJECT_DIR}/"}"
+    done < <(claude_settings)
+    echo "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${files})."
+    echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, or an HLD that grants merge, Claude Code refuses every swarm.sh merge an agent runs without it, and you merge each PR by hand."
+  fi
+  auto_mode_set_up && return
+  echo "Auto mode has not learned your environment: $(user_settings) has no autoMode.environment, and nobody ran swarm.sh init --auto-mode-done here."
+  echo "Your step: run /auto-mode-setup once in claude, so no agent's pane stops on the 'Teach auto mode' dialog. Then run swarm.sh init --auto-mode-done here, and init stops printing this step."
+}
+
 # init_project — set the project up from the installed plugin, from its git root: the board templates
 # (never over a file that exists), .claude/swarm/ with a commented commit_trailers line, the .gitignore
-# lines, a CI workflow and a pre-commit hook. A second run changes nothing.
+# lines, a CI workflow and a pre-commit hook, then the Claude Code steps the user must take
+# (init_claude). A second run changes nothing.
 init_project() {
   local rel board f line n=0
   mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
@@ -1959,7 +2059,8 @@ init_project() {
   init_ci "${board}"
   init_hook "${board}"
   init_commit_step "${board}"
-  echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
+  init_claude
+  echo "Last step: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 
 # close_tabs <label> [pane] — close every tab this script opened under <label> and its numbered

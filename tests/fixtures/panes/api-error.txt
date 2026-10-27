@@ -1,0 +1,8 @@
+⏺ Running the tests.
+✻ Running… (3s · esc to interrupt)
+⏺ API Error: 529 overloaded
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
