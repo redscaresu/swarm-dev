@@ -150,11 +150,28 @@ brief="$(cat "${p}/.swarm/briefs/f1.md")"
 check "an epic's story branches from the base (dev), opens its PR against it, runs the epic's check first, and asks for a mutation" "$(git -C "${ROOT}/svc.git" rev-parse dev)|yes|yes|yes" \
   "$(git -C "${ROOT}/svc-wt/f1" rev-parse HEAD)|$(has "Open the PR against \`dev\`" "${brief}")|$(has "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`make test\`" "${brief}")|$(has "prove each new or changed test can fail" "${brief}")"
 check "the load rule caps load at 4 CPUs in all (docker run --cpus 4), cleans up as soon as the check ends, starts each process itself with a marker, checks at the end of a turn including orphans, and says the load in the PR" "yes|yes|yes|yes|yes|yes|yes" \
-  "$(has "use at most 4 CPUs in all, across everything you run at once (\`docker run --cpus 4\`, or that many loops)" "${brief}")|$(has "Stop and remove what you started as soon as the check ends, with a trap that kills each recorded PID on EXIT, INT and TERM, and never leave it running between steps" "${brief}")|$(has "Start each load process itself, with no wrapper that forks, record each" "${brief}")|$(has "and give it a marker in its command line (an argument \`f1-load\`)" "${brief}")|$(has "Before you end any turn, check that none of it is still running, orphaned children too" "${brief}")|$(has "\`pgrep -f f1-load\`, killing what it finds by PID" "${brief}")|$(has "Say in the PR how you loaded the machine." "${brief}")"
+  "$(has "use at most 4 CPUs in all, across everything you run at once (\`docker run --cpus 4\`, or that many loops)" "${brief}")|$(has "Stop and remove what you started as soon as the check ends, with a trap that kills each recorded PID on EXIT, INT and TERM, and never leave it running between steps" "${brief}")|$(has "Start each load process itself, with no wrapper that forks, record each" "${brief}")|$(has "and give it a marker in its command line (an argument \`f1-load\`)" "${brief}")|$(has "Before you end any turn, check that none of it is still running, orphaned children too" "${brief}")|$(has "\`pgrep -f '[f]1-load'\`, killing what it finds by PID" "${brief}")|$(has "Say in the PR how you loaded the machine." "${brief}")"
 check "the load rule names the leftover cleanup, the labelled container cleanup, no run_in_background, the runner cap with no project flag, a timeout no longer than the check, and the labelled docker check" "yes|yes|yes|yes|yes|yes|yes|yes" \
   "$(has "Remove leftovers from an earlier step first (\`docker rm -f \$(docker ps -aq --filter label=swarm=f1)\`)" "${brief}")|$(has "Name and label every container (\`--name f1-load-<n> --label swarm=f1\`), and remove them by that label in the trap, or use \`--rm\` and still remove them by name" "${brief}")|$(has "Never start load with run_in_background" "${brief}")|$(has "Cap your test runner's parallelism at 4 (its jobs or workers setting) too" "${brief}")|$(has "make test JOBS=4" "${brief}" | grep -q '^yes' && echo "project flag in brief" || echo yes)|$(has "no longer than the check and you kill it when the check ends" "${brief}")|$(has "or wrap each in \`timeout <seconds>\`" "${brief}")|$(has "\`docker ps --filter label=swarm=f1\`" "${brief}")"
 check "a builder re-reads, before it pushes, the comments and docs naming what its diff changes, and fixes the stale ones" "yes" \
   "$(has "Before you push, for each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it, and fix each one that no longer matches." "$(tr -s '[:space:]' ' ' <<< "${brief}")")"
+# The builder brief (_brief) of f1, whose worktree lacks scripts/select-tests.sh (only svc's own
+# checkout has it), then has it: after review fixes only the change's tests (select-tests.sh only where
+# the builder works), and no self-matching pgrep poll.
+selected="run only the tests mapped to the change (\`scripts/select-tests.sh --run\`) and let CI run the full suite."
+own="After review fixes, run only the project's own tests for the change and let CI run the full suite."
+nopoll="Never poll with a \`pgrep -f\` pattern that matches the poll's own command line or another poll's: such a loop finds itself or its twin and never ends. Wait on the PIDs you recorded, and find load by its \`f1-load\` marker with the bracketed pattern above, which cannot match itself."
+mkdir -p "${ROOT}/svc/scripts"; : > "${ROOT}/svc/scripts/select-tests.sh"
+plain="$(run _brief f1 | tr -s '[:space:]' ' ')"
+rm -r "${ROOT}/svc/scripts"; mkdir -p "${ROOT}/svc-wt/f1/scripts"; : > "${ROOT}/svc-wt/f1/scripts/select-tests.sh"
+withsel="$(run _brief f1 | tr -s '[:space:]' ' ')"
+rm -r "${ROOT}/svc-wt/f1/scripts"
+check "a worktree without scripts/select-tests.sh (its repo's checkout has one): after review fixes the brief names the project's own tests and CI, and no select-tests" "yes|no" \
+  "$(has "${own}" "${plain}")|$(grep -qF 'select-tests' <<< "${plain}" && echo yes || echo no)"
+check "a worktree with scripts/select-tests.sh: after review fixes the brief names select-tests.sh --run and CI" "yes|no" \
+  "$(has "After review fixes, ${selected}" "${withsel}")|$(grep -qF "${own}" <<< "${withsel}" && echo yes || echo no)"
+check "with and without select-tests.sh, the brief forbids a pgrep -f poll that matches itself and points to the bracketed marker" "yes|yes" \
+  "$(has "${nopoll}" "${plain}")|$(has "${nopoll}" "${withsel}")"
 # A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the worktree
 # exists, and nothing is sent.
 printf '%s\n' "goal = 7" > "${p}/.claude/swarm/config"
