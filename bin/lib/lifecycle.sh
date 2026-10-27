@@ -3404,7 +3404,8 @@ upgrade_status() {
 # (upgrade_want) read afresh, herdr's list once (UPGRADE_HERDR): each conductor whose agents will move
 # is asked for its handover (upgrade_ask); while one is idle with it written, the agents are read
 # again, so a builder it started before it paused, or after a watch woke it, counts. Then each idle
-# builder whose conductor is idle with its handover in (upgrade_hold) is restarted (upgrade_restart,
+# builder whose conductor is idle with its handover in, and whose Claude review agent is not busy
+# (upgrade_hold), is restarted (upgrade_restart,
 # waiting one round at most, upgrade_round_end), one whose session is gone or unknown is left, a busy
 # one waits; last, each conductor whose builders are all moved or left is moved (upgrade_conductor).
 # Fails while any agent waits, and when herdr's list cannot be read, so that round counts as waiting
@@ -3434,9 +3435,9 @@ upgrade_round() {
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
-    case "$(upgrade_hold "${e}" "${list}")" in
-      left) upgrade_left "${name}" "$(upgrade_held_why "${e}")"; continue ;;
-      wait) held+="${e} "; continue ;;
+    case "$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")" in
+      left) upgrade_left "${name}" "$(upgrade_held_why "${e}" left)"; continue ;;
+      wait|review\ *) held+="${e} "; continue ;;
     esac
     st="$(upgrade_state "${name}" "${pane}")"
     case "${st}" in
@@ -3494,10 +3495,12 @@ upgrade_read_herdr() {
 # upgrade_herdr — herdr's agent list: the round's copy (UPGRADE_HERDR) while a round runs, else read now.
 upgrade_herdr() { if [[ -n "${UPGRADE_HERDR}" ]]; then printf '%s\n' "${UPGRADE_HERDR}"; else herdr agent list 2>/dev/null; fi; }
 
-# upgrade_held_why <epic> — why <epic>'s builders were held: its conductor wrote its handover but
-# stayed busy, or it wrote none.
+# upgrade_held_why <epic> <hold> — why a builder of <epic> was held, from its upgrade_hold: `review
+# <name>`, its review agent stayed busy; else its conductor wrote its handover but stayed busy, or it
+# wrote none.
 upgrade_held_why() {
   local f
+  [[ "$2" != "review "* ]] || { echo "its review agent ${2#review } stayed busy"; return; }
   f="$(cat "${UPGRADE_DIR}/hand-$(conductor_name "$1")" 2>/dev/null)" || f=""
   if [[ -n "${f}" && -s "${f}" ]]; then echo "its conductor wrote its handover but stayed busy"; else echo "its conductor wrote no handover"; fi
 }
@@ -3509,7 +3512,7 @@ upgrade_held_why() {
 # more), since one that ended its turn reads no inbox, else by a note, and left. When herdr's list
 # cannot be read then, the last round's (list) stands in, so no agent still waiting is missed.
 upgrade_end() {
-  local list name pane role cur e
+  local list name pane role cur e h
   if upgrade_reread "$1" "$2"; then list="$(upgrade_open < "${UPGRADE_DIR}/list")"
   elif [[ -e "${UPGRADE_DIR}/list" ]]; then
     echo "herdr's agent list could not be read at the end; the last round's names the agents" >> "${UPGRADE_DIR}/summary"
@@ -3523,8 +3526,9 @@ upgrade_end() {
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
-    if [[ -z "$(upgrade_hold "${e}" "${list}")" ]]; then upgrade_left "${name}" "still busy at the end of the wait"
-    else upgrade_left "${name}" "$(upgrade_held_why "${e}")"; fi
+    h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
+    if [[ -z "${h}" ]]; then upgrade_left "${name}" "still busy at the end of the wait"
+    else upgrade_left "${name}" "$(upgrade_held_why "${e}" "${h}")"; fi
   done <<< "${list}"
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" == conduct ]] || continue
@@ -3579,17 +3583,52 @@ upgrade_epic() {
   echo "${e}"
 }
 
-# upgrade_hold <epic> <list> — whether <epic>'s builders wait on its conductor: left when it was left
-# (or kept) with no handover, wait while it is in <list> (upgrade_list, not yet moved) and not idle with its
-# handover in this round (ready-); else nothing, as when it left herdr's list (gone-), so none is
-# left to act on them.
+# upgrade_hold <epic> <list> [reviewer] — whether a builder of <epic> waits: left when its conductor
+# was left (or kept) with no handover, wait while the conductor is in <list> (upgrade_list, not yet
+# moved) and not idle with its handover in this round (ready-); else, as when the conductor left
+# herdr's list (gone-), so none is left to act on them, `review <reviewer>` while the builder's
+# review agent (upgrade_reviewer), which tells it and merges its PR, is busy (upgrade_review_busy),
+# left or not; else nothing.
 upgrade_hold() {
   local c
-  [[ "$1" != - ]] || return 0
-  c="$(conductor_name "$1")"
-  [[ ! -e "${UPGRADE_DIR}/ready-${c}" && ! -e "${UPGRADE_DIR}/gone-${c}" ]] || return 0
-  if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left
-  elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi   # loose-match: ok conductor names are [a-z0-9_-], anchored by ^ and a tab
+  if [[ "$1" != - ]]; then
+    c="$(conductor_name "$1")"
+    if [[ ! -e "${UPGRADE_DIR}/ready-${c}" && ! -e "${UPGRADE_DIR}/gone-${c}" ]]; then
+      if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left; return 0; fi
+      if grep -q "^${c}"$'\t' <<< "$2"; then echo wait; return 0; fi   # loose-match: ok conductor names are [a-z0-9_-], anchored by ^ and a tab
+    fi
+  fi
+  ! upgrade_review_busy "${3:-}" || echo "review $3"
+}
+
+# upgrade_reviewer <name> <role> — the agent name of the review agent of the story whose builder is
+# <name> (agent_name of review-<slug>, exact), kept for the run; nothing for an agent in no builder
+# role, or with no story.
+upgrade_reviewer() {
+  local f="${UPGRADE_DIR}/reviewer-$1" s r=""
+  [[ " ${BUILDER_ROLES} " == *" $2 "* ]] || return 0
+  [[ ! -e "${f}" ]] || { cat "${f}"; return; }
+  while IFS= read -r s; do
+    s="$(basename "${s}" .md)"
+    [[ "$(agent_name "${s}")" == "$1" ]] || continue
+    r="$(agent_name "review-${s}")"; break
+  done < <(board stories)
+  echo "${r}" > "${f}"
+  echo "${r}"
+}
+
+# upgrade_review_busy <reviewer> — succeed while <reviewer> is in the run's last read of its agents
+# (list, a Claude agent) on its old version, not moved since, and neither idle nor gone (upgrade_state).
+# One left on its old version still holds: it still tells its builder and merges. A codex review agent
+# is in no list, so it holds nothing.
+upgrade_review_busy() {
+  local name pane role cur
+  [[ -n "$1" && -f "${UPGRADE_DIR}/list" && ! -e "${UPGRADE_DIR}/done-$1" && ! -e "${UPGRADE_DIR}/kept-$1" ]] || return 1
+  while IFS=$'\t' read -r name pane role cur; do
+    [[ "${name}" == "$1" && "${cur}" == old ]] || continue
+    case "$(upgrade_state "${name}" "${pane}" </dev/null)" in idle|gone) return 1 ;; *) return 0 ;; esac
+  done < "${UPGRADE_DIR}/list"
+  return 1
 }
 
 # upgrade_ask <conductor> <pane> <epic> <version> — where the conductor is with its handover. The

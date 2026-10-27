@@ -24,7 +24,8 @@
 # asked again by prompt once idle, and its late handover still moves it and its builders. Without
 # --foreground upgrade runs detached, outlives the shell that started it, is named by a second
 # upgrade (which starts nothing) and by status, and moves a builder busy at first once it is idle;
-# every run ends on one line per agent. docs/reference.md and
+# every run ends on one line per agent. A builder whose Claude review agent is busy waits for it; one
+# still busy at the end is named, and so is its builder, for it. docs/reference.md and
 # commands/swarm.md describe it. An empty version record reads as unknown, and no message file is
 # left behind. claude agents --json is a stub printing ${H}/claude.json; with
 # ${H}/flip ("<n> <sed expression>"), its calls after the n-th print it through the expression, and
@@ -586,6 +587,38 @@ echo '[{"sessionId":"sk","status":"idle"},{"sessionId":"sy","status":"idle"},{"s
 upgrade backlog
 check "it restarts y1 then the backlog conductor, after its handover, and leaves epic e alone" "0|prompt w:k|keys w:y1|start y1|prompt w:y1|keys w:k|start ${CB}|prompt w:k|yes" \
   "${rc}|$(order)|$(ls "${P}"/.swarm/handover-backlog-*.md >/dev/null 2>&1 && echo yes || echo no)"
+
+# --- review-b1 is a Claude agent now (it owns b1's PR): idle b1 waits while review-b1 is busy, and
+# both are restarted once it reads idle, from Claude Code's 7th read on.
+printf '2026-10-22\treview\treview-b1\tclaude\tsonnet\thigh\tsr\n' >> "${P}/.swarm/agents.tsv"
+sed -i.bak 's/^review-b1 w:r -$/review-b1 w:r sr/' "${H}/agents"
+CMD=(claude); argv review-b1 sonnet --session-id sr > "${H}/argv-w:r"
+review_b1() {   # <status> — review-b1 and b1 on the old version, the rest of epic e on this one
+  for n in b1 review-b1; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+  for n in conduct-e b2 b5; do echo "${NEW}" > "${P}/.swarm/versions/${n}"; done
+  printf '[{"sessionId":"sc","status":"idle"},{"sessionId":"s1","status":"idle"},{"sessionId":"s2","status":"idle"},{"sessionId":"s5","status":"idle"},{"sessionId":"sr","status":"%s"}]\n' "$1" > "${H}/claude.json"
+  rm -f "${H}/flip" "${H}/flip2"
+}
+review_b1 busy; echo '6 s/"sr","status":"busy"/"sr","status":"idle"/' > "${H}/flip"
+upgrade e
+check "b1 is restarted only once its busy review agent reads idle, and both are moved" "0|yes|yes|yes" \
+  "${rc}|$(awk '/^claude 7$/ { seen = 1 } /^agent start b1 / { print (seen ? "yes" : "no, before claude 7"); exit }' "${LOG}")|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")|$(has "review-b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
+review_b1 busy
+WAIT_MS=300 upgrade e
+check "a review agent busy past the wait is left and named, and holds its idle builder, named for it" "1|1|1|" \
+  "${rc}|$(grep -cx 'review-b1: left on 0.21.0: still busy at the end of the wait' "${H}/out")|$(grep -cx 'b1: left on 0.21.0: its review agent review-b1 stayed busy' "${H}/out")|$(calls 'agent start')"
+# A review agent left on its old version (it could not be told the new path) that then goes busy
+# still holds b1, busy at first and idle from then on.
+review_b1 idle; sed -i.bak 's/"s1","status":"idle"/"s1","status":"busy"/' "${H}/claude.json"; touch "${H}/promptfail"
+cat > "${H}/onstart-review-b1" <<EOF
+#!/bin/sh
+sed -i.bak -e 's/"sr","status":"idle"/"sr","status":"busy"/' -e 's/"s1","status":"busy"/"s1","status":"idle"/' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-review-b1"
+WAIT_MS=3000 upgrade e
+rm -f "${H}/promptfail" "${H}/onstart-review-b1"
+check "a left review agent gone busy still holds its idle builder" "1|1||1" \
+  "${rc}|$(grep -c '^review-b1: left on 0.21.0: ' "${H}/out")|$(calls 'agent start b1')|$(grep -cx 'b1: left on 0.21.0: its review agent review-b1 stayed busy' "${H}/out")"
 
 # --- The docs describe it.
 for f in docs/reference.md commands/swarm.md; do

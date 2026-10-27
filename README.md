@@ -162,8 +162,9 @@ claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swa
 ```
 
 Restart Claude Code afterwards. Agents already running stay on the old version until
-`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. upgrade runs
-detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
+`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. A builder
+waits while the Claude review agent that owns its PR is busy. upgrade runs detached until every
+agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
 
 An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
 `next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
