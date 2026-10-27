@@ -114,11 +114,39 @@ def usage_limit(text):
     if "Usage limit reached" in joined and re.search("Continuing shortly|limit resets", joined):
         return "waiting", ""
     return None
+# READ_SECONDS: how long one pane read (pane_text) may take.
+READ_SECONDS = 10
 def pane_text(pane):
+    # Under a report's deadline (SWARM_REPORT_END, an epoch to the millisecond: status sets it on
+    # status_report.py, with SWARM_REPORT_SKIP_FILE), the read takes at most the time left, and one due at
+    # or past the deadline never starts. Either way it is recorded as skipped, as report_read (merge.sh)
+    # records a read it cuts, under the name the shell's herdr wrapper gives the same read. With no
+    # deadline (dash, tidy, the agents.sh snippets), READ_SECONDS, and nothing is recorded.
+    timeout, end = READ_SECONDS, os.environ.get("SWARM_REPORT_END")
+    if end:
+        try:
+            timeout = min(READ_SECONDS, float(end) - time.time())
+        except ValueError:
+            end = None
+        if end and timeout < 0.001:
+            read_skipped()
+            return ""
     try:
-        return subprocess.run(["herdr", "agent", "read", pane, "--source", "recent-unwrapped"], capture_output=True, text=True, timeout=10).stdout
+        return subprocess.run(["herdr", "agent", "read", pane, "--source", "recent-unwrapped"], capture_output=True, text=True, timeout=timeout).stdout
+    except subprocess.TimeoutExpired:
+        if end:
+            read_skipped()
+        return ""
     except (OSError, subprocess.SubprocessError):
         return ""
+def read_skipped():
+    path = os.environ.get("SWARM_REPORT_SKIP_FILE")
+    if path:
+        try:
+            with open(path, "a") as f:
+                f.write("herdr agent read\n")
+        except OSError:
+            pass
 # BRIEF_PASTE: how Claude Code shows a collapsed paste, a brief herdr typed into the pane.
 BRIEF_PASTE = re.compile(r"\[Pasted text #\d+")
 def box_borders(lines):

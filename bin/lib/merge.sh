@@ -2138,8 +2138,18 @@ stacked_lines() {
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
+# Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS in its place, for a
+# test): status_reads routes every herdr, gh and claude call, and git's fetch and ls-remote, through
+# report_read, its own and those of the functions it calls; status_report.py's pane reads (one herdr
+# agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
+# to them the same way. A read cut there, or due after it, fails as it would on an error, and
+# report_skipped's line, printed last, names it.
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent
+  # Local, so report_start and report_skipped, called from here, read it.
+  local REPORT_SECONDS="${SWARM_REPORT_SECONDS:-${REPORT_SECONDS}}"
+  report_start || die "status: cannot start the report deadline"
+  status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
   if [[ "${HERDR_ENV:-}" != 1 ]]; then
     echo "No agent: not checked; it needs herdr's agent list, so run status inside a herdr pane"
@@ -2172,7 +2182,8 @@ status_report() {
     while read -r pane name; do
       [[ "${own}" != *" ${pane} "* ]] || pane_check "${name}" "${pane}" > /dev/null
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
-    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+    # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.
+    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}" \
       python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
     upgrade_status
   fi
@@ -2191,6 +2202,38 @@ status_report() {
   next_lines | sed 's/^/  /'
   # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none.
   idle_warned | sed 's/^/  /' || true
+  local skipped; skipped="$(report_skipped)"
+  [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"
+}
+
+# status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status
+# calls it; after status_report only timed's run_time_end runs, which calls none of these): each of
+# these reads goes through report_read, named by its
+# command and subcommand (gh api by `gh api` alone), with stdin from /dev/null, since within runs it in
+# a process group of its own, where a read of the terminal would stop it until the deadline. Of git,
+# only fetch and ls-remote, which reach origin, go through it; the rest run as they are. One of those is
+# a network read too: `git remote set-head origin --auto` (base_for, on stacked_child's path, when
+# base_branches is empty) asks origin and writes refs/remotes/origin/HEAD. It is left unbounded on
+# purpose, as a KILL mid-write would leave a stale ref lock. A fetch KILLed at the deadline mid-update
+# can leave such a <ref>.lock behind, which fails that ref's later fetches (builds' and merges' too)
+# until it is removed. A call that already runs under within execs the program itself and keeps its
+# own wait.
+# shellcheck disable=SC2329 # status's callers call these functions by name: herdr, gh, claude, git
+status_reads() {
+  herdr() { report_read "herdr $1 $2" herdr "$@" </dev/null; }
+  claude() { report_read "claude $1" claude "$@" </dev/null; }
+  gh() { if [[ "$1" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh $1 $2" gh "$@" </dev/null; fi; }
+  git() {
+    local i=1
+    # The subcommand is the first word past git's own options; -C and -c take a value.
+    while (( i <= $# )); do
+      case "${!i}" in -C|-c) i=$((i + 2)) ;; -*) i=$((i + 1)) ;; *) break ;; esac
+    done
+    case "${!i:-}" in
+      fetch|ls-remote) report_read "git ${!i}" git "$@" </dev/null ;;
+      *) command git "$@" ;;   # remote set-head too: unbounded on purpose (above)
+    esac
+  }
 }
 
 # stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no build yet can
