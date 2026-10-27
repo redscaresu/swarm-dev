@@ -34,12 +34,15 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
-# ci_gate head <owner/repo> <sha> <base> <pr> <changed> [<memo file>] — the same, and each workflow at
-# <sha> whose on: pull_request covers <base> and the files PR <pr> changes at <sha> (ci_gate files) is pending
-# while it has no pull_request run on <sha> ("<path> (no run on <short sha>)") or a run not finished,
-# and red when that run finished other than success, skipped or neutral. A workflow
-# whose triggers it cannot read is not waited on: "<path> (triggers not read, so not waited on: <why>)"
-# ends the line, green or not. <memo file> keeps the workflows read, so later reads of <sha> skip them.
+# ci_gate head <owner/repo> <sha> <base> <pr> <changed> [<memo file>] — the same, and, when no check is
+# red, each workflow whose on: pull_request covers <base> and the files PR <pr> changes at <sha> (ci_gate
+# files) is pending while it has no pull_request run on <sha> ("<path> (no run on <short sha>)") or its
+# newest one has not finished, and red when that run finished other than success, skipped or neutral.
+# The workflows are read at the PR's merge commit (refs/pull/<pr>/merge), which GitHub runs them from,
+# once it merges <sha>, else at <sha>; Actions' disabled workflows are left out. A workflow whose
+# triggers it cannot read is not waited on, and a second line names it: "not waited on: <path>
+# (triggers not read: <why>)". <memo file> keeps the workflows read at the merge commit, so later
+# reads of <sha> skip them.
 # ci_gate fixed <owner/repo> <sha> <base> <red sha> <board paths> <check>... — succeed when <sha>
 # shows the red main at <red sha> of <base> fixed, judged at the newest commit from <sha> back (first
 # parents) that changes a file outside <board paths> (a board-only commit's CI may skip its tests),
@@ -993,6 +996,7 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # The head read takes the PR's changed file count too, so ci_gate head waits on each workflow a
 # pull_request runs there; one still with no run WAIT_PR_GRACE after the first read that found it
 # missing ends the wait the same way, naming it. With no count read, only the checks are judged.
+# ci_gate's "not waited on:" line is printed once, apart from the checks.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
@@ -1008,7 +1012,7 @@ wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
-  local spent budget bounded="" changed expect=() unstarted="" item missing gone
+  local spent budget bounded="" changed expect=() unstarted="" item missing gone note noted=""
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -1051,6 +1055,8 @@ wait_pr() {
       left=$((limit - (SECONDS - start)))
       (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
       why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" ${expect[@]+"${expect[@]}"})" || rc=$?
+      note=""; if [[ "${why}" == *$'\n'* ]]; then note="${why#*$'\n'}"; why="${why%%$'\n'*}"; fi
+      [[ -z "${note}" || "${note}" == "${noted}" ]] || { echo "${note}"; noted="${note}"; }
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
     fi
     case ${rc} in
