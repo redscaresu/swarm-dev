@@ -127,7 +127,11 @@ is one column, top to bottom:
   recorded session that is `gone` (it ended) or `unknown` (no state, or no `claude` to ask) is
   marked `!`. So is an idle one whose transcript ends on an expired login: it shows `auth`, since
   only your `/login` clears it. herdr's word stands for codex agents, agents with no session recorded, and retired
-  ones. A finished story's file is deleted, so finished ones are
+  ones. An idle conductor whose report is written shows `reported`. Its epic comes from its name.
+  When herdr cut that name to 32 characters, it comes from the one conductor the records hold under
+  the cut: an epic on the board, an ok `conduct` line or a brief, so it holds once the epic's file
+  has left the board. With none, or two, or a story under the cut too, it is not `reported`. Nor is
+  an agent that `agents.tsv` records in another role, though it holds a conductor's name. A finished story's file is deleted, so finished ones are
   counted from the board repo's history: story files deleted on its base branch (and on HEAD) whose
   front matter named the epic, once per slug, when any deletion closed the story: its own PR's
   merge (the commit names `story/<slug>`), its own work (a squash merge: the commit also changes a
