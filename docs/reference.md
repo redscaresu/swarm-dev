@@ -1823,7 +1823,10 @@ the PR with a reason; none is silenced or dismissed. findings also reads the PR'
 test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tests/*_test.sh`, a JS
 `it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
 mutation run. findings prints each test without one as `rules-unchecked`, with the command that
-logs it, `log-finding --reviewer ci`.
+logs it, `log-finding --reviewer ci`. A moved test is skipped: an added line that matches a line the
+same diff removes, from another file or elsewhere in the same one, with leading and trailing
+whitespace ignored. Each removed line covers one added line, so a test added beside a moved one
+still needs its FAIL line.
 
 ## Merging
 

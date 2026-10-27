@@ -513,6 +513,8 @@ for a in json.load(sys.stdin):
 # fail_lines <owner/repo> <pr> — a rules-unchecked line for each test named on a line the PR's diff
 # adds (Go func TestX, Python def test_x, a check line in tests/*_test.sh, a JS it or test call) when
 # no line of the PR body holds both FAIL and its name: the builder's proof that the test can fail.
+# A moved test is not new: an added line that matches a line the diff removes, whitespace aside, is
+# skipped, one removed line for each added one.
 fail_lines() {
   local pr diff
   pr="$(gh pr view "$2" --repo "$1" --json body,url)" || die "findings: cannot read the body of $1#$2"
@@ -520,7 +522,7 @@ fail_lines() {
   diff="$(gh pr diff "$2" --repo "$1")" \
     || { echo "  FAIL lines: not checked, gh pr diff failed on $1#$2 (a diff over 20,000 lines or 300 files is refused)"; return 0; }
   PR="${pr}" python3 -c '
-import json, os, re, sys
+import collections, json, os, re, sys
 pr = json.loads(os.environ["PR"])
 body = [l for l in (pr.get("body") or "").splitlines() if "FAIL" in l]
 tests = [  # (path pattern, pattern whose group n is the test name)
@@ -529,8 +531,10 @@ tests = [  # (path pattern, pattern whose group n is the test name)
     (r"(^|/)tests/[^/]*_test\.sh$", r"\s*check\s+\x22(?P<n>(\\.|[^\x22\\])*)\x22"),
     (r"\.(test|spec)\.[cm]?[jt]sx?$", r".*?\b(it|test)\(\s*(?P<q>[\x22\x27`])(?P<n>(\\.|(?!(?P=q))[^\\])*)(?P=q)"),
 ]
+diff = sys.stdin.read().splitlines()
+removed = collections.Counter(l[1:].strip() for l in diff if l[:1] == "-" and not l.startswith("--- "))
 path, names, end = "", [], None
-for line in sys.stdin.read().splitlines():
+for line in diff:
     if line.startswith("+++ "):
         path, end = line[4:], None  # b/<path>: each pattern ends at $ or starts at (^|/)
     elif line.startswith("@@"):
@@ -548,7 +552,9 @@ for line in sys.stdin.read().splitlines():
             continue
         for p, t in tests:
             m = re.search(p, path) and re.match(t, line[1:])
-            if m and m["n"] not in names:
+            if m and removed[line[1:].strip()] > 0:
+                removed[line[1:].strip()] -= 1  # moved from where the diff removes it
+            elif m and m["n"] not in names:
                 names.append(m["n"])
 for n in names:
     # The whole name as the test prints it: each unescaped expansion (a dollar sign, \x24, then a
