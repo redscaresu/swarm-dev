@@ -576,6 +576,30 @@ check "and so is one gone after round 2's own tell:findings" never_woke ro-b
 ev review-agent:next ro-b "review-agent --next: could not read ${URL}'s head (gh pr view --json headRefOid)"
 poll; poll
 check "a failed --next after that tell changes nothing: silent" never_woke ro-b
+# A findings round handed over another way after --next, as review_rounds counts it: a tell herdr sent
+# but did not see taken up, or a findings step-up, whose brief carried the findings.
+fresh; story ro-c "kind: code" "status: ready"; ev story ro-c; built ro-c; listed ro-c
+rbrief ro-c "${URL}"; ev review-agent ro-c; rhead ro-c; ev tell:findings ro-c
+ev review-agent:next ro-c "ok (round 2)"; rhead ro-c
+ev tell:findings ro-c "tell: ro-c did not take up the brief: herdr sent it the brief once"
+poll; poll
+check "review-ro-c gone after --next and a findings tell herdr sent is silent" never_woke ro-c
+ev review-agent:next ro-c "ok (round 3)"; rhead ro-c; ev escalate ro-c "ok (findings-3: sonnet -> opus)"
+poll; poll
+check "and so is one gone after --next and a findings step-up" never_woke ro-c
+
+# Under merge = human, a review story under a merge grant gets the no-review: line alone: its builder's
+# close after the handover (swarm.sh review, then close) is the normal path, never a no-agent: line.
+fresh "merge = human"; mkdir -p "${P}/docs/epics" "${P}/docs/hld"
+printf -- '---\nstatus: agreed\ngrants: [merge]\n---\n\n# g\n' > "${P}/docs/hld/g.md"
+printf -- '---\nstatus: active\nhld: g\n---\n\n# ge\n' > "${P}/docs/epics/ge.md"
+story ro-g "kind: code" "status: review" "prs: ${URL}" "epic: ge"; ev story ro-g; built ro-g; listed review-ro-g
+rbrief ro-g "${URL}"; ev review-agent ro-g; rhead ro-g; ev review ro-g "ok (${URL})"; ev close ro-g
+poll; poll
+check "a granted review story whose builder closed after the handover, review-ro-g listed, is silent" never_woke ro-g
+listed; poll
+check "with review-ro-g gone too, it gets the no-review: line alone" rev_fires ro-g "${URL}"
+rm -rf "${P}/docs/epics" "${P}/docs/hld"
 
 # One line per story: a ready story with its builder gone gets the restart first, then no-review:.
 fresh; story nr-b "kind: code" "status: ready"; ev story nr-b; built nr-b; ev close nr-b

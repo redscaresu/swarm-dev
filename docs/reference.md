@@ -120,11 +120,9 @@ still in the box on the read after the Enter wakes the lead through an `.unsent`
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
 counts a story only when all of these hold:
 
-- It is ready, or in review under `merge = agent`. Under `merge = human`, a story in review counts
-  too when the agreed HLD over it grants `merge`, since its review agent merges that PR. The grant
-  is read from the board (the story's epic, its parents and the HLD), with no gh call. A story
-  waiting on the user is left out: awaiting their merge under `merge = human` with no grant,
-  `costs: money` or `kept:`, green or not.
+- It is ready, or in review under `merge = agent`. A story waiting on the user is left out:
+  awaiting their merge under `merge = human`, `costs: money` or `kept:`, green or not. A story in
+  review under a `merge` grant gets only the `no-review:` line (below).
 - It is of a kind an agent builds. That rules out `kind: lead`, and so every held or escalated
   story. A blocked story is never counted.
 - It has a build record: an ok builder start that no close ended or, for a story with any start
@@ -172,8 +170,12 @@ for a story that passes the `no-agent:` filters on status, kind, `held_for:`, `k
 upgrades and a ready story's step-up marker, that has a build record as `no-agent:` needs it (an ok
 builder start no close ended, or its worktree or `story/<slug>` branch), and whose review start is
 on record: a `review-agent <slug>` events line since its last ok `story` start or reopen. A build a
-close cleared has no PR left to review. It comes whether or not the builder is listed. One of these
-must hold:
+close cleared has no PR left to review. It comes whether or not the builder is listed. Under
+`merge = human` it also comes for a story in review when the agreed HLD over it grants `merge`. The
+lead merges that PR once it is reviewed, so a review agent gone leaves it unreviewed. The grant is
+read from the board (the story's epic, its parents and the HLD), with no gh call. Such a story gets
+no `no-agent:` line: its builder closes after the handover (`swarm.sh review`, then `close`), and
+the lead's `merge:` item covers the PR. One of these must hold:
 
 - Never started: the newest `review-agent <slug>` line is not ok.
 - Started and went: that line is ok and `.swarm/reviews/<slug>.head` was written, but no findings
@@ -189,12 +191,14 @@ start.
 It stays quiet while a round is under way:
 
 - herdr lists `review-<slug>` in a pane this project opened;
-- an ok `tell:findings` line came after the newest review start in events.tsv, so the builder is
-  fixing what it was told. An ok `review-agent:next` line (`review-agent --next`, the review agent's
-  next round in its own session) counts as a start, so once it runs the review agent owns the PR
-  again. A failed one started no round and changes nothing;
+- a findings round came after the newest review start in events.tsv, so the builder is fixing what
+  it was told. A findings round is a findings tell that is ok or that herdr sent, or a findings
+  step-up (`escalate ... ok (findings-N: ...)`), as the review round count reads them. An ok
+  `review-agent:next` line (`review-agent --next`, the review agent's next round in its own session)
+  counts as a start, so once it runs the review agent owns the PR again. A failed one started no
+  round and changes nothing;
 - that start was refused because the builder is still at work (its worktree not at the PR's head,
-  or with uncommitted changes), and a `tell:findings` line is on record;
+  or with uncommitted changes), and a findings round is on record;
 - a process answers for the story, as for `no-agent:`: a `tell`, `story`, `agent`, `review-agent`,
   `step-up` or `restart` naming it, or a `swarm.sh wait-pr` or `swarm.sh merge` on its PR, on
   `prs:` or on the PR its review brief names.

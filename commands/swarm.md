@@ -190,7 +190,8 @@ Repeat until a step below says stop:
      wait-pr runs and may come back once after it ends; that needs nothing new. A
      `no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
      line means the PR's review agent never started, or started and went without findings for its
-     head, and no review round is under way. It comes even while the builder works. Run
+     head, and no review round is under way. It comes even while the builder works, and under
+     `merge = human` for a story in review whose HLD grants `merge`, which you land once it is reviewed. Run
      `swarm.sh review-agent <slug> <PR URL>`. Once `review-<slug>` is open, the next poll is quiet.
      If it fails again, its `review-agent <slug>` line in `.swarm/events.tsv` says why. A worktree
      not at the PR's head, or with uncommitted changes, means the builder is still at work: leave it,

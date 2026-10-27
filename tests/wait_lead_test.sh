@@ -356,7 +356,7 @@ check "a held PR whose first item is not green still wakes it through a later gr
 check "it prints the later item" test "$(out)|$(rc)" == "merge: e ${URL}|0"
 stop; rm -rf "${P}/docs/epics"
 
-# --- under merge = human, a story in review whose HLD grants merge waits on its review agent's merge:
+# --- under merge = human, the lead merges a reviewed PR whose HLD grants merge:
 # with review-wl-granted gone (herdr lists conduct-e only) after an ok start and its PR open, it needs the
 # lead. A slug and URL no other test's processes name: a swarm.sh merge or tell on them anywhere on the
 # machine would make the story look busy (no_agent_busy reads the real ps).
