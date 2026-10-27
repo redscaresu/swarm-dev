@@ -234,7 +234,8 @@ expect "a split later epic's later child is not planned unasked" "gate" \
   "item epics/c.md 'status: later' 'parent: p' 'depends_on: [b]'"
 # Once planned unasked (plan-unasked), a later epic is never offered again: the gate says what to do
 # with it. With no stories yet, plan it again if that plan stopped; with stories (they reach the board
-# only once approved), set it active. Declined (--declined), the gate says that instead.
+# only once approved), set it active with agreed: <today>, its ticket past the epic guard. Declined
+# (--declined), the gate says that instead.
 expect "a later epic planned unasked with no stories is a gate" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "bash \"\${SWARM}\" plan-unasked a >/dev/null"
@@ -244,7 +245,7 @@ expect "a later epic planned unasked with stories is a gate" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "item stories/s.md 'status: ready' 'kind: code' 'epic: a'" \
   "bash \"\${SWARM}\" plan-unasked a >/dev/null"
-if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F); set it active to start it)"* ]]; then echo "ok   the gate says to set a later epic planned unasked with stories active"
+if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F); set it active with agreed: <today> to start it)"* ]]; then echo "ok   the gate says to set a later epic planned unasked with stories active, with agreed: <today>"
 else echo "FAIL the gate's line for a later epic planned unasked with stories: ${out}"; fails=$((fails + 1)); fi
 expect "a later epic whose unasked plan was declined is offered no more" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
@@ -464,9 +465,13 @@ expect "ready story in a later epic waits" "gate" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"
 expect "only later stories left is a gate, not done" "gate" \
   "item stories/a.md 'status: later' 'kind: code'"
-# A later epic with no depends_on waits on nothing but the user: it is never planned unasked.
+# A later epic with no depends_on waits on nothing but the user: it is never planned unasked. Its
+# gate line says to write agreed: <today> as it goes active, since the epic guard refuses it with no
+# ticket (epic_unticketed).
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
+has_line "the gate's line for a later epic says to set it active with agreed: <today>" \
+  "  later epic: e1 (set it active with agreed: <today> to start it)"
 expect "a later epic with an empty depends_on is a gate" "gate" \
   "item epics/e1.md 'status: later' 'depends_on: []'"
 # A blocked story whose dependency shares no touches part waits for nothing it uses: next names it.

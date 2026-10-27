@@ -108,7 +108,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it. For a `later` epic, say go and the lead sets it `active` with `agreed: <today>` |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 | an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
 
