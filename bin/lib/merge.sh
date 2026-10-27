@@ -31,7 +31,7 @@ PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first 
 REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
 [[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
-BASE_MOVED_WAIT=60      # how long each of base_moved's reads may take, the compare's retries included (SWARM_BASE_MOVED_WAIT, for tests)
+BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and protected_hold's may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
 BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -91,7 +91,9 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
 # "<status> <path>", the status as GitHub gives it (added, removed, modified, renamed, copied, changed
-# or unchanged), empty when it gives none.
+# or unchanged), empty when it gives none. Either with <base> <head> [<wait>] after them: the files of
+# <base>...<head> instead, the PR's at that head (300 at most, else it fails saying so), a transient gh
+# error read again up to READ_TRIES times, <wait> seconds apart.
 # ci_gate behind <owner/repo> <sha> <base> <board paths> <wait> — the number of commits <base> has that
 # <sha> lacks (compare <sha>...<base>), then each path they change outside <board paths> (on_board_paths'
 # rule, but a README.md there counts as outside; a renamed file's old path too), one a line. A transient
@@ -260,24 +262,32 @@ epic_guard() {
   done <<< "${files}"
 }
 
-# merge_hold <pr-url> — stop merge when pr_held holds the PR for the user. Then, with merge = agent on
-# the story route (merge_pr's local only empty), when the PR changes a protected path (protected_paths),
-# a renamed file's old path too, read as <base>...<head> (ci_gate files-status on merge_pr's locals
-# repo, n, changed, base and head), so a push after the pin cannot hide one. A file list it cannot read
-# holds it too. Either hold names the first story listing the PR (pr_stories), else the URL. --board
-# and --release change only board paths or plugin.json, never a protected path; with merge = human
-# merge_grant has already refused such a PR (pr_hld puts it under no HLD), so no file is read.
+# merge_hold <pr-url> — stop merge when pr_held holds the PR for the user (a story's costs:). The
+# protected-path hold is protected_hold's, later in merge_pr.
 merge_hold() {
-  local why s
+  local why
   why="$(pr_held "$1")"
   [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it"; }
-  [[ "${CFG_merge}" == agent && -z "${only}" ]] || return 0
-  s="$(pr_stories "$1")" || s=""
-  s="${s%%$'\n'*}"; s="${s:-$1}"
-  why="$(ci_gate files-status "${repo}" "${n}" "${changed}" "${base}" "${head}")" \
-    || { MERGE_TARGET="${s}"; merge_fail "held: ${s} (its files at ${head:0:7} could not be read: ${why#error }, so whether it changes a path only the user merges is unknown); the user merges it"; }
+}
+
+# protected_hold — on the story route under merge = agent, once the story lookup has set MERGE_TARGET to
+# the slug and the head's CI check has passed: stop merge when the PR changes a protected path
+# (protected_paths), a renamed or removed file's old path too, read as <base>...<head> at the pinned
+# head (ci_gate files-status on merge_pr's locals repo, n, changed, base and head), so a push after the
+# pin cannot hide one. The read tries a transient gh error again (READ_TRIES, MERGE_READ_WAIT apart)
+# and stops after BASE_MOVED_WAIT, as base_moved's compare does; a list it still cannot read holds the
+# PR too, saying why, so the user can tell a passing error from a hold that stands (a PR of over 300
+# files, the most the compare lists, or of no file). --board and --release change only board paths or
+# plugin.json, never a protected path; with merge = human merge_grant has already refused such a PR
+# (pr_hld puts it under no HLD), so no file is read.
+protected_hold() {
+  local why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
+  why="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" files-status "${repo}" "${n}" "${changed}" "${base}" "${head}" \
+    "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
+  [[ ${rc} -ne 142 ]] || why="error the compare took over ${limit}s"
+  [[ ${rc} -eq 0 ]] || merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: ${why#error }, so whether it changes a path only the user merges is unknown); the user merges it"
   why="$(cut -d' ' -f2- <<< "${why}" | protected_paths)"
-  [[ -z "${why}" ]] || { MERGE_TARGET="${s}"; merge_fail "held: ${s} changes ${why%%$'\n'*}, which only the user merges; the user merges it"; }
+  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why%%$'\n'*}, which only the user merges; the user merges it"
 }
 
 # merged_state <pr> <owner/repo> — "<state> <merge commit>" once the PR reads MERGED with one, read up
@@ -428,9 +438,9 @@ short_shas() {
 # merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
-# story or stacked parent costs money is the user's; and on this route, its files at the pinned head
-# change no protected path (merge_hold: .claude/, .github/, hooks/ or a root Makefile, a renamed
-# file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
+# story or stacked parent costs money is the user's; and on this route, once the head's CI check has
+# passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
+# hooks/ or a root Makefile, a renamed file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the
 # board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
 # with no ticket (epic_unticketed, under either merge mode); with --release: the PR is in the
@@ -535,6 +545,10 @@ merge_pr() {
     [[ -z "${why}" ]] || merge_fail "${why}"
     merge_hold "${url}"
   fi
+  # With merge = agent a story PR that changes a protected path is the user's too: after the story
+  # lookup, so a PR no story in review lists is refused as such, and after the head's CI check, so a
+  # red head costs no compare read.
+  [[ "${CFG_merge}" != agent || -n "${only}" ]] || protected_hold
   if [[ "${only}" == --board ]]; then
     # A board PR could lift a hold (costs: money to none, or a story deleted) before it merges.
     info="$(gh pr diff "${n}" --repo "${repo}" --color never)" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"

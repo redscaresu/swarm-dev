@@ -511,17 +511,33 @@ def covers(f, base, files):
             return False
     return True
 
-def pr_files(repo, n, changed, status=False, base=None, sha=None):
+def pr_files(repo, n, changed, status=False, base=None, sha=None, wait=0):
     """Every path PR n changes, a renamed file's old one too, or None when fewer than its changed
     count come back (the API lists 3000 at most). With base and sha, the files of base...sha
-    instead, the PR's files at that head whatever head it has now (the API lists 300 at most). With
-    status, each as "<status> <path>": added, modified, removed, renamed or copied, empty when the
-    API gives none."""
+    instead, the PR's files at that head whatever head it has now: a transient gh error (TRANSIENT, in
+    gh's own words) is read again, READ_TRIES reads in all, wait seconds apart, and a list the compare
+    cannot give is an Err that says why: it lists COMPARE_FILES at most, so a PR of more is never
+    listed, a PR of no file has none, and a shorter list than changed is cut. With status, each as
+    "<status> <path>": added, modified, removed, renamed or copied, empty when the API gives none."""
     got = []
     if sha:
-        got = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha))).get("files")
+        if changed > COMPARE_FILES:
+            raise Err("the compare of %s with %s lists at most %d files, and the PR changes %d, so it cannot list them all" % (base, sha[:7], COMPARE_FILES, changed))
+        if not changed:
+            raise Err("the PR changes no file")
+        path = "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha)
+        for i in range(READ_TRIES):
+            try:
+                got = json.loads(gh("api", path)).get("files")
+                break
+            except Err as e:
+                if i == READ_TRIES - 1 or not TRANSIENT.search(str(e).split(": ", 1)[-1]):
+                    raise
+                time.sleep(wait)
         if not isinstance(got, list):
             raise Err("unreadable files for %s...%s" % (base, sha[:7]))
+        if len(got) != changed:
+            raise Err("the compare of %s with %s lists %d of the %d files the PR changes" % (base, sha[:7], len(got), changed))
     else:
         for d in docs("repos/%s/pulls/%s/files?per_page=100" % (repo, n)):
             if not isinstance(d, list):
@@ -881,7 +897,7 @@ try:
         print(msg)
         sys.exit(rc)
     elif mode in ("files", "files-status"):
-        files = pr_files(repo, args[0], int(args[1]), mode == "files-status", *args[2:4])
+        files = pr_files(repo, args[0], int(args[1]), mode == "files-status", *args[2:4], wait=float(args[4]) if len(args) > 4 else 0)
         if not files:
             raise Err("gh listed no files, or fewer than the PR changes")
         print("\n".join(files))
