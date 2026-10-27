@@ -3,7 +3,8 @@
 # dash [--watch [seconds]] [--ladder] [--tree] — a read-only dashboard: a header and a summary
 # line, what needs you, what runs now, each active epic's progress with its live agents and open PRs, and the recent
 # events. --ladder adds the model per role; --tree shows the agents by herdr workspace and tab in
-# place of the epics. It never writes the board, state or logs, and never opens or closes a pane.
+# place of the epics. It never writes the board or state, and never opens or closes a pane. The one
+# log it writes is its row in .swarm/run-times.tsv (swarm.sh's timed; a watch's after its first frame).
 # --watch rebuilds it every N seconds (default 2) and repaints in place; q quits, t and l toggle the
 # tree and the ladder. Colour only on a terminal with NO_COLOR unset, or as DASH_COLOR says when set.
 # Each --project <dir> (repeatable) draws that project's frame in turn (dash_frame) in place of this
@@ -446,6 +447,7 @@ dash_watch() {
       # Keep the error line on screen: cut the rest to one line short of the terminal's height.
       [[ ${tty} == 0 || ${DASH_H} -lt 2 ]] || tpl="$(head -n $((DASH_H - 1)) <<< "${tpl}")"
       tpl+=$'\n'"(dash: this render failed; retrying in ${every}s)"
+      run_time_drop   # a watch whose first frame failed logs no row, as a run that fails logs none
     fi
     frame="${tpl//HH:MM:SS/$(date +%H:%M:%S)}"
     if [[ ${tty} == 0 ]]; then
@@ -457,6 +459,7 @@ dash_watch() {
       printf '\033[H%s\033[K' "${frame%%$'\n'*}"
     fi
     last="${tpl}"; winch=0
+    run_time_end   # the watch's row times its first frame only
     for ((i = 0; i < every; i++)); do
       if [[ ${tty} == 1 ]]; then
         key=""; read -rsn1 -t 1 key </dev/tty || true
