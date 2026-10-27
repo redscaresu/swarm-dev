@@ -10,7 +10,7 @@ state or the logs, and never opens or closes a pane. In a folder with no board i
 naming `swarm.sh init`.
 
 Each frame gives its reads of herdr, Claude Code's session list and GitHub 30 seconds in all
-(`SWARM_REPORT_SECONDS` sets another number). A read still running at that point is stopped, and a
+(`SWARM_REPORT_SECONDS` sets a different number of seconds). A read still running at that point is stopped, and a
 read that comes later is skipped. dash draws the frame from what the other reads gave, then names
 the stopped and skipped reads on its last line: `skipped (over 30 s): gh PR states, herdr agent
 list`. So `--watch` draws its first frame within about 30 seconds, even when herdr or GitHub hangs.
