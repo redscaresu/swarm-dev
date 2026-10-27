@@ -173,7 +173,7 @@ check "a poll leaves no pane text behind, in .swarm/lead or TMPDIR" \
 
 # Slow reads that use up the poll's budget leave the agents not read first in line for the next poll.
 fresh; printf '%s\n' "w:p1 ${A}" "w:p2 sww-slow-a" "w:p3 sww-slow-b" "w:p4 sww-slow-c" > "${P}/.swarm/state/tab"
-printf '{"name":"sww-slow-%s","agent_status":"blocked","pane_id":"w:p%s"},' a 2 b 3 c 4 > "${ROOT}/agents"
+printf '{"name":"sww-slow-%s","agent_status":"blocked","pane_id":"w:p%s"},' a 2 b 3 c 4 > "${ROOT}/agents"  # vacuous-test: ok, objects the stub joins into its list
 printf '{"name":"%s","agent_status":"blocked","pane_id":"w:p1"}' "${A}" >> "${ROOT}/agents"
 touch "${ROOT}/hang-w:p2" "${ROOT}/hang-w:p3" "${ROOT}/hang-w:p4"; cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
 check "three hung reads first in herdr's list use up the budget, so the fourth agent is not read" \
