@@ -80,6 +80,15 @@ Repeat until a step below says stop:
      `unblock` never readies a blocked story with no dependency left. Make the edit as any board
      edit: through `swarm.sh board-pr` when the board is in the project's repo, where it is when it
      is outside.
+   - `idle: <story> is ready with no build, exit: swarm.sh story --strict <story>`: the story is ready and
+     an agent can build it, its build has not started, and it has been ready for `queue_minutes`.
+     Its `touches` share no part with a story in review or one whose build has started.
+     Nothing holds it back, so start it with the exit. While its conductor runs, the exit is
+     `swarm.sh tell <conductor> note <file>` instead: write a note naming the story and asking the
+     conductor to start it or say why not, and send it. A conductor `next` started itself (its
+     `started:` lines) is already running when the line is worked out, so the line names its note.
+     When the step is `conduct <epic>` for the story's epic, `next` has not started it, so the line
+     still says `swarm.sh story --strict`: run the step instead, and leave the story to that conductor.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
@@ -248,8 +257,9 @@ Repeat until a step below says stop:
      it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
      then `swarm.sh conduct <epic>`. An
-     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` line is
-     capacity no step uses, the line `next` prints after its step: handle it as step 1's `idle:` list
+     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` or
+     `idle: <story> is ready with no build, exit: <exit>` line is capacity no step uses, a line `next`
+     prints after its step: handle it as step 1's `idle:` list
      says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
      then it needs nothing. It comes once, and again only after it has gone from the queue. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
