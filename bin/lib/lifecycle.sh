@@ -716,9 +716,10 @@ step_up_marker() {
 # `step-up:failed <slug> ok (<why>)`, the line flow reads, then die with <message>. Its .step-up marker
 # stays for step-up --resume, and wait --lead tells the lead.
 # STEP_UP_CLOSED: set once step_up has closed the old builder (and by a resume, whose step-up did).
-STEP_UP_LOGGED=""; STEP_UP_CLOSED=""
+# STEP_UP_WHY: the <why> step_up_die logged, which step_up_note names.
+STEP_UP_LOGGED=""; STEP_UP_CLOSED=""; STEP_UP_WHY=""
 step_up_die() {
-  STEP_UP_LOGGED=1; record_event step-up:failed "$1" "ok ($2)"
+  STEP_UP_LOGGED=1; STEP_UP_WHY="$2"; record_event step-up:failed "$1" "ok ($2)"
   die "$3"
 }
 
@@ -832,10 +833,11 @@ rung_late() {
 # step_up_failed <slug> — the exit trap of step_up once the old builder is closed, and of step_up_resume
 # once it rewrote the marker: on a failure (the .step-up marker kept for step-up --resume, which also
 # keeps step_due from trying this build again), log its step-up:failed line unless step_up_die did, the
-# why being the die's message (DIE_FILE, set for a logged command) or the exit status. A _step-up
-# (STEP_UP_AUTO) then says so and exits STEP_UP_PARTWAY; any other keeps its status. One that stopped
-# inside the close with the pane still open (STEP_UP_CLOSED unset, CLOSE_PANE_KEPT set) is a refusal:
-# its marker goes, and nothing is logged.
+# why being the die's message (DIE_FILE, set for a logged command) or the exit status, and note the
+# story's conductor (step_up_note). A _step-up (STEP_UP_AUTO) then says so and exits STEP_UP_PARTWAY;
+# any other keeps its status. One that stopped inside the close with the pane still open
+# (STEP_UP_CLOSED unset, CLOSE_PANE_KEPT set) is a refusal: its marker goes, and nothing is logged or
+# noted.
 step_up_failed() {
   local rc=$? why=""
   [[ ${rc} != 0 ]] || return 0
@@ -847,9 +849,29 @@ step_up_failed() {
   fi
   [[ -z "${DIE_FILE}" ]] || read -r why 2>/dev/null < "${DIE_FILE}" || true
   [[ -n "${STEP_UP_LOGGED}" ]] || record_event step-up:failed "$1" "ok (${why:-exit ${rc}})"
+  # Outside any set -e: a note that fails must not change how the step-up ends.
+  step_up_note "$1" "${STEP_UP_WHY:-${why:-exit ${rc}}}" || true
   [[ -n "${STEP_UP_AUTO:-}" ]] || return 0
   echo "step-up failed: $1 stopped after its builder was closed. wait --lead tells the lead, whose exit is swarm.sh step-up --resume $1 once the cause is fixed; leave $1 alone: do not close, retry, tell or list it"
   exit "${STEP_UP_PARTWAY}"
+}
+
+# step_up_note <slug> <why> — step_up_failed's note to <slug>'s conductor (conduct-<epic>, or the
+# backlog's with no epic), so one whose builder a review agent's tell stepped up hears of it: the
+# story, <why> and the resume. Sent as `swarm.sh tell <conductor> note`, so it is logged as tell:note
+# and note_wake prompts one whose turn has ended. Nothing is sent with no conductor of this project
+# listed, or one that wrote its report (nobody reads its inbox). A note that fails is warned of.
+step_up_note() {
+  local e name note rc=0
+  e="$(fm "${BOARD}/stories/$1.md" epic 2>/dev/null)" || e=""
+  if [[ -n "${e}" ]]; then name="$(conductor_name "${e}")"; else name="$(conductor_name backlog)"; fi
+  [[ -n "$(agent_field "${name}" pane_id)" && ! -f "$(conductor_report "${name}")" ]] || return 0
+  note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || { echo "warning: ${name} was not noted that $1's step-up failed (mktemp failed)" >&2; return 0; }
+  printf '%s\n' "$1's step-up failed after its builder was closed ($2). Its worktree, branch and handover brief are kept, and wait --lead tells the lead, whose exit is swarm.sh step-up --resume $1 once the cause is fixed. Leave $1 alone: do not close, retry, tell or list it." > "${note}"
+  # Its stdout to stderr: a caller reads this step-up's stdout (wait_agent's ladder_step).
+  SWARM_PROJECT="${PROJECT_DIR}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" tell "${name}" note "${note}" >&2 || rc=$?
+  rm -f "${note}"
+  [[ ${rc} -eq 0 ]] || echo "warning: ${name} was not noted that $1's step-up failed (exit ${rc}); wait --lead still tells the lead" >&2
 }
 
 # restart_build <slug> — `restart`: start a started story's builder again once herdr no longer lists it
