@@ -1919,11 +1919,12 @@ gone_merged() {
 fm_gone() {
   [[ ! -f "$1" ]] || { fm "$1" "$2"; return; }
   state_name "$1" "$2"
-  if [[ -n "${STATE_PATH}" ]] && grep -q "^$2:" "${STATE_PATH}" 2>/dev/null; then
-    sed -n "s/^$2: *//p" "${STATE_PATH}" | head -1
-  else
-    gone_copy "$1" | get_fm - "$2"
+  # The state's line, when it has one (an empty one clears the key, as in state_value).
+  if [[ -n "${STATE_PATH}" ]] && awk -v k="$2" 'index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; f = 1; exit }
+    END { exit !f }' "${STATE_PATH}" 2>/dev/null; then
+    return 0
   fi
+  gone_copy "$1" | get_fm - "$2"
 }
 
 # gone_copy <item-file> — an item file missing from the main checkout as git last had it: HEAD's copy,
