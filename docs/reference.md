@@ -407,6 +407,11 @@ whose HLD grants `epics` (§ The lead, § Merging).
 
 ## Decomposing an HLD
 
+`next` offers no `plan-hld` step for an agreed HLD whose file name holds anything but `a-z`, `0-9`
+and `-`, or starts with `-`. `board-pr` refuses that name, so `/plan-hld` would fail only at its
+end. The gate lists the HLD as `hld cannot be planned: <hld>, ...`; rename the file and every `hld:`
+that names it.
+
 `swarm.sh next` names `plan-hld <hld>` for an agreed HLD with no `planned:` line, no epic carrying
 its `hld:` and no plan worktree. On a board outside the project's repo, `/plan-hld` writes epics in
 place with no PR, so an interrupted run leaves epics naming the HLD and no `planned:`. Before it
