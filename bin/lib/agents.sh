@@ -1602,9 +1602,8 @@ note_lock() {
 # would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
 # or of unknown state, rather than waiting on it. A dialog the user cleared can leave an agent listed
 # as waiting or blocked, so for those it reads the pane once (pane_clear) and refuses only when the
-# pane is not clear. herdr refuses a prompt to an agent it reads blocked (agent_blocked, before any
-# key), and a cleared dialog fires no hook, so the blocked its hook reported stays: with the pane
-# clear, tell reports the agent idle to herdr first (herdr_idle). With goal on, findings get a fresh goal (findings_goal).
+# pane is not clear. herdr refusing the tell itself as blocked is tell_deliver's to clear (tell_unblock).
+# With goal on, findings get a fresh goal (findings_goal).
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
 # the handover brief, and the tell fails, saying so; a step-up that closed nothing sends them as usual.
@@ -1618,7 +1617,7 @@ note_lock() {
 # The text sent says who it is from (tell_from): the review agent from review-<slug>'s pane, else the
 # conductor. Either counts the same: rounds, step-ups and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n clear="" seen
+  local kind="$2" f="$3" name msg state since inbox rc pane line n
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1639,17 +1638,13 @@ tell_agent() {
     note_wake "${name}" "${inbox%.md}" "${pane}"
     echo "noted ${name}"; return
   fi
-  # herdr_idle's --seq, taken before the pane is read: a blocked report a prompt raised after the read
-  # has a later one, so herdr keeps it over the idle report.
-  seen="$(python3 -I -c 'import time; print(time.time_ns())')" || seen=""
   state="$(read_state "${name}")"
   # A turn that stopped on an API error has ended, though open background shells keep its session busy.
   [[ "${state}" != busy ]] || ! api_stopped "${name}" "${pane}" || state=idle
   case "${state}" in
     idle|herdr:idle|herdr:done) ;;
     busy|herdr:working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
-    waiting*|herdr:blocked) pane_clear "${pane}" || die "${name} is waiting on $(waiting_for "${state}"); answer it (herdr agent read ${name}), then tell it"
-      clear=1 ;;
+    waiting*|herdr:blocked) pane_clear "${pane}" || die "${name} is waiting on $(waiting_for "${state}"); answer it (herdr agent read ${name}), then tell it" ;;
     gone) die "${name}: its Claude session has ended (gone); there is no one to tell" ;;
     unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
@@ -1668,12 +1663,6 @@ tell_agent() {
     [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
     [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
-  fi
-  # herdr's blocked for an agent it answers for is its own read of the screen, so it is left to herdr.
-  # For any other, with the pane clear, herdr_idle; if it fails, herdr refuses the tell (agent_blocked).
-  if [[ "${state}" != herdr:* && "$(agent_status "${name}")" == blocked ]]; then
-    [[ -n "${clear}" ]] || ! pane_clear "${pane}" || clear=1
-    [[ -z "${clear}" ]] || herdr_idle "${name}" "${pane}" "${seen}" || true
   fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
@@ -1716,6 +1705,19 @@ sys.exit(0 if m and not "".join([box[0][m.end():]] + box[1:]).strip() and stuck_
          and not any(MID_COMMAND in l for l in lines[reply + 1:]) else 1)'
 }
 
+# tell_unblock <name> — after herdr refused a prompt to <name> because it reads it blocked
+# (agent_blocked, before any key): a dialog the user cleared fires no hook, so the blocked its hook
+# reported stays. Take the time, read the pane once (pane_clear) and, with it clear, report the agent
+# idle (herdr_idle) with that time as --seq, so a blocked report from a prompt raised after the read
+# wins. Fails when the pane is not clear or no report went, as for an agent herdr answers for (codex):
+# its blocked is herdr's own read of its screen.
+tell_unblock() {
+  local seen pane
+  seen="$(python3 -I -c 'import time; print(time.time_ns())')" || return 1
+  pane="$(agent_field "$1" pane_id)"
+  [[ -n "${pane}" ]] && pane_clear "${pane}" && herdr_idle "$1" "${pane}" "${seen}"
+}
+
 # herdr_idle <name> <pane> <seq> — report <name> idle to herdr, as hooks/agent-state.sh does on Stop:
 # for its Claude session on record (agents.tsv) with a resume command swarm.sh wrote (resume_file's
 # .argv), the session that command resumes (restart_session) and the command. <seq> is the time in
@@ -1732,12 +1734,13 @@ herdr_idle() {
     --agent-session-id "${id}" -- "${resume[@]}" >/dev/null 2>&1
 }
 
-# tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other
+# tell_deliver <name> <prompt-file> <kind> [again] — deliver_prompt, failing with its message, after any other
 # stderr it printed. A findings tell herdr sent also says what to do: findings_told counts it as a
 # round, so the same findings sent again as findings would count that round twice. After "may or may
 # not have the brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice)
 # herdr may have dropped both, so the pane says whether to send them again, as a nudge: a nudge is
-# not a round.
+# not a round. When herdr refused it as blocked before sending anything, and tell_unblock cleared that,
+# it is delivered once more ([again] marks that try).
 tell_deliver() {
   local err why rc
   # Not `{ ...; } || rc=$?`: on the left of || set -e is ignored inside deliver_prompt too, so an
@@ -1749,6 +1752,9 @@ tell_deliver() {
   if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || echo "${err}" >&2; exit "${rc}"; fi
   why="${err##*swarm: }"; err="${err%swarm: *}"
   [[ -z "${err}" ]] || printf '%s' "${err}" >&2
+  if [[ -z "${4:-}" && "${why}" == *"herdr did not send it the brief: it is blocked on a question (agent_blocked)"* ]] && tell_unblock "$1"; then
+    tell_deliver "$1" "$2" "$3" again; return
+  fi
   case "$3:${why}" in
     findings:*"the brief was not taken up: herdr sent it the brief"*)
       die "${why}; the findings count as a round: read its pane (herdr agent read $1) and, if it shows they never arrived, send them again as a nudge (swarm.sh tell $1 nudge <file>), which is not a round" ;;

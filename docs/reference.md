@@ -970,9 +970,10 @@ findings. Findings from either count the same: as a round, toward a step-up and 
 agent as waiting, and herdr as blocked. For such an agent, `tell` reads the pane once. It sends the
 tell only when the pane shows an empty input box with no command running and no prompt, dialog,
 manual mode, login or API error over it. Otherwise it refuses as before, so its keys never answer a
-permission prompt. herdr refuses any prompt to an agent it reads as blocked, and clearing a dialog
-fires no hook that would change that. So when the pane is clear, `tell` first reports a Claude agent
-idle to herdr, with its session and resume command, as the agent's Stop hook would.
+permission prompt. herdr refuses any prompt to an agent it reads as blocked, before sending a key,
+and clearing a dialog fires no hook that would change that. So when herdr refuses a tell that way,
+`tell` reads the pane again. If it is clear, `tell` reports a Claude agent idle to herdr, with its
+session and resume command, as the agent's Stop hook would, and sends the tell once more.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or

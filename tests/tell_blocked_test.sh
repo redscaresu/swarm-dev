@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # tell_blocked_test.sh — `tell <slug> nudge <file>` to an agent listed as waiting or blocked reads its
 # pane once (pane_clear) and sends the tell only when the pane shows an empty input box with nothing
-# over it; otherwise it refuses as before and sends no keys. Three ways an agent is listed so:
+# over it; otherwise it refuses as before and sends no keys. When herdr then refuses the tell as
+# blocked (agent_blocked, before any key), tell reads the pane again (tell_unblock) and, with it clear,
+# reports a Claude agent idle to herdr (herdr_idle: its session and resume command) and sends once
+# more. Three ways an agent is listed so:
 #   waiting: Claude Code lists its session waiting (on a dialog), and herdr reads it blocked, as the
-#     plugin's hook reported. A clear pane is reported idle to herdr (herdr_idle: its session and
-#     resume command), then told. A permission prompt, text typed in the box, a command running, or
-#     manual mode is refused, with no report and no keys;
+#     plugin's hook reported. A clear pane is reported idle, then told. A permission prompt, text typed
+#     in the box, a command running, or manual mode is refused, with no report and no keys;
 #   herdr:blocked: an agent herdr answers for (a Claude agent with no session on record). A clear
 #     pane is told, with no report: herdr's own check when it sends has the last word. A permission
 #     prompt is refused;
 #   herdr only: Claude Code lists the session idle while herdr still reads it blocked (#540's builder,
-#     2026-10-26). A clear pane is reported idle, then told. A permission prompt gets no report, and
-#     herdr refuses the tell (agent_blocked) before any key. A permission prompt raised just after the
-#     pane read (its hook's blocked report stamped then) outranks the idle report, whose --seq is from
-#     before the read, so herdr still refuses the tell and no key goes.
+#     2026-10-26). herdr refuses the tell; a clear pane is then reported idle and told. A permission
+#     prompt gets no report, and the tell fails on herdr's refusal (agent_blocked) with no key sent. A
+#     permission prompt raised just after the pane read (its hook's blocked report stamped then)
+#     outranks the idle report, whose --seq is from before the read, so herdr refuses the second try too.
 # herdr and claude are stubs on PATH. herdr lists b1 with ${ROOT}/status and refuses a prompt while
 # ${ROOT}/live reads blocked, as herdr does before sending any input. A report-agent is logged to
 # ${ROOT}/reports.log and, as herdr does, taken only when its --seq is above the last one taken
