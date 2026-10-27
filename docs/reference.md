@@ -2110,7 +2110,9 @@ init` skips: `stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under t
 the board's own repo. Commits that change only those run no tests there, so they do not count. A
 `README.md` there counts as code, since a test may check it: swarm-dev's own CI gate tests the board
 READMEs. When the base gained only board paths and the board's repo cannot be read (no origin, or gh
-cannot tell which GitHub repo it is), `merge` refuses naming that read. A compare it cannot read
+cannot tell which GitHub repo it is), `merge` refuses naming that read, with gh's own error line.
+That refusal also ends `merge origin/<base> in, push, and merge the new head`: once the head has the
+base, there is nothing to read. A compare it cannot read
 refuses too, and so does one listing 300 files or more, since GitHub lists no more, or one that lists
 no file for the commits (a commit and its revert give no file). The 300-file and no-file refusals end
 `merge origin/<base> in, push, and merge the new head` as well, since merging the base in clears them, and the conductor
@@ -2124,9 +2126,11 @@ merge queue closes that window. `--board` and `--release` skip the check. A PR t
 queue skips it too, since the queue tests each PR on top of the base. Under `merge_admin = on` no PR
 joins one, so the check runs on every story merge.
 Under `merge_admin = on`, a base that requires PRs to be up to date is still `ci_gate admin`'s to
-refuse. Most refusals go to the lead, but the conductor handles this one. It nudges the builder to
-merge origin/<base> in, re-run the tests and push. Then it waits with `swarm.sh wait-pr`, reviews the
-new head as for any new head, and merges that head with `--head`.
+refuse. Under `merge = agent` the conductor handles this refusal itself, though most refusals go to
+the lead. It nudges the builder to merge origin/<base> in, re-run the tests and push. Then it waits
+with `swarm.sh wait-pr`, reviews the new head as for any new head, and merges that head with
+`--head`. Under `merge = human`, and when the lead merges under a `merge` grant, no conductor
+merges, so the refusal goes to whoever ran `swarm.sh merge`, with the step to take in its message.
 
 **init's Claude Code checks.** An agent's `swarm.sh merge` runs only when a `permissions.allow`
 rule in Claude Code's settings allows it. Without one, under `merge = agent` or an HLD that grants

@@ -70,8 +70,14 @@ case "$1 $2" in
     [ ! -e "${FX}/on-merge" ] || sh "${FX}/on-merge"
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
-  # With ${FX}/origin.hang, the nameWithOwner read first sleeps a minute.
-  "repo view") case "$*" in *nameWithOwner*) [ ! -e "${FX}/origin.hang" ] || sleep 60; cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
+  # With ${FX}/origin.hang, the nameWithOwner read first sleeps a minute; with ${FX}/origin.fail it
+  # prints that to stderr and fails.
+  "repo view") case "$*" in
+                 *nameWithOwner*) [ ! -e "${FX}/origin.hang" ] || sleep 60
+                                  [ ! -e "${FX}/origin.fail" ] || { cat "${FX}/origin.fail" >&2; exit 1; }
+                                  cat "${FX}/origin" ;;
+                 *) cat "${FX}/repo" ;;
+               esac ;;
   # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none; with ${FX}/prlist.<slug>.fail, a 5xx.
   "pr list") h=""; prev=""; for a in "$@"; do [ "${prev}" != --head ] || h="${a##*/}"; prev="${a}"; done
              [ ! -e "${FX}/prlist.${h}.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }

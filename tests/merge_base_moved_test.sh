@@ -50,12 +50,17 @@ OTHER=https://github.com/o/other/pull/7
 fresh; item s "status: review" "prs: ${OTHER}"; gained 1 docs/stories/t.md; merge "${OTHER}"
 refused "a PR in another repo: its stories/ file is code" "${MOVED}"
 check "a PR in another repo: compares in that repo" compared o/other "${H1}"
-# The board's repo cannot be read: the failed read is named, not called code on the base.
-fresh; gained 1 docs/stories/t.md; rm "${FX}/origin"; merge "${URL}"
+# The board's repo cannot be read: the failed read is named, with gh's own line, not called code on the
+# base, and the refusal says to merge the base in, which clears it.
+NOREPO="GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
+fresh; gained 1 docs/stories/t.md; echo "${NOREPO}" > "${FX}/origin.fail"; merge "${URL}"
 refused "board files only, gh cannot read the board's repo" \
-  "cannot tell whether main moved past 1111111's CI: its 1 commits change only board paths, and gh did not say, within 60s, which GitHub repo the board's origin is"
+  "cannot tell whether main moved past 1111111's CI: its 1 commits change only board paths, and gh repo view failed (${NOREPO}): merge origin/main in, push, and merge the new head"
+fresh; gained 1 docs/stories/t.md; echo 'not json' > "${FX}/origin"; merge "${URL}"
+refused "board files only, gh names no repo" "and gh repo view named no GitHub repo: merge origin/main in, push, and merge the new head"
 fresh; gained 1 docs/stories/t.md; git -C "${P}" remote remove origin; merge "${URL}"; git -C "${P}" remote add origin "${ROOT}/origin.git"
-refused "board files only, the board's repo has no origin" "its 1 commits change only board paths, and ${P}, the board's repo, has no origin"
+refused "board files only, the board's repo has no origin" \
+  "its 1 commits change only board paths, and ${P}, the board's repo, has no origin: merge origin/main in, push, and merge the new head"
 
 # --- A head up to date with the base merges.
 fresh; merge "${URL}"
@@ -81,7 +86,7 @@ is "a 404 on the compare: read once" 1 "$(reads)"
 fresh; touch "${FX}/behind.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
 refused "a compare that hangs" "cannot tell whether main moved past 1111111's CI: the compare took over 2s"
 fresh; gained 1 docs/stories/t.md; touch "${FX}/origin.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
-refused "board files only, a board repo read that hangs" "and gh did not say, within 2s, which GitHub repo the board's origin is"
+refused "board files only, a board repo read that hangs" "and gh did not say within 2s which GitHub repo the board's origin is: merge origin/main in, push, and merge the new head"
 fresh; echo '{"status":"ahead"}' > "${FX}/behind"; merge "${URL}"
 refused "a compare with no ahead_by" "cannot tell whether main moved past 1111111's CI: unreadable compare"
 # many <n> <prefix> — <n> paths, <prefix>1.md to <prefix><n>.md.

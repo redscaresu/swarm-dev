@@ -270,8 +270,9 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # given board_paths; a board README counts as code) and the PR is in the board's own repo. Board-only
 # commits run no tests, as CI's board-only gate has it. Conservative on purpose: GitHub ran the PR's CI on a merge ref that may hold
 # some of them, and the price is one more CI run. A compare it cannot read refuses too, and so does a
-# board-only gain when the board's repo cannot be read, naming the read. A compare that cannot list what
-# the base gained (BEHIND_UNLISTED) says to merge the base in, which clears it. Each read stops after
+# board-only gain when the board's repo cannot be read, naming the read. That refusal, and a compare that
+# cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, which clears them: the
+# head is then up to date, so no repo read is needed. Each read stops after
 # BASE_MOVED_WAIT. Nothing locks the compare against gh pr merge, so two merges into one base seconds
 # apart can both pass: only a merge queue closes that.
 base_moved() {
@@ -292,9 +293,12 @@ base_moved() {
   if [[ "${out}" != *$'\n'* ]]; then
     why+=": its ${n} commits change only board paths, and"
     p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" \
-      || merge_fail "${why} ${PROJECT_DIR}, the board's repo, has no origin"
-    own="$(within "${limit}" gh repo view "${p}" --json nameWithOwner </dev/null | json "d['nameWithOwner'].lower()")" \
-      || merge_fail "${why} gh did not say, within ${limit}s, which GitHub repo the board's origin is"
+      || merge_fail "${why} ${PROJECT_DIR}, the board's repo, has no origin: ${fix}"
+    # gh's own error line goes in the refusal; on success it prints the JSON alone.
+    rc=0; own="$(within "${limit}" gh repo view "${p}" --json nameWithOwner </dev/null 2>&1)" || rc=$?
+    [[ ${rc} -ne 142 ]] || merge_fail "${why} gh did not say within ${limit}s which GitHub repo the board's origin is: ${fix}"
+    [[ ${rc} -eq 0 ]] || merge_fail "${why} gh repo view failed (${own##*$'\n'}): ${fix}"
+    own="$(json "d['nameWithOwner'].lower()" <<< "${own}")" || merge_fail "${why} gh repo view named no GitHub repo: ${fix}"
     [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" != "${own}" ]] || return 0
   fi
   merge_fail "the base $3 moved past ${2:0:7}'s CI (${n} commits it lacks): ${fix}"
