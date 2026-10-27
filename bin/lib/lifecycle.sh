@@ -3600,14 +3600,15 @@ upgrade_flags() {
 
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
 # on its own: Claude Code's own state for the session herdr has in <pane> now (upgrade_herdr; the one
-# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else read_state's; a turn stopped on
+# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else read_state's, over
+# agents.tsv's session (herdr 0.9.5 lists none); a turn stopped on
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
-# turn though background shells keep Claude Code saying busy (turn_over); one waiting on a prompt,
-# or on a tool call's result, is busy.
+# turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
+# one waiting on a prompt, or on a tool call's result, is busy.
 upgrade_state() {
   local s sid
   sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
-  if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"
+  if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"; sid="$(recorded_session "$1")"
   else
     s="$(claude_agents </dev/null | python3 -I -c '
 import json, sys

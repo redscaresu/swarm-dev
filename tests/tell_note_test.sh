@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tell_note_test.sh — `tell conduct-<epic> note <file>` writes the note to the conductor's inbox and,
 # when the conductor's turn has ended (idle, or busy only with background jobs: its session log ends
-# on an assistant entry that ended its turn), sends it one prompt to process the inbox as its brief
+# on an assistant entry that ended its turn, system entries aside; its session is agents.tsv's when
+# herdr lists none, as herdr 0.9.5 does), sends it one prompt to process the inbox as its brief
 # says (via <inbox>.reading.md) and end its turn, leaving its waits alone. One mid-turn gets the note
 # and no prompt. One prompt a minute at most (SWARM_NOTE_WAKE_SECS, 4 here), per conductor: a second
 # note within it, after the conductor took the inbox to read it too, or two at once (each prompt
@@ -49,7 +50,8 @@ printf '#!/bin/sh\nF="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-    { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\",\"agent_session\":{\"value\":\"%s\"}}", (NR > 1 ? "," : ""), $1, $2, $3 }
+    { s = $3 == "-" ? "" : sprintf(",\"agent_session\":{\"value\":\"%s\"}", $3)
+      printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"%s}", (NR > 1 ? "," : ""), $1, $2, s }
     END { print "]}}" }' "$F/agents" ;;
   "agent prompt") [ ! -f "$F/promptfail" ] || exit 1; [ ! -f "$F/slow" ] || sleep 1; echo "$*" >> "$F/prompts.log" ;;
   "agent get") n=$(($(cat "$F/gets" 2>/dev/null || echo 0) + 1)); echo "${n}" > "$F/gets"
@@ -163,6 +165,27 @@ echo '{"type":"assistant","message":{"model":"claude-opus-5-5","stop_reason":"en
 note >/dev/null
 check "busy only with background jobs (its turn ended): the note is in its inbox" 1 "$(notes)"
 check "busy only with background jobs (its turn ended): one prompt" 1 "$(prompts)"
+
+# A live conductor idle between turns with background shells (Claude Code 2.1.311): the end_turn
+# entry, then a stop_hook_summary and a turn_duration system entry, and nothing more while they run.
+# herdr (0.9.5) lists no agent_session ("-" in ${ROOT}/agents), so its session is agents.tsv's.
+state busy
+echo "conduct-e w:7 -" > "${ROOT}/agents"
+printf '2026-10-26\tconduct\tconduct-e\tclaude\topus\thigh\tsc\n' > "${p}/.swarm/agents.tsv"
+cat > "${CLAUDE_PROJECTS_DIR}/p/sc.jsonl" <<'EOF'
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"x"}],"stop_reason":"end_turn"}}
+{"type":"system","subtype":"stop_hook_summary","isSidechain":false,"hookCount":0,"hookInfos":[],"hookErrors":[],"preventedContinuation":false,"stopReason":"","hasOutput":false,"level":"info","toolUseID":"t1"}
+{"type":"system","subtype":"turn_duration","isMeta":false,"isSidechain":false,"durationMs":0,"messageCount":0}
+EOF
+note >/dev/null
+check "background shells after end_turn, no session from herdr: the note is in its inbox" 1 "$(notes)"
+check "background shells after end_turn, no session from herdr: one prompt" 1 "$(prompts)"
+
+state busy   # the same conductor mid-turn: a tool call waits on its result
+printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{}}],"stop_reason":"tool_use"}}' > "${CLAUDE_PROJECTS_DIR}/p/sc.jsonl"
+note >/dev/null; settle
+check "a tool call waiting on its result, no session from herdr: no prompt" 0 "$(prompts)"
+echo "conduct-e w:7 sc" > "${ROOT}/agents"; rm -f "${p}/.swarm/agents.tsv"
 
 state idle; touch "${p}/.swarm/conduct-e.report.md"
 note >/dev/null; settle
