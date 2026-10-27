@@ -1880,8 +1880,9 @@ when none has one.
 `green_to_review_min`, the last `outcomes` column, is the minutes from the later of a PR's head going
 green and the PR opening to the first review round that started after that, before the PR closed.
 A round starts at an events.tsv `review-agent` line for the slug, the review agent's start, whose
-outcome is `ok` (the plain start, which the conductor runs once the head is green) or
-`ok (round <n>)`, or at a `review-agent:next` line, whose outcome is `ok (round <n>)`. A start before
+outcome is a bare `ok` (the conductor runs that start once the head is green, so it is round 1's),
+or at a `review-agent:next` line, whose outcome is `ok (round <n>)`; only those lines carry the
+round, though a `review-agent` line that did would count the same. A start before
 the head's green, at PR open say, is not after it and does not count, and a round before the PR
 opened is an earlier PR's of the slug. The head went green at the end of its last check run, and
 only when every run on it concluded `SUCCESS`, `NEUTRAL` or `SKIPPED`. gh gives the runs of the PR's
@@ -1892,7 +1893,9 @@ check rerun on the same head after a round started moves its green past that rou
 then runs to the next round, or is empty. A run that failed, is still going or has no conclusion
 means no green. A commit status counts at the time it was set, and a green entry with no time at
 all leaves the green unknown. A PR record cached before conclusions were read has none, so its
-green is unknown. The column is empty with no green, or no round after it.
+green is unknown, and so is every story that finished before this column existed, until
+`flow --no-cache` reads their PRs from gh again and rewrites the cache. The column is empty with no
+green, or no round after it.
 
 The `idle_slots` section asks whether the swarm sat idle while work was ready. It prints TSV `epic
 idle_min no_conductor_min most_ready`, one row per epic and a last `all` row, or the `--epic` row

@@ -191,10 +191,11 @@ def board_commits(*args):
 ready_at, blocked_at = collections.defaultdict(list), collections.defaultdict(list)
 conducting, closed, reported = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
 # round_starts: each slug's review round starts: its review-agent lines, the review agent's start,
-# with outcome ok (the plain start, which the conductor runs once the PR's head is green, so it is
-# round 1's start) or `ok (round <n>)`, and review-agent --next's review-agent:next lines
-# (`ok (round <n>)`). green_to_review reads only those at or after the head's green, so a start before
-# it, at PR open say, never counts.
+# whose outcome main logs as a bare ok (the conductor runs that start once the PR's head is green, so
+# it is round 1's start), and review-agent --next's review-agent:next lines, the only ones main gives
+# `ok (round <n>)`. A review-agent line that carried `(round <n>)` would count the same, though none
+# does today. green_to_review reads only those at or after the head's green, so a start before it, at
+# PR open say, never counts.
 round_starts = collections.defaultdict(list)
 # Explicit prefixes and no colour, whatever the user's diff.noprefix, diff.dstPrefix or color.ui.
 for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
