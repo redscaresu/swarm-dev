@@ -184,7 +184,9 @@ else:
   esac
 }
 
-# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
+# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed, in
+# HERDR_WORKSPACE_ID: a tab whose recorded panes are in another workspace (<workspace>:<pane>) has no
+# room, so a stale record in a workspace an older swarm.sh shared between projects is never split.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
 prune_dead_panes() {
@@ -201,6 +203,10 @@ next_pane() {
     state="${STATE_DIR}/${tab_label}"
     [[ -f "${state}" ]] && prune_dead_panes "${state}"
     count=0; [[ -f "${state}" ]] && count=$(wc -l < "${state}" | tr -d ' ')
+    if [[ -n "${HERDR_WORKSPACE_ID:-}" && ${count} -gt 0 ]]; then
+      pane="$(awk 'NR == 1 { print $1 }' "${state}")"
+      [[ "${pane}" != *:* || "${pane%%:*}" == "${HERDR_WORKSPACE_ID}" ]] || count=${PANES_PER_TAB}
+    fi
     if [[ ${count} -lt ${PANES_PER_TAB} ]]; then
       if [[ ${count} -eq 0 ]]; then
         pane=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID}" --cwd "${cwd}" --label "${tab_label}" --no-focus \
@@ -258,7 +264,8 @@ story_env() {
   local v n words out="" exported list='^\[[^][]*\]$' epic
   v="$(get_fm "$1" env)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   # An empty env: is no names, unless - items follow it (a block list, at any indent).
-  if { [[ -n "${v}" ]] && [[ ! "${v}" =~ ${list} ]]; } || { [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit }
+  if { [[ -n "${v}" ]] && [[ ! "${v}" =~ ${list} ]]; } ||   # loose-match: ok list is a fixed regex
+      { [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit }
       n == 1 && bare && /^[ \t]*-([ \t]|$)/ { f = 1; exit } n == 1 { bare = /^env:[ \t]*(#.*)?$/ } END { exit !f }' "$1"; }; then
     echo "$1: env: is not a one-line list; write it as env: [NAME, ...]"; return 1
   fi
@@ -333,8 +340,9 @@ launch_file() {
     done
     printf 'export SHELL=%q ZDOTDIR=%q\n' "${AGENT_SHELL%% *}" "$4"
     # The agent's name (its ZDOTDIR's): gh-shim logs its calls under it, and not as the starting
-    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry).
-    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA\n' "${4##*/}"
+    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry). Nor does the agent keep a
+    # timed run's SWARM_RUN_TIMED (next starts conductors), so its own status, next and dash log rows.
+    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA SWARM_RUN_TIMED\n' "${4##*/}"
     # shellcheck disable=SC2016 # the wrapper's own bash expands them
     printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
       "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done"
@@ -411,7 +419,7 @@ RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
 # and <names>), with the restored pane's own values, so no value is written down or put on a command
 # line; sets AGENT_SET as launch_file does, with SWARM_PROJECT, SWARM_RESUME and gh-shim's
 # SWARM_GH_LOG and SWARM_GH_CALLER (its folder first on PATH, so the agent's gh calls log; no
-# SWARM_GH_VIA); and execs its arguments. Python, not bash, so neither a BASH_ENV nor an exported
+# SWARM_GH_VIA, and no SWARM_RUN_TIMED, as launch_file); and execs its arguments. Python, not bash, so neither a BASH_ENV nor an exported
 # function in that environment runs before the scrub or changes it, as none can on a first start through env -i. It also makes the
 # session's own ZDOTDIR (<session>.zdotdir) afresh at 0700 with clean_env's two files, so nothing
 # written there since runs in the restored agent's shells; it empties the folder rather than
@@ -463,6 +471,7 @@ env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(
 env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r},
            SWARM_GH_LOG={gh_log!r}, SWARM_GH_CALLER={name!r}, PATH=":".join(p for p in ({gh_shim!r}, env.get("PATH", "")) if p))
 env.pop("SWARM_GH_VIA", None)
+env.pop("SWARM_RUN_TIMED", None)
 try:
     env["GPG_TTY"] = os.ttyname(0)
 except OSError:
@@ -1314,14 +1323,14 @@ settle() {
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
   [[ -z "${wake}" ]] || hold=$(($(now_ms) + STALL_POLL_MS))
-  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do
+  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do   # loose-match: ok SETTLED is a fixed regex
     t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
     if [[ ${end} -gt ${t0} ]]; then
       herdr agent wait "${target}" --timeout $((end - t0)) >/dev/null 2>"${err}" || timed_out "${err}" || rc=1
     fi
     state="$(session_state "${name}")"
     [[ "${state}" =~ ^(idle|unknown)$ ]] || hold=0
-    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi
+    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi   # loose-match: ok SETTLED is a fixed regex
     if [[ ${rc} -ne 0 ]]; then cat "${err}" >&2; break; fi
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2

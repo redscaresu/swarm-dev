@@ -1226,22 +1226,23 @@ EOF
 # WORKSPACE_SEP: between the project's label and the rest of a workspace label (`app · <epic>`).
 WORKSPACE_SEP=" · "
 
-# herdr_workspaces — herdr's workspaces, one "<id>\t<label>\t<cwd>" line each. A workspace has no cwd
+# herdr_workspaces — herdr's workspaces, one "<id>\t<label>\t<cwd>\t<others>" line each. A workspace has no cwd
 # of its own in herdr, so it is the cwd of its first pane in herdr's pane list: the conductor's, a
 # review agent's, or, while new, the placeholder's epic_workspace made it with. A pane in a story
 # worktree of this project's repo (<project>-wt/<slug>) counts as the project's, so a workspace whose
 # conductor pane has gone is still its own; one in any other story worktree (<repo>-wt/<slug>, whose
-# project it does not say) is skipped. With no pane left, empty. Fails when herdr gives no workspace
-# list, or no pane list while it has a workspace.
+# project it does not say) is skipped. With no pane left, empty. <others> is 1 when any pane not
+# skipped is in a dir other than the project's (another project's), else 0. Fails when herdr gives no
+# workspace list, or no pane list while it has a workspace.
 herdr_workspaces() {
   local ws panes='{"result":{"panes":[]}}'
   ws="$(herdr workspace list 2>/dev/null)" || return 1
   if [[ "$(json "len(d['result']['workspaces'])" <<< "${ws}")" != 0 ]]; then
     panes="$(herdr pane list 2>/dev/null)" || return 1
   fi
-  SWARM_WS="${ws}" SWARM_PANES="${panes}" python3 -c '
+  SWARM_WS="${ws}" SWARM_PANES="${panes}" python3 -I -c '
 import json, os, sys
-cwd = {}
+cwd, others = {}, set()
 for p in json.loads(os.environ["SWARM_PANES"])["result"]["panes"]:
     d = (p.get("cwd") or "").rstrip("/"); parent = os.path.dirname(d)
     if parent == sys.argv[1] + "-wt":
@@ -1249,9 +1250,13 @@ for p in json.loads(os.environ["SWARM_PANES"])["result"]["panes"]:
     elif d != sys.argv[1] and parent.endswith("-wt"):
         continue
     if d:
-        cwd.setdefault(p.get("workspace_id") or p.get("pane_id", "").split(":")[0], d)
+        w = p.get("workspace_id") or p.get("pane_id", "").split(":")[0]
+        cwd.setdefault(w, d)
+        if d != sys.argv[1]:
+            others.add(w)
 for w in json.loads(os.environ["SWARM_WS"])["result"]["workspaces"]:
-    print("%s\t%s\t%s" % (w["workspace_id"], w.get("label") or "", cwd.get(w["workspace_id"], "")))' "${PROJECT_DIR}"
+    i = w["workspace_id"]
+    print("%s\t%s\t%s\t%d" % (i, w.get("label") or "", cwd.get(i, ""), i in others))' "${PROJECT_DIR}"
 }
 
 # project_label [<herdr_workspaces lines>] — this project's part of its workspace labels: its dir's
@@ -1273,7 +1278,8 @@ project_label() {
 # epic's parent: (so the child epics of a split one share a workspace), else the epic's own slug, or
 # backlog. Found by label and cwd (herdr_workspaces), so never another project's: under either form of
 # project_label, since /b/app's turns back to app once /a/app has no workspace, or under the bare
-# <label> an older swarm.sh gave it. A new workspace's placeholder tab is closed once the caller has
+# <label> an older swarm.sh gave it, and then only with no other project's pane in it (an older
+# swarm.sh put every project's backlog, and each project's same-named epic, in one). A new workspace's placeholder tab is closed once the caller has
 # added its own; a found one has none. Refused, with the reason printed and 1 returned, when herdr
 # gives no list or no new workspace.
 epic_workspace() {
@@ -1282,7 +1288,7 @@ epic_workspace() {
   base="$(basename "${PROJECT_DIR}")"
   own="$(project_label "${list}")${WORKSPACE_SEP}${label}"
   for want in "${own}" "${base}${WORKSPACE_SEP}${label}" "${base}-$(path_hash)${WORKSPACE_SEP}${label}" "${label}"; do
-    ws="$(W="${want}" D="${PROJECT_DIR}" awk -F'\t' '$2 == ENVIRON["W"] && $3 == ENVIRON["D"] { print $1; exit }' <<< "${list}")"
+    ws="$(W="${want}" D="${PROJECT_DIR}" B="${label}" awk -F'\t' '$2 == ENVIRON["W"] && $3 == ENVIRON["D"] && ($2 != ENVIRON["B"] || $4 == 0) { print $1; exit }' <<< "${list}")"
     [[ -z "${ws}" ]] || { printf '%s\t%s\t\n' "${ws}" "${want}"; return; }
   done
   read -r ws tab <<< "$(herdr workspace create --label "${own}" --cwd "${PROJECT_DIR}" --no-focus \
@@ -1386,6 +1392,8 @@ start_conductor() {
   # The backlog's tab takes the conductor's name too: an older swarm.sh put every project's backlog tab
   # in one workspace named backlog, which a project still reuses, and close shuts every tab with its label there.
   tab="${epic}"; [[ "${epic}" != backlog ]] || tab="${name}"
+  # In that workspace, even when the tab's record still lists a live pane in another (a retired
+  # conductor's, in a workspace an older swarm.sh shared): next_pane then opens <tab>-2.
   HERDR_WORKSPACE_ID="${ws}" start_agent "${tab}" "${name}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
