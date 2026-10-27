@@ -40,6 +40,15 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
+# ci_gate head <owner/repo> <sha> <base> <pr> <changed> [<memo file>] — the same, and, when no check is
+# red, each workflow whose on: pull_request covers <base> and the files PR <pr> changes at <sha> (ci_gate
+# files) is pending while it has no pull_request run on <sha> ("<path> (no run on <short sha>)") or its
+# newest one has not finished, and red when that run finished other than success, skipped or neutral.
+# The workflows are read at the PR's merge commit (refs/pull/<pr>/merge), which GitHub runs them from,
+# once it merges <sha>, else at <sha> (a base push since <sha> that adds or widens a pull_request
+# workflow is waited on, though it never ran); Actions' disabled workflows are left out. A workflow whose
+# triggers it cannot read is not waited on, and a second line names it: "not waited on: <path>
+# (triggers not read: <why>)". <memo file> keeps the workflows read, so later reads of <sha> skip them.
 # ci_gate fixed <owner/repo> <sha> <base> <red sha> <board paths> <check>... — succeed when <sha>
 # shows the red main at <red sha> of <base> fixed, judged at the newest commit from <sha> back (first
 # parents) that changes a file outside <board paths> (a board-only commit's CI may skip its tests),
@@ -1296,6 +1305,10 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
 # WAIT_PR_TRIES in a row at most, any other ends it at once. A new head has no check runs for a few
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
+# The head read takes the PR's changed file count too, so ci_gate head waits on each workflow a
+# pull_request runs there; one still with no run WAIT_PR_GRACE after the first read that found it
+# missing ends the wait the same way, naming it. With no count read, only the checks are judged.
+# ci_gate's "not waited on:" line is printed once, apart from the checks.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
@@ -1311,7 +1324,7 @@ wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
-  local spent budget bounded=""
+  local spent budget bounded="" changed expect=() unstarted="" item missing gone note noted=""
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -1335,13 +1348,16 @@ wait_pr() {
       # A conflicted PR runs no checks, so it ends here. UNKNOWN on an open PR is GitHub still
       # computing: the PR is read again each poll, its checks read beside it, so a red or green
       # check still ends the wait. A merged or closed PR stays UNKNOWN, so it is not read again.
-      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state \
-        -q '[.headRefOid, .mergeable, .baseRefName, .state] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
-      read -r oid mergeable base state <<< "${why}"
+      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,changedFiles \
+        -q '[.headRefOid, .mergeable, .baseRefName, .state, (.changedFiles | tostring)] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
+      read -r oid mergeable base state changed <<< "${why}"
       if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
         [[ "${mergeable}" != CONFLICTING ]] || wait_pr_fail "conflicts with ${base}: merge origin/${base} in, then push"
         unknown=""; [[ "${mergeable}/${state}" != UNKNOWN/OPEN ]] || unknown=1
-        [[ -n "${head}" ]] || { head="${oid}"; missed=0; echo "head ${head}"; }
+        if [[ -z "${head}" ]]; then
+          head="${oid}"; missed=0; echo "head ${head}"
+          [[ ! "${changed}" =~ ^[0-9]+$ ]] || expect=("${base}" "${n}" "${changed}" "${WAIT_PR_TMP}.expected")
+        fi
         [[ -n "${unknown}" ]] || continue
       elif [[ ${rc} -ne 142 ]]; then
         rc=3; why="gh cannot read the head of ${url}: $(tail -1 "${WAIT_PR_TMP}")"
@@ -1350,7 +1366,9 @@ wait_pr() {
     if [[ ${rc} -eq 0 ]]; then
       left=$((limit - (SECONDS - start)))
       (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
-      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
+      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" ${expect[@]+"${expect[@]}"})" || rc=$?
+      note=""; if [[ "${why}" == *$'\n'* ]]; then note="${why#*$'\n'}"; why="${why%%$'\n'*}"; fi
+      [[ -z "${note}" || "${note}" == "${noted}" ]] || { echo "${note}"; noted="${note}"; }
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
     fi
     case ${rc} in
@@ -1363,6 +1381,15 @@ wait_pr() {
            empty="${empty:-${SECONDS}}"
            (( SECONDS - empty < grace )) \
              || wait_pr_fail "no check runs on ${head:0:7} after $((SECONDS - empty))s (${why})"
+         fi
+         missing=""; gone=" (no run on ${head:0:7})"
+         while IFS= read -r item; do
+           [[ "${item%"${gone}"}" == "${item}" ]] || missing="${missing:+${missing}, }${item%"${gone}"}"
+         done <<< "${why//; /$'\n'}"
+         if [[ -n "${missing}" ]]; then
+           unstarted="${unstarted:-${SECONDS}}"
+           (( SECONDS - unstarted < grace )) \
+             || wait_pr_fail "${missing}: a pull_request into ${base} runs it, but it has no run on ${head:0:7} after $((SECONDS - unstarted))s (${why})"
          fi
          [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
          last="${why}"; what="still pending: ${why}"; pause=${poll} ;;
@@ -1381,6 +1408,7 @@ wait_pr() {
            what="rate limited until ${at}"
            # The grace for a head with no check runs pauses with the wait: the budget ran out, not CI.
            [[ -z "${empty}" ]] || empty=$((empty + pause))
+           [[ -z "${unstarted}" ]] || unstarted=$((unstarted + pause))
            if [[ -z "${bounded}" ]]; then limit=$((limit + pause))
            elif (( pause >= limit - (SECONDS - start) )); then
              wait_pr_fail "rate limited: GitHub's API budget resets at ${at}, past --timeout ${limit}s"
