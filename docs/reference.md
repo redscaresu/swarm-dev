@@ -1058,9 +1058,10 @@ Claude session has ended. It also drops one whose tell fails after claiming it. 
 of each tell it drops in `.swarm/tells/<agent>.<kind>.undelivered.md`. A tell dropped before any
 `swarm.sh tell` ran for it is logged as `tell:<kind>` with `undelivered: <why>`. A delivery that
 failed already has its own tell's line, and a second line would count findings herdr sent as two
-rounds. `wait --lead` then prints `tell undelivered: <slug> <kind> (<why>), exit: if it still
-applies, swarm.sh tell <slug> <kind> <file>; then rm <marker> <file>` as an alert, like
-`no-agent:`. When the why says herdr may have sent it, the exit is `it may have arrived, so do as
+rounds. `wait --lead` then prints `tell undelivered: <slug> <kind> at <time> (<why>), exit: if it
+still applies, swarm.sh tell <slug> <kind> <file>; then rm <marker> <file>` as an alert, like
+`no-agent:`. A later drop of the same kind replaces the file and the line, and its own time wakes
+the lead again. When the why says herdr may have sent it, the exit is `it may have arrived, so do as
 that says and never send it again as <kind>`, because findings herdr sent count as a round already.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,

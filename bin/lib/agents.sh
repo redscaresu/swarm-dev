@@ -1905,11 +1905,12 @@ tell_requeue() {
 
 # tell_undelivered <name> <slug> <kind> <body> <why> [log] — hand the lead a queued tell no check
 # delivered: its text, moved from <body>, as TELL_QUEUE/<name>.<kind>.undelivered.md, and the line wait
-# --lead prints as <name>.<kind>.undelivered; a later one of the kind replaces both. Its exit sends it
-# again, unless <why> says herdr may have sent it (as resend_pass reads a failed delivery), where
-# findings count as a round already: then it follows <why> and never sends it again as <kind>. With
-# [log] (a drop, which no tell ran for) it logs tell:<kind> <slug> with `undelivered: <why>`, not ok, so
-# it counts as no round; a failed delivery's tell logged its own line, which a second would count twice.
+# --lead prints as <name>.<kind>.undelivered; a later one of the kind replaces both, and the drop time
+# in its line wakes the lead again (wait --lead prints a line once). Its exit sends it again, unless
+# <why> says herdr may have sent it (as resend_pass reads a failed delivery), where findings count as a
+# round already: then it follows <why> and never sends it again as <kind>. With [log] (a drop, which no
+# tell ran for) it logs tell:<kind> <slug> with `undelivered: <why>`, not ok, so it counts as no round;
+# a failed delivery's tell logged its own line, which a second would count twice.
 tell_undelivered() {
   local m="${TELL_QUEUE}/$1.$3.undelivered" q act
   mv -f "$4" "${m}.md" 2>/dev/null || return 0
@@ -1919,7 +1920,8 @@ tell_undelivered() {
       act="it may have arrived, so do as that says and never send it again as $3" ;;
     *) act="if it still applies, swarm.sh tell $2 $3 ${q}.md" ;;
   esac
-  printf 'tell undelivered: %s %s (%s), exit: %s; then rm %s %s\n' "$2" "$3" "$5" "${act}" "${q}" "${q}.md" > "${m}" 2>/dev/null || true
+  printf 'tell undelivered: %s %s at %s (%s), exit: %s; then rm %s %s\n' "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$5" "${act}" \
+    "${q}" "${q}.md" > "${m}" 2>/dev/null || true
   [[ -z "${6:-}" ]] || record_event "tell:$3" "$2" "undelivered: $5"
 }
 

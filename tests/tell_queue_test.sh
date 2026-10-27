@@ -14,10 +14,11 @@
 # its way is sent by the next check, and a delivery never claims another check's tell (its token). A
 # direct tell that cannot take the queue's lock to replace a queued one sends nothing. A queued tell
 # to a builder whose pane closed, or whose name a new pane holds, is sent to no pane: it is dropped,
-# and wait --lead prints a tell undelivered: line for the lead. One herdr sent but never showed taken
-# up (${ROOT}/nosend: no status in its reply, idle on every read) is not to be sent again as findings:
-# its line says it may have arrived, and it counts as one round. Queued findings due a step-up or a
-# top-rung hold while the story's lock is held go back in the queue.
+# and wait --lead prints a tell undelivered: line for the lead, again for a later drop of its kind.
+# One herdr sent but never showed taken up (${ROOT}/nosend: no status in its reply, idle on every
+# read) is not to be sent again as findings: its line says it may have arrived, and it counts as one
+# round. Queued findings due a step-up or a top-rung hold while the story's lock is held go back in
+# the queue.
 # herdr and claude are stubs on PATH. herdr lists the agents in ${ROOT}/agents (`<name> <pane> <status>`)
 # and logs each prompt to ${ROOT}/keys.log; claude agents --json prints ${ROOT}/claude.json, which holds
 # b1's session sb.
@@ -173,17 +174,19 @@ state idle -; settle
 check "a queued tell to a builder whose pane closed: sent to no pane" 0 "$(prompts)"
 out="$(lead)"
 U="${Q}/b1.findings.undelivered"
-check "a queued tell to a builder whose pane closed: wait --lead prints its line for the lead" \
-  "tell undelivered: b1 findings (b1 is no longer in pane w:9), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" "${out}"
+# alert <wait --lead's output> — yes when it is the one line for b1's dropped findings (its drop time aside).
+alert() { [[ "$1" == "tell undelivered: b1 findings at "*" (b1 is no longer in pane w:9), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" && "$1" != *$'\n'* ]] && echo yes || echo "no: $1"; }
+check "a queued tell to a builder whose pane closed: wait --lead prints its line for the lead" yes "$(alert "${out}")"
 check "a queued tell to a builder whose pane closed: its text is kept for the lead" "fix round one" "$(cat "${U}.md" 2>/dev/null)"
 check "a queued tell to a builder whose pane closed: logged undelivered, no round" "${QUEUED}|undelivered: b1 is no longer in pane w:9|0" "$(outcomes)|$(rounds)"
+state busy; tell "fix round two" >/dev/null; state idle -; settle   # dropped the same way, after the lead saw the first
+check "a second drop of the kind, for the same reason, wakes the lead again with its text" "yes|fix round two" "$(alert "$(lead)")|$(cat "${U}.md" 2>/dev/null)"
 
 fresh; state busy
 tell "fix round one" >/dev/null
 state idle w:10; settle   # a new b1, idle in another pane
 check "a queued tell to a builder whose name a new pane holds: not sent to that pane" 0 "$(prompts)"
-check "a queued tell to a builder whose name a new pane holds: wait --lead prints its line" yes \
-  "$(grep -qxF "tell undelivered: b1 findings (b1 is no longer in pane w:9), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" <<< "$(lead)" && echo yes || echo no)"
+check "a queued tell to a builder whose name a new pane holds: wait --lead prints its line" yes "$(alert "$(lead)")"
 
 # With the ladder on, the next findings round is a step-up's (round 3 of the build, sonnet,opus,fable)
 # or a top-rung hold's (round 2 on the top rung: b1 runs opus, sonnet,opus), and a step-up, restart or
