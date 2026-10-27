@@ -96,11 +96,11 @@ awk -v d="${ROOT}" 'BEGIN { printf "[" }
     printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (k++ ? "," : ""), \$3, s }
   END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json"
 EOF
-# With ghhang its api reads hang, and with ghfail they fail.
+# With ghhang its api reads hang for 300s, and with ghfail they fail.
 cat > "${STUB_BIN}/gh" <<EOF
 #!/bin/sh
 if [ "\$1" = api ]; then
-  [ ! -e "${ROOT}/ghhang" ] || sleep 30
+  [ ! -e "${ROOT}/ghhang" ] || sleep 300
   [ ! -e "${ROOT}/ghfail" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
 fi
 case "\$1 \$3" in
@@ -513,14 +513,15 @@ echo '{"total_count":1,"check_runs":[{"name":"test","status":"in_progress","conc
 check "--recheck while CI runs refuses, saying to wait and run --recheck again, not --next, and changes no file under .swarm/reviews" "1|yes|yes|yes|yes" \
   "$(set +e; o="$(recheck)"; echo "$?|$(has "CI on ${NARROW:0:7} has not finished: test (in_progress)" "${o}")|$(has "wait for it (swarm.sh wait-pr ${PR}), then run swarm.sh review-agent --recheck r1" "${o}")|$([[ "${o}" != *--next* ]] && echo yes || echo "no, got: ${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 echo "${GREEN}" > "${ROOT}/checks"; touch "${ROOT}/ghfail"
-check "--recheck when gh cannot read CI refuses, saying to run --recheck again, not --next" "1|yes|yes|yes" \
-  "$(set +e; o="$(recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: error gh api" "${o}")|$(has "run swarm.sh review-agent --recheck r1" "${o}")|$([[ "${o}" != *--next* ]] && echo yes || echo "no, got: ${o}")")"
+check "--recheck when gh cannot read CI refuses, saying to run --recheck again, not --next, and changes no file under .swarm/reviews" "1|yes|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: error gh api" "${o}")|$(has "run swarm.sh review-agent --recheck r1" "${o}")|$([[ "${o}" != *--next* ]] && echo yes || echo "no, got: ${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 rm "${ROOT}/ghfail"; touch "${ROOT}/ghhang"
-# The stub's read sleeps 30s; with SWARM_RECHECK_CI_SECONDS=1 the recheck ends well before it. The kill can
-# reach gh first, so ci_gate's own error may come back in place of the timeout: either says the same.
+# The stub's read sleeps 300s; with SWARM_RECHECK_CI_SECONDS=1 the recheck ends long before it, under 120s
+# on a loaded machine too. The kill can reach gh first, so ci_gate's own error may come back in place of
+# the timeout: either says the same.
 t0=${SECONDS}
 check "--recheck whose CI read hangs ends after SWARM_RECHECK_CI_SECONDS, saying to run it again, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
-  "$(set +e; o="$(SWARM_RECHECK_CI_SECONDS=1 recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: " "${o}")|$( (( SECONDS - t0 < 20 )) && echo yes || echo "no, took $((SECONDS - t0))s")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+  "$(set +e; o="$(SWARM_RECHECK_CI_SECONDS=1 recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: " "${o}")|$( (( SECONDS - t0 < 120 )) && echo yes || echo "no, took $((SECONDS - t0))s")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 rm "${ROOT}/ghhang"
 echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"failure","html_url":"u"}]}' > "${ROOT}/checks"
 check "--recheck on a head that is not green refuses, naming --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
