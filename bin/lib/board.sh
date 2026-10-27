@@ -1823,16 +1823,37 @@ builder_state() {
 
 # merged_build <slug> — clear a merged story's build (clear_build), after closing its builder if one
 # is open (still in review, so close counts nothing), and saying so when herdr cannot tell whether one
-# is. A builder whose pane could not be closed (close_pane) may still be working in the worktree, so
-# then the build is kept, with CLOSE_PANE_KEPT set; the caller says what happens to it.
+# is, and its review agent (merged_review). A builder whose pane could not be closed (close_pane) may
+# still be working in the worktree, so then the build is kept, with CLOSE_PANE_KEPT set; the caller
+# says what happens to it.
 merged_build() {
   local builder
   builder="$(builder_state "$1")"; CLOSE_PANE_KEPT=""
   [[ "${builder}" != open ]] || close_agent "$1"
+  merged_review "$1"
   [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
   clear_build "$1" "the PR of $1 merged" "[]"
   [[ "${builder}" != unknown ]] \
     || echo "build cleared: $1's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close $1"
+}
+
+# merged_review <slug> — close review-<slug>, a merged story's review agent, when this project has it
+# open in herdr: its pane only (shut_agent), never a builder's close. Only when the newest agents.tsv
+# line for that name has role review, as review_pane checks: the builder of a story slugged
+# review-<slug> holds the same name. When its pane is the one running this
+# command (a merge from the review pane, whose reconcile runs there), it is retired instead
+# (retire_agent), so the pane stays open under review-<slug>-done until tidy closes it. It never
+# fails the caller: it runs in the background, so set -e holds inside it, and a failure is said.
+merged_review() {
+  local name pane
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  name="$(agent_name "review-$1")"
+  [[ "$(awk -F'\t' -v n="${name}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" == review ]] || return 0
+  pane="$(agent_field "${name}" pane_id)"
+  [[ -n "${pane}" ]] || return 0
+  ( set -e
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; else shut_agent "review-$1"; fi ) </dev/null &
+  wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh close review-$1"
 }
 
 # pr_state <url> — the PR's state as gh gives it (OPEN, CLOSED or MERGED); fails when gh cannot read it.
