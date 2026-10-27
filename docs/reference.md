@@ -1210,8 +1210,9 @@ exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each 
 `resume <agent>`, and `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`.
 The stall rule skips those lines, because none is a sign of life. Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
-`wait-timeout` when its wait runs out (not when herdr's wait fails sooner, and not for a
-`wait --until-report` hour that it waits again), and `login` when it returns `auth`, once per
+`wait-timeout` when its wait runs out (not when herdr's wait fails sooner, not for a
+`wait --until-report` hour that it waits again, and not while the agent is still working, `busy`
+or `herdr:working`), and `login` when it returns `auth`, once per
 expired login: a second wait adds none, and a `tell` (the resume after the `/login`) starts a new
 one. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
 unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the waits on that builder write

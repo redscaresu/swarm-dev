@@ -1372,7 +1372,8 @@ settle() {
 # (usage_event), counts no nudge or resume, and waits on, a slice at a time, never past its timeout,
 # where it prints usage-limit and fails. A pane that already waits after that choice is the same,
 # with nothing sent; pane_quiet never sees it, so it is never stuck however long it sits.
-# A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
+# A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again)
+# or the agent is still working (busy or herdr:working, tell's working values), which is no fault;
 # one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
 # (login_incident).
 wait_agent() {
@@ -1402,7 +1403,8 @@ wait_agent() {
     fi
     if [[ "${status}" == stuck:* ]]; then echo "${status}"; return "${WAIT_STUCK}"; fi
     if [[ ${rc} -ne 0 ]]; then
-      [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
+      [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} || "${status}" == busy || "${status}" == herdr:working ]] \
+        || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
     fi
     lim=""   # settle's own read when it ended on the usage limit; else, idle or waiting, a read here
