@@ -2653,7 +2653,16 @@ does not try it again on the same head. A step-up whose new builder does not sta
 closed, prints `step-up failed: <slug>` and stops the command that ran it: a close counts nothing
 and clears nothing. The story is then the lead's to resume (`step-up --resume`), and no trigger tries
 that build again meanwhile. `wait --lead` tells the lead within one poll (§ The lead), so the
-conductor leaves the story alone.
+conductor leaves the story alone. The failed step-up also sends the story's conductor
+(`conduct-<epic>`, or the backlog's) a note through `swarm.sh tell <conductor> note`, logged as
+`tell:note`. Its first line says swarm.sh sent it, since the lead may not know yet. It names the
+story, why the step-up failed and `swarm.sh step-up --resume <slug>`. A conductor whose turn has
+ended is prompted to read it. When a review agent's `tell` ran the step-up, the note is how the
+conductor hears of it, since that output goes to the review agent's pane. Nothing is sent when herdr
+lists no conductor of the project, when the conductor has written its report, when the step-up was
+refused inside the close, or when a `step-up --resume` fails, since the lead ran that. Reading
+herdr's list and sending the note get 120 seconds between them. Past that, or when the list cannot
+be read, the step-up prints a warning and ends as it would have.
 
 A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the
 escalate role's model starts an escalate build, so `outcomes` pairs only those (and build_story's
