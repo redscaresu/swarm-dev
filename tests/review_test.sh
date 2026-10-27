@@ -96,7 +96,8 @@ case "$1 $2" in
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
-  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w","label":"e"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
