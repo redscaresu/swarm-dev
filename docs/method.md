@@ -32,8 +32,8 @@ each step is in [`reference.md`](reference.md).
 step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD or epic, a plan or finish PR
 awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
-`depends_on` story (one an agent builds, not in review) shares no file in `touches` with it and has no `needs:` line naming what it uses
-(the lead drops the dependency or adds the line). When the step leaves the builders idle and no
+`depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
+(the lead drops the dependency or names it in the story's `needs:` line). When the step leaves the builders idle and no
 story is buildable, it also prints the project with up to five candidates for a one-off: the findings
 declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
@@ -45,7 +45,7 @@ only once every epic it `depends_on` is done or has only stories in `review` lef
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
 When `next` says to wait on a conductor, it also lists each ready `lead` story that a blocked story
-depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no conductor will build them.
+depends on (`also: lead <slug> blocks <slugs>`). It also lists a story that is blocked with no `depends_on`, if its kind is one no agent builds: only the lead can ready it. A blocked story of a kind an agent builds gets no `also:` line. The lead runs the listed stories while it waits, since no conductor will build them. `status` reads a blocked story's line as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds. That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step like `operator:<x>`.
 
 ## Who does what
 
@@ -121,7 +121,7 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main`. A repo that has none of them stops the command |
 | `sign_commits` | `false` | `true`: every builder's and conductor's brief tells it to sign each commit and merge with `-S`, and to stop if it cannot; `swarm.sh board-pr`'s commit and a stacked start's merge pass `-S` too |
-| `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
+| `merge` | `human` | `human`: a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one; under that grant a story's review agent may also merge that story's PR. `agent`: the conductor merges, and so may a story's review agent for that story's PR, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task. To `wait` and `dash`, a test suite running in the agent's pane (`make test`, `make check`, `scripts/test.sh`) is work for up to 3 times this long, so it is neither stalled nor stuck (reference.md § Building) |
 | `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
