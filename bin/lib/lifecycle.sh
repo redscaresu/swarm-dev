@@ -1446,10 +1446,11 @@ failed_build() {
 # CLOSE_DROP set (close --drop), each step that succeeds is printed as dropped:, with the head SHA of
 # each branch (read before it goes) and each PR. A step that fails
 # is said on stderr, and the rest still run. A held child (held_by:) loses the hold and its prs: line,
-# so it no longer counts as open in touches_rows.
+# so it no longer counts as open in touches_rows. A story a pulled commit took off the board is
+# cleared in the repo its deleted copy names (fm_gone), and has no hold left to lose.
 clear_build() {
   local slug="$1" b="story/$1" src wt url head sha
-  src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
+  src="$(repo_dir "$(fm_gone "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
   wt="$(worktree_for "${src}" "${slug}")"
   if [[ -e "${wt}" ]]; then
     git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2
@@ -1477,6 +1478,7 @@ clear_build() {
       echo "swarm: ${slug}: could not delete ${b} on origin" >&2
     fi
   fi
+  [[ -f "${BOARD}/stories/$1.md" ]] || return 0
   # A held child's hold goes with its build, and so does the prs: line the hold kept; so does a kept: line.
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" held_by)" ]]; then
     state_set "${BOARD}/stories/$1.md" held_by "" prs ""
@@ -1532,19 +1534,26 @@ has_records() {
 }
 
 # close_epic <conductor> — the label of its epic's tabs, or nothing. It is the name without conduct-
-# when that is the full name: the brief start_conductor wrote (.swarm/briefs/<name>.md) has it, the
-# name is not AGENT_NAME_MAX long, so not cut, or the records hold no name under it. When they hold
-# one (cut_record), it is that one's epic if it is a conductor's: conduct-<epic> with its brief, and
-# no story of that name, since a story's slug may start with conduct- too. Two names under the cut,
-# or one that is no conductor's, give nothing: the cut is not this conductor's alone, and the name
-# without conduct- may be a third epic's label.
+# when a brief of that name exists (.swarm/briefs/<name>.md, whoever's: start_conductor's, or a
+# builder's whose slug it is, as on main), when the name is not AGENT_NAME_MAX long, so not cut, or
+# when the records hold no name under it. A cut that is the backlog conductor's (conductor_name
+# backlog: AGENT_NAME_MAX long for a project directory name of 9 or more characters, its brief under
+# conduct-backlog, so no record is under the name) is backlog's, as conduct_epic maps it. Else, when
+# the records hold one name under the cut (cut_record), it is that one's epic if it is a conductor's:
+# conduct-<epic> with its brief, and no story of that name, since a story's slug may start with
+# conduct- too. Two names under the cut, or one that is no conductor's, give nothing: the cut is not
+# this conductor's alone, and the name without conduct- may be a third epic's label. With two it says
+# so on stderr, since the close goes on and closes no epic's tabs, and stdout is the label.
 close_epic() {
   local full rc=0
   if [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"; return 0; fi
+  [[ "$1" != "$(conductor_name backlog)" ]] || { echo backlog; return 0; }
   full="$(cut_record "$1")" || rc=$?
   if [[ ${rc} -eq 1 ]]; then echo "${1#conduct-}"
   elif [[ ${rc} -eq 0 && "${full}" == conduct-* && -f "${PROJECT_DIR}/.swarm/briefs/${full}.md" && ! -f "${BOARD}/stories/${full}.md" ]]; then
     echo "${full#conduct-}"
+  elif [[ ${rc} -eq 2 ]]; then
+    echo "swarm: close: $1 is the cut of more than one recorded name, so no epic's tabs were closed: close by the conductor's full name (conduct-<epic>)" >&2
   fi
 }
 
@@ -1933,9 +1942,109 @@ init_config() {
   echo "added a commented commit_trailers line to ${f}"
 }
 
+# MERGE_RULE: the Claude Code permissions.allow rule that lets an agent run swarm.sh merge as the
+# conductor's and the lead's briefs write it. Without one, Claude Code refuses an agent every merge
+# (v0.28.0: the user merged 8 approved PRs by hand).
+MERGE_RULE='Bash(swarm.sh merge *)'
+
+# user_settings — the user's Claude Code settings file.
+user_settings() { echo "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json"; }
+
+# claude_settings — the Claude Code settings files that can hold MERGE_RULE, one per line: the user's
+# first, then the project's shared and local ones.
+claude_settings() {
+  user_settings
+  echo "${PROJECT_DIR}/.claude/settings.json"
+  echo "${PROJECT_DIR}/.claude/settings.local.json"
+}
+
+# merge_allowed — true when the permissions.allow lists of the claude_settings files, pooled, let
+# through every form of swarm.sh merge an agent runs: --head and --board (a conductor), --release
+# --head and the plain form (the lead), each on two PRs and SHAs of the project's GitHub origin (o/r
+# with none), so a rule tied to one PR or SHA does not count.
+# A rule is Bash(<command>), with * for any text and the older :* suffix. Bash alone, or a pattern of
+# only *, does not count: agents run in auto mode, which sets such broad rules aside. It reads only
+# those allow lists, so a deny or ask rule, or managed settings, can still block a merge it passes.
+# It prints nothing (these files can hold tokens under env) and writes no file. A missing or broken
+# file counts as no rule.
+merge_allowed() {
+  local origin
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || origin=""
+  claude_settings | python3 -I -c '
+import json, re, sys
+m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/*$", sys.argv[1])
+prs = "https://github.com/%s/%s/pull/" % (m.groups() if m else ("o", "r"))
+FORMS = ("--head {0} ", "--board ", "--release --head {0} ", "")
+CMDS = ["swarm.sh merge %s%s%d" % (f.format(sha), prs, n) for sha, n in (("0123abc", 1), ("fedcba9", 98765)) for f in FORMS]
+def allows(rule, cmd):
+    m = re.fullmatch(r"Bash\((.*)\)", rule, re.S) if isinstance(rule, str) else None
+    if not m:
+        return False
+    pat = m.group(1)[:-2] + "*" if m.group(1).endswith(":*") else m.group(1)
+    if not pat.strip("*"):
+        return False
+    return re.fullmatch(".*".join(re.escape(p) for p in pat.split("*")), cmd, re.S) is not None
+rules = []
+for f in sys.stdin.read().splitlines():
+    try:
+        allow = json.load(open(f, encoding="utf-8"))["permissions"]["allow"]
+    except (OSError, ValueError, LookupError, TypeError):
+        continue
+    rules += allow if isinstance(allow, list) else []
+sys.exit(0 if all(any(allows(r, c) for r in rules) for c in CMDS) else 1)' "${origin}"
+}
+
+# AUTO_MODE_DONE — the user's word that auto mode's setup ran, the date swarm.sh init --auto-mode-done
+# wrote. v0.28.0: the 'Teach auto mode' dialog and permission prompts froze builder panes for hours.
+AUTO_MODE_DONE="${PROJECT_DIR}/.swarm/auto-mode-done"
+
+# auto_mode_set_up — true when auto mode's setup has run: the user said so (AUTO_MODE_DONE), or the
+# user's settings hold a non-empty autoMode.environment, the list /auto-mode-setup writes there. Claude
+# Code offers the 'Teach auto mode' dialog only while that list, merged from the user's, flag and
+# managed policy settings, is empty; it takes autoMode from no project settings file. This reads only
+# the user's settings file, so a user whose org sets the list in managed settings runs
+# init --auto-mode-done. It reads only that list, prints nothing and writes no file.
+auto_mode_set_up() {
+  [[ -f "${AUTO_MODE_DONE}" ]] && return
+  python3 -I -c '
+import json, sys
+try:
+    env = json.load(open(sys.argv[1], encoding="utf-8"))["autoMode"]["environment"]
+except (OSError, ValueError, LookupError, TypeError):
+    sys.exit(1)
+sys.exit(0 if isinstance(env, list) and env else 1)' "$(user_settings)"
+}
+
+# auto_mode_done — swarm.sh init --auto-mode-done: record the user's word that auto mode's setup ran,
+# today's date in AUTO_MODE_DONE, so init stops printing that step. With main's line for the command
+# in .swarm/events.tsv, that is all it writes: nothing outside .swarm/.
+auto_mode_done() {
+  { mkdir -p "${PROJECT_DIR}/.swarm" && date +%F > "${AUTO_MODE_DONE}"; } || die "init: cannot write ${AUTO_MODE_DONE}"
+  echo "recorded that auto mode's setup ran, in ${AUTO_MODE_DONE#"${PROJECT_DIR}/"}; init no longer prints that step"
+}
+
+# init_claude — the Claude Code steps only the user can take: when merge_allowed finds no rule, the
+# step that adds MERGE_RULE to the user's settings, naming the files it read; until auto_mode_set_up,
+# the step that runs /auto-mode-setup, and the command that records it ran.
+init_claude() {
+  local f user="" files=""
+  if ! merge_allowed; then
+    while IFS= read -r f; do
+      [[ -n "${user}" ]] || user="${f}"
+      files+="${files:+, }${f#"${PROJECT_DIR}/"}"
+    done < <(claude_settings)
+    echo "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${files})."
+    echo "Your step: add \"${MERGE_RULE}\" to permissions.allow in ${user}. Under merge = agent, or an HLD that grants merge, Claude Code refuses every swarm.sh merge an agent runs without it, and you merge each PR by hand."
+  fi
+  auto_mode_set_up && return
+  echo "Auto mode has not learned your environment: $(user_settings) has no autoMode.environment, and nobody ran swarm.sh init --auto-mode-done here."
+  echo "Your step: run /auto-mode-setup once in claude, so no agent's pane stops on the 'Teach auto mode' dialog. Then run swarm.sh init --auto-mode-done here, and init stops printing this step."
+}
+
 # init_project — set the project up from the installed plugin, from its git root: the board templates
 # (never over a file that exists), .claude/swarm/ with a commented commit_trailers line, the .gitignore
-# lines, a CI workflow and a pre-commit hook. A second run changes nothing.
+# lines, a CI workflow and a pre-commit hook, then the Claude Code steps the user must take
+# (init_claude). A second run changes nothing.
 init_project() {
   local rel board f line n=0
   mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
@@ -1964,7 +2073,8 @@ init_project() {
   init_ci "${board}"
   init_hook "${board}"
   init_commit_step "${board}"
-  echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
+  init_claude
+  echo "Last step: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 
 # close_tabs <label> [pane] — close every tab this script opened under <label> and its numbered
