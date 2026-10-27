@@ -121,17 +121,62 @@ def pane_text(pane):
         return ""
 # BRIEF_PASTE: how Claude Code shows a collapsed paste, a brief herdr typed into the pane.
 BRIEF_PASTE = re.compile(r"\[Pasted text #\d+")
-def input_box(text):
-    # The input box, as pane_stop (agents.sh) reads it: the lines between the last two border lines
+def box_borders(lines):
+    # The input box's two border lines, as pane_stop (agents.sh) reads them: the last two border lines
     # at the margin, with no reply from the upper one down. None when there is no such box.
-    lines = (text or "").splitlines()
     borders = [i for i, l in enumerate(lines) if re.match("(╭|╰)?─", l)]
     if len(borders) < 2 or any(re.match("(⏺|●)", l) for l in lines[borders[-2]:]):
         return None
-    return lines[borders[-2] + 1:borders[-1]]
+    return borders[-2], borders[-1]
+def input_box(text):
+    # The input box: the lines between its borders (box_borders). None when there is no such box.
+    lines = (text or "").splitlines()
+    b = box_borders(lines)
+    return None if b is None else lines[b[0] + 1:b[1]]
 def unsent_brief(text):
     # A paste left in the input box. A submitted one above the box (`> [Pasted text #1 ...]`) is not.
     return any(BRIEF_PASTE.search(l) for l in input_box(text) or [])
+# PROMPT_OPTION: the selected option of a live menu, a permission prompt's or a dialog's (`❯ 1. Yes`).
+PROMPT_OPTION = re.compile(r"[\s│]*❯\s*\d+\.\s*\S")
+# STOP_LINE: a reply (⏺ or ●) or a submitted prompt, the lines pane_stop (agents.sh) ends a turn on.
+STOP_LINE = re.compile(r"\s*(⏺|●)|(>|❯) +\S")
+# LOGIN_STOP: Claude Code's "<reason> · Please run /login", not a reply that only mentions /login.
+LOGIN_STOP = re.compile(r"(⏺|●)\s*([^·]*·\s*)?Please run /login\s*(·|$)")
+API_STOP = re.compile(r"(⏺|●)\s*API Error:")
+MANUAL_MODE = re.compile(r"\s*⏸ manual mode on")
+MID_COMMAND = "esc to interrupt"
+def stuck_kind(text):
+    # What the pane's last screen is stuck on, else None:
+    #   prompt: a live menu, a permission prompt ("Do you want to proceed?") or a dialog ("Teach auto
+    #     mode about your environment?"): its selected option among the last USAGE_TAIL non-empty lines,
+    #     after the last reply (⏺ or ●) and not typed into the input box, with no input box or running
+    #     command (esc to interrupt) under it; usage_limit's dialog is none (wait answers it). A framed
+    #     dialog's borders (╭─, ╰─) read as a box (box_borders): of the box's lines, only those that
+    #     start │ (a framed dialog's) are no typed input;
+    #   login: the turn ended (the last reply or submitted prompt above the input box) on Claude Code's
+    #     "<reason> · Please run /login" ("Login expired · Please run /login");
+    #   api-error: the turn ended on an `API Error:` reply at the margin, as pane_stop reads it;
+    #   manual: the footer under the input box says manual mode.
+    # Else a pane mid-command (esc to interrupt among the last USAGE_TAIL non-empty lines, after the last
+    # reply), at an empty input box or on a menu quoted above the box is none.
+    lines = (text or "").splitlines()
+    last = [i for i, l in enumerate(lines) if l.strip()][-USAGE_TAIL:]
+    b = box_borders(lines)
+    reply = max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1])
+    inside = range(b[0] + 1, b[1]) if b else ()
+    sel = [i for i in last if i > reply and PROMPT_OPTION.match(lines[i])
+           and not (i in inside and not lines[i].startswith("│"))]
+    if sel and not (b and b[0] > sel[-1]) and not any(MID_COMMAND in lines[i] for i in last if i > sel[-1]):
+        return None if (usage_limit(text) or ("",))[0] == "dialog" else "prompt"
+    if any(MID_COMMAND in lines[i] for i in last if i > reply):
+        return None
+    stop = ([""] + [l for l in lines[:b[0] if b else len(lines)] if STOP_LINE.match(l)])[-1]
+    if LOGIN_STOP.match(stop):
+        return "login"
+    if API_STOP.match(stop):
+        return "api-error"
+    footer = lines[b[1] + 1:] if b else []
+    return "manual" if any(MANUAL_MODE.match(l) for l in footer) else None
 def turn_since(log, name, projects, since, slack):
     # True when <name>'s Claude session log has a turn start (a prompt typed or pasted in, not a tool
     # result or an automated prompt) stamped later than <slack> seconds before <since> (an events.tsv
