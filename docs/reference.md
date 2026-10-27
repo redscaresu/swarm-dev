@@ -937,9 +937,13 @@ conductor's `watch --epic` or `--backlog` also returns `<repo> #<n> <branch> ope
 lists an open story PR of its own. It says this once per PR, and records it as `opened <repo>#<n>` in
 `.swarm/state/watch-seen`. It says it before reading anything else about the PR, so the line costs no
 gh call past the list. It never says it for a `lead` story's PR, which is the lead's, or for a
-fix-main story's PR, which is in every conductor's scope. It also skips a story that has already had
-a review agent (a findings file or a head on record in `.swarm/reviews/`), so a PR reviewed before the
-watch first saw it is not reported as new. The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. A codex
+fix-main story's PR, which is in every conductor's scope. It also skips a PR whose head a review agent
+has already reviewed or started on (the findings file's `head:` line, or the head on record in
+`.swarm/reviews/`), so a PR reviewed before the watch first saw it is not reported as new. A rebuilt
+story's new PR has a new head, so it is reported. Watches that run at once share `watch-seen`, and the
+lead's rewrite of its waiting lines can drop an `opened` line written at the same moment, so a PR can
+be reported opened twice; `review-agent` refuses a second start while the first is still reviewing.
+The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. A codex
 agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's
 wait is reported once, and again only after a poll finds that agent no longer waiting; a poll that
 cannot read the agents changes nothing. herdr lists every project's agents, so

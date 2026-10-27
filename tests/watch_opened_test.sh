@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # watch_opened_test.sh — a conductor's watch (--epic or --backlog) returns once when a story PR of its
-# own opens, `<repo> #<n> <branch> opened`, except a lead story's, a fix-main story's or one whose story
-# has had a review agent; the lead's bare watch never says it. gh is a stub on PATH answering from prlist.json; every check run is still
-# running, so a watch with nothing to say polls on.
+# own opens, `<repo> #<n> <branch> opened`, except a lead story's, a fix-main story's or one whose head
+# a review agent has reviewed or started on; the lead's bare watch never says it. gh is a stub on PATH
+# answering from prlist.json; every check run is still running, so a watch with nothing to say polls on.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -65,6 +65,9 @@ prs() {
 }
 prs
 seen="${p}/.swarm/state/watch-seen"
+# unsee <n> — drop watch-seen's opened line for PR #<n>, which only a wrong earlier watch wrote, so the
+# check after it stands alone.
+unsee() { { grep -vx "opened o/svc#$1" "${seen}" || true; } > "${ROOT}/seen"; cp "${ROOT}/seen" "${seen}"; }
 
 # watch_for <watch args...> — what watch printed (stdout and stderr), a |, then how it ended: its exit
 # code, "polling" once it has listed the PRs three times (so two whole polls said nothing), or "timeout"
@@ -103,17 +106,19 @@ check "watch --epic never says a lead story's PR opened" "|polling" "$(watch_for
 prs story/d story/fix-main-abcdef1
 check "watch --epic never says a fix-main story's PR opened" "|polling" "$(watch_for --epic e)"
 # A watch --epic that wrongly said it opened recorded it: drop that line, so this check stands alone.
-{ grep -vx 'opened o/svc#5' "${seen}" || true; } > "${ROOT}/seen"; cp "${ROOT}/seen" "${seen}"
+unsee 5
 check "watch --backlog never says a fix-main story's PR opened" "|polling" "$(watch_for --backlog)"
-# A story that has had a review agent (a findings file, or a head on record) was reviewed before this
-# watch looked: its PR is not said opened. Without either, it is.
+# A PR whose head (head6) a review agent reviewed (its findings file's head: line) or started on (the
+# head on record) was reviewed before this watch looked: it is not said opened.
 prs story/d story/fix-main-abcdef1 story/r
 mkdir -p "${p}/.swarm/reviews"; printf 'head: head6\n## Findings\nNone.\n' > "${p}/.swarm/reviews/r.md"
-check "watch --epic does not say a PR opened whose story has a findings file" "|polling" "$(watch_for --epic e)"
-mv "${p}/.swarm/reviews/r.md" "${p}/.swarm/reviews/r.md.keep"; echo head6 > "${p}/.swarm/reviews/r.head"
-check "watch --epic does not say a PR opened whose story has a review head on record" "|polling" "$(watch_for --epic e)"
-rm -f "${p}/.swarm/reviews/r.head"
-check "watch --epic says a PR opened whose story has had no review agent" "o/svc #6 story/r opened|0" "$(watch_for --epic e)"
+check "watch --epic does not say a PR opened whose head has a findings file" "|polling" "$(watch_for --epic e)"
+rm -f "${p}/.swarm/reviews/r.md"; echo head6 > "${p}/.swarm/reviews/r.head"; unsee 6
+check "watch --epic does not say a PR opened whose head a review agent started on" "|polling" "$(watch_for --epic e)"
+# A rebuilt story: its old PR's review (head5old, file and head on record, never removed) stays, and its
+# new PR, at head6, is said opened.
+printf 'head: head5old\n## Findings\nNone.\n' > "${p}/.swarm/reviews/r.md"; echo head5old > "${p}/.swarm/reviews/r.head"; unsee 6
+check "watch --epic says a rebuilt story's new PR opened, its old PR's review left in place" "o/svc #6 story/r opened|0" "$(watch_for --epic e)"
 
 # The lead's bare watch leaves the review starts to the conductors: no opened line, none recorded.
 rm -f "${seen}"
