@@ -178,6 +178,30 @@ under Waits on the user. When \`swarm.sh merge\` refuses any other PR with \`hel
 it\` (a parent it stacks on costs money, or another \`costs:\` value), do the same: close its builder,
 leave the PR for the user and list it.
 
+When \`swarm.sh merge\` prints \`base merged: <PR URL> is now <new> (<old> with <base> merged in)\`, it
+merged nothing: code landed on <base> after <old>'s CI ran, so it had GitHub merge <base> into the
+PR's branch and checked that the new head's only new content is <base>'s. That head needs no new
+review. Run the \`swarm.sh wait-pr <PR URL>\` the line names in the background and, once it exits 0,
+the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of the findings file's head: line.
+If that CI goes red, handle it as a red check, telling the builder to pull its branch first
+(\`git pull --ff-only origin story/<slug>\`, naming the branch: its worktree tracks origin/<base>, or
+nothing when stacked): GitHub's merge commit is not in its worktree.
+When \`swarm.sh merge\` refuses with a line that ends \`merge origin/<base> in, push, and merge the new
+head\` (\`the base <base> moved past <sha>'s CI\` when GitHub could not merge it in, or a compare that
+cannot list what the base gained), it merged nothing: code may have landed on <base> after that head's
+CI ran, so the two were never tested together. This refusal is yours to handle, not the lead's. Send
+the builder a nudge with \`swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review
+round) telling it to pull its branch (\`git pull --ff-only origin story/<slug>\`), merge origin/<base>
+in, re-run the tests and push; with no
+builder, start one as the clash rule says for a conflict. Wait for the new
+head's CI with \`swarm.sh wait-pr <PR URL>\` in the background, review the new head as for any new
+head, and merge the head that review passed with \`swarm.sh merge --head <sha> <PR URL>\`, as below.
+When it refuses with \`base merge unchecked:\`, the PR's head moved and merge could not show that its
+only new content is <base>'s: a builder's push, a merge someone made by hand, or GitHub's own merge of
+<base> that touches a file the PR changed too. Review the new head as for any new head. If that review
+sends findings, tell the builder to pull its branch first (\`git pull --ff-only origin story/<slug>\`):
+the new head may be a merge commit its worktree does not have, and its push would be refused.
+
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
@@ -574,26 +598,16 @@ build_story() {
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
 # the conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
-# which review_on_head reads.
+# which review_on_head reads. Its later rounds run in the same session, through review_next.
 review_agent() {
-  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at moved errf err round
+  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head moved errf err round
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ ! -f "${BOARD}/stories/review-${slug}.md" ]] \
     || die "review-agent: the board has a story named review-${slug}, whose builder's agent name would be the same; nothing was started"
   [[ -n "$(story_items "${story}" 'Done when')" ]] || die "${slug}: ${story} has no **Done when** with an item under it"
-  src="$(repo_dir "$(fm "${story}" repo)")" || die "${slug}: ${src}"
-  wt="$(worktree_for "${src}" "${slug}")"
-  [[ -d "${wt}" ]] || die "${slug}: no worktree at ${wt}: review-agent reviews a story built here"
-  head="$(gh pr view "${pr}" --json headRefOid --jq .headRefOid 2>/dev/null)" || head=""
-  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || die "review-agent: could not read ${pr}'s head (gh pr view --json headRefOid)"
-  at="$(git -C "${wt}" rev-parse HEAD)"
-  [[ "${at}" == "${head}" ]] \
-    || die "review-agent: ${slug}'s worktree is at ${at}, not the PR's head ${head}; nothing was started: wait for its builder, then start the review again"
-  # Uncommitted work would be reviewed with the head (codex's story prompt includes it).
-  [[ -z "$(git -C "${wt}" status --porcelain)" ]] \
-    || die "review-agent: ${slug}'s worktree has uncommitted changes, so it is not the PR's head ${head}; nothing was started: wait for its builder to commit and push, then start the review again"
+  review_at_head "${slug}" "${pr}"; src="${REVIEW_SRC}"; wt="${REVIEW_WT}"; head="${REVIEW_HEAD}"
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
   # An open review-<slug> with no findings file is still reviewing (idle while its codex runs), and
   # free_agent_name would retire it as finished.
@@ -627,12 +641,102 @@ review_agent() {
   echo "${head}" > "${out%.md}.head"
 }
 
-# review_round <slug> — the review round a story's PR is on: one more than the findings told its builder
-# (tell's count) since the story's last build start (its `story` event). A step-up or a restarted
-# builder (escalate, agent) keeps the same PR, so neither starts the count again.
+# review_round <slug> — the review round a story's PR is on: one more than the findings rounds of its
+# build since the story's last build start (its `story` event), counted as the ladder counts them: a
+# findings tell that is ok or that herdr sent (findings_told), and a findings step-up (escalate's
+# `ok (findings-N: ...)`), whose brief carried the findings in place of a tell. A step-up or a
+# restarted builder (escalate, agent) keeps the same PR, so neither starts the count again.
 review_round() {
-  awk -F'\t' -v s="$1" '$3 != s { next } $2 == "story" && $5 ~ /^ok/ { n = 0 }
-    ($2 == "tell" || $2 == "tell:findings") && $5 == "ok" { n++ } END { print n + 1 }' "${EVENTS_LOG}" 2>/dev/null || echo 1
+  review_rounds "$1" | cut -d' ' -f1
+}
+
+# review_rounds <slug> — "<round> <started>": review_round's round, and the round the newest review start
+# since the story's last build start began (an ok review-agent or review-agent:next line, each on the round
+# review_round gave then), or 0 with none.
+review_rounds() {
+  awk -F'\t' -v s="$1" '$3 != s { next } $2 == "story" && $5 ~ /^ok/ { n = 0; at = 0 }
+    ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
+    $2 == "escalate" && $5 ~ /^ok \(findings-[0-9]+:/ { n++ }
+    ($2 == "review-agent" || $2 == "review-agent:next") && $5 ~ /^ok/ { at = n + 1 }
+    END { print n + 1, at + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo "1 0"
+}
+
+# review_at_head <slug> <PR URL> [next] — the story's repo, worktree and PR head, in REVIEW_SRC, REVIEW_WT
+# and REVIEW_HEAD, once the worktree is at the PR's head with nothing uncommitted; dies otherwise, as
+# review-agent, or as review-agent --next with next. Not for $(...): main logs its die's message,
+# which no_review_events reads.
+review_at_head() {
+  local at cmd=review-agent undone="nothing was started" again="start the review again"
+  [[ -z "${3:-}" ]] || { cmd="review-agent --next"; undone="no round was started"; again="run swarm.sh review-agent --next $1 <PR URL> again"; }
+  REVIEW_SRC="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || die "$1: ${REVIEW_SRC}"
+  REVIEW_WT="$(worktree_for "${REVIEW_SRC}" "$1")"
+  [[ -d "${REVIEW_WT}" ]] || die "$1: no worktree at ${REVIEW_WT}: review-agent reviews a story built here"
+  REVIEW_HEAD="$(gh pr view "$2" --json headRefOid --jq .headRefOid 2>/dev/null)" || REVIEW_HEAD=""
+  [[ "${REVIEW_HEAD}" =~ ^[0-9a-f]{40}$ ]] || die "${cmd}: could not read $2's head (gh pr view --json headRefOid)"
+  at="$(git -C "${REVIEW_WT}" rev-parse HEAD)"
+  [[ "${at}" == "${REVIEW_HEAD}" ]] \
+    || die "${cmd}: $1's worktree is at ${at}, not the PR's head ${REVIEW_HEAD}; ${undone}: wait for its builder, then ${again}"
+  # Uncommitted work would be reviewed with the head (codex's story prompt includes it).
+  [[ -z "$(git -C "${REVIEW_WT}" status --porcelain)" ]] \
+    || die "${cmd}: $1's worktree has uncommitted changes, so it is not the PR's head ${REVIEW_HEAD}; ${undone}: wait for its builder to commit and push, then ${again}"
+}
+
+# review_next <slug> <PR URL> — review-agent --next: the next review round of review-<slug>, run from its
+# own pane, in the same session; it starts no agent. Once the worktree is at the PR's head with nothing
+# uncommitted (review_at_head), the last findings file goes aside to <slug>.md.prev (so the conductor's
+# wait ends only on this round's), the head goes in .swarm/reviews/<slug>.head, and it prints the round
+# (review_round) and that round's instruction (review_round_line). Refused, touching no file under
+# .swarm/reviews, from any other pane, when the board has a story named review-<slug>, when herdr lists no
+# review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
+# since the build started), when this build has no ok review-agent start (review-<slug> is an earlier
+# build's), or while that round has started already (review_rounds): no findings round since, so its
+# review would be lost.
+# review_agent's refusal while review-<slug> is live stays for every other caller.
+review_next() {
+  local slug="$1" pr="$2" out pane round rounds
+  [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --next: bad slug '${slug}' (swarm.sh review-agent --next <slug> <PR URL>)"
+  [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent --next: '${pr}' is not a PR URL (swarm.sh review-agent --next <slug> <PR URL>)"
+  [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
+  [[ ! -f "${BOARD}/stories/review-${slug}.md" ]] \
+    || die "review-agent --next: the board has a story named review-${slug}, whose builder's agent name would be the same; no round was started"
+  pane="$(agent_field "$(agent_name "review-${slug}")" pane_id)"
+  if [[ -z "${pane}" ]]; then
+    # agent_field is empty too when herdr's list fails: that is no answer, not no review agent.
+    herdr agent list >/dev/null 2>&1 \
+      || die "review-agent --next: herdr could not list its agents, so whether review-${slug} runs is unknown; no round was started: run swarm.sh review-agent --next ${slug} <PR URL> again once herdr answers, and start no new review agent"
+    die "review-agent --next: herdr lists no review-${slug} this project started, so no round was started: start one with swarm.sh review-agent ${slug} <PR URL>"
+  fi
+  [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
+    || die "review-agent --next: only review-${slug}, in its pane ${pane}, runs its next round, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; no round was started"
+  rounds="$(review_rounds "${slug}")"; round="${rounds% *}"
+  # Round 1 is always a plain review-agent start: with no findings sent since the build started (a new
+  # build's story event resets the count), there is no next round.
+  [[ "${round}" -gt 1 ]] \
+    || die "review-agent --next: no findings went to ${slug}'s builder since its build started, so there is no next round (round 1 is a plain review-agent start); no round was started"
+  # A review-<slug> left from an earlier build has no start in this one: its next round is not this build's.
+  [[ "${rounds#* }" -gt 0 ]] \
+    || die "review-agent --next: no review-agent start of ${slug} is on record since its build started, so review-${slug} is from an earlier build; no round was started: close it, then start one with swarm.sh review-agent ${slug} <PR URL>"
+  [[ "${rounds#* }" -lt "${round}" ]] \
+    || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: wait for the conductor's findings tell, then run it again"
+  review_at_head "${slug}" "${pr}" next
+  out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
+  if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
+  echo "${REVIEW_HEAD}" > "${out%.md}.head"
+  # The brief pins the head of the round it started: this round's head replaces it there.
+  echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}, and write ${out} afresh, its first line \`head: ${REVIEW_HEAD}\` (or, if the worktree moved, \`head moved: <what changed>\` under it)."
+  review_round_line "${round}" "${pr}"
+}
+
+# review_round_line <round> <PR URL> — what review round <round> runs, for review_brief and review_next:
+# codex and, when the PR changes code, /code-review on round 1; codex alone after it.
+review_round_line() {
+  if [[ "$1" == 1 ]]; then
+    echo "This is review round 1 of the story. When the PR
+changes code (not only docs, board files or a dependency bump), state the touches and Done when
+above, then run \`/code-review $2\`."
+  else
+    echo "This is review round $1 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
+  fi
 }
 
 # review_start_failed <slug> <moved> <err> — after review_agent's start of review-<slug> failed with
@@ -775,18 +879,32 @@ EOF
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: read-only, the
-# story's touches and Done when, codex-review with the slug, /code-review on round 1 when the PR changes code, the
-# project's rules, and each finding written to the absolute <findings file> (the agent's cwd is the
-# worktree) under its head: line, with work outside the story listed apart for the conductor to decline.
+# story's touches and Done when, the green step first (wait-pr, then triage of the PR's check-run notes
+# and code-scanning alerts as green_rule's, each real one, red check or conflict sent to the builder as a
+# nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
+# or when the builder stops pushing, it writes a findings file with the red check as its one finding,
+# which the conductor's review rules send to the builder), codex-review with the slug, /code-review on round 1
+# when the PR changes code, the project's rules, and each finding written to the absolute <findings
+# file> (the agent's cwd is the worktree) under its head: line, with work outside the story listed apart
+# for the conductor to decline. Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
-  local story="${BOARD}/stories/$1.md" rules cr
-  cr="This is review round $6 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
-  [[ "$6" != 1 ]] || cr="This is review round 1 of the story. When the PR
-changes code (not only docs, board files or a dependency bump), state the touches and Done when
-above, then run \`/code-review $2\`."
+  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" repo ladder=""
+  cr="$(review_round_line "$6" "$2")"
+  sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
+  # findings takes the story's repo by name; a story with no repo: is in the project's own.
+  repo="$(fm "${story}" repo)"; [[ -n "${repo}" ]] || repo="$(basename "${PROJECT_DIR}")"
+  # Only with the ladder on does a wait-pr from this pane step the build up (review_red_scan).
+  [[ -z "${CFG_escalate_ladder:-}" ]] || ladder="
+  When it also prints \`stepped up: $1\`, the build's red heads handed it to the next model on the
+  escalation ladder, and $5 is gone: send no nudge; write ${4} with the Write tool holding two lines,
+  \`head: $5\` and \`head moved: <that stepped up: line>\`, then stop. When it prints
+  \`step-up failed: $1\` instead, the builder was closed and no new one runs, so no nudge can reach
+  it: write ${4} with the Write tool holding \`head: $5\`, a \`## Findings\` heading with that
+  \`step-up failed:\` line as its one item, and a \`## Out of scope\` heading with \`none\`, then stop."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. You are read-only: never edit,
-commit or push here, and never merge, by any route. The one file you write is ${4}.
+commit or push here, and never merge, by any route. The files you write are ${4} and, to nudge the
+builder, ${nudge}.
 
 The story touches: $(fm "${story}" touches)
 
@@ -795,6 +913,32 @@ $(story_items "${story}" 'Done when')
 
 Judge the PR against these touches and items. ${SCOPE_RULE}
 $(review_stack_note "$1" "$3")
+Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr $2\` in the
+background and wait for it to exit, never a loop of your own; it prints the head it waits on first.
+- Exit 0: the head counts green only once you have triaged what \`${sw} findings ${repo} ${2##*/}\`
+  prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning
+  alerts. Nudge the builder with each real one. Rebut the rest with a reason in the PR
+  (\`gh pr comment $2 --body '<the reason>'\`), unless a comment there already rebuts it: scanners
+  often flag a name, not a value. Never dismiss an alert.
+- Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in.${ladder}
+- Its other exit 2s print why. On a timeout or no check runs, read the checks once (\`gh pr checks $2\`):
+  nudge the builder when a workflow never started, else run wait-pr again. On a gh error, run it again.
+To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: the Write tool refuses
+to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
+to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
+When tell says the builder is still working, wait for it with \`${sw} wait $1\` in the background,
+then tell it. After each nudge, wait for the builder the same way, then wait for green again on the
+head it pushed. The green step is bounded: at most two nudges, and at most two heads that wait-pr
+calls red. Stop with the not-green file when the builder goes idle without pushing (wait-pr prints
+the same head), when wait-pr ends the same way twice, when the second red head would need a nudge, or
+when the head after your second nudge is not green. The not-green file is ${4}, written with the
+Write tool: \`head: $5\`, then a \`## Findings\` heading with one line for the builder,
+\`wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>\`, then a
+\`## Out of scope\` heading with \`none\`. The conductor sends it to the builder as a findings round,
+as any finding. Reply with the same, then stop. Once a head is green and triaged with nothing to
+nudge, review it as below when it is $5. When the builder pushed past $5, write ${4} with the Write
+tool holding two lines, \`head: $5\` and \`head moved: <the green head>\`, then stop.
+
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
 Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
@@ -978,11 +1122,14 @@ EOF
 swarm.sh steps a build up the escalation ladder (${CFG_escalate_ladder}) itself when its builder
 stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${STEP_UP_FINDINGS} of its build
 (tell), or its PR's checks go red on ${STEP_UP_RED_HEADS} heads of its build (\`watch --epic\` or
-\`--backlog\`). That command then prints \`stepped up: <slug>\` (wait prints it in place of
-\`stalled:\`): the next model carries on in the same worktree and branch. Do not close, retry or
-tell that story for it; wait on its builder again. A \`step-up failed: <slug>\` line means the
+\`--backlog\`, or the review agent's \`wait-pr\` from its own pane). That command then prints
+\`stepped up: <slug>\` (wait prints it in place of \`stalled:\`): the next model carries on in the
+same worktree and branch. Do not close, retry or tell that story for it; wait on its builder again.
+A review file whose \`head moved:\` line names \`stepped up:\` is the review agent reporting one
+from its \`wait-pr\`: the PR's head has not moved, so do not start the review again; wait on the
+builder, then start the review on the head it pushes. A \`step-up failed: <slug>\` line means the
 step-up stopped after closing the builder. Leave that story alone: \`wait --lead\` tells the lead,
-so it does not go in your report.
+so it does not go in your report. A review file whose one finding is that line is the same case.
 EOF
   local rules sign; sign="$(sign_rule)"
   [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"
@@ -1421,6 +1568,6 @@ start_conductor() {
   if err="$(set_fm "${epic_file}" status active 2>&1)"; then
     echo "epic ${epic}: status later -> active (in .swarm/board-state)"
   else
-    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand (${err#swarm: })" >&2
+    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand, with agreed: <today> in the same edit (${err#swarm: })" >&2
   fi
 }

@@ -236,9 +236,10 @@ Repeat until a step below says stop:
      the story's builder and then could not start the next model's. Its conductor leaves the story
      alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says where it stopped,
      and sometimes why. The error is in the output of whatever ran the step-up: read that output
-     in every case before you resume. For a step-up swarm.sh ran itself, it is the
-     conductor's pane: `herdr agent read <conductor>`, the name `swarm.sh status` lists for the
-     story's epic or for the backlog. For one run by hand, it is the command's own output. With
+     in every case before you resume. For a step-up `close`, `tell`, `wait --stall` or `watch` ran,
+     it is the conductor's pane: `herdr agent read <conductor>`, the name `swarm.sh status` lists for
+     the story's epic or for the backlog. For one a review pane's `wait-pr` ran, it is the review
+     agent's pane: `herdr agent read review-<slug>`. For one run by hand, it is the command's own output. With
      no `step-up:failed` line, the step-up was killed partway. Fix the cause the output shows,
      then run the exit. A pane may still be open under the builder's name, kept by the failed
      start or left by a killed step-up. The resume retires an idle agent in it and starts the
@@ -529,7 +530,11 @@ Repeat until a step below says stop:
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
-     story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
+     story: what blocks it; a later story: set it `ready` to start it; a later epic: on the user's go,
+     set it `active` and write `agreed: <today>` (today's date) in the same edit, as /epic does,
+     since board-pr refuses a later epic set active with no ticket, as it does a draft. If it already
+     has `agreed: <today>` (agreed and parked today) on a board in the repo, that date is no ticket: drop
+     the line in one board PR, then set it `active` with `agreed: <today>` in the next; a draft epic:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
      The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
      `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or

@@ -57,6 +57,8 @@ case "$1 $2" in
       */commits/*/status*) serve "${sha}.status" ;;
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
       */pulls/*/files*) serve files ;;
+      # compare/<head>...main, merge's read of what the base gained: nothing.
+      */compare/*...main) echo '{"ahead_by":0,"files":[]}' ;;
       */compare/*) serve "compare.${path##*...}" ;;
       */rules/branches/*) echo '[]' ;;
       */branches/*) echo "gh: Branch not protected (HTTP 404)" >&2; exit 1 ;;

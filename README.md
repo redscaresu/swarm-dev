@@ -109,7 +109,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it. For a `later` epic, say go and the lead sets it `active` with `agreed: <today>` |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 | an agent waiting on a prompt or a dialog, or in manual mode | answer the prompt in the pane the lead names, or turn manual mode off there. The lead hears of most within a poll. Manual mode turned on, or a dialog opened, at an idle box can take up to 5 minutes, and a slow pane read ahead of it can add a poll. A ready story's builder in manual mode it handles itself: it closes the pane, then restarts or holds the story |
 | an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
@@ -159,6 +159,12 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   `.claude/`, `.github/`, `hooks/` or a root `Makefile` waits for you to merge it by hand.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
+- Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
+  does not merge it while the base has commits the PR's head lacks that change more than board files.
+  It has GitHub merge the base into the PR's branch, checks that the new head adds only the base's
+  commits, and stops with a `base merged:` line. Under `merge = agent` the conductor waits for that
+  head's CI and merges it. When GitHub cannot merge the base in (a conflict, say), the builder does,
+  and the conductor reviews and merges the new head ([reference.md § Merging](docs/reference.md#merging)).
 - Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
   holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
   PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).
@@ -188,6 +194,10 @@ An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage
 Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:` line. Once its
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
+
+On a board inside the project's repo, an agreed HLD must end with a line that is exactly
+`## Epics`, followed only by blank lines and links `- [<slug>](../epics/<slug>.md)` to epics on the
+board. `next` offers no `/plan-hld` for any other HLD, and the gate says what to change.
 
 On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
 `next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
