@@ -42,11 +42,51 @@ board_read() {
   fi
 }
 
+# board_pr_kind <name> <board> — the kind of the board PR <name>: plan (plan-<hld>, scope-<epic>),
+# agreement (agree-<hld or epic>), finish (finish-<slug>, drop-<slug>), hold (hold-<slug>), else
+# story-scope edit. A plan or agreement name counts only when it names an HLD or epic in <board> (the
+# PR's worktree's), by its file name made clean (board_pr_names); a story slug such as plan-hld-gaps
+# or scope-creep is a story-scope edit.
+board_pr_kind() {
+  local x="${1#*-}"
+  case "$1" in
+    plan-?*) board_pr_names "$2/hld" "${x}" && { echo plan; return; } ;;
+    scope-?*) board_pr_names "$2/epics" "${x}" && { echo plan; return; } ;;
+    agree-?*) { board_pr_names "$2/hld" "${x}" || board_pr_names "$2/epics" "${x}"; } && { echo agreement; return; } ;;
+    finish-?* | drop-?*) echo finish; return ;;
+    hold-?*) echo hold; return ;;
+  esac
+  echo "story-scope edit"
+}
+
+# board_pr_names <dir> <x> — true when a file <dir>/<f>.md other than the README has <f>, lower-cased
+# with each run of characters other than a-z and 0-9 turned into one - and - trimmed from both ends,
+# equal to <x>: the name /hld and /epic give an agreement PR (agree-<x>).
+board_pr_names() {
+  local f names=""
+  [[ "$2" != readme ]] || return 1
+  for f in "$1"/*.md; do [[ ! -f "${f}" ]] || names+="$(basename "${f}" .md)"$'\n'; done
+  names="$(tr '[:upper:]' '[:lower:]' <<< "${names}" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  grep -qxF -- "$2" <<< "${names}"
+}
+
+# board_pr_kind_line <name> <board> — open's line on stderr: a plan or agreement PR needs one
+# codex-review pass before it merges (the commands run it before open, so it may be done); the other
+# kinds none. How a PR lands is not here: merge and grants decide that (finish's own line, and
+# board_pr_merge_rule in the conductor's brief, say it).
+board_pr_kind_line() {
+  local kind; kind="$(board_pr_kind "$1" "$2")"
+  case "${kind}" in
+    plan | agreement) echo "board-pr: $1 is a ${kind} PR: it needs one swarm.sh codex-review pass before it merges; skip it if you ran it" ;;
+    *) echo "board-pr: $1 is a ${kind} PR: no codex-review" ;;
+  esac
+}
+
 # board_pr start|open|done <name> ... — the lead's board edits, each in its own worktree, never the
 # main checkout: start makes <repo>-wt/_board-<name> (a path no story slug makes) on a new
 # board/<name> from origin/<base> and prints its path; open <name> "<title>" <body-file> commits every change (all under the board) with
-# the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL, and
-# refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
+# the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL (its
+# kind's line, board_pr_kind_line, goes to stderr), and refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
 # the worktree and board/<name> here, once the PR on the branch's tip has merged or closed, or, with
 # no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
@@ -141,6 +181,7 @@ board_pr() {
       if [[ -n "${split}" ]] && ! grep -qsF "${url}" "${split}/split-pr"; then
         printf '%s\t%s\n' "$(date +%F)" "${url}" > "${split}/split-pr"
       fi
+      board_pr_kind_line "${name}" "${wt}${rel:+/${rel%/}}" >&2
       echo "${url}" ;;
     done)
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)" || die "board-pr: ${PROJECT_DIR} has no origin"
@@ -4002,10 +4043,11 @@ upgrade_flags() {
 
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
 # on its own: Claude Code's own state for the session herdr has in <pane> now (upgrade_herdr; the one
-# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else read_state's; a turn stopped on
+# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else read_state's, over
+# agents.tsv's session (herdr 0.9.5 lists none); a turn stopped on
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
-# turn though background shells keep Claude Code saying busy (turn_over); one waiting on a prompt,
-# or on a tool call's result, is busy.
+# turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
+# one waiting on a prompt, or on a tool call's result, is busy.
 upgrade_state() {
   local s sid
   sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
@@ -4023,7 +4065,7 @@ print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("
   case "${s}" in
     idle|herdr:idle|herdr:done) echo idle ;;
     gone|unknown|herdr:unknown) echo "${s#herdr:}" ;;
-    busy|herdr:working) if api_stopped "$1" "$2" </dev/null || turn_over "${sid}"; then echo idle; else echo busy; fi ;;
+    busy|herdr:working) if api_stopped "$1" "$2" </dev/null || turn_over "${sid:-$(recorded_session "$1")}"; then echo idle; else echo busy; fi ;;
     *) echo busy ;;
   esac
 }
