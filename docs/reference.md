@@ -695,16 +695,18 @@ to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, i
 `/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
 background work. When it starts, an epic still `later` is set `active` (in
 `.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
-stop listing it as waiting on you. It runs in a herdr workspace named for the epic's `parent:` if it has one (epics with the same
-parent share it), or else for the epic, in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
-that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
+stop listing it as waiting on you. It runs in a herdr workspace labelled for its project and the epic's `parent:` if it has one (epics with the same
+parent share it), or else for the epic (see **Workspace labels** below), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
+that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane always
+opens in the workspace of the agent that starts it: a tab whose panes are in another workspace
+counts as full, so that pane opens `<epic>-2` there instead. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
 **The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
 first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
-`story --strict`, the same review, and the same handover or merge. It runs in a workspace named
-`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
+`story --strict`, the same review, and the same handover or merge. It runs in its project's
+`<project> · backlog` workspace and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
 names span every project, so naming it for the project's path lets two projects each run one at once,
 even two directories with the same name. A name another project's agent holds is refused before the
 old report or brief is touched, and the refusal says where that agent runs. An epic whose
@@ -754,6 +756,35 @@ still the step, and logs a `conduct` line in `events.tsv` as `swarm.sh conduct` 
 fails prints a warning, logs its error as that line's outcome, and changes neither command's exit
 status. The warning says to run the `swarm.sh conduct` yourself, or, when an agent's own board merge
 started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
+
+**Workspace labels.** herdr's workspaces span every project on the machine, so each label swarm.sh
+gives one starts with the project's label, then ` · `:
+
+- `<project> · <epic>`: an epic's conductor, its stories' builders and their review agents. For a
+  child epic of a split one, `<epic>` is its `parent:`, so the children share the workspace.
+- `<project> · backlog`: the backlog conductor and the one-offs it builds.
+
+`<project>` is the project directory's name. When herdr already lists a workspace labelled
+`<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
+of the project's path (the hash the backlog conductor's name ends with), so `/a/app` gets `app`
+and `/b/app` gets `app-<hash>`. herdr gives a workspace no directory of its own, so a workspace's
+directory is that of its first pane in `herdr pane list`, the conductor's or a review agent's. A
+builder's pane in the project's own story worktree (`<project>-wt/<slug>`) counts as the project's;
+one in any other repo's (`<repo>-wt/<slug>`) is skipped, since its path does not say whose it is. `conduct` takes a
+workspace only when its directory is the project's: one under either form of the project's label, or
+one under the bare `<epic>` or `backlog` label an older swarm.sh gave with no other project's pane in
+it, so a conductor started before the upgrade keeps its workspace and never takes one another project
+shares. Otherwise it makes a new one. A tab record that still lists a live pane in a workspace an
+older swarm.sh shared counts as full (see above), so the conductor, its builders and its review
+agents open a new tab in the project's own workspace. Labels can still repeat, for example: two
+projects of one name that start a conductor at the same moment both make `<name> · <epic>`; a
+project inside a folder whose name ends in `-wt` is skipped like a story worktree, so another
+project of its name takes the plain label too; and a project's workspace with only its builders
+left (in `<project>-wt/<slug>`) has no directory for another project, which makes the plain label
+as well. Each still reuses only its own workspace. A workspace left with only other repos' builders
+has no directory, so the next conductor makes a second one.
+`close` and `tidy` find tabs and panes from `.swarm/state`, not from labels, so a relabelled
+workspace closes as before.
 
 **`next`'s idle dependency line.** After its step, `next` prints `idle: <story> waits on <dep> but
 shares no touches part with it and needs nothing from it` for each blocked story an agent builds,
@@ -1021,7 +1052,18 @@ So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at t
 herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, when it is queued (green and mergeable for `queue_minutes` with no review agent on
-its head, reported once per head), or when an agent's session is waiting, and it names what the agent waits for. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. A codex
+its head, reported once per head), or when an agent's session is waiting, and it names what the agent waits for. A
+conductor's `watch --epic` or `--backlog` also returns `<repo> #<n> <branch> opened` the first time it
+lists an open story PR of its own. It says this once per PR, and records it as `opened <repo>#<n>` in
+`.swarm/state/watch-seen`. It says it before reading anything else about the PR, so the line costs no
+gh call past the list. It never says it for a `lead` story's PR, which is the lead's, or for a
+fix-main story's PR, which is in every conductor's scope. It also skips a PR whose head a review agent
+has already reviewed or started on (the findings file's `head:` line, or the head on record in
+`.swarm/reviews/`), so a PR reviewed before the watch first saw it is not reported as new. A rebuilt
+story's new PR has a new head, so it is reported. Watches that run at once share `watch-seen`, and the
+lead's rewrite of its waiting lines can drop an `opened` line written at the same moment, so a PR can
+be reported opened twice; `review-agent` refuses a second start while the first is still reviewing.
+The lead's bare `watch` never prints it. It polls the open PRs every minute over gh's REST API, whose hourly limit is separate from the GraphQL one that `gh pr` commands spend: the list, then a PR's mergeable state, read only for its own stories' PRs and only when a conflict or a queued line could follow from it, so never for a head it has reported conflicting, or finished and queued. A poll that reports one PR reads nothing past it. A failed read counts as `UNKNOWN` for that poll and is said on stderr. A failed list is said once, until a list succeeds again, and watch polls on. A failed check-runs read counts as unknown for that poll and is said once per PR, with gh's reason, until a read of that PR succeeds. A codex
 agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's
 wait is reported once, and again only after a poll finds that agent no longer waiting; a poll that
 cannot read the agents changes nothing. herdr lists every project's agents, so
@@ -2330,6 +2372,16 @@ record for the pane names `review-<slug>` (a retired `-done` name does not count
 name, so a record left over after the agent exited or was retired is refused. The builder of a story slugged `review-x`
 has a builder's role there, so it is refused. Under `merge = human` a review agent merges only where
 the HLD grants `merge`, as the lead does.
+
+`swarm.sh review <slug> <PR URL>...` sends the story's running conductor (the backlog conductor, for
+a story with no epic) a note too, as a story merge does, when it puts a story in review with
+`merge = human`, or a story with `costs: money` (or any `costs:` value but `none`) with
+`merge = agent`. The note says the story is in review and its PRs now wait to be merged; it does
+not say who merges them. No note goes for a review held on an open parent, for an epic's review, for
+a story the swarm merges itself with `merge = agent`, or when the conductor ran the review itself.
+With no conductor running, none is written. Its herdr calls stop after `SWARM_NOTE_HERDR_WAIT`
+seconds, as a merge note's do. A herdr that cannot list its agents, or gives a list that does not
+parse, or a note that fails, is a warning and never fails the review.
 
 The plugin also ships a merge guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
 `hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. Inside a swarm

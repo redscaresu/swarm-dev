@@ -631,14 +631,16 @@ live_at() {
 # ready. One that has written its report has finished (conductors_queued): nobody reads its inbox.
 # With none running, or only that one, print the ready now: line for [slugs], or nothing without
 # them. A herdr that cannot list its agents, or a tell that fails, is a warning: it never fails. It
-# runs after the PR has merged, so its herdr calls, the list here and those tell_agent makes, are
-# bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), checked to parse
-# (note_agents), so a list that does not, or a read that fails after it, is a warning, never a
-# conductor taken for gone.
+# runs after merge has merged the PR, or after review has set the story's state, so its herdr calls,
+# the list here and those tell_agent makes, are bounded (bound_herdr): neither command hangs on herdr.
+# The conductor's pane is read from that one list (herdr_from), checked to parse (note_agents), so a
+# list that does not, or a read that fails after it, is a warning, never a conductor taken for gone.
+# Without [slugs] a warning says the conductor was not told "of the merge", or NOTE_WHAT when the call
+# sets it (as review_note does).
 conductor_note() {
   local name list what="that ${3:-} are ready" later="it finds them on its next pass"
   name="$(group_conductor "$1")"
-  [[ -n "${3:-}" ]] || { what="of the merge"; later="it reads the board on its next pass"; }
+  [[ -n "${3:-}" ]] || { what="${NOTE_WHAT:-of the merge}"; later="it reads the board on its next pass"; }
   (
     bound_herdr
     if ! list="$(note_agents)"; then
@@ -656,7 +658,7 @@ conductor_note() {
 # bound_herdr — from here on in this shell, `herdr` is a function that cuts each herdr call off after
 # SWARM_NOTE_HERDR_WAIT seconds (default HERDR_LIST_WAIT): the caller's own and those of the functions
 # it calls (within runs the program, not the function). Call it in a subshell: a note goes after the
-# PR has merged, and merge must not hang on herdr.
+# PR has merged or the story is in review, and neither merge nor review may hang on herdr.
 bound_herdr() {
   # shellcheck disable=SC2329 # called by name, by what runs after it
   herdr() { within "${SWARM_NOTE_HERDR_WAIT:-${HERDR_LIST_WAIT}}" herdr "$@"; }
@@ -1840,7 +1842,13 @@ queued_sent() {
 }
 
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
-# needs the lead, print one line saying which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
+# needs the lead, print one line saying which and why, and exit 0. With --epic or --backlog, a story PR
+# first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>), before
+# anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
+# whose head already has a review). Watches that run at once share watch-seen, and the lead's rewrite
+# of its waiting lines can drop an opened line written meanwhile, so a PR can be said opened twice, as
+# a done or conflict line can be said twice (review-agent refuses a second start while the first still
+# reviews). A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # when its head has had no check at all for WATCH_STALL_SECS (default 600), or when its head, its
 # checks reported finished, has waited green for a review (queued_line). An agent of this
@@ -1880,6 +1888,12 @@ watch_prs() {
       while read -r n sha br age; do
         [[ -n "${n}" ]] || continue
         [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
+        # A conductor's watch (heads set) says once that a story PR opened, so it starts the review
+        # agent; from the list and the board alone, before any read of the PR. The lead's bare watch
+        # leaves that to it.
+        if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}" && opened_due "${br#story/}" "${sha}"; then
+          echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"; return 0
+        fi
         mergeable=""
         # No conflict read on a head already reported conflicting, or finished and queued: nothing
         # more is said of it.
@@ -1954,6 +1968,19 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     fi
     nap 60
   done
+}
+
+# opened_due <slug> <sha> — true when a scoped watch says <slug>'s PR, its head at <sha>, opened: its
+# story is one an agent builds (a lead story's PR is the lead's, as in queued_line); it is no fix-main
+# story, which is in every conductor's scope, so the one opened line watch-seen keeps could go to a
+# conductor that does not build it; and no review agent has reviewed or started on <sha> (the findings
+# file's head: line, or the head on record in .swarm/reviews). So a PR already reviewed when a watch
+# first looks is not said opened, and a rebuilt story's new PR is, whatever its old PR's review left.
+opened_due() {
+  local f="${BOARD}/stories/$1.md" r="${PROJECT_DIR}/.swarm/reviews/$1"
+  if [[ -f "${f}" ]] && ! agent_kind "$(fm "${f}" kind)"; then return 1; fi
+  [[ "$1" != fix-main-* ]] || return 1
+  ! grep -qx "head: $2" "${r}.md" 2>/dev/null && [[ "$(cat "${r}.head" 2>/dev/null)" != "$2" ]]
 }
 
 # watch_rows <owner/repo> — watch's list: each open story/* PR as `<number> <head sha> <head ref>
