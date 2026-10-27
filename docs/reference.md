@@ -722,7 +722,10 @@ ready stories (an `unblock` or a `reset` readies a story there): a new one would
 Another epic's state writes do not count. Nor does a backlog conductor start while its report
 lists a one-off whose worktree is still there under `not started:` (the stops above). Nothing starts
 while a working conductor has stopped on an expired login or an API error, which would stop a new one
-too, or while herdr cannot list its agents, since what runs is then not known; each prints why.
+too, or while herdr cannot list its agents, since what runs is then not known; each prints why. From
+`swarm.sh next`, nothing starts once a read it needs was cut at next's deadline, since a cut read could
+hide a stopped conductor: it prints `no conductor started: <conductor>: a read it needs was cut at the
+report's deadline; run swarm.sh next again` for each one it would have started.
 Under `merge = agent`, none starts without an allow rule for `swarm.sh merge` (§ Merging, the conduct
 preflight).
 Outside herdr it starts nothing and prints the `swarm.sh conduct` to run. Each start prints `started:

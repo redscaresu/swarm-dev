@@ -469,8 +469,9 @@ idle_lines() {
 # report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
 # each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
 # next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
-# later list cut at the deadline cannot hide a conductor an earlier one showed. off: the programs again
-# (unset -f).
+# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
+# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
+# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
 # shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
 next_reads() {
   if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
@@ -479,17 +480,17 @@ next_reads() {
       [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
       printf '%s\n' "${LEAD_AGENTS}"; return 0
     fi
-    report_read "herdr ${*:1:2}" herdr "$@"
+    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
   }
-  gh() { report_read "gh ${*:1:2}" gh "$@"; }
-  claude() { report_read "claude $1" claude "$@"; }
+  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
+  claude() { report_read "claude $1" claude "$@" </dev/null; }
 }
 
 # next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
 # which next_reads' gh never sees. In a subshell, so that ci_gate ends with it.
 # shellcheck disable=SC2329 # queued_line calls it
 next_queued() (
-  ci_gate() { report_read "ci_gate $1" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@"; }
+  ci_gate() { report_read "ci_gate $1" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@" </dev/null; }
   conductors_queued
 )
 

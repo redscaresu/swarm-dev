@@ -198,6 +198,7 @@ printf '2026-10-26T10:00:00Z\tstory\tn1\t-\tok\n2026-10-26T10:30:00Z\tclose\tn1\
 printf '2026-10-26\tcode\tn1\tclaude\tsonnet\thigh\ts-n1\n' >> "${p}/.swarm/agents.tsv"
 nextrun "${ORIGIN_LIMIT}" slow-origin
 rm "${p}/docs/stories/n1.md"
+soon "a slow origin read: next exits soon after the deadline" "${ORIGIN_LIMIT}"
 check "a no-agent step after a slow origin read: next's step comes first" "no-agent n1" "$(first)"
 check "a slow origin read is cut, not waited for" "not waited for" "$(waited origin)"
 check "a slow origin read: next names it skipped" "gh repo view" "$(named "gh repo view")"

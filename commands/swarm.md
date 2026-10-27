@@ -130,8 +130,8 @@ Repeat until a step below says stop:
      `no backlog conductor started:` says why none did: a conductor that has reported (collect it
      first), a report nobody collected, an expired login or API error, another project's agent
      holding the name, a report newer than every story and epic file (the board must change
-     first), or, under `merge = agent`, no allow rule for `swarm.sh merge` (the user adds the rule the
-     line names). The backlog's can also say its report lists a story under `not started:` whose worktree
+     first), a read it needed cut at next's deadline (run `swarm.sh next` again), or, under
+     `merge = agent`, no allow rule for `swarm.sh merge` (the user adds the rule the line names). The backlog's can also say its report lists a story under `not started:` whose worktree
      is still there, so that build died: clear it first, as the line says. A `warning: ... failed`
      line means the start failed: run the `swarm.sh conduct` it names yourself once the cause is
      fixed. `warning: herdr cannot list its agents ...` means none was started because which
