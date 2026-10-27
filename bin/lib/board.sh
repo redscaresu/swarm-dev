@@ -1029,9 +1029,11 @@ hld_due() {
 HLD_MARKER="writing-epics"
 
 # hld_resumable <hld name> — true when an interrupted /plan-hld wrote the epics naming the HLD and a
-# rerun may overwrite them: its marker (HLD_MARKER) is there and lists each of them, and no story names
-# one in epic: and no epic in parent:, done or not (work on it has started). An epic the marker does not
-# list (an older or hand-written one) is not the run's.
+# rerun may overwrite them: its marker (HLD_MARKER) is there and lists each of them, and no work has
+# started on them. Work has started when a story names one in epic: or an epic in parent:, done or not,
+# or when the project's log (EVENTS_LOG) has a conductor started for one (conduct <epic>) or one, or an
+# epic the marker lists, finished (finish <epic>): finish deletes a story on a board outside the repo,
+# so the log is what keeps it. An epic the marker does not list (an older or hand-written one) is not the run's.
 hld_resumable() {
   local marker f e slugs=" "; marker="${PROJECT_DIR}/.swarm/$1/${HLD_MARKER}"
   [[ -f "${marker}" ]] || return 1
@@ -1046,7 +1048,8 @@ hld_resumable() {
   while IFS= read -r f; do
     e="$(fm_list "${f}" parent)"; [[ -z "${e}" || "${slugs}" != *" ${e} "* ]] || return 1
   done < <(board epics)
-  return 0
+  ! awk -F'\t' -v s="${slugs}$(tr '\n' ' ' < "${marker}") " '($2 == "conduct" || $2 == "finish") && index(s, " " $3 " ") { f = 1 }
+    END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
 # hld_resuming <epic file> — true when the epic's hld: names an HLD that a rerun of an interrupted

@@ -52,8 +52,9 @@ The whole plan runs on origin's copy of the board in the plan worktree, `<wt>` b
   leave it and say so. On a board outside the repo, feed each `docs/epics/*.md` to the same `awk`
   and `grep`. There an epic naming the HLD is not a stop when the HLD has no `planned:` value,
   `.swarm/$1/writing-epics` lists every epic naming the HLD, and no story's `epic:` and no epic's
-  `parent:` names one of them. An interrupted run wrote those epics in place and no work has started
-  on them: resume and overwrite them as below.
+  `parent:` names one of them, and `.swarm/events.tsv` has no `conduct` or `finish` line for one of
+  them. An interrupted run wrote those epics in place and no work has started on them: resume and
+  overwrite them as below.
 
 A board outside the project's repo has no worktree and no origin: skip the PR, origin and worktree
 steps, run the checks on the board's own files, read and write the board where it is, and read
@@ -135,7 +136,9 @@ the top. A board outside the project's repo is written in place: no commit, no b
 before you write any epic, write `<project>/.swarm/$1/writing-epics`, one slug per line: every epic
 this run writes and, on a resume, every slug the file already lists. Remove it once the HLD's
 `planned:` line is written. While it is there and the HLD has no `planned:`, `swarm.sh next` offers
-`plan-hld $1` again to finish the interrupted run.
+`plan-hld $1` again to finish the interrupted run. A run interrupted before this file existed has
+none: the user writes it by hand, one slug per epic naming the HLD, after checking that none of
+those epics has work on it.
 
 Once the board PR is open, log every skeptic, codex and critic finding against it, as `/plan-epic`
 does: `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan

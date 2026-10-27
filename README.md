@@ -163,8 +163,8 @@ epics leave the board, `next` offers to plan it again. Add `planned: <date>` to 
 by hand.
 
 On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
-`next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once a story
-or a child epic names one of those epics, `next` stops offering it.
+`next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
+starts on one of those epics, `next` stops offering it.
 
 ## More
 

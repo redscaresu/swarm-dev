@@ -405,8 +405,11 @@ writes any epic, it writes `<project>/.swarm/<hld>/writing-epics`, one slug per 
 it removes the file once `planned:` is set. `next` names `plan-hld <hld>` again while that file
 lists every epic naming the HLD and no story's `epic:` or epic's `parent:` names one of them. The
 rerun overwrites those epics. An epic the file does not list (an older or hand-written one), or one
-that work has started on, leaves the HLD alone, and so does a board inside the repo. Until the rerun,
-`next` plans none of those epics.
+that work has started on, leaves the HLD alone, and so does a board inside the repo. Work has started
+once a story or child epic names the epic, or the project's `events.tsv` logs a conductor for it or
+a `finish` of it. Until the rerun, `next` plans none of those epics. A run interrupted before
+`writing-epics` existed stays stuck until you write the file by hand, one slug per epic naming the
+HLD, after checking that none of those epics has work on it.
 `/plan-hld <hld>` (the file name without `.md`) then:
 
 1. Works on origin's copy of the board in `<repo>-wt/_board-plan-<hld>`, never the main checkout.

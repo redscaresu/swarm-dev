@@ -121,6 +121,15 @@ expect "outside the repo, the run's epic agreed and built (a done story): not pl
   "item hld/h.md 'status: agreed'" "item epics/e1.md 'status: active' 'hld: h'" \
   "item stories/s1.md 'status: done' 'epic: e1'" "${OUT_MARK}" "${OUT_LEAD}" "${OUT_MOVE}"
 rm -rf "${HLDEXT}"
+# finish deletes a story's file on a board outside the repo, so the project's log is what says work started.
+expect "outside the repo, the run's epic built and its only story finished (file gone): not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_MARK}" \
+  "printf '2026-10-01T00:00:00Z\tconduct\te1\t-\tok\n2026-10-02T00:00:00Z\tfinish\ts1\t-\tok\n' > .swarm/events.tsv" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, an epic the marker lists finished (file gone): not planned again" "gate" \
+  "${OUT_HLD[@]}" "mkdir -p .swarm/h && printf 'e1\ne2\n' > .swarm/h/writing-epics" \
+  "printf '2026-10-02T00:00:00Z\tfinish\te2\t-\tok\n' > .swarm/events.tsv" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
 expect "outside the repo, a story naming the run's epic in a quoted epic: with a comment: not planned again" "gate" \
   "${OUT_HLD[@]}" "item stories/s1.md 'status: done' 'epic: \"e1\" # built'" "${OUT_MARK}" "${OUT_MOVE}"
 rm -rf "${HLDEXT}"
