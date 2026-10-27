@@ -92,6 +92,7 @@ has resume-mtime 'newer than `\.swarm/\$1/base-rev` \(the reference; on a board 
 has resume-closed-attempt 'A PR created after `\.swarm/\$1/base-rev` was written belongs to the attempt that wrote it, which is over: delete `\.swarm/\$1/`'
 has resume-gh-failure-stops 'If it fails, stop and report it: an error prints no date, and reads as no PR'
 has resume-base-rev-is-wt-tree '`\.swarm/\$1/base-rev` holds `git -C <wt> merge-base HEAD origin/<base>`, the commit `<wt>` was made from'
+has resume-checks-repo-board-only 'The two checks below apply only to a board in the project.s repo; a board outside it has no board PR and no `base-rev`, so skip them there\.'
 has resume-tree-mismatch 'When the file is missing or holds another commit, delete `\.swarm/\$1/`.s outputs and `\.partial` files and write the file again'
 has stop-when-open 'If the board PR `plan-\$1` is already open \(`gh pr list --head board/plan-\$1 --state open --json url --jq .\.\[\]\.url.` prints a URL\), report its URL and stop'
 hasnt resume-no-committer-time '%ct'

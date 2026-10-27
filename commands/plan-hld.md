@@ -80,7 +80,8 @@ renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` fo
 
 **Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
 its output file. A file in `.swarm/$1/` counts only when this attempt wrote it against the tree
-`<wt>` holds, so clear the others first.
+`<wt>` holds, so clear the others first. The two checks below apply only to a board in the project's
+repo; a board outside it has no board PR and no `base-rev`, so skip them there.
 
 - **Another attempt.** Run `gh pr list --head board/plan-$1 --state all --json createdAt --jq
   '.[].createdAt'`. If it fails, stop and report it: an error prints no date, and reads as no PR.
