@@ -208,8 +208,11 @@ chmod u+w "${P}/docs/stories"
 check "a red main whose clearing fails in reconcile: reconcile says so and still succeeds" \
   bash -c "[ ${rrc} = 0 ] && grep -qF 'clearing a red main failed' '${ROOT}/out'"
 # Two red merges in one batch, on one repo and base: fix_main runs one at a time under the key's
-# lock, so neither logs main-red while another holds it, and only the story logged last is left.
-fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; M3=dddddddddddddddddddddddddddddddddddddddd; URL2=https://github.com/o/r/pull/8
+# lock, so neither logs main-red while another holds it, and only the newest commit's story is left,
+# whichever logs first. A batch's merge commits are a chain in P's clone: M, then M3, then M4.
+m_fake="${M}"; M="$("${GP[@]}" commit-tree -m m "$("${GP[@]}" mktree < /dev/null)")"
+M3="$("${GP[@]}" commit-tree -p "${M}" -m m3 "$("${GP[@]}" mktree < /dev/null)")"; M4="$("${GP[@]}" commit-tree -p "${M3}" -m m4 "$("${GP[@]}" mktree < /dev/null)")"
+fresh; echo "${M}" > "${FX}/oid"; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; URL2=https://github.com/o/r/pull/8
 rm -rf "${ROOT}/fxb"; cp -R "${FX}" "${ROOT}/fxb"; echo "${M3}" > "${ROOT}/fxb/oid"; cp "${FX}/${M}.checks" "${ROOT}/fxb/${M3}.checks"
 statuses "${ROOT}/fxb/${M3}.status"; wfruns "${ROOT}/fxb/${M3}.runs" "$(run ci completed success "${M3}")"; item t "status: review" "prs: ${URL2}"
 racer() { # <fixtures> <url> <out>
@@ -230,26 +233,25 @@ check "two red merges racing on one key: both wait on the key's lock" all_wait "
 check "two red merges racing on one key: neither logs main-red while the key's lock is held" bash -c "! grep -q main-red '${P}/.swarm/events.tsv'"
 # 2>/dev/null || true: with the lock broken a racer may have removed it, and the next race should still run.
 rmdir "${P}/.swarm/fix-main.o-r-main.lock" 2>/dev/null || true; wait "${pa}" "${pb}" || true
-last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
-check "two red merges racing on one key: both print fix-main:, and only the story logged last is left" \
+check "two red merges racing on one key: both print fix-main:, and only the newer commit's story is left" \
   bash -c "grep -q '^fix-main:' '${ROOT}/outa' && grep -q '^fix-main:' '${ROOT}/outb' && [ \"\$(ls '${P}/docs/stories' | grep -c '^fix-main-')\" = 1 ] \
-    && [ -n '${last}' ] && [ -e '${P}/docs/stories/fix-main-${last}.md' ]"
+    && [ -e '${P}/docs/stories/fix-main-${M3:0:7}.md' ]"
 rm -rf "${ROOT}/fxb"
 # Three in a row: each run's lock is its own, freed once, so the third never runs beside the second.
-fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; item t "status: review" "prs: ${URL2}"; item u "status: review" "prs: https://github.com/o/r/pull/9"
-for x in b:${M3} c:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; do d="${ROOT}/fx${x%%:*}"; o="${x#*:}"; rm -rf "${d}"; cp -R "${FX}" "${d}"; echo "${o}" > "${d}/oid"
+fresh; echo "${M}" > "${FX}/oid"; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; item t "status: review" "prs: ${URL2}"; item u "status: review" "prs: https://github.com/o/r/pull/9"
+for x in b:${M3} c:${M4}; do d="${ROOT}/fx${x%%:*}"; o="${x#*:}"; rm -rf "${d}"; cp -R "${FX}" "${d}"; echo "${o}" > "${d}/oid"
   cp "${FX}/${M}.checks" "${d}/${o}.checks"; statuses "${d}/${o}.status"; wfruns "${d}/${o}.runs" "$(run ci completed success "${o}")"; done
 mkdir "${P}/.swarm/fix-main.o-r-main.lock"; : > "${ROOT}/lock-tries"
 racer "${FX}" "${URL}" "${ROOT}/outa"; pa=$!; racer "${ROOT}/fxb" "${URL2}" "${ROOT}/outb"; pb=$!; racer "${ROOT}/fxc" https://github.com/o/r/pull/9 "${ROOT}/outc"; pc=$!
 for _ in $(seq 100); do all_wait "${FX}" "${ROOT}/fxb" "${ROOT}/fxc" && break; sleep 0.1; done
 check "three red merges in a row on one key: all three wait on the key's lock" all_wait "${FX}" "${ROOT}/fxb" "${ROOT}/fxc"
 rmdir "${P}/.swarm/fix-main.o-r-main.lock" 2>/dev/null || true; wait "${pa}" "${pb}" "${pc}" || true; rm "${ROOT}/bin/perl"
-last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
-check "three red merges in a row on one key: all print fix-main:, one story is left, the one logged last, and no lock" \
+check "three red merges in a row on one key: all print fix-main:, one story is left, the newest commit's, and no lock" \
   bash -c "grep -q '^fix-main:' '${ROOT}/outa' && grep -q '^fix-main:' '${ROOT}/outb' && grep -q '^fix-main:' '${ROOT}/outc' \
-    && [ \"\$(ls '${P}/docs/stories' | grep -c '^fix-main-')\" = 1 ] && [ -n '${last}' ] && [ -e '${P}/docs/stories/fix-main-${last}.md' ] \
+    && [ \"\$(ls '${P}/docs/stories' | grep -c '^fix-main-')\" = 1 ] && [ -e '${P}/docs/stories/fix-main-${M4:0:7}.md' ] \
     && [ ! -e '${P}/.swarm/fix-main.o-r-main.lock' ]"
-rm -rf "${ROOT}/fxb" "${ROOT}/fxc"
+# Back to the fake M, with no story or merge commit left from the races.
+rm -rf "${ROOT}/fxb" "${ROOT}/fxc" "${FX}/oid" "${P}"/docs/stories/fix-main-*; M="${m_fake}"
 # A green fix (H2) under a board-only head (H3, a finish or a merge --board): judged by the fix.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"; H3=3333333333333333333333333333333333333333
 echo "${H3}" > "${FX}/commit.main"; printf '{"files":[{"filename":"docs/stories/x.md"}],"parents":[{"sha":"%s"}]}' "${H2}" > "${FX}/commit.${H3}"
