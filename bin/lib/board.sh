@@ -481,11 +481,12 @@ next_queued() (
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
-# The reads that can block, next_step's and conductors_queued's, run with next_reads on, within
-# REPORT_SECONDS of the start. It is off before next_seen's write and conduct_ready, which runs whole
-# and to its end however long it takes, as does the read that decides whether it runs: its reads decide
-# each start (a cut agent list would start a second conductor), and a start cut partway would leave a
-# pane with no conductor.
+# Every read that can block, next_step's, conductors_queued's and conduct_ready's, runs with next_reads
+# on, within REPORT_SECONDS of the start. conduct_ready fails closed: after a cut read it starts no
+# conductor and names each one it would have started (a cut read could hide a stopped conductor). Each
+# start it makes runs without next_reads' forms, to its end however long it takes: a start cut partway
+# would leave a pane with no conductor. The writes (next_seen's, conduct_ready's events) read nothing
+# next_reads changes.
 next_report() {
   local tmp step idle queued rest started skipped
   # Local, so the list read below never reaches a later lead_agents.
@@ -508,8 +509,6 @@ next_report() {
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
   queued="$(next_queued)"
-  next_reads off
-  skipped="$(report_skipped)"
   next_seen || true
   # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
   # keeps what it printed: its started: lines name conductors that run. A no-agent step while a
@@ -518,6 +517,8 @@ next_report() {
     started="$(conduct_ready)" || started+="${started:+$'\n'}warning: starting conductors for ready work failed (exit $?)"
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi
+  next_reads off
+  skipped="$(report_skipped)"
   if [[ -n "${queued}" ]]; then
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"

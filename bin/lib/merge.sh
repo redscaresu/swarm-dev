@@ -494,10 +494,16 @@ group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conduc
 # fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
+# Under a report's deadline (next runs it with next_reads on), its reads are cut there too, and it
+# fails closed: once a read made since it began is cut (report_cuts), no conductor starts, and each it
+# would have started is named with a line telling the lead to run next again. A cut read could hide a
+# conductor stopped on an expired login or an API error. The start itself runs without next_reads'
+# forms, so it is never cut.
 conduct_ready() {
-  local e name arg ready log c why todo report stop said="" rc=0
+  local e name arg ready log c why todo report stop said="" rc=0 cuts
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
+  cuts="$(report_cuts)"
   if ! herdr agent list >/dev/null 2>&1; then
     echo "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"; return 0
   fi
@@ -527,8 +533,11 @@ conduct_ready() {
       [[ "${stop}" == "${said}" ]] || echo "${stop}"; said="${stop}"; continue
     fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
+    if [[ "$(report_cuts)" != "${cuts}" ]]; then
+      echo "no conductor started: ${name}: a read it needs was cut at the report's deadline; run swarm.sh next again"; continue
+    fi
     log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
-    ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
+    ( set -e; unset -f herdr gh claude; start_conductor "${arg}" ) > "${log}" 2>&1 &
     # Logged as a dispatched swarm.sh conduct logs it, with its die line on a failure: outcomes builds
     # its conductor runs from these lines.
     if wait $!; then
@@ -1124,6 +1133,13 @@ report_read() {
   within "@${REPORT_END:?report_read: no report_start}" "$@" || rc=$?
   (( rc != 142 )) || [[ -z "${REPORT_SKIP_FILE:-}" ]] || echo "${name}" >> "${REPORT_SKIP_FILE}"
   return "${rc}"
+}
+
+# report_cuts — how many reads report_read has cut or skipped since report_start or the last
+# report_skipped, 0 outside a report: a count that changed between two calls means a read between
+# them was cut.
+report_cuts() {
+  if [[ -n "${REPORT_SKIP_FILE:-}" && -f "${REPORT_SKIP_FILE}" ]]; then wc -l < "${REPORT_SKIP_FILE}" | tr -d ' '; else echo 0; fi
 }
 
 # report_skipped — print `skipped (over <REPORT_SECONDS> s): <names>`, each skipped read named once in
