@@ -119,6 +119,7 @@ def mtimes(*paths):
 
 # The events that put a story back to ready, or may have: its board edits are dated by the files' mtimes.
 READIES = ("unblock", "reset", "reset:held", "reconcile", "close")
+GIT_WAIT = 5   # seconds the --idle check's one git read of a checkout's story branches may take
 
 if __name__ == "__main__":
     stories, me, project_dir, repos_dir, state = sys.argv[1:]
@@ -167,10 +168,25 @@ if __name__ == "__main__":
             return os.path.isdir(os.path.join(os.path.dirname(src), os.path.basename(src) + "-wt", slug)) \
                 or any(t >= since(slug) for t in ev["story", slug])
 
+        branches = {}   # checkout -> its story/* branch names, or None once a read timed out
+
         def branched(slug, fm):
-            # build_exists's other half, read only for a story about to get the line: its story/<slug> branch.
-            return subprocess.run(["git", "-C", checkout(fm), "show-ref", "-q", "--verify", "refs/heads/story/" + slug],
-                                  capture_output=True).returncode == 0
+            # build_exists's other half, read only for a story about to get the line: its story/<slug>
+            # branch. One read of every story/* branch per checkout. A read past GIT_WAIT counts every
+            # branch as there and ends git reads for this call, so a hung git costs at most GIT_WAIT
+            # once and the check stays quiet.
+            src = checkout(fm)
+            if src not in branches:
+                if None in branches.values():
+                    branches[src] = None
+                else:
+                    try:
+                        got = subprocess.run(["git", "-C", src, "for-each-ref", "--format=%(refname)", "refs/heads/story/"],
+                                             capture_output=True, text=True, timeout=GIT_WAIT)
+                        branches[src] = set(got.stdout.split()) if got.returncode == 0 else set()
+                    except subprocess.TimeoutExpired:
+                        branches[src] = None
+            return branches[src] is None or "refs/heads/story/" + slug in branches[src]
 
         def conductor(epic):
             # The running conductor's agent name, else None. The backlog's is SWARM_BACKLOG_CONDUCTOR

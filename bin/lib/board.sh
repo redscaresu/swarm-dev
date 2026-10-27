@@ -427,13 +427,16 @@ one_off_started() {
 # idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
 # is not in its needs, and per ready story with no build past queue_minutes (touches_rows.py --idle,
 # given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR), from the board, its state
-# and events.tsv alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each call it
-# on every read, so a line goes once its dependency is in review or done. Its epic lines name an epic
-# that can start and an active one with no plan running; a staged draft's (staged_draft) is dropped, as
-# next's stage step sets it active once its tag is cut and the gate lists it until then, and so is the
-# no-plan line of an epic a rerun of an interrupted /plan-hld will overwrite (hld_resuming), which
-# plannable_epic leaves to that rerun. Fails when the check does: a story file reconcile removes between
-# the script's glob and its read is one way.
+# and events.tsv alone (and one git read of the story branches per checkout with a ready story about to
+# get a line, 5 s at most in all): no gh or herdr call.
+# next (idle_lines), wait --lead (lead_queue), status and dash each call it on every read, so a blocked
+# story's line goes once its dependency is in review or done, and a ready story's once its build starts.
+# Its epic lines name an epic that can start and an active one with no plan running; a staged draft's
+# (staged_draft) is dropped, as next's stage step sets it active once its tag is cut and the gate lists it
+# until then, and so is the no-plan line of an epic a rerun of an interrupted /plan-hld will overwrite
+# (hld_resuming), which plannable_epic leaves to that rerun.
+# Fails when the check does, on any kind of line: a story file reconcile removes between the
+# script's glob and its read is one way.
 idle_now() {
   local out line can='^idle: epic ([^ ]+) can start, ' unplanned='^idle: epic ([^ ]+) has no plan running, '
   # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
@@ -447,12 +450,12 @@ idle_now() {
 }
 
 # idle_warned [<tail>] — idle_now's lines. When the check fails: no line, one `warning: the
-# idle-dependency check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
+# idle check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
 # traceback, and exit 1, so a caller can keep what it last saw. next, wait --lead and status read it;
 # dash reads idle_now, a frame having no place for a warning.
 idle_warned() {
   local out
-  out="$(idle_now 2>/dev/null)" || { echo "warning: the idle-dependency check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
+  out="$(idle_now 2>/dev/null)" || { echo "warning: the idle check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
   [[ -z "${out}" ]] || printf '%s\n' "${out}"
 }
 
