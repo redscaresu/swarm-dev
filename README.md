@@ -169,6 +169,10 @@ Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
 
+On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
+`next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
+starts on one of those epics, `next` stops offering it.
+
 ## More
 
 - [The method](docs/method.md): how planning, building and merging work, in short.
@@ -180,6 +184,7 @@ by hand.
 - `make test` and `scripts/test.sh` refuse to run under codex, where `CODEX_SANDBOX` or
   `CODEX_THREAD_ID` is set.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
+- Each `swarm.sh status`, `next` and `dash` run adds a row to `.swarm/run-times.tsv`: when it started, the command, the seconds it took and the load average. A `dash --watch` adds one, for its first frame. `swarm.sh flow` reads it in its `run_times` section: per command, the runs, the median and p90 seconds, and the share that took over a minute.
 - `make test` runs each test file from its own `TMPDIR` with `SWARM_PROJECT` naming a stand-in project, and fails a file whose `swarm.sh` reaches it: one that does not source `tests/test_helpers.sh` first, and run on its own from a pane would reach the lead's real project. `swarm.sh` also refuses to act on the checkout the tests run from, or a worktree of it, while `SWARM_FORBID_PROJECT` names it, which the runner and the prelude set.
 - To cap how many `make test` runs go at once on your machine, across all projects, write a whole number to `~/.swarm/test-cap`. There is no cap by default: no file, an empty file and 0 all mean none. Each run holds a slot in `~/.swarm/test-slots/` while it goes. A run past the cap prints that it is waiting, with the PID and slot of each run ahead of it, and starts when one of them ends. The wait has no time limit: a run that is stopped (Ctrl-Z) or hung keeps its slot. To free a slot by hand, `rm -r` the slot path the message names. A `make test` that a test starts inside another run takes no slot.
 - `scripts/select-tests.sh` prints the test files that cover this branch's changes against `origin/main`,

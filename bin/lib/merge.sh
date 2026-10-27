@@ -74,7 +74,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # protection is unprotected only when GitHub says "Branch not protected".
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
-# "<status> <path>" (added, modified, removed, renamed).
+# "<status> <path>", the status as GitHub gives it (added, removed, modified, renamed, copied, changed
+# or unchanged), empty when it gives none.
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
@@ -213,7 +214,7 @@ merge_gone() {
 # and head); any other line as it is.
 unticketed_why() {
   local re='^cannot read (.+) at the (base|head)$' ref="${base}"
-  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }
+  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }   # loose-match: ok re is a fixed regex
   [[ "${BASH_REMATCH[2]}" == base ]] || ref="${head:0:7}"
   echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}"
 }
@@ -2008,7 +2009,7 @@ stacked_lines() {
 # step-up labelled; a no-review: line, for a PR whose review agent never started or went, as wait
 # --lead prints it; none when there are none), then the agents that need a look or are working, the stacked
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
-# waiting on them, and what `next` would do, with next's idle: lines for blocked stories (idle_now); idle agents and blocked stories are only counted unless
+# waiting on them, and what `next` would do, with next's idle: lines for blocked stories (idle_warned: a failed check warns on stderr); idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
@@ -2063,7 +2064,8 @@ status_report() {
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
   echo; echo "Next"
   next_lines | sed 's/^/  /'
-  idle_now | sed 's/^/  /' || true
+  # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none.
+  idle_warned | sed 's/^/  /' || true
 }
 
 # stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no build yet can

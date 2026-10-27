@@ -45,7 +45,7 @@ only once every epic it `depends_on` is done or has only stories in `review` lef
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
 When `next` says to wait on a conductor, it also lists each ready `lead` story that a blocked story
-depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no conductor will build them.
+depends on (`also: lead <slug> blocks <slugs>`). It also lists a story that is blocked with no `depends_on`, if its kind is one no agent builds: only the lead can ready it. A blocked story of a kind an agent builds gets no `also:` line. The lead runs the listed stories while it waits, since no conductor will build them. `status` reads a blocked story's line as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds. That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step like `operator:<x>`.
 
 ## Who does what
 
@@ -80,7 +80,7 @@ your share of the work before you approve it. A step found during the build that
 `lead` story, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
-step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines wake the lead while a conductor works, and `status` and `dash` show them.
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories wake the lead while a conductor works, and `status` and `dash` show them.
 
 ## The board
 
@@ -93,24 +93,24 @@ project). `templates/docs/` holds the READMEs that define each format and an Obs
 ## Configuring a project
 
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir` without
-overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and adds `.swarm/`
-and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it
-writes a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch. It reads
-that branch from the cached `origin/HEAD`, and asks origin only when that is missing, without prompting
-and for at most 15 seconds; with no answer it writes no CI and says so. The step fails, naming the
-target, when make has no `check` target. Its gate, `.github/swarm-board-only.sh`, skips the checks for a
-PR or push that changes only the board's own files (`stories/`, `epics/`, `hld/`, `Board.base` and
-`.obsidian/` under `board_dir`, so other pages in `docs/` still get checked). A board outside the repo
-gets the workflow without the gate. A `ci.yml` that init wrote carries a marker line; init leaves it
-alone after that and only writes the gate again if it is missing. With other workflows already there,
-init leaves them, writes the gate, and prints the step to add to the job that runs your checks. It also
-writes a git pre-commit hook that runs `make check`, skipping a commit that changes only the board's own
-files. While make has no `check` target, the hook only warns; CI is the check that fails. When a hook
-exists, or the repo sets `core.hooksPath`, init writes no hook and prints the lines to add before any
-`exec` in it (for husky, to `.husky/pre-commit`). A global `core.hooksPath` gets no hook and no lines,
-since a hook there runs in every repo. Last, init lists the files it wrote that git does not track yet,
-for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks once
-for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
+overwriting a file (except a `Board.base` that is a past template nobody edited, which gets the current one),
+creates `.claude/swarm/` with a commented `commit_trailers` line, and adds `.swarm/` and the board's Obsidian
+lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it writes a `ci.yml` that runs
+`make check` on each PR and on pushes to origin's default branch. It reads that branch from the cached
+`origin/HEAD`, and asks origin only when that is missing, without prompting and for at most 15 seconds; with
+no answer it writes no CI and says so. The step fails, naming the target, when make has no `check` target.
+Its gate, `.github/swarm-board-only.sh`, skips the checks for a PR or push that changes only the board's own
+files (`stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under `board_dir`, so other pages in
+`docs/` still get checked). A board outside the repo gets the workflow without the gate. A `ci.yml` that init
+wrote carries a marker line; init leaves it alone after that and only writes the gate again if it is missing.
+With other workflows already there, init leaves them, writes the gate, and prints the step to add to the job
+that runs your checks. It also writes a git pre-commit hook that runs `make check`, skipping a commit that
+changes only the board's own files. While make has no `check` target, the hook only warns; CI is the check
+that fails. When a hook exists, or the repo sets `core.hooksPath`, init writes no hook and prints the lines
+to add before any `exec` in it (for husky, to `.husky/pre-commit`). A global `core.hooksPath` gets no hook
+and no lines, since a hook there runs in every repo. Last, init lists the files it wrote that git does not
+track yet, for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks
+once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments, parsed and never run; an unknown
 key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` prints each setting and its source.
