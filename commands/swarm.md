@@ -62,11 +62,14 @@ Repeat until a step below says stop:
    Its first line is the step, the rest is why. Tell the user both in one line. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
-   - `idle: <story> waits on <dep> but shares no touches with it`: the dependency looks
-     over-broad. Both are stories an agent builds, and the dependency is not in review (a story a
-     review holds is left out too). Drop it from the story's `depends_on`, so the story builds
-     beside its dependency; or keep it and add a `needs:` line to the story's front matter naming
-     what it uses from the dependency (the function, the flag, the file). When you drop it and no other
+   - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
+     dependency looks over-broad. Both are stories an agent builds, and the dependency is not in review
+     (a story a review holds is left out too). No entry of the story's `touches` clashes with one of
+     the dependency's (the same file and the same first word of the part, or both the bare file), and
+     the story's `needs:` line does not name the dependency. Drop it from the story's `depends_on`, so
+     the story builds beside its dependency; or keep it and name it in the story's `needs:` line with
+     what the story uses from it (`needs: <dep> (the function, the flag, the file)`), which silences
+     the line. When you drop it and no other
      `depends_on` of the story is still open, set the story's `status: ready` in the same edit:
      `unblock` never readies a blocked story with no dependency left. Make the edit as any board
      edit: through `swarm.sh board-pr` when the board is in the project's repo, where it is when it
