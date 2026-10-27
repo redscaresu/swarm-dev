@@ -50,7 +50,9 @@ The whole plan runs on origin's copy of the board in the plan worktree, `<wt>` b
   `grants` read the old HLD, and the answers in `.swarm/$1/` are its. On a stop, remove a `<wt>` you
   just started with `swarm.sh board-pr done plan-$1`; a resumed one holds the earlier run's work, so
   leave it and say so. On a board outside the repo, feed each `docs/epics/*.md` to the same `awk`
-  and `grep`.
+  and `grep`. There an epic naming the HLD is not a stop when the HLD has no `planned:` value, and
+  `.swarm/$1/hld-lead.json` is newer than `docs/hld/$1.md` and lists every epic naming the HLD. An
+  interrupted run wrote those epics in place: resume and overwrite them as below.
 
 A board outside the project's repo has no worktree and no origin: skip the PR, origin and worktree
 steps, run the checks on the board's own files, read and write the board where it is, and read

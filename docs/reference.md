@@ -399,7 +399,14 @@ whose HLD grants `epics` (§ The lead, § Merging).
 ## Decomposing an HLD
 
 `swarm.sh next` names `plan-hld <hld>` for an agreed HLD with no `planned:` line, no epic carrying
-its `hld:` and no plan worktree. `/plan-hld <hld>` (the file name without `.md`) then:
+its `hld:` and no plan worktree. On a board outside the project's repo, `/plan-hld` writes epics in
+place with no PR, so an interrupted run leaves epics naming the HLD and no `planned:`. `next` names
+`plan-hld <hld>` again when that run wrote those epics: `<project>/.swarm/<hld>/hld-lead.json` is
+newer than the HLD file and lists each epic's slug. The rerun overwrites the epics that carry the
+HLD's name. `next` names nothing for a survey answer alone, for an answer older than the HLD (a
+previous plan's), or when an epic is missing from the answer (an older or hand-written one). Inside
+the repo this case cannot arise.
+`/plan-hld <hld>` (the file name without `.md`) then:
 
 1. Works on origin's copy of the board in `<repo>-wt/_board-plan-<hld>`, never the main checkout.
    It stops when a plan PR for the HLD is open, and when the HLD is not agreed, has a `planned:`

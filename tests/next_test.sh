@@ -96,6 +96,34 @@ expect "an agreed HLD with no planned: and an epic carrying its hld: is not plan
   "item epics/e1.md 'status: later' 'hld: h'"
 if [[ "${out}" != *"plan-hld"* ]]; then echo "ok   an HLD with an epic carrying its hld: gets no plan-hld"
 else echo "FAIL an HLD with an epic carrying its hld: gets plan-hld: ${out}"; fails=$((fails + 1)); fi
+# On a board outside the repo /plan-hld writes epics in place with no PR, so an interrupted run leaves
+# epics naming the HLD and no planned:. When its decomposition (.swarm/<hld>/hld-lead.json, newer than
+# the HLD as /plan-hld reuses it) lists each of them, that is planned again. The HLD is dated back so
+# the answer is newer by more than a second.
+HLDEXT="${STUB_BIN}/hld-ext-board"
+OUT_HLD=("item hld/h.md 'status: agreed'" "touch -t 202601010000 docs/hld/h.md" "item epics/e1.md 'status: later' 'hld: h'")
+OUT_MOVE="mv docs '${HLDEXT}' && mkdir -p .claude/swarm && echo 'board_dir = ${HLDEXT}' > .claude/swarm/config"
+OUT_LEAD="mkdir -p .swarm/h && echo '{\"epics\": [{\"slug\": \"e1\"}]}' > .swarm/h/hld-lead.json"
+expect "outside the repo, epics naming the HLD, no planned: and an hld-lead answer listing them: plan again" "plan-hld h" \
+  "${OUT_HLD[@]}" "${OUT_LEAD}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, epics naming the HLD and no .swarm/<hld>/ output: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, epics naming the HLD and only a survey answer: not planned again" "gate" \
+  "${OUT_HLD[@]}" "mkdir -p .swarm/h && echo '{}' > .swarm/h/survey-code.json" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, epics naming the HLD and an hld-lead answer older than the HLD: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_LEAD}" "touch -t 202501010000 .swarm/h/hld-lead.json" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, an epic naming the HLD that its hld-lead answer does not list: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_LEAD}" "item epics/e2.md 'status: later' 'hld: h'" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "outside the repo, a planned: HLD with epics and an hld-lead answer: not planned again" "plan-epic e1" \
+  "item hld/h.md 'status: agreed' 'planned: 2026-10-24'" "item epics/e1.md 'status: active' 'hld: h'" "${OUT_LEAD}" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
+expect "inside the repo, epics naming the HLD, no planned: and an hld-lead answer listing them: not planned again" "gate" \
+  "${OUT_HLD[@]}" "${OUT_LEAD}"
 # planned: with no value once quotes, brackets and a comment are gone is not planned.
 expect "planned: \"\" is not planned" "plan-hld h" \
   "item hld/h.md 'status: agreed' 'planned: \"\"'"

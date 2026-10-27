@@ -1006,10 +1006,34 @@ hld_planned() { local v; v="$(fm_list "$1" planned)"; [[ -n "${v//[[:space:]]/}"
 
 # hld_due <hld file> — for an agreed HLD that no epic names (hld_epics): plan with no planned:
 # (hld_planned), finish with it. Else nothing: an epic carrying its hld: means it was decomposed (an
-# HLD planned through /epic before planned: existed too), and is not planned again.
+# HLD planned through /epic before planned: existed too), and is not planned again. One exception, on
+# a board outside the repo (BOARD_IN_REPO is not 1), where /plan-hld writes epics in place with no PR:
+# an interrupted run leaves epics naming the HLD and no planned:, and when that run wrote them
+# (hld_resumable) that is plan again, which overwrites the epics naming the HLD.
 hld_due() {
-  [[ "$(get_fm "$1" status)" == agreed && -z "$(hld_epics "$(basename "$1" .md)" -1)" ]] || return 0
-  if hld_planned "$1"; then echo finish; else echo plan; fi
+  local name; name="$(basename "$1" .md)"
+  [[ "$(get_fm "$1" status)" == agreed ]] || return 0
+  if [[ -z "$(hld_epics "${name}" -1)" ]]; then
+    if hld_planned "$1"; then echo finish; else echo plan; fi
+  elif [[ ${BOARD_IN_REPO} != 1 ]] && ! hld_planned "$1" && hld_resumable "$1"; then
+    echo plan
+  fi
+  return 0
+}
+
+# hld_resumable <hld file> — true when an interrupted /plan-hld wrote the epics naming the HLD: its
+# decomposition, <project>/.swarm/<hld name>/hld-lead.json, is newer than the HLD (the answers a rerun
+# reuses; an older one is a previous plan's) and lists every such epic's slug. A survey answer alone, or
+# an epic the plan never had (an older or hand-written one), is not the run's.
+hld_resumable() {
+  local name lead slugs f; name="$(basename "$1" .md)"; lead="${PROJECT_DIR}/.swarm/${name}/hld-lead.json"
+  [[ "${lead}" -nt "$1" ]] || return 1
+  slugs="$(python3 -c 'import json, sys
+for e in json.load(open(sys.argv[1]))["epics"]: print(e["slug"])' "${lead}" 2>/dev/null)" || return 1
+  while IFS= read -r f; do
+    grep -qxF -- "$(basename "${f}" .md)" <<< "${slugs}" || return 1
+  done < <(hld_epics "${name}")
+  return 0
 }
 
 # hld_pr_open <hld name> <plan|finish> — true while the HLD's plan or finish board PR's worktree
