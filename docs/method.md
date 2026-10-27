@@ -33,9 +33,9 @@ step (when it says to wait, it also starts a conductor for any ready work that h
 awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
 `depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
-(the lead drops the dependency or names it in the story's `needs:` line). When the step leaves the builders idle and no
-story is buildable, it also prints the project with up to five candidates for a one-off: the findings
-declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
+(the lead drops the dependency or names it in the story's `needs:` line), and a ready story with no build, ready for `queue_minutes`, whose `touches` share no part with a running build
+(the lead sends its conductor a note, or starts it with `swarm.sh story --strict`). When the step leaves the builders idle and no
+story is buildable, it also prints the project with up to five candidates for a one-off: the findings declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
 are the swarm's own list of follow-ups. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
@@ -60,7 +60,7 @@ Three parties do the work, and the plan decides which one does each step, not th
   reviews and runs `lead` stories, never the agents' work. Its messages to agents go through
   `swarm.sh tell`, never a bare `herdr agent prompt`, and when the board is in the project's repo its
   board edits go through `swarm.sh board-pr`, each in its own worktree, never the main checkout
-  (reference.md § The lead). If it stops while `next` names a step it has not started, a hook sends it back once.
+  (reference.md § The lead). Only a plan or agreement board PR gets a codex review; an edit, a hold or a finish lands on green CI. If it stops while `next` names a step it has not started, a hook sends it back once.
 - **Agents** plan, conduct and build everything else, each in its own pane, builders in a worktree too.
 
 A story is `kind: lead`, never an agent's, when it:
@@ -80,7 +80,7 @@ your share of the work before you approve it. A step found during the build that
 `lead` story, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
-step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories wake the lead while a conductor works, and `status` and `dash` show them.
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories and for ready stories with no build wake the lead while a conductor works, and `status` and `dash` show them.
 
 ## The board
 

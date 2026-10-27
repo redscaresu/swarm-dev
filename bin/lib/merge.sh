@@ -24,7 +24,11 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
-REPORT_SECONDS=30       # how long a report (status, next, dash) may spend on reads that can block (report_read)
+# REPORT_SECONDS: how long a report (status, next, dash) may spend on reads that can block (report_read):
+# SWARM_REPORT_SECONDS when it is a whole number above 0, else 30. A 0, a negative or a word would put
+# the deadline at the start, so every read would be skipped unrun.
+REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
+[[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -36,6 +40,15 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
+# ci_gate head <owner/repo> <sha> <base> <pr> <changed> [<memo file>] — the same, and, when no check is
+# red, each workflow whose on: pull_request covers <base> and the files PR <pr> changes at <sha> (ci_gate
+# files) is pending while it has no pull_request run on <sha> ("<path> (no run on <short sha>)") or its
+# newest one has not finished, and red when that run finished other than success, skipped or neutral.
+# The workflows are read at the PR's merge commit (refs/pull/<pr>/merge), which GitHub runs them from,
+# once it merges <sha>, else at <sha> (a base push since <sha> that adds or widens a pull_request
+# workflow is waited on, though it never ran); Actions' disabled workflows are left out. A workflow whose
+# triggers it cannot read is not waited on, and a second line names it: "not waited on: <path>
+# (triggers not read: <why>)". <memo file> keeps the workflows read, so later reads of <sha> skip them.
 # ci_gate fixed <owner/repo> <sha> <base> <red sha> <board paths> <check>... — succeed when <sha>
 # shows the red main at <red sha> of <base> fixed, judged at the newest commit from <sha> back (first
 # parents) that changes a file outside <board paths> (a board-only commit's CI may skip its tests),
@@ -509,10 +522,16 @@ group_of() { if [[ "$1" == - ]]; then echo "with no epic"; else echo "of epic $1
 # fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
+# Under a report's deadline (next runs it with next_reads on), its reads are cut there too, and it
+# fails closed: once a read made since it began is cut (report_cuts), no conductor starts, and each it
+# would have started is named with a line telling the lead to run next again. A cut read could hide a
+# conductor stopped on an expired login or an API error. The start itself runs without next_reads'
+# forms, so it is never cut.
 conduct_ready() {
-  local e name arg ready log c why todo report stop said="" rc=0
+  local e name arg ready log c why todo report stop said="" rc=0 cuts
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
+  cuts="$(report_cuts)"
   if ! herdr agent list >/dev/null 2>&1; then
     echo "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"; return 0
   fi
@@ -542,8 +561,11 @@ conduct_ready() {
       [[ "${stop}" == "${said}" ]] || echo "${stop}"; said="${stop}"; continue
     fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
+    if [[ "$(report_cuts)" != "${cuts}" ]]; then
+      echo "no conductor started: ${name}: a read it needs was cut at the report's deadline; run swarm.sh next again"; continue
+    fi
     log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
-    ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
+    ( set -e; unset -f herdr gh claude; start_conductor "${arg}" ) > "${log}" 2>&1 &
     # Logged as a dispatched swarm.sh conduct logs it, with its die line on a failure: outcomes builds
     # its conductor runs from these lines.
     if wait $!; then
@@ -631,14 +653,16 @@ live_at() {
 # ready. One that has written its report has finished (conductors_queued): nobody reads its inbox.
 # With none running, or only that one, print the ready now: line for [slugs], or nothing without
 # them. A herdr that cannot list its agents, or a tell that fails, is a warning: it never fails. It
-# runs after the PR has merged, so its herdr calls, the list here and those tell_agent makes, are
-# bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), checked to parse
-# (note_agents), so a list that does not, or a read that fails after it, is a warning, never a
-# conductor taken for gone.
+# runs after merge has merged the PR, or after review has set the story's state, so its herdr calls,
+# the list here and those tell_agent makes, are bounded (bound_herdr): neither command hangs on herdr.
+# The conductor's pane is read from that one list (herdr_from), checked to parse (note_agents), so a
+# list that does not, or a read that fails after it, is a warning, never a conductor taken for gone.
+# Without [slugs] a warning says the conductor was not told "of the merge", or NOTE_WHAT when the call
+# sets it (as review_note does).
 conductor_note() {
   local name list what="that ${3:-} are ready" later="it finds them on its next pass"
   name="$(group_conductor "$1")"
-  [[ -n "${3:-}" ]] || { what="of the merge"; later="it reads the board on its next pass"; }
+  [[ -n "${3:-}" ]] || { what="${NOTE_WHAT:-of the merge}"; later="it reads the board on its next pass"; }
   (
     bound_herdr
     if ! list="$(note_agents)"; then
@@ -656,7 +680,7 @@ conductor_note() {
 # bound_herdr — from here on in this shell, `herdr` is a function that cuts each herdr call off after
 # SWARM_NOTE_HERDR_WAIT seconds (default HERDR_LIST_WAIT): the caller's own and those of the functions
 # it calls (within runs the program, not the function). Call it in a subshell: a note goes after the
-# PR has merged, and merge must not hang on herdr.
+# PR has merged or the story is in review, and neither merge nor review may hang on herdr.
 bound_herdr() {
   # shellcheck disable=SC2329 # called by name, by what runs after it
   herdr() { within "${SWARM_NOTE_HERDR_WAIT:-${HERDR_LIST_WAIT}}" herdr "$@"; }
@@ -1247,6 +1271,13 @@ report_read() {
   return "${rc}"
 }
 
+# report_cuts — how many reads report_read has cut or skipped since report_start or the last
+# report_skipped, 0 outside a report: a count that changed between two calls means a read between
+# them was cut.
+report_cuts() {
+  if [[ -n "${REPORT_SKIP_FILE:-}" && -f "${REPORT_SKIP_FILE}" ]]; then wc -l < "${REPORT_SKIP_FILE}" | tr -d ' '; else echo 0; fi
+}
+
 # report_skipped — print `skipped (over <REPORT_SECONDS> s): <names>`, each skipped read named once in
 # the order it was first skipped, or nothing when none was, and forget those names by removing the file:
 # so it works in a $( ) as well, and a read skipped after it is named alone by the next call.
@@ -1274,6 +1305,10 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
 # WAIT_PR_TRIES in a row at most, any other ends it at once. A new head has no check runs for a few
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
+# The head read takes the PR's changed file count too, so ci_gate head waits on each workflow a
+# pull_request runs there; one still with no run WAIT_PR_GRACE after the first read that found it
+# missing ends the wait the same way, naming it. With no count read, only the checks are judged.
+# ci_gate's "not waited on:" line is printed once, apart from the checks.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # No read starts at or past the deadline, so --timeout 0 reads nothing and ends timed out (exit 2).
@@ -1289,7 +1324,7 @@ wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
-  local spent budget bounded=""
+  local spent budget bounded="" changed expect=() unstarted="" item missing gone note noted=""
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -1313,13 +1348,16 @@ wait_pr() {
       # A conflicted PR runs no checks, so it ends here. UNKNOWN on an open PR is GitHub still
       # computing: the PR is read again each poll, its checks read beside it, so a red or green
       # check still ends the wait. A merged or closed PR stays UNKNOWN, so it is not read again.
-      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state \
-        -q '[.headRefOid, .mergeable, .baseRefName, .state] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
-      read -r oid mergeable base state <<< "${why}"
+      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,changedFiles \
+        -q '[.headRefOid, .mergeable, .baseRefName, .state, (.changedFiles | tostring)] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
+      read -r oid mergeable base state changed <<< "${why}"
       if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
         [[ "${mergeable}" != CONFLICTING ]] || wait_pr_fail "conflicts with ${base}: merge origin/${base} in, then push"
         unknown=""; [[ "${mergeable}/${state}" != UNKNOWN/OPEN ]] || unknown=1
-        [[ -n "${head}" ]] || { head="${oid}"; missed=0; echo "head ${head}"; }
+        if [[ -z "${head}" ]]; then
+          head="${oid}"; missed=0; echo "head ${head}"
+          [[ ! "${changed}" =~ ^[0-9]+$ ]] || expect=("${base}" "${n}" "${changed}" "${WAIT_PR_TMP}.expected")
+        fi
         [[ -n "${unknown}" ]] || continue
       elif [[ ${rc} -ne 142 ]]; then
         rc=3; why="gh cannot read the head of ${url}: $(tail -1 "${WAIT_PR_TMP}")"
@@ -1328,7 +1366,9 @@ wait_pr() {
     if [[ ${rc} -eq 0 ]]; then
       left=$((limit - (SECONDS - start)))
       (( left > 0 )) || wait_pr_fail "timed out after $((SECONDS - start))s${what:+, ${what}}"
-      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
+      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}" ${expect[@]+"${expect[@]}"})" || rc=$?
+      note=""; if [[ "${why}" == *$'\n'* ]]; then note="${why#*$'\n'}"; why="${why%%$'\n'*}"; fi
+      [[ -z "${note}" || "${note}" == "${noted}" ]] || { echo "${note}"; noted="${note}"; }
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
     fi
     case ${rc} in
@@ -1341,6 +1381,15 @@ wait_pr() {
            empty="${empty:-${SECONDS}}"
            (( SECONDS - empty < grace )) \
              || wait_pr_fail "no check runs on ${head:0:7} after $((SECONDS - empty))s (${why})"
+         fi
+         missing=""; gone=" (no run on ${head:0:7})"
+         while IFS= read -r item; do
+           [[ "${item%"${gone}"}" == "${item}" ]] || missing="${missing:+${missing}, }${item%"${gone}"}"
+         done <<< "${why//; /$'\n'}"
+         if [[ -n "${missing}" ]]; then
+           unstarted="${unstarted:-${SECONDS}}"
+           (( SECONDS - unstarted < grace )) \
+             || wait_pr_fail "${missing}: a pull_request into ${base} runs it, but it has no run on ${head:0:7} after $((SECONDS - unstarted))s (${why})"
          fi
          [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
          last="${why}"; what="still pending: ${why}"; pause=${poll} ;;
@@ -1359,6 +1408,7 @@ wait_pr() {
            what="rate limited until ${at}"
            # The grace for a head with no check runs pauses with the wait: the budget ran out, not CI.
            [[ -z "${empty}" ]] || empty=$((empty + pause))
+           [[ -z "${unstarted}" ]] || unstarted=$((unstarted + pause))
            if [[ -z "${bounded}" ]]; then limit=$((limit + pause))
            elif (( pause >= limit - (SECONDS - start) )); then
              wait_pr_fail "rate limited: GitHub's API budget resets at ${at}, past --timeout ${limit}s"
@@ -1775,12 +1825,14 @@ watch_scope() {
 }
 
 # repo_slug <name> — the repo's owner/name, from its own origin: repos on one board need not share an
-# owner. Prints why and fails when there is no such repo or it has no GitHub origin.
+# owner. Prints why and fails when there is no such repo, it has no GitHub origin, or the read was cut
+# at a report's deadline (report_read's 142, under next's next_reads), which says nothing of the origin.
 repo_slug() {
-  local src
+  local src rc=0
   src="$(repo_dir "$1")" || { echo "watch $1: ${src}"; return 1; }
-  gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner \
-    || { echo "no GitHub origin for ${src}"; return 1; }
+  gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner || rc=$?
+  (( rc != 142 )) || { echo "the read of ${src}'s GitHub origin was cut at the report's deadline"; return 1; }
+  (( rc == 0 )) || { echo "no GitHub origin for ${src}"; return 1; }
 }
 
 # watch_repos die|warn — set WATCH_REPOS to WATCH_NAMES resolved (repo_slug), each owner/name once: a
@@ -1840,7 +1892,13 @@ queued_sent() {
 }
 
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
-# needs the lead, print one line saying which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
+# needs the lead, print one line saying which and why, and exit 0. With --epic or --backlog, a story PR
+# first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>), before
+# anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
+# whose head already has a review). Watches that run at once share watch-seen, and the lead's rewrite
+# of its waiting lines can drop an opened line written meanwhile, so a PR can be said opened twice, as
+# a done or conflict line can be said twice (review-agent refuses a second start while the first still
+# reviews). A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # when its head has had no check at all for WATCH_STALL_SECS (default 600), or when its head, its
 # checks reported finished, has waited green for a review (queued_line). An agent of this
@@ -1880,6 +1938,12 @@ watch_prs() {
       while read -r n sha br age; do
         [[ -n "${n}" ]] || continue
         [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
+        # A conductor's watch (heads set) says once that a story PR opened, so it starts the review
+        # agent; from the list and the board alone, before any read of the PR. The lead's bare watch
+        # leaves that to it.
+        if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}" && opened_due "${br#story/}" "${sha}"; then
+          echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"; return 0
+        fi
         mergeable=""
         # No conflict read on a head already reported conflicting, or finished and queued: nothing
         # more is said of it.
@@ -1954,6 +2018,19 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     fi
     nap 60
   done
+}
+
+# opened_due <slug> <sha> — true when a scoped watch says <slug>'s PR, its head at <sha>, opened: its
+# story is one an agent builds (a lead story's PR is the lead's, as in queued_line); it is no fix-main
+# story, which is in every conductor's scope, so the one opened line watch-seen keeps could go to a
+# conductor that does not build it; and no review agent has reviewed or started on <sha> (the findings
+# file's head: line, or the head on record in .swarm/reviews). So a PR already reviewed when a watch
+# first looks is not said opened, and a rebuilt story's new PR is, whatever its old PR's review left.
+opened_due() {
+  local f="${BOARD}/stories/$1.md" r="${PROJECT_DIR}/.swarm/reviews/$1"
+  if [[ -f "${f}" ]] && ! agent_kind "$(fm "${f}" kind)"; then return 1; fi
+  [[ "$1" != fix-main-* ]] || return 1
+  ! grep -qx "head: $2" "${r}.md" 2>/dev/null && [[ "$(cat "${r}.head" 2>/dev/null)" != "$2" ]]
 }
 
 # watch_rows <owner/repo> — watch's list: each open story/* PR as `<number> <head sha> <head ref>
@@ -2134,11 +2211,11 @@ stacked_lines() {
 # step-up labelled; a no-review: line, for a PR whose review agent never started or went, as wait
 # --lead prints it; none when there are none), then the agents that need a look or are working, the stacked
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
-# waiting on them, and what `next` would do, with next's idle: lines for blocked stories (idle_warned: a failed check warns on stderr); idle agents and blocked stories are only counted unless
+# waiting on them, and what `next` would do, with next's idle: lines for blocked stories and for ready stories with no build (idle_warned: a failed check warns on stderr); idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
-# Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS in its place, for a
+# Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS sets another, for a
 # test): status_reads routes every herdr, gh and claude call, and git's fetch and ls-remote, through
 # report_read, its own and those of the functions it calls; status_report.py's pane reads (one herdr
 # agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
@@ -2146,8 +2223,6 @@ stacked_lines() {
 # report_skipped's line, printed last, names it.
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent
-  # Local, so report_start and report_skipped, called from here, read it.
-  local REPORT_SECONDS="${SWARM_REPORT_SECONDS:-${REPORT_SECONDS}}"
   report_start || die "status: cannot start the report deadline"
   status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
