@@ -49,10 +49,12 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
 4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
    the agreed HLD over its work lists `merge` in its `grants:`.
    With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
-   waits for you. After a merge, main is judged by the checks it requires, and any other red check
-   prints a `warning:` line. A required check that fails in GitHub Actions is rerun once; if it
-   passes then, merge prints a `flaky:` line. If main is still red, the swarm writes a story to fix
-   it and builds that first.
+   waits for you. In that mode no conductor starts until your Claude Code settings allow
+   `swarm.sh merge` (step 3 of Getting started names the rule). `swarm.sh conduct` prints the rule
+   to add, and so does `swarm.sh next` while it waits on a working conductor. After a merge, main is
+   judged by the checks it requires, and any other red check prints a `warning:` line. A required
+   check that fails in GitHub Actions is rerun once; if it passes then, merge prints a `flaky:`
+   line. If main is still red, the swarm writes a story to fix it and builds that first.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and does the
 stories no agent may: real cloud, credentials and anything hard to undo. Your steps in those are
@@ -82,8 +84,10 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
    hook that run `make check`. If your Claude Code settings have no rule that allows `swarm.sh merge`,
    it names the rule and the file to add it to: `"Bash(swarm.sh merge *)"` in `permissions.allow`.
    Without it, under `merge = agent` or an HLD that grants `merge`, Claude Code refuses every
-   `swarm.sh merge` an agent runs. It then stops and tells you to run `claude` in the project once
-   and accept the trust prompt (step 2, if you have not).
+   `swarm.sh merge` an agent runs. Until auto mode has learned your environment, it asks you to run
+   `/auto-mode-setup` once in `claude`, so no agent's pane stops on the 'Teach auto mode' dialog, and
+   then `swarm.sh init --auto-mode-done`, which records that you did. It then stops and tells you to
+   run `claude` in the project once and accept the trust prompt (step 2, if you have not).
 4. Run `/swarm-dev:swarm` again. The first time, it asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.

@@ -407,21 +407,24 @@ expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
 expect "a later epic with an empty depends_on is a gate" "gate" \
   "item epics/e1.md 'status: later' 'depends_on: []'"
-# A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
-# A shared file (another function in it counts), a needs: line, or a hold by review keeps it quiet.
+# A blocked story whose dependency shares no touches part waits for nothing it uses: next names it.
+# A shared part (the same file and first word), a needs: line naming the dependency, or a hold by
+# review keeps it quiet; another part of a shared file does not.
 # idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]
 idle_case() {
   local got=no
   expect "idle dependency, $1" "story a" \
     "item stories/a.md 'status: ready' 'kind: code' 'touches: [x.sh:f, y.sh]'" \
     "item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [$2]' ${4:+"'$4'"}"
-  grep -qxF "idle: b waits on a but shares no touches with it" <<< "${out}" && got=yes
+  grep -qxF "idle: b waits on a but shares no touches part with it and needs nothing from it" <<< "${out}" && got=yes
   if [[ "${got}" == "$3" ]]; then echo "ok   idle dependency, $1: named $3"
   else echo "FAIL idle dependency, $1: want named $3: ${out}"; fails=$((fails + 1)); fi
 }
 idle_case disjoint c.sh yes
-idle_case "shared file" x.sh:g no
-idle_case "needs line" c.sh no "needs: a.sh"
+idle_case "shared part" "x.sh:f check" no
+idle_case "shared file, other part" x.sh:g yes
+idle_case "needs names it" c.sh no "needs: a (its f)"
+idle_case "needs names another" c.sh yes "needs: a.sh"
 idle_case "held by review" c.sh no "held_by: review"
 # A multi-word kind is no kind an agent builds: it stays with the lead.
 expect "a multi-word kind stays with the lead" "gate" \
@@ -557,7 +560,7 @@ cmds="$(dirname "${SWARM}")/../commands"
 got=""
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
 {
-grep -qF '`idle: <story> waits on <dep> but shares no touches with it`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-dependency line"
+grep -qF '`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-dependency line"
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
 grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
