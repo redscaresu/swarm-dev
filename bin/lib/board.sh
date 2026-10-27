@@ -493,7 +493,8 @@ next_seen() {
 # blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
 # (kind: lead, or a legacy or unknown kind: agent_kind fails) that a blocked
 # story's depends_on names: the lead's own work that holds an agent's story up while a conductor works.
-# A blocked story with no depends_on (by hand: only the lead readies it) is named the same way.
+# A blocked story with no depends_on (by hand: only the lead readies it) is named the same way, when
+# its kind is one no agent builds: the lead runs it, then finishes it.
 # An escalated story is left out (wait --lead hands it to the escalated step), and so is one with
 # after: (it waits for its epic to finish, as epic_has_stories says). Only a blocked story an agent
 # builds counts, and neither story may sit in an epic the user holds (epic_held).
@@ -506,7 +507,7 @@ blocking_leads() {
         if agent_kind "$(fm "${f}" kind)"; then continue; fi
         if is_escalated "${f}" || epic_held "${f}"; then continue; fi ;;
       blocked) by_hand_blocked "${f}" || continue
-        if epic_held "${f}"; then continue; fi ;;
+        if agent_kind "$(fm "${f}" kind)" || epic_held "${f}"; then continue; fi ;;
       *) continue ;;
     esac
     slug=$(basename "${f}" .md); blocks=""
@@ -526,15 +527,17 @@ by_hand_blocked() {
   [[ "$(fm "$1" status)" == blocked && -z "$(story_deps "$1" | tr -d ' ')" ]]
 }
 
-# lead_blocked <story-file> — true when the story is blocked and every depends_on still open is a
-# story no agent builds: a kind: lead one (agent_kind fails), or one blocked by hand. It waits on
-# the lead, not on an agent.
+# lead_blocked <story-file> — true when the story is blocked and every depends_on still open is
+# work no agent builds: a hand step (not a plain slug, such as operator:<x>), a story of a kind no
+# agent builds (agent_kind fails) in any status, or a story blocked by hand. It waits on the lead,
+# not on an agent. An open epic is not one: a conductor builds its stories.
 lead_blocked() {
   local open p f
   [[ "$(fm "$1" status)" == blocked ]] || return 1
   open="$(open_deps "$(story_deps "$1")")"
   [[ -n "${open}" ]] || return 1
   for p in ${open}; do
+    [[ "${p}" =~ ^[a-z0-9-]+$ ]] || continue
     f="${BOARD}/stories/${p}.md"
     [[ -f "${f}" ]] || return 1
     if agent_kind "$(fm "${f}" kind)" && ! by_hand_blocked "${f}"; then return 1; fi

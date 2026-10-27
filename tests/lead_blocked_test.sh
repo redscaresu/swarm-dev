@@ -43,7 +43,7 @@ also() { grep '^also:' <<< "$1" || true; }
 blocked() { grep '^  blocked:' <<< "$1" || true; }
 
 # A parent blocked with no depends_on: next names it, status says no agent builds it.
-board "item stories/hand.md 'status: blocked' 'kind: code'" \
+board "item stories/hand.md 'status: blocked' 'kind: lead'" \
   "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [hand]'"
 check "next: a story blocked on a by-hand blocked parent gets an also: lead line" \
   "also: lead hand blocks child" "$(also "$(nxt)")"
@@ -58,6 +58,36 @@ check "next: a ready kind: lead parent still gets its also: lead line" \
   "also: lead lead blocks child" "$(also "$(nxt)")"
 check "status: the child of a kind: lead parent is blocked by one no agent builds" \
   "  blocked: child (by lead, which no agent builds)" "$(blocked "$(sts)" | grep child)"
+rm -rf "${dir}"
+
+# A by-hand blocked parent of a kind an agent builds: finish would close it unbuilt, so no also: line.
+board "item stories/hand.md 'status: blocked' 'kind: code'" \
+  "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [hand]'"
+check "next: a by-hand blocked kind: code parent gets no also: line" "" "$(also "$(nxt)")"
+rm -rf "${dir}"
+
+# A by-hand blocked parent in a later or draft epic is the user's: no also: line.
+for st in later draft; do
+  board "item epics/ep.md 'status: ${st}'" "item stories/hand.md 'status: blocked' 'kind: lead' 'epic: ep'" \
+    "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [hand]'"
+  check "next: a by-hand blocked parent in a ${st} epic gets no also: line" "" "$(also "$(nxt)")"
+  rm -rf "${dir}"
+done
+
+# A hand-step dependency is cleared by a person: no agent builds it.
+board "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [operator:x]'"
+check "status: a child blocked on a hand step is blocked by one no agent builds" \
+  "  blocked: child (by operator:x, which no agent builds)" "$(blocked "$(sts)" | grep child)"
+rm -rf "${dir}"
+board "item stories/lead.md 'status: ready' 'kind: lead'" \
+  "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [operator:x, lead]'"
+check "status: a child blocked on a hand step and a lead story is blocked by ones no agent builds" \
+  "  blocked: child (by operator:x lead, which no agent builds)" "$(blocked "$(sts)" | grep child)"
+rm -rf "${dir}"
+board "item stories/agent.md 'status: ready' 'kind: code' 'epic: e1'" \
+  "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [operator:x, agent]'"
+check "status: a child blocked on a hand step and an agent's story reads as today" \
+  "  blocked: child (by operator:x agent)" "$(blocked "$(sts)" | grep child)"
 rm -rf "${dir}"
 
 # A by-hand blocked parent with after: waits for its epic, so next does not send the lead to it yet.
