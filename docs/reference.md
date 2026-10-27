@@ -64,9 +64,10 @@ waits on the lead's user: every one with `merge = human`, and with `merge = agen
 with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
 It also prints `next`'s `idle:` lines: for blocked stories (`idle: <story> waits on <dep> but shares
 no touches part with it and needs nothing from it`) and for ready stories with no build (`idle: <story>
-is ready with no build, exit: <exit>`). Each poll works them out again from the board, its state and
-events.tsv, with no gh or herdr call. A line wakes the lead once and goes once its dependency is in
-review or done, or once the story's build starts. It wakes the lead again only if it comes back. On a run that starts with no
+is ready with no build, exit: <exit>`), and the epic lines (`idle: epic <epic> can start, ...` and
+`idle: epic <epic> has no plan running, ...`). Each poll works them out again from the board, its
+state and events.tsv, with no gh or herdr call. A line wakes the lead once and goes once its dependency is in
+review or done, once the story's build starts, or once the epic is active or its plan runs. It wakes the lead again only if it comes back. On a run that starts with no
 `.swarm/lead/seen`, the first read saves the lines it finds without waking the lead, as it does held
 lines, so a line already there wakes the lead only when it leaves and comes back. A poll whose check
 fails keeps the lines the last poll saw and prints one `warning: the idle-dependency check failed` line
@@ -755,6 +756,23 @@ of its agent or a `report` line, and not while its report file is there (`conduc
 one before it starts). With none running the exit is
 `swarm.sh story --strict <slug>`, which refuses a clash with a builder herdr lists. The check reads the board, its state and events.tsv, with no gh or herdr
 call.
+
+**`next`'s idle epic lines.** `next` prints `idle: epic <epic> can start, exit: plan it, or set it
+active in a board PR` for a draft or later epic in the current stage that has nothing left to wait
+on. The current stage is the lowest `stage:` an epic on the board carries; an epic with no `stage:`
+of its own takes its nearest parent's. When no epic carries one, every epic is in it. Nothing is left
+to wait on when the epic's `depends_on` lists something and every item it lists has left the board
+or is `done`, or when one of the epic's stories is `ready`. A later epic with no `depends_on` waits
+only on the user, so it gets no line. Nor does one with `unasked_plan:` set, as the gate already
+shows its plan or the user's decline. A staged draft gets none either: `next`'s `stage` step sets it
+active once the tag before its stage is cut, and the gate lists it until then. `next` also prints
+`idle: epic <epic> has no plan running, exit: /swarm-dev:plan-epic <epic>` for an active epic with no
+stories, no `depends_on` that still holds up its planning (as `plan-epic`'s step judges it), and no
+`scope-<epic>` tab record (or numbered `scope-<epic>-<n>` one) in `.swarm/state`. A
+plan's record goes when its panes close, so a plan that stopped with no stories brings the line
+back. A lead story whose `after:` names its epic does not count as one of the epic's stories. An
+epic that a rerun of an interrupted `/plan-hld` will overwrite gets no line, as `next` leaves it to
+that rerun. Both lines read the board and `.swarm/state` alone.
 
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
@@ -2548,7 +2566,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. Under `merge = agent` it refuses while Claude Code's settings have no allow rule for `swarm.sh merge` (§ Merging, the conduct preflight). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), as `next` prints them, and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), or an epic that can start or has no plan running (`idle: epic <epic> can start, ...`, `idle: epic <epic> has no plan running, ...`), as `next` prints them, and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |

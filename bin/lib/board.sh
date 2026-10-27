@@ -427,12 +427,22 @@ one_off_started() {
 # is not in its needs, and per ready story with no build past queue_minutes (touches_rows.py --idle,
 # given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR), from the board, its state
 # and events.tsv alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each call it
-# on every read, so a line goes once its dependency is in review or done. Fails when the check does: a
-# story file reconcile removes between the script's glob and its read is one way.
+# on every read, so a line goes once its dependency is in review or done. Its epic lines name an epic
+# that can start and an active one with no plan running; a staged draft's (staged_draft) is dropped, as
+# next's stage step sets it active once its tag is cut and the gate lists it until then, and so is the
+# no-plan line of an epic a rerun of an interrupted /plan-hld will overwrite (hld_resuming), which
+# plannable_epic leaves to that rerun. Fails when the check does: a story file reconcile removes between
+# the script's glob and its read is one way.
 idle_now() {
+  local out line can='^idle: epic ([^ ]+) can start, ' unplanned='^idle: epic ([^ ]+) has no plan running, '
   # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
-  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
-    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+  out="$(SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
+    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories")" || return 1
+  while IFS= read -r line; do
+    if [[ "${line}" =~ ${can} ]] && staged_draft "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi
+    if [[ "${line}" =~ ${unplanned} ]] && hld_resuming "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi
+    [[ -z "${line}" ]] || printf '%s\n' "${line}"
+  done <<< "${out}"
 }
 
 # idle_warned [<tail>] — idle_now's lines. When the check fails: no line, one `warning: the
