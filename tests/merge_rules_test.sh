@@ -351,6 +351,63 @@ chmod 644 "${P}/.swarm/state/e"
 fresh; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b --board "${URL}"; refused "--board from a builder's pane" "pane w:b"
 fresh "merge = agent"; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"
 is "--board from a conductor's pane with merge = agent: exits 0" 0 "${rc}"
+# A review agent's pane: its tab record names review-<slug>, the newest agents.tsv line for that name
+# has role review, and herdr's agent in the pane holds that name. It merges its own story's PR only,
+# never with --board or --release, under merge = human only where an HLD grants merge.
+# reviewer <name> [role] — pane w:r is <name>'s: a tab record of its own, herdr's agent, and the one
+# agents.tsv line, with <role> (default review).
+reviewer() {
+  printf 'w:r %s\n' "$1" > "${P}/.swarm/state/r"
+  printf 'conduct-e w:c\nt w:b\n%s w:r\n' "$1" > "${ROOT}/agents"
+  printf '2026-10-26\t%s\t%s\tclaude\tsonnet\thigh\t-\n' "${2:-review}" "$1" > "${P}/.swarm/agents.tsv"
+}
+# own_pr <slug> [config line]... — fresh, with story <slug> in review listing the PR in place of s, and
+# none of these cases' other stories.
+own_pr() { fresh "${@:2}"; rm -f "${S}" "${P}"/docs/stories/{a,b,t,x,a-done}.md; item "$1" "status: review" "prs: ${URL}"; }
+# human_pr <grants> — own_pr a with merge = human, story a under epic g, g under agreed HLD h granting
+# <grants>, and a.md the file the PR changes, so pr_hld finds h.
+human_pr() {
+  own_pr a "merge = human"; mkdir -p "${P}/docs/hld" "${P}/docs/epics"
+  printf -- '---\nstatus: agreed\ngrants: [%s]\n---\n\n# h\n' "$1" > "${P}/docs/hld/h.md"
+  printf -- '---\nstatus: active\nhld: h\n---\n\n# g\n' > "${P}/docs/epics/g.md"
+  item a "status: review" "prs: ${URL}" "epic: g"; echo '[{"filename":"docs/stories/a.md","status":"modified"}]' > "${FX}/files"
+}
+own_pr a; reviewer review-a; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+is "review-a's pane, story a's PR, merge = agent: exits 0" 0 "${rc}"
+check "review-a's pane, story a's PR, merge = agent: gh pr merge ran" merged
+own_pr b; item a "status: review" "prs: https://github.com/o/r/pull/8"; reviewer review-a; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "review-a's pane, story b's PR" "review-a merges only a PR on story a's prs: line, and ${URL} is not on it"
+for o in --board --release; do
+  own_pr a; reviewer review-a; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${o}" "${URL}"
+  refused "review-a's pane with ${o}" "review-a merges only story a's PR, never with ${o}"
+done
+human_pr merge; reviewer review-a; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+is "merge = human, review-a's pane, story a's PR under grants: [merge]: exits 0" 0 "${rc}"
+check "merge = human, review-a's pane, story a's PR under grants: [merge]: gh pr merge ran" merged
+human_pr stories; reviewer review-a; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "merge = human, review-a's pane, story a's PR under no merge grant" "${URL} waits on the user's merge (merge = human, and no HLD grants merge for it)"
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
+# A builder's pane, for its own story's PR too.
+own_pr t; merge HERDR_ENV=1 HERDR_PANE_ID=w:b "${URL}"; refused "a builder's pane, its story's PR, merge = agent" "pane w:b is one this project started"
+own_pr t "merge = human"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b "${URL}"; refused "a builder's pane, its story's PR, merge = human" "pane w:b is one this project started"
+# A pane named review-<slug> whose record is not a review agent's.
+own_pr x; reviewer review-x code; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a pane named review-x whose agents.tsv role is code (story review-x's builder), story x's PR" "pane w:r is one this project started"
+own_pr a; reviewer review-a; rm "${P}/.swarm/agents.tsv"; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a pane named review-a with no agents.tsv line" "pane w:r is one this project started"
+own_pr a-done; reviewer review-a-done; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a review-a-done pane, though its agents.tsv role is review and story a-done lists the PR" "pane w:r is one this project started"
+# A record left stale: herdr's agent in the pane has exited, or retire_agent renamed it there but
+# could not rewrite the record.
+own_pr a; reviewer review-a; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a review-a record whose pane herdr lists no agent in" "pane w:r is one this project started"
+own_pr a; reviewer review-a; printf 'conduct-e w:c\nt w:b\nreview-a-done w:r\n' > "${ROOT}/agents"; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a review-a record whose pane herdr names review-a-done" "pane w:r is one this project started"
+own_pr a; reviewer review-a; echo 'w:r t' >> "${P}/.swarm/state/e"; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a review-a pane that another tab record names t" "pane w:r is one this project started"
+# Back to fresh's board, tab records and agents.
+own_pr s; rm -f "${P}/.swarm/state/r" "${P}/.swarm/agents.tsv"
+printf 'w:c conduct-e\nw:b t\n' > "${P}/.swarm/state/e"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 
 # --- A story marked costs: money is the user's to merge: with merge = agent, merge holds it whoever
 # calls, status lists it for the user, and the conductor's and plan-epic's briefs say so.
