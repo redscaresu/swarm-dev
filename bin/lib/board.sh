@@ -1066,10 +1066,14 @@ hld_due() {
 
 # hld_blocked <hld file> — why /plan-hld cannot plan the HLD, or nothing. A name board-pr refuses (a
 # character outside a-z, 0-9 and -, which grants and finish_item refuse too, or a leading -) would
-# fail the run only at its end.
+# fail the run only at its end. So would, on a board in the repo, an HLD whose last section is not
+# ## Epics (epics_last): plan_hld then puts the plan PR under no grant.
 hld_blocked() {
-  [[ "$(basename "$1" .md)" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
-    || echo "its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+  if [[ ! "$(basename "$1" .md)" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+  elif [[ ${BOARD_IN_REPO} == 1 ]] && ! epics_last "$1"; then
+    echo "end the HLD with ## Epics, with nothing after it but links to the board's epics"
+  fi
 }
 
 # The marker /plan-hld writes in <project>/.swarm/<hld name>/ on a board outside the repo: one epic

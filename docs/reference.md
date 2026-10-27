@@ -401,7 +401,10 @@ whose HLD grants `epics` (§ The lead, § Merging).
 `next` offers no `plan-hld` step for an agreed HLD whose file name holds anything but `a-z`, `0-9`
 and `-`, or starts with `-`. `board-pr` refuses that name, so `/plan-hld` would fail only at its
 end. The gate lists the HLD as `hld cannot be planned: <hld>, ...`; rename the file and every `hld:`
-that names it.
+that names it. On a board inside the project's repo, `next` also skips an agreed HLD with no
+`## Epics` section, or with anything after its last `## Epics` but blank lines and links to the
+board's epics. The plan PR adds its epic links there, and `grants` puts a plan PR for such an HLD
+under no grant. The gate line says to end the HLD with `## Epics`.
 
 `swarm.sh next` names `plan-hld <hld>` for an agreed HLD with no `planned:` line, no epic carrying
 its `hld:` and no plan worktree. On a board outside the project's repo, `/plan-hld` writes epics in
