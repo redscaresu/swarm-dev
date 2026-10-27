@@ -110,6 +110,62 @@ check "a changed board file is not overwritten" "mine" "$(cat "${p}/docs/stories
 check "the output names it as left" "yes" "$(has "${out}" "left   docs/stories/README.md (it exists)")"
 check "a missing one is copied back" "yes" "$(has "${out}" "copied docs/Board.base")"
 
+# --- Board.base: every past template in git history, unedited, becomes the current one; an edited one is
+# left with a note. Run against every version, so a template change that leaves its old cksum out of
+# BOARD_BASE_PAST goes red here.
+repo="$(dirname "${SWARM}")/.."
+current="$(cat "${TEMPLATES}/Board.base")"
+past=0
+while IFS= read -r c; do
+  git -C "${repo}" show "${c}:templates/docs/Board.base" > "${ROOT}/past.base"
+  [[ "$(cat "${ROOT}/past.base")" != "${current}" ]] || continue
+  past=$((past + 1))
+  cp "${ROOT}/past.base" "${p}/docs/Board.base"
+  out="$(run "${p}" init || true)"
+  check "a board holding ${c}'s Board.base gets the current one, and an updated line" "same|yes" \
+    "$(cmp -s "${TEMPLATES}/Board.base" "${p}/docs/Board.base" && echo same || echo differs)|$(has "${out}" "updated docs/Board.base (an older template nobody edited, now the current one)")"
+done < <(git -C "${repo}" log --format=%h -- templates/docs/Board.base)
+check "git history has past Board.base versions to check" "yes" "$([[ ${past} -ge 4 ]] && echo yes || echo no)"
+out="$(run "${p}" init || true)"
+check "a current Board.base is left as it exists" "yes" "$(has "${out}" "left   docs/Board.base (it exists)")"
+git -C "${repo}" show "$(git -C "${repo}" log --format=%h -- templates/docs/Board.base | tail -1):templates/docs/Board.base" \
+  > "${p}/docs/Board.base"
+echo "# mine" >> "${p}/docs/Board.base"
+edited="$(cksum < "${p}/docs/Board.base")"
+out="$(run "${p}" init || true)"
+check "an edited Board.base keeps its bytes" "${edited}" "$(cksum < "${p}/docs/Board.base")"
+check "and gets a note saying how to compare" "yes" \
+  "$(has "${out}" "left   docs/Board.base (edited): the template changed since; compare with diff docs/Board.base $(cd "$(dirname "${SWARM}")/.." && pwd)/templates/docs/Board.base")"
+before="$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
+out="$(run "${p}" init || true)"
+check "a second run updates nothing" "no|${before}" \
+  "$(grep -q '^updated' <<< "${out}" && echo yes || echo no)|$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
+# A Board.base that links to a past template elsewhere is left: cp would write through the link.
+cp "${ROOT}/past.base" "${ROOT}/shared.base"
+rm "${p}/docs/Board.base" && ln -s "${ROOT}/shared.base" "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+check "a symlinked Board.base is left, and the file it names keeps its bytes" "yes|same" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$(cmp -s "${ROOT}/past.base" "${ROOT}/shared.base" && echo same || echo differs)"
+# A hard link to a past template elsewhere: the board's entry becomes a new file, and the other link
+# keeps its bytes; a cp over the old file would write through the link. A Board.base.tmp beside it is
+# not the replacement's scratch file, and the new file has the mode init's other copies have.
+cp "${ROOT}/past.base" "${ROOT}/linked.base"
+rm "${p}/docs/Board.base" && ln "${ROOT}/linked.base" "${p}/docs/Board.base"
+echo "mine" > "${p}/docs/Board.base.tmp"
+out="$(run "${p}" init || true)"
+check "a hard-linked past Board.base gets the current one, and the file it was linked to keeps its bytes" "yes|same|same" \
+  "$(has "${out}" "updated docs/Board.base (an older template nobody edited, now the current one)")|$(cmp -s "${TEMPLATES}/Board.base" "${p}/docs/Board.base" && echo same || echo differs)|$(cmp -s "${ROOT}/past.base" "${ROOT}/linked.base" && echo same || echo differs)"
+check "a Board.base.tmp beside it keeps its bytes" "mine" "$(cat "${p}/docs/Board.base.tmp")"
+mode() { python3 -I -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$1"; }
+check "the new Board.base has the mode of a file init copied" "$(mode "${p}/docs/epics/README.md")" "$(mode "${p}/docs/Board.base")"
+rm "${p}/docs/Board.base.tmp"
+# A board directory init cannot write to: init stops, naming the file, which keeps its bytes.
+cp "${ROOT}/past.base" "${p}/docs/Board.base"; chmod u-w "${p}/docs"
+out="$(run "${p}" init || echo "exit=$?")"
+chmod u+w "${p}/docs"
+check "when the board cannot be written, init stops naming Board.base, and the file keeps its bytes" "yes|exit=1|same" \
+  "$(has "${out}" "swarm: init: could not replace docs/Board.base with the current template")|$(tail -n 1 <<< "${out}")|$(cmp -s "${ROOT}/past.base" "${p}/docs/Board.base" && echo same || echo differs)"
+
 # --- board_dir = board: the files land in board/, and the .gitignore lines name it.
 p="${ROOT}/custom"; "${GIT[@]}" init -q "${p}"; origin "${p}"
 mkdir -p "${p}/.claude/swarm" && echo "board_dir = board" > "${p}/.claude/swarm/config"

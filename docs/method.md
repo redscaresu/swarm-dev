@@ -93,8 +93,9 @@ project). `templates/docs/` holds the READMEs that define each format and an Obs
 ## Configuring a project
 
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir` without
-overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and adds `.swarm/`
-and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it
+overwriting a file. The one exception is a `Board.base` that is a past template nobody edited, which
+gets the current one. It creates `.claude/swarm/` with a commented `commit_trailers` line, and adds
+`.swarm/` and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it
 writes a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch. It reads
 that branch from the cached `origin/HEAD`, and asks origin only when that is missing, without prompting
 and for at most 15 seconds; with no answer it writes no CI and says so. The step fails, naming the

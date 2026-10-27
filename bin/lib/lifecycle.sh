@@ -2025,16 +2025,53 @@ init_claude() {
   echo "Your step: run /auto-mode-setup once in claude, so no agent's pane stops on the 'Teach auto mode' dialog. Then run swarm.sh init --auto-mode-done here, and init stops printing this step."
 }
 
+# BOARD_BASE_PAST: the sha256 of each Board.base the plugin shipped before the current one (git log --
+# templates/docs/Board.base), one per line. A board's Board.base that matches one is a template nobody
+# edited, so init replaces it with the current one. When the template changes, add the outgoing
+# version's sha256 here; init_test.sh checks every past version in git history is listed.
+BOARD_BASE_PAST='2da305247898d622618058c62cd705560ea90b83ce9b225687e565080f255103
+302798ca551553b5d24d68577a24630f5d31dd7b6b9d006c66981a0810d02d62
+9956edaf77067f1c503bbc52572022998ba127a653c5960ce164a8a8fa6ed102
+ec19a467c31c0b2b5a168b1aee132727d8a0e6d5b26d4780d913227d53a5b5f9'
+
+# init_board_base <rel> — init's line for the board's Board.base, which exists: replaced with the
+# current template when it is a regular file holding a past one nobody edited (BOARD_BASE_PAST);
+# otherwise left, with how to compare when it differs from the template. A symlink is left as it is:
+# replacing it would drop what the board linked to. The replacement is a file of its own (mktemp),
+# moved over the old one: a hard link to the old one keeps its bytes, and no file beside it is written.
+# Fails when it left the file; init stops when the replacement cannot be written.
+init_board_base() {
+  local have="${BOARD}/Board.base" want="${SWARM_HOME}/templates/docs/Board.base" sum="" tmp=""
+  if [[ -L "${have}" ]] || cmp -s "${have}" "${want}"; then echo "left   $1Board.base (it exists)"; return 1; fi
+  # Empty for a file that is not regular or cannot be read: left, as edited.
+  [[ ! -f "${have}" ]] \
+    || sum="$(python3 -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "${have}" 2>/dev/null)" \
+    || sum=""
+  if [[ -n "${sum}" ]] && grep -qxF -- "${sum}" <<< "${BOARD_BASE_PAST}"; then
+    # chmod =rw: the mode a new file gets under the umask, as cp gives the other templates, not mktemp's 600.
+    { tmp="$(mktemp "${have}.XXXXXX")" && cp "${want}" "${tmp}" && chmod '=rw' "${tmp}" && mv -f "${tmp}" "${have}"; } \
+      || { [[ -z "${tmp}" ]] || rm -f "${tmp}"; die "init: could not replace $1Board.base with the current template"; }
+    echo "updated $1Board.base (an older template nobody edited, now the current one)"
+    return
+  fi
+  echo "left   $1Board.base (edited): the template changed since; compare with diff $(printf '%q %q' "$1Board.base" "${want}")"
+  return 1
+}
+
 # init_project — set the project up from the installed plugin, from its git root: the board templates
-# (never over a file that exists), .claude/swarm/ with a commented commit_trailers line, the .gitignore
-# lines, a CI workflow and a pre-commit hook, then the Claude Code steps the user must take
-# (init_claude). A second run changes nothing.
+# (never over a file that exists, but for an unedited older Board.base, init_board_base), .claude/swarm/
+# with a commented commit_trailers line, the .gitignore lines, a CI workflow and a pre-commit hook, then
+# the Claude Code steps the user must take (init_claude). A second run changes nothing.
 init_project() {
   local rel board f line n=0
   mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
   # The board's path from the root with a trailing /, or empty when the board is the root.
   rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}/"}/"
   while IFS= read -r f; do
+    if [[ "${f}" == Board.base && -e "${BOARD}/${f}" ]]; then
+      if init_board_base "${rel}"; then n=$((n + 1)); fi
+      continue
+    fi
     if [[ -e "${BOARD}/${f}" ]]; then echo "left   ${rel}${f} (it exists)"; continue; fi
     mkdir -p "$(dirname "${BOARD}/${f}")" && cp "${SWARM_HOME}/templates/docs/${f}" "${BOARD}/${f}"
     echo "copied ${rel}${f}"; n=$((n + 1))
