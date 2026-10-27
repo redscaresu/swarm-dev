@@ -2326,17 +2326,91 @@ lead_heads() {
 # queue: green, or unread while LEAD_SEEN has it, so a gh error wakes no one.
 lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "$2" "${LEAD_SEEN}" 2>/dev/null; }; }
 
+# open_story_prs — every open story/* PR whose story is on the board, whatever its build state and the
+# merge mode, in that story's own repo (its repo:, else the project's): a story/<slug> PR in another repo
+# is never <slug>'s. One `gh pr list` per repo, its owner/name read from its origin's URL with no gh call.
+# Prints `<slug> <PR URL> <head> <mergeable> <checks> <minutes open>` per PR, <checks> green when it has
+# at least one check run, as ci_gate needs, and every check run and status passed (success, skipped or
+# neutral), else not; and `- <owner/repo>` for a repo gh could not list. A repo with no clone or no
+# GitHub origin has no PR to list.
+open_story_prs() {
+  local own="" slug repo src url nwo names=" " homes=" " rows rest
+  [[ ${PROJECT_IS_GIT} == 1 ]] && own="$(basename "${PROJECT_DIR}")"
+  # names: " <repo>=<owner/repo or -> " per repo: name, each resolved once; homes: " <slug>=<owner/repo> ".
+  while IFS=$'\x1f' read -r slug repo; do
+    repo="${repo//[\"\']/}"; repo="${repo:-${own}}"
+    [[ -n "${slug}" && -n "${repo}" ]] || continue
+    if [[ "${names}" != *" ${repo}="* ]]; then
+      nwo=-
+      if src="$(repo_dir "${repo}")" && url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
+        && [[ "${url}" =~ github\.com[:/]([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)$ ]]; then nwo="${BASH_REMATCH[1]%.git}"; fi
+      names+="${repo}=${nwo} "
+    fi
+    nwo="${names#* "${repo}"=}"; nwo="${nwo%% *}"
+    [[ "${nwo}" == - ]] || homes+="${slug}=${nwo} "
+  done < <(stories_fm repo)
+  for nwo in $(tr ' ' '\n' <<< "${homes}" | sed -n 's/^[^=]*=//p' | sort -u); do
+    rows="$(gh pr list -R "${nwo}" --state open --limit 1000 --json url,headRefName,headRefOid,mergeable,statusCheckRollup,createdAt </dev/null 2>/dev/null \
+      | python3 -I -c '
+import datetime, json, sys
+OK = ("SUCCESS", "SKIPPED", "NEUTRAL")
+now = datetime.datetime.now(datetime.timezone.utc)
+for p in json.load(sys.stdin):
+    ref = p.get("headRefName") or ""
+    if not ref.startswith("story/"):
+        continue
+    roll = p.get("statusCheckRollup") or []
+    green = any(c.get("__typename") == "CheckRun" for c in roll) and all(((c.get("state") or "") if c.get("__typename") == "StatusContext" else (c.get("conclusion") or "") if (c.get("status") or "") == "COMPLETED" else "").upper() in OK for c in roll)
+    opened = datetime.datetime.fromisoformat(p["createdAt"].replace("Z", "+00:00"))
+    print(ref[6:], p["url"], p["headRefOid"], p.get("mergeable") or "UNKNOWN", "green" if green else "not", max(int((now - opened).total_seconds() // 60), 0))
+')" || { echo "- ${nwo}"; continue; }
+    while read -r slug rest; do
+      [[ -n "${slug}" && "${homes}" == *" ${slug}=${nwo} "* ]] && echo "${slug} ${rest}"
+    done <<< "${rows}"
+  done
+}
+
+# pr_lines — the lead's queue's lines for open story PRs (open_story_prs): `conflict: <slug> <PR URL>,
+# exit: tell its builder to merge the base in` for one CONFLICTING with its base, and `unmerged: <slug>
+# <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` for one MERGEABLE and green whose findings file is a pass on
+# its head (review_pass), open and reviewed queue_minutes or more ago (the findings file's mtime). A PR
+# whose mergeable state GitHub is still working out (UNKNOWN), and every PR of a repo gh could not list,
+# keeps its lines from LEAD_SEEN, so a lapse in the read neither drops a line nor wakes the lead with it
+# again; a repo it could not list is warned of on stderr, one line per poll.
+pr_lines() {
+  local slug url head mg ck age m lost=""
+  while read -r slug url head mg ck age; do
+    if [[ "${slug}" == - ]]; then
+      echo "warning: gh cannot list ${url}'s open PRs, so its unmerged: and conflict: lines stand as last seen" >&2
+      lost+="https://github.com/${url}/pull/"$'\n'; continue
+    fi
+    if [[ "${mg}" == UNKNOWN ]]; then
+      grep -F -e "unmerged: ${slug} ${url}," -e "conflict: ${slug} ${url}," "${LEAD_SEEN}" 2>/dev/null || true; continue
+    fi
+    [[ "${mg}" != CONFLICTING ]] || echo "conflict: ${slug} ${url}, exit: tell its builder to merge the base in"
+    [[ "${mg}" == MERGEABLE && "${ck}" == green ]] || continue
+    review_pass "${slug}" "${head}" || continue
+    m="$(perl -e 'my @s = stat shift or exit 1; print int((time - $s[9]) / 60)' "${PROJECT_DIR}/.swarm/reviews/${slug}.md")" || continue
+    (( m < age )) || m=${age}
+    # shellcheck disable=SC2154 # assigned in another file
+    (( m < CFG_queue_minutes )) || echo "unmerged: ${slug} ${url}, exit: swarm.sh merge --head ${head} ${url}"
+  done < <(open_story_prs)
+  [[ -z "${lost}" ]] || awk 'NR == FNR { if ($0 != "") p[tolower($0)] = 1; next }
+    /^(unmerged|conflict): / { u = tolower($3); for (k in p) if (index(u, k) == 1) { print; next } }' - "${LEAD_SEEN}" <<< "${lost}" 2>/dev/null || true
+}
+
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
-# heads pass's (lead_heads), wakes the lead (lead_head_wakes). Last, from no_agent_lines record: `step-up
+# heads pass's (lead_heads), wakes the lead (lead_head_wakes). Then, from no_agent_lines record: `step-up
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
 # after closing its builder, `no-agent: <slug>, exit: <exit>` for a started story no agent works
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
 # events.tsv line for a story whose missing agent no event explains yet. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines).
-# It never calls gh. It drops
+# Last, pr_lines' `conflict:` and `unmerged:` lines, its one gh call a repo (open_story_prs); else it
+# never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
 # no_agent_lines', read afresh each poll, so one goes once its dependency is in review or done; a poll
@@ -2361,6 +2435,7 @@ lead_queue() {
   idle_warned "the idle: lines the last poll saw stand" || grep '^idle: ' "${LEAD_SEEN}" 2>/dev/null || true
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
+  pr_lines
 }
 
 # prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
@@ -3181,8 +3256,8 @@ unsent_lines() {
 # queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
-# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:` and `prompt:` lines) and saves the
-# rest.
+# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `prompt:`, `unmerged:` and
+# `conflict:` lines) and saves the rest.
 lead_wake() {
   local now line new="" slug u
   lead_agents
@@ -3207,7 +3282,7 @@ lead_wake() {
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
       || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* \
-            && "${line}" != "prompt: "* ]] || new+="${line}"$'\n'
+            && "${line}" != "prompt: "* && "${line}" != "unmerged: "* && "${line}" != "conflict: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
@@ -3269,7 +3344,7 @@ lead_lock() {
 # (lead_wake). The PR heads behind its merge: lines are read only in a heads pass (lead_heads), on its
 # first read and then at most once every LEAD_HEADS_EVERY seconds. The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts
-# (no-agent:, step-up failed:, unsent brief:, prompt:). At the timeout (default an hour) it fails with nothing printed. It edits
+# (no-agent:, step-up failed:, unsent brief:, prompt:, unmerged:, conflict:). At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file, and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
