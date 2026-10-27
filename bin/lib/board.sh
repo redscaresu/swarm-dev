@@ -1889,7 +1889,9 @@ drop_gone_state() {
     # A story's escalated block goes with its state file, which is still here only when the story kept it.
     [[ "${s}" != "${PROJECT_DIR}/.swarm/escalated/"* || ! -e "${BOARD_STATE_DIR}/stories/${n}" ]] || continue
     if [[ "${d}" == stories ]]; then
-      merged="$(gone_merged "${BOARD}/${d}/${n}.md")"
+      # Stopped here, not in gone_merged's subshell, so reconcile ends and logs why.
+      merged="$(gone_merged "${BOARD}/${d}/${n}.md")" \
+        || die "reconcile: ${n}, pulled off the board, has a board state that cannot be read, so it is left as it was; make ${BOARD_STATE_DIR}/stories/${n} readable, or remove it, then run reconcile again"
       [[ "${merged}" != unread ]] || continue
       if [[ "${merged}" == merged ]]; then
         merged_build "${n}"
@@ -1906,12 +1908,15 @@ drop_gone_state() {
 
 # gone_merged <story-file> — for a story a pulled commit took off the board, read as reconcile_board
 # reads one in review (fm_gone, pr_state): merged when it is in review and every PR on its prs: line
-# merged, unread when gh cannot read one of them (said on stderr, naming it), else nothing.
+# merged, unread when gh cannot read one of them (said on stderr, naming it), else nothing. Fails when
+# its board state cannot be read (fm_gone).
 gone_merged() {
-  local url st out=merged urls slug="${1##*/}"
+  local url st out=merged urls prs slug="${1##*/}"
   slug="${slug%.md}"
-  [[ "$(fm_gone "$1" status)" == review ]] || return 0
-  read -r -a urls <<< "$(fm_gone "$1" prs)"
+  st="$(fm_gone "$1" status)" || return 1
+  [[ "${st}" == review ]] || return 0
+  prs="$(fm_gone "$1" prs)" || return 1
+  read -r -a urls <<< "${prs}"
   [[ ${#urls[@]} -gt 0 ]] || return 0
   for url in "${urls[@]}"; do
     if ! st="$(pr_state "${url}")"; then
@@ -1926,12 +1931,16 @@ gone_merged() {
 # fm_gone <item-file> <key> — fm, also for an item a pulled commit took off a board in the repo: then
 # its board state's value for <key> (state_name), read as state_value reads it against the copy that
 # commit deleted (gone_copy), so a later commit's value in that copy wins; else that copy's, or nothing.
+# Dies, as state_value does, when the state file is there but cannot be read: the copy's value could
+# be stale (a story in review read as ready).
 fm_gone() {
   local copy
   [[ ! -f "$1" ]] || { fm "$1" "$2"; return; }
   copy="$(gone_copy "$1")"
   state_name "$1" "$2"
-  if [[ -f "${STATE_PATH}" ]] && state_read "${STATE_PATH}" - "$2" <<< "${copy}" 2>/dev/null; then return 0; fi
+  [[ ! -f "${STATE_PATH}" || -r "${STATE_PATH}" ]] \
+    || die "board state: cannot read ${STATE_PATH}; make it readable, or remove it to read $1 as its last commit had it"
+  if [[ -f "${STATE_PATH}" ]] && state_read "${STATE_PATH}" - "$2" <<< "${copy}"; then return 0; fi
   get_fm - "$2" <<< "${copy}"
 }
 

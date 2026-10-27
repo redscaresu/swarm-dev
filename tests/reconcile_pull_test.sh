@@ -15,7 +15,8 @@
 # finishes a story in review whose PR merged: its builder closed, its build cleared (in its own repo
 # too) and `reconcile <slug> ok (finished)` logged; a builder whose pane cannot be closed keeps it, and
 # the story its state, until a later reconcile can close it. One whose PR is open, or whose file a later
-# commit took out of review, only loses its state; one whose PR gh cannot read keeps it.
+# commit took out of review, only loses its state; one whose PR gh cannot read keeps it, and one whose
+# state cannot be read stops reconcile.
 # gh and herdr are stubs on PATH; origin is a local bare repo.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -359,6 +360,17 @@ check "and a keeps its state and escalated block for the next reconcile, not yet
 rc=0; in_herdr pk reconcile >/dev/null || rc=$?
 check "once the pane closes, the next reconcile closes it, clears the build and finishes a" "0|  |a |gone|gone" \
   "${rc}|$(left pk a)|$(finished pk)|$(state pk a)|$([[ -e "${ROOT}/pk/.swarm/escalated/a" ]] && echo there || echo gone)"
+
+# --- The same pull by hand, but a's board state cannot be read: reconcile stops, naming the file and
+# logging why, and leaves a as it was (its state and build, not finished). Read as its deleted copy, a
+# would be ready, and dropped.
+setup pu; built pu a; git -C "${ROOT}/pu" pull -q --ff-only
+chmod a-r "${ROOT}/pu/.swarm/board-state/stories/a"
+rc=0; out="$(at pu reconcile)" || rc=$?
+[[ ! -e "${ROOT}/pu/.swarm/board-state/stories/a" ]] || chmod u+r "${ROOT}/pu/.swarm/board-state/stories/a"   # gone if reconcile dropped it
+check "a's board state cannot be read: reconcile stops naming it and logs why; a keeps its state and build, not finished" \
+  "1|yes|yes|there|worktree branch origin|" \
+  "${rc}|$(has "board state: cannot read ${ROOT}/pu/.swarm/board-state/stories/a; make it readable" "${out}")|$(has "reconcile: a, pulled off the board, has a board state that cannot be read" "$(awk -F'\t' '$2 == "reconcile" { o = $5 } END { print o }' "${ROOT}/pu/.swarm/events.tsv")")|$(state pu a)|$(left pu a)|$(finished pu)"
 
 # --- A board PR deletes x, the only epic, so git removes docs/epics with it: x's state goes too.
 setup ep; git -C "${ROOT}/ep" pull -q --ff-only
