@@ -3088,12 +3088,13 @@ unsent_lines() {
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
 # and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
 # since its last (lead_heads), run resend_pass off that list, add the .unsent markers' lines
-# (unsent_lines) after it, then the `tell undelivered:` line of each queued tell no check delivered
-# (tell_undelivered), and save the queue as LEAD_SEEN. Print
+# (unsent_lines) after it, then, after handing on the queued tells whose check stopped
+# (tell_queue_strays), the `tell undelivered:` or `tell goal failed:` line of each queued tell no check
+# delivered (tell_undelivered), and save the queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
-# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:` and `tell undelivered:` lines)
-# and saves the rest.
+# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `tell undelivered:` and
+# `tell goal failed:` lines) and saves the rest.
 lead_wake() {
   local now line new="" slug u
   lead_agents
@@ -3105,11 +3106,12 @@ lead_wake() {
   # No marker, no subshell: most polls have none.
   u=""; ! compgen -G "${PROJECT_DIR}/.swarm/briefs/*.unsent" >/dev/null || u="$(unsent_lines)"
   now="${now}${now:+${u:+$'\n'}}${u}"
+  tell_queue_strays 2>/dev/null || true   # a queued tell whose check stopped goes to the lead, never sits unseen
   u=""; ! compgen -G "${TELL_QUEUE}/*.undelivered" >/dev/null || u="$(cat "${TELL_QUEUE}"/*.undelivered 2>/dev/null)" || true
   now="${now}${now:+${u:+$'\n'}}${u}"
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
-      || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* && "${line}" != "tell undelivered: "* ]] || new+="${line}"$'\n'
+      || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* && "${line}" != "tell undelivered: "* && "${line}" != "tell goal failed: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1

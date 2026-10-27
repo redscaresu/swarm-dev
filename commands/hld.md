@@ -94,7 +94,7 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    agents a step the user takes today, so name what goes wrong if it is misused and whether the
    HLD needs it; cite file:line; write findings only to `D/review.md`) and start it:
    `swarm.sh agent _hld hld-review-<slug> "$PWD" hld-review <brief>`. Wait until `D/review.md`
-   is written, then `swarm.sh wait hld-<slug>` (tell refuses a busy co-author) and hand it over:
+   is written, then hand it over (a tell to a busy co-author is queued and delivered when its turn ends):
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
    together." to a file `<note>` and run `swarm.sh tell hld-<slug> nudge <note>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set

@@ -254,7 +254,8 @@ JSON and `ps` once, whenever a story with a build record or a ready story with a
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
 everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines,
-`unsent brief:` lines and `tell undelivered:` lines (§ A tell to a busy agent is queued) on its first read.
+`unsent brief:` lines, and `tell undelivered:` and `tell goal failed:` lines (§ A tell to a busy agent
+is queued) on its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
@@ -1094,29 +1095,38 @@ findings, nudge or resume tell to an agent mid-turn (Claude Code lists its sessi
 lists it working) is now queued. `tell` saves the file as `.swarm/tells/<agent>.<kind>`, prints
 `queued: <agent> (busy); delivered when its turn ends, so do not tell it again`, and exits 0.
 events.tsv logs that line as the tell's outcome instead of `ok`, so queued findings are not yet a
-review round. A newer tell of the same kind replaces a queued one that has not been sent. So does a
-tell of that kind sent at once after the agent goes idle.
+review round. An agent whose turn is over counts as idle even while background shells keep its
+session busy: its session log ends on the reply that ended the turn, as for a note's wake. So a
+builder at its prompt with a test running in the background is told. A newer tell of the same kind
+replaces a queued one that has not been sent. So does a tell of that kind sent at once after the
+agent goes idle.
 
-Each agent with a queue has one check running in the background (`<agent>.later`). Once a minute
+Each agent with a queue has one check running in the background. It is its own process (`swarm.sh
+_tell-queue-check <agent>`), so `wait --lead`'s resend pass and its `no-agent:` lines do not take it
+for a tell under way. `<agent>.later` holds its last look's time, token and pid. Once a minute
 (`SWARM_NOTE_WAKE_SECS`, the same minute a note's wake uses), the check reads the agent as `tell`
 does. When the agent is idle, it sends the oldest queued tell through its own `swarm.sh tell`, from
 the same sender, and only to the pane the tell was queued for. That tell is logged like any other,
-so findings count as one round when they are delivered. While the check sends it, the tell is
-`<agent>.<kind>.sending.<token>`, the token that delivery's own, and a newer tell of its kind can
-still replace it until the check's tell has read the agent idle and claimed it. A delivery claims
-only its own token, so a check that stalled past its `.later` never sends a newer tell's file. A
-tell replaced that way prints `replaced: <agent>'s queued <kind> tell, by a newer one; not sent`,
-sends nothing, and is logged with that line. If the agent
-is no longer idle by then, the tell goes back in the queue. Findings that find the story's step-up
-lock held (by a step-up, a restart or a hold) go back in the queue too. A step-up or a top-rung
-hold that takes queued findings has delivered them: the handover or the lead's block holds them,
-and `wait --lead` names a step-up that failed. The check ends when the queue is empty. A check
-whose last look is more than twice that minute plus 60 seconds old (three minutes by default)
-counts as dead, and the next queued tell to that agent starts a new one, which also puts back a
-tell the dead check left on its way.
+so findings count as one round when they are delivered. If the agent is no longer idle by then, the
+tell goes back in the queue. So does one whose own `swarm.sh tell` failed before it claimed the tell
+(herdr down, say), up to 3 tries; the third goes to the lead. Findings that find the story's step-up
+lock held (by a step-up, a restart or a hold) go back in the queue too. A step-up or a top-rung hold
+that takes queued findings has delivered them: the handover or the lead's block holds them, and
+`wait --lead` names a step-up that failed.
+
+While the check sends a tell, the tell is `<agent>.<kind>.sending.<token>`, the token that
+delivery's own. A newer tell of its kind can still replace it until the check's tell has read the
+agent idle and claimed it. A tell replaced that way prints `replaced: <agent>'s queued <kind> tell,
+by a newer one; not sent`, sends nothing, and is logged with that line. A delivery claims only its
+own token, so a check that stalled past its `.later` never sends a newer tell's file. The check ends
+when the queue is empty, and also when its plugin version's files are gone after an update. A check
+counts as stopped once its process has ended or it has not looked for 10 minutes. `wait --lead` then
+hands each tell that agent has queued to the lead, as below, so none sits unseen, and the next
+queued tell to that agent starts a new check.
 
 The check drops a queued tell when the agent's pane has closed, another pane holds its name or its
-Claude session has ended. It also drops one whose tell fails after claiming it. It keeps the text
+Claude session has ended. It also drops one whose tell fails after claiming it, or fails before
+claiming it for the third time, and `wait --lead` drops those of a stopped check. It keeps the text
 of each tell it drops in `.swarm/tells/<agent>.<kind>.undelivered.md`. A tell dropped before any
 `swarm.sh tell` ran for it is logged as `tell:<kind>` with `undelivered: <why>`. A delivery that
 failed already has its own tell's line, and a second line would count findings herdr sent as two
@@ -1125,6 +1135,10 @@ still applies, swarm.sh tell <slug> <kind> <file>; then rm <marker> <file>` as a
 `no-agent:`. A later drop of the same kind replaces the file and the line, and its own time wakes
 the lead again. When the why says herdr may have sent it, the exit is `it may have arrived, so do as
 that says and never send it again as <kind>`, because findings herdr sent count as a round already.
+With goal on, findings that reached the builder before their `/goal` failed count as a round, and
+the line is `tell goal failed: <slug> findings at <time> (<why>), exit: the findings were delivered
+and count as a round, and only their goal failed, so never send them again; then rm <marker>
+<file>`.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or

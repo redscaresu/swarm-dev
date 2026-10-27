@@ -623,6 +623,7 @@ dispatch() {
     _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
+    _tell-queue-check) tell_queue_check "${1:-}" "${2:-}" ;;      # tell_queue_later's check on a busy agent's queued tells
     wait)   wait_command "$@" ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
@@ -635,7 +636,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _step"
+READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _step _tell-queue-check"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.

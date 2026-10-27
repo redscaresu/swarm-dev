@@ -1723,17 +1723,27 @@ tell_agent() {
 
 # TELL_QUEUE: tells queued for busy agents (tell_queue). <name>.<kind> holds one: a line `<slug> <pane>
 # <from>` (what it was told as, the pane it was for, tell_from's word), then the file told; it is
-# <name>.<kind>.sending.<token> while a check sends it, the token that delivery's own. Beside them
-# <name>.lock (note_lock) and <name>.later (its pending check); and for a tell no check delivered,
-# <name>.<kind>.undelivered (the line wait --lead prints) and <name>.<kind>.undelivered.md (its text).
+# <name>.<kind>.sending.<token> while a check sends it, the token that delivery's own, and
+# <name>.<kind>.tries counts the deliveries that failed before they claimed it. Beside them
+# <name>.lock (note_lock) and <name>.later (its check: tell_check_live); and for a tell no check
+# delivered, <name>.<kind>.undelivered (the line wait --lead prints) and <name>.<kind>.undelivered.md
+# (its text).
 TELL_QUEUE="${PROJECT_DIR}/.swarm/tells"
+# TELL_QUEUE_TRIES: how many deliveries of one queued tell may fail before they claim it (a missing
+# plugin version, herdr down) before it goes to the lead. TELL_CHECK_DEAD_SECS: how long a check may go
+# without a look (one is due each NOTE_WAKE_SECS; a delivery takes a few minutes at most) before it
+# counts as stopped.
+TELL_QUEUE_TRIES=3
+TELL_CHECK_DEAD_SECS=600
 
-# tell_state <name> <pane> — read_state's word for <name>, busy read as idle when its turn stopped on
-# an API error (api_stopped): the turn has ended, though open background shells keep its session busy.
+# tell_state <name> <pane> — read_state's word for <name>, busy read as idle once its turn is over,
+# though open background shells keep its session busy: it stopped on an API error (api_stopped), or
+# its session log ends on a reply that ended the turn (turn_over, as upgrade_state reads a conductor
+# for a note's wake), as a builder at its prompt with a test running in the background does.
 tell_state() {
   local s
   s="$(read_state "$1")"
-  [[ "${s}" != busy ]] || ! api_stopped "$1" "$2" || s=idle
+  [[ "${s}" != busy ]] || ! { api_stopped "$1" "$2" || turn_over "$(recorded_session "$1")"; } || s=idle
   echo "${s}"
 }
 
@@ -1750,7 +1760,7 @@ tell_queue() {
       rm -f "${tmp}"; die "tell: $2 is busy, and its tell could not be queued in ${TELL_QUEUE}"
     fi
     note_lock "${q}" || { rm -f "${tmp}"; die "tell: $2 is busy, and its queue's lock (${q}.lock) is held; tell it again"; }
-    rm -f "${q}.$3.sending."*
+    rm -f "${q}.$3.sending."* "${q}.$3.tries"
     mv -f "${tmp}" "${q}.$3" || { rm -f "${tmp}"; rmdir "${q}.lock"; die "tell: $2 is busy, and its tell could not be queued as ${q}.$3"; }
     tell_queue_later "$2"
     rmdir "${q}.lock"
@@ -1768,7 +1778,7 @@ tell_outcome() { { printf '%s\n' "$1" > "${DIE_FILE:-/dev/null}"; } 2>/dev/null 
 tell_unqueue() {
   [[ -e "${TELL_QUEUE}/$1.$2" ]] || compgen -G "${TELL_QUEUE}/$1.$2.sending.*" >/dev/null || return 0
   note_lock "${TELL_QUEUE}/$1" || return 1
-  rm -f "${TELL_QUEUE}/$1.$2" "${TELL_QUEUE}/$1.$2.sending."*
+  rm -f "${TELL_QUEUE}/$1.$2" "${TELL_QUEUE}/$1.$2.sending."* "${TELL_QUEUE}/$1.$2.tries"
   rmdir "${TELL_QUEUE}/$1.lock"
 }
 
@@ -1789,32 +1799,91 @@ tell_claim() {
 # tell_queued <name> — the paths of <name>'s queued tells, oldest first.
 tell_queued() { ls -1tr "${TELL_QUEUE}/$1".{findings,nudge,resume} 2>/dev/null || true; }
 
-# tell_queue_later <name> — with <name>'s queue lock held: unless a check is pending (<name>.later, the
-# time it last looked and its token; one that has not looked for twice NOTE_WAKE_SECS and a minute
-# was killed), start one in the background, its output dropped. Every NOTE_WAKE_SECS, the note wake's
-# minute, it looks at the queue (tell_queue_pass), until the queue is empty (tell_queue_look).
+# tell_queue_later <name> — with <name>'s queue lock held: unless a live check holds <name>.later
+# (tell_check_live), start one, its output dropped, and record its last look's time, token and pid
+# there. The check is its own process (swarm.sh _tell-queue-check, tell_queue_check), so no reader of
+# the process list takes it for a tell under way (resend_busy, no_agent_lines).
 tell_queue_later() {
-  local later="${TELL_QUEUE}/$1.later" was tok
-  was="$(cut -d' ' -f1 "${later}" 2>/dev/null)" || was=""
-  [[ "${was}" =~ ^[0-9]+$ ]] && (( $(date +%s) - was <= 2 * NOTE_WAKE_SECS + 60 )) && return 0
+  local later="${TELL_QUEUE}/$1.later" tok pid
+  ! tell_check_live "$1" || return 0
   tok="$$.${RANDOM}"
-  echo "$(date +%s) ${tok}" > "${later}" || return 0
-  ( trap '[[ "$(cut -d" " -f2 "${later}" 2>/dev/null)" != "${tok}" ]] || rm -f "${later}"' EXIT
-    while sleep "${NOTE_WAKE_SECS}" && tell_queue_look "$1" "${tok}"; do tell_queue_pass "$1" || true; done ) </dev/null >/dev/null 2>&1 &
+  echo "$(date +%s) ${tok} -" > "${later}" || return 0
+  SWARM_PROJECT="${PROJECT_DIR}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _tell-queue-check "$1" "${tok}" </dev/null >/dev/null 2>&1 &
+  pid=$!
+  echo "$(date +%s) ${tok} ${pid}" > "${later}" || true
+}
+
+# tell_check_live <name> — succeed while a check holds <name>.later: its pid runs and it has looked in
+# the last TELL_CHECK_DEAD_SECS.
+tell_check_live() {
+  local was tok pid
+  read -r was tok pid 2>/dev/null < "${TELL_QUEUE}/$1.later" || return 1
+  [[ "${was}" =~ ^[0-9]+$ && "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null && (( $(date +%s) - was <= TELL_CHECK_DEAD_SECS ))
+}
+
+# tell_queue_check <name> <token> — swarm.sh _tell-queue-check: every NOTE_WAKE_SECS, the note wake's
+# minute, look at <name>'s queue (tell_queue_pass) until it is empty, <token> is no longer the one in
+# <name>.later, or this plugin version's files are gone (tell_queue_look); on the way out, remove
+# <name>.later while it still holds <token>.
+TQ_NAME=""; TQ_TOK=""
+tell_queue_check() {
+  [[ -n "${1:-}" && -n "${2:-}" ]] || die "usage: swarm.sh _tell-queue-check <name> <token>"
+  TQ_NAME="$1"; TQ_TOK="$2"
+  trap '[[ "$(cut -d" " -f2 "${TELL_QUEUE:?}/${TQ_NAME:?}.later" 2>/dev/null)" != "${TQ_TOK}" ]] || rm -f "${TELL_QUEUE:?}/${TQ_NAME:?}.later"' EXIT
+  while sleep "${NOTE_WAKE_SECS}" && tell_queue_look "$1" "$2"; do tell_queue_pass "$1" || true; done
 }
 
 # tell_queue_look <name> <token> — under <name>'s queue lock, succeed while <name>.later holds <token>
-# and a tell is queued or left on its way (.sending.<token>), stamping the time there; else fail, ending
-# the check, and remove <name>.later when it holds <token>. A lock held past note_lock's wait skips the
-# stamp, not the look.
+# and a tell is queued or left on its way (.sending.<token>), stamping the time and this check's pid
+# there; else fail, ending the check, and remove <name>.later when it holds <token>. A lock held past
+# note_lock's wait skips the stamp, not the look. With this plugin version's files gone (an update) it
+# fails too, and its queue goes to the lead (tell_queue_strays).
 tell_queue_look() {
   local later="${TELL_QUEUE}/$1.later" rc=0
+  [[ -f "${SWARM_HOME}/bin/swarm.sh" ]] || return 1
   if ! note_lock "${TELL_QUEUE}/$1"; then [[ -d "${TELL_QUEUE}" ]]; return; fi
   if [[ "$(cut -d' ' -f2 "${later}" 2>/dev/null)" != "$2" ]]; then rc=1
   elif [[ -z "$(tell_queued "$1")" ]] && ! compgen -G "${TELL_QUEUE}/$1.*.sending.*" >/dev/null; then rm -f "${later}"; rc=1
-  else echo "$(date +%s) $2" > "${later}" || true; fi
+  else echo "$(date +%s) $2 $$" > "${later}" || true; fi
   rmdir "${TELL_QUEUE}/$1.lock"
   return "${rc}"
+}
+
+# tell_queue_strays — for wait --lead: hand the lead each queued tell whose agent's check has stopped
+# (tell_check_live fails: its process died with a pane, a herdr or machine restart, or a plugin
+# update), so none sits unseen (tell_queue_stray).
+tell_queue_strays() {
+  local f n seen=" "
+  [[ -d "${TELL_QUEUE}" ]] || return 0
+  for f in "${TELL_QUEUE}"/*.findings "${TELL_QUEUE}"/*.nudge "${TELL_QUEUE}"/*.resume "${TELL_QUEUE}"/*.sending.*; do
+    [[ -e "${f}" ]] || continue
+    n="${f##*/}"; n="${n%%.*}"
+    [[ "${seen}" != *" ${n} "* ]] || continue
+    seen+="${n} "
+    tell_check_live "${n}" || tell_queue_stray "${n}"
+  done
+}
+
+# tell_queue_stray <name> — under <name>'s queue lock, with still no live check: take each of its
+# queued tells, one left on its way first, out of the queue and hand it to the lead (tell_undelivered),
+# never sent.
+tell_queue_stray() {
+  local f top body i kinds=() tops=() bodies=()
+  note_lock "${TELL_QUEUE}/$1" || return 0
+  if tell_check_live "$1"; then rmdir "${TELL_QUEUE}/$1.lock"; return 0; fi
+  for f in "${TELL_QUEUE}/$1".*.sending.*; do [[ ! -e "${f}" ]] || { mv -n "${f}" "${f%.sending.*}" 2>/dev/null || true; rm -f "${f}"; }; done
+  while IFS= read -r f; do
+    body="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || continue
+    if top="$(head -1 "${f}" 2>/dev/null)" && [[ -n "${top}" ]] && tail -n +2 "${f}" > "${body}" && rm -f "${f}" "${f}.tries"; then
+      kinds+=("${f##*.}"); tops+=("${top}"); bodies+=("${body}")
+    else rm -f "${body}"; fi
+  done < <(tell_queued "$1")
+  rmdir "${TELL_QUEUE}/$1.lock"
+  for ((i = 0; i < ${#kinds[@]}; i++)); do
+    read -r top _ _ <<< "${tops[i]}"
+    tell_undelivered "$1" "${top}" "${kinds[i]}" "${bodies[i]}" "its queue's check has stopped (its process ended: a closed pane, a restart or a plugin update), so it was never sent" log
+    rm -f "${bodies[i]}"
+  done
 }
 
 # tell_queue_pass <name> — one look at <name>'s queued tells, from one read of herdr's list (none, when
@@ -1833,7 +1902,7 @@ tell_queue_pass() {
   pane="$(list_field "$1" pane_id <<< "${list}")"
   [[ -z "${pane}" ]] || state="$(tell_state "$1" "${pane}")"
   while IFS= read -r f; do
-    read -r _ at _ < "${f}" 2>/dev/null || continue
+    read -r _ at _ 2>/dev/null < "${f}" || continue
     if [[ -z "${pane}" || "${at}" != "${pane}" ]]; then tell_drop "$1" "${f}" "${at}" "$1 is no longer in pane ${at}"
     elif [[ "${state}" == gone ]]; then tell_drop "$1" "${f}" "${at}" "$1's Claude session in pane ${at} has ended (gone)"; fi
   done < <(tell_queued "$1")
@@ -1867,6 +1936,7 @@ tell_drop() {
   body="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || return 0
   if top="$(tell_take "$1" "$2" "${body}" "$3")"; then
     read -r slug _ _ <<< "${top}"
+    rm -f "$2.tries"
     tell_undelivered "$1" "${slug}" "${2##*.}" "${body}" "$4" log
   fi
   rm -f "${body}"
@@ -1876,13 +1946,14 @@ tell_drop() {
 # of its own (swarm.sh tell, logged as any tell, so findings count as a round now) to <pane> alone, from
 # the sender that queued it (SWARM_TELL_QUEUED). It is on its way meanwhile (tell_take's
 # .sending.<token>, this delivery's own). One that tell never claimed (tell_claim: it read <name> busy
-# again, or not idle) goes back in the queue for the next look, and so does one it claimed while a
+# again, or not idle) goes back in the queue for the next look, until TELL_QUEUE_TRIES deliveries of it
+# have failed so (tell_tries), when it goes to the lead; and so does one it claimed while a
 # step-up, restart or hold of its story held the story's lock. One a step-up or top-rung hold took (its
 # handover or lead block holds the findings), or a step-up that failed partway (wait --lead names it),
 # is done. One it claimed and failed otherwise goes to the lead (tell_undelivered) with its error, which
 # that tell logged itself; one a newer tell replaced on its way is gone, and that tell sent nothing.
 tell_queue_send() {
-  local f top slug from body out rc=0 why tok
+  local f top slug from body out rc=0 why tok back=""
   f="$(tell_queued "$1" | head -1)"
   [[ -n "${f}" ]] || return 0
   tok="$$.${RANDOM}${RANDOM}"
@@ -1890,19 +1961,45 @@ tell_queue_send() {
   if ! top="$(tell_take "$1" "${f}" "${body}" "$2" "${tok}")"; then rm -f "${body}"; return 0; fi
   read -r slug _ from <<< "${top}"
   out="$(SWARM_TELL_QUEUED="$2 ${from} ${tok}" SWARM_PROJECT="${PROJECT_DIR}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" tell "${slug}" "${f##*.}" "${body}" 2>&1)" || rc=$?
-  if [[ -e "${f}.sending.${tok}" ]]; then
-    tell_requeue "$1" "${f}" "${f}.sending.${tok}"
+  if [[ -e "${f}.sending.${tok}" ]] && { [[ ${rc} -eq 0 ]] || (( $(tell_tries "${f}") < TELL_QUEUE_TRIES )); }; then
+    tell_requeue "$1" "${f}" "${f}.sending.${tok}"; back=1
+  elif [[ -e "${f}.sending.${tok}" ]]; then
+    why="$(grep '^swarm: ' <<< "${out}" | tail -1)" || why=""
+    why="${why#swarm: }"
+    tell_unsend "$1" "${f}.sending.${tok}" && rm -f "${f}.tries" \
+      && tell_undelivered "$1" "${slug}" "${f##*.}" "${body}" "${why:-its tell exited ${rc}}; its delivery failed before sending it ${TELL_QUEUE_TRIES} times" log
   elif [[ ${rc} -ne 0 ]]; then
     why="$(grep '^swarm: ' <<< "${out}" | tail -1)" || why=""
     why="${why#swarm: }"
     case "${why}" in
       *" was not told: another step-up or a restart of it is running"*|*" was not told: a step-up, restart or hold of it is running"*)
-        { echo "${top}"; cat "${body}"; } > "${f}.sending.${tok}" && tell_requeue "$1" "${f}" "${f}.sending.${tok}" ;;
+        { echo "${top}"; cat "${body}"; } > "${f}.sending.${tok}" && tell_requeue "$1" "${f}" "${f}.sending.${tok}"; back=1 ;;
       *"so it was stepped up, with them in its handover brief"*|*"is held for the lead (held_for: top-rung"*|*"its step-up failed partway, after its builder was closed"*) ;;
       *) tell_undelivered "$1" "${slug}" "${f##*.}" "${body}" "${why:-its tell failed (exit ${rc})}" ;;
     esac
   fi
+  [[ -n "${back}" ]] || rm -f "${f}.tries"   # claimed, replaced or handed on: its count is done
   rm -f "${body}"
+}
+
+# tell_tries <entry> — count one more delivery of <entry> that failed before it claimed it, in
+# <entry>.tries, and print the count.
+tell_tries() {
+  local n
+  n="$(cat "$1.tries" 2>/dev/null)" || n=0
+  [[ "${n}" =~ ^[0-9]+$ ]] || n=0
+  n=$((n + 1)); echo "${n}" > "$1.tries" 2>/dev/null || true
+  echo "${n}"
+}
+
+# tell_unsend <name> <sending> — under <name>'s queue lock, take <sending> away; fails when it is gone
+# (a newer tell replaced it), or with the lock held.
+tell_unsend() {
+  local rc=1
+  note_lock "${TELL_QUEUE}/$1" || return 1
+  if [[ -e "$2" ]] && rm -f "$2"; then rc=0; fi
+  rmdir "${TELL_QUEUE}/$1.lock"
+  return "${rc}"
 }
 
 # tell_requeue <name> <entry> <sending> — under <name>'s queue lock, put <sending>
@@ -1923,19 +2020,23 @@ tell_requeue() {
 # --lead prints as <name>.<kind>.undelivered; a later one of the kind replaces both, and the drop time
 # in its line wakes the lead again (wait --lead prints a line once). Its exit sends it again, unless
 # <why> says herdr may have sent it (as resend_pass reads a failed delivery), where findings count as a
-# round already: then it follows <why> and never sends it again as <kind>. With [log] (a drop, which no
+# round already: then it follows <why> and never sends it again as <kind>. Findings delivered whose goal
+# then failed (findings_goal's "the findings were delivered, but") get a `tell goal failed:` line
+# instead, which says they count as a round and must not be sent again. With [log] (a drop, which no
 # tell ran for) it logs tell:<kind> <slug> with `undelivered: <why>`, not ok, so it counts as no round;
 # a failed delivery's tell logged its own line, which a second would count twice.
 tell_undelivered() {
-  local m="${TELL_QUEUE}/$1.$3.undelivered" q act
+  local m="${TELL_QUEUE}/$1.$3.undelivered" q act what="tell undelivered"
   mv -f "$4" "${m}.md" 2>/dev/null || return 0
   q="$(printf '%q' "${m}")"
   case "$5" in
+    *"the findings were delivered, but"*)
+      what="tell goal failed"; act="the findings were delivered and count as a round, and only their goal failed, so never send them again" ;;
     *"herdr sent it the brief"*|*"may or may not have the brief"*|*"could not be read"*)
       act="it may have arrived, so do as that says and never send it again as $3" ;;
     *) act="if it still applies, swarm.sh tell $2 $3 ${q}.md" ;;
   esac
-  printf 'tell undelivered: %s %s at %s (%s), exit: %s; then rm %s %s\n' "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$5" "${act}" \
+  printf '%s: %s %s at %s (%s), exit: %s; then rm %s %s\n' "${what}" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$5" "${act}" \
     "${q}" "${q}.md" > "${m}" 2>/dev/null || true
   [[ -z "${6:-}" ]] || record_event "tell:$3" "$2" "undelivered: $5"
 }

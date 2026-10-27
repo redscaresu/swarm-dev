@@ -18,7 +18,12 @@
 # One herdr sent but never showed taken up (${ROOT}/nosend: no status in its reply, idle on every
 # read) is not to be sent again as findings: its line says it may have arrived, and it counts as one
 # round. Queued findings due a step-up or a top-rung hold while the story's lock is held go back in
-# the queue.
+# the queue. A builder at its prompt with a background shell (busy, its turn over) gets its queued
+# tell; mid-turn it waits. A queued tell whose check died goes to the lead through wait --lead, and so
+# does one whose delivery failed before claiming it three times (${ROOT}/childfail). The check is its
+# own process, so wait --lead's resend pass still reads the pane of an agent a tell waits for. With
+# goal on, findings delivered whose goal then failed (${ROOT}/goalwait) count one round, and the lead
+# is told not to send them again.
 # herdr and claude are stubs on PATH. herdr lists the agents in ${ROOT}/agents (`<name> <pane> <status>`)
 # and logs each prompt to ${ROOT}/keys.log; claude agents --json prints ${ROOT}/claude.json, which holds
 # b1's session sb.
@@ -52,11 +57,16 @@ printf '#!/bin/sh\nF="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "agent list") [ ! -f "$F/listfail" ] || exit 1
+    # With childfail, a queued tell's own delivery (its tell's file is a swarm-tell-queued copy) finds no agents.
+    if [ -f "$F/childfail" ] && ps -o command= -p "$PPID" | grep -q swarm-tell-queued; then exit 1; fi
     awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
     END { print "]}}" }' "$F/agents" ;;
   "agent get") printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$(awk -v p="$3" '$2 == p { print $3 }' "$F/agents")" ;;
-  "agent prompt") echo "$*" >> "$F/keys.log"; [ -f "$F/nosend" ] || echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent prompt") echo "$*" >> "$F/keys.log"; [ -f "$F/nosend" ] || echo '{"result":{"agent":{"agent_status":"working"}}}'
+    [ ! -f "$F/goalwait" ] || echo '[{"sessionId": "sb", "status": "waiting", "waitingFor": "permission prompt"}]' > "$F/claude.json" ;;
+  "agent read") gp="$(ps -o ppid= -p "$PPID" | tr -d ' ')"   # its caller and the caller's caller (within reads through perl)
+    echo "$(ps -o command= -p "$PPID" | head -1) <- $(ps -o command= -p "${gp:-1}" | head -1) | $*" >> "$F/reads.log" ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
@@ -75,7 +85,7 @@ state() {
   echo "b1 ${2:-w:9} $([[ "$1" == busy ]] && echo working || echo idle)" > "${ROOT}/agents"
 }
 # fresh — a new case: no prompts, events, queue or lead line, the last check ended.
-fresh() { settle; rm -rf "${Q}" "${p}/.swarm/lead" "${p}/.swarm/events.tsv"; : > "${ROOT}/keys.log"; }
+fresh() { settle; rm -rf "${Q}" "${p}/.swarm/lead" "${p}/.swarm/events.tsv" "${LOG}"; : > "${ROOT}/keys.log"; : > "${ROOT}/reads.log"; }
 # tell <text> — tell b1 findings (or ${KIND}) holding <text>; its output, then `rc=<exit>`. With
 # VIA="<pane> <from> <token>", as the check runs it to deliver a queued tell.
 tell() {
@@ -92,6 +102,7 @@ outcomes() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { printf "%s%s", (n
 # rounds — b1's findings rounds as findings_told counts them: its tell:findings lines logged ok, or
 # whose outcome says herdr sent them.
 rounds() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
+LOG="${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # b1's session log
 lead() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait --lead 0 2>&1) || true; }
 QUEUED="queued: b1 (busy); delivered when its turn ends, so do not tell it again"
 
@@ -216,6 +227,53 @@ touch "${ROOT}/nosend"; state idle; settle; rm -f "${ROOT}/nosend"   # herdr sen
 check "a queued findings tell herdr sent and never showed taken up: sent twice, as any tell, and one round" "2 1" "$(prompts) $(rounds)"
 check "a queued findings tell herdr sent and never showed taken up: wait --lead says it may have arrived, never to send it as findings again" yes \
   "$(grep -qF "herdr sent it the brief twice" <<< "$(lead)" && grep -qF "exit: it may have arrived, so do as that says and never send it again as findings; then rm ${U} ${U}.md" "${U}" && echo yes || echo no)"
+
+# A builder at its prompt with a test running in the background: Claude Code lists it busy, its session
+# log ends on the reply that ended its turn. Mid-turn (its log ends on a prompt) the tell waits.
+fresh; state busy
+printf '%s\n' '{"type":"user","message":{"content":"run the tests in the background"}}' > "${LOG}"
+tell "fix round background" >/dev/null
+sleep 2.5   # a look or two mid-turn
+check "a builder busy mid-turn: its queued tell waits" 0 "$(prompts)"
+printf '%s\n' '{"type":"assistant","message":{"model":"claude-opus-5-5","stop_reason":"end_turn","content":[{"type":"text","text":"The tests run in the background."}]}}' >> "${LOG}"
+settle
+check "a builder at its prompt with a background shell (busy, its turn over): gets the queued tell" "1 yes" "$(prompts) $(sent "fix round background")"
+
+# A check that dies (its pane closed, a restart, an update) leaves its queued tell to wait --lead.
+fresh; state busy
+tell "fix round stranded" >/dev/null
+read -r _ _ pid < "${Q}/b1.later"
+dead() { ! kill -0 "$1" 2>/dev/null; }
+kill -9 "${pid}" 2>/dev/null; until_ok dead "${pid}" || true
+out="$(lead)"
+check "a queued tell whose check died: wait --lead hands it to the lead, never sent" "yes|fix round stranded|no|0" \
+  "$([[ "${out}" == "tell undelivered: b1 findings at "*" (its queue's check has stopped (its process ended: a closed pane, a restart or a plugin update), so it was never sent), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo "no: ${out}")|$(cat "${U}.md" 2>/dev/null)|$([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)|$(prompts)"
+
+# A delivery whose own tell fails before it claims the tell (here herdr lists no agents to it) puts it
+# back, TELL_QUEUE_TRIES (3) times, then hands it to the lead.
+fresh; state busy
+tell "fix round unreachable" >/dev/null
+touch "${ROOT}/childfail"; state idle; settle; rm -f "${ROOT}/childfail"
+check "a queued tell whose delivery fails before claiming it: three tries, then to the lead, never sent" "3|yes|0" \
+  "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && $5 ~ /^could not reach b1/ { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv")|$([[ "$(lead)" == "tell undelivered: b1 findings at "*"; its delivery failed before sending it 3 times), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(prompts)"
+
+# The check is its own process (swarm.sh _tell-queue-check), so wait --lead's resend pass still reads the
+# pane of an agent herdr lists idle while a tell waits for it (its session busy).
+fresh; state busy
+printf '2026-10-27T09:00:00Z\tstory\tb1\t-\tok\n' > "${p}/.swarm/events.tsv"   # its brief went in
+tell "fix round later" >/dev/null
+echo "b1 w:9 idle" > "${ROOT}/agents"   # herdr: idle; its session: busy
+lead >/dev/null
+check "a tell queued for an agent: wait --lead's resend pass still reads its pane" yes \
+  "$(grep -q 'wait --lead.* | agent read w:9' "${ROOT}/reads.log" && echo yes || echo no)"
+
+# With goal on, queued findings that reach the builder and then hit a goal failure count as a round, and
+# the lead is told they were delivered, never to send them again.
+fresh; state busy; echo "goal = 4" > "${p}/.claude/swarm/config"
+tell "fix round goal" >/dev/null
+touch "${ROOT}/goalwait"; state idle; settle; rm -f "${ROOT}/goalwait"; : > "${p}/.claude/swarm/config"
+check "queued findings delivered whose goal then failed: one prompt, one round, and the lead told not to resend" "1 1 yes" \
+  "$(prompts) $(rounds) $([[ "$(lead)" == "tell goal failed: b1 findings at "*" (b1: the findings were delivered, but its builder is waiting on permission prompt, so no /goal was sent"*"), exit: the findings were delivered and count as a round, and only their goal failed, so never send them again; then rm ${U} ${U}.md" ]] && echo yes || echo no)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
