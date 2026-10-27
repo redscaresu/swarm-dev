@@ -65,8 +65,7 @@ case "$1 $2" in
   "agent get") printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$(awk -v p="$3" '$2 == p { print $3 }' "$F/agents")" ;;
   "agent prompt") echo "$*" >> "$F/keys.log"; [ -f "$F/nosend" ] || echo '{"result":{"agent":{"agent_status":"working"}}}'
     [ ! -f "$F/goalwait" ] || echo '[{"sessionId": "sb", "status": "waiting", "waitingFor": "permission prompt"}]' > "$F/claude.json" ;;
-  "agent read") gp="$(ps -o ppid= -p "$PPID" | tr -d ' ')"   # its caller and the caller's caller (within reads through perl)
-    echo "$(ps -o command= -p "$PPID" | head -1) <- $(ps -o command= -p "${gp:-1}" | head -1) | $*" >> "$F/reads.log" ;;
+  "agent read") echo "${TQ_CALLER:--} | $*" >> "$F/reads.log" ;;   # TQ_CALLER: lead for wait --lead's own reads
 esac
 EOF
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
@@ -103,7 +102,7 @@ outcomes() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { printf "%s%s", (n
 # whose outcome says herdr sent them.
 rounds() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
 LOG="${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # b1's session log
-lead() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait --lead 0 2>&1) || true; }
+lead() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 TQ_CALLER=lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait --lead 0 2>&1) || true; }
 QUEUED="queued: b1 (busy); delivered when its turn ends, so do not tell it again"
 
 fresh; state busy
@@ -265,7 +264,7 @@ tell "fix round later" >/dev/null
 echo "b1 w:9 idle" > "${ROOT}/agents"   # herdr: idle; its session: busy
 lead >/dev/null
 check "a tell queued for an agent: wait --lead's resend pass still reads its pane" yes \
-  "$(grep -q 'wait --lead.* | agent read w:9' "${ROOT}/reads.log" && echo yes || echo no)"
+  "$(grep -q '^lead | agent read w:9' "${ROOT}/reads.log" && echo yes || echo no)"
 
 # With goal on, queued findings that reach the builder and then hit a goal failure count as a round, and
 # the lead is told they were delivered, never to send them again.
