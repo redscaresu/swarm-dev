@@ -3,8 +3,9 @@
 # a costs: money story under merge = agent) notes the story's running conductor through its inbox: the
 # story and its PR now wait for the user. A review held on an open parent, an epic's review and, under
 # merge = agent, a story the swarm merges itself send none; with no conductor running no inbox is
-# written. A herdr that cannot list its agents, or a tell that fails, is a warning and the review still
-# exits 0. On merge_fixture.sh, whose herdr stub lists conduct-e in a pane this project opened.
+# written. A story with no epic notes the backlog conductor. A herdr that cannot list its agents, or a
+# tell that fails, is a warning and the review still exits 0. On merge_fixture.sh, whose herdr stub
+# lists conduct-e, and here the backlog conductor, in panes this project opened.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -20,11 +21,16 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" SWARM_NOTE_WAKE_SECS=1
 # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
 
+# The backlog conductor's name, as conductor_name makes it: conduct-backlog-<project dir>-<path hash>.
+crc="$(printf '%s' "${P}" | cksum)"; BL="conduct-backlog-proj-$(printf '%06x' $((${crc%% *} % 16777216)))"
+AGENTS="$(printf 'conduct-e w:c\nt w:b\n%s w:k' "${BL}")"
+printf '%s\n' "${AGENTS}" > "${ROOT}/agents"; printf 'w:k %s\n' "${BL}" >> "${P}/.swarm/state/e"
 INBOX="${P}/.swarm/inbox/conduct-e.md"
 mkdir -p "${P}/docs/epics"; printf -- '---\nstatus: active\n---\n' > "${P}/docs/epics/e.md"
 notes() { grep -c '^From the lead' "${INBOX}" 2>/dev/null || true; }
 noted() { grep -qF -- "$1" "${INBOX}" 2>/dev/null; }
 no_inbox() { [[ ! -e "${INBOX}" ]]; }
+no_inboxes() { ! compgen -G "${P}/.swarm/inbox/*.md" >/dev/null; }
 # story [config line]... — fresh with merge = human (a line may override it), no inbox and no other
 # story: s1 of epic e, built and ready for review.
 story() {
@@ -51,18 +57,24 @@ story; item p "status: review" "prs: https://github.com/o/r/pull/8" "epic: e"; i
 review s1 "${URL}"
 is "a review held on an open parent: exits non-zero" 1 "${rc}"
 check "a review held on an open parent: says held" said "held: s1 waits for p to merge"
-check "a review held on an open parent: no inbox" no_inbox
+check "a review held on an open parent: no inbox" no_inboxes
 
-# --- The epic's own review: no note.
+# --- The epic's own review: no note, to conduct-e or to the backlog conductor.
 story; review e "${URL}"
 is "an epic review: exits 0" 0 "${rc}"
 check "an epic review: says e is in review" said "review: e ${URL}"
-check "an epic review: no inbox" no_inbox
+check "an epic review: no inbox" no_inboxes
 
 # --- No conductor runs: no inbox, and the review exits 0.
-story; printf 't w:b\n' > "${ROOT}/agents"; review s1 "${URL}"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
+story; printf 't w:b\n' > "${ROOT}/agents"; review s1 "${URL}"; printf '%s\n' "${AGENTS}" > "${ROOT}/agents"
 is "a story review with no conductor running: exits 0" 0 "${rc}"
-check "a story review with no conductor running: no inbox" no_inbox
+check "a story review with no conductor running: no inbox" no_inboxes
+
+# --- A story with no epic: one note to the backlog conductor, none to conduct-e.
+story; item s1 "status: building" "kind: code"; review s1 "${URL}"
+check "a story review with no epic: the backlog conductor's note names s1 and its PR" \
+  grep -qF "Story s1 is in review: its PR ${URL} now waits for the user to merge." "${P}/.swarm/inbox/${BL}.md"
+check "a story review with no epic: no note to conduct-e" no_inbox
 
 # --- merge = agent: the swarm merges s1 itself, so no note; one that costs money waits for the user.
 story "merge = agent"; review s1 "${URL}"
