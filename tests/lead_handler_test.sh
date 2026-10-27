@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -73,6 +73,9 @@ board() {
                     printf 's w:p1 builder\npid 999999999\n' > "${P}/.swarm/briefs/s.unsent"; echo "w:p1 s" > "${P}/.swarm/state/tab"
                     echo '{"name":"s","agent_status":"idle","pane_id":"w:p1"}' > "${ROOT}/agents"
                     printf '────────────────\n❯ [Pasted text #1 +40 lines]\n────────────────\n' > "${ROOT}/pane.txt" ;;
+    # A blocked story whose dependency, still to build, shares no file in touches with it.
+    idle) story s "kind: code" "status: blocked" "depends_on: [d]" "touches: [a.sh]"
+          story d "kind: code" "status: ready" "touches: [b.sh]" ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }

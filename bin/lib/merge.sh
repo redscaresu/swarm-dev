@@ -275,13 +275,15 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
 # --release, which refuses there (only --admin merges past a queue). Then wait for CI on the merge commit and, without --board or --release, run
-# reconcile, even after a red main, since the PR has merged; with --board, on a green main with an
+# reconcile, even after a red main, since the PR has merged, then for a story story_note notes its
+# conductor, saying so when reconcile failed, CI on the base is not green or the queue merged another
+# head; with --board, on a green main with an
 # upstream, ready_tell reconciles and notes conductors of the stories the PR made ready. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -317,6 +319,8 @@ merge_pr() {
     [[ -n "${any}" ]] || merge_fail "no story or epic lists ${url} on its prs: line: run swarm.sh review <slug> ${url} first, or pass --board for a board-only PR"
     if [[ -z "${f}" ]]; then MERGE_TARGET="$(basename "${any}" .md)"; merge_fail "${MERGE_TARGET} is $(fm "${any}" status), not review"; fi
     MERGE_TARGET="$(basename "${f}" .md)"
+    # A story's epic (- for none), for story_note: its file may be gone once the PR merges.
+    [[ "${f}" != "${BOARD}/stories/"* ]] || { grp="$(fm "${f}" epic)"; grp="${grp:--}"; }
   else
     whose="the project's"
     if [[ "${only}" == --board ]]; then
@@ -455,10 +459,23 @@ merge_pr() {
     # shellcheck disable=SC2034 # read in another file
     ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
     wait $! || {
-      rrc=$?; why="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
-      record_event reconcile - "${why:-failed (exit ${rrc})}"
-      die "merge: reconcile failed after the merge; run swarm.sh reconcile"
+      rrc=$?; rwhy="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
+      record_event reconcile - "${rwhy:-failed (exit ${rrc})}"; rwhy="${rwhy:-exit ${rrc}}"
     }
+    # The story's conductor hears it merged now, a failed reconcile too. In the background, so set -e
+    # holds inside it; it never fails the merge.
+    if [[ -n "${grp}" ]]; then
+      [[ -z "${QUEUE_BAD}" ]] || caveat="the merge queue merged a head nobody checked (${QUEUE_BAD}), so start none of the stories waiting on it until what merged is reviewed"
+      [[ ${rc} -eq ${MAIN_CI_OK} || -z "${oid}" ]] || caveat+="${caveat:+, and }CI on ${base} at ${oid:0:7} is not green (${why%% *}), so start none of the stories waiting on it until it is"
+      [[ -z "${rwhy}" ]] || caveat+="${caveat:+, and }reconcile failed after it (${rwhy}), so which stories it made ready is not known until swarm.sh reconcile succeeds"
+      # After either of the first two, reconcile has still finished the story, so unblock readies its
+      # dependents, and the startable pass the note's wake prompt asks for would start them.
+      [[ ${rc} -eq ${MAIN_CI_OK} && -z "${QUEUE_BAD}" ]] \
+        || caveat+=". This overrides the startable pass after this note: do not start any story whose depends_on names ${MERGE_TARGET}"
+      ( set -e; story_note "${url}" "${MERGE_TARGET}" "${grp}" "${caveat}" ) &
+      wait $! || echo "warning: telling the conductor of ${MERGE_TARGET} that ${url} merged failed (exit $?)"
+    fi
+    [[ -z "${rwhy}" ]] || die "merge: reconcile failed after the merge; run swarm.sh reconcile"
   fi
   [[ ${rc} -eq ${MAIN_CI_OK} ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: $(ci_data <<< "${why}")"
   [[ -z "${QUEUE_BAD}" ]] || die "merge: ${QUEUE_BAD}"
@@ -480,6 +497,8 @@ board_ready() {
 
 # group_conductor <epic> — the conductor of board_ready's epic column: - is the backlog's.
 group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conductor_name "$1"; fi; }
+# group_of <epic> — how a note names board_ready's epic column: "of epic <epic>", or for - "with no epic".
+group_of() { if [[ "$1" == - ]]; then echo "with no epic"; else echo "of epic $1"; fi; }
 
 # conduct_ready — start a conductor, as swarm.sh conduct does, for each group of buildable stories
 # (board_ready --started: an active epic's, or with no epic the backlog's) whose conductor
@@ -620,19 +639,119 @@ live_at() {
   [[ -z "${e}" || "$(at_rev "$1" "${2%stories/*}epics/${e}.md" status)" == active ]]
 }
 
+# conductor_note <epic> <file> [slugs] — note the running conductor of <epic> (board_ready's column:
+# - is the backlog's) with <file>, through its inbox (tell_agent); [slugs] are the stories it says are
+# ready. One that has written its report has finished (conductors_queued): nobody reads its inbox.
+# With none running, or only that one, print the ready now: line for [slugs], or nothing without
+# them. A herdr that cannot list its agents, or a tell that fails, is a warning: it never fails. It
+# runs after the PR has merged, so its herdr calls, the list here and those tell_agent makes, are
+# bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), checked to parse
+# (note_agents), so a list that does not, or a read that fails after it, is a warning, never a
+# conductor taken for gone.
+conductor_note() {
+  local name list what="that ${3:-} are ready" later="it finds them on its next pass"
+  name="$(group_conductor "$1")"
+  [[ -n "${3:-}" ]] || { what="of the merge"; later="it reads the board on its next pass"; }
+  (
+    bound_herdr
+    if ! list="$(note_agents)"; then
+      echo "warning: herdr cannot list its agents, so ${name} was not told ${what}"; exit 0
+    fi
+    if [[ -z "$(herdr_from "${list}" agent_field "${name}" pane_id)" || -f "$(conductor_report "${name}")" ]]; then
+      [[ -z "${3:-}" ]] || echo "ready now: $3 ($(group_of "$1")); no conductor runs for it yet"
+      exit 0
+    fi
+    ( set -e; tell_agent "${name}" note "$2" ) &
+    wait $! || echo "warning: could not note ${name} ${what} (exit $?); ${later}"
+  )
+}
+
+# bound_herdr — from here on in this shell, `herdr` is a function that cuts each herdr call off after
+# SWARM_NOTE_HERDR_WAIT seconds (default HERDR_LIST_WAIT): the caller's own and those of the functions
+# it calls (within runs the program, not the function). Call it in a subshell: a note goes after the
+# PR has merged, and merge must not hang on herdr.
+bound_herdr() {
+  # shellcheck disable=SC2329 # called by name, by what runs after it
+  herdr() { within "${SWARM_NOTE_HERDR_WAIT:-${HERDR_LIST_WAIT}}" herdr "$@"; }
+}
+
+# note_agents — herdr's agent list (bounded once bound_herdr has run), printed when it reads as one:
+# JSON whose result.agents is a list. Fails otherwise, so a list herdr could not give, or gave cut
+# short, is never read as no agents running.
+note_agents() {
+  local list
+  list="$(herdr agent list </dev/null 2>/dev/null)" || return 1
+  json "isinstance(d['result']['agents'], list) or sys.exit(1)" <<< "${list}" >/dev/null 2>&1 || return 1
+  printf '%s\n' "${list}"
+}
+
+# herdr_from <list> <command>... — run <command> in a subshell where `herdr agent list` prints <list>,
+# a list already read, and any other herdr call fails: what it reads of the agents is that one list.
+herdr_from() {
+  (
+    # shellcheck disable=SC2329 # called by name, by the command
+    herdr() { [[ "$1 $2" == "agent list" ]] && printf '%s\n' "${HERDR_LIST}"; }
+    HERDR_LIST="$1"; shift
+    "$@"
+  )
+}
+
+# story_note <url> <slug> <epic> [why] — once merge has landed story <slug>'s PR <url> and run
+# reconcile: one note to the conductor of <epic>, the story's (conductor_note), that the PR merged and
+# which stories of <epic> it made ready: each blocked one whose depends_on names <slug> and has no
+# open slug left (open_deps), which the conductor's unblock readies. To start are those unblock
+# --startable would print: of a kind an agent builds, in an active epic or none, their build not
+# started. One unblock readies as held, by its own rule (a held_by: and the build's worktree still
+# there), is named apart, to merge its base in and be reviewed again, never to start; with no
+# conductor running, the ready now: line marks it (held).
+# With [why], merge's reason the ready ones are not to be started or not known, or with <slug> still
+# in review (reconcile held its pull, or could not read its PR), the note says that in their place.
+story_note() {
+  local f e s src slugs="" held="" list live=1 why="${4:-}" msg note
+  [[ -n "${why}" || "$(fm "${BOARD}/stories/$2.md" status 2>/dev/null)" != review ]] \
+    || why="reconcile has not finished $2 yet (it is still in review), so which stories it made ready is not known until swarm.sh reconcile finishes it"
+  msg="The PR $1 of story $2 just merged"
+  [[ "$3" == - || "$(fm "${BOARD}/epics/$3.md" status 2>/dev/null)" == active ]] || live=""
+  if [[ -n "${why}" ]]; then
+    msg+=", but ${why%.}."
+  else
+    while IFS= read -r f; do
+      e="$(fm "${f}" epic)"; s="$(basename "${f}" .md)"
+      [[ "${e:--}" == "$3" && "$(fm "${f}" status)" == blocked && " $(story_deps "${f}") " == *" $2 "* ]] || continue
+      [[ -z "$(open_deps "$(story_deps "${f}")")" ]] || continue
+      if [[ -n "$(get_fm "${f}" held_by)" ]] && src="$(repo_dir "$(fm "${f}" repo)")" && [[ -d "$(worktree_for "${src}" "${s}")" ]]; then
+        held+="${held:+ }${s}"
+      elif [[ -n "${live}" ]] && agent_kind "$(fm "${f}" kind)" && ! one_off_started "${s}"; then slugs+="${slugs:+ }${s}"; fi
+    done < <(board stories)
+    if [[ -n "${slugs}" ]]; then
+      msg+=", and these stories $(group_of "$3") are ready now: ${slugs}. Start them now, within your builder limits, rather than on your next pass."
+    else
+      msg+="; it made no story $(group_of "$3") ready to start."
+    fi
+    [[ -z "${held}" ]] || msg+=" These held child reviews waited on it: ${held}. Unblock readies each as held: merge its base in and review it again, and never run swarm.sh story for it."
+  fi
+  list="${slugs}"; for s in ${held}; do list+="${list:+ }${s} (held)"; done
+  note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
+  printf '%s\n' "${msg}" > "${note}"
+  conductor_note "$3" "${note}" "${list}"
+  rm -f "${note}"
+}
+
 # ready_tell <url> <oid> <files> <before> <prev> — once merge --board has landed <url> at the merge commit
 # <oid>: run reconcile, which clears any merged build before it pulls the main checkout. New are the
 # stories buildable now (board_ready) that <before> (its --review lines before the merge) does not list and
 # whose file, or whose epic's, is among <files>, the paths <url> changes, and <url> made live (live_at):
 # not at <prev>, the board <url> merged onto, but at <oid>, its own merge commit (not a queue batch's tip): not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
-# backlog's, for stories with no epic) one note naming them, to start them now; with none running,
+# backlog's, for stories with no epic) one note naming them, to start them now (conductor_note); with none running,
 # say so. Then conduct_ready starts the conductors ready work lacks. With no upstream nothing is
-# pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one), a
+# pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one) is a
+# warning, and each running conductor still gets a note that <url> merged, naming the failure, its
+# herdr calls bounded (bound_herdr). That, a
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d=""
+  local url="$1" oid="$2" new rc why dief e c slugs note list p was="" d=""
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
@@ -643,6 +762,21 @@ ready_tell() {
     rc=$?; why="$(head -1 "${dief}" 2>/dev/null || true)"; [[ "${dief}" == /dev/null ]] || rm -f "${dief}"
     record_event reconcile - "${why:-failed (exit ${rc})}"
     echo "warning: reconcile failed after the merge (${why:-exit ${rc}}), so no conductor was told what ${url} made ready; run swarm.sh reconcile"
+    # What it made ready is not known, so every running conductor hears it merged.
+    note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || return 0
+    printf 'The board PR %s just merged, but reconcile failed after it (%s), so which stories it made ready is not known until swarm.sh reconcile succeeds.\n' \
+      "${url}" "${why:-exit ${rc}}" > "${note}"
+    # One list, bounded and read as in conductor_note (note_agents), names the conductors. On fd 3, as below.
+    if ! list="$(bound_herdr; note_agents)"; then
+      echo "warning: herdr cannot list its agents, so no conductor was told that ${url} merged"
+    else
+      while read -r c <&3; do
+        [[ -n "${c}" ]] || continue
+        e="$(conduct_epic "${c}")"; [[ "${e}" != backlog ]] || e=-
+        conductor_note "${e}" "${note}"
+      done 3<<< "$(herdr_from "${list}" running_conductors)"
+    fi
+    rm -f "${note}"
     return 0
   }
   [[ "${dief}" == /dev/null ]] || rm -f "${dief}"
@@ -668,19 +802,10 @@ ready_tell() {
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
     slugs="$(awk -v e="${e}" '$2 == e { print $1 }' <<< "${new}" | paste -sd' ' -)"
-    name="$(group_conductor "${e}")"; of="of epic ${e}"; [[ "${e}" != - ]] || of="with no epic"
-    if ! herdr agent list >/dev/null 2>&1; then
-      echo "warning: herdr cannot list its agents, so ${name} was not told that ${slugs} are ready"; continue
-    fi
-    # One that has written its report has finished (conductors_queued): nobody reads its inbox.
-    if [[ -z "$(agent_field "${name}" pane_id)" || -f "$(conductor_report "${name}")" ]]; then
-      echo "ready now: ${slugs} (${of}); no conductor runs for it yet"; continue
-    fi
     note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
     printf 'The board PR %s just merged, and these stories %s are ready now: %s. Start them now, within your builder limits, rather than on your next pass.\n' \
-      "${url}" "${of}" "${slugs}" > "${note}"
-    ( set -e; tell_agent "${name}" note "${note}" ) &
-    wait $! || echo "warning: could not note ${name} that ${slugs} are ready (exit $?); it finds them on its next pass"
+      "${url}" "$(group_of "${e}")" "${slugs}" > "${note}"
+    conductor_note "${e}" "${note}" "${slugs}"
     rm -f "${note}"
   done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
   conduct_ready || true   # a failed start has printed its warning
@@ -2031,12 +2156,22 @@ stacked_lines() {
 # step-up labelled; a no-review: line, for a PR whose review agent never started or went, as wait
 # --lead prints it; none when there are none), then the agents that need a look or are working, the stacked
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
-# waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
+# waiting on them, and what `next` would do, with next's idle: lines for blocked stories (idle_warned: a failed check warns on stderr); idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
+# Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS in its place, for a
+# test): status_reads routes every herdr, gh and claude call, and git's fetch and ls-remote, through
+# report_read, its own and those of the functions it calls; status_report.py's pane reads (one herdr
+# agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
+# to them the same way. A read cut there, or due after it, fails as it would on an error, and
+# report_skipped's line, printed last, names it.
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent
+  # Local, so report_start and report_skipped, called from here, read it.
+  local REPORT_SECONDS="${SWARM_REPORT_SECONDS:-${REPORT_SECONDS}}"
+  report_start || die "status: cannot start the report deadline"
+  status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
   if [[ "${HERDR_ENV:-}" != 1 ]]; then
     echo "No agent: not checked; it needs herdr's agent list, so run status inside a herdr pane"
@@ -2069,7 +2204,8 @@ status_report() {
     while read -r pane name; do
       [[ "${own}" != *" ${pane} "* ]] || pane_check "${name}" "${pane}" > /dev/null
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
-    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+    # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.
+    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}" \
       python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
     upgrade_status
   fi
@@ -2086,6 +2222,40 @@ status_report() {
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
   echo; echo "Next"
   next_lines | sed 's/^/  /'
+  # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none.
+  idle_warned | sed 's/^/  /' || true
+  local skipped; skipped="$(report_skipped)"
+  [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"
+}
+
+# status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status
+# calls it; after status_report only timed's run_time_end runs, which calls none of these): each of
+# these reads goes through report_read, named by its
+# command and subcommand (gh api by `gh api` alone), with stdin from /dev/null, since within runs it in
+# a process group of its own, where a read of the terminal would stop it until the deadline. Of git,
+# only fetch and ls-remote, which reach origin, go through it; the rest run as they are. One of those is
+# a network read too: `git remote set-head origin --auto` (base_for, on stacked_child's path, when
+# base_branches is empty) asks origin and writes refs/remotes/origin/HEAD. It is left unbounded on
+# purpose, as a KILL mid-write would leave a stale ref lock. A fetch KILLed at the deadline mid-update
+# can leave such a <ref>.lock behind, which fails that ref's later fetches (builds' and merges' too)
+# until it is removed. A call that already runs under within execs the program itself and keeps its
+# own wait.
+# shellcheck disable=SC2329 # status's callers call these functions by name: herdr, gh, claude, git
+status_reads() {
+  herdr() { report_read "herdr $1 $2" herdr "$@" </dev/null; }
+  claude() { report_read "claude $1" claude "$@" </dev/null; }
+  gh() { if [[ "$1" == api ]]; then report_read "gh api" gh "$@" </dev/null; else report_read "gh $1 $2" gh "$@" </dev/null; fi; }
+  git() {
+    local i=1
+    # The subcommand is the first word past git's own options; -C and -c take a value.
+    while (( i <= $# )); do
+      case "${!i}" in -C|-c) i=$((i + 2)) ;; -*) i=$((i + 1)) ;; *) break ;; esac
+    done
+    case "${!i:-}" in
+      fetch|ls-remote) report_read "git ${!i}" git "$@" </dev/null ;;
+      *) command git "$@" ;;   # remote set-head too: unbounded on purpose (above)
+    esac
+  }
 }
 
 # stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no build yet can

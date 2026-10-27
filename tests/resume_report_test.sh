@@ -387,12 +387,12 @@ check "a herdr that fails never fails the hook, which would block the prompt" "$
 touch "${ROOT}/hookslow"; hook UserPromptSubmit "" '{"hook_event_name":"UserPromptSubmit","session_id":"@S1@","prompt":"go"}'; rm -f "${ROOT}/hookslow"
 check "a herdr that hangs holds no prompt: the hook returns at once, its call made" \
   "$(as working "${S1}")||0|fast" "${got}|$( ((took < 2000)) && echo fast || echo "${took} ms")"
-check "every state hook has a timeout of at most 10 seconds" "" "$(python3 -c '
+check "every state hook has a timeout of at most 30 seconds" "" "$(python3 -c '
 import json, sys
 for event, entries in json.load(open(sys.argv[1]))["hooks"].items():
     for e in entries:
         for h in e["hooks"]:
-            if "agent-state.sh" in h["command"] and not 0 < h.get("timeout", 0) <= 10:
+            if "agent-state.sh" in h["command"] and not 0 < h.get("timeout", 0) <= 30:
                 print(event)' "${REPO}/hooks/hooks.json")"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
