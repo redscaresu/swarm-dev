@@ -1,30 +1,18 @@
 ---
 kind: code
-status: ready
-epic: less-noise
-depends_on: []
-touches: [bin/lib/lifecycle.sh:lead_queue, bin/lib/panes.py:prompt detection, commands/swarm.md:wait --lead handler, tests/stuck_work_watch_test.sh (new), docs/reference.md:wait --lead lines]
-estimate_lines: 280
+status: blocked
+epic: stuck-work
+depends_on: [pane-prompt-classifier, idle-lines-in-lead-queue]
+needs: [pane-prompt-classifier: the pane classifier in bin/lib/panes.py, idle-lines-in-lead-queue: lead_queue, the wait --lead handler, KINDS and the wait --lead and method.md lines as it leaves them (shared parts)]
+touches: [bin/lib/lifecycle.sh:lead_queue, commands/swarm.md:wait --lead handler, tests/lead_handler_test.sh:KINDS, tests/stuck_work_watch_test.sh (new), docs/reference.md:wait --lead lines, docs/method.md:Every stop names its exit]
+estimate_lines: 150
 easy: false
 ---
 
-# wait --lead wakes the lead for every kind of stuck work, not only stories with no agent
+# wait --lead wakes the lead for an agent stuck on a prompt, a dialog or manual mode
 
-Target: v0.29.0, adopted by less-noise (user, 2026-10-26). On 2026-10-25/26 the user found these by hand, several times, while swarm.sh's waits saw nothing: builder panes frozen on a Claude Code permission prompt or the "Teach auto mode" dialog for hours (one from 03:07), a pane dropped into manual mode after a prompt was answered, PRs that passed review and were green but sat unmerged (#508 for 1h45, #539 for over an hour), PRs left conflicting with main, and main red after two individually-green PRs merged. The lead stopgapped it with .swarm/lead-watchdog.sh, a 3-minute poll; this story moves that into swarm.sh.
-
-Add to lead_queue (so wait --lead, next and status all show it), each line naming its exit, each alerted once per occurrence:
-- `prompt: <agent>`: its pane waits on a Claude Code permission prompt or dialog, or shows manual mode, or a login or API error. Exit: who answers it (the user), and for manual mode, restart the builder (no-agent-alert's restart command).
-- `unmerged: <slug> <PR>`: passed review on its current head, green and mergeable, open for more than queue_minutes. Exit: swarm.sh merge with the reviewed head.
-- `conflict: <slug> <PR>`: an open story PR CONFLICTING with the base. Exit: tell its builder to merge the base in.
-- main red is already fix-main's; do not duplicate it.
-
-Reads stay inside wait --lead's poll budget (one herdr agent list per poll; a per-pane read only for an agent herdr lists as blocked, idle or done).
-
-
-`swarm.sh tell` checks the pane itself before refusing an agent herdr lists as blocked: a dialog the user has cleared leaves herdr's status stale, and on 2026-10-26 the user had to type into #540's pane because no tell got through (v0.28.0 retro).
+Uses pane-prompt-classifier's classifier (bin/lib/panes.py), and idle-lines-in-lead-queue's lead_queue, handler arm, KINDS and docs lines as it leaves them (shared parts). Re-scoped by less-noise: this story is the `prompt:` line; unmerged-conflict-lines and tell-reads-blocked-pane take the rest of its old text. lead_queue prints `prompt: <agent> (<kind>), exit: <exit>`: a prompt or dialog, the user answers it; manual mode, `swarm.sh restart <slug>`; login, the user runs /login; an API error only once wait has stopped resuming it. Reads stay inside wait --lead's poll budget: the poll's one herdr agent list, and a pane read only for an agent herdr lists as blocked, idle or done. Each wakes the lead once per occurrence. commands/swarm.md's wait --lead handler gets a `prompt:` arm; KINDS gets prompt; docs/method.md's 'Every stop names its exit' names stuck agents. merge-holds' protected-hold-queue also edits lead_queue: story --strict serialises the two.
 
 **Done when:**
-- A test per line kind fires on its real case and stays silent on its false case (a pane mid-command that is not a prompt; a PR passed review on an older head; a PR mergeable but not reviewed).
-- commands/swarm.md's wait --lead handler has an arm for each new kind, and the handler-coverage test covers them.
-- `make test` passes.
-- A test: an agent herdr lists as blocked whose pane shows an empty prompt receives the tell.
+- tests/stuck_work_watch_test.sh (new): a blocked agent on each fixture kind gives its prompt: line once; an agent mid-command, and a working agent, give none. It fails with the line removed.
+- tests/lead_handler_test.sh passes with prompt in KINDS.

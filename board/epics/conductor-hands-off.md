@@ -2,7 +2,7 @@
 status: active
 hld: 2026-10-25-swarm-dev-0-28
 stage: v0.29.0
-depends_on: [review-loop]
+depends_on: []
 ---
 
 # The conductor stays one per epic and stops carrying PRs
