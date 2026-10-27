@@ -187,7 +187,8 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this (then unblocked_epic's, below) comes before its wait
 #   plan-hld <hld>    an agreed HLD with no planned: (hld_planned), no epic carrying its hld:
-#                     (hld_epics), and no plan board PR's worktree
+#                     (hld_epics) or, on a board outside the repo, only epics an interrupted run of
+#                     /plan-hld wrote and no work has started on (hld_resumable), and no plan board PR's worktree
 #                     (<repo>-wt/_board-plan-<hld>); with one, this falls through to the steps below
 #                     and the gate lists it (plan PR awaiting merge: <hld>)
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
@@ -502,15 +503,23 @@ next_seen() {
 # blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
 # (kind: lead, or a legacy or unknown kind: agent_kind fails) that a blocked
 # story's depends_on names: the lead's own work that holds an agent's story up while a conductor works.
+# A blocked story with no depends_on (by hand: only the lead readies it) is named the same way, when
+# its kind is one no agent builds: the lead runs it, then finishes it.
 # An escalated story is left out (wait --lead hands it to the escalated step), and so is one with
 # after: (it waits for its epic to finish, as epic_has_stories says). Only a blocked story an agent
 # builds counts, and neither story may sit in an epic the user holds (epic_held).
 blocking_leads() {
   local f b slug blocks
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == ready && -z "$(get_fm "${f}" after)" ]] || continue
-    if agent_kind "$(fm "${f}" kind)"; then continue; fi
-    if is_escalated "${f}" || epic_held "${f}"; then continue; fi
+    [[ -z "$(get_fm "${f}" after)" ]] || continue
+    case "$(fm "${f}" status)" in
+      ready)
+        if agent_kind "$(fm "${f}" kind)"; then continue; fi
+        if is_escalated "${f}" || epic_held "${f}"; then continue; fi ;;
+      blocked) by_hand_blocked "${f}" || continue
+        if agent_kind "$(fm "${f}" kind)" || epic_held "${f}"; then continue; fi ;;
+      *) continue ;;
+    esac
     slug=$(basename "${f}" .md); blocks=""
     while IFS= read -r b; do
       [[ "$(fm "${b}" status)" == blocked && " $(story_deps "${b}") " == *" ${slug} "* ]] || continue
@@ -520,6 +529,30 @@ blocking_leads() {
     done < <(board stories)
     if [[ -n "${blocks}" ]]; then echo "also: lead ${slug} blocks${blocks}"; fi
   done < <(board stories)
+}
+
+# by_hand_blocked <story-file> — true for a blocked story with no depends_on: no merge readies it,
+# so only the lead does (blocked_why's "by hand").
+by_hand_blocked() {
+  [[ "$(fm "$1" status)" == blocked && -z "$(story_deps "$1" | tr -d ' ')" ]]
+}
+
+# lead_blocked <story-file> — true when the story is blocked and every depends_on still open is
+# work no agent builds: a hand step (not a plain slug, such as operator:<x>), a story of a kind no
+# agent builds (agent_kind fails) in any status, or a story blocked by hand. It waits on the lead,
+# not on an agent. An open epic is not one: a conductor builds its stories.
+lead_blocked() {
+  local open p f
+  [[ "$(fm "$1" status)" == blocked ]] || return 1
+  open="$(open_deps "$(story_deps "$1")")"
+  [[ -n "${open}" ]] || return 1
+  for p in ${open}; do
+    [[ "${p}" =~ ^[a-z0-9-]+$ ]] || continue
+    if open_item "${BOARD}/epics/${p}.md"; then return 1; fi
+    f="${BOARD}/stories/${p}.md"
+    [[ -f "${f}" ]] || return 1
+    if agent_kind "$(fm "${f}" kind)" && ! by_hand_blocked "${f}"; then return 1; fi
+  done
 }
 
 # epic_held <story-file> — true when the story's epic is later or draft: the user has not started it.
@@ -532,11 +565,13 @@ epic_held() {
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
 # (epic_holding_deps), or nothing. A split epic (status: split) is never planned: its child epics are.
+# An epic an interrupted /plan-hld's rerun will overwrite (hld_resuming) waits for that rerun.
 plannable_epic() {
   local f held
   while IFS= read -r f; do
     held="$(epic_holding_deps "${f}")" || continue
     [[ -z "${held}" ]] || continue
+    ! hld_resuming "${f}" || continue
     basename "${f}" .md; return
   done < <(board epics)
 }
@@ -1015,10 +1050,56 @@ hld_planned() { local v; v="$(fm_list "$1" planned)"; [[ -n "${v//[[:space:]]/}"
 
 # hld_due <hld file> — for an agreed HLD that no epic names (hld_epics): plan with no planned:
 # (hld_planned), finish with it. Else nothing: an epic carrying its hld: means it was decomposed (an
-# HLD planned through /epic before planned: existed too), and is not planned again.
+# HLD planned through /epic before planned: existed too), and is not planned again. One exception, on
+# a board outside the repo (BOARD_IN_REPO is not 1), where /plan-hld writes epics in place with no PR:
+# an interrupted run leaves epics naming the HLD and no planned:, and when its marker says it wrote
+# them and no work has started on them (hld_resumable) that is plan again, which overwrites them.
 hld_due() {
-  [[ "$(get_fm "$1" status)" == agreed && -z "$(hld_epics "$(basename "$1" .md)" -1)" ]] || return 0
-  if hld_planned "$1"; then echo finish; else echo plan; fi
+  local name; name="$(basename "$1" .md)"
+  [[ "$(get_fm "$1" status)" == agreed ]] || return 0
+  if [[ -z "$(hld_epics "${name}" -1)" ]]; then
+    if hld_planned "$1"; then echo finish; else echo plan; fi
+  elif [[ ${BOARD_IN_REPO} != 1 ]] && ! hld_planned "$1" && hld_resumable "${name}"; then
+    echo plan
+  fi
+  return 0
+}
+
+# The marker /plan-hld writes in <project>/.swarm/<hld name>/ on a board outside the repo: one epic
+# slug per line, every epic the run writes, before it writes any; it removes it once planned: is set.
+HLD_MARKER="writing-epics"
+
+# hld_resumable <hld name> — true when an interrupted /plan-hld wrote the epics naming the HLD and a
+# rerun may overwrite them: its marker (HLD_MARKER) is there and lists each of them, and no work has
+# started on them. Work has started when a story names one in epic: or an epic in parent:, done or not,
+# or when the project's log (EVENTS_LOG) has a conductor started for one (conduct <epic>) or one, or an
+# epic the marker lists, finished (finish <epic>): finish deletes a story on a board outside the repo,
+# so the log is what keeps it. An epic the marker does not list (an older or hand-written one) is not the run's.
+hld_resumable() {
+  local marker f e slugs=" "; marker="${PROJECT_DIR}/.swarm/$1/${HLD_MARKER}"
+  [[ -f "${marker}" ]] || return 1
+  while IFS= read -r f; do
+    f="$(basename "${f}" .md)"
+    grep -qxF -- "${f}" "${marker}" || return 1
+    slugs+="${f} "
+  done < <(hld_epics "$1")
+  while IFS= read -r f; do
+    e="$(fm_list "${f}" epic)"; [[ -z "${e}" || "${slugs}" != *" ${e} "* ]] || return 1
+  done < <(board stories)
+  while IFS= read -r f; do
+    e="$(fm_list "${f}" parent)"; [[ -z "${e}" || "${slugs}" != *" ${e} "* ]] || return 1
+  done < <(board epics)
+  ! awk -F'\t' -v s="${slugs}$(tr '\n' ' ' < "${marker}") " '($2 == "conduct" || $2 == "finish") && index(s, " " $3 " ") { f = 1 }
+    END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+}
+
+# hld_resuming <epic file> — true when the epic's hld: names an HLD that a rerun of an interrupted
+# /plan-hld will overwrite (hld_due says plan): plannable_epic leaves it to that rerun.
+hld_resuming() {
+  local hld
+  [[ ${BOARD_IN_REPO} != 1 ]] || return 1
+  hld="$(slug_list "$(get_fm "$1" hld)")"
+  [[ -n "${hld}" && -f "${BOARD}/hld/${hld}.md" && "$(hld_due "${BOARD}/hld/${hld}.md")" == plan ]]
 }
 
 # hld_pr_open <hld name> <plan|finish> — true while the HLD's plan or finish board PR's worktree
@@ -1196,12 +1277,12 @@ pr_hld() (
   } | one_hld
 )
 
-# grants <story | epic | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
+# grants <story | epic | hld | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
 # PR) and its grants (hld_grants), one per line, or none. A name that is no story or epic but an HLD
 # in ${BOARD}/hld is that HLD: an agreed one prints itself and its grants, any other none.
 grants() {
   local h g
-  [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | PR URL>"
+  [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | hld | PR URL>"
   if [[ "$1" == https://* ]]; then h="$(pr_hld "$1")" || exit 1
   # Keep this slug check and the story/epic lookups in step with item_file's.
   elif [[ "$1" =~ ^[a-z0-9-]+$ && ! -f "${BOARD}/stories/$1.md" && ! -f "${BOARD}/epics/$1.md" && -f "${BOARD}/hld/$1.md" ]]; then
@@ -1351,7 +1432,8 @@ open_deps() {
 blocked_why() {
   local deps open
   deps="$(story_deps "$1")"; open="$(open_deps "${deps}")"
-  if [[ -n "${open}" ]]; then echo "by ${open}"
+  if [[ -n "${open}" ]]; then
+    if lead_blocked "$1"; then echo "by ${open}, which no agent builds"; else echo "by ${open}"; fi
   elif [[ -n "${deps// /}" ]]; then echo "its depends_on is finished: swarm.sh unblock readies it"
   else echo "by hand: no depends_on"
   fi
