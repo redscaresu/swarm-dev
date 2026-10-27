@@ -134,16 +134,19 @@ merge_grant() {
 }
 
 # pr_contents <owner/repo> <ref> <path> — <path> at <ref> (a branch or a SHA), its bytes on stdout,
-# through gh's contents API; fails 1 when it is absent there (HTTP 404) and 2 on any other failure,
-# with gh's error on stderr. The one reader of a file at a PR's ref: merge_read, pr_hld and
-# release_check read through it.
+# through gh's contents API, both URL-quoted; fails 1 when it is absent there (HTTP 404) and 2 on any
+# other failure, with gh's error on stderr and nothing on stdout (gh prints the error's JSON body
+# there). The shell's reader of a file at a PR's ref: merge_read, pr_hld and release_check read
+# through it (ci_gate.py's expected has its own).
 pr_contents() {
-  local q err rc=0
-  # Quoted, so a # or ? in a name is read as itself.
-  q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$3")" || return 2
-  # The file's bytes go to stdout (fd 3); gh's stderr into err, to tell a 404 from the rest.
-  { err="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/${q}?ref=$2" 2>&1 >&3)" || rc=$?; } 3>&1
-  [[ ${rc} -ne 0 ]] || return 0
+  local q out err rc=0
+  # Quoted, so a # or ? in a name, or a + or & in a ref, is read as itself.
+  q="$(python3 -c 'import sys, urllib.parse as u; print(u.quote(sys.argv[1]) + "?ref=" + u.quote(sys.argv[2], safe=""))' "$3" "$2")" || return 2
+  # The bytes go to a file, printed only on success; gh's stderr into err, to tell a 404 from the rest.
+  out="$(mktemp)" || return 2
+  err="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/${q}" 2>&1 > "${out}")" || rc=$?
+  if [[ ${rc} -eq 0 ]]; then cat "${out}" || rc=2; rm -f "${out}"; return "${rc}"; fi
+  rm -f "${out}"
   [[ "${err}" != *"HTTP 404"* ]] || return 1
   [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2
   return 2

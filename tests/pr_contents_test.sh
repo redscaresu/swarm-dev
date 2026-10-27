@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# pr_contents_test.sh — pr_contents, the one reader of a file at a PR's ref, and the three that read
+# pr_contents_test.sh — pr_contents, the shell's reader of a file at a PR's ref, and the three that read
 # through it: merge --board's epic guard (merge_read), swarm.sh grants (pr_hld) and merge --release
 # (release_check). On merge_fixture.sh, with a stub of gh's contents API in front of its gh: a read of
-# <path> at <ref> answers ${FX}/ct/<ref>/<path as gh was asked for it>, byte for byte; with .500
-# beside it a 500, and with neither a 404. The consumers run from a copy of the plugin whose
-# pr_contents first logs "<ref> <path>" to ${FX}/spy, so a consumer that stops calling it fails.
+# <path> at <ref> answers ${FX}/ct/<ref as gh was asked for it>/<path as gh was asked for it>, byte for
+# byte; with .500 beside it a 500, and with neither a 404, each with a JSON body on stdout as gh prints
+# one. With ${FX}/gone.fail, merge_gone's read of the PR's files fails. The consumers run from a copy
+# of the plugin whose pr_contents first logs "<ref> <path>" to ${FX}/spy, so a consumer that stops
+# calling it fails.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -21,7 +23,7 @@ export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # The contents stub. .github/ goes to the fixture's gh (ci_gate reads the workflows there), and so
 # does every other call.
 mv "${ROOT}/bin/gh" "${ROOT}/bin/gh-fixture"
-printf '#!/usr/bin/env bash\nCT="%s"; LOG="%s"; NEXT="%s"\n' "${FX}/ct" "${ROOT}/gh.log" "${ROOT}/bin/gh-fixture" > "${ROOT}/bin/gh"
+printf '#!/usr/bin/env bash\nFX="%s"; CT="%s"; LOG="%s"; NEXT="%s"\n' "${FX}" "${FX}/ct" "${ROOT}/gh.log" "${ROOT}/bin/gh-fixture" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 for a in "$@"; do path="${a}"; done
 case "$1 ${path}" in
@@ -30,8 +32,10 @@ case "$1 ${path}" in
     echo "$*" >> "${LOG}"
     f="${path#repos/*/*/contents/}"; ref="${f##*\?ref=}"; f="${CT}/${ref}/${f%\?ref=*}"
     if [ -f "${f}" ]; then cat "${f}"; exit 0; fi
-    if [ -e "${f}.500" ]; then echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; fi
-    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+    if [ -e "${f}.500" ]; then echo '{"message":"Server Error"}'; echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; fi
+    echo '{"message":"Not Found","status":"404"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  # merge_gone's read (--slurp) fails with ${FX}/gone.fail; ci_gate's read of the same files does not.
+  "api repos/"*/pulls/*/files*) case " $* " in *" --slurp "*) [ ! -e "${FX}/gone.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;; esac ;;
 esac
 exec "${NEXT}" "$@"
 STUB
@@ -69,14 +73,21 @@ is "pr_contents, ok: exits 0" 0 "${rc}"
 check "pr_contents, ok: the file's bytes on stdout" cmp -s "${FX}/ct/${H1}/docs/a.md" "${ROOT}/pc.out"
 pc "${H1}" docs/none.md
 is "pr_contents, a 404: exits 1" 1 "${rc}"
+check "pr_contents, a 404: nothing on stdout" test ! -s "${ROOT}/pc.out"
 err_at "${H1}" docs/b.md; pc "${H1}" docs/b.md
 is "pr_contents, a 500: exits 2" 2 "${rc}"
 check "pr_contents, a 500: gh's error on stderr" grep -qxF "gh: Internal Server Error (HTTP 500)" "${ROOT}/pc.err"
+check "pr_contents, a 500: nothing on stdout" test ! -s "${ROOT}/pc.out"
 serve_at "${H1}" 'docs/a%23b%3Fc.md' odd
 pc "${H1}" 'docs/a#b?c.md'
 is "pr_contents, a path holding # and ?: exits 0" 0 "${rc}"
 is "pr_contents, a path holding # and ?: reads that file" odd "$(cat "${ROOT}/pc.out")"
 check "pr_contents, a path holding # and ?: asks for it quoted" grep -qxF "api -H Accept: application/vnd.github.raw repos/o/r/contents/docs/a%23b%3Fc.md?ref=${H1}" "${ROOT}/gh.log"
+serve_at 'r%23s%2Bt' docs/a.md refd
+pc 'r#s+t' docs/a.md
+is "pr_contents, a ref holding # and +: exits 0" 0 "${rc}"
+is "pr_contents, a ref holding # and +: reads that file" refd "$(cat "${ROOT}/pc.out")"
+check "pr_contents, a ref holding # and +: asks for it quoted" grep -qxF "api -H Accept: application/vnd.github.raw repos/o/r/contents/docs/a.md?ref=r%23s%2Bt" "${ROOT}/gh.log"
 
 # --- merge_read, through merge --board's epic guard on a board PR that changes docs/epics/e1.md: read
 # at the base branch (main) and the head (${H1}).
@@ -99,6 +110,9 @@ board_pr removed; item_at main "${E}" "status: draft"; merge --board "${URL}"
 is "--board, a 404 at the head on e1, which the PR removes: exits 0" 0 "${rc}"
 check "--board, a 404 at the head on e1, which the PR removes: merged" merged
 guard_read "--board, a 404 at the head on e1, which the PR removes" "${H1}"
+board_pr removed; item_at main "${E}" "status: draft"; : > "${FX}/gone.fail"; merge --board "${URL}"
+refused "--board, a 404 at the head on e1, which the PR removes, when its file list cannot be read: unreadable" "--board: gh cannot read ${E} at 1111111, ${UK}"
+guard_read "--board, a 404 at the head on e1, when its file list cannot be read" "${H1}"
 board_pr; item_at main "${E}" "status: draft"; merge --board "${URL}"
 refused "--board, a 404 at the head on e1, which the PR keeps: unreadable" "--board: gh cannot read ${E} at 1111111, ${UK}"
 guard_read "--board, a 404 at the head on e1, which the PR keeps" "${H1}"
