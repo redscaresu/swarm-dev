@@ -590,6 +590,9 @@ cat > "${ROOT}/gh/prlist.json" <<'EOF'
  {"number": 3, "headRefName": "story/a", "headRefOid": "head3", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
  {"number": 4, "headRefName": "story/c", "headRefOid": "head4", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]
 EOF
+# Every PR here was reported opened already (watch_opened_test.sh covers that line), so the checks
+# below see what watch says after it.
+mkdir -p "${w}/.swarm/state"; printf 'opened o/svc#%s\n' 1 2 3 4 5 > "${w}/.swarm/state/watch-seen"
 # Each watch is bounded, so one that polls on fails here rather than hangs the run.
 check "watch --backlog reports a no-epic story's PR and skips every epic story's PR in the same repo" "o/svc #4 story/c checks finished on head4" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --backlog 2>&1)"
