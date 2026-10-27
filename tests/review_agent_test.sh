@@ -375,8 +375,8 @@ check "review-n1 has a pane on record" "yes" "$([[ -n "${NP}" ]] && echo yes || 
 echo "head: ${HEAD_SHA} ROUND-ONE" > "${p}/.swarm/reviews/n1.md"; done_agent review-n1
 echo STALE > "${p}/.swarm/reviews/n1.head"
 echo mark >> "${ROOT}/herdr.log"; was="$(reviews_now)"
-check "--next before any findings tell refuses, as round 1 has started, and changes no file under .swarm/reviews" "1|yes|yes" \
-  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "round 1 of n1 has started already" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+check "--next before any findings tell refuses, as round 1 is a plain review-agent start, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "there is no next round" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T11:30:00Z tell:findings n1 - ok >> "${p}/.swarm/events.tsv"
 check "--next from another pane refuses, naming review-n1's pane, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID=w:999 run review-agent --next n1 "${PR}")"; echo "$?|$(has "only review-n1, in its pane ${NP}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
@@ -411,6 +411,12 @@ printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T13:00:00Z story n1 - ok 2026-10-16T13:1
   2026-10-16T13:20:00Z tell:findings n1 - ok 2026-10-16T13:30:00Z escalate n1 - "ok (findings-3: sonnet -> opus)" >> "${p}/.swarm/events.tsv"
 check "after two ok findings tells and a findings-3 step-up, --next prints round 4" "yes" \
   "$(has "Review round 4 of story n1" "$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")")"
+# A new build starts while review-n1's pane is still open: its story event resets the count, so no
+# findings went to this build and --next has no round to start.
+echo "head: ${HEAD_SHA} ROUND-FOUR" > "${p}/.swarm/reviews/n1.md"
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:00:00Z story n1 - ok >> "${p}/.swarm/events.tsv"; was="$(reviews_now)"
+check "after a new build's story event, --next refuses, as round 1 is a plain review-agent start, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "there is no next round" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 

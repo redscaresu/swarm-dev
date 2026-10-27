@@ -643,8 +643,9 @@ review_at_head() {
 # uncommitted (review_at_head), the last findings file goes aside to <slug>.md.prev (so the conductor's
 # wait ends only on this round's), the head goes in .swarm/reviews/<slug>.head, and it prints the round
 # (review_round) and that round's instruction (review_round_line). Refused, touching no file under
-# .swarm/reviews, from any other pane, when herdr lists no review-<slug> this project started, or while
-# that round has started already (review_rounds): no findings round since, so its review would be lost.
+# .swarm/reviews, from any other pane, when herdr lists no review-<slug> this project started, when the
+# round would be 1 (no findings since the build started), or while that round has started already
+# (review_rounds): no findings round since, so its review would be lost.
 # review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
   local slug="$1" pr="$2" out pane round rounds
@@ -657,6 +658,10 @@ review_next() {
   [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
     || die "review-agent --next: only review-${slug}, in its pane ${pane}, runs its next round, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; no round was started"
   rounds="$(review_rounds "${slug}")"; round="${rounds% *}"
+  # Round 1 is always a plain review-agent start: with no findings sent since the build started (a new
+  # build's story event resets the count), there is no next round.
+  [[ "${round}" -gt 1 ]] \
+    || die "review-agent --next: no findings went to ${slug}'s builder since its build started, so there is no next round (round 1 is a plain review-agent start); no round was started"
   [[ "${rounds#* }" -lt "${round}" ]] \
     || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: wait for the conductor's findings tell, then run it again"
   review_at_head "${slug}" "${pr}" next
