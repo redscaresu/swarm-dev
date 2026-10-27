@@ -2332,8 +2332,8 @@ lead_review_items() {
 # lead_heads — the heads pass: read the PR heads of each review item lead_review_items lists
 # (heads_green) and write its verdict to LEAD_HEADS, `<verdict> merge: <slug> <PR URL>...`: green when
 # every head is, unread when none is red but one could not be read, red otherwise. wait_lead runs it on a
-# run's first read and then at most once every LEAD_HEADS_EVERY seconds, so the polls between make no gh
-# call. A costs: money PR an earlier item already reports is not read again, and that item gets no verdict.
+# run's first read and then at most once every LEAD_HEADS_EVERY seconds, as does open_story_prs beside it,
+# so the polls between make no gh call. A costs: money PR an earlier item already reports is not read again, and that item gets no verdict.
 lead_heads() {
   local tag line slug prs rc v urls="" u new seen=" " red="|"
   : > "${LEAD_GREEN}.new"; : > "${LEAD_HEADS}.new"
@@ -2373,36 +2373,41 @@ lead_heads() {
 # queue: green, or unread while LEAD_SEEN has it, so a gh error wakes no one.
 lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "$2" "${LEAD_SEEN}" 2>/dev/null; }; }
 
-# open_story_prs — every open story/* PR whose story is on the board, whatever its build state and the
-# merge mode, in that story's own repo (its repo:, else the project's): a story/<slug> PR in another repo
-# is never <slug>'s. One `gh pr list` per repo, its owner/name read from its origin's URL with no gh call.
-# Prints `<slug> <PR URL> <head> <mergeable> <checks> <minutes open>` per PR, <checks> green when it has
-# at least one check run, as ci_gate needs, and every check run and status passed (success, skipped or
-# neutral), else not; and `- <owner/repo>` for a repo gh could not list. A repo with no clone or no
-# GitHub origin has no PR to list.
+LEAD_PRS="${LEAD_DIR}/prs"            # the open story PRs the last heads pass read (open_story_prs), for pr_lines
+LEAD_PRS_WAIT="${SWARM_LEAD_PRS_WAIT:-30}"   # seconds one gh read of open_story_prs may take before it counts as failed
+LEAD_PRS_WARN_AFTER="${SWARM_LEAD_PRS_WARN_AFTER:-3}"   # heads passes in a row a repo's read fails before wait --lead warns
+LEAD_REPOS=""                         # "<name> <owner/repo>" per repo this run resolved, so each costs one gh repo view a run
+LEAD_PRS_FAILS=""                     # "<name> <n>": the heads passes in a row that could not read the repo's open PRs
+
+# open_story_prs — the heads pass's read of the open story PRs, for pr_lines to read each poll with no gh call (LEAD_PRS).
+# For each repo a story names (its repo:, `.` for the project's own), resolved once a run to its owner/name as
+# repo_slug does (gh repo view on its origin), it prints `= <name> <owner/repo>`, then one `gh pr list` per
+# owner/repo, each gh read bounded by LEAD_PRS_WAIT seconds (within): `+ <owner/repo> <slug> <PR URL> <head>
+# <mergeable> <checks> <opened, epoch seconds>` per open story/* PR. <checks> is green when the rollup GitHub returns
+# has at least one check run and every check run and status in it passed (success, skipped or neutral); a required
+# check that never reported is not seen, and `swarm.sh merge` runs ci_gate's full rule. A repo whose read failed or
+# timed out is `- <name>`; at LEAD_PRS_WARN_AFTER such passes in a row it warns once on stderr (open_prs_failed).
+# A repo with no clone or no origin has no PR to list and prints nothing. It runs in the caller's shell, which
+# keeps LEAD_REPOS and LEAD_PRS_FAILS across passes.
 open_story_prs() {
-  local own="" slug repo src url nwo names=" " homes=" " rows rest
-  [[ ${PROJECT_IS_GIT} == 1 ]] && own="$(basename "${PROJECT_DIR}")"
-  # names: " <repo>=<owner/repo or -> " per repo: name, each resolved once; homes: " <slug>=<owner/repo> ".
-  while IFS=$'\x1f' read -r slug repo; do
-    repo="${repo//[\"\']/}"; repo="${repo:-${own}}"
-    # A name repo_dir takes, so the glob below matches it as itself.
-    [[ -n "${slug}" && "${repo}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
-    if [[ "${names}" != *" ${repo}="* ]]; then   # loose-match: ok repo is checked to a plain repo name above
-      nwo=-
-      if src="$(repo_dir "${repo}")" && url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
-        && [[ "${url}" =~ github\.com[:/]([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)$ ]]; then nwo="${BASH_REMATCH[1]%.git}"; fi
-      names+="${repo}=${nwo} "
+  local name src origin nwo listed="" failed="" rows
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    nwo="$(awk -v n="${name}" '$1 == n { print $2; exit }' <<< "${LEAD_REPOS}")"
+    if [[ -z "${nwo}" ]]; then
+      if [[ "${name}" == . ]]; then src="$(repo_dir "")" || continue; else src="$(repo_dir "${name}")" || continue; fi
+      origin="$(git -C "${src}" remote get-url origin 2>/dev/null)" || continue
+      nwo="$(within "${LEAD_PRS_WAIT}" gh repo view "${origin}" --json nameWithOwner -q .nameWithOwner </dev/null 2>/dev/null)" || nwo=""
+      if [[ ! "${nwo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
+      LEAD_REPOS+="${name} ${nwo}"$'\n'
     fi
-    nwo="${names#* "${repo}"=}"; nwo="${nwo%% *}"
-    [[ "${nwo}" == - ]] || homes+="${slug}=${nwo} "
-  done < <(stories_fm repo)
-  for nwo in $(tr ' ' '\n' <<< "${homes}" | sed -n 's/^[^=]*=//p' | sort -u); do
-    rows="$(gh pr list -R "${nwo}" --state open --limit 1000 --json url,headRefName,headRefOid,mergeable,statusCheckRollup,createdAt </dev/null 2>/dev/null \
-      | python3 -I -c '
+    echo "= ${name} ${nwo}"
+    if grep -qxF "${nwo}" <<< "${failed}"; then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
+    if ! grep -qxF "${nwo}" <<< "${listed}"; then
+      rows="$(within "${LEAD_PRS_WAIT}" gh pr list -R "${nwo}" --state open --limit 1000 --json url,headRefName,headRefOid,mergeable,statusCheckRollup,createdAt </dev/null 2>/dev/null \
+        | python3 -I -c '
 import datetime, json, sys
 OK = ("SUCCESS", "SKIPPED", "NEUTRAL")
-now = datetime.datetime.now(datetime.timezone.utc)
 prs = json.load(sys.stdin)
 if not isinstance(prs, list):
     sys.exit(1)
@@ -2413,40 +2418,87 @@ for p in prs:
     roll = p.get("statusCheckRollup") or []
     green = any(c.get("__typename") == "CheckRun" for c in roll) and all(((c.get("state") or "") if c.get("__typename") == "StatusContext" else (c.get("conclusion") or "") if (c.get("status") or "") == "COMPLETED" else "").upper() in OK for c in roll)
     opened = datetime.datetime.fromisoformat(p["createdAt"].replace("Z", "+00:00"))
-    print(ref[6:], p["url"], p["headRefOid"], p.get("mergeable") or "UNKNOWN", "green" if green else "not", max(int((now - opened).total_seconds() // 60), 0))
-' 2>/dev/null)" || { echo "- ${nwo}"; continue; }
-    while read -r slug rest; do
-      [[ -n "${slug}" && "${homes}" == *" ${slug}=${nwo} "* ]] && echo "${slug} ${rest}"
-    done <<< "${rows}"
-  done
+    print(ref[6:], p["url"], p["headRefOid"], p.get("mergeable") or "UNKNOWN", "green" if green else "not", int(opened.timestamp()))
+' 2>/dev/null)" || { failed+="${nwo}"$'\n'; echo "- ${name}"; open_prs_failed "${name}"; continue; }
+      listed+="${nwo}"$'\n'
+      awk -v n="${nwo}" 'NF { print "+ " n " " $0 }' <<< "${rows}"
+    fi
+    LEAD_PRS_FAILS="$(awk -v r="${name}" '$1 != r' <<< "${LEAD_PRS_FAILS}")"
+  done < <(stories_fm repo | awk -F '\x1f' '{ r = $2; gsub(/["\047]/, "", r); if (r == "") r = "."; if (r == "." || r ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) print r }' | sort -u)
 }
 
-# pr_lines — the lead's queue's lines for open story PRs (open_story_prs): `conflict: <slug> <PR URL>,
-# exit: tell its builder to merge the base in` for one CONFLICTING with its base, and `unmerged: <slug>
-# <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` for one MERGEABLE and green whose findings file is a pass on
-# its head (review_pass), open and reviewed queue_minutes or more ago (the findings file's mtime). A PR
-# whose mergeable state GitHub is still working out (UNKNOWN), and every PR of a repo gh could not list,
-# keeps its lines from LEAD_SEEN, so a lapse in the read neither drops a line nor wakes the lead with it
-# again. A gh error prints nothing, as in lead_heads.
+# open_prs_failed <name> — count a heads pass that could not read <name>'s open PRs; the LEAD_PRS_WARN_AFTER-th
+# in a row warns on stderr, once until a read succeeds, saying who clears it.
+open_prs_failed() {
+  local n
+  n="$(awk -v r="$1" '$1 == r { print $2 }' <<< "${LEAD_PRS_FAILS}")"; n=$(( ${n:-0} + 1 ))
+  LEAD_PRS_FAILS="$(awk -v r="$1" '$1 != r' <<< "${LEAD_PRS_FAILS}")"$'\n'"$1 ${n}"
+  [[ ${n} -eq ${LEAD_PRS_WARN_AFTER} ]] || return 0
+  echo "warning: wait --lead could not read the open PRs of $([[ "$1" == . ]] && echo "the project's repo" || echo "repo $1") on ${n} heads passes in a row (gh failed or timed out), so its unmerged: and conflict: lines stand as last seen and no new one comes: check gh auth status and that gh can see the repo" >&2
+}
+
+# findings_open <file> — true when the ## Findings section of a review's findings file lists a finding: a
+# non-empty line that does not say none.
+findings_open() {
+  awk '/^## / { f = ($0 ~ /^## Findings/); next }
+    f && NF { l = tolower($0); sub(/^[-*] +/, "", l); if (l !~ /^(none|no findings)([^a-z]|$)/) o = 1 }
+    END { exit !o }' "$1" 2>/dev/null
+}
+
+# pr_lines — the lead's queue's lines for open story PRs, from the last heads pass's LEAD_PRS joined with the board
+# as it is now, so a poll makes no gh call. A PR counts when its story is ready or in review, is one an agent builds
+# (agent_kind: a lead story's PR is the lead's), and names the PR's repo as its own (repo:, else the project's).
+# `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` for one CONFLICTING with its base.
+# `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` for one MERGEABLE and green whose findings
+# file is a pass on its head (review_pass), opened and reviewed queue_minutes or more ago (the findings file's
+# mtime); when that file lists findings the exit is `triage .swarm/reviews/<slug>.md, then swarm.sh merge --head
+# <sha> <PR URL> once every finding is declined`. No unmerged: for a kept story's PR (the kept: line's), a PR that
+# already has a merge: line (lead_review_items), or one a `swarm.sh merge` is merging now (one ps read, only
+# when such a line is due). A PR whose mergeable state GitHub is still working out (UNKNOWN), and each story of a
+# repo the pass could not read, keeps its lines from LEAD_SEEN, so a lapse in the read neither drops a line nor
+# wakes the lead with it again.
 pr_lines() {
-  local slug url head mg ck age m lost=""
-  while read -r slug url head mg ck age; do
-    if [[ "${slug}" == - ]]; then
-      lost+="https://github.com/${url}/pull/"$'\n'; continue
+  local slug url head mg ck opened kept m out items="" ps="" got=0
+  [[ -s "${LEAD_PRS}" ]] || return 0
+  while read -r slug url head mg ck opened kept; do
+    if [[ "${url}" == - ]]; then
+      awk -v s="${slug}" '($1 == "unmerged:" || $1 == "conflict:") && $2 == s' "${LEAD_SEEN}" 2>/dev/null || true; continue
     fi
     if [[ "${mg}" == UNKNOWN ]]; then
       grep -F -e "unmerged: ${slug} ${url}," -e "conflict: ${slug} ${url}," "${LEAD_SEEN}" 2>/dev/null || true; continue
     fi
     [[ "${mg}" != CONFLICTING ]] || echo "conflict: ${slug} ${url}, exit: tell its builder to merge the base in"
-    [[ "${mg}" == MERGEABLE && "${ck}" == green ]] || continue
+    [[ "${mg}" == MERGEABLE && "${ck}" == green && "${kept}" == 0 ]] || continue
     review_pass "${slug}" "${head}" || continue
-    m="$(perl -e 'my @s = stat shift or exit 1; print int((time - $s[9]) / 60)' "${PROJECT_DIR}/.swarm/reviews/${slug}.md")" || continue
-    (( m < age )) || m=${age}
+    m="$(perl -e 'my ($f, $o) = @ARGV; my @s = stat $f or exit 1; my $g = time - $s[9]; $g = time - $o if time - $o < $g; print int($g / 60)' \
+      "${PROJECT_DIR}/.swarm/reviews/${slug}.md" "${opened}")" || continue
     # shellcheck disable=SC2154 # assigned in another file
-    (( m < CFG_queue_minutes )) || echo "unmerged: ${slug} ${url}, exit: swarm.sh merge --head ${head} ${url}"
-  done < <(open_story_prs)
-  [[ -z "${lost}" ]] || awk 'NR == FNR { if ($0 != "") p[tolower($0)] = 1; next }
-    /^(unmerged|conflict): / { u = tolower($3); for (k in p) if (index(u, k) == 1) { print; next } }' - "${LEAD_SEEN}" <<< "${lost}" 2>/dev/null || true
+    (( m >= CFG_queue_minutes )) || continue
+    # The reads below are the poll's, made once and only for a line that is due.
+    if (( got == 0 )); then got=1; items="$(lead_review_items)"; ps="$(ps -A -ww -o command= 2>/dev/null)" || ps=""; fi
+    awk -v u="${url}" '$2 == "merge:" { for (i = 4; i <= NF; i++) if ($i == u) f = 1 } END { exit !f }' <<< "${items}" && continue
+    awk -v u="${url}" 'index($0, "swarm.sh merge") { for (i = 1; i <= NF; i++) if ($i == u) f = 1 } END { exit !f }' <<< "${ps}" && continue
+    out="swarm.sh merge --head ${head} ${url}"
+    ! findings_open "${PROJECT_DIR}/.swarm/reviews/${slug}.md" \
+      || out="triage .swarm/reviews/${slug}.md, then swarm.sh merge --head ${head} ${url} once every finding is declined"
+    echo "unmerged: ${slug} ${url}, exit: ${out}"
+  done < <(awk -v kinds=" ${AGENT_KINDS} " -v sep=$'\x1f' '
+    FILENAME == ARGV[1] {
+      split($0, v, sep); r = v[5]; gsub(/["\047]/, "", r); if (r == "") r = "."
+      if ((v[2] == "ready" || v[2] == "review") && (v[3] == "" || index(kinds, " " v[3] " "))) { home[v[1]] = r; kept[v[1]] = (v[4] != "") }
+      next
+    }
+    $1 == "=" { nwo[$2] = $3; next }
+    $1 == "-" { lost[$2] = 1; next }
+    $1 == "+" { row[++n] = $0; next }
+    END {
+      for (s in home) if (home[s] in lost) print s " -"
+      for (i = 1; i <= n; i++) {
+        split(row[i], f, " ")
+        if ((f[3] in home) && nwo[home[f[3]]] == f[2] && !(home[f[3]] in lost))
+          print f[3], f[4], f[5], f[6], f[7], f[8], kept[f[3]]
+      }
+    }' <(stories_fm status kind kept repo) "${LEAD_PRS}")
 }
 
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
@@ -2458,9 +2510,9 @@ pr_lines() {
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
 # events.tsv line for a story whose missing agent no event explains yet. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
-# then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines).
-# Last, pr_lines' `conflict:` and `unmerged:` lines, its one gh call a repo (open_story_prs); else it
-# never calls gh. It drops
+# then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
+# come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs).
+# It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
 # no_agent_lines', read afresh each poll, so one goes once its dependency is in review or done; a poll
@@ -3392,6 +3444,8 @@ lead_wake() {
   lead_agents
   if [[ -z "${LEAD_HEADS_AT}" ]] || (( SECONDS - LEAD_HEADS_AT >= LEAD_HEADS_EVERY )); then
     LEAD_HEADS_AT=${SECONDS}; lead_heads
+    # The open story PRs pr_lines reads each poll, on the heads pass's cadence: its gh reads come with the pass's.
+    open_story_prs > "${LEAD_PRS}.new" && mv "${LEAD_PRS}.new" "${LEAD_PRS}"
   fi
   now="$(lead_queue)"
   # One read budget and one read per pane for resend_pass and prompt_lines. The reads sit in
@@ -3474,8 +3528,9 @@ lead_lock() {
 
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
-# (lead_wake). The PR heads behind its merge: lines are read only in a heads pass (lead_heads), on its
-# first read and then at most once every LEAD_HEADS_EVERY seconds. The first read of a run reports what
+# (lead_wake). The PR heads behind its merge: lines, and the open story PRs behind its unmerged: and conflict:
+# lines, are read only in a heads pass (lead_heads, open_story_prs), on its first read and then at most once
+# every LEAD_HEADS_EVERY seconds. The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts
 # (no-agent:, step-up failed:, unsent brief:, prompt:, unmerged:, conflict:). At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file, and nudges no one but to submit an unsent brief (resend_pass).

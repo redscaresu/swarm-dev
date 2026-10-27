@@ -4,7 +4,8 @@
 # kind, reads the queue once (`swarm.sh wait --lead 0`), and checks the line came out and that the handler
 # names it as a backticked `<kind>: ` line. A kind on GAPS is a known gap, printed but not yet handled.
 # Both lists are |-separated, as a kind may hold a space.
-# gh is a stub answering a green head, whose pr list prints ${ROOT}/prs.json (no PR when it is missing);
+# gh is a stub answering a green head, whose pr list prints ${ROOT}/prs.json (no PR when it is missing) and
+# repo view the origin's owner/name;
 # herdr a stub listing ${ROOT}/agents (no agent when it is missing), whose agent read prints ${ROOT}/pane.txt.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -29,6 +30,7 @@ printf '#!/bin/sh\nH="%s"\nR="%s"\n' "${H}" "${ROOT}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 case "$*" in
   "pr list"*) cat "${R}/prs.json" 2>/dev/null || echo '[]' ;;
+  "repo view"*) echo na-owner/na-repo ;;
   "pr view"*) read -r _ || true; echo "${H}" ;;
   *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
   *status*) echo '{"total_count":0,"statuses":[]}' ;;
