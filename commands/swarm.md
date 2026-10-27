@@ -256,7 +256,17 @@ Repeat until a step below says stop:
      findings in the box, is kept: the exit is `swarm.sh tell <slug> nudge <file>`, the file asking
      it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
-     then `swarm.sh conduct <epic>`. An
+     then `swarm.sh conduct <epic>`. A
+     `prompt: <agent> (<kind>), exit: <exit>` line means an agent herdr shows blocked, idle or done
+     is stuck, and no agent can clear it. For `(prompt)`, a permission prompt or dialog, tell the
+     user to answer it in the pane the exit names. For `(login)`, tell the user to run `/login`,
+     then send the agent a file asking it to resume with `swarm.sh tell <agent> resume <file>`. For
+     `(api-error)`, which comes only once no `wait` is resuming the agent, read the pane with
+     `herdr agent read <agent>` and tell the user what it shows. For `(manual)`, run the exit: for
+     a ready story's builder it closes the pane and then restarts or holds the story, as a
+     `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
+     pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
+     on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
      `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` or
      `idle: <story> is ready with no build, exit: <exit>` line is capacity no step uses, a line `next`
      prints after its step: handle it as step 1's `idle:` list

@@ -148,6 +148,48 @@ resends through `tell`, which would log a second `tell:findings` line and count 
 twice. The resend prints nothing and wakes no one. The stall rule skips `resend` lines. A brief
 still in the box on the read after the Enter wakes the lead through an `.unsent` marker (below).
 
+**An agent stuck where no agent can help wakes the lead too.** `wait --lead` prints
+`prompt: <agent> (<kind>), exit: <exit>` for an agent this project opened that its one herdr list
+shows blocked, idle or done, and whose pane shows it stuck. A working agent's pane is never read. These
+are skipped: a retired agent (`<name>-done`), a co-writer that talks with you in its own pane (an
+`agents.tsv` role of `hld` or `epic`), and an agent a `swarm.sh` command is delivering a prompt to, as
+the resend skips it. While `swarm.sh upgrade` runs, no pane is read, as for the resend.
+
+The check runs after the resend and shares its budget: 10 seconds a read, and none started 20 seconds
+into the poll's reads. A pane the resend read in that poll is not read again, and one it failed to read
+waits for the next poll. `.swarm/lead/stuck` keeps, for each agent, its herdr status, the time its
+Claude session log last changed, what its pane showed and when it was last read. A pane last found
+clear is read again when the status or the log time has changed, or after 5 minutes
+(`STUCK_RECHECK`), since manual mode turned on or a dialog opened at an idle box changes neither. A pane
+last found stuck is read every poll, since you can clear it without a turn. Agents are read oldest read
+first, so slow reads that use up one poll's budget leave the rest first in line for the next. Each
+poll's first read of its own goes even past the budget, so a loaded machine still reads one a poll.
+
+The kinds and their exits:
+
+- `prompt`: a permission prompt, a menu or a dialog waits on an answer, with no command running
+  under it. Exit: `the user answers it in pane <pane>`. Claude Code's usage-limit dialog is not one:
+  `wait` answers it.
+- `login`: the turn ended on "Please run /login". Exit: `the user runs /login, then swarm.sh tell
+  <agent> resume <file>`.
+- `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
+  `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
+  up. Exit: `herdr agent read <agent>, then tell the user what it shows`.
+- `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
+  `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
+  builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
+  A permission prompt with that footer under it (a builder in manual mode is nearly always on one)
+  is `manual` for a ready story's builder, whose restart clears both. For any other agent it is a
+  `prompt` whose exit adds `, and turns manual mode off there`.
+
+The line wakes the lead once per stop. It stays in `.swarm/lead/seen` while the agent is stuck. A
+skipped agent, a pane read that fails, and a herdr list, list parse or `ps` that fails all keep the
+last poll's line, so a missed read neither drops it nor wakes the lead again. A new stop wakes the lead
+even when its line reads the same: one found after the agent moved on, after a turn (its session log
+changed), or in a pane the agent came back in. Manual mode is a state, not a stop, so a builder in it
+answering prompt after prompt wakes the lead once, and its line stays while it works between them. A
+pane the resend sent Enter to in a poll is left for the next poll to read.
+
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
 counts a story only when all of these hold:
@@ -259,8 +301,8 @@ events.tsv are read every poll; git only for a story with a start line and no cu
 JSON and `ps` once, whenever a story with a build record or a ready story with a step-up marker is
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
-everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines and
-`unsent brief:` lines on its first read.
+everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines,
+`unsent brief:` lines and `prompt:` lines on its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
@@ -2676,7 +2718,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. Under `merge = agent` it refuses while Claude Code's settings have no allow rule for `swarm.sh merge` (§ Merging, the conduct preflight). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), as `next` prints them, and print each new one. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (`prompt: <agent> (<kind>), exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), as `next` prints them, and print each new one. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. Green also needs a `pull_request` run of each workflow that a pull request into the base runs with the PR's files (its `branches` and `paths` filters). It reads the workflows once per wait, on its first read: at the PR's merge commit (`refs/pull/<n>/merge`), which is what GitHub runs them from, or at the head when that merge commit is missing or does not include the head yet. GitHub rebuilds the merge commit when the base moves, so a base commit pushed after the head that adds a `pull_request` workflow, or widens one's `branches` or `paths`, makes wait-pr wait on a workflow that never ran on this head. It then exits 2 after the grace, on every run, until you merge the base in and push. A workflow Actions has disabled is not waited on, and neither is one whose `types` leave out `opened` or `synchronize`. An expected workflow that has not started counts as pending, as `<path> (no run on <sha>)`, and so does one whose newest run has not finished, even when every check already there is green. If that newest run finished as anything but success, skipped or neutral, the head is red. A `push` run of the same workflow does not count. A workflow whose triggers it cannot read is not waited on, and a line of its own names it: `not waited on: <path> (triggers not read: <why>)`. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`) or an expected workflow still has no run by then (naming it), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
