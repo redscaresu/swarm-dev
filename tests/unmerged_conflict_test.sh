@@ -6,7 +6,7 @@
 # (unmerged:, except for a kept story or one with a merge: line), one whose review lists findings (unmerged:
 # with a triage exit), one conflicting (conflict:), and ones that give neither: reviewed on an older head,
 # not reviewed, opened under queue_minutes ago, reviewed under queue_minutes ago, a check failed, only a
-# commit status with no check run, a lead story's and a done story's. Then each line wakes the lead once,
+# commit status with no check run, a lead story's, a done story's and a fork's. Then each line wakes the lead once,
 # stands through a gh failure, a timeout and an UNKNOWN mergeable, wakes it again once it comes back, and
 # comes on a run's first read; polls between heads passes make no gh call; a PR swarm.sh merge is merging
 # gets no unmerged:; a failed read warns once it has failed SWARM_LEAD_PRS_WARN_AFTER passes in a row. Last,
@@ -86,9 +86,10 @@ pr() {
 # o (reviewed on an older head), n (not reviewed),
 # y (opened 5 minutes ago), r (reviewed 5 minutes ago), f (a check failed), s (a status, no check run),
 # one whose story is not on the board, one on a branch that is no story's, l (a lead story's, conflicting),
-# d (a done story's, conflicting) and t (reviewed and old, its review listing a finding).
+# d (a done story's, conflicting), t (reviewed and old, its review listing a finding) and a fork's PR on
+# story/n, conflicting.
 prs() {
-  printf '[%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s]\n' "$(pr 11 l "${H}" CONFLICTING SUCCESS "${OLD_MIN}")" \
+  printf '[%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s]\n' "$(pr 14 n "${H}" CONFLICTING SUCCESS "${OLD_MIN}" | sed 's/^{/{"isCrossRepository":true,/')" "$(pr 11 l "${H}" CONFLICTING SUCCESS "${OLD_MIN}")" \
     "$(pr 12 d "${H}" CONFLICTING SUCCESS "${OLD_MIN}")" "$(pr 13 t "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 7 f "${H}" MERGEABLE FAILURE "${OLD_MIN}")" "$(pr 8 s "${H}" MERGEABLE - "${OLD_MIN}")" \
     "$(pr 1 a "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 2 c "${H}" "${1:-CONFLICTING}" SUCCESS "${OLD_MIN}")" \
     "$(pr 3 o "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 4 n "${H}" MERGEABLE SUCCESS "${OLD_MIN}")" "$(pr 5 y "${H}" MERGEABLE SUCCESS 5)" \
@@ -162,6 +163,7 @@ for mode in agent human; do
     check "no line for a story/ PR whose story is not on the board ${at}" none "conflict: gone " "${out}"
     check "no line for a lead story's PR ${at}" none "conflict: l " "${out}"
     check "no line for a done story's PR ${at}" none "conflict: d " "${out}"
+    check "no line for a fork's PR on a story's branch ${at}" none "conflict: n " "${out}"
     check "one gh repo view and one gh pr list per repo a heads pass ${at}" \
       test "$(grep -c '^repo view' "${ROOT}/gh.log") $(grep -c "${LISTS}" "${ROOT}/gh.log")" == "1 1"
   done

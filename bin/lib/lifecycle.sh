@@ -2405,7 +2405,7 @@ LEAD_PRS_FAILS=""                     # "<name> <n>": the heads passes in a row 
 # For each repo a story names (its repo:, `.` for the project's own), resolved once a run to its owner/name as
 # repo_slug does (gh repo view on its origin), it prints `= <name> <owner/repo>`, then one `gh pr list` per
 # owner/repo, each gh read bounded by LEAD_PRS_WAIT seconds (within): `+ <owner/repo> <slug> <PR URL> <head>
-# <mergeable> <checks> <opened, epoch seconds>` per open story/* PR. <checks> is green when the rollup GitHub returns
+# <mergeable> <checks> <opened, epoch seconds>` per open story/* PR from the repo itself, never a fork's. <checks> is green when the rollup GitHub returns
 # has at least one check run and every check run and status in it passed (success, skipped or neutral); a required
 # check that never reported is not seen, and `swarm.sh merge` runs ci_gate's full rule. A repo whose read failed or
 # timed out is `- <name>`; at LEAD_PRS_WARN_AFTER such passes in a row it warns once on stderr (open_prs_failed).
@@ -2426,7 +2426,7 @@ open_story_prs() {
     echo "= ${name} ${nwo}"
     if grep -qxF "${nwo}" <<< "${failed}"; then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
     if ! grep -qxF "${nwo}" <<< "${listed}"; then
-      rows="$(within "${LEAD_PRS_WAIT}" gh pr list -R "${nwo}" --state open --limit 1000 --json url,headRefName,headRefOid,mergeable,statusCheckRollup,createdAt </dev/null 2>/dev/null \
+      rows="$(within "${LEAD_PRS_WAIT}" gh pr list -R "${nwo}" --state open --limit 1000 --json url,headRefName,headRefOid,mergeable,statusCheckRollup,createdAt,isCrossRepository </dev/null 2>/dev/null \
         | python3 -I -c '
 import datetime, json, sys
 OK = ("SUCCESS", "SKIPPED", "NEUTRAL")
@@ -2435,7 +2435,8 @@ if not isinstance(prs, list):
     sys.exit(1)
 for p in prs:
     ref = (p.get("headRefName") or "") if isinstance(p, dict) else ""
-    if not ref.startswith("story/"):
+    # A fork PR whose branch is named story/<slug> does not belong to the story.
+    if not ref.startswith("story/") or p.get("isCrossRepository"):
         continue
     roll = p.get("statusCheckRollup") or []
     green = any(c.get("__typename") == "CheckRun" for c in roll) and all(((c.get("state") or "") if c.get("__typename") == "StatusContext" else (c.get("conclusion") or "") if (c.get("status") or "") == "COMPLETED" else "").upper() in OK for c in roll)
