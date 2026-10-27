@@ -89,14 +89,17 @@ dash_size() {
 }
 
 # dash_deadline — start one frame's report deadline (report_start): REPORT_SECONDS (merge.sh:
-# SWARM_REPORT_SECONDS when it is whole seconds above 0, else 30), or with --project the deadline of
-# the dash that drew this one (DASH_REPORT_END), so the projects share it. From here on every herdr, claude and gh call in this
-# process goes through report_read, named by its subcommand: those reads sit deep in helpers dash shares
-# with next and status (next_lines, test_running), and dash only reads, so no write or agent start is cut.
+# SWARM_REPORT_SECONDS when it is whole seconds above 0, else 30). From here on every herdr, claude and
+# gh call in this process goes through report_read, named by its subcommand: those reads sit deep in
+# helpers dash shares with next and status (next_lines, test_running), and dash only reads, so no write
+# or agent start is cut. The deadline and the skip file go to the python dash runs too (SWARM_REPORT_END
+# and SWARM_REPORT_SKIP_FILE, as status sets them): panes.py's pane_text, dash_render.py's read of an
+# agent's pane for a usage-limit dialog, takes at most the time left and records `herdr agent read` when
+# cut. With --project each project's frame runs this for itself, so each has a deadline of its own.
 # dash --check never calls it: its frame reads in full (dash_check_frame).
 dash_deadline() {
   report_start || die "dash: could not start the report deadline"
-  [[ ! "${DASH_REPORT_END:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || REPORT_END="${DASH_REPORT_END}"
+  export SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}"
   # </dev/null, as status_reads (merge.sh) has: a read inside a while-read loop must not eat the loop's input.
   herdr() { report_read "herdr ${*:1:2}" herdr "$@" </dev/null; }
   # shellcheck disable=SC2329 # claude_agents (agents.sh) calls it
@@ -123,7 +126,7 @@ print("\n".join(f"\033[2m{r}\033[0m" if color else r for r in rows))' "${DASH_W}
 
 # dash_frame — one frame: this project's (after dash_slow), or with --project each project's in turn,
 # each drawn by this script run again on it (SWARM_PROJECT) with this colour, width, tree and ladder,
-# this frame's deadline (DASH_REPORT_END) and no legend, then the legend once (dash_legend). With
+# a deadline of its own (dash_deadline) and no legend, then the legend once (dash_legend). With
 # DASH_SHARE the height, less the legend's, is shared out between them; with too little room for a
 # line each the legend goes. A project whose frame fails shows its error line in its place, the
 # others are still drawn, and it returns 1. What the others print to stderr follows the frames, so it
@@ -144,7 +147,7 @@ dash_frame() {
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
   for d in "${DASH_DIRS[@]}"; do
-    if ! out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND=0 DASH_REPORT_END="${REPORT_END:-}" \
+    if ! out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND=0 \
         "${SWARM_HOME}/bin/swarm.sh" "$@" 2> "${err}")"; then
       out="$(tail -n 1 "${err}")"; out="$(basename "${d}")  could not draw: ${out#swarm: }"; failed=1
     elif [[ -s "${err}" ]]; then
@@ -175,13 +178,17 @@ dash_base_ref() {
 # view per PR that matches, each with the same limit; how many stories of each epic finished
 # (dash_finished); and the project's ci line (its origin repo's row of flow's ci time, from a cache of
 # its own, in a 0700 directory of this user's, that a detached dash_slow.py refreshes every 6 hours).
-# dash_slow.py's reads run under the report deadline (report_read, as gh PR states): it stops each gh
-# call a second short of it (DASH_READ_END), so no gh outlives the frame in a session of its own, and
-# exits 142, report_read's cut. A run cut there is cached with what it printed (python -u, in case
-# report_read's KILL comes first): the PRs it did not reach show as their URLs, as a PR gh cannot
-# answer in 5 seconds does.
+# dash_slow.py's reads run under the report deadline (report_read, as gh PR states), with at most half
+# of it (DASH_GH_SHARE): they come first in the frame, and a slow GitHub with many PRs must leave
+# dash_render's herdr reads their own time. It stops each gh call a second short of that end
+# (DASH_READ_END), so no gh outlives the frame in a session of its own, and exits 142, report_read's
+# cut. A run cut there keeps what it printed (python -u, in case report_read's KILL comes first) over
+# the last cache's lines it did not reach (dash_cache_merge), so a PR state, a story's head or the ci
+# line, a local 6-hour cache, stands until a later run reads it again; a PR no run has answered shows
+# as its URL, as a PR gh cannot answer in 5 seconds does.
+DASH_GH_SHARE=2
 dash_slow() {
-  local cache f r urls pairs day key rc=0
+  local cache f r urls pairs day key rc=0 gh_end
   day="$(dash_day)"
   # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
   key="$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
@@ -201,11 +208,17 @@ dash_slow() {
       # Test mode (SWARM_SLEEP_SCALE set) starts no ci refresh unless SWARM_NO_CI_REFRESH is set, if
       # only to empty: a detached refresh outlives the test and runs flow, and gh, on its project.
       if gh_installed; then
-        SWARM_NO_CI_REFRESH="${SWARM_NO_CI_REFRESH-${SWARM_SLEEP_SCALE:+1}}" SWARM_CI_CACHE="${TMPDIR:-/tmp}/swarm-dash-ci-$(id -u)/${key}" SWARM_CI_PROJECT="${PROJECT_DIR}" SWARM_PAIRS="${pairs}" DASH_READ_END="${REPORT_END}" \
+        # The gh reads' end: the deadline, or half of REPORT_SECONDS from now when that comes first.
+        gh_end="$(perl -MTime::HiRes=time -e 'my ($end, $s) = @ARGV; my $h = time + $s; printf "%.3f", $h < $end ? $h : $end' -- "${REPORT_END}" "$((REPORT_SECONDS / DASH_GH_SHARE))")"
+        SWARM_NO_CI_REFRESH="${SWARM_NO_CI_REFRESH-${SWARM_SLEEP_SCALE:+1}}" SWARM_CI_CACHE="${TMPDIR:-/tmp}/swarm-dash-ci-$(id -u)/${key}" SWARM_CI_PROJECT="${PROJECT_DIR}" SWARM_PAIRS="${pairs}" DASH_READ_END="${gh_end}" \
           report_read "gh PR states" python3 -u "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}
       fi
     } > "${cache}.$$" 2>/dev/null || rc=$?
-    if [[ ${rc} == 0 || ${rc} == 142 ]]; then mv -f "${cache}.$$" "${cache}"; else rm -f "${cache}.$$"; fi
+    # A full run replaces the cache; one cut at the deadline (142) is merged over it; any other failure
+    # leaves it as it was.
+    if [[ ${rc} == 0 ]]; then mv -f "${cache}.$$" "${cache}"
+    elif [[ ${rc} == 142 ]]; then dash_cache_merge "${cache}" "${cache}.$$"
+    else rm -f "${cache}.$$"; fi
   fi
   DASH_COST="$(awk -F'\t' '$1 == "cost" { print $2 }' "${cache}" 2>/dev/null || true)"
   DASH_FINISHED="$(awk -F'\t' '$1 == "finished" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
@@ -261,7 +274,8 @@ dash_check() {
   # status asks herdr only inside a pane; dash whenever herdr is on PATH. Read next to the frame, as
   # agents change state.
   # A status that fails is said once, and the fields it owns are not compared with nothing.
-  st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status)" || { dash_unread "agents and Waiting on you" status; DASH_CHECK_NOSTATUS=1; }
+  # Both read in full, as the frame does (DASH_CHECK_SECONDS): a read cut at 30 s would differ for the cut, not the code.
+  st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" SWARM_REPORT_SECONDS="${DASH_CHECK_SECONDS}" "${sw}" status)" || { dash_unread "agents and Waiting on you" status; DASH_CHECK_NOSTATUS=1; }
   hi="$(dash_flow_cost "${day}")"
 
   want="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"
@@ -327,7 +341,7 @@ dash_check() {
     status "$(sed -n 's/^  \([^ ]*\)  *WAITING .*/\1/p' <<< "${st}" | dash_words)"
 
   # _step: next's step without the conductors next starts; --dash: its no-agent lines read as dash reads them.
-  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" _step --dash 2>/dev/null | sed -n 1p || true)"
+  want="$(SWARM_PROJECT="${PROJECT_DIR}" SWARM_REPORT_SECONDS="${DASH_CHECK_SECONDS}" "${sw}" _step --dash 2>/dev/null | sed -n 1p || true)"
   got="$(dash_first '.*  next \(.*[^ ]\)  *[0-9][0-9:]*$' "$(sed -n 1p <<< "${frame}")")"
   dash_agree next "$(dash_cut "${got}" "${want}")" next "${want}"
 
@@ -358,6 +372,15 @@ dash_check() {
 # dash_flow_cost <day> — the total of flow's cost section since that day, with no calling session.
 dash_flow_cost() {
   { flow_sections "$1" 9999-12-30 "" "" "" cost 2>/dev/null || true; } | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p'
+}
+
+# dash_cache_merge <cache> <new> — <new>'s lines, then <cache>'s lines whose key <new> lacks, into
+# <cache>; <new> is removed. A line's key is its first field (cost, ci, a PR's URL), or its first two
+# for a head or finished line (the slug, the epic). With no <cache> yet, <new>'s lines stand alone.
+dash_cache_merge() {
+  awk -F'\t' '{ k = ($1 == "head" || $1 == "finished") ? $1 FS $2 : $1 }
+    FNR == NR { seen[k] = 1; print; next } !(k in seen)' "$2" "$1" > "$2.m" 2>/dev/null || true
+  mv -f "$2.m" "$1"; rm -f "$2"
 }
 
 # DASH_CHECK_SECONDS: the report deadline of dash --check's frame, a day, which stands for none: it
@@ -612,12 +635,12 @@ dash_no_agent() {
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
 # DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads. Claude
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
-# session is unknown. The reads report_read cut or skipped (report_skipped, its own and dash_slow's)
-# are named on a line under the frame, which is laid out a line shorter to make room; a frame one
-# line high has none to spare, and names none. The line is cut to DASH_W.
+# session is unknown. The reads cut or skipped (report_skipped: its own, dash_slow's, and the render's
+# pane reads) are named on a line under the frame, which is laid out a line shorter to make room; a
+# frame one line high has none to spare, and names none. The line is cut to DASH_W.
 dash_render() {
   local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
-  local testing="" p idle skipped lines="${DASH_H:-0}"
+  local testing="" p idle skipped="" more pass pending=0 out read_end lines="${DASH_H:-0}"
   # type -P: herdr on PATH, not dash_deadline's function of that name.
   if type -P herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
@@ -703,14 +726,19 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   nx="$(next_lines)" || true
   # next's idle: lines (idle_now), read each frame: board and state only.
   idle="$(idle_now 2>/dev/null)" || idle=""
-  # The last read is above: the frame is laid out from here.
-  skipped="$(report_skipped)"
-  # A frame of one line (a --project share) keeps its header, and no room is left for the line.
-  if [[ -n "${skipped}" && ${lines} -gt 1 ]]; then lines=$((lines - 1)); elif [[ ${lines} == 1 ]]; then skipped=""; fi
-  # Cut to the width with …, as the legend is, so the line never wraps onto a second.
-  if [[ ${#skipped} -gt ${DASH_W:-100} ]]; then skipped="${skipped:0:$((${DASH_W:-100} - 1))}…"; fi
+  # The shell's reads are done; the render's own, each agent's pane for a usage-limit dialog (panes.py's
+  # pane_text, under SWARM_REPORT_END), come inside the python below. The frame is laid out a line
+  # shorter when a read was cut before the render (pending); when the render's own reads are the first
+  # cut, it is drawn again a line shorter with no pane read at all (SWARM_REPORT_END=0: each is skipped
+  # at once, so no pane is read twice in a frame), the states from herdr's list alone. A frame of one
+  # line (a --project share) keeps its header, and names none.
+  [[ ! -s "${REPORT_SKIP_FILE:-/dev/null}" ]] || pending=1
+  [[ ${pending} == 0 || ${lines} -le 1 ]] || lines=$((lines - 1))
+  read_end="${SWARM_REPORT_END:-}"
+  for pass in 1 2; do
+  # An x after the frame keeps its trailing newlines through $( ); python's failure returns.
   # shellcheck disable=SC2154 # assigned in another file
-  DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
+  out="$(SWARM_REPORT_END="${read_end}" DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_IDLE="${idle}" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_NO_AGENT="${noagent}" DASH_NO_AGENT_AT="${noagent_at}" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
@@ -719,6 +747,15 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" DASH_SESSIONS="${sessions}" DASH_TESTING="${testing}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
-  DASH_BUILDERS="${BUILDER_ROLES}" DASH_INTERVENE_KINDS="${INTERVENE_KINDS}" DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/dash_render.py" || return
+  DASH_BUILDERS="${BUILDER_ROLES}" DASH_INTERVENE_KINDS="${INTERVENE_KINDS}" DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/dash_render.py" && echo x)" || return
+  out="${out%x}"
+  more="$(report_skipped)"; [[ -z "${more}" ]] || skipped="${more}"
+  [[ ${pass} == 1 && ${pending} == 0 && -n "${skipped}" && ${lines} -gt 1 ]] || break
+  lines=$((lines - 1)); pending=1; read_end=0
+  done
+  [[ ${lines} != 1 ]] || skipped=""
+  # Cut to the width with …, as the legend is, so the line never wraps onto a second.
+  if [[ ${#skipped} -gt ${DASH_W:-100} ]]; then skipped="${skipped:0:$((${DASH_W:-100} - 1))}…"; fi
+  printf '%s' "${out}"
   [[ -z "${skipped}" ]] || echo "${skipped}"
 }

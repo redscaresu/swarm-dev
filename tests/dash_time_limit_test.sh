@@ -4,7 +4,8 @@
 # and names the reads it cut or skipped on its last line, and dash --watch draws its first frame.
 # A throwaway project with one active epic, a story in review with three PRs and a ready one; stub
 # herdr, claude and gh on PATH that answer at once, or with SLOW set sleep that many seconds (gh logs
-# its pid first, to show none outlives the frame). The limit is SWARM_REPORT_SECONDS.
+# its pid first, to show none outlives the frame); with SLOW_READ set only herdr's read of an agent's
+# pane sleeps, the read dash_render.py makes (panes.py's pane_text). The limit is SWARM_REPORT_SECONDS.
 # Each bound is the limit, plus twice the same dash's time with fast stubs (its local work, which the
 # deadline does not cover, doubled for a machine whose load moves between runs), plus 10 seconds. With
 # report_read taken out the slow reads add 10 minutes, so each run is stopped 5 seconds past its bound.
@@ -52,6 +53,7 @@ case "$1 $2" in
   "agent list") echo '{"result":{"agents":[{"name":"s-two","agent_status":"working","pane_id":"w1:p1"}]}}' ;;
   "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"}]}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"e1"}]}}' ;;
+  "agent read") [ -z "${SLOW_READ:-}" ] || exec sleep "${SLOW_READ}"; exit 1 ;;
   *) exit 1 ;;
 esac
 STUB
@@ -83,7 +85,7 @@ run_dash() {
   local out="$1" stop="$2" slow="$3" start pid rc=0
   shift 3
   start="$(now)"
-  (cd "${P}" && exec env -u HERDR_ENV SLOW="${slow}" "${SWARM}" dash "$@") > "${out}" 2>&1 &
+  (cd "${P}" && exec env -u HERDR_ENV SLOW="${slow}" SLOW_READ="${SLOW_READ:-}" "${SWARM}" dash "$@") > "${out}" 2>&1 &
   pid=$!; pids+=("${pid}")
   while kill -0 "${pid}" 2>/dev/null && (( $(now) - start < stop )); do sleep 0.2; done
   kill "${pid}" 2>/dev/null || true
@@ -116,6 +118,19 @@ check "with reads past the limit, dash exits within the limit plus a few seconds
 check "with reads past the limit, dash still draws its frame" has "swarm-dev" "${out}"
 is "with reads past the limit, dash names the reads it skipped, last" \
   "skipped (over ${LIMIT} s): gh PR states, herdr agent list" "$(tail -n 1 <<< "${out}")"
+
+# --- Only the read of an agent's pane sleeps past the limit; herdr's lists, claude and gh answer at
+# once. The frame still shows the agent (s-two, working in its pane), ends within the bound, and names
+# that read, which dash_render.py makes under SWARM_REPORT_END (panes.py's pane_text): the only skip of
+# the frame, so dash draws the frame again a line shorter to make room for the line.
+fresh
+read -r took rc <<< "$(SLOW_READ="${SLOW_SECONDS}" run_dash "${ROOT}/read.out" $((bound + 5)) "")"
+out="$(cat "${ROOT}/read.out")"
+check "with only the pane read past the limit, dash exits 0" test "${rc}" = 0
+check "with only the pane read past the limit, dash exits within the limit plus a few seconds (${took} s, bound ${bound} s)" test "${took}" -le "${bound}"
+check "with only the pane read past the limit, the frame still shows the agent working" grep -qE 's-two .*working' <<< "${out}"
+is "with only the pane read past the limit, dash names that read, last" \
+  "skipped (over ${LIMIT} s): herdr agent read" "$(tail -n 1 <<< "${out}")"
 
 # --- dash_slow.py as dash runs it, with its deadline (DASH_READ_END) 10 s away and every gh call
 # sleeping past it: it stops its own gh calls (each in a session of its own, which report_read's KILL
