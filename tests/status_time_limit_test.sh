@@ -2,13 +2,16 @@
 # status_time_limit_test.sh — `swarm.sh status` keeps to the report deadline: its herdr and gh reads,
 # its own and those of the functions it calls (pane_check's herdr agent read, stacked_lines' gh pr
 # list, next's herdr agent list), share REPORT_SECONDS through report_read. With herdr and gh stubs
-# that sleep three times that long, status exits within the deadline of the time it takes with fast
-# stubs, and its last line names the reads it skipped. With fast stubs its output is what it was.
+# that sleep far past it, status exits within the deadline of the time it takes with fast stubs (and
+# some slack), and its last line names the reads it skipped. With fast stubs its output is what it was.
 # The stubs: herdr lists one agent, child, in this project's pane w:1 and reads its pane; gh answers
 # pr list with an open PR, so child, stacked on p, shows a Stacked line. herdr sleeps $HERDR_SLEEP
-# seconds first, gh $GH_SLEEP; each is slowed in a run of its own.
-# The bound is relative to the fast run, not absolute, so it holds on a loaded machine, where status's
-# own work, not its reads, takes most of the time.
+# seconds first, gh $GH_SLEEP; each is slowed in a run of its own. gh writes when it was first called.
+# Nothing here hangs on host speed, as on a loaded machine status's own work, not its reads, can take
+# longer than REPORT_SECONDS: the fast run has a deadline of an hour (SWARM_REPORT_SECONDS), so it skips
+# nothing; the bound is relative to the fast run's time; and the gh run's deadline is REPORT_SECONDS
+# after the time gh was first called in the fast run, so the reads before it are not skipped. herdr
+# agent list is status's first read, so the herdr run keeps REPORT_SECONDS itself.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -22,7 +25,9 @@ trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; WT="${ROOT}/proj-wt/child"; UP="${ROOT}/upstream"
 GIT=(git -c user.name=t -c user.email=t@t)
-SLACK=15   # seconds a slow run may take past the fast run plus the deadline: the cut, and the noise
+SLACK=15   # seconds a slow run may take past the fast run plus the deadline, plus half the fast run's
+           # time: run-to-run noise grows with how slow the host is
+STUB_SLEEP=600   # far past any bound: a status that waits out a read fails the time check
 
 # shellcheck disable=SC2034 # merge.sh reads PROJECT_DIR as it loads
 PROJECT_DIR="${ROOT}"
@@ -33,6 +38,7 @@ mkdir -p "${P}/.swarm/state" "${P}/docs/stories" "${ROOT}/bin"
 cp "${REPO}/tests/claude_stub.sh" "${ROOT}/bin/claude"
 # shellcheck disable=SC2016 # the stubs' lines are literal: each reads its sleep when it runs
 for t in herdr gh; do printf '#!/bin/sh\nsleep "${%s_SLEEP:-0}"\n' "$(tr '[:lower:]' '[:upper:]' <<< "${t}")" > "${ROOT}/bin/${t}"; done
+printf '[ -e "%s" ] || date +%%s > "%s"\n' "${ROOT}/gh-at" "${ROOT}/gh-at" >> "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "agent list") echo '{"result":{"agents":[{"name":"child","agent_status":"idle","pane_id":"w:1"}]}}' ;;
@@ -68,10 +74,10 @@ holds() {
   else echo "FAIL $1: $2 with a=$3, b=$4"; fails=$((fails + 1)); fi
 }
 now() { perl -MTime::HiRes=time -e 'printf "%.3f\n", time'; }
-# status <cap> — status's output, cut after <cap> seconds (within) so a
-# status that ignores the deadline fails the check rather than the file's time limit.
+# status <cap> [deadline] — status's output, cut after <cap> seconds (within) so a status that ignores
+# the deadline fails the check rather than the file's time limit; [deadline] is SWARM_REPORT_SECONDS.
 status() {
-  (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" \
+  (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" SWARM_REPORT_SECONDS="${2:-}" \
     within "$1" bash "${SWARM}" status 2>&1) || true
 }
 
@@ -91,26 +97,28 @@ Next
     blocked: child (by p)
     awaiting your merge: p https://github.com/o/r/pull/1"
 
-t0="$(now)"; fast="$(status 1800)"; t1="$(now)"
+t0="$(now)"; fast="$(status 3700 3600)"; t1="$(now)"
 is "with fast stubs status's output is as before the deadline, with no skipped line" "${want}" "${fast}"
 spent="$(awk -v a="${t0}" -v b="${t1}" 'BEGIN { print b - a }')"
-bound="$(awk -v s="${spent}" -v r="${REPORT_SECONDS}" -v k="${SLACK}" 'BEGIN { printf "%d\n", s + r + k + 1 }')"
+bound="$(awk -v s="${spent}" -v r="${REPORT_SECONDS}" -v k="${SLACK}" 'BEGIN { printf "%d\n", s + r + k + s / 2 + 1 }')"
+# The gh run's deadline: REPORT_SECONDS past the second gh was first called in, counted from the start.
+gh_at=$(( $(cat "${ROOT}/gh-at") - ${t0%.*} + 1 + REPORT_SECONDS ))
 
-# slow <herdr|gh> <read> — with that stub sleeping three times the deadline, status ends within the
-# deadline of the fast run's time, names <read>, the one cut at the deadline, first on its last line
-# (every read after it is skipped at once and named after it), and still prints its sections.
+# slow <herdr|gh> <read> [deadline] — with that stub sleeping STUB_SLEEP, status ends
+# within REPORT_SECONDS of the fast run's time, names <read>, the one cut at the deadline, first on its
+# last line (every read after it is skipped at once and named after it), and still prints its sections.
 slow() {
   local out t0 t1 last var=HERDR_SLEEP
   [[ "$1" == herdr ]] || var=GH_SLEEP
-  t0="$(now)"; out="$(export "${var}=$((3 * REPORT_SECONDS))"; status "$((bound + 5))")"; t1="$(now)"
+  t0="$(now)"; out="$(export "${var}=${STUB_SLEEP}"; status "$((bound + 5))" "${3:-}")"; t1="$(now)"
   holds "$1 sleeping past the deadline: status ends within it of a fast run's time" "b - a <= ${bound}" "${t0}" "${t1}"
   last="$(tail -n 1 <<< "${out}")"
   is "$1 sleeping past the deadline: the last line names the read cut first" \
-    "skipped (over ${REPORT_SECONDS} s): $2" "${last%%,*}"
+    "skipped (over ${3:-${REPORT_SECONDS}} s): $2" "${last%%,*}"
   is "$1 sleeping past the deadline: status still prints its sections" 1 "$(grep -cx 'Waiting on you' <<< "${out}" || true)"
 }
 slow herdr "herdr agent list"
-slow gh "gh pr list"
+slow gh "gh pr list" "${gh_at}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
