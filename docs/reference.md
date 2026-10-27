@@ -1059,7 +1059,7 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green, and keep any load it starts on purpose within 4 CPUs in all and remove it when the check ends), the epic's `check:` command when it has one
+codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, and keep any load it starts on purpose within 4 CPUs in all and remove it when the check ends), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then the project's own rules from
 `.claude/swarm/brief.md`, plus the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
 `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md`, since a builder in another repo's worktree reads
