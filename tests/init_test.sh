@@ -2,7 +2,8 @@
 # init_test.sh — swarm.sh init in throwaway git repos: the board from the plugin's templates, never
 # over a file that exists, .claude/swarm/ with a commented commit_trailers line, the .gitignore
 # lines, a CI workflow with a board-only skip, a pre-commit hook, a second run that changes nothing,
-# board_dir, the swarm.sh merge allow rule in Claude Code's settings, and the refusals outside a repo's root.
+# board_dir, the swarm.sh merge allow rule in Claude Code's settings, auto mode's setup step and
+# init --auto-mode-done, and the refusals outside a repo's root.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -307,6 +308,36 @@ rule_init repo '{"permissions": {"allow": ["Bash(swarm.sh merge --* https://gith
 check "a rule scoped to the project's GitHub origin counts as the rule" "no" \
   "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
 check "init changes no settings file and adds none" "" "${changed}"
+
+# --- Auto mode's setup: until the user's settings hold a non-empty autoMode.environment (the list
+# /auto-mode-setup writes) or the user ran init --auto-mode-done, init prints the step. Claude Code takes
+# autoMode from no project settings file, so one there is no record. --auto-mode-done writes the date
+# to .swarm/auto-mode-done and nothing outside .swarm/.
+q="${ROOT}/auto-mode"; "${GIT[@]}" init -q "${q}"; mkdir -p "${q}/.claude"
+AM_STEP="Your step: run /auto-mode-setup once in claude, so no agent's pane stops on the 'Teach auto mode' dialog. Then run swarm.sh init --auto-mode-done here, and init stops printing this step."
+am_step() { grep -q 'auto-mode-setup' <<< "$1" && echo yes || echo no; }
+printf '{"permissions": {"allow": ["Bash(swarm.sh merge *)"]}, "autoMode": {"environment": []}}\n' > "${S_USER}"
+printf '{"autoMode": {"environment": ["Source control: github.com/o"]}}\n' > "${q}/.claude/settings.local.json"
+out="$(run "${q}" init || true)"
+check "with an empty autoMode.environment and one only in the project's settings, init prints the auto mode step and the --auto-mode-done command, before the trust step" "yes|yes" \
+  "$(has "${out}" "${AM_STEP}")|$(tail -1 <<< "${out}" | grep -q '^Last step: run claude once' && echo yes || echo no)"
+printf '{"autoMode": {"environment": ["Source control: github.com/o"]}}\n' > "${S_USER}"
+out="$(run "${q}" init || true)"
+check "with autoMode.environment in the user's settings, init prints no auto mode step" "no" "$(am_step "${out}")"
+printf '{"autoMode": {"environment": []}}\n' > "${S_USER}"
+# outside_swarm — the checksum of every file in the project outside .git/ and .swarm/, and in the stub
+# config dir, which holds the user's settings and .claude.json.
+outside_swarm() {
+  { (cd "${q}" && find . \( -path ./.git -o -path ./.swarm \) -prune -o -type f -exec cksum {} +)
+    find "${CLAUDE_CONFIG_DIR}" -type f -exec cksum {} +; } | LC_ALL=C sort
+}
+before="$(outside_swarm)"; run "${q}" init --auto-mode-done >/dev/null || true
+check "init --auto-mode-done writes today's date to .swarm/auto-mode-done and changes no file outside .swarm/, settings files included" \
+  "$(date +%F)|yes" "$(cat "${q}/.swarm/auto-mode-done" 2>/dev/null || true)|$([[ "$(outside_swarm)" == "${before}" ]] && echo yes || echo no)"
+out="$(run "${q}" init || true)"
+check "after init --auto-mode-done, init prints no auto mode step" "no" "$(am_step "${out}")"
+out="$(run "${q}" init --auto-mode || true)"
+check "init with an argument it does not know refuses with its usage" "yes" "$(has "${out}" "swarm: usage: swarm.sh init [--auto-mode-done]")"
 
 # --- Refusals: a subdirectory names the root; outside git names that.
 mkdir -p "${p}/sub"

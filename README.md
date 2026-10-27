@@ -82,8 +82,10 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
    hook that run `make check`. If your Claude Code settings have no rule that allows `swarm.sh merge`,
    it names the rule and the file to add it to: `"Bash(swarm.sh merge *)"` in `permissions.allow`.
    Without it, under `merge = agent` or an HLD that grants `merge`, Claude Code refuses every
-   `swarm.sh merge` an agent runs. It then stops and tells you to run `claude` in the project once
-   and accept the trust prompt (step 2, if you have not).
+   `swarm.sh merge` an agent runs. Until auto mode has learned your environment, it asks you to run
+   `/auto-mode-setup` once in `claude`, so no agent's pane stops on the 'Teach auto mode' dialog, and
+   then `swarm.sh init --auto-mode-done`, which records that you did. It then stops and tells you to
+   run `claude` in the project once and accept the trust prompt (step 2, if you have not).
 4. Run `/swarm-dev:swarm` again. The first time, it asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
    it writes.
