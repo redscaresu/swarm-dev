@@ -55,7 +55,7 @@ sites() (
     timeout) settle() { slow_timeout; }; wait_agent a 1000 ;;
     herdr-timeout) settle() { sleep 1; return 1; }; read_state() { echo "${st}"; }; wait_agent a 1000 ;;
     slice) settle() { slow_timeout; }; SWARM_WAIT_SLICE=1 wait_agent conduct-e 1000 ;;
-    herdr-fails) settle() { echo busy; return 1; }; wait_agent a 60000 ;;
+    herdr-fails) settle() { echo "${st}"; return 1; }; wait_agent a 60000 ;;
     login) settle() { echo idle; }; login_expired() { return 0; }
       wait_agent a 1000; wait_agent a 1000; record_event tell:resume a; wait_agent a 1000 ;;
     stuck) settle() { echo idle; }; wait_agent a 1000; wait_agent a 1000; close_agent a met ;;
@@ -78,8 +78,8 @@ check "wait_agent's timeout on a busy agent writes none" "$(sites timeout busy)"
 check "herdr's wait timing out on an agent herdr says is working writes none" "$(sites herdr-timeout herdr:working)" ""
 check "herdr's wait timing out on an agent herdr says is blocked writes its state" "$(sites herdr-timeout herdr:blocked)" \
   $'incident\ta\twait-timeout: herdr:blocked'
-check "a conductor's hour slice running out (SWARM_WAIT_SLICE) writes none" "$(sites slice)" ""
-check "herdr's wait failing before the timeout writes none" "$(sites herdr-fails)" ""
+check "a conductor's hour slice running out (SWARM_WAIT_SLICE) writes none" "$(sites slice blocked)" ""
+check "herdr's wait failing before the timeout writes none" "$(sites herdr-fails blocked)" ""
 check "an expired login waited on twice writes one login line, and a resume then another" "$(sites login)" \
   "$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tlogin: Login expired')"
 check "a stuck builder, waited on twice (nudged) and closed, writes one idle-no-pr line, the close's" "$(sites stuck)" \
