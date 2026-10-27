@@ -538,6 +538,7 @@ lead_blocked() {
   [[ -n "${open}" ]] || return 1
   for p in ${open}; do
     [[ "${p}" =~ ^[a-z0-9-]+$ ]] || continue
+    if open_item "${BOARD}/epics/${p}.md"; then return 1; fi
     f="${BOARD}/stories/${p}.md"
     [[ -f "${f}" ]] || return 1
     if agent_kind "$(fm "${f}" kind)" && ! by_hand_blocked "${f}"; then return 1; fi

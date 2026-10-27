@@ -90,6 +90,13 @@ check "status: a child blocked on a hand step and an agent's story reads as toda
   "  blocked: child (by operator:x agent)" "$(blocked "$(sts)" | grep child)"
 rm -rf "${dir}"
 
+# An open epic that shares its slug with a finished lead story is what the child waits on: a conductor builds it.
+board "item epics/x.md 'status: active'" "item stories/x.md 'status: done' 'kind: lead'" \
+  "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [x]'"
+check "status: a child blocked on an open epic is not blocked by one no agent builds, whatever a done story of its slug says" \
+  "  blocked: child (by x)" "$(blocked "$(sts)" | grep child)"
+rm -rf "${dir}"
+
 # A by-hand blocked parent with after: waits for its epic, so next does not send the lead to it yet.
 board "item stories/hand.md 'status: blocked' 'kind: lead' 'epic: e1' 'after: e1'" \
   "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [hand]'"
