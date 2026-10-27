@@ -830,20 +830,29 @@ naming its note, which nobody reads. When a note gets no answer, check the condu
 
 **`next`'s idle epic lines.** `next` prints `idle: epic <epic> can start, exit: plan it, or set it
 active in a board PR` for a draft or later epic in the current stage that has nothing left to wait
-on. The current stage is the lowest `stage:` an epic on the board carries; an epic with no `stage:`
-of its own takes its nearest parent's. When no epic carries one, every epic is in it. Nothing is left
-to wait on when the epic's `depends_on` lists something and every item it lists has left the board
-or is `done`, or when one of the epic's stories that an agent builds is `ready`. A later epic with no `depends_on` waits
-only on the user, so it gets no line. Nor does one with `unasked_plan:` set, as the gate already
-shows its plan or the user's decline. A staged draft gets none either: `next`'s `stage` step sets it
-active once the tag before its stage is cut, and the gate lists it until then. `next` also prints
-`idle: epic <epic> has no plan running, exit: /swarm-dev:plan-epic <epic>` for an active epic with no
-stories, no `depends_on` that still holds up its planning (as `plan-epic`'s step judges it), and no
-`scope-<epic>` tab record (or numbered `scope-<epic>-<n>` one) in `.swarm/state`. A
-plan's record goes when its panes close, so a plan that stopped with no stories brings the line
-back. A lead story whose `after:` names its epic does not count as one of the epic's stories. An
-epic that a rerun of an interrupted `/plan-hld` will overwrite gets no line, as `next` leaves it to
-that rerun. Both lines read the board and `.swarm/state` alone.
+on. The current stage is the lowest `stage:` an epic on the board carries, whatever its status. An
+epic with no `stage:` is in it, so when no epic carries one, every epic is. An epic whose `stage:` is
+not `v<x.y.z>` gets no line. Nothing is left to wait on when the epic's `depends_on` lists something
+and every item it lists has left the board or is `done`, or when one of the epic's stories that an
+agent builds is `ready`. An active epic whose only open stories are lead `after:` ones counts as done
+here, as it does wherever `next` reads a dependency. A later epic with no `depends_on` and no such
+ready story waits only on the user, so it gets no line. Nor does an epic with `parent:` set (a split's
+children are the user's), one with `unasked_plan:` set (the gate already shows its plan or the user's
+decline), or a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
+cut, and the gate lists it until then). The later epic `next`'s `plan-epic` step names, the first in
+board order with its dependencies done and no stories, gets none either; a second such epic does, as
+capacity that step does not use. Plan an epic that has no stories; set one whose stories are on the
+board active in a board PR. `next` also prints `idle: epic <epic> has no plan running, exit:
+/swarm-dev:plan-epic <epic>` for an active epic its `plan-epic` step could name, with no stories and
+nothing in its `depends_on` holding up its planning as that step judges it, but does not, as it names
+an earlier one, while no plan of it runs: no `scope-<epic>` tab record (or numbered `scope-<epic>-<n>`
+one) in `.swarm/state`, and no open plan board PR (its `_board-scope-<epic>` worktree). A plan's
+record goes when its panes close, so a plan that stopped with no stories and no PR brings the line
+back. A lead story whose `after:` names its epic does not count as one of the epic's stories. An epic
+that a rerun of an interrupted `/plan-hld` will overwrite gets no line, as `next` leaves it to that
+rerun. Both lines come from the predicates `next`'s steps use, so they read what those read: the
+board, `.swarm/state`, the board PR worktrees and, for an active epic with no open story, the board's
+history.
 
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with

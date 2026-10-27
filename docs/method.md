@@ -34,7 +34,7 @@ awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
 `depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
 (the lead drops the dependency or names it in the story's `needs:` line), and a ready story with no build, ready for `queue_minutes`, whose `touches` share no part with a running build
-(the lead sends its conductor a note, or starts it with `swarm.sh story --strict`). It also names a draft or later epic of the current stage with nothing left to wait on, and an active epic with no stories and no plan running (the lead plans it with `/swarm-dev:plan-epic`). When the step leaves the builders idle and no
+(the lead sends its conductor a note, or starts it with `swarm.sh story --strict`). It also names a draft or later epic of the current stage with nothing left to wait on, and an active epic with no stories and no plan running, each unless its own step already names it (the lead plans it with `/swarm-dev:plan-epic`). When the step leaves the builders idle and no
 story is buildable, it also prints the project with up to five candidates for a one-off: the findings declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
 are the swarm's own list of follow-ups. The board is the

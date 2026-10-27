@@ -90,16 +90,19 @@ Repeat until a step below says stop:
      When the step is `conduct <epic>` for the story's epic, `next` has not started it, so the line
      still says `swarm.sh story --strict`: run the step instead, and leave the story to that conductor.
    - `idle: epic <epic> can start, exit: plan it, or set it active in a board PR`: a draft or later
-     epic in the current stage (its `stage:`, or its parent's, is the lowest an epic on the board has,
-     or no epic has one) has nothing left to wait on. Everything in its `depends_on` has left the
-     board or is done, or one of its stories that an agent builds is already ready. Plan it with
-     `/swarm-dev:plan-epic <epic>`, or set it `status: active` in a board PR. Setting a draft active
-     needs the user's agreement, or an HLD over it that grants `epics`. A staged draft gets no line:
-     `next`'s `stage` step sets it active once the tag before its stage is cut. A later epic with
-     `unasked_plan:` set gets none either: the gate shows its plan or the user's decline.
+     epic in the current stage (its `stage:` is the lowest an epic on the board has, or it has none)
+     has nothing left to wait on. Everything in its `depends_on` has left the board or is done, or one
+     of its stories that an agent builds is already ready. Plan it with `/swarm-dev:plan-epic <epic>`
+     when it has no stories; set it `status: active` in a board PR when its stories are on the board.
+     Setting a draft active needs the user's agreement, or an HLD over it that grants `epics`. No line
+     comes for a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
+     cut), for an epic with `parent:` set (a split's children are the user's), for a later epic with
+     `unasked_plan:` set (the gate shows its plan or the user's decline), or for the later epic
+     `next`'s `plan-epic` step names.
    - `idle: epic <epic> has no plan running, exit: /swarm-dev:plan-epic <epic>`: the epic is active
-     with no stories, nothing in its `depends_on` holds up its planning, and no `scope-<epic>` plan is
-     recorded in `.swarm/state`. Plan it with the exit.
+     with no stories and nothing in its `depends_on` holds up its planning, but `next`'s `plan-epic`
+     step names an earlier epic, and no plan of this one runs: no `scope-<epic>` record in
+     `.swarm/state` and no open plan board PR. Plan it with the exit, beside the step's epic.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in

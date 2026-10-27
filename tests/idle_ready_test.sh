@@ -88,8 +88,7 @@ board; story a "status: ready" "epic: gone" "touches: [x.sh:f run]"
 check "a story whose epic: has no file gives no line" "" "$(idle)"
 board; story a "status: ready" "epic: e" "touches: [x.sh:f run]"
 printf -- '---\nstatus: draft\n---\n\n# e\n' > "${CASE}/docs/epics/e.md"
-check "a story of an epic not yet active gives no ready line (its epic gets idle_epic_test.sh's can-start line)" \
-  "idle: epic e can start, exit: plan it, or set it active in a board PR" "$(idle)"
+check "a story of an epic not yet active gives no line" "" "$(idle)"
 printf -- '---\nstatus: active\n---\n\n# e\n' > "${CASE}/docs/epics/e.md"
 check "a story of an active epic with no conductor running names swarm.sh story --strict" "${LINE}" "$(idle)"
 event conduct e

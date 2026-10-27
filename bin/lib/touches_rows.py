@@ -80,22 +80,8 @@ def first_word(part):
 def overlap(a, b):
     return a[:2] == b[:2] and first_word(a[2]) == first_word(b[2])
 
-# slugs(value) — a front-matter value's slugs, as slug_list reads them: brackets, quotes, commas and a
-# trailing # comment gone.
-def slugs(value):
-    return [s for s in re.split(r"[\s,\[\]\"']+", value.split("#")[0]) if s]
-
 def deps(fm):
-    return set(slugs(fm.get("depends_on", "")))
-
-# stage_of(value) — (x, y, z) for a stage: v<x.y.z> (stage_of in board.sh: a # comment, whitespace and a
-# matching pair of quotes off), None for none, "bad" for any other value.
-def stage_of(value):
-    v = value.split("#")[0].strip()
-    m = re.fullmatch(r"(['\"])(.*)\1", v)
-    v = m.group(2) if m else v
-    m = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", v)
-    return tuple(int(n) for n in m.groups()) if m else "bad" if v else None
+    return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))
 
 # ok_events(path) — {(command, target): [secs, ...]} of events.tsv's ok lines; empty with no file.
 # A line's place in the file adds under a second, so two lines in one second keep their order (a
@@ -217,68 +203,6 @@ if __name__ == "__main__":
                 continue
             c = conductor(epic)
             print(f"idle: {slug} is ready with no build, exit: " + (f"swarm.sh tell {c} note <file>" if c else f"swarm.sh story --strict {slug}"))
-        # A draft or later epic in the current stage (its stage:, or its nearest parent's, is the lowest
-        # an epic on the board carries, or no epic carries one) with no unasked_plan: (the gate has its
-        # recorded plan or decline) that can start: its depends_on lists something and only items gone
-        # from the board or done, or a story of it an agent builds is ready. idle_now drops a staged draft's line, which
-        # next's stage step or the gate names. And an active epic with no stories, no depends_on that
-        # holds up its planning (holds) and no scope-<epic> tab record in .swarm/state (has_records):
-        # no plan runs. idle_now drops that line for an epic a resuming /plan-hld will overwrite.
-        efms = {os.path.basename(f)[:-3]: front(f, os.path.join(os.path.dirname(state), "epics"))
-                for f in glob.glob(os.path.join(epics, "*.md")) if not f.endswith("/README.md")}
-
-        def stage(e):
-            for _ in range(8):   # a parent: cycle ends
-                v = stage_of(efms[e].get("stage", ""))
-                p = (slugs(efms[e].get("parent", "")) or [""])[0]
-                if v is not None or p not in efms:
-                    return v
-                e = p
-            return None
-
-        def open_epic(d, seen=()):
-            # open_item for an epic: on the board and not done, and a split one only while an open epic
-            # names it in parent: (has_child_epics; seen ends a parent: cycle).
-            if d not in efms or efms[d].get("status") == "done":
-                return False
-            if efms[d].get("status") == "split":
-                return any(c != d and c not in seen and " ".join(slugs(f.get("parent", ""))) == d
-                           and open_epic(c, seen + (d,)) for c, f in efms.items())
-            return True
-
-        def gone(d):
-            # Not open_deps: a slug, and neither an open story nor an open epic on the board.
-            return re.fullmatch(r"[a-z0-9-]+", d) is not None and fms.get(d, {}).get("status", "done") == "done" \
-                and not open_epic(d)
-
-        def stories_of(e):
-            # epic_stories: the stories naming the epic, but a lead one whose after: names it (waits_on_epic).
-            return [fm for fm in fms.values() if fm.get("epic") == e
-                    and not (fm.get("kind") == "lead" and e in slugs(fm.get("after", "")))]
-
-        def holds(d):
-            # dep_holds: an open story, or an open epic with no stories or one not yet in review.
-            if d in fms:
-                return fms[d].get("status") != "done"
-            if not open_epic(d):
-                return False
-            sts = [fm.get("status") for fm in stories_of(d)]
-            return not sts or any(s not in ("review", "done") for s in sts) or "review" not in sts
-
-        stages = {e: stage(e) for e in efms}
-        current = min((v for v in stages.values() if isinstance(v, tuple)), default=None)
-        tab_dir = os.path.join(project_dir, ".swarm", "state")
-        tabs = os.listdir(tab_dir) if os.path.isdir(tab_dir) else []
-        for e, efm in sorted(efms.items()):
-            mine = stories_of(e)
-            if efm.get("status") in ("draft", "later") and stages[e] == current and not efm.get("unasked_plan") \
-                    and (deps(efm) and all(gone(d) for d in deps(efm))
-                         or any(fm.get("status") == "ready" and fm.get("kind", "") in kinds for fm in mine)):
-                print(f"idle: epic {e} can start, exit: plan it, or set it active in a board PR")
-            elif efm.get("status") == "active" and not mine \
-                    and not any(holds(d) for d in deps(efm) - set(slugs(efm.get("parent", "")))) \
-                    and not any(re.fullmatch(re.escape("scope-" + e) + r"(-\d+)?", t) for t in tabs):
-                print(f"idle: epic {e} has no plan running, exit: /swarm-dev:plan-epic {e}")
         sys.exit()
     mine = entries(fms[me], project_dir, repos_dir)
     for slug, fm in sorted(fms.items()):

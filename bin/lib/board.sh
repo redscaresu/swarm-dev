@@ -424,30 +424,92 @@ one_off_started() {
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
 }
 
-# idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
-# is not in its needs, and per ready story with no build past queue_minutes (touches_rows.py --idle,
-# given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR), from the board, its state
-# and events.tsv alone (and one git read of the story branches per checkout with a ready story about to
-# get a line, 5 s at most in all): no gh or herdr call.
+# idle_now — the idle: lines as they stand. One per blocked story whose depends_on story shares no
+# touches part with it and is not in its needs, and per ready story with no build past queue_minutes
+# (touches_rows.py --idle, given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR),
+# from the board, its state and events.tsv alone (and one git read of the story branches per checkout
+# with a ready story about to get a line, 5 s at most in all); then idle_epic_lines' epic lines. No gh
+# or herdr call.
 # next (idle_lines), wait --lead (lead_queue), status and dash each call it on every read, so a blocked
-# story's line goes once its dependency is in review or done, and a ready story's once its build starts.
-# Its epic lines name an epic that can start and an active one with no plan running; a staged draft's
-# (staged_draft) is dropped, as next's stage step sets it active once its tag is cut and the gate lists it
-# until then, and so is the no-plan line of an epic a rerun of an interrupted /plan-hld will overwrite
-# (hld_resuming), which plannable_epic leaves to that rerun.
-# Fails when the check does, on any kind of line: a story file reconcile removes between the
-# script's glob and its read is one way.
+# story's line goes once its dependency is in review or done, a ready story's once its build starts, and
+# an epic's once it is active and has stories, or its plan runs.
+# Fails when the story check does: a story file reconcile removes between the script's glob and its
+# read is one way.
 idle_now() {
-  local out line can='^idle: epic ([^ ]+) can start, ' unplanned='^idle: epic ([^ ]+) has no plan running, '
   # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
-  out="$(SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
-    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories")" || return 1
-  while IFS= read -r line; do
-    if [[ "${line}" =~ ${can} ]] && staged_draft "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi   # loose-match: ok can is a fixed regex
-    if [[ "${line}" =~ ${unplanned} ]] && hld_resuming "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi   # loose-match: ok unplanned is a fixed regex
-    [[ -z "${line}" ]] || printf '%s\n' "${line}"
-  done <<< "${out}"
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
+    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories" || return 1
+  idle_epic_lines
 }
+
+# idle_epic_lines — idle_now's epic lines, one per epic in board order, from the predicates next's steps
+# plan by, so they cannot drift from them. `idle: epic <epic> can start, exit: plan it, or set it active
+# in a board PR` for a draft or later epic with nothing left to wait on: its depends_on lists something
+# and open_deps leaves none of it, or a story that counts in it is ready and an agent builds it
+# (epic_ready_story). Not for one with parent: (a split's child: the user's, as unblocked_epics leaves
+# it) or unasked_plan: (the gate shows its plan or the user's decline); nor one outside the current
+# stage (idle_stage; one with no stage: is in it, and one whose stage: is not v<x.y.z> gets no line); nor
+# a staged_draft (next's stage step sets it active once its tag is cut, and the gate lists it until
+# then); nor the later epic next's plan-epic step names (unblocked_epic, the first of unblocked_epics:
+# the others are capacity that step does not use). `idle: epic <epic> has no plan running, exit:
+# /swarm-dev:plan-epic <epic>` for each of plannable_epics but its first, which is next's plan-epic step
+# (plannable_epic), while no plan of it runs: no scope-<epic> tab record (has_records) and no open plan
+# board PR (plan_pr_open). Board files, .swarm/state, the board PR worktrees and, for an active epic
+# with no open story, the board's history (epic_planned, through epic_holding_deps): no gh or herdr call.
+idle_epic_lines() {
+  local f slug st v deps plannable unblocked current
+  plannable="$(plannable_epics)"; unblocked="$(unblocked_epics)"; current="$(idle_stage)"
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] || continue
+    slug="$(basename "${f}" .md)"; st="$(fm "${f}" status)"
+    case "${st}" in
+      draft|later)
+        [[ "${slug}" != "${unblocked%%$'\n'*}" && -z "$(fm "${f}" unasked_plan)" && -z "$(fm_list "${f}" parent)" ]] || continue
+        ! staged_draft "${f}" >/dev/null || continue
+        v="$(stage_of "$(get_fm "${f}" stage)")"
+        [[ "${v}" == - || "${v}" == "${current}" ]] || continue
+        deps="$(story_deps "${f}")"
+        if [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || epic_ready_story "${slug}"; then
+          echo "idle: epic ${slug} can start, exit: plan it, or set it active in a board PR"
+        fi ;;
+      active)
+        grep -qxF "${slug}" <<< "${plannable}" || continue
+        [[ "${slug}" != "${plannable%%$'\n'*}" ]] || continue
+        if has_records "scope-${slug}" || plan_pr_open "${slug}"; then continue; fi
+        echo "idle: epic ${slug} has no plan running, exit: /swarm-dev:plan-epic ${slug}" ;;
+    esac
+  done < <(board epics)
+}
+
+# idle_stage — the current stage, x.y.z: the lowest stage: (stage_of) an epic on the board carries,
+# whatever its status, or nothing when none does.
+idle_stage() {
+  local f v low=""
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] || continue
+    v="$(stage_of "$(get_fm "${f}" stage)")"
+    [[ "${v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    if [[ -z "${low}" ]] || version_gt "${low}" "${v}"; then low="${v}"; fi
+  done < <(board epics)
+  printf '%s' "${low}"
+}
+
+# epic_ready_story <epic> — true when a story that counts in <epic> (epic_stories) is ready and an agent
+# builds it (agent_kind): buildable_story's test but for the epic's status, which is not active here.
+epic_ready_story() {
+  local s list
+  list="$(epic_stories "$1")"
+  while IFS= read -r s; do
+    [[ -n "${s}" && "$(fm "${s}" status)" == ready ]] || continue
+    ! agent_kind "$(fm "${s}" kind)" || return 0
+  done <<< "${list}"
+  return 1
+}
+
+# plan_pr_open <epic> — true while the epic's plan board PR's worktree (<repo>-wt/_board-scope-<epic>,
+# which board-pr start scope-<epic> makes) exists: its stories are in that PR, so its plan is running.
+# A local directory test, no gh.
+plan_pr_open() { [[ -e "$(worktree_for "${PROJECT_DIR}" "_board-scope-$1")" ]]; }
 
 # idle_warned [<tail>] — idle_now's lines. When the check fails: no line, one `warning: the
 # idle check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
@@ -646,26 +708,32 @@ epic_held() {
   return 1
 }
 
-# plannable_epic — the first active epic with no stories whose depends_on holds nothing up
-# (epic_holding_deps), or nothing. A split epic (status: split) is never planned: its child epics are.
-# An epic an interrupted /plan-hld's rerun will overwrite (hld_resuming) waits for that rerun.
-plannable_epic() {
+# plannable_epics — every active epic with no stories whose depends_on holds nothing up
+# (epic_holding_deps), one slug a line in board order. A split epic (status: split) is never planned:
+# its child epics are. An epic an interrupted /plan-hld's rerun will overwrite (hld_resuming) waits for
+# that rerun. The first is next's plan-epic step (plannable_epic); idle_epic_lines names the rest.
+plannable_epics() {
   local f held
   while IFS= read -r f; do
     held="$(epic_holding_deps "${f}")" || continue
     [[ -z "${held}" ]] || continue
     ! hld_resuming "${f}" || continue
-    basename "${f}" .md; return
+    basename "${f}" .md
   done < <(board epics)
 }
 
-# unblocked_epic — the first later epic, in board order, whose depends_on lists something and is all
-# done or gone (open_deps), with no unasked_plan: (plan_unasked), no parent: and no stories, or
-# nothing: once planned unasked it is never offered again, and the gate says what to do with it
-# (waiting_on_user). An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
+# plannable_epic — the first of plannable_epics, or nothing. sed, not head: head can exit before the
+# writer finishes, and the broken pipe fails under pipefail.
+plannable_epic() { plannable_epics | sed -n 1p; }
+
+# unblocked_epics — every later epic, in board order, whose depends_on lists something and is all
+# done or gone (open_deps), with no unasked_plan: (plan_unasked), no parent: and no stories, one slug
+# a line: once planned unasked it is never offered again, and the gate says what to do with it
+# (waiting_on_user). An active epic is plannable_epics'. A later epic with no depends_on waits on nothing but
 # the user, and a split later epic's later children wait for the user to start them, so both stay
-# the user's. Board files only, no gh: dash runs it every frame.
-unblocked_epic() {
+# the user's. Board files only, no gh: dash runs it every frame. The first is next's plan-epic step
+# (unblocked_epic); idle_epic_lines names the rest.
+unblocked_epics() {
   local f slug deps
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == later && -z "$(fm "${f}" unasked_plan)" && -z "$(fm_list "${f}" parent)" ]] || continue
@@ -673,9 +741,12 @@ unblocked_epic() {
     [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || continue
     slug="$(basename "${f}" .md)"
     epic_has_stories "${slug}" && continue
-    echo "${slug}"; return
+    echo "${slug}"
   done < <(board epics)
 }
+
+# unblocked_epic — the first of unblocked_epics, or nothing.
+unblocked_epic() { unblocked_epics | sed -n 1p; }
 
 
 # plan_unasked [--declined] <epic> — swarm.sh plan-unasked: the lead records, before it starts the
