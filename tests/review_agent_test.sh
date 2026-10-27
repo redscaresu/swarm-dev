@@ -61,6 +61,7 @@ case "$1 $2" in
                   esac
                   # With quick, the agent writes its findings file while its brief is still being delivered.
                   [ -e "$H/quick" ] && echo "head: NEW-REVIEW" > "$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/[a-z0-9-]*\.md' | head -1)"
+                  printf '%s\n' "$4" > "$H/prompted-$(echo "$3" | tr : -)"   # what the agent in pane $3 received last
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait")   name=$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")
                   ms=$(echo "$*" | sed -n 's/.*--timeout \([0-9]*\).*/\1/p'); ticks=$(( ${ms:-10000} / 100 ))
@@ -175,12 +176,23 @@ check "the brief triages check-run notes and code-scanning alerts before the hea
   "$(has "Exit 0: the head counts green only once you have triaged what \`${sw} findings svc 1\` prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning alerts." "${flat}")|$(has "Nudge the builder with each real one. Rebut the rest with a reason in the PR (\`gh pr comment ${PR} --body" "${flat}")|$(has "Never dismiss an alert." "${flat}")|$(has "\`${sw} tell s1 nudge ${p}/.swarm/reviews/s1.nudge.md\` (never findings, which count as a review round)" "${flat}")"
 check "a red head or a conflict is a nudge naming the check or the base, and with the ladder off no step-up is named" "yes|0" \
   "$(has "Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in." "${flat}")|$(grep -c 'stepped up' <<< "${brief}" || true)"
-# The green step ends: two nudges or two red heads at most, then a findings file the conductor's rules
-# send to the builder (a file with no ## Findings is a review started again, for ever on a PR that
+# The green step ends: two nudges or two red heads at most, then a findings file the agent sends the
+# builder as any finding (a file with no ## Findings is a review started again, for ever on a PR that
 # stays red); and each nudge file is removed before the Write tool writes it (an earlier round's
 # survives, and the tool refuses to overwrite a file the session has not read).
 check "the green step is bounded, its not-green file is a findings file with the red check as its one item, and the nudge file is removed before each write" "yes|yes|yes" \
-  "$(has "The green step is bounded: at most two nudges, and at most two heads that wait-pr calls red." "${flat}")|$(has "The not-green file is ${p}/.swarm/reviews/s1.md, written with the Write tool: \`head: ${HEAD_SHA}\`, then a \`## Findings\` heading with one line for the builder, \`wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>\`, then a \`## Out of scope\` heading with \`none\`. The conductor sends it to the builder as a findings round, as any finding." "${flat}")|$(has "first remove any earlier nudge file (\`rm -f ${p}/.swarm/reviews/s1.nudge.md\`: the Write tool refuses to overwrite a file this session has not read), then write ${p}/.swarm/reviews/s1.nudge.md with the Write tool" "${flat}")"
+  "$(has "The green step is bounded: at most two nudges, and at most two heads that wait-pr calls red." "${flat}")|$(has "The not-green file is ${p}/.swarm/reviews/s1.md, written with the Write tool: \`head: ${HEAD_SHA}\`, then a \`## Findings\` heading with one line for the builder, \`wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>\`, then a \`## Out of scope\` heading with \`none\`. Its one finding is to fix, from ci: log it and send it to the builder as findings, as below." "${flat}")|$(has "first remove any earlier nudge file (\`rm -f ${p}/.swarm/reviews/s1.nudge.md\`: the Write tool refuses to overwrite a file this session has not read), then write ${p}/.swarm/reviews/s1.nudge.md with the Write tool" "${flat}")"
+# After each review the agent triages its own findings: it fixes (through the builder) or declines each,
+# logs each with its round, and tells the builder only once the builder is idle. A round with nothing
+# to fix is a pass. The conductor no longer triages this file, and the agent still edits nothing.
+check "the brief has the agent fix or decline each finding and log each with log-finding --round, its round 1 here, then --next's" "yes|yes|yes|yes" \
+  "$(has "Otherwise, fix or decline each finding. One that is real and inside the story is to fix: the builder fixes it, never you." "${flat}")|$(has "log-finding --declined <reason> --reviewer <who> --round <n> <kind> <PR URL>" "${flat}")|$(has "Log each declined one now, as below; log each one to fix as fixed only once the builder has pushed its fix. A finding's round is 1 on this first review, then the round \`review-agent --next\` prints." "${flat}")|$(has "Otherwise log each finding you sent as fixed, then run the green step above on the head it pushed." "${flat}")"
+check "the brief waits for the builder before its findings tell, then runs --next on the green head, and stops on a moved head only before any findings went out" "yes|yes|yes" \
+  "$(has "With findings to fix, wait before you tell: run \`${sw} wait s1\` in the background and wait for it to exit, then run \`${sw} tell s1 findings ${p}/.swarm/reviews/s1.md\`." "${flat}")|$(has "run \`${sw} review-agent --next s1 ${PR}\` and do the round it prints (codex alone from round 2)" "${flat}")|$(has "When the builder pushed past ${HEAD_SHA} before any findings went to it, write ${p}/.swarm/reviews/s1.md with the Write tool holding two lines" "${flat}")"
+check "a round with nothing to fix is a pass that ends the agent's turn, and the agent still never edits, commits or pushes" "yes|yes" \
+  "$(has "A round with nothing to fix is a pass: reply with ${p}/.swarm/reviews/s1.md, and with \`codex skipped: <why>\` when codex was, then stop." "${flat}")|$(has "You are read-only: never edit, commit or push here" "${flat}")"
+check "the brief leaves no finding for the conductor to decline or send" "0|0" \
+  "$(grep -c 'the conductor can decline' <<< "${flat}" || true)|$(grep -c 'The conductor sends it' <<< "${flat}" || true)"
 check "a started review agent records the head it reviews, so watch and next do not call the PR queued" "${HEAD_SHA}" \
   "$(cat "${p}/.swarm/reviews/s1.head")"
 check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusals')" "s1	ok" \
@@ -439,6 +451,42 @@ echo "head: ${HEAD_SHA} ROUND-FOUR" > "${p}/.swarm/reviews/n1.md"
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:00:00Z story n1 - ok >> "${p}/.swarm/events.tsv"; was="$(reviews_now)"
 check "after a new build's story event, --next refuses, as round 1 is a plain review-agent start, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "there is no next round" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+
+# --- A findings round run as the brief writes it: review-f1's wait, tell and --next commands, taken
+# from its brief and run from its pane, in f1's worktree. f1's builder, in pane w:900 of f1's tab, has
+# a Claude session that is busy until done/f1 exists.
+sed "s/s4/f1/g" "${b}/stories/s4.md" > "${b}/stories/f1.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/f1 "${ROOT}/svc-wt/f1" origin/main
+mkdir -p "${p}/.swarm/state"; echo "w:900 f1" >> "${p}/.swarm/state/f1"; echo "f1 w:900 sess-f1" >> "${ROOT}/agents"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' 2026-10-16 code f1 claude sonnet high sess-f1 >> "${p}/.swarm/agents.tsv"; "${ROOT}/sessions"
+check "review-agent f1 starts review-f1 for round 1" "0" "$(set +e; run review-agent f1 "${PR}" >/dev/null; echo "$?")"
+FP="$(awk '$1 == "review-f1" { p = $2 } END { print p }' "${ROOT}/agents")"
+fbrief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/review-f1.md")"
+# brief_cmd <words> — the one backquoted command in review-f1's brief that holds <words>, or nothing.
+brief_cmd() { { grep -o "\`[^\`]*$1[^\`]*\`" <<< "${fbrief}" || true; } | sort -u | tr -d '\`'; }
+wait_cmd="$(brief_cmd " wait f1")"; tell_cmd="$(brief_cmd " tell f1 findings ")"; next_cmd="$(brief_cmd " review-agent --next f1 ")"
+check "review-f1's brief has one wait, one findings tell and one --next command, each naming the project" "yes|yes|yes" \
+  "$(has "SWARM_PROJECT=${p} ${SWARM} wait f1" "${wait_cmd}")|$(has "SWARM_PROJECT=${p} ${SWARM} tell f1 findings ${p}/.swarm/reviews/f1.md" "${tell_cmd}")|$(has "SWARM_PROJECT=${p} ${SWARM} review-agent --next f1 ${PR}" "${next_cmd}")"
+# in_review_pane <command> — <command> as review-f1 runs it: from its pane, in f1's worktree.
+in_review_pane() { (cd "${ROOT}/svc-wt/f1" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID="${FP}" PATH="${STUB_BIN}:${PATH}" bash -c "$1" 2>&1); }
+# The findings the agent wrote, after its triage.
+printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "- codex: bin/f1.sh:3 F1-FIX-ME" "## Declined" "none" "## Out of scope" "none" > "${p}/.swarm/reviews/f1.md"
+check "with f1's builder busy, the brief's tell refuses, saying it is still working, and sends the builder nothing" "1|yes|no" \
+  "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "f1 is still working" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)"
+# The brief's wait returns once the builder goes idle, not before.
+in_review_pane "${wait_cmd} 10000" > "${ROOT}/wait-f1.out" & wpid=$!
+sleep 1; check "the brief's wait on f1 holds while f1's builder works" "yes" "$(kill -0 "${wpid}" 2>/dev/null && echo yes || echo no)"
+done_agent f1
+rc=0; for _ in $(seq 100); do kill -0 "${wpid}" 2>/dev/null || break; sleep 0.1; done; wait "${wpid}" || rc=$?
+check "and returns 0, idle, once it is idle" "0|idle" "${rc}|$(tail -1 "${ROOT}/wait-f1.out")"
+o="$(in_review_pane "${tell_cmd}")" || echo "FAIL the brief's tell to an idle f1 exited non-zero: ${o}"
+check "with f1's builder idle, the brief's tell is logged tell:findings f1 ok, from the review agent" "tell:findings	f1	ok|yes" \
+  "$(awk -F'\t' '$2 ~ /^tell/ && $3 == "f1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(has "From the review agent:" "$(cat "${ROOT}/prompted-w-900" 2>/dev/null)")"
+check "and f1's builder receives the findings file" "yes" \
+  "$(diff <(tail -n +3 "${ROOT}/prompted-w-900") "${p}/.swarm/reviews/f1.md" >/dev/null 2>&1 && echo yes || echo no)"
+o="$(in_review_pane "${next_cmd}")" || echo "FAIL the brief's --next for f1 exited non-zero: ${o}"
+check "the brief's --next then prints round 2, with codex alone" "yes|yes" \
+  "$(has "Review round 2 of story f1" "${o}")|$(has "This is review round 2 of the story: run codex alone, not \`/code-review\`" "${o}")"
 
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 

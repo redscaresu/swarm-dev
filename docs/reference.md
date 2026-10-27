@@ -1244,12 +1244,12 @@ once it has also triaged `swarm.sh findings`, as a conductor does: the notes on 
 the PR's open code-scanning alerts. Each real finding, a red check or a conflict goes to the builder
 as `swarm.sh tell <slug> nudge`; the rest get a reason in a PR comment. After a nudge the agent waits
 for the builder, then for green on the head the builder pushed. The green step is bounded: at most
-two nudges, and at most two heads `wait-pr` calls red. When a green head is not the one the agent was
-started on, it writes `head moved: <the green head>` and stops, and the conductor starts the review
+two nudges, and at most two heads `wait-pr` calls red. Before any findings went to the builder, when
+a green head is not the one the agent was started on, it writes `head moved: <the green head>` and stops, and the conductor starts the review
 again on the new head. When the builder goes idle without pushing, `wait-pr` ends the same way twice,
 or the bound is reached, it writes a not-green file and stops: a review file whose `## Findings` has
 one item, `wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>`. The
-conductor sends that to the builder as a findings round, as any finding, so a PR that stays red
+agent sends that to the builder as a findings round, as any finding, so a PR that stays red
 climbs the findings ladder instead of being reviewed again and again. With `escalate_ladder` set, a
 `wait-pr` that steps the build up ends the agent with `head moved: stepped up: ...`: the PR's head
 has not moved, so the conductor does not start the review again but waits on the new builder, as
@@ -1261,6 +1261,19 @@ runs `codex-review` with `SWARM_STORY=<slug>` and, on the story's first round wh
 code, `/code-review <PR URL>`. From round 2 on it runs codex alone. `review-agent` counts the round
 from the findings `tell` sent the builder since the story's last build started (a step-up or a
 restarted builder does not start it again).
+After each review the agent triages its own findings. It never edits the code: a finding that is
+real and inside the story goes to the builder to fix. It declines the rest, each with a reason (nit,
+wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in one PR comment. It logs
+each declined finding with `log-finding --round <n>` at once, and each one to fix once the builder has
+pushed its fix. Then it writes its review file. A round with nothing
+to fix is a pass: the agent replies with the file and stops, and the conductor takes the PR from
+there. With findings to fix, it runs `swarm.sh wait <slug>` and then `swarm.sh tell <slug> findings
+<file>`, since `tell` refuses a builder that is still working. When `tell` says the build was
+stepped up, the agent waits on the new builder, which has the findings in its handover brief. When
+`tell` says the story is held for the lead, or its step-up failed partway, the agent stops. Once the
+builder has pushed, the agent runs the green step on the new head, then `swarm.sh review-agent --next
+<slug> <PR URL>`, and reviews the round that prints in the same session. If the builder goes idle
+without pushing, or the wait fails, the agent stops.
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. One exception: a comment, doc or error-text line that the changed code no
@@ -1278,9 +1291,9 @@ path `<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree
 project), and replies with that path. It writes the file in one go once both reviews are done,
 after `review-agent` has removed the one from an earlier head. The file starts with `head: <SHA>`,
 the PR's head, which `review-agent` reads from `gh` and puts in the brief, then `codex skipped:
-<why>` when codex was skipped. Under them go the findings,
-each with its reviewer and file:line, then an out-of-scope section for points raised outside the
-story.
+<why>` when codex was skipped. Under them go the findings to fix,
+each with its reviewer and file:line, then the declined findings with their reasons, then an
+out-of-scope section for points raised outside the story.
 `review-agent` refuses, starting nothing and leaving the last review's file in place, when the board has a story named
 `review-<slug>` (whose builder would hold the same agent name), when the worktree is not at the PR's
 head or has uncommitted changes, or when `review-<slug>` is still working or still open with no
@@ -2050,7 +2063,7 @@ PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
 review round a finding came from: the n-th review of a story PR is round n, the passing one included,
-and a plan or board PR is round 0. The conductor passes it on each finding it logs, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
+and a plan or board PR is round 0. The review agent and the conductor pass it on each finding they log, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
 `/swarm-dev:swarm` files one story with `checks: <kind>` for each recurring kind that has no check
 yet, in a board PR named `check-<kind>` (written in place when the board is outside the repo, and
 noted in `.swarm/checks-filed.tsv` so the kind is filed once). The
