@@ -2717,11 +2717,15 @@ no_agent_busy() {
 
 # no_review_events <slug review-name>... — per slug with a review start on record since its newest ok
 # `story` start or reopen, from one read of events.tsv: "<slug> <ok> <url> <under> <wrote>". ok is 1 when
-# the newest `review-agent <slug>` line is ok, else 0. url is the PR URL a failed line's message names,
+# the newest `review-agent <slug>` line is ok, else 0. An ok `review-agent:next` line (review-<slug>'s next
+# round, run in its own session) counts as an ok start: the review agent owns the PR again, so a findings
+# tell before it says nothing about this round, and the brief on record is the one that agent started
+# with. A failed one started no round and changes nothing. url is the PR URL a failed line's message names,
 # when review_agent took it as one (never from its "is not a PR URL" refusal), else -. under is 1 when a round is under way by the
-# events: an ok tell:findings line came after that line (the builder fixing what it was told), or that
-# line is a start refused because the builder is still at work (its worktree not at the PR's head, or
-# with uncommitted changes) with an ok tell:findings line on record. wrote is 1 when that start wrote
+# events: a findings round came after that line (the builder fixing what it was told: a findings tell
+# that is ok or that herdr sent, or a findings step-up, as review_rounds counts them), or that line is a
+# start refused because the builder is still at work (its worktree not at the PR's head, or with
+# uncommitted changes) with a findings round on record. wrote is 1 when that start wrote
 # .swarm/briefs/review-<slug>.md: an ok one, or one that failed after the brief (review_start_failed's
 # messages, or its mktemp), else 0: a preflight that fails leaves an earlier attempt's brief. A refusal that leaves an earlier ok start of this build, not closed since, in place
 # (review-<slug> still reviewing, or its name still held: free_agent_name's refusals name it) changes
@@ -2740,7 +2744,7 @@ no_review_events() {
     ($3 in me) && (($2 == "story" && $5 ~ /^ok/) || ($2 == "reconcile" && $5 == "ok (reopened)")) {
       s = $3; on[s] = 0; told[s] = 0; next
     }
-    ($3 in me) && $2 == "review-agent" {
+    ($3 in me) && ($2 == "review-agent" || ($2 == "review-agent:next" && $5 ~ /^ok/)) {
       s = $3; ok1 = $5 ~ /^ok/
       if (!ok1 && on[s] && ok[s] && !shut[s] && (index($5, " is still reviewing ") || index($5, rn[s] ": ") == 1 || index($5, "review-" s ": ") == 1)) next
       on[s] = 1; ok[s] = ok1; shut[s] = 0; url[s] = "-"; after[s] = 0
@@ -2754,7 +2758,10 @@ no_review_events() {
         url[s] = substr($5, RSTART, RLENGTH)
       next
     }
-    ($3 in me) && $2 == "tell:findings" && $5 == "ok" { told[$3] = 1; after[$3] = 1; next }
+    # A findings round, counted as review_rounds counts it: a tell that is ok or that herdr sent, or a
+    # findings step-up, whose brief carried the findings in place of a tell.
+    ($3 in me) && ((($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/)) ||
+      ($2 == "escalate" && $5 ~ /^ok \(findings-[0-9]+:/)) { told[$3] = 1; after[$3] = 1; next }
     ($3 in rv) && $2 ~ /^close(:|$)/ && $5 ~ /^ok/ { shut[rv[$3]] = 1 }
     END {
       for (i = 1; i <= k; i++) {
@@ -2905,6 +2912,16 @@ no_agent_exit() {
   echo "${out}"
 }
 
+# no_agent_granted <slug> — true when the agreed HLD over the story (item_hld) grants merge (hld_grants):
+# under merge = human the lead, not the user, merges its PR once it is reviewed, so a review agent gone
+# leaves it unreviewed with no one to act. Board files only, no gh; a grants: that cannot be read grants
+# nothing.
+no_agent_granted() {
+  local h g
+  h="$(item_hld "${BOARD}/stories/$1.md")"
+  [[ -n "${h}" ]] && g="$(hld_grants "${h}" 2>/dev/null)" && grep -qxF merge <<< "${g}"
+}
+
 # no_agent_lines [record] — `no-agent: <slug>, exit: <exit>` (no_agent_exit) for each started story that
 # no agent works on and that is not the user's to move: status ready, or review under merge = agent;
 # of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money
@@ -2921,8 +2938,14 @@ no_agent_exit() {
 # does not say the old builder was closed (step_up_closed). Each story with a build record, whether
 # its builder is listed or not, also gets no_review_line's `no-review:` line when its review agent
 # never started or started and went (no_review_events): a build a close cleared has no PR to review.
+# Under merge = human, a story in review whose HLD grants merge (no_agent_granted, read once per such
+# story, after the cheaper checks) gets that no-review: line only once its builder's build ended (an ok
+# close after its newest start): its builder's close after the handover (swarm.sh review, then close)
+# is the normal path, and the lead's merge: item covers the PR. A builder started again since, to fix
+# a later review's findings, and gone with no close still gets its no-agent: line.
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
-# matter in one pass (stories_fm) and events.tsv once (no_agent_events), then once more
+# matter in one pass (stories_fm), a review story's epic chain and HLD under merge = human
+# (no_agent_granted), events.tsv once (no_agent_events), then once more
 # (no_review_events) for the stories with a build record; per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder, or no-review: with no PR
 # known), then herdr's JSON and one ps once a started story or a marker is left. No gh. dash (dash_render) hands it its own herdr list
@@ -2931,7 +2954,7 @@ no_agent_exit() {
 # unless dash handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
 # with or without lines.
 no_agent_lines() {
-  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said=""
+  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said="" revonly="" handed=""
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 2
   if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
@@ -2939,11 +2962,18 @@ no_agent_lines() {
     # shellcheck disable=SC2154 # CFG_merge is assigned in another file
     case "${st}" in
       ready) ;;
-      review) [[ "${CFG_merge}" == agent && -z "${kept}" ]] || continue ;;
+      review) [[ -z "${kept}" ]] || continue ;;
       *) continue ;;
     esac
     # Not kind: lead, which every escalated story is (lead_block), and a held one too.
     agent_kind "${kind}" && [[ -z "${held}" ]] || continue
+    # Under merge = human, a review story counts only under a merge grant. Its builder's line is dropped
+    # once the handover closed it (handed, below), so it gets no-review: alone; a builder started again,
+    # to fix a later review's findings, and gone with no close still gets its no-agent: line.
+    if [[ "${st}" == review && "${CFG_merge}" != agent ]]; then
+      no_agent_granted "${slug}" || continue
+      revonly+=" ${slug}"
+    fi
     # A step-up runs only on a ready story, so only a ready one's marker is a failed step-up. It is
     # reported while an upgrade runs too: the upgrade restarts agents, and this story has none.
     if [[ "${st}" == ready && -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]]; then marked+=" ${slug}"; continue; fi
@@ -2966,6 +2996,8 @@ no_agent_lines() {
       build_exists "${src}" "${slug}" || continue
     fi
     built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'; revs+=" ${slug} ${rname}"
+    # Its build ended: an ok close of the builder after its newest start, as the handover leaves it.
+    [[ "${build}" == 1 || " ${revonly} " != *" ${slug} "* ]] || handed+=" ${slug}"
   done < <(no_agent_events ${rows})
   [[ -n "${built}${marked}" ]] || return 0
   # The review case reads events.tsv once more, for the stories with a build record only: a build a
@@ -2985,7 +3017,7 @@ no_agent_lines() {
     step_up_running "${slug}" || echo "step-up failed: ${slug}, exit: swarm.sh step-up --resume ${slug}"
   done
   [[ -z "${built}" ]] || while read -r slug ev name rname prs; do
-    [[ -n "${slug}" ]] || continue
+    [[ -n "${slug}" && " ${handed} " != *" ${slug} "* ]] || continue
     ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
     ! no_agent_busy "${slug}" "${name}" "${prs}" || continue
     if [[ "${ev}" == - ]]; then
