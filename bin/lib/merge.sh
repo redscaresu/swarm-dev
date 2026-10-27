@@ -24,7 +24,7 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
-REPORT_SECONDS=30       # how long a report (status, next, dash) may spend on reads that can block (report_read)
+REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"   # how long a report (status, next, dash) may spend on reads that can block (report_read)
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo

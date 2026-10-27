@@ -59,7 +59,10 @@ Repeat until a step below says stop:
    what was closed unmerged; an item whose PR left its file on a board in the repo is marked done
    instead, so run the `swarm.sh finish <slug>` it prints), then `swarm.sh unblock` (it readies stories whose blockers have
    merged), then `swarm.sh next`.
-   Its first line is the step, the rest is why. Tell the user both in one line. Lines that
+   Its first line is the step, the rest is why. Tell the user both in one line. A `skipped (over
+   30 s): <reads>` line names the reads next cut to stay within its time limit, and its step was
+   worked out without them. If `herdr agent list` is one of them, the step may have missed a working
+   conductor, so run `swarm.sh next` again before acting on it. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
    - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
