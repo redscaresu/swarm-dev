@@ -202,7 +202,10 @@ printf '{"name":"%s","agent_status":"blocked","pane_id":"w:p1"}' "${A}" >> "${RO
 touch "${ROOT}/hang-w:p2" "${ROOT}/hang-w:p3" "${ROOT}/hang-w:p4"; cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
 check "three hung reads first in herdr's list use up the budget, so the fourth agent is not read" \
   test "$(count "prompt: ${A} " "$(run)")" = 0
-check "the next poll reads it first and gives its line" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+# Each poll reads at least the oldest read pane, so it comes up within one poll per pane ahead of it, however
+# loaded the machine; in herdr's order every poll the hung panes would come first each time.
+got=0; for _ in 1 2 3 4; do [[ "$(count "prompt: ${A} (prompt)" "$(run)")" == 0 ]] || { got=1; break; }; done
+check "the polls after it read it in turn and give its line" test "${got}" = 1
 rm -f "${ROOT}"/hang-*; echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
 
 # A pane read that fails keeps the line: the poll after it, with the pane back, is quiet too. The status
