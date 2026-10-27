@@ -27,7 +27,7 @@ hasnt() { # <name> <pattern> [text]
 
 step3=$(awk '/^\*\*3\. /{on=1} /^\*\*4\. |^\*\*Then report/{on=0} on' "$F")
 step2=$(awk '/^\*\*2\. /{on=1} /^\*\*3\. /{on=0} on' "$F" | tr '\n' ' ' | tr -s ' ')
-approval=$(printf '%s' "$(tr '\n' ' ' < "$F" | tr -s ' ')" | grep -oE 'On approval write one.*open a PR with' || true)
+approval=$(printf '%s' "$(tr '\n' ' ' < "$F" | tr -s ' ')" | grep -oE 'On approval write one.*open the board PR `scope-\$1` with' || true)
 # The file with line breaks folded to spaces, so a phrase wrapped over two lines still matches.
 flat=$(tr '\n' ' ' < "$F" | tr -s ' ')
 risk=$(printf '%s' "$flat" | grep -oE 'risk: high` only[^;]*;' || true)
