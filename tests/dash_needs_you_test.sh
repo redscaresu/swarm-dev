@@ -194,6 +194,11 @@ litem hld/h.md '' 'status: draft'
 # then the lead's stage step: a lead's-queue row, no agree row.
 litem hld/hg.md '' 'status: agreed' 'grants: [epics]'
 litem epics/c.md '' 'status: draft' 'stage: v1.4.0' 'hld: hg'
+# Drafts the epic guard would let go active unagreed (waiting_on_user's lead line): one whose parent:
+# is split, one under an agreed HLD that grants epics. A lead's-queue row each, no agree row.
+litem epics/pa.md '' 'status: split'
+litem epics/kid.md '' 'status: draft' 'parent: pa'
+litem epics/uh.md '' 'status: draft' 'hld: hg'
 printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
 printf '2026-10-13\tcode\t%s\tclaude\topus\thigh\t%s\n' l-auth lauth l-wait lwait l-gone lgone l-stall lstall > "${L}/.swarm/agents.tsv"
 cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/lauth.jsonl"
@@ -246,7 +251,8 @@ LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs 
   "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop"
   "! no agent on story l-na: swarm.sh hold l-na <reason>"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
-  "! look at l-gone: session ended" "! look at l-stall: working 1" "! staged epic c: stage v1.4.0, after v1.3.0")
+  "! look at l-gone: session ended" "! look at l-stall: working 1" "! staged epic c: stage v1.4.0, after v1.3.0"
+  "! set draft epic kid active: parent pa is split" "! set draft epic uh active: hld hg grants epics")
 echo "lead = session" > "${L}/.claude/swarm/config"
 for cols in 100 160; do
   out="$(ldash "${cols}")"
@@ -264,6 +270,8 @@ for cols in 100 160; do
     check "lead = session at ${cols} columns: needs you lacks '${want}'" lacks "${want}" "$(joined "${needs}")"
   done
   check "lead = session at ${cols} columns: a staged draft has no agree draft epic row" lacks "agree draft epic c" "${out}"
+  check "lead = session at ${cols} columns: a draft whose parent: is split has no agree draft epic row" lacks "agree draft epic kid" "${out}"
+  check "lead = session at ${cols} columns: a draft under an HLD granting epics has no agree draft epic row" lacks "agree draft epic uh" "${out}"
   check "lead = session at ${cols} columns: a draft HLD is one needs-you row, not also a waiting line" \
     test "$(grep -c 'draft HLD h\|draft hld' <<< "${out}")" -eq 1
   check "lead = session at ${cols} columns: the legend says ! is needs you or the lead" has "! needs you or the lead (session gone or unknown)" "${out}"
@@ -296,6 +304,11 @@ check "lead = session: a story whose restart failed is a no-agent row" \
 check "lead = session: and its row waits from the failed start" has "waiting on you or the lead, oldest 2h" "${out}"
 rm "${L}/docs/stories/l-nf.md"
 # With merge = agent swarm.sh merge holds a costs: money story for the user: no lead session can merge it.
+# With lead_epics = on every draft is the lead's, the plain draft d too: no agree row left.
+printf 'lead = session\nlead_epics = on\n' > "${L}/.claude/swarm/config"; out="$(ldash 100)"
+needs="$(lbox "needs you" "${out}")"; queue="$(lbox "lead's queue" "${out}")"
+check "lead = session, lead_epics = on: the lead's queue holds the plain draft" has "! set draft epic d active: lead_epics = on" "$(joined "${queue}")"
+check "lead = session, lead_epics = on: needs you has no agree draft epic row" lacks "agree draft epic" "$(joined "${needs}")"
 printf 'lead = session\nmerge = agent\n' > "${L}/.claude/swarm/config"; out="$(ldash 100)"
 check "lead = session, merge = agent: a costs: money merge is under needs you" \
   has "! merge l#5 (✓ green) m-paid (costs money)" "$(joined "$(lbox "needs you" "${out}")")"

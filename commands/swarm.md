@@ -505,9 +505,12 @@ Repeat until a step below says stop:
      since board-pr refuses a later epic set active with no ticket, as it does a draft; a draft epic:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
      The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
-     `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or
-     `lead_epics = on` in `.claude/swarm/config`. An `agreed:` already on a draft is stale (an epic
-     set back to draft by hand) and does not count. Offer to follow `/epic <slug>` to resume it,
+     `parent:` naming an epic that is active or split, an agreed HLD grants `epics` through its
+     `hld:`, or `swarm.sh config lead_epics` prints `on`. `next` lists such a draft as
+     `draft epic: <slug>, the lead sets it active (<why>)`: set it active through a board PR without
+     asking. An `agreed:` already on a draft is stale (an epic set back to draft by hand) and does
+     not count.
+     For a `draft epic: <slug>, run /epic <slug>` line, offer to follow `/epic <slug>` to resume it,
      which opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. A staged epic
