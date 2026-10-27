@@ -513,6 +513,8 @@ for a in json.load(sys.stdin):
 # fail_lines <owner/repo> <pr> — a rules-unchecked line for each test named on a line the PR's diff
 # adds (Go func TestX, Python def test_x, a check line in tests/*_test.sh, a JS it or test call) when
 # no line of the PR body holds both FAIL and its name: the builder's proof that the test can fail.
+# A moved test is not new: an added test line that matches a test line the diff removes, leading and
+# trailing whitespace aside, is skipped, one removed line for each added one.
 fail_lines() {
   local pr diff
   pr="$(gh pr view "$2" --repo "$1" --json body,url)" || die "findings: cannot read the body of $1#$2"
@@ -520,7 +522,7 @@ fail_lines() {
   diff="$(gh pr diff "$2" --repo "$1")" \
     || { echo "  FAIL lines: not checked, gh pr diff failed on $1#$2 (a diff over 20,000 lines or 300 files is refused)"; return 0; }
   PR="${pr}" python3 -c '
-import json, os, re, sys
+import collections, json, os, re, sys
 pr = json.loads(os.environ["PR"])
 body = [l for l in (pr.get("body") or "").splitlines() if "FAIL" in l]
 tests = [  # (path pattern, pattern whose group n is the test name)
@@ -529,27 +531,39 @@ tests = [  # (path pattern, pattern whose group n is the test name)
     (r"(^|/)tests/[^/]*_test\.sh$", r"\s*check\s+\x22(?P<n>(\\.|[^\x22\\])*)\x22"),
     (r"\.(test|spec)\.[cm]?[jt]sx?$", r".*?\b(it|test)\(\s*(?P<q>[\x22\x27`])(?P<n>(\\.|(?!(?P=q))[^\\])*)(?P=q)"),
 ]
-path, names, end = "", [], None
-for line in sys.stdin.read().splitlines():
-    if line.startswith("+++ "):
-        path, end = line[4:], None  # b/<path>: each pattern ends at $ or starts at (^|/)
-    elif line.startswith("@@"):
-        end = None  # ponytail: a hunk that opens inside a heredoc reads its fixture as tests
-    elif line[:1] in ("+", " "):
-        # A heredoc in a shell file is a fixture, not tests: skip to its end word, on context
-        # lines as on added ones.
-        if end:
-            end = None if line[1:].strip() == end else end
-            continue
-        if path.endswith(".sh"):
-            h = re.search(r"(?<!<)<<(?!<)-?\s*[\x22\x27]?([A-Za-z_]\w*)", line[1:])  # not 1<<3
-            end = h and h[1]
-        if line[0] != "+":
-            continue
-        for p, t in tests:
-            m = re.search(p, path) and re.match(t, line[1:])
-            if m and m["n"] not in names:
-                names.append(m["n"])
+def named(diff, side):
+    """(name, stripped line) for each test named on a line on one side of the diff, + or -."""
+    path, end, out = "", None, []
+    for line in diff:
+        if line.startswith(side * 3 + " "):
+            path, end = line[4:], None  # a/ or b/<path>: each pattern ends at $ or starts at (^|/)
+        elif line.startswith("@@"):
+            end = None  # ponytail: a hunk that opens inside a heredoc reads its fixture as tests
+        elif line[:1] in (side, " "):
+            # A heredoc in a shell file is a fixture, not tests: skip to its end word, on context
+            # lines as on the lines of this side.
+            if end:
+                end = None if line[1:].strip() == end else end
+                continue
+            if path.endswith(".sh"):
+                h = re.search(r"(?<!<)<<(?!<)-?\s*[\x22\x27]?([A-Za-z_]\w*)", line[1:])  # not 1<<3
+                end = h and h[1]
+            if line[0] != side:
+                continue
+            for p, t in tests:
+                m = re.search(p, path) and re.match(t, line[1:])
+                if m:
+                    out.append((m["n"], line[1:].strip()))
+    return out
+diff = sys.stdin.read().splitlines()
+# A test line the diff removes, as a test (not a fixture or a doc), pays for one added twin: moved.
+removed = collections.Counter(l for _, l in named(diff, "-"))
+names = []
+for n, l in named(diff, "+"):
+    if removed[l] > 0:
+        removed[l] -= 1
+    elif n not in names:
+        names.append(n)
 for n in names:
     # The whole name as the test prints it: each unescaped expansion (a dollar sign, \x24, then a
     # word, braces or parentheses) stands for what it expands to, maybe nothing, and the rest is
