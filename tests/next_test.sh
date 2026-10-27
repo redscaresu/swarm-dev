@@ -626,7 +626,7 @@ grep -qF '`idle: <story> waits on <dep> but shares no touches part with it and n
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
 grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
-grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
+grep -qF 'a `depends_on` story that shares no `touches` part with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
 }
 if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's critic checks disjoint touches"
 else echo "FAIL${got}"; fails=$((fails + 1)); fi
@@ -1369,7 +1369,7 @@ dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p bin && item stories/s.md 'status: ready' 'kind: code' 'epic: e')
 # shellcheck disable=SC2016 # the stub's own $1
-printf '#!/bin/sh\n[ "$1" != --version ] || { echo "herdr 0.9.5"; exit 0; }\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "herdr 0.9.5"; exit 0; }\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"workspace\":{\"workspace_id\":\"w\"},\"tab\":{\"tab_id\":\"t0\"},\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
 conduct() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" conduct e 2>&1); }
 es="${dir}/.swarm/board-state/epics"
