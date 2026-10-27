@@ -143,8 +143,10 @@ if __name__ == "__main__":
                        + [t for c in READIES for t in ev[c, slug]], default=0)
 
         def checkout(fm):
+            # As repo_dir: the project for no repo:, or its own name when the project is a git repo.
             r = fm.get("repo", "")
-            return project_dir if r in ("", os.path.basename(project_dir)) else os.path.join(repos_dir, r)
+            own = r == os.path.basename(project_dir) and os.path.exists(os.path.join(project_dir, ".git"))
+            return project_dir if r == "" or own else os.path.join(repos_dir, r)
 
         def started(slug, fm):
             src = checkout(fm)

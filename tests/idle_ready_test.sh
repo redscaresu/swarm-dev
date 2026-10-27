@@ -67,6 +67,8 @@ check "a story unblocked under queue_minutes ago gives no line" "" "$(idle)"
 
 board; mkdir -p "${CASE}-wt/a"
 check "a story whose worktree exists (its build started) gives no line" "" "$(idle)"
+board; story a "status: ready" "repo: $(basename "${CASE}")" "touches: [x.sh:f run]"; mkdir -p "${CASE}/repos/$(basename "${CASE}")-wt/a"
+check "in a project with no git repo, a story's repo of the project's name is under repos_dir" "" "$(idle)"
 board; git -C "${CASE}" init -q && git -C "${CASE}" -c user.name=t -c user.email=t -c commit.gpgsign=false commit -q --allow-empty -m init \
   && git -C "${CASE}" branch story/a
 check "a story whose story/<slug> branch is left (build_exists) gives no line" "" "$(idle)"
