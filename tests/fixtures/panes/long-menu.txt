@@ -1,0 +1,22 @@
+⏺ Which one should I build?
+
+ ❯ 1. Yes
+     Build it now.
+   2. Option 2
+     What option 2 does.
+   3. Option 3
+     What option 3 does.
+   4. Option 4
+     What option 4 does.
+   5. Option 5
+     What option 5 does.
+   6. Option 6
+     What option 6 does.
+   7. Option 7
+     What option 7 does.
+   8. Option 8
+     What option 8 does.
+   9. Option 9
+     What option 9 does.
+
+ Enter to select · Esc to cancel

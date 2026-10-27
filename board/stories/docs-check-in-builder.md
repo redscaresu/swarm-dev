@@ -6,6 +6,7 @@ depends_on: []
 touches: [bin/lib/build.sh:story_brief, bin/lib/build.sh:review_checklist, tests/review_test.sh:CHECKLIST, tests/epic_briefs_test.sh:builder brief checks]
 estimate_lines: 60
 easy: true
+checks: docs-misstate-code
 ---
 
 # Move the docs-misstate-code check from the review checklist to the builder

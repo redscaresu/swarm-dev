@@ -1,25 +1,17 @@
 ---
 kind: code
-status: later
+status: ready
+epic: fixes-027
 depends_on: []
-touches: [commands/plan-hld.md, bin/lib/board.sh:hld_due and plan_head, bin/lib/dash_render.py:plan and finish rows, hooks/lead-stop.sh:plan_drafted]
-estimate_lines: 200
-easy: false
+touches: [bin/lib/board.sh:hld_blocked, bin/lib/board.sh:next_step plan-hld arm, bin/lib/board.sh:waiting_on_user HLD arm, docs/reference.md:blocked-HLD sentence beside next's plan-hld rule, tests/next_test.sh:HLD name cases]
+estimate_lines: 90
+easy: true
 ---
 
-# /plan-hld closes the gaps its conductor found
+# next does not offer /plan-hld for an HLD whose name board-pr refuses
 
-For 0.28 (0.27 retro, 2026-10-25). From conduct-plan-hld's report (2026-10-24). Split this when it is planned, if it runs over one PR.
-- dash does not match the plan or finish PR rows, so under `lead = session` the user's finish PR lands in the lead's queue.
-- `plan_head` accepts a head `planned:` equal to the value already on the board. An empty `planned: ""` makes plan PRs fall to none.
-- HLD names containing `.` or `_` pass `next` but are refused by board-pr, grants and finish.
-- A rerun whose empty worktree was removed reruns the whole swarm.
-- An HLD with no `## Epics`, or with a section after it, makes the plan PR fall to none silently. It should stop and say why.
-- A closed plan PR leaves `.swarm/<hld>/critic.json` behind, which lead-stop's plan_drafted counts as a drafted plan.
-- On a board outside the repo, an interrupted run leaves the HLD stuck: hld_due offers neither plan-hld nor hld.
-- The plan-hld step in swarm.md reads the main checkout's grants, not origin's.
-- `grants()`'s usage text does not name `hld`. merge.sh's `files-status` comment lists only four statuses.
+An HLD named outside [a-z0-9-] passes next (item_hld's pattern, bin/lib/board.sh:981). But board-pr (bin/lib/lifecycle.sh:57), grants (board.sh:1197) and finish_item (:1449) refuse it, so /plan-hld runs to the end and then fails. Add hld_blocked <hld file>, which prints why an HLD cannot be planned, or nothing. This story checks the name; hld-epics-last adds a second check. next's plan-hld arm (:293-298) skips an HLD that hld_blocked names. waiting_on_user's HLD arm (:1276-1283) lists it as `hld cannot be planned: <slug>, <why>`, naming the fix: rename the file and every hld: that names it. Add a sentence for this beside docs/reference.md:401-402, leaving that sentence to hld-outside-resume.
 
 **Done when:**
-- A test for each gap fails before the fix and passes after it.
-- `make test` passes.
+- tests/next_test.sh: agreed HLDs named a_b and a.b get no plan-hld step, and the gate lists each with the rename. Fails on the base.
+- An agreed HLD with a valid name still gets `plan-hld <hld>`.

@@ -1,13 +1,17 @@
 # shellcheck shell=bash
 
-# findings_goal <slug> <since> <goal-file> — send the builder a fresh /goal mid-turn, once its findings
+# findings_goal <slug> <since> <goal-file> <from> — send the builder a fresh /goal mid-turn, once its findings
 # are taken up, so the goal drives the fix (sent after the turn, the judge would find it met at once): the
 # findings addressed, the reply its brief asks for in its mode, and the turn bound. Mid-turn it sets at
 # once and costs one extra short turn, as build_story's does. send_goal confirms it from entries newer
 # than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story.
+# <from> is who sent the tell, review or conductor, as tell_agent read it (tell_from) for the header:
+# the goal names the review agent's findings, or the conductor's review findings, to match.
 findings_goal() {
+  local what="the conductor's review findings"
+  [[ "$4" != review ]] || what="the review agent's findings"
   # shellcheck disable=SC2154 # assigned in another file
-  printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
+  printf '%s %s %s\n' "The goal: ${what}, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
     "$(reply_sentence)" "It is met once both hold, or stop after ${CFG_goal} more turns." > "$3"
   send_goal "$1" "$3" findings "$2"
 }
@@ -1326,8 +1330,9 @@ epic_env() {
 
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
+# Under merge = agent with no allow rule for swarm.sh merge, it dies with merge_rule_stop's line first.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name report
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name report why
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; label=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -1342,6 +1347,7 @@ start_conductor() {
     [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
+  if why="$(merge_rule_stop)"; then die "${why}"; fi
   require_claude
   if [[ "$1" == --backlog ]]; then names="$(epic_env "")"; else names="$(epic_env "${epic}")"; fi || die "${names}"
   name="$(conductor_name "${epic}")"; free_agent_name "${name}"   # a name held elsewhere leaves the report be

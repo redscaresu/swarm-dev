@@ -154,6 +154,82 @@ check "TestMain is not a test, though TestMainPath is" \
   "  rules-unchecked: TestMainPath has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
   "$(unchecked)"
 
+# A check the diff moves is not new; the file it moves to comes first, and its indent changes.
+cat > "${FX}/diff" <<'EOF'
+diff --git a/tests/a_test.sh b/tests/a_test.sh
+--- a/tests/a_test.sh
++++ b/tests/a_test.sh
+@@ -1,1 +1,2 @@
+ x=1
++  check "a moved check" "yes" "$(x)"
+diff --git a/tests/b_test.sh b/tests/b_test.sh
+--- a/tests/b_test.sh
++++ b/tests/b_test.sh
+@@ -1,2 +1,1 @@
+ y=1
+-check "a moved check" "yes" "$(x)"
+EOF
+body "Nothing."
+check "a check moved from one test file to another is not rules-unchecked" "" "$(unchecked)"
+
+cat > "${FX}/diff" <<'EOF'
+diff --git a/tests/a_test.sh b/tests/a_test.sh
+--- a/tests/a_test.sh
++++ b/tests/a_test.sh
+@@ -1,3 +1,3 @@
+-check "moved down" "yes" "$(x)"
+ x=1
++check "moved down" "yes" "$(x)"
++check "new beside it" "yes" "$(x)"
+EOF
+check "a new check beside one moved in the same file is rules-unchecked, the moved one is not" \
+  "  rules-unchecked: new beside it has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
+  "$(unchecked)"
+# shellcheck disable=SC2016 # the check line's $(x), as the diff holds it
+printf '+check "moved down" "yes" "$(x)"\n' >> "${FX}/diff"
+check "a moved check added twice is new the second time" \
+  "  rules-unchecked: new beside it has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)
+  rules-unchecked: moved down has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
+  "$(unchecked)"
+
+# Only a removed test line is a twin: not one from a doc, nor one from a heredoc fixture.
+cat > "${FX}/diff" <<'EOF'
+diff --git a/docs/x.md b/docs/x.md
+--- a/docs/x.md
++++ b/docs/x.md
+@@ -1,2 +1,1 @@
+ intro
+-check "brand new" "yes" "$(x)"
+diff --git a/tests/a_test.sh b/tests/a_test.sh
+--- a/tests/a_test.sh
++++ b/tests/a_test.sh
+@@ -1,1 +1,2 @@
+ x=1
++check "brand new" "yes" "$(x)"
+EOF
+check "a new check whose twin the diff removes from a doc is rules-unchecked" \
+  "  rules-unchecked: brand new has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
+  "$(unchecked)"
+
+cat > "${FX}/diff" <<'EOF'
+diff --git a/tests/a_test.sh b/tests/a_test.sh
+--- a/tests/a_test.sh
++++ b/tests/a_test.sh
+@@ -1,1 +1,2 @@
+ x=1
++check "was a fixture" "yes" "$(x)"
+diff --git a/tests/b_test.sh b/tests/b_test.sh
+--- a/tests/b_test.sh
++++ b/tests/b_test.sh
+@@ -1,3 +1,2 @@
+ cat > fixture <<'END'
+-check "was a fixture" "yes" "$(x)"
+ END
+EOF
+check "a new check whose twin the diff removes from a heredoc fixture is rules-unchecked" \
+  "  rules-unchecked: was a fixture has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
+  "$(unchecked)"
+
 : > "${FX}/diff.fail"
 out="$(cd "${P}" && PATH="${ROOT}/bin:${PATH}" env -u SWARM_PROJECT bash "${SWARM}" findings proj 7 2>&1)" && st=0 || st=$?
 check "a diff gh refuses leaves a note that the FAIL lines were not checked, and exits 0" "0|yes" \

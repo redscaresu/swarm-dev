@@ -1,0 +1,7 @@
+⏺ Working.
+
+────────────────────────────────────────
+  Usage limit reached
+
+  ❯ 1. Stop and wait for limit to reset
+    2. Wait here, then continue automatically
