@@ -599,6 +599,15 @@ poll; poll
 check "a granted review story whose builder closed after the handover, review-ro-g listed, is silent" never_woke ro-g
 listed; poll
 check "with review-ro-g gone too, it gets the no-review: line alone" rev_fires ro-g "${URL}"
+# After the handover, a later review's findings bring the builder back; gone with no close, mid-round,
+# it still needs the lead: the findings round keeps no-review: quiet, so only no-agent: says so.
+fresh "merge = human"
+story ro-h "kind: code" "status: review" "prs: ${URL}" "epic: ge"; ev story ro-h; built ro-h
+rbrief ro-h "${URL}"; ev review-agent ro-h; rhead ro-h; ev review ro-h "ok (${URL})"; ev close ro-h
+ev review-agent ro-h; ev tell:findings ro-h; ev restart ro-h "ok (resumed session s-1)"
+poll; poll
+check "a granted review story whose builder came back for findings and went with no close fires no-agent:" \
+  fires ro-h "swarm.sh review-agent ro-h ${URL}"
 rm -rf "${P}/docs/epics" "${P}/docs/hld"
 
 # One line per story: a ready story with its builder gone gets the restart first, then no-review:.

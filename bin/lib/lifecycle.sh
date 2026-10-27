@@ -2917,8 +2917,10 @@ no_agent_granted() {
 # its builder is listed or not, also gets no_review_line's `no-review:` line when its review agent
 # never started or started and went (no_review_events): a build a close cleared has no PR to review.
 # Under merge = human, a story in review whose HLD grants merge (no_agent_granted, read once per such
-# story, after the cheaper checks) gets that no-review: line only: its builder's close after the
-# handover (swarm.sh review, then close) is the normal path, and the lead's merge: item covers the PR.
+# story, after the cheaper checks) gets that no-review: line only once its builder's build ended (an ok
+# close after its newest start): its builder's close after the handover (swarm.sh review, then close)
+# is the normal path, and the lead's merge: item covers the PR. A builder started again since, to fix
+# a later review's findings, and gone with no close still gets its no-agent: line.
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
 # matter in one pass (stories_fm), a review story's epic chain and HLD under merge = human
 # (no_agent_granted), events.tsv once (no_agent_events), then once more
@@ -2930,7 +2932,7 @@ no_agent_granted() {
 # unless dash handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
 # with or without lines.
 no_agent_lines() {
-  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said="" revonly=""
+  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said="" revonly="" handed=""
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 2
   if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
@@ -2943,7 +2945,9 @@ no_agent_lines() {
     esac
     # Not kind: lead, which every escalated story is (lead_block), and a held one too.
     agent_kind "${kind}" && [[ -z "${held}" ]] || continue
-    # Under merge = human, a review story counts only under a merge grant, and for no-review: alone.
+    # Under merge = human, a review story counts only under a merge grant. Its builder's line is dropped
+    # once the handover closed it (handed, below), so it gets no-review: alone; a builder started again,
+    # to fix a later review's findings, and gone with no close still gets its no-agent: line.
     if [[ "${st}" == review && "${CFG_merge}" != agent ]]; then
       no_agent_granted "${slug}" || continue
       revonly+=" ${slug}"
@@ -2970,6 +2974,8 @@ no_agent_lines() {
       build_exists "${src}" "${slug}" || continue
     fi
     built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'; revs+=" ${slug} ${rname}"
+    # Its build ended: an ok close of the builder after its newest start, as the handover leaves it.
+    [[ "${build}" == 1 || " ${revonly} " != *" ${slug} "* ]] || handed+=" ${slug}"
   done < <(no_agent_events ${rows})
   [[ -n "${built}${marked}" ]] || return 0
   # The review case reads events.tsv once more, for the stories with a build record only: a build a
@@ -2989,7 +2995,7 @@ no_agent_lines() {
     step_up_running "${slug}" || echo "step-up failed: ${slug}, exit: swarm.sh step-up --resume ${slug}"
   done
   [[ -z "${built}" ]] || while read -r slug ev name rname prs; do
-    [[ -n "${slug}" && " ${revonly} " != *" ${slug} "* ]] || continue
+    [[ -n "${slug}" && " ${handed} " != *" ${slug} "* ]] || continue
     ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
     ! no_agent_busy "${slug}" "${name}" "${prs}" || continue
     if [[ "${ev}" == - ]]; then

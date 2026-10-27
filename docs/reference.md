@@ -196,7 +196,8 @@ counts a story only when all of these hold:
 
 - It is ready, or in review under `merge = agent`. A story waiting on the user is left out:
   awaiting their merge under `merge = human`, `costs: money` or `kept:`, green or not. A story in
-  review under a `merge` grant gets only the `no-review:` line (below).
+  review under a `merge` grant counts only while its builder was started again after the
+  handover and no close ended that start; otherwise it gets only the `no-review:` line (below).
 - It is of a kind an agent builds. That rules out `kind: lead`, and so every held or escalated
   story. A blocked story is never counted.
 - It has a build record: an ok builder start that no close ended or, for a story with any start
@@ -250,9 +251,11 @@ on record: a `review-agent <slug>` events line since its last ok `story` start o
 close cleared has no PR left to review. It comes whether or not the builder is listed. Under
 `merge = human` it also comes for a story in review when the agreed HLD over it grants `merge`. The
 lead merges that PR once it is reviewed, so a review agent gone leaves it unreviewed. The grant is
-read from the board (the story's epic, its parents and the HLD), with no gh call. Such a story gets
-no `no-agent:` line: its builder closes after the handover (`swarm.sh review`, then `close`), and
-the lead's `merge:` item covers the PR. One of these must hold:
+read from the board (the story's epic, its parents and the HLD), with no gh call. Once its builder
+closed after the handover (`swarm.sh review`, then `close`), such a story gets no `no-agent:` line,
+and the lead's `merge:` item covers the PR. A builder started again since (to fix a later review's
+findings, say) and gone with no close still gets its `no-agent:` line, since the findings round
+keeps `no-review:` quiet. One of these must hold:
 
 - Never started: the newest `review-agent <slug>` line is not ok.
 - Started and went: that line is ok and `.swarm/reviews/<slug>.head` was written, but no findings

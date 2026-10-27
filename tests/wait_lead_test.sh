@@ -362,7 +362,8 @@ stop; rm -rf "${P}/docs/epics"
 # machine would make the story look busy (no_agent_busy reads the real ps).
 GURL=https://github.com/wl-owner/wl-granted/pull/7
 # granted <grants> — story wl-granted in review, under epic ge, under the agreed HLD g with grants:
-# <grants>; its build and its review agent's ok start on record, the review's head pending, no findings yet.
+# <grants>; its build, its review agent's ok start and the handover (review, then the builder's close)
+# on record, its worktree kept, the review's head pending, no findings yet.
 granted() {
   mkdir -p "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs"
   printf -- '---\nstatus: agreed\ngrants: %s\n---\n\n# g\n' "$1" > "${P}/docs/hld/g.md"
@@ -371,6 +372,8 @@ granted() {
   printf 'Review %s, the PR of story wl-granted, at its head %s, in this worktree.\n' "${GURL}" "${H}" > "${P}/.swarm/briefs/review-wl-granted.md"
   echo "${H}" > "${P}/.swarm/reviews/wl-granted.head"
   printf '2026-10-27T00:00:00Z\tstory\twl-granted\t-\tok\n2026-10-27T00:01:00Z\treview-agent\twl-granted\t-\tok\n' >> "${P}/.swarm/events.tsv"
+  printf '2026-10-27T00:02:00Z\treview\twl-granted\t-\tok (%s)\n2026-10-27T00:03:00Z\tclose\twl-granted\t-\tok\n' "${GURL}" >> "${P}/.swarm/events.tsv"
+  mkdir -p "${ROOT}/proj-wt/wl-granted"
   checks pending
 }
 fresh "merge = human"; granted "[merge]"
@@ -380,7 +383,7 @@ check "a granted review story whose review agent went reaches wait --lead" test 
 fresh "merge = human"; granted "[epics, stories]"
 lead 0
 check "the same story with no merge grant (an ordinary handoff to the user) gives none" test "$(out)|$(rc)" == "|1"
-rm -rf "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs"
+rm -rf "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt"
 
 # --- no change: a short timeout.
 fresh
