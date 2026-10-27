@@ -7,8 +7,11 @@
 # which resumes it. A pane read or a herdr list that fails keeps the line from the last poll, so it neither
 # goes nor wakes the lead again. A run with no .swarm/lead/seen yet still prints it, as an alert. Manual
 # mode on a ready story's builder closes its pane, then restarts or holds the story, found by its full slug.
-# herdr is a stub listing ${ROOT}/agents (failing while ${ROOT}/list-fails exists), whose agent read prints
-# ${ROOT}/pane.txt and fails without it.
+# A pane is read only when its agent's herdr status or session log changed since the last poll, and never
+# while a swarm.sh command delivers the agent a prompt.
+# herdr is a stub listing ${ROOT}/agents (failing while ${ROOT}/list-fails exists, cut short while
+# ${ROOT}/list-garbled does), whose agent read logs
+# itself to ${ROOT}/reads and prints ${ROOT}/pane.txt, failing without it.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -32,8 +35,8 @@ echo "w:p1 ${A}" > "${P}/.swarm/state/tab"   # the pane this project opened for 
 printf '#!/bin/sh\nR="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "agent list") [ ! -e "${R}/list-fails" ] || exit 1; printf '{"result":{"agents":[%s]}}\n' "$(cat "${R}/agents" 2>/dev/null)" ;;
-  "agent read") cat "${R}/pane.txt" ;;
+  "agent list") [ ! -e "${R}/list-fails" ] || exit 1; [ ! -e "${R}/list-garbled" ] || { echo '{"result":'; exit 0; }; printf '{"result":{"agents":[%s]}}\n' "$(cat "${R}/agents" 2>/dev/null)" ;;
+  "agent read") echo "$*" >> "${R}/reads"; cat "${R}/pane.txt" ;;
   *) echo '{"result":{}}' ;;
 esac
 STUB
@@ -53,6 +56,16 @@ agent() {
 }
 # fresh — a lead that has read its queue before, with nothing in it.
 fresh() { rm -rf "${P}/.swarm/lead" "${P}/.swarm/events.tsv"; mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"; }
+# fake <args>... — the fake swarm.sh running <args> in the background, returning once ps shows it: a
+# poll that read ps before its exec would see no such command.
+fake() {
+  "${ROOT}/fake/swarm.sh" "$@" & WAITER=$!
+  local i
+  for ((i = 0; i < 100; i++)); do ! ps -p "${WAITER}" -o command= 2>/dev/null | grep -q "fake/swarm.sh $1" || return 0; sleep 0.1; done
+  echo "FAIL the fake swarm.sh $* never showed in ps"; fails=$((fails + 1))
+}
+# reads — how many pane reads herdr took since the last call.
+reads() { local n; n="$(grep -c '^agent read' "${ROOT}/reads" 2>/dev/null)" || true; : > "${ROOT}/reads"; echo "${n:-0}"; }
 # count <text> <out> — how many lines of <out> start with <text>.
 count() { awk -v t="$1" 'index($0, t) == 1 { n++ } END { print n + 0 }' <<< "$2"; }
 
@@ -85,15 +98,52 @@ echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
 fresh; agent blocked prompt.txt; rm -f "${P}/.swarm/lead/seen"
 check "a first read with no lead/seen yet prints the prompt: line" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
 
-# A pane read that fails keeps the line: the poll after it, with the pane back, is quiet too.
+# A pane found clear is read again only when the agent's herdr status or its session log changed since the
+# last poll. A stuck one is read every poll, so a stop cleared with no turn goes.
+fresh; agent blocked mid-command.txt; : > "${ROOT}/reads"
+mkdir -p "${ROOT}/projects/proj"; log="${ROOT}/projects/proj/session-0.jsonl"; : > "${log}"
+printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
+check "the first poll on a clear pane reads it and gives no line" test "$(count "prompt: " "$(run)")|$(reads)" = "0|1"
+cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
+check "the next poll, nothing changed, reads no pane" test "$(count "prompt: " "$(run)")|$(reads)" = "0|0"
+touch -t 203001010000 "${log}"
+check "a poll after the session log changed reads the pane again and finds the prompt" \
+  test "$(count "prompt: ${A} (prompt)" "$(run)")|$(reads)" = "1|1"
+touch -t 203006010000 "${log}"
+check "a turn that ends on the same prompt again wakes the lead again" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+check "the poll after it, with no turn, is quiet" test "$(count "prompt: " "$(run)")" = 0
+cp "${FX}/manual.txt" "${ROOT}/pane.txt"; run > /dev/null; reads > /dev/null
+cp "${FX}/empty-box.txt" "${ROOT}/pane.txt"; run > /dev/null
+check "a stuck pane is read every poll, so manual mode turned off with no turn clears its line" \
+  test "$(reads)|$(grep -c "prompt: ${A}" "${P}/.swarm/lead/seen" || true)" = "1|0"
+# An agent a swarm.sh command is delivering a prompt to is not read, and keeps its line.
+cp "${FX}/prompt.txt" "${ROOT}/pane.txt"; touch -t 203101010000 "${log}"; run > /dev/null
+check "a new turn that ends on a prompt brings the line back" grep -qF "prompt: ${A} (prompt)" "${P}/.swarm/lead/seen"
+agent idle prompt.txt; reads > /dev/null
+fake tell "${A}" nudge /tmp/f.md
+check "an agent a tell is delivering to is quiet" test "$(count "prompt: " "$(run)")" = 0
+check "and its pane is not read" test "$(reads)" = 0
+check "and its line stays in the lead's queue" grep -qF "prompt: ${A} (prompt)" "${P}/.swarm/lead/seen"
+kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
+rm -f "${P}/.swarm/agents.tsv"
+
+# With no session log to say a turn ran, the pane is read each poll: a prompt after a command shows.
+fresh; agent blocked mid-command.txt
+check "an agent mid-command, with no session log, gives no line" test "$(count "prompt: " "$(run)")" = 0
+cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
+check "the next poll, its status unchanged, finds the prompt that followed" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+
+# A pane read that fails keeps the line: the poll after it, with the pane back, is quiet too. The status
+# changes between the polls, so each one reads the pane.
 fresh; agent idle prompt.txt
 out="$(run)"
 check "an idle agent on a prompt gives its line" test "$(count "prompt: ${A} (prompt)" "${out}")" = 1
-rm -f "${ROOT}/pane.txt"
+agent blocked prompt.txt; rm -f "${ROOT}/pane.txt"
 check "a poll whose pane read fails is quiet" test "$(count "prompt: " "$(run)")" = 0
 check "it keeps the line in the lead's queue" grep -qF "prompt: ${A} (prompt)" "${P}/.swarm/lead/seen"
-cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
+cp "${FX}/prompt.txt" "${ROOT}/pane.txt"; : > "${ROOT}/reads"
 check "the poll after it, with the pane back, is quiet" test "$(count "prompt: " "$(run)")" = 0
+check "and reads the pane it could not read" test "$(reads)" = 1
 
 # So does a poll whose herdr agent list fails.
 touch "${ROOT}/list-fails"
@@ -101,16 +151,27 @@ check "a poll whose herdr agent list fails is quiet" test "$(count "prompt: " "$
 check "it keeps the line in the lead's queue too" grep -qF "prompt: ${A} (prompt)" "${P}/.swarm/lead/seen"
 rm -f "${ROOT}/list-fails"
 check "the poll after it, with the list back, is quiet" test "$(count "prompt: " "$(run)")" = 0
+# And a poll whose list herdr gives but no parser can read.
+touch "${ROOT}/list-garbled"
+check "a poll whose herdr agent list does not parse is quiet" test "$(count "prompt: " "$(run)")" = 0
+check "it keeps the line in the lead's queue as well" grep -qF "prompt: ${A} (prompt)" "${P}/.swarm/lead/seen"
+rm -f "${ROOT}/list-garbled"
 
 # An API error while a wait naming the agent runs: that wait resumes it.
 fresh; agent idle api-error.txt
-"${ROOT}/fake/swarm.sh" wait --stall "${A}" & WAITER=$!
+fake wait --stall "${A}"
 check "an API error while a swarm.sh wait names the agent gives no line" test "$(count "prompt: " "$(run)")" = 0
 kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
 check "once that wait ends, the API error gives its line" test "$(count "prompt: ${A} (api-error)" "$(run)")" = 1
+# An API error that already woke the lead stays seen while a wait runs, so it does not wake the lead again.
+fake wait --stall "${A}"
+check "a wait started on an API error already seen is quiet" test "$(count "prompt: " "$(run)")" = 0
+check "and the line stays in the lead's queue" grep -qF "prompt: ${A} (api-error)" "${P}/.swarm/lead/seen"
+kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
+check "once that wait ends, the same API error does not wake the lead again" test "$(count "prompt: " "$(run)")" = 0
 # A wait's flag is no agent name: agent_name makes --lead s--lead.
 A=s--lead; fresh; agent idle api-error.txt; echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
-"${ROOT}/fake/swarm.sh" wait --lead 600000 & WAITER=$!
+fake wait --lead 600000
 check "a swarm.sh wait --lead hides no API error of an agent named s--lead" test "$(count "prompt: ${A} (api-error)" "$(run)")" = 1
 kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
 A="${AGENT}"; echo "w:p1 ${A}" > "${P}/.swarm/state/tab"

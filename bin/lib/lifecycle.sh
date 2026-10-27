@@ -2236,10 +2236,9 @@ lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
 # after closing its builder, `no-agent: <slug>, exit: <exit>` for a started story no agent works
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
-# events.tsv line for a story whose missing agent no event explains yet. After them, `prompt: <agent>
-# (<kind>), exit: <exit>` for an agent stuck on a prompt, a dialog, a login, an API error or manual mode
-# (prompt_lines), off the same herdr list. wait --lead adds `unsent brief:
-# <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers.
+# events.tsv line for a story whose missing agent no event explains yet. wait --lead adds `unsent brief:
+# <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
+# then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines).
 # It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_now) come before
@@ -2263,62 +2262,104 @@ lead_queue() {
   idle_now || true
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
-  prompt_lines || true
 }
 
 # prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
 # (own_panes) that the poll's herdr list (lead_agents) shows blocked, idle or done, and whose pane
 # panes.py's stuck_kind finds stuck: on a prompt or dialog (prompt), an expired login (login), an API
-# error (api-error) or manual mode (manual). Only those agents' panes are read, once each, with
-# resend_pass's limits: RESEND_HERDR_WAIT seconds a read, and none started RESEND_PASS_WAIT seconds
-# into the pass. A retired agent (<name>-done) is skipped. An api-error line comes only while no
-# `swarm.sh wait` naming the agent runs (one ps read): a running wait resumes it, and ends once it
-# stops resuming. A pane it could not read, or a ps that failed, keeps the agent's line from LEAD_SEEN,
-# and a herdr list that failed keeps every prompt: line there, so a missed read neither drops a line
-# nor wakes the lead with it again on the next poll. The exit:
-# for a prompt, the user answers it in its pane; for login, the user runs /login, then a resume tell;
-# for api-error, read the pane and tell the user; for manual, a ready story's builder has its pane
-# closed and then no_agent_exit's restart (restart refuses a builder herdr still lists), and any other
-# agent has the user turn manual mode off in its pane.
+# error (api-error) or manual mode (manual). lead_wake runs it after resend_pass, inside that pass's
+# read budget (LEAD_READ_DEADLINE: no read starts past it; RESEND_HERDR_WAIT seconds a read), and
+# takes a pane resend_pass read this poll from LEAD_READS, never reading it twice; a pane resend_pass
+# failed to read is not read again. A pane the last poll found clear (LEAD_STUCK) is read again only
+# when its agent's key, herdr's status and the mtime of its Claude session log, has changed, as a new
+# stop comes only after a turn, which writes the log; one with no log, or last found stuck (a user can
+# clear manual mode with no turn), is read every poll. A retired agent
+# (<name>-done) is skipped, and so is one a swarm.sh command is delivering to (resend_busy, over one
+# ps read). An api-error line comes only while no `swarm.sh wait` naming the agent runs, in that same
+# ps: a running wait resumes it, and ends once it stops resuming; meanwhile a line already in LEAD_SEEN
+# stays, so the same stop never wakes the lead twice. An agent skipped, or whose pane it
+# could not read, keeps its line from LEAD_SEEN; a herdr list, ps, list parse or temp dir that failed
+# keeps every prompt: line there (prompt_seen); so a missed read neither drops a line nor wakes the lead
+# with it again. A pane last found stuck that a turn has moved on since (its session log changed) and
+# is found stuck again is a new stop: its line leaves LEAD_SEEN, so it wakes the lead even when it reads
+# the same. The exit: for a
+# prompt, the user answers it in its pane; for login, the user runs /login, then a resume tell; for
+# api-error, read the pane and tell the user; for manual, a ready story's builder has its pane closed
+# and then no_agent_exit's restart (restart refuses a builder herdr still lists), and any other agent
+# has the user turn manual mode off in its pane.
+LEAD_STUCK="${LEAD_DIR}/stuck"
+LEAD_READS=""; LEAD_READ_DEADLINE=""
+# prompt_seen — the prompt: lines in LEAD_SEEN: what prompt_lines prints when it cannot check, so a
+# stop already seen stays seen.
+prompt_seen() { awk 'index($0, "prompt: ") == 1' "${LEAD_SEEN}" 2>/dev/null || true; }
 prompt_lines() {
-  local rows name pane kind ps="" out slug
+  local rows name pane key last lkey lkind kind out slug dir n=0 text state="" files=() kinds=() i
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
-  # No list to read: the last poll's lines stand, as for a pane it could not read.
-  [[ -n "${LEAD_AGENTS_OK}" ]] || { awk 'index($0, "prompt: ") == 1' "${LEAD_SEEN}" 2>/dev/null || true; return 0; }
-  # No agent herdr shows blocked, idle or done: no process starts, as on most polls while agents work.
-  [[ "${LEAD_AGENTS}" =~ \"(blocked|idle|done)\" ]] || return 0
+  # No list to read, or no process list to rule out a delivery: the last poll's lines stand.
+  if [[ -z "${LEAD_AGENTS_OK}" ]] || ! NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)"; then prompt_seen; return 0; fi
   rows="$(SWARM_PANES="$(own_panes)" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
-import json, os, re, subprocess, sys, time
-sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import stuck_kind
+import glob, json, os, re, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import session_id
 own = set(os.environ["SWARM_PANES"].split())
-each, end = float(sys.argv[1]), time.monotonic() + float(sys.argv[2])
 for a in json.loads(sys.stdin.read())["result"]["agents"]:
-    n, p = a.get("name") or "", a.get("pane_id")
-    if p not in own or a.get("agent_status") not in ("blocked", "idle", "done") \
-            or not re.fullmatch("[a-z][a-z0-9_-]*", n) or re.search(r"-done\d*$", n):
+    n, p, st = a.get("name") or "", a.get("pane_id"), a.get("agent_status")
+    if p not in own or st not in ("blocked", "idle", "done") or not re.fullmatch("[a-z][a-z0-9_-]*", n) \
+            or not re.fullmatch("[A-Za-z0-9]+:[A-Za-z0-9]+", p) or re.search(r"-done\d*$", n):
         continue
-    k = "unread"
-    if time.monotonic() < end:
+    sid, at = session_id(sys.argv[1], n), "-"
+    for path in glob.glob(os.path.join(glob.escape(sys.argv[2]), "*", glob.escape(sid) + ".jsonl")) if sid else []:
         try:
-            r = subprocess.run(["herdr", "agent", "read", p, "--source", "recent-unwrapped"],
-                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=each)
-            if r.returncode == 0 and r.stdout.strip():
-                k = stuck_kind(r.stdout) or "-"
-        except (OSError, subprocess.SubprocessError):
+            at = str(os.stat(path).st_mtime_ns)
+        except OSError:
             pass
-    print("\t".join((n, p, k)))' "${RESEND_HERDR_WAIT}" "${RESEND_PASS_WAIT}" <<< "${LEAD_AGENTS}" 2>/dev/null)" || return 0
-  while IFS=$'\t' read -r name pane kind; do
+    print("\t".join((n, p, st + ":" + at)))' "${AGENTS_LOG}" "${CLAUDE_PROJECTS}" <<< "${LEAD_AGENTS}" 2>/dev/null)" \
+    || { prompt_seen; return 0; }
+  [[ -n "${rows}" ]] || { rm -f "${LEAD_STUCK}"; return 0; }
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/swarm-stuck.XXXXXX")" || { prompt_seen; return 0; }
+  # Each agent's kind: the last poll's when its key stands, - for one to classify below, unread to keep.
+  while IFS=$'\t' read -r name pane key; do
+    last="$(awk -F'\t' -v n="${name}" -v p="${pane}" '$1 == n && $2 == p { print $3 "\t" $4; exit }' "${LEAD_STUCK}" 2>/dev/null)" || last=""
+    IFS=$'\t' read -r lkey lkind <<< "${last}"
+    kind=unread; text=""
+    if resend_busy "${name}" "$([[ "${name}" != "$(conductor_name backlog)" ]] || echo 1)"; then :
+    elif [[ -n "${LEAD_READS}" && -f "${LEAD_READS}/${pane}" ]]; then text="$(cat "${LEAD_READS}/${pane}")"
+    elif [[ -n "${LEAD_READS}" && -e "${LEAD_READS}/${pane}.fail" ]]; then :
+    # Only a pane last found clear is taken as it was: a stuck one may be cleared with no turn (manual mode
+    # turned off), and with no session log to say a turn ran (key ending :-) every pane is read.
+    elif [[ -n "${last}" && "${lkey}" == "${key}" && "${key}" != *:- && "${lkind}" == - ]]; then kind=-
+    elif (( SECONDS < ${LEAD_READ_DEADLINE:-$((SECONDS + RESEND_PASS_WAIT))} )); then
+      text="$(within "${RESEND_HERDR_WAIT}" herdr agent read "${pane}" --source recent-unwrapped </dev/null 2>/dev/null)" || text=""
+    fi
+    if [[ -n "${text}" ]]; then n=$((n + 1)); printf '%s' "${text}" > "${dir}/${n}"; files+=("${dir}/${n}"); kind="@${n}"; fi
+    state+="${name}"$'\t'"${pane}"$'\t'"${key}"$'\t'"${kind}"$'\t'"${lkey:--}"$'\t'"${lkind:--}"$'\n'
+  done <<< "${rows}"
+  # One python classifies every pane read: its stuck_kind per file, - for none.
+  if [[ ${n} -gt 0 ]]; then
+    while IFS= read -r i; do kinds+=("${i}"); done < <(SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import stuck_kind
+for f in sys.argv[1:]:
+    print(stuck_kind(open(f, encoding="utf-8", errors="replace").read()) or "-")' "${files[@]}" 2>/dev/null)
+  fi
+  rm -rf "${dir}"
+  # The new record: what each read found; an agent left unread keeps the last poll's line, so its next
+  # poll reads it again.
+  : > "${LEAD_STUCK}.tmp" 2>/dev/null || true
+  while IFS=$'\t' read -r name pane key kind lkey lkind; do
     [[ -n "${name}" ]] || continue
+    if [[ "${kind}" == @* ]]; then kind="${kinds[$((${kind#@} - 1))]:-unread}"; fi
+    if [[ "${kind}" == unread ]]; then
+      awk -F'\t' -v n="${name}" -v p="${pane}" '$1 == n && $2 == p { print; exit }' "${LEAD_STUCK}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true
+    else printf '%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${key}" "${kind}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true; fi
     if [[ "${kind}" == api-error ]]; then
-      [[ -n "${ps}" ]] || ps="$(ps -A -ww -o command= 2>/dev/null)" || kind=unread
       # A wait naming it, as agent_name makes a name (resend_busy), is still resuming it. A flag or a
       # timeout is no name: agent_name makes `--lead` s--lead.
-      [[ "${kind}" == unread ]] || ! awk -v n="${name}" -v max="${AGENT_NAME_MAX}" '
+      ! awk -v n="${name}" -v max="${AGENT_NAME_MAX}" '
         function nm(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, max) }
         { m = split($0, w, " ")
           for (i = 1; i < m; i++) if (w[i] ~ /(^|\/)swarm\.sh$/ && w[i + 1] == "wait")
             for (j = i + 2; j <= m; j++) if (w[j] !~ /^(-|[0-9]+$)/ && nm(w[j]) == n) { f = 1; exit } }
-        END { exit !f }' <<< "${ps}" || continue
+        END { exit !f }' <<< "${NO_AGENT_PS}" || kind=unread
     fi
     case "${kind}" in
       prompt) out="the user answers it in pane ${pane}" ;;
@@ -2333,8 +2374,18 @@ for a in json.loads(sys.stdin.read())["result"]["agents"]:
       unread) awk -v p="prompt: ${name} (" 'index($0, p) == 1 { print; exit }' "${LEAD_SEEN}" 2>/dev/null || true; continue ;;
       *) continue ;;
     esac
+    # A stuck pane read again after a turn (its session log changed) is a new stop, even with the same
+    # line: LEAD_SEEN forgets the old one, so it wakes the lead. A status change alone (done, then idle)
+    # is the same stop.
+    if [[ "${lkind}" != - && "${lkind}" != unread && "${key#*:}" != - && "${lkey#*:}" != "${key#*:}" ]]; then
+      if awk -v p="prompt: ${name} (" 'index($0, p) != 1' "${LEAD_SEEN}" > "${LEAD_SEEN}.drop" 2>/dev/null; then
+        mv -f "${LEAD_SEEN}.drop" "${LEAD_SEEN}" 2>/dev/null || true
+      fi
+      rm -f "${LEAD_SEEN}.drop"
+    fi
     echo "prompt: ${name} (${kind}), exit: ${out}"
-  done <<< "${rows}"
+  done <<< "${state}"
+  mv -f "${LEAD_STUCK}.tmp" "${LEAD_STUCK}" 2>/dev/null || true
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
@@ -2767,7 +2818,7 @@ step_up_closed() {
 LEAD_RESENT="${LEAD_DIR}/resend"
 RESEND_SLACK=$(( 7 * PROMPT_TIMEOUT_MS / 1000 ))
 RESEND_HERDR_WAIT=10   # seconds each herdr read or key press of resend_pass may take, as pane_text gives a read
-RESEND_PASS_WAIT=20    # seconds after which resend_pass starts no more pane reads, leaving them for the next poll
+RESEND_PASS_WAIT=20    # seconds into a poll's reads (LEAD_READ_DEADLINE) after which resend_pass and prompt_lines start no more
 
 # resend_busy <name> [backlog] — true while a swarm.sh command that may deliver <name> a prompt runs:
 # one of NO_AGENT_ASKS or conduct, with an argument that is <name> once made an agent name
@@ -2798,8 +2849,10 @@ resend_busy() {
 # sent) the prompt (a brief never taken up ends its command so); a tell that failed before sending
 # delivered nothing and is passed over, while a start that did skips its agent (it may have opened the
 # pane and recorded the session that turn_since reads). A line not yet in LEAD_RESENT gets one pane
-# read. Each herdr call has RESEND_HERDR_WAIT seconds (within), and no read starts RESEND_PASS_WAIT
-# seconds into the pass (the rest wait for the next poll), so a hung herdr cannot hold the poll. When
+# read. Each herdr call has RESEND_HERDR_WAIT seconds (within), and no read starts past
+# LEAD_READ_DEADLINE, RESEND_PASS_WAIT seconds after lead_wake set it (the rest wait for the next poll),
+# so a hung herdr cannot hold the poll. Each read's text, or its failure, goes in LEAD_READS for
+# prompt_lines, which reads no pane twice in a poll. When
 # the box holds a collapsed paste (panes.py's unsent_brief) and no turn started since the prompt went
 # out (turn_since: for a start, which opens its own session, any turn in it; for a tell, one later than
 # RESEND_SLACK before the line), it sends the pane Enter and logs `resend <agent>`. A turn that started
@@ -2822,7 +2875,7 @@ resend_busy() {
 # idle marked agent's pane is read each poll, as one read with any delivery of its own. Prints nothing;
 # outside herdr, or with no list, it does nothing.
 resend_pass() {
-  local rows pane name at cmd k stem role mode marked text since rc backlog line size deadline=$((SECONDS + RESEND_PASS_WAIT))
+  local rows pane name at cmd k stem role mode marked text since rc backlog line size deadline="${LEAD_READ_DEADLINE:-$((SECONDS + RESEND_PASS_WAIT))}"
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
   # No idle agent in the list and no .unsent marker, no work: return before any process starts, as most polls do.
   [[ "${LEAD_AGENTS}" == *idle* && -s "${EVENTS_LOG}" ]] || compgen -G "${PROJECT_DIR}/.swarm/briefs/*.unsent" >/dev/null || return 0
@@ -2919,7 +2972,10 @@ for n in sorted(set(idle) & (set(n for n, v in newest.items() if v) | set(marked
     (( SECONDS < deadline )) || break
     ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
     # pane_text's read, with its failure kept: an empty or failed read is no clear box.
-    text="$(within "${RESEND_HERDR_WAIT}" herdr agent read "${pane}" --source recent-unwrapped </dev/null 2>/dev/null)" && [[ -n "${text}" ]] || continue
+    text="$(within "${RESEND_HERDR_WAIT}" herdr agent read "${pane}" --source recent-unwrapped </dev/null 2>/dev/null)" && [[ -n "${text}" ]] \
+      || { [[ -z "${LEAD_READS}" ]] || : > "${LEAD_READS}/${pane}.fail"; continue; }
+    # prompt_lines reads the pane from here, not from herdr again.
+    [[ -z "${LEAD_READS}" ]] || printf '%s' "${text}" > "${LEAD_READS}/${pane}"
     since="${at}"; [[ "${cmd}" == tell* ]] || since=-
     # 10: a paste in the box and no turn since the prompt went out; 11: a clear box; 13: a paste, but a turn
     # since. Anything else (12, a paste with no session log to say whether a turn ran, or python's own error
@@ -3022,7 +3078,8 @@ unsent_lines() {
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
 # and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
 # since its last (lead_heads), run resend_pass off that list, add the .unsent markers' lines
-# (unsent_lines) after it, and save the queue as LEAD_SEEN. Print
+# (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, and save the
+# queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
 # alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:` and `prompt:` lines) and saves the
@@ -3034,10 +3091,20 @@ lead_wake() {
     LEAD_HEADS_AT=${SECONDS}; lead_heads
   fi
   now="$(lead_queue)"
+  # One read budget and one read per pane for resend_pass and prompt_lines; the reads go with the poll.
+  LEAD_READ_DEADLINE=$((SECONDS + RESEND_PASS_WAIT))
+  LEAD_READS="$(mktemp -d "${TMPDIR:-/tmp}/swarm-reads.XXXXXX" 2>/dev/null)" || LEAD_READS=""
   resend_pass >/dev/null 2>&1 || true
   # No marker, no subshell: most polls have none.
   u=""; ! compgen -G "${PROJECT_DIR}/.swarm/briefs/*.unsent" >/dev/null || u="$(unsent_lines)"
   now="${now}${now:+${u:+$'\n'}}${u}"
+  # No agent herdr shows blocked, idle or done, and no prompt: line to keep or drop: no subshell, as on
+  # most polls while agents work.
+  u=""; [[ ! "${LEAD_AGENTS}" =~ \"(blocked|idle|done)\" && -n "${LEAD_AGENTS_OK}" ]] && ! grep -q '^prompt: ' "${LEAD_SEEN}" 2>/dev/null \
+    || u="$(prompt_lines)"
+  now="${now}${now:+${u:+$'\n'}}${u}"
+  [[ -z "${LEAD_READS}" ]] || rm -rf "${LEAD_READS}"
+  LEAD_READS=""
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
       || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* \
