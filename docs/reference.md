@@ -68,6 +68,11 @@ The line names no way to land the PR: `merge`, the HLD's grants and `costs:` dec
 `swarm.sh merge --board` (§ Merging). `merge --board` runs no codex for any kind and keeps its CI
 gate: a PR whose head is not green is refused.
 
+When `done` clears a plan PR that closed unmerged, it also removes `.swarm/<hld or epic>/critic.json`
+and names it. `hooks/lead-stop.sh` reads that file as a plan reported and waiting on the user, but a
+closed PR leaves nothing to wait on. A file newer than the branch's last commit belongs to a new plan,
+so `done` keeps it.
+
 Each step logs one `events.tsv` line, `board-pr:start`, `board-pr:open` or `board-pr:done`, with
 the name and `ok` or the refusal. The name may be a story's slug, so these lines are never a sign
 of life for that story's builder.
