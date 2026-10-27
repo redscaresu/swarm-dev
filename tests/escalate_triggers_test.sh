@@ -226,8 +226,8 @@ for ladder in sonnet,opus,fable ""; do
     printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
     echo 2026-10-01T10:30:00Z > "${ROOT}/commit-${RA}"
     waits w:2 "${RA}" "${RB}"; first="$(stepped)"; waits w:2 "${RC}"
-    check "a head committed before the build, first seen red by the review pane's wait-pr after it, is not this build's; the two after it are" "|ok (ci-red-2: sonnet -> opus)|1" \
-      "${first}|$(stepped)|$(grep -c " ${RA} " "${P}/.swarm/red-heads.tsv")"
+    check "a head committed before the build, first seen red by the review pane's wait-pr after it, is not this build's; the two after it are" \
+      "ok (stalled: haiku -> sonnet)|ok (stalled: haiku -> sonnet),ok (ci-red-2: sonnet -> opus)|1" "${first}|$(stepped)|$(grep -c " ${RA} " "${P}/.swarm/red-heads.tsv")"
     # A step-up refused after ladder_step's check (here the story is no longer ready) is said, is not
     # logged (a refusal is no sign of life), and is not tried again on the same head.
     fresh "${ladder}" idle; sed -i.bak 's/^status: ready$/status: review/' "${P}/docs/stories/s1.md"

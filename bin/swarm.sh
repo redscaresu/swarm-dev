@@ -588,7 +588,7 @@ dispatch() {
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _step"
+READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _review-red-scan _step"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
@@ -926,7 +926,6 @@ main() {
                  EV_TARGET="${*:$((FINDING_SKIP + 2)):2}" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     merge|intervene|hold) EV_TARGET='!' ;;
-    _review-red-scan) EV_TARGET='!' ;;   # logs nothing itself: a step-up it runs logs its escalate line
     tidy) EV_TARGET=- ;;
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
     # old form, tell <slug> <file>, would put a path there).
