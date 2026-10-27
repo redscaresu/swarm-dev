@@ -478,21 +478,69 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
+# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
+# report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
+# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
+# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
+# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
+# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
+# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
+# shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
+next_reads() {
+  if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
+  herdr() {
+    if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
+      [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
+      printf '%s\n' "${LEAD_AGENTS}"; return 0
+    fi
+    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
+  }
+  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
+  claude() { report_read "claude $1" claude "$@" </dev/null; }
+}
+
+# next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
+# which next_reads' gh never sees. In a subshell, so that ci_gate ends with it.
+# shellcheck disable=SC2329 # queued_line calls it
+next_queued() (
+  ci_gate() { report_read "ci_gate $1" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@" </dev/null; }
+  conductors_queued
+)
+
 # next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
-# conductors_queued's, after its why), its release-held: line, then idle_lines' for it. Both are worked out first
+# conductors_queued's, after its why), its release-held: line, report_skipped's skipped: line, then
+# idle_lines' for it. All are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
+# Every read that can block, next_step's, conductors_queued's and conduct_ready's, runs with next_reads
+# on, within REPORT_SECONDS of the start. conduct_ready fails closed: after a cut read it starts no
+# conductor and names each one it would have started (a cut read could hide a stopped conductor). Each
+# start it makes runs without next_reads' forms, to its end however long it takes: a start cut partway
+# would leave a pane with no conductor. The writes (next_seen's, conduct_ready's events) read nothing
+# next_reads changes.
 next_report() {
-  local tmp step idle queued rest started
+  local tmp step idle queued rest started skipped
+  # Local, so the list read below never reaches a later lead_agents.
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
   tmp="$(mktemp)" || die "next: cannot make a temp file"
-  # shellcheck disable=SC2064 # the path is fixed now
-  trap "rm -f '${tmp}'" EXIT
+  report_start || die "next: cannot set the report's deadline (perl)"
+  # shellcheck disable=SC2064 # the paths are fixed now
+  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}'" EXIT
+  # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
+  # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
+  # deadline).
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  if [[ "${HERDR_ENV:-}" == 1 ]] && LEAD_AGENTS="$(report_read "herdr agent list" herdr agent list </dev/null 2>/dev/null)"; then
+    LEAD_AGENTS_OK=1
+  else LEAD_AGENTS=""; fi
+  next_reads on
   next_step > "${tmp}"
   step="$(< "${tmp}")"
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
-  queued="$(conductors_queued)"
+  queued="$(next_queued)"
   next_seen || true
   # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
   # keeps what it printed: its started: lines name conductors that run. A no-agent step while a
@@ -501,11 +549,14 @@ next_report() {
     started="$(conduct_ready)" || started+="${started:+$'\n'}warning: starting conductors for ready work failed (exit $?)"
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi
+  next_reads off
+  skipped="$(report_skipped)"
   if [[ -n "${queued}" ]]; then
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
   fi
   [[ -z "${RELEASE_HELD}" ]] || step+=$'\n'"${RELEASE_HELD}"
+  [[ -z "${skipped}" ]] || step+=$'\n'"${skipped}"
   idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
