@@ -818,7 +818,7 @@ active in a board PR` for a draft or later epic in the current stage that has no
 on. The current stage is the lowest `stage:` an epic on the board carries; an epic with no `stage:`
 of its own takes its nearest parent's. When no epic carries one, every epic is in it. Nothing is left
 to wait on when the epic's `depends_on` lists something and every item it lists has left the board
-or is `done`, or when one of the epic's stories is `ready`. A later epic with no `depends_on` waits
+or is `done`, or when one of the epic's stories that an agent builds is `ready`. A later epic with no `depends_on` waits
 only on the user, so it gets no line. Nor does one with `unasked_plan:` set, as the gate already
 shows its plan or the user's decline. A staged draft gets none either: `next`'s `stage` step sets it
 active once the tag before its stage is cut, and the gate lists it until then. `next` also prints

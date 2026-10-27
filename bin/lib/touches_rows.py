@@ -204,7 +204,7 @@ if __name__ == "__main__":
         # A draft or later epic in the current stage (its stage:, or its nearest parent's, is the lowest
         # an epic on the board carries, or no epic carries one) with no unasked_plan: (the gate has its
         # recorded plan or decline) that can start: its depends_on lists something and only items gone
-        # from the board or done, or a story of it is ready. idle_now drops a staged draft's line, which
+        # from the board or done, or a story of it an agent builds is ready. idle_now drops a staged draft's line, which
         # next's stage step or the gate names. And an active epic with no stories, no depends_on that
         # holds up its planning (holds) and no scope-<epic> tab record in .swarm/state (has_records):
         # no plan runs. idle_now drops that line for an epic a resuming /plan-hld will overwrite.
@@ -256,7 +256,8 @@ if __name__ == "__main__":
         for e, efm in sorted(efms.items()):
             mine = stories_of(e)
             if efm.get("status") in ("draft", "later") and stages[e] == current and not efm.get("unasked_plan") \
-                    and (deps(efm) and all(gone(d) for d in deps(efm)) or any(fm.get("status") == "ready" for fm in mine)):
+                    and (deps(efm) and all(gone(d) for d in deps(efm))
+                         or any(fm.get("status") == "ready" and fm.get("kind", "") in kinds for fm in mine)):
                 print(f"idle: epic {e} can start, exit: plan it, or set it active in a board PR")
             elif efm.get("status") == "active" and not mine \
                     and not any(holds(d) for d in deps(efm) - set(slugs(efm.get("parent", "")))) \

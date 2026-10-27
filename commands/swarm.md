@@ -88,7 +88,7 @@ Repeat until a step below says stop:
    - `idle: epic <epic> can start, exit: plan it, or set it active in a board PR`: a draft or later
      epic in the current stage (its `stage:`, or its parent's, is the lowest an epic on the board has,
      or no epic has one) has nothing left to wait on. Everything in its `depends_on` has left the
-     board or is done, or one of its stories is already ready. Plan it with
+     board or is done, or one of its stories that an agent builds is already ready. Plan it with
      `/swarm-dev:plan-epic <epic>`, or set it `status: active` in a board PR. Setting a draft active
      needs the user's agreement, or an HLD over it that grants `epics`. A staged draft gets no line:
      `next`'s `stage` step sets it active once the tag before its stage is cut. A later epic with

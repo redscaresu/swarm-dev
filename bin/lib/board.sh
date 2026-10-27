@@ -440,8 +440,8 @@ idle_now() {
   out="$(SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
     python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories")" || return 1
   while IFS= read -r line; do
-    if [[ "${line}" =~ ${can} ]] && staged_draft "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi
-    if [[ "${line}" =~ ${unplanned} ]] && hld_resuming "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi
+    if [[ "${line}" =~ ${can} ]] && staged_draft "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi   # loose-match: ok can is a fixed regex
+    if [[ "${line}" =~ ${unplanned} ]] && hld_resuming "${BOARD}/epics/${BASH_REMATCH[1]}.md"; then continue; fi   # loose-match: ok unplanned is a fixed regex
     [[ -z "${line}" ]] || printf '%s\n' "${line}"
   done <<< "${out}"
 }
