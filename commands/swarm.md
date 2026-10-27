@@ -247,10 +247,12 @@ Repeat until a step below says stop:
      `herdr agent read <agent>` and tell the user what it shows. For `(manual)`, run the exit: for
      a ready story's builder it closes the pane and then restarts or holds the story, as a
      `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
-     pane. The line comes once per stop, and again only after the agent has moved on. An
-     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` line is capacity no step uses,
-     the line `next` prints after its step: handle it as step 1's `idle:` list says. It comes once,
-     and again only after it has gone from the queue. Then start
+     pane. The line comes once per stop: again once the agent has moved on, or after a turn that
+     ends on the same stop. An
+     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` line is
+     capacity no step uses, the line `next` prints after its step: handle it as step 1's `idle:` list
+     says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
+     then it needs nothing. It comes once, and again only after it has gone from the queue. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
