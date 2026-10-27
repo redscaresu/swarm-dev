@@ -276,7 +276,7 @@ load_config() {
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: lead_epics must be off or on, not '${value}'" ;;
       commit_trailers)
         [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
-          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;
+          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;   # loose-match: ok trailer is a fixed regex
       agent_env)
         # Reserved names are refused once agents.sh, which defines them, is loaded (reserved_env).
         read -r -a words <<< "${value}"   # read, not a bare word list, so a * is never globbed
