@@ -2191,9 +2191,9 @@ base, pushed while GitHub's was pending, has the same parents but may hold more.
 in events.tsv, so later steps can tell this head from a builder's push, and exits 1 with `base merged:
 <PR URL> is now <new> (<old> with <base> merged in); wait-pr <PR URL>, then merge --head <new head>
 <PR URL>`. It has merged nothing, since the new head's CI has not run yet. Each of its reads stops
-after 60 seconds (`BASE_MOVED_WAIT`), as the compare's does. It refuses, naming the cause, in five cases, the
-first four ending, as the moved-base refusals do, in `merge origin/<base> in, push, and merge the new
-head`:
+after 60 seconds (`BASE_MOVED_WAIT`), as the compare's does. It refuses, naming the cause, in five
+cases. The first four end in `merge origin/<base> in, push, and merge the new head`, as the moved-base
+refusals do:
 
 - GitHub answers 422, a conflict: `the base <base> moved past <sha>'s CI (<n> commits it lacks), and
   GitHub cannot merge it in, a conflict (HTTP 422: <GitHub's message>): merge origin/<base> in, push,
