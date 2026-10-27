@@ -1158,7 +1158,7 @@ build_started() {
 }
 
 # ladder_step <slug> <trigger> [findings] — step_up <slug> for a trigger swarm.sh saw itself (close,
-# wait --stall, tell, watch): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
+# wait --stall, tell, watch, a review pane's wait-pr): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
 # builder, and the caller stops; STEP_UP_BUSY when another step-up or a restart of it holds the lock, and the caller
 # touches nothing; any other status when nothing was closed (a refusal, said on stderr,
 # or a failure before the close), and the caller carries on as before. One step-up of a story at a
@@ -1796,9 +1796,11 @@ close_stories() {
 }
 
 # live_agents <tab-ids> <tab-record> [pane] — set LIVE to each agent in a pane of those tabs, <pane>'s
-# aside, that a tab close must not take, as "<pane>\t<name>\t<why>\t<herdr's name or ->" lines:
-# working or waiting (session_state, else herdr's status), its state unknown (herdr gave no agent
-# list too) or any other not known to be idle or finished, its story's PR open on story/<name>
+# aside, that a tab close must not take, as "<pane>\t<name>\t<why>\t<herdr's name or ->" lines: the
+# pane running this command (HERDR_PANE_ID), whatever is in it, since a review agent idles there while
+# its own swarm.sh tell or merge runs in the background and steps the build up or reconciles; working
+# or waiting (session_state, else herdr's status), its state unknown (herdr gave no agent list too)
+# or any other not known to be idle or finished, its story's PR open on story/<name>
 # (close_heads) or gh could not say, or, for a name agent_name may have cut, no story found: the
 # records hold no name under it, or two (cut_record), or one that is no story's. The panes are
 # herdr's (close_lists), since a pane moved in by hand closes with the tab and one moved out does
@@ -1815,6 +1817,10 @@ live_agents() {
   while read -r pane; do
     [[ -n "${pane}" && "${pane}" != "${3:-}" ]] || continue
     name="$(record_name "${pane}" "${CLOSE_RECORDS}")"
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then
+      who="$(awk -v p="${pane}" '$1 == p && $3 != "-" { print $3; exit }' <<< "${CLOSE_AGENTS}")"
+      live_line "${pane}" "${name:-${who:-${pane}}}" "the pane running this command" "${who:--}"; continue
+    fi
     if [[ -z "${CLOSE_AGENTS_OK}" ]]; then live_line "${pane}" "${name:-${pane}}" "herdr gave no agent list, so its state is unknown" -; continue; fi
     read -r _ st who <<< "$(awk -v p="${pane}" '$1 == p { print; exit }' <<< "${CLOSE_AGENTS}")"
     if [[ -z "${st}" ]]; then
