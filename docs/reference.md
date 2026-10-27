@@ -1068,7 +1068,7 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green, and keep any load it starts on purpose within 4 CPUs in all and remove it when the check ends), the epic's `check:` command when it has one
+codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, and keep any load it starts on purpose within 4 CPUs in all and remove it when the check ends), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then the project's own rules from
 `.claude/swarm/brief.md`, plus the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
 `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md`, since a builder in another repo's worktree reads
@@ -2398,13 +2398,24 @@ its PRs. It prints each of those agents as `kept`, and still closes the conducto
 close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
 name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or
 its full name gives. herdr and `swarm.sh` print agent names cut at 32 characters, so two long names
-can look the same, and a cut name matches no record. herdr's agent list stands in for a missing
-record only for a name shorter than 32 characters, which herdr holds exactly. When nothing is
-recorded under a longer name and herdr lists a live agent under its first 32 characters, that agent
-may be another's. close then closes, counts, clears and keeps nothing, and fails: close by the full
-recorded name, or close that pane by hand if it is the one you meant. With nothing recorded and
-nothing live under the cut, there is nothing to close by mistake, so the close goes on with no
-pane, as it does for a pane closed by hand.
+can look the same. A cut stands for a full name only when it is the one name the project's records
+hold under it, counting the pane names in `.swarm/state`, the briefs in `.swarm/briefs` and the
+stories together. When two names share the cut, it stands for neither: a conductor closed by such a
+cut closes no epic's tabs, and close says so. An old brief whose name
+shares a live slug's first 32 characters keeps that cut ambiguous while it stays, and close errs
+that way on purpose: the pane is kept, or the close refused. A conductor named by its cut closes
+the epic of the one name under the cut when that name is `conduct-<epic>` with a brief and no
+story has it. With no name under the cut it closes the tabs of the cut minus `conduct-`, as it did
+before, and the backlog conductor's cut is the backlog's. A tab close keeps an agent that herdr
+lists under a cut, printing that its story could not be found, unless the one name under that cut
+is a story's.
+herdr's agent list stands in for a missing pane line only for a name shorter than 32 characters,
+which herdr holds exactly: a longer name's cut may be an agent's with no record of its own. When
+`.swarm/state` records nothing under a longer name and herdr lists a live agent under its first 32
+characters, that agent may be another's. close then closes, counts, clears and keeps nothing, and
+fails: close by the full recorded name, or close that pane by hand if it is the one you meant. With
+nothing recorded and nothing live under the cut, there is nothing to close by mistake, so the close
+goes on with no pane, as it does for a pane closed by hand.
 
 ## Releases
 
@@ -2497,7 +2508,7 @@ changes merge's exit code.
 |---|---|
 | `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh init` | Set a project up, from its git root: the board templates, `.claude/swarm/` with a commented `commit_trailers` line, the `.gitignore` lines, a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch, and fails when make has no `check` target, with a gate (`.github/swarm-board-only.sh`) that skips a PR or push changing only the board's own files (with workflows already there, it writes the gate and prints the step to add; a board outside the repo gets no gate; when origin's default branch can't be found, no CI), and a pre-commit hook that runs `make check` except on a commit that changes only the board's own files (when a hook exists or `core.hooksPath` is set, it writes none and prints the lines to add before any `exec`, or, for a global `core.hooksPath`, says to add them nowhere there). It ends by listing the files it wrote that git does not track yet, to commit. When no `permissions.allow` rule in Claude Code's settings lets `swarm.sh merge` run, it then prints your step to add `Bash(swarm.sh merge *)`. Until auto mode has learned your environment, it prints your step to run `/auto-mode-setup`, then `swarm.sh init --auto-mode-done`, which only records that you did, in `.swarm/auto-mode-done`, and writes nothing outside `.swarm/` (§ Merging, init's Claude Code checks). A second run changes nothing. |
+| `swarm.sh init` | Set a project up, from its git root: the board templates (a file that exists is left, except a `Board.base` that is a past template nobody edited, which it replaces with the current one and says `updated`, or stops when it cannot write the replacement; an edited one is left, with the `diff` command that compares it with the current template), `.claude/swarm/` with a commented `commit_trailers` line, the `.gitignore` lines, a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch, and fails when make has no `check` target, with a gate (`.github/swarm-board-only.sh`) that skips a PR or push changing only the board's own files (with workflows already there, it writes the gate and prints the step to add; a board outside the repo gets no gate; when origin's default branch can't be found, no CI), and a pre-commit hook that runs `make check` except on a commit that changes only the board's own files (when a hook exists or `core.hooksPath` is set, it writes none and prints the lines to add before any `exec`, or, for a global `core.hooksPath`, says to add them nowhere there). It ends by listing the files it wrote that git does not track yet, to commit. When no `permissions.allow` rule in Claude Code's settings lets `swarm.sh merge` run, it then prints your step to add `Bash(swarm.sh merge *)`. Until auto mode has learned your environment, it prints your step to run `/auto-mode-setup`, then `swarm.sh init --auto-mode-done`, which only records that you did, in `.swarm/auto-mode-done`, and writes nothing outside `.swarm/` (§ Merging, init's Claude Code checks). A second run changes nothing. |
 | `swarm.sh status` | Show started stories with no live agent and PRs whose review agent never started or went (No agent, with each one's exit), agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. Its herdr, gh and claude reads, and its git fetch and ls-remote, share a 30-second deadline (`SWARM_REPORT_SECONDS` sets another, for a test). One network read is left out on purpose: `git remote set-head origin --auto`, which a stacked build's check runs when `base_branches` is empty. It writes `refs/remotes/origin/HEAD`, and cutting it mid-write would leave a stale ref lock. A `git fetch` cut at the deadline can leave the same kind of lock: a `.lock` file under the repo's `.git/refs/` that fails later fetches of that ref, builds' and merges' included. Deleting the file clears it. A read cut off there, or due after it, counts as a failed read, so its section shows what it shows when that read fails, and a last line such as `skipped (over 30 s): herdr agent list, gh pr list` names it. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights, and a third when someone had to step in. `swarm.sh dash --project <dir>` (repeatable) draws several projects. `swarm.sh dash --check` compares each figure with the command that owns it and exits 1 naming each one that differs. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
@@ -2651,7 +2662,16 @@ does not try it again on the same head. A step-up whose new builder does not sta
 closed, prints `step-up failed: <slug>` and stops the command that ran it: a close counts nothing
 and clears nothing. The story is then the lead's to resume (`step-up --resume`), and no trigger tries
 that build again meanwhile. `wait --lead` tells the lead within one poll (§ The lead), so the
-conductor leaves the story alone.
+conductor leaves the story alone. The failed step-up also sends the story's conductor
+(`conduct-<epic>`, or the backlog's) a note through `swarm.sh tell <conductor> note`, logged as
+`tell:note`. Its first line says swarm.sh sent it, since the lead may not know yet. It names the
+story, why the step-up failed and `swarm.sh step-up --resume <slug>`. A conductor whose turn has
+ended is prompted to read it. When a review agent's `tell` ran the step-up, the note is how the
+conductor hears of it, since that output goes to the review agent's pane. Nothing is sent when herdr
+lists no conductor of the project, when the conductor has written its report, when the step-up was
+refused inside the close, or when a `step-up --resume` fails, since the lead ran that. Reading
+herdr's list and sending the note get 120 seconds between them. Past that, or when the list cannot
+be read, the step-up prints a warning and ends as it would have.
 
 A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the
 escalate role's model starts an escalate build, so `outcomes` pairs only those (and build_story's
