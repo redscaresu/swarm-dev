@@ -122,8 +122,9 @@ def pane_text(pane):
 # BRIEF_PASTE: how Claude Code shows a collapsed paste, a brief herdr typed into the pane.
 BRIEF_PASTE = re.compile(r"\[Pasted text #\d+")
 def box_borders(lines):
-    # The input box's two border lines, as pane_stop (agents.sh) reads them: the last two border lines
-    # at the margin, with no reply from the upper one down. None when there is no such box.
+    # The last two border lines at the margin (─, ╭─ or ╰─), with no reply from the upper one down: the
+    # input box pane_stop (agents.sh) reads when the pane has two or more. None when there is no such
+    # pair. pane_stop also takes a lone border line as the box's top; turn_lines reads that.
     borders = [i for i, l in enumerate(lines) if re.match("(╭|╰)?─", l)]
     if len(borders) < 2 or any(re.match("(⏺|●)", l) for l in lines[borders[-2]:]):
         return None
@@ -138,39 +139,51 @@ def unsent_brief(text):
     return any(BRIEF_PASTE.search(l) for l in input_box(text) or [])
 # PROMPT_OPTION: the selected option of a live menu, a permission prompt's or a dialog's (`❯ 1. Yes`).
 PROMPT_OPTION = re.compile(r"[\s│]*❯\s*\d+\.\s*\S")
-# STOP_LINE: a reply (⏺ or ●) or a submitted prompt, the lines pane_stop (agents.sh) ends a turn on.
+# BOX_PROMPT: the input box's first line, its prompt at the margin. A dialog between two border lines
+# starts with an indented title, a framed one with │.
+BOX_PROMPT = re.compile(r"(>|❯)(\s|$)")
+# STOP_LINE: a reply (⏺ or ●, at any indent) or a submitted prompt (`> text` or `❯ text` at the margin):
+# the lines on which pane_stop (agents.sh) starts or clears a stop. pane_stop's auto-denied tool result
+# is no stop here.
 STOP_LINE = re.compile(r"\s*(⏺|●)|(>|❯) +\S")
 # LOGIN_STOP: Claude Code's "<reason> · Please run /login", not a reply that only mentions /login.
 LOGIN_STOP = re.compile(r"(⏺|●)\s*([^·]*·\s*)?Please run /login\s*(·|$)")
 API_STOP = re.compile(r"(⏺|●)\s*API Error:")
 MANUAL_MODE = re.compile(r"\s*⏸ manual mode on")
 MID_COMMAND = "esc to interrupt"
+def turn_lines(lines):
+    # The lines pane_stop (agents.sh) reads for a stop: those above the input box's top border (the
+    # second-to-last border line at the margin, or the only one), or every line when a reply (⏺ or ● at
+    # the margin) sits on or below that border.
+    borders = [i for i, l in enumerate(lines) if re.match("(╭|╰)?─", l)]
+    top = borders[-2] if len(borders) > 1 else borders[-1] if borders else len(lines)
+    return lines if any(re.match("(⏺|●)", l) for l in lines[top:]) else lines[:top]
 def stuck_kind(text):
-    # What the pane's last screen is stuck on, else None:
+    # What the pane's last screen is stuck on, else None. It reads the lines after the last reply (⏺ or
+    # ● at the margin), and the input box: box_borders' pair when the first line between them is
+    # BOX_PROMPT, so a dialog between two border lines is no box.
     #   prompt: a live menu, a permission prompt ("Do you want to proceed?") or a dialog ("Teach auto
-    #     mode about your environment?"): its selected option among the last USAGE_TAIL non-empty lines,
-    #     after the last reply (⏺ or ●) and not typed into the input box, with no input box or running
-    #     command (esc to interrupt) under it; usage_limit's dialog is none (wait answers it). A framed
-    #     dialog's borders (╭─, ╰─) read as a box (box_borders): of the box's lines, only those that
-    #     start │ (a framed dialog's) are no typed input;
-    #   login: the turn ended (the last reply or submitted prompt above the input box) on Claude Code's
-    #     "<reason> · Please run /login" ("Login expired · Please run /login");
+    #     mode about your environment?"): a selected option after the last reply and outside the input
+    #     box, with no input box and no running command (esc to interrupt) under it. usage_limit's
+    #     dialog is none (wait answers it);
+    #   login: the turn ended (the last STOP_LINE in turn_lines) on Claude Code's "<reason> · Please
+    #     run /login" ("Login expired · Please run /login");
     #   api-error: the turn ended on an `API Error:` reply at the margin, as pane_stop reads it;
     #   manual: the footer under the input box says manual mode.
-    # Else a pane mid-command (esc to interrupt among the last USAGE_TAIL non-empty lines, after the last
-    # reply), at an empty input box or on a menu quoted above the box is none.
+    # Else a pane mid-command (esc to interrupt after the last reply), at an empty input box or on a
+    # menu above the input box is none.
     lines = (text or "").splitlines()
-    last = [i for i, l in enumerate(lines) if l.strip()][-USAGE_TAIL:]
-    b = box_borders(lines)
     reply = max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1])
-    inside = range(b[0] + 1, b[1]) if b else ()
-    sel = [i for i in last if i > reply and PROMPT_OPTION.match(lines[i])
-           and not (i in inside and not lines[i].startswith("│"))]
-    if sel and not (b and b[0] > sel[-1]) and not any(MID_COMMAND in lines[i] for i in last if i > sel[-1]):
+    b = box_borders(lines)
+    if b and not BOX_PROMPT.match(lines[b[0] + 1]):
+        b = None
+    sel = [i for i in range(reply + 1, len(lines))
+           if PROMPT_OPTION.match(lines[i]) and not (b and b[0] < i < b[1])]
+    if sel and not (b and b[0] > sel[-1]) and not any(MID_COMMAND in l for l in lines[sel[-1] + 1:]):
         return None if (usage_limit(text) or ("",))[0] == "dialog" else "prompt"
-    if any(MID_COMMAND in lines[i] for i in last if i > reply):
+    if any(MID_COMMAND in l for l in lines[reply + 1:]):
         return None
-    stop = ([""] + [l for l in lines[:b[0] if b else len(lines)] if STOP_LINE.match(l)])[-1]
+    stop = ([""] + [l for l in turn_lines(lines) if STOP_LINE.match(l)])[-1]
     if LOGIN_STOP.match(stop):
         return "login"
     if API_STOP.match(stop):
