@@ -1532,15 +1532,19 @@ has_records() {
 }
 
 # close_epic <conductor> — the label of its epic's tabs, or nothing. It is the name without conduct-
-# when that is the full name: the brief start_conductor wrote (.swarm/briefs/<name>.md) has it, the
-# name is not AGENT_NAME_MAX long, so not cut, or the records hold no name under it. When they hold
-# one (cut_record), it is that one's epic if it is a conductor's: conduct-<epic> with its brief, and
-# no story of that name, since a story's slug may start with conduct- too. Two names under the cut,
-# or one that is no conductor's, give nothing: the cut is not this conductor's alone, and the name
-# without conduct- may be a third epic's label.
+# when a brief of that name exists (.swarm/briefs/<name>.md, whoever's: start_conductor's, or a
+# builder's whose slug it is, as on main), when the name is not AGENT_NAME_MAX long, so not cut, or
+# when the records hold no name under it. A cut that is the backlog conductor's (conductor_name
+# backlog: AGENT_NAME_MAX long for a project directory name of 9 or more characters, its brief under
+# conduct-backlog, so no record is under the name) is backlog's, as conduct_epic maps it. Else, when
+# the records hold one name under the cut (cut_record), it is that one's epic if it is a conductor's:
+# conduct-<epic> with its brief, and no story of that name, since a story's slug may start with
+# conduct- too. Two names under the cut, or one that is no conductor's, give nothing: the cut is not
+# this conductor's alone, and the name without conduct- may be a third epic's label.
 close_epic() {
   local full rc=0
   if [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"; return 0; fi
+  [[ "$1" != "$(conductor_name backlog)" ]] || { echo backlog; return 0; }
   full="$(cut_record "$1")" || rc=$?
   if [[ ${rc} -eq 1 ]]; then echo "${1#conduct-}"
   elif [[ ${rc} -eq 0 && "${full}" == conduct-* && -f "${PROJECT_DIR}/.swarm/briefs/${full}.md" && ! -f "${BOARD}/stories/${full}.md" ]]; then
