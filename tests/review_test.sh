@@ -13,6 +13,8 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
@@ -96,7 +98,8 @@ case "$1 $2" in
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
-  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w","label":"e"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
@@ -352,7 +355,6 @@ CHECKLIST=(
   "- A new code path must enforce every rule the existing paths enforce."
   "- A zero or empty value shown to a person must say what it means."
   "- A repair path that changes something must say what it did."
-  "- For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it."
   "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
   "- For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
@@ -361,6 +363,11 @@ for l in "${CHECKLIST[@]}"; do
   check "the review agent's and the fallback's briefs carry: ${l:2:40}..." "yes|yes|yes" \
     "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")|$( (( ${#l} < 200 )) && echo yes || echo "no, ${#l} bytes")"
 done
+# checklist_of <brief> — the checklist's "- " lines under its heading, up to the first other line.
+checklist_of() { awk '/^Hold the PR to these as well:$/ { on = 1; next } on && /^- / { print; next } on { exit }' <<< "$1"; }
+WANT="$(printf '%s\n' "${CHECKLIST[@]}")"
+check "both briefs' checklists are CHECKLIST, line for line: the re-read line is the builder's now, the exception line stays" \
+  "${WANT}|${WANT}" "$(checklist_of "${brief}")|$(checklist_of "${fbrief}")"
 SCOPE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
 check "both briefs say, in the same words, a point only a file outside the touches can fix is out of scope and a gap in the PR's own code is a finding" "yes|yes" \
   "$(has "${SCOPE}" "${brief}")|$(has "${SCOPE}" "${fbrief}")"
@@ -584,6 +591,9 @@ cat > "${ROOT}/gh/prlist.json" <<'EOF'
  {"number": 3, "headRefName": "story/a", "headRefOid": "head3", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
  {"number": 4, "headRefName": "story/c", "headRefOid": "head4", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]
 EOF
+# Every PR here was reported opened already (watch_opened_test.sh covers that line), so the checks
+# below see what watch says after it.
+mkdir -p "${w}/.swarm/state"; printf 'opened o/svc#%s\n' 1 2 3 4 5 > "${w}/.swarm/state/watch-seen"
 # Each watch is bounded, so one that polls on fails here rather than hangs the run.
 check "watch --backlog reports a no-epic story's PR and skips every epic story's PR in the same repo" "o/svc #4 story/c checks finished on head4" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --backlog 2>&1)"
@@ -643,28 +653,54 @@ wagents() { # <mine-builder's herdr status> <cx's herdr status>
 wsession() { # <mine-builder's session status> [its waitingFor]; mine-two's session is $TWO (default idle), waiting on $TWO_WHY
   echo "[{\"sessionId\":\"s-mb\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}},{\"sessionId\":\"s-two\",\"status\":\"${TWO:-idle}\"${TWO_WHY:+,\"waitingFor\":\"${TWO_WHY}\"}}]" > "${ROOT}/watch-sessions.json"
 }
-# watchrun — run watch --epic mine for at most 10 seconds (Claude's sessions from $WATCH_SESSIONS, else
-# watch-sessions.json) and print what it printed, or "(still watching)" once it has read the agents
-# and not returned, so a watch that wrongly polls on fails rather than hangs. It runs as swarm.sh's
-# own pid (exec), so its sleep is its child: swarm.sh is stopped first, so it is not there to report
-# the sleep killed, then the sleep.
+# watchstart — start watch --epic mine in the background, writing to watch.out, its pid in wpid
+# (Claude's sessions from $WATCH_SESSIONS, else watch-sessions.json; $WATCH_PRE first on its PATH).
+# SIGPIPE is ignored, as on CI, so a write into a closed pipe prints "Broken pipe" here too. watch.out
+# is removed first, so a writer an earlier watch left (see watchstop) writes to that run's unlinked
+# file, never this one's.
+watchstart() {
+  : > "${ROOT}/herdr.log"; rm -f "${ROOT}/watch.out"
+  (trap '' PIPE; cd "${w}" && exec env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${WATCH_SESSIONS:-${ROOT}/watch-sessions.json}" PATH="${WATCH_PRE:+${WATCH_PRE}:}${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
+  wpid=$!
+}
+# watchstop <pid> — stop a watch and everything under it: STOP each process, parents first, and read
+# the children of all of them again until no new one shows, then KILL them all. Killing only swarm.sh
+# and its children leaves a deeper descendant, such as fm's head (swarm.sh, queued_line's $(...),
+# fm's $(...), head), to write into a closed pipe after the stop, and its "Broken pipe" into the next
+# watch's output (CI, 2026-10-27). kill(2) returns while a STOP is pending, so a fork already under
+# way can still finish after the last read and outlive the KILL; watchstart's fresh watch.out keeps
+# such a writer out of the next watch's output.
+watchstop() {
+  local all="" new="$1" p c i
+  for ((i = 0; i < 20 && ${#new} > 0; i++)); do
+    for p in ${new}; do kill -STOP "${p}" 2>/dev/null || true; done
+    all+=" ${new}"; new=""
+    for p in ${all}; do
+      for c in $(pgrep -P "${p}" || true); do [[ " ${all} ${new} " == *" ${c} "* ]] || new+=" ${c}"; done
+    done
+  done
+  # shellcheck disable=SC2086 # one pid per word
+  kill -KILL ${all} ${new} 2>/dev/null || true
+  { wait "$1"; } 2>/dev/null || true
+}
+# watchrun [<file>] — run a watch (watchstart) for at most 10 seconds and print what it printed, or
+# "(still watching)" once it has read the agents and not returned, or once <file> exists, so a watch
+# that wrongly polls on fails rather than hangs.
 watchrun() {
-  local pid kids grace=-1
-  : > "${ROOT}/herdr.log"
-  (cd "${w}" && exec env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${WATCH_SESSIONS:-${ROOT}/watch-sessions.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
-  pid=$!
+  local wpid grace=-1
+  watchstart
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 1
-    kill -0 "${pid}" 2>/dev/null || break
+    kill -0 "${wpid}" 2>/dev/null || break
+    [[ -z "${1:-}" || ! -e "${1:-}" ]] || break
     [[ ${grace} -ne 0 ]] || break   # two seconds after it first read the agents
     if [[ ${grace} -gt 0 ]]; then grace=$((grace - 1)); elif grep -q '^agent list' "${ROOT}/herdr.log"; then grace=2; fi
   done
-  if kill -0 "${pid}" 2>/dev/null; then
-    kids="$(pgrep -P "${pid}" || true)"; kill "${pid}" 2>/dev/null || true; { wait "${pid}"; } 2>/dev/null || true
-    for k in ${kids}; do kill "${k}" 2>/dev/null || true; done
+  if kill -0 "${wpid}" 2>/dev/null; then
+    watchstop "${wpid}"
     echo "(still watching)"; return
   fi
-  { wait "${pid}"; } 2>/dev/null || true
+  { wait "${wpid}"; } 2>/dev/null || true
   cat "${ROOT}/watch.out"
 }
 wagents idle idle; wsession waiting "permission prompt"
@@ -695,6 +731,25 @@ check "watch does not report a wait twice across a failed read" "(still watching
 # So does a failed Claude Code list, which would read every Claude session unknown, so not waiting.
 check "watch is quiet on a poll whose Claude Code list fails" "(still watching)" "$(WATCH_SESSIONS="${ROOT}/no-such-file" watchrun)"
 check "watch does not report a wait twice across a failed Claude Code list" "(still watching)" "$(watchrun)"
+# The stop leaves nothing to write after it. A head shim records its pid, then holds inside fm
+# (queued_line reads story a's kind on every poll); watchrun stops the watch as soon as it holds. Had
+# the shim outlived the stop, it would go on to run head, whose write into the closed $(...) pipe
+# prints "Broken pipe". Once checked, it is let go.
+mkdir -p "${ROOT}/held-bin"
+cat > "${ROOT}/held-bin/head" <<EOF
+#!/bin/sh
+echo \$\$ > "${ROOT}/head-pid"; echo "\$*" >> "${ROOT}/head-held"; i=0
+while [ ! -e "${ROOT}/head-go" ] && [ \$i -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
+exec $(command -v head) "\$@"
+EOF
+chmod +x "${ROOT}/held-bin/head"; rm -f "${ROOT}/head-pid" "${ROOT}/head-held" "${ROOT}/head-go"
+# A killed shim can read alive until it is reaped, so gone is waited for, up to 2 s; one that outlived
+# the stop holds for 30 s.
+out="$(WATCH_PRE="${ROOT}/held-bin" watchrun "${ROOT}/head-held")"; held="$(cat "${ROOT}/head-pid" 2>/dev/null)"
+for _ in {1..20}; do kill -0 "${held}" 2>/dev/null || break; sleep 0.1; done
+check "a watch stopped while fm's head runs leaves no process behind to write after the stop" "(still watching)|-1|gone|" \
+  "${out}|$(head -n 1 "${ROOT}/head-held" 2>/dev/null)|$(kill -0 "${held}" 2>/dev/null && echo alive || echo gone)|$(cat "${ROOT}/watch.out")"
+touch "${ROOT}/head-go"
 rm -f "${ROOT}/agents.json"
 
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.

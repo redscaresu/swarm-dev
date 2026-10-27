@@ -1,5 +1,5 @@
 ---
-status: active
+status: split
 hld: 2026-10-25-swarm-dev-0-28
 stage: v0.29.0
 depends_on: [stage-gating, test-speed, clash-by-part, no-agent-alert, liveness-signals]
@@ -8,6 +8,8 @@ depends_on: [stage-gating, test-speed, clash-by-part, no-agent-alert, liveness-s
 # Less work and noise per story
 
 Less work and noise per story: board-only PRs of three kinds skip codex, no incident for a wait on a busy agent, no nudge to a working agent, briefs show the guard's accepted forms, one helper each for the board-root path, the PR contents reader and the name cut, reconcile finishes merged stories the pull removed, and AGENTS.md carries the removal rule, the patch cadence, docs-move-with-behaviour and Appendix C's development rules. HLD Goal 9, Design § Less work, less noise and § Removing what a board sets.
+
+Split (2026-10-26) into child epics: board-pr-and-briefs, shared-helpers, dev-rules-docs, merge-agent-setup, workspace-labels, report-speed, stuck-work.
 
 **Done when:**
 - A board-only PR of kind story-scope edit, hold or finish merges on green CI with no codex-review; a plan PR and an HLD agreement PR still run it. The kind is set where board-pr and codex-review are called (commands/hld.md:79, epic.md:91, plan-epic.md:37, plan-hld.md:129; bin/lib/merge.sh:270-278), not in scripts/board-only.sh; a test per kind. The retro-file kind is retro-report's, not this epic's.

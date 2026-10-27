@@ -371,7 +371,7 @@ check "a review agent's line names swarm.sh close review-<slug>, then review-age
 
 # A tell takes its agent's role: from its start line (a review agent), or with none, from the name it
 # was told by (a conductor). Any swarm.sh next or merge on the machine holds a conductor's read
-# (resend_busy), so its polls go on until the marker is written, at most six.
+# (resend_busy), so its polls go on until the marker is written, at most twelve.
 fresh; listed review-ubr-s1:idle; pane w:p1 unsent; ev review-agent ubr-s1 "$(ago 3600)"; ev tell:nudge review-ubr-s1
 session review-ubr-s1 "$(ago 3600)"
 printf -- '---\nkind: code\nstatus: ready\nprs: https://github.com/o/r/pull/7\n---\n\n# ubr-s1\n' > "${B}/ubr-s1.md"
@@ -379,12 +379,20 @@ poll; poll
 check "a tell left unsent in a review agent's box gets a review marker and the review-agent exit" \
   test "$(cat "${ROOT}/out")|$(head -1 "${P}/.swarm/briefs/review-ubr-s1.unsent" 2>/dev/null)" \
   == "unsent brief: review-ubr-s1, exit: swarm.sh close review-ubr-s1 then swarm.sh review-agent ubr-s1 https://github.com/o/r/pull/7|review-ubr-s1 w:p1 review"
-fresh; listed conduct-ubr-e:idle; pane w:p1 unsent; ev tell:nudge conduct-ubr-e; session conduct-ubr-e
-for i in 1 2 3 4 5 6; do poll; [[ ! -e "${P}/.swarm/briefs/conduct-ubr-e.unsent" ]] || break; done
 # nexts — the swarm.sh next and merge processes running now, which hold every conductor's read.
 nexts() { ps -A -ww -o command= | awk '{ for (i = 1; i < NF; i++) if ($i ~ /swarm\.sh$/ && ($(i + 1) == "next" || $(i + 1) == "merge")) { n++; break } } END { print n + 0 }'; }
-if [[ ! -e "${P}/.swarm/briefs/conduct-ubr-e.unsent" && "$(nexts)" -gt 0 ]]; then
-  echo "skip a tell left unsent in a conductor's box: a swarm.sh next or merge on this machine held every read"
+# held: a next or merge seen around any poll. One that held every poll and ended before a single check
+# after them was a FAIL where it should skip, on a CI shard whose other files run next and merge.
+fresh; listed conduct-ubr-e:idle; pane w:p1 unsent; ev tell:nudge conduct-ubr-e; session conduct-ubr-e
+held=0
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  [[ "$(nexts)" -eq 0 ]] || held=1
+  poll
+  [[ "$(nexts)" -eq 0 ]] || held=1
+  [[ ! -e "${P}/.swarm/briefs/conduct-ubr-e.unsent" ]] || break
+done
+if [[ ! -e "${P}/.swarm/briefs/conduct-ubr-e.unsent" && ${held} -eq 1 ]]; then
+  echo "skip a tell left unsent in a conductor's box: a swarm.sh next or merge on this machine held its reads"
 else
   check "a tell left unsent in a conductor's box gets a conductor marker and the conduct exit" \
     test "$(cat "${ROOT}/out")|$(head -1 "${P}/.swarm/briefs/conduct-ubr-e.unsent" 2>/dev/null)" \
