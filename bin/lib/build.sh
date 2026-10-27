@@ -649,9 +649,9 @@ review_at_head() {
     || die "${REVIEW_CMD}: $1's worktree has uncommitted changes, so it is not the PR's head ${REVIEW_HEAD}; ${REVIEW_UNDONE}: wait for its builder to commit and push, then ${REVIEW_AGAIN}"
 }
 
-# review_pane <slug> next|recheck — dies, as review-agent --next or --recheck, unless herdr lists a
+# review_own_pane <slug> next|recheck — dies, as review-agent --next or --recheck, unless herdr lists a
 # review-<slug> this project started and this is its pane.
-review_pane() {
+review_own_pane() {
   local pane what="runs its next round"
   review_words "$1" "$2"; [[ "$2" != recheck ]] || what="runs its wording recheck"
   pane="$(agent_field "$(agent_name "review-$1")" pane_id)"
@@ -674,7 +674,7 @@ review_next() {
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --next: bad slug '${slug}' (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent --next: '${pr}' is not a PR URL (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
-  review_pane "${slug}" next
+  review_own_pane "${slug}" next
   rounds="$(review_rounds "${slug}")"; round="${rounds% *}"
   [[ "${rounds#* }" -lt "${round}" ]] \
     || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: wait for the conductor's findings tell, then run it again"
@@ -688,7 +688,7 @@ review_next() {
 }
 
 # review_recheck <slug> <PR URL> <old head> <file:line>... — review-agent --recheck: the wording recheck,
-# run by review-<slug> from its own pane (review_pane) once its builder has pushed a wording fix. <old head>
+# run by review-<slug> from its own pane (review_own_pane) once its builder has pushed a wording fix. <old head>
 # is the head review-<slug> last reviewed, as .swarm/reviews/<slug>.head records it, with that round's
 # findings file written (review_pass), and each file:line a point its ## Findings name (recheck_named), its
 # line as at <old head>. With the worktree at the PR's new head (review_at_head), it passes when
@@ -711,7 +711,7 @@ review_recheck() {
     [[ "${point}" =~ ^[^[:space:]]+:[0-9]+$ ]] || die "review-agent --recheck: '${point}' is not a file:line point (${usage})"
   done
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
-  review_pane "${slug}" recheck
+  review_own_pane "${slug}" recheck
   review_at_head "${slug}" "${pr}" recheck
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
   [[ "$(cat "${out%.md}.head" 2>/dev/null)" == "${old}" ]] \
