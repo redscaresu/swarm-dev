@@ -178,6 +178,30 @@ under Waits on the user. When \`swarm.sh merge\` refuses any other PR with \`hel
 it\` (a parent it stacks on costs money, or another \`costs:\` value), do the same: close its builder,
 leave the PR for the user and list it.
 
+When \`swarm.sh merge\` prints \`base merged: <PR URL> is now <new> (<old> with <base> merged in)\`, it
+merged nothing: code landed on <base> after <old>'s CI ran, so it had GitHub merge <base> into the
+PR's branch and checked that the new head's only new content is <base>'s. That head needs no new
+review. Run the \`swarm.sh wait-pr <PR URL>\` the line names in the background and, once it exits 0,
+the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of the findings file's head: line.
+If that CI goes red, handle it as a red check, telling the builder to pull its branch first
+(\`git pull --ff-only origin story/<slug>\`, naming the branch: its worktree tracks origin/<base>, or
+nothing when stacked): GitHub's merge commit is not in its worktree.
+When \`swarm.sh merge\` refuses with a line that ends \`merge origin/<base> in, push, and merge the new
+head\` (\`the base <base> moved past <sha>'s CI\` when GitHub could not merge it in, or a compare that
+cannot list what the base gained), it merged nothing: code may have landed on <base> after that head's
+CI ran, so the two were never tested together. This refusal is yours to handle, not the lead's. Send
+the builder a nudge with \`swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review
+round) telling it to pull its branch (\`git pull --ff-only origin story/<slug>\`), merge origin/<base>
+in, re-run the tests and push; with no
+builder, start one as the clash rule says for a conflict. Wait for the new
+head's CI with \`swarm.sh wait-pr <PR URL>\` in the background, review the new head as for any new
+head, and merge the head that review passed with \`swarm.sh merge --head <sha> <PR URL>\`, as below.
+When it refuses with \`base merge unchecked:\`, the PR's head moved and merge could not show that its
+only new content is <base>'s: a builder's push, a merge someone made by hand, or GitHub's own merge of
+<base> that touches a file the PR changed too. Review the new head as for any new head. If that review
+sends findings, tell the builder to pull its branch first (\`git pull --ff-only origin story/<slug>\`):
+the new head may be a merge commit its worktree does not have, and its push would be refused.
+
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
@@ -775,18 +799,35 @@ EOF
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: read-only, the
-# story's touches and Done when, codex-review with the slug, /code-review on round 1 when the PR changes code, the
-# project's rules, and each finding written to the absolute <findings file> (the agent's cwd is the
-# worktree) under its head: line, with work outside the story listed apart for the conductor to decline.
+# story's touches and Done when, the green step first (wait-pr, then triage of the PR's check-run notes
+# and code-scanning alerts as green_rule's, each real one, red check or conflict sent to the builder as a
+# nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
+# or when the builder stops pushing, it writes a findings file with the red check as its one finding,
+# which the conductor's review rules send to the builder), codex-review with the slug, /code-review on round 1
+# when the PR changes code, the project's rules, and each finding written to the absolute <findings
+# file> (the agent's cwd is the worktree) under its head: line, with work outside the story listed apart
+# for the conductor to decline. Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
-  local story="${BOARD}/stories/$1.md" rules cr
+  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" repo ladder=""
   cr="This is review round $6 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
   [[ "$6" != 1 ]] || cr="This is review round 1 of the story. When the PR
 changes code (not only docs, board files or a dependency bump), state the touches and Done when
 above, then run \`/code-review $2\`."
+  sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
+  # findings takes the story's repo by name; a story with no repo: is in the project's own.
+  repo="$(fm "${story}" repo)"; [[ -n "${repo}" ]] || repo="$(basename "${PROJECT_DIR}")"
+  # Only with the ladder on does a wait-pr from this pane step the build up (review_red_scan).
+  [[ -z "${CFG_escalate_ladder:-}" ]] || ladder="
+  When it also prints \`stepped up: $1\`, the build's red heads handed it to the next model on the
+  escalation ladder, and $5 is gone: send no nudge; write ${4} with the Write tool holding two lines,
+  \`head: $5\` and \`head moved: <that stepped up: line>\`, then stop. When it prints
+  \`step-up failed: $1\` instead, the builder was closed and no new one runs, so no nudge can reach
+  it: write ${4} with the Write tool holding \`head: $5\`, a \`## Findings\` heading with that
+  \`step-up failed:\` line as its one item, and a \`## Out of scope\` heading with \`none\`, then stop."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. You are read-only: never edit,
-commit or push here, and never merge, by any route. The one file you write is ${4}.
+commit or push here, and never merge, by any route. The files you write are ${4} and, to nudge the
+builder, ${nudge}.
 
 The story touches: $(fm "${story}" touches)
 
@@ -795,6 +836,32 @@ $(story_items "${story}" 'Done when')
 
 Judge the PR against these touches and items. ${SCOPE_RULE}
 $(review_stack_note "$1" "$3")
+Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr $2\` in the
+background and wait for it to exit, never a loop of your own; it prints the head it waits on first.
+- Exit 0: the head counts green only once you have triaged what \`${sw} findings ${repo} ${2##*/}\`
+  prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning
+  alerts. Nudge the builder with each real one. Rebut the rest with a reason in the PR
+  (\`gh pr comment $2 --body '<the reason>'\`), unless a comment there already rebuts it: scanners
+  often flag a name, not a value. Never dismiss an alert.
+- Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in.${ladder}
+- Its other exit 2s print why. On a timeout or no check runs, read the checks once (\`gh pr checks $2\`):
+  nudge the builder when a workflow never started, else run wait-pr again. On a gh error, run it again.
+To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: the Write tool refuses
+to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
+to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
+When tell says the builder is still working, wait for it with \`${sw} wait $1\` in the background,
+then tell it. After each nudge, wait for the builder the same way, then wait for green again on the
+head it pushed. The green step is bounded: at most two nudges, and at most two heads that wait-pr
+calls red. Stop with the not-green file when the builder goes idle without pushing (wait-pr prints
+the same head), when wait-pr ends the same way twice, when the second red head would need a nudge, or
+when the head after your second nudge is not green. The not-green file is ${4}, written with the
+Write tool: \`head: $5\`, then a \`## Findings\` heading with one line for the builder,
+\`wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>\`, then a
+\`## Out of scope\` heading with \`none\`. The conductor sends it to the builder as a findings round,
+as any finding. Reply with the same, then stop. Once a head is green and triaged with nothing to
+nudge, review it as below when it is $5. When the builder pushed past $5, write ${4} with the Write
+tool holding two lines, \`head: $5\` and \`head moved: <the green head>\`, then stop.
+
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
 Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
@@ -978,11 +1045,14 @@ EOF
 swarm.sh steps a build up the escalation ladder (${CFG_escalate_ladder}) itself when its builder
 stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${STEP_UP_FINDINGS} of its build
 (tell), or its PR's checks go red on ${STEP_UP_RED_HEADS} heads of its build (\`watch --epic\` or
-\`--backlog\`). That command then prints \`stepped up: <slug>\` (wait prints it in place of
-\`stalled:\`): the next model carries on in the same worktree and branch. Do not close, retry or
-tell that story for it; wait on its builder again. A \`step-up failed: <slug>\` line means the
+\`--backlog\`, or the review agent's \`wait-pr\` from its own pane). That command then prints
+\`stepped up: <slug>\` (wait prints it in place of \`stalled:\`): the next model carries on in the
+same worktree and branch. Do not close, retry or tell that story for it; wait on its builder again.
+A review file whose \`head moved:\` line names \`stepped up:\` is the review agent reporting one
+from its \`wait-pr\`: the PR's head has not moved, so do not start the review again; wait on the
+builder, then start the review on the head it pushes. A \`step-up failed: <slug>\` line means the
 step-up stopped after closing the builder. Leave that story alone: \`wait --lead\` tells the lead,
-so it does not go in your report.
+so it does not go in your report. A review file whose one finding is that line is the same case.
 EOF
   local rules sign; sign="$(sign_rule)"
   [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"

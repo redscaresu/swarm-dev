@@ -157,6 +157,12 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the last tag is under an agreed HLD that lists `release`.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
+- Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
+  does not merge it while the base has commits the PR's head lacks that change more than board files.
+  It has GitHub merge the base into the PR's branch, checks that the new head adds only the base's
+  commits, and stops with a `base merged:` line. Under `merge = agent` the conductor waits for that
+  head's CI and merges it. When GitHub cannot merge the base in (a conflict, say), the builder does,
+  and the conductor reviews and merges the new head ([reference.md § Merging](docs/reference.md#merging)).
 - Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
   holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
   PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).
@@ -186,6 +192,10 @@ An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage
 Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:` line. Once its
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
+
+On a board inside the project's repo, an agreed HLD must end with a line that is exactly
+`## Epics`, followed only by blank lines and links `- [<slug>](../epics/<slug>.md)` to epics on the
+board. `next` offers no `/plan-hld` for any other HLD, and the gate says what to change.
 
 On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
 `next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
