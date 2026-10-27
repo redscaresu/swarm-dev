@@ -48,6 +48,26 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   another worktree), and when git cannot remove the worktree (giving git's reason). Origin's
   branch goes first, so when its delete fails the local state is still there for the next run.
 
+**Board PR kinds.** `open` names the PR's kind from its name, on stderr; its stdout stays the URL
+alone. Only a plan or an agreement PR gets a codex review, and only when its name names an HLD or
+epic in the PR's worktree (by the file name lower-cased, each run of characters other than `a-z`
+and `0-9` one `-`, trimmed). A story slug that starts the same way, such as `plan-hld-gaps`, is a
+story-scope edit:
+
+- plan: `plan-<hld>` (`/plan-hld`) and `scope-<epic>` (`/plan-epic`). It needs one
+  `swarm.sh codex-review` pass before it merges, which those commands run before `open`.
+- agreement: `agree-<hld or epic>`, the HLD or epic the user agreed (`/hld` and `/epic` step 5).
+  One `swarm.sh codex-review` pass before it merges, which those commands run before `open` too.
+- finish: `finish-<slug>` and `drop-<slug>`, which `swarm.sh finish` and `swarm.sh drop` open. No
+  codex-review.
+- hold: `hold-<slug>`. No codex-review. (`swarm.sh hold` itself only logs.)
+- story-scope edit: any other name, such as a re-scope, `stage-v<x-y-z>` or `check-<kind>`. No
+  codex-review.
+
+The line names no way to land the PR: `merge`, the HLD's grants and `costs:` decide who runs
+`swarm.sh merge --board` (§ Merging). `merge --board` runs no codex for any kind and keeps its CI
+gate: a PR whose head is not green is refused.
+
 Each step logs one `events.tsv` line, `board-pr:start`, `board-pr:open` or `board-pr:done`, with
 the name and `ok` or the refusal. The name may be a story's slug, so these lines are never a sign
 of life for that story's builder.
@@ -383,7 +403,7 @@ sits above the epic: HLD, then epics, then stories. It is optional; a single epi
 3. **Say it is ready.** A reviewer (the `hld-review` role) attacks the draft, its `grants:` included:
    each grant hands agents a step you take today, so it names what goes wrong if the grant is
    misused. Its findings arrive in the co-author's pane.
-4. **Agree it.** Your session sets `status: agreed`, opens a board PR with one codex pass, and
+4. **Agree it.** Your session sets `status: agreed`, opens the board PR `agree-<hld>` with one codex pass, and
    closes the panes. Only you agree an HLD, and only you set `superseded`, by hand, when a newer
    one replaces it. Nothing plans a draft.
 
@@ -473,7 +493,7 @@ and line of code after it is for, so you write it with a co-author.
    co-author's pane; go through them there and revise until you are satisfied. You never switch
    tabs.
 4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: active`,
-   opens a PR for the epic (reviewed like any other change), and closes the co-author's pane. Only
+   opens the board PR `agree-<epic>` with one codex pass, and closes the co-author's pane. Only
    you can agree an epic; no agent changes its status, and `next` plans no draft epic.
 5. **Hand over.** Run `/swarm-dev:swarm`. It sees an active epic with no stories and starts
    `/plan-epic`.
@@ -1753,7 +1773,16 @@ the end of the window. A build with no session log yet starts at 00:00 on its `a
 no earlier than the build before it ended. Such a build counts as built since its story went ready,
 unless a close readied the story. A conductor runs as `held_min` reads it: from an ok `conduct`
 event until the next one, a close of its agent or its report. A backlog run ends on a close of
-`conduct-backlog` or of the project's own backlog conductor name.
+`conduct-backlog` or of the project's own backlog conductor name. Stories count by their full slug
+and conductors by their exact name. A close may name an agent by herdr's name, and a build with no
+session log has only `agents.tsv`'s. Both are agent names, cut to 32 characters, with an `s` in
+front of a slug that starts with a digit. Such a name counts as the one record whose agent name it
+is. The records are the board's stories and those its history deleted, the briefs, `conduct-<epic>`
+for each ok `conduct` event, the slugs session logs name, and the targets of `unblock`, `reset`,
+`reconcile`, `review` and `kept` events. With no record, or two, the name stays as it is, so two
+slugs that share their first 32 characters never merge. A build with no session log under a name
+two or more records share may be any of theirs. While it runs, none of those stories waits idle,
+and any other story clashes with what each of them touches.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying

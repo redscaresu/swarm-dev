@@ -21,10 +21,22 @@ def escalate_build(result, model):
     m = STEP_UP.fullmatch(result)
     return re.fullmatch(r"ok \(attempt \d+\)", result) is not None or (m is not None and m.group(3) == model)
 
+AGENT_NAME_MAX = 32   # bash AGENT_NAME_MAX: herdr's name for an agent is cut to this many characters
+
 def agent_name(n):
     # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
     n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
-    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:AGENT_NAME_MAX]
+
+def cut_records(names):
+    # bash cut_record over many names at once: each agent name -> the one full name in <names> that
+    # agent_name gives it, or None when two or more share it, since herdr's name then never says whose
+    # it is. A name AGENT_NAME_MAX long may be a cut, so <names> are only names known to be full.
+    by = {}
+    for n in set(names):
+        c = agent_name(n)
+        by[c] = None if c in by else n
+    return by
 
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
