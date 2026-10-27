@@ -61,9 +61,12 @@ check "status: the child of a kind: lead parent is blocked by one no agent build
 rm -rf "${dir}"
 
 # A by-hand blocked parent of a kind an agent builds: finish would close it unbuilt, so no also: line.
+# Only the lead readies it all the same, so status says no agent builds it.
 board "item stories/hand.md 'status: blocked' 'kind: code'" \
   "item stories/child.md 'status: blocked' 'kind: code' 'depends_on: [hand]'"
 check "next: a by-hand blocked kind: code parent gets no also: line" "" "$(also "$(nxt)")"
+check "status: the child of a by-hand blocked kind: code parent is blocked by one no agent builds" \
+  "  blocked: child (by hand, which no agent builds)" "$(blocked "$(sts)" | grep child)"
 rm -rf "${dir}"
 
 # A by-hand blocked parent in a later or draft epic is the user's: no also: line.
