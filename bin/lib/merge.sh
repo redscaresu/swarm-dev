@@ -165,7 +165,7 @@ merge_gone() {
 # and head); any other line as it is.
 unticketed_why() {
   local re='^cannot read (.+) at the (base|head)$' ref="${base}"
-  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }
+  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }   # loose-match: ok re is a fixed regex
   [[ "${BASH_REMATCH[2]}" == base ]] || ref="${head:0:7}"
   echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}"
 }

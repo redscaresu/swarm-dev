@@ -722,7 +722,7 @@ staged_chain() {
 stage_of() {
   local v="$1" dq='^"(.*)"$' sq="^'(.*)'\$"
   v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
-  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi
+  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi   # loose-match: ok dq and sq are fixed regexes
   if [[ -z "${v}" ]]; then echo -
   elif [[ "${v}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then echo "${BASH_REMATCH[1]}"
   else echo bad; fi
@@ -1041,7 +1041,7 @@ epic_links() {
   local l re='^- \[([A-Za-z0-9._-]+)\]\(\.\./epics/([A-Za-z0-9._-]+)\.md\)$'
   while IFS= read -r l || [[ -n "${l}" ]]; do
     [[ -z "${l//[[:blank:]]/}" ]] && continue
-    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1
+    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1   # loose-match: ok re is a fixed regex
   done
 }
 
@@ -1063,7 +1063,7 @@ epics_last() {
 plan_head() {
   local h n re='^planned: [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   h="$(planned_lines "$2")"
-  [[ "${h}" =~ ${re} ]] || return 1
+  [[ "${h}" =~ ${re} ]] || return 1   # loose-match: ok re is a fixed regex
   [[ "$(hld_due "$1")" == plan ]] || return 1
   n=$(( $(hld_top "$1" | wc -l) ))
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links "$3"

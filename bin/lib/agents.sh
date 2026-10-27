@@ -258,7 +258,8 @@ story_env() {
   local v n words out="" exported list='^\[[^][]*\]$' epic
   v="$(get_fm "$1" env)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   # An empty env: is no names, unless - items follow it (a block list, at any indent).
-  if { [[ -n "${v}" ]] && [[ ! "${v}" =~ ${list} ]]; } || { [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit }
+  if { [[ -n "${v}" ]] && [[ ! "${v}" =~ ${list} ]]; } ||   # loose-match: ok list is a fixed regex
+      { [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit }
       n == 1 && bare && /^[ \t]*-([ \t]|$)/ { f = 1; exit } n == 1 { bare = /^env:[ \t]*(#.*)?$/ } END { exit !f }' "$1"; }; then
     echo "$1: env: is not a one-line list; write it as env: [NAME, ...]"; return 1
   fi
@@ -1314,14 +1315,14 @@ settle() {
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
   [[ -z "${wake}" ]] || hold=$(($(now_ms) + STALL_POLL_MS))
-  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do
+  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do   # loose-match: ok SETTLED is a fixed regex
     t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
     if [[ ${end} -gt ${t0} ]]; then
       herdr agent wait "${target}" --timeout $((end - t0)) >/dev/null 2>"${err}" || timed_out "${err}" || rc=1
     fi
     state="$(session_state "${name}")"
     [[ "${state}" =~ ^(idle|unknown)$ ]] || hold=0
-    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi
+    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi   # loose-match: ok SETTLED is a fixed regex
     if [[ ${rc} -ne 0 ]]; then cat "${err}" >&2; break; fi
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
