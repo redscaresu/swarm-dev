@@ -2097,8 +2097,13 @@ check that went red, or, when the base requires checks, of each of those (a fix 
 failed job; a path filter may skip a check the base does not require). Until then, while the story is buildable (ready, `kind: code`: one escalated or held for the lead goes
 to the lead's queue instead) with no build of it, `next` names
 `fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
-from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
-pane it cannot identify is refused.
+from a pane this project did not start (the lead's), from a conductor's with `merge = agent`, or
+from `review-<slug>`'s for a PR on story `<slug>`'s `prs:` line, without `--board` or `--release`.
+It refuses a pane it cannot identify. It takes a pane as `review-<slug>`'s only when every tab
+record for the pane names `review-<slug>` (a retired `-done` name does not count) and the newest
+`.swarm/agents.tsv` line for that name has role `review`. The builder of a story slugged `review-x`
+has a builder's role there, so it is refused. Under `merge = human` a review agent merges only where
+the HLD grants `merge`, as the lead does.
 
 The plugin also ships a merge guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
 `hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. Inside a swarm
