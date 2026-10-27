@@ -29,7 +29,7 @@ edit to a story goes through `swarm.sh board-pr` too (its brief says so). `swarm
 `swarm.sh merge --board <url>` that lands it: run that, or with `merge = human` hand the PR to the
 user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. An edit, a hold
 (`hold-<slug>`) or a finish PR gets no `swarm.sh codex-review`: it lands on green CI alone. Only a
-plan PR (`plan-<hld>`, `scope-<epic>`) or an agreement PR (`agree-<slug>`) gets one codex-review
+plan PR (`plan-<hld>`, `scope-<epic>`) or an agreement PR (`agree-<hld or epic>`) gets one codex-review
 pass before it merges; `board-pr open` names the PR's kind on stderr. A `costs: money`
 PR, or one stacked on one, stays the user's to merge, grant or not. Once it has merged, `swarm.sh board-pr done <that name>` clears its worktree away.
 

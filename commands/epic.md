@@ -21,8 +21,25 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    the title: lowercase it, turn every run of characters other than `a-z` and
    `0-9` into one `-`, and trim `-` from both ends (`Add rate-limiting (v2)!` is
    `add-rate-limiting-v2`). If the slug is empty or `backlog` (the name `conduct --backlog` uses),
-   stop and ask the user for another title. If `docs/epics/<slug>.md` exists (or an epic with this
-   title does) and is `status: draft`, resume it. If it exists with any other status, it is live
+   stop and ask the user for another title. `<name>` below is the slug made clean the same way
+   (lower-cased, each run of characters other than `a-z` and `0-9` one `-`, `-` trimmed from both
+   ends), since `board-pr` refuses any other name.
+
+   First look for an agreement of this epic still waiting, which may have moved a new draft out of
+   the main checkout (step 5): when the branch `board/agree-<name>` exists here or on origin
+   (`git show-ref -q --verify refs/heads/board/agree-<name>`, `git ls-remote --exit-code origin
+   refs/heads/board/agree-<name>`), read its PR (`gh pr list --head board/agree-<name> --state all
+   --json state,url`). An open PR means the user agreed this epic and it waits on that PR: tell them
+   so with its URL, and stop. A merged one: run `swarm.sh board-pr done agree-<name>` and
+   `swarm.sh reconcile`, which pulls the agreed epic, and go on below, where it is live.
+   A closed one: write the epic back from the branch first, as `status: draft` with no `agreed:` line, over
+   any copy in the main checkout, since the branch holds the latest draft (`git diff --name-only
+   origin/<base>...board/agree-<name>`
+   names its path; `git show board/agree-<name>:<path> > <path>`, from `origin/board/agree-<name>`
+   when only origin has the branch), then run `swarm.sh board-pr done agree-<name>` and go on below.
+
+   If `docs/epics/<slug>.md` exists (or an epic with this title does) and is `status: draft`,
+   resume it. If the epic exists with any other status, it is live
    (active, later, review or done) and not for co-writing: stop, say so with its status, and let
    the user pick another title. Otherwise create `docs/epics/<slug>.md` with this skeleton:
 
@@ -88,17 +105,19 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
    `status: active`; nothing plans a draft epic. The same edit writes
    `agreed: <YYYY-MM-DD>` (today's date) into the front matter. When the board is in the project's
-   repo, make that edit in a board PR named `agree-<slug>`. Run `swarm.sh board-pr start
-   agree-<slug>`; the worktree it prints starts from origin's base. When the base lacks
+   repo, make that edit in a board PR named `agree-<name>`. Run `swarm.sh board-pr start
+   agree-<name>`; the worktree it prints starts from origin's base. When the base lacks
    `docs/epics/<slug>.md` (a new draft), move the agreed file from the main checkout into the
    worktree with `mv`, so no copy is left to block the pull once the PR merges. When the base has
    it, copy it over the worktree's, then put the main checkout's copy back as the base has it (`git
    show origin/<base>:docs/epics/<slug>.md > docs/epics/<slug>.md`), since edits left there block
    the pull too. Make the edit in the
-   worktree, run `swarm.sh board-pr open agree-<slug> "<title>" <body-file>`, which commits with the
+   worktree, run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the
    brief's trailers and signing, then run one `swarm.sh codex-review` pass in the worktree before it
    merges (`board-pr open` again pushes its fixes). A board outside the project's repo is edited where it is. Close the co-author and the reviewer (if it started) by name
    (`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`; never `swarm.sh close
    epic`, which would close every tab whose label starts `epic-`), and tell the user the epic is agreed and
    that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`): once its board PR has merged, or at
-   once on a board outside the project's repo.
+   once on a board outside the project's repo. Once that PR has merged or closed, `swarm.sh board-pr
+   done agree-<name>` removes its worktree and branch (step 1 runs it on the next `/epic` of this
+   epic, or run it then).

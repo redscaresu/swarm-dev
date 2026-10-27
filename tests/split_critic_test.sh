@@ -59,6 +59,8 @@ git init -q --bare "${ROOT}/origin.git"; git -C "${ROOT}/origin.git" symbolic-re
 git -C "${P}" init -q -b main && git -C "${P}" add -A && git -C "${P}" commit -qm init
 git -C "${P}" remote add origin "${ROOT}/origin.git" && git -C "${P}" push -q -u origin main
 sw() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+# sw_out <args> — sw's stdout alone: board-pr open's kind line goes to stderr, its URL to stdout.
+sw_out() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2> "${ROOT}/sw.err"); }
 critics() { grep -c $'\tcritic\tsplit-critic\t' "${P}/.swarm/agents.tsv" 2>/dev/null || true; }
 echo "Check the split of docs/epics/big.md." > "${ROOT}/brief.md"; echo "The board edit." > "${ROOT}/body.md"
 
@@ -72,14 +74,14 @@ is "the refusal is the die alone, with no shell error for the missing file" "swa
 sw agent scope-big split-critic "${P}" critic "${ROOT}/brief.md" >/dev/null
 is "the split critic starts as a critic agent" 1 "$(critics)"
 is "the critic wrote split-critic.json" '{"findings":[{"kind":"split-gap","why":"w","fix":"f"}]}' "$(cat "${P}/.swarm/big/split-critic.json" 2>/dev/null)"
-is "after the critic answered, the split's board PR opens" "${URL}" "$(sw board-pr open scope-big "Split big" "${ROOT}/body.md" | tail -n 1)"
+is "after the critic answered, the split's board PR opens" "${URL}" "$(sw_out board-pr open scope-big "Split big" "${ROOT}/body.md")"
 
 # --- The medium epic: its board PR opens with no critic. That the medium path starts none is the
 # lead's to follow: plan_epic_test's medium-no-split-critic greps it, and the large path's critic is
 # enforced by board-pr open's refusal above.
 W="$(sw board-pr start scope-med)"
 mkdir -p "${W}/docs/stories"; printf -- '---\nkind: code\nstatus: ready\nepic: med\n---\n\n# med-a\n' > "${W}/docs/stories/med-a.md"
-is "a medium epic's board PR opens" "${URL}" "$(sw board-pr open scope-med "Plan med" "${ROOT}/body.md" | tail -n 1)"
+is "a medium epic's board PR opens" "${URL}" "$(sw_out board-pr open scope-med "Plan med" "${ROOT}/body.md")"
 
 # The critic's brief comes from commands/plan-epic.md, which the stubs above do not read: pin its line,
 # in the large-epic paragraph, and the **Areas:** line it reads.
