@@ -246,11 +246,24 @@ epic_guard() {
   done <<< "${files}"
 }
 
-# merge_hold <pr-url> — stop merge when pr_held holds the PR for the user.
+# merge_hold <pr-url> — stop merge when pr_held holds the PR for the user. Then, with merge = agent on
+# the story route (merge_pr's local only empty), when the PR changes a protected path (protected_paths),
+# a renamed file's old path too, read as <base>...<head> (ci_gate files-status on merge_pr's locals
+# repo, n, changed, base and head), so a push after the pin cannot hide one. A file list it cannot read
+# holds it too. Either hold names the first story listing the PR (pr_stories), else the URL. --board
+# and --release change only board paths or plugin.json, never a protected path; with merge = human
+# merge_grant has already refused such a PR (pr_hld puts it under no HLD), so no file is read.
 merge_hold() {
-  local why
+  local why s
   why="$(pr_held "$1")"
   [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it"; }
+  [[ "${CFG_merge}" == agent && -z "${only}" ]] || return 0
+  s="$(pr_stories "$1")" || s=""
+  s="${s%%$'\n'*}"; s="${s:-$1}"
+  why="$(ci_gate files-status "${repo}" "${n}" "${changed}" "${base}" "${head}")" \
+    || { MERGE_TARGET="${s}"; merge_fail "held: ${s} (its files at ${head:0:7} could not be read: ${why#error }, so whether it changes a path only the user merges is unknown); the user merges it"; }
+  why="$(cut -d' ' -f2- <<< "${why}" | protected_paths)"
+  [[ -z "${why}" ]] || { MERGE_TARGET="${s}"; merge_fail "held: ${s} changes ${why%%$'\n'*}, which only the user merges; the user merges it"; }
 }
 
 # merged_state <pr> <owner/repo> — "<state> <merge commit>" once the PR reads MERGED with one, read up
@@ -273,7 +286,9 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
-# story or stacked parent costs money is the user's; with merge = human and no --release, merge_grant
+# story or stacked parent costs money is the user's; and on this route, its files at the pinned head
+# change no protected path (merge_hold: .claude/, .github/, hooks/ or a root Makefile, a renamed
+# file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the
 # board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
 # with no ticket (epic_unticketed, under either merge mode); with --release: the PR is in the
