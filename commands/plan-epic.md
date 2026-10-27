@@ -12,7 +12,7 @@ decompose it yourself in one pass, except for a small epic (step 0). Requires he
 stop. If `$1` is empty, list `docs/epics/*.md` (not the README) and ask which. If the epic does not
 exist, help the user write it from `docs/epics/README.md` first.
 
-Every agent writes its answer as JSON to `.swarm/$1/<name>.json` — the only file it may write —
+Every agent writes its answer as JSON to `.swarm/$1/<name>.json` — with its `.json.partial`, the only files it may write —
 and replies with that path. Put each prompt below in `.swarm/briefs/<name>.md`, then:
 
     swarm.sh agent scope-$1 <name> "$PWD" <role> .swarm/briefs/<name>.md
@@ -25,12 +25,12 @@ renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` fo
 `wait` printed `auth`, and wait on each again in the background.
 
 **Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
-its output file. If it exists (a `.partial` file is an unfinished run: ignore it), parses as JSON and is newer than `docs/epics/$1.md`, reuse it and do not
+its output file. If it exists (a `.partial` file is an unfinished run, not a result: start the agent, which carries on from it), parses as JSON and is newer than `docs/epics/$1.md`, reuse it and do not
 start that agent again; an older one belongs to a previous plan, so start the agent. A resume also starts a skeptic for each story the critic's file moves to `risk: high` that has no skeptic file yet.
 
 Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; read it first.
-Read-only — write nothing except your output file, never commit, never touch real cloud or
-credentials. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.*
+Read-only — write nothing except your output file and its `.partial`, never commit, never touch real cloud or
+credentials. If `<output>.partial` exists, a run was cut off: start from it and carry on, do not redo it. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.*
 
 **0. Size** — judge the epic from its **Done when**. An epic of at most 3 stories with no `risk: high` is
 planned by the lead alone: you write the stories in a board-PR worktree (`swarm.sh board-pr start scope-$1`),
@@ -90,7 +90,7 @@ tell you which of the two broke something, and cannot be rolled back one half at
   `gh auth status` first, which fails inside codex's sandbox, and codex then stops without reviewing.
 - one `critic`, role `critic`, given the `depends_on` graph and the waves: what the plan missed — a change the epic's
 **Done when** needs that no story makes, an unrespected constraint, a test or doc nobody updates, a
-  real-cloud step hidden inside an agent story. For every story, skeptic or not, it also checks: a story that should carry `risk: high` (real cloud, teardown, credentials, a safety path) and does not, a `touches` clash inside a wave, a bare-file `touches` entry in a story that changes only part of the file (the finding names the `file:part` entries to write instead), a `depends_on` story that shares no `touches` part with it and that its `needs` does not name, for each dependency (disjoint touches: drop the dependency, or name it in `needs`), and a `needs` entry that names nothing the dependency's own scope adds (a file or function it creates or changes), a wrong `kind` (an agent story that needs real cloud, credentials or a person), and a missing or wrong `costs: money` (a story whose merge can spend money). A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words for the whole-plan part, plus one short line for each story that has a problem. Output `{findings:[...], stories:[{slug, why}]}`. A story moved to `risk: high` in review (by the critic or this session) gets its `skeptic-<slug>` before the report, within the cap of five.
+  real-cloud step hidden inside an agent story. For every story, skeptic or not, it also checks: a story that should carry `risk: high` (real cloud, teardown, credentials, a safety path) and does not, a `touches` clash inside a wave, a bare-file `touches` entry in a story that changes only part of the file (the finding names the `file:part` entries to write instead), a `depends_on` story that shares no `touches` part with it and that its `needs` does not name, for each dependency (disjoint touches: drop the dependency, or name it in `needs`; a `kind: lead` dependency's **You:** step counts as the need), and a `needs` entry that names nothing the dependency's own scope adds (a file or function it creates or changes, or a `kind: lead` dependency's **You:** step), a wrong `kind` (an agent story that needs real cloud, credentials or a person), and a missing or wrong `costs: money` (a story whose merge can spend money). A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words for the whole-plan part, plus one short line for each story that has a problem. Output `{findings:[...], stories:[{slug, why}]}`. A story moved to `risk: high` in review (by the critic or this session) gets its `skeptic-<slug>` before the report, within the cap of five.
 
 **Then report**, in this order: which stories had a skeptic (or "no skeptic: no `risk: high` story"); refuted stories and why, with the critic's per-story problem lines beside them; contradictions; codex and critic findings
 the plan does not answer; the surviving stories with `kind`, `estimate_lines`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain (this session checks chain depth over the whole graph, since skeptics run only on `risk: high` stories); then **What you will do**: every `lead`
