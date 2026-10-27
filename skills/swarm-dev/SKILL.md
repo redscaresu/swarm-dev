@@ -17,7 +17,7 @@ run inside herdr (`HERDR_ENV=1`), as does `swarm.sh conduct`. `swarm.sh init`, `
 `config`, `flow`, `version` and `update` work outside herdr too.
 
 1. `swarm.sh init` creates the board, `.claude/swarm/`, a CI workflow and a pre-commit hook. It
-   never overwrites a file.
+   never overwrites a file, except a `Board.base` that is a past template nobody edited.
 2. The user runs `claude` in that folder once and accepts the trust prompt. Only the user can do
    this; never accept it for them.
 3. `/epic <title>` opens a co-author pane. The user writes the draft epic there and agrees it.

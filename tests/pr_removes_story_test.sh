@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # pr_removes_story_test.sh — a builder's PR takes its story off an in-repo board, and the epic with its
 # last story; finish and drop on an in-repo board delete through a board PR and leave the main checkout
-# alone, and finish <hld> only once the HLD is planned and no epic names it; on an external board
+# alone, and finish <hld> only once the HLD is planned and no epic names it; once a drop's board PR
+# merges, reconcile only drops the story's state; on an external board
 # finish deletes in place; the conductor's brief and /swarm send story
 # edits through board-pr. gh is a stub on PATH that logs to gh.log and creates a PR, which pr list
 # then lists as open on its head; origin is a local bare repo.
@@ -132,6 +133,19 @@ is "drop: opens a second board PR" 2 "$(grep -c '^pr create' "${ROOT}/gh.log")"
 is "drop: the board PR deletes the story, on board/drop-esc" "D	board/stories/esc.md" "$(git -C "${ROOT}/origin.git" diff --name-status main board/drop-esc)"
 is "drop: the PR is titled with the verb and the reason" yes "$(has "--head board/drop-esc --title Drop esc: no longer needed --body-file" "$(cat "${ROOT}/gh.log")")"
 is "drop: prints the merge --board line" yes "$(has "land it: swarm.sh merge --board ${URL}" "${out}")"
+
+# --- The drop's board PR merges and reconcile pulls it. esc, with no merged PR of its own, only loses
+# its state and escalated block: nothing of a build is cleared (story/esc stays) and no finish is logged.
+mkdir -p "${P}/.swarm/board-state/stories" "${P}/.swarm/escalated"
+printf '%s\n' "attempts: 2" "attempts@base:" > "${P}/.swarm/board-state/stories/esc"
+echo "**Escalated.** esc failed twice." > "${P}/.swarm/escalated/esc"
+git -C "${P}" branch -q story/esc
+git -C "${ROOT}/origin.git" update-ref refs/heads/main refs/heads/board/drop-esc   # the board PR, merged
+rc=0; out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_PANE_ID -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile 2>&1)" || rc=$?
+is "a dropped story's board PR merged: reconcile pulls it, and esc's file is gone" "0 gone" \
+  "${rc} $([[ -e "${B}/stories/esc.md" ]] && echo there || echo gone)"
+is "esc only loses its state and escalated block: story/esc stays, and no finish is logged" "gone gone branch none" \
+  "$([[ -e "${P}/.swarm/board-state/stories/esc" ]] && echo there || echo gone) $([[ -e "${P}/.swarm/escalated/esc" ]] && echo there || echo gone) $(git -C "${P}" show-ref -q --verify refs/heads/story/esc && echo branch) $(awk -F'\t' '$2 == "reconcile" && $3 == "esc" { n++ } END { print (n ? "logged" : "none") }' "${P}/.swarm/events.tsv")"
 
 # --- A story that is not on origin/main (an unmerged board PR adds it): refused with the reason, and
 # the worktree and branch the run started are gone, so a second run fails the same way.

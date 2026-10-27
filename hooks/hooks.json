@@ -18,12 +18,12 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" working",
-            "timeout": 5
+            "timeout": 30
           },
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/user-caught-reminder.sh\"",
-            "timeout": 5
+            "timeout": 30
           }
         ]
       }
@@ -34,7 +34,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" working",
-            "timeout": 5
+            "timeout": 30
           }
         ]
       }
@@ -45,7 +45,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" idle",
-            "timeout": 5
+            "timeout": 30
           },
           {
             "type": "command",
@@ -61,7 +61,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" idle",
-            "timeout": 5
+            "timeout": 30
           }
         ]
       }
@@ -73,7 +73,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" blocked",
-            "timeout": 5
+            "timeout": 30
           }
         ]
       }
@@ -85,7 +85,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" idle",
-            "timeout": 5
+            "timeout": 30
           }
         ]
       }
@@ -96,7 +96,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" release",
-            "timeout": 5
+            "timeout": 30
           }
         ]
       }
