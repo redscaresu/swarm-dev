@@ -2346,6 +2346,16 @@ name, so a record left over after the agent exited or was retired is refused. Th
 has a builder's role there, so it is refused. Under `merge = human` a review agent merges only where
 the HLD grants `merge`, as the lead does.
 
+`swarm.sh review <slug> <PR URL>...` sends the story's running conductor (the backlog conductor, for
+a story with no epic) a note too, as a story merge does, when it puts a story in review with
+`merge = human`, or a story with `costs: money` (or any `costs:` value but `none`) with
+`merge = agent`. The note says the story is in review and its PRs now wait to be merged; it does
+not say who merges them. No note goes for a review held on an open parent, for an epic's review, for
+a story the swarm merges itself with `merge = agent`, or when the conductor ran the review itself.
+With no conductor running, none is written. Its herdr calls stop after `SWARM_NOTE_HERDR_WAIT`
+seconds, as a merge note's do. A herdr that cannot list its agents, or gives a list that does not
+parse, or a note that fails, is a warning and never fails the review.
+
 The plugin also ships a merge guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
 `hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. Inside a swarm
 project (a `.claude/swarm/` folder at or above the session's folder, or above its main checkout when

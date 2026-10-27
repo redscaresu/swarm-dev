@@ -631,14 +631,16 @@ live_at() {
 # ready. One that has written its report has finished (conductors_queued): nobody reads its inbox.
 # With none running, or only that one, print the ready now: line for [slugs], or nothing without
 # them. A herdr that cannot list its agents, or a tell that fails, is a warning: it never fails. It
-# runs after the PR has merged, so its herdr calls, the list here and those tell_agent makes, are
-# bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), checked to parse
-# (note_agents), so a list that does not, or a read that fails after it, is a warning, never a
-# conductor taken for gone.
+# runs after merge has merged the PR, or after review has set the story's state, so its herdr calls,
+# the list here and those tell_agent makes, are bounded (bound_herdr): neither command hangs on herdr.
+# The conductor's pane is read from that one list (herdr_from), checked to parse (note_agents), so a
+# list that does not, or a read that fails after it, is a warning, never a conductor taken for gone.
+# Without [slugs] a warning says the conductor was not told "of the merge", or NOTE_WHAT when the call
+# sets it (as review_note does).
 conductor_note() {
   local name list what="that ${3:-} are ready" later="it finds them on its next pass"
   name="$(group_conductor "$1")"
-  [[ -n "${3:-}" ]] || { what="of the merge"; later="it reads the board on its next pass"; }
+  [[ -n "${3:-}" ]] || { what="${NOTE_WHAT:-of the merge}"; later="it reads the board on its next pass"; }
   (
     bound_herdr
     if ! list="$(note_agents)"; then
@@ -656,7 +658,7 @@ conductor_note() {
 # bound_herdr — from here on in this shell, `herdr` is a function that cuts each herdr call off after
 # SWARM_NOTE_HERDR_WAIT seconds (default HERDR_LIST_WAIT): the caller's own and those of the functions
 # it calls (within runs the program, not the function). Call it in a subshell: a note goes after the
-# PR has merged, and merge must not hang on herdr.
+# PR has merged or the story is in review, and neither merge nor review may hang on herdr.
 bound_herdr() {
   # shellcheck disable=SC2329 # called by name, by what runs after it
   herdr() { within "${SWARM_NOTE_HERDR_WAIT:-${HERDR_LIST_WAIT}}" herdr "$@"; }
