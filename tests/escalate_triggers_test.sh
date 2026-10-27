@@ -273,7 +273,7 @@ for ladder in sonnet,opus,fable ""; do
     # pane, as the PR's head may be green by then; the same head, still the PR's, is.
     fresh "${ladder}" idle; review_pane
     waits w:2 "${RA}"; echo "${RC}" > "${ROOT}/head-now"; waits w:2 "${RB}"
-    first="$(stepped)|$(grep -c " ${RB} " "${P}/.swarm/red-heads.tsv")"; rm -f "${ROOT}/head-now"; waits w:2 "${RB}"
+    first="$(stepped)|$(grep -c " ${RB} " "${P}/.swarm/red-heads.tsv" || true)"; rm -f "${ROOT}/head-now"; waits w:2 "${RB}"
     check "a red head the PR has moved past by the time wait-pr ends is not scanned from the review pane; the same head, still the PR's, is" \
       "|0|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
     # The review agent has none of the story's env: names, so a step-up from its pane would be refused
