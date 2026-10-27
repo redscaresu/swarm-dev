@@ -336,7 +336,7 @@ echo story > "${ROOT}/proj-wt/_board-scope-med/board/stories/med-a.md"
 reset_log; bpr open scope-med "Plan med" "${ROOT}/body.md"
 is "a medium epic's board PR opens with no split-critic.json" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
 
-# --- An epic that goes active (new, or draft at the base) needs a ticket: agreed:, parent:, an hld:
+# --- An epic that goes active (new, or not active at the base) needs a ticket: agreed:, parent:, an hld:
 # naming an HLD agreed with grants: [epics] at both ends, or lead_epics = on. A refused PR creates no
 # PR and pushes nothing. Fixtures on origin/main go in through the old-split clone.
 NT="goes active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
@@ -362,7 +362,8 @@ on_main board/epics/fresh.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# f
 on_main board/epics/selfp.md '---\nstatus: draft\n---\n\n# selfp\n'
 on_main board/epics/pdraft.md '---\nstatus: draft\n---\n\n# pdraft\n'
 on_main board/epics/nostat.md '---\ndepends_on: []\n---\n\n# nostat\n'
-on_main board/epics/later.md '---\nstatus: later\n---\n\n# later\n'
+# was-<status>.md: an epic at each status but active (and draft, above) on origin/main.
+for st in later split review "done"; do on_main "board/epics/was-${st}.md" "---\nstatus: ${st}\n---\n\n# was-${st}\n"; done
 on_main board/epics/act.md '---\nstatus: active\n---\n\n# act\n'
 on_main board/epics/gone.md '---\nstatus: active\n---\n\n# gone\n'
 on_main board/hld/h-draft.md '---\nstatus: draft\ngrants: [epics]\n---\n'
@@ -423,6 +424,11 @@ is "a bad grant value: the refusal names the HLD, not a temp path" \
 bpr start unr; ep unr epics/e-unr.md '---\nstatus: active\n---\n'; chmod 000 "${ROOT}/proj-wt/_board-unr/board/epics/e-unr.md"
 guard_refused unr "an unreadable epic in the worktree" "cannot read board/epics/e-unr.md at the head"
 chmod 644 "${ROOT}/proj-wt/_board-unr/board/epics/e-unr.md"
+# Only active at the base goes on with no ticket: later, split, review and done need one, as a draft does.
+for st in later split review "done"; do
+  bpr start "w${st}"; ep "w${st}" "epics/was-${st}.md" "---\nstatus: active\n---\n\n# was-${st}\n"
+  guard_refused "w${st}" "${st} to active with no ticket" "was-${st} ${NT} was-${st}"
+done
 bpr start two1; ep two1 epics/a-ok.md '---\nstatus: active\nagreed: 2026-01-01\n---\n'; ep two1 epics/b-no.md '---\nstatus: active\n---\n'
 guard_refused two1 "two active epics, the ticketed one first" "b-no ${NT} b-no"
 check "the ticketed one first: the refusal does not name it" bash -c "! grep -qF a-ok '${ROOT}/err'"
@@ -436,8 +442,10 @@ bpr start fresh; ep fresh epics/fresh.md '---\nstatus: active\nagreed: 2026-02-0
 guard_opens fresh "a draft flipped to active with a new agreed: date"
 bpr start hdot; ep hdot epics/e-hdot.md '---\nstatus: active\nhld: H.dot\n---\n'
 guard_opens hdot "hld: an HLD name item_hld takes (capitals and a dot)"
-bpr start later; ep later epics/later.md '---\nstatus: active\n---\n\n# later\n'
-guard_opens later "later to active"
+# A later epic with no agreed:, parent: or hld: starts on the user's go: the lead writes agreed: <today>
+# in the edit that sets it active, as /epic does.
+bpr start later; ep later epics/was-later.md "---\nstatus: active\nagreed: $(date +%F)\n---\n\n# was-later\n"
+guard_opens later "later to active with agreed: <today>"
 bpr start act; ep act epics/act.md '---\nstatus: active\n---\n\n# act, edited\n'
 guard_opens act "a body-only edit to an active epic"
 bpr start gone; rm "${ROOT}/proj-wt/_board-gone/board/epics/gone.md"
