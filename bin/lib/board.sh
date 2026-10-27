@@ -43,13 +43,20 @@ state_value() {
   state_path "$1" "$2"
   [[ -f "${STATE_PATH}" ]] || return 1
   [[ -r "${STATE_PATH}" ]] || die "board state: cannot read ${STATE_PATH}; make it readable, or remove it to read $1 as committed"
-  awk -v k="$2" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+  state_read "${STATE_PATH}" "$1" "$2"
+}
+
+# state_read <state-file> <item-file> <key> — state_value's read of <key> from <state-file>, against
+# <item-file>'s front matter (- for stdin): its value, failing when it has no line for <key> or its
+# <key>@base: is no longer the item's value.
+state_read() {
+  awk -v k="$3" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
     FILENAME == ARGV[1] { if (!h && index($0, k ":") == 1) { v = val($0, length(k) + 1); h = 1 }
       if (!hb && index($0, k "@base:") == 1) { b = val($0, length(k) + 6); hb = 1 }
       next }
     /^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { t = val($0, length(k) + 1); exit }
-    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "${STATE_PATH}" "$1"
+    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "$1" "$2"
 }
 
 # board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
@@ -187,9 +194,11 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this (then unblocked_epic's, below) comes before its wait
 #   plan-hld <hld>    an agreed HLD with no planned: (hld_planned), no epic carrying its hld:
-#                     (hld_epics), and no plan board PR's worktree
+#                     (hld_epics) or, on a board outside the repo, only epics an interrupted run of
+#                     /plan-hld wrote and no work has started on (hld_resumable), and no plan board PR's worktree
 #                     (<repo>-wt/_board-plan-<hld>); with one, this falls through to the steps below
-#                     and the gate lists it (plan PR awaiting merge: <hld>)
+#                     and the gate lists it (plan PR awaiting merge: <hld>). One that hld_blocked
+#                     names is never offered: the gate lists it (hld cannot be planned: <hld>, <why>)
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -292,7 +301,7 @@ next_step() {
   # steps below go on, and is a gate row (waiting_on_user).
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
-    [[ "$(hld_due "${f}")" == plan ]] || continue
+    [[ "$(hld_due "${f}")" == plan && -z "$(hld_blocked "${f}")" ]] || continue
     ! hld_pr_open "${slug}" plan || continue
     echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has not been planned into epics yet: run /plan-hld ${slug}"; return
   done < <(board hld)
@@ -415,9 +424,33 @@ one_off_started() {
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
 }
 
-# idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
-# per blocked story whose depends_on story shares no touches part with it and is not in its needs:
-# (touches_rows.py --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
+# is not in its needs, and per ready story with no build past queue_minutes (touches_rows.py --idle,
+# given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR), from the board, its state
+# and events.tsv alone (and one git read of the story branches per checkout with a ready story about to
+# get a line, 5 s at most in all): no gh or herdr call.
+# next (idle_lines), wait --lead (lead_queue), status and dash each call it on every read, so a blocked
+# story's line goes once its dependency is in review or done, and a ready story's once its build starts.
+# Fails when the check does, on either kind of line: a story file reconcile removes between the
+# script's glob and its read is one way.
+idle_now() {
+  # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
+    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+}
+
+# idle_warned [<tail>] — idle_now's lines. When the check fails: no line, one `warning: the
+# idle check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
+# traceback, and exit 1, so a caller can keep what it last saw. next, wait --lead and status read it;
+# dash reads idle_now, a frame having no place for a warning.
+idle_warned() {
+  local out
+  out="$(idle_now 2>/dev/null)" || { echo "warning: the idle check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
+}
+
+# idle_lines <step> — what next prints after its step <step>: capacity no step uses. idle_now's
+# lines. And when the step leaves the builders idle (gate, done, escalated, release: no planning
 # step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
 # finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
 # quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.
@@ -425,9 +458,8 @@ one_off_started() {
 IDLE_CANDIDATES=5
 idle_lines() {
   local f found
-  # Advisory: a failed check warns, and never fails next.
-  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories" \
-    || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
+  # Advisory: a failed check warns (idle_warned), and never fails next.
+  idle_warned "next's step above stands" || true
   case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
   while IFS= read -r f; do
     if buildable_story "${f}"; then return 0; fi
@@ -439,21 +471,69 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
+# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
+# report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
+# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
+# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
+# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
+# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
+# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
+# shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
+next_reads() {
+  if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
+  herdr() {
+    if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
+      [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
+      printf '%s\n' "${LEAD_AGENTS}"; return 0
+    fi
+    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
+  }
+  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
+  claude() { report_read "claude $1" claude "$@" </dev/null; }
+}
+
+# next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
+# which next_reads' gh never sees. In a subshell, so that ci_gate ends with it.
+# shellcheck disable=SC2329 # queued_line calls it
+next_queued() (
+  ci_gate() { report_read "ci_gate $1" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@" </dev/null; }
+  conductors_queued
+)
+
 # next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
-# conductors_queued's, after its why), its release-held: line, then idle_lines' for it. Both are worked out first
+# conductors_queued's, after its why), its release-held: line, report_skipped's skipped: line, then
+# idle_lines' for it. All are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
+# Every read that can block, next_step's, conductors_queued's and conduct_ready's, runs with next_reads
+# on, within REPORT_SECONDS of the start. conduct_ready fails closed: after a cut read it starts no
+# conductor and names each one it would have started (a cut read could hide a stopped conductor). Each
+# start it makes runs without next_reads' forms, to its end however long it takes: a start cut partway
+# would leave a pane with no conductor. The writes (next_seen's, conduct_ready's events) read nothing
+# next_reads changes.
 next_report() {
-  local tmp step idle queued rest started
+  local tmp step idle queued rest started skipped
+  # Local, so the list read below never reaches a later lead_agents.
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
   tmp="$(mktemp)" || die "next: cannot make a temp file"
-  # shellcheck disable=SC2064 # the path is fixed now
-  trap "rm -f '${tmp}'" EXIT
+  report_start || die "next: cannot set the report's deadline (perl)"
+  # shellcheck disable=SC2064 # the paths are fixed now
+  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}'" EXIT
+  # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
+  # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
+  # deadline).
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  if [[ "${HERDR_ENV:-}" == 1 ]] && LEAD_AGENTS="$(report_read "herdr agent list" herdr agent list </dev/null 2>/dev/null)"; then
+    LEAD_AGENTS_OK=1
+  else LEAD_AGENTS=""; fi
+  next_reads on
   next_step > "${tmp}"
   step="$(< "${tmp}")"
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
-  queued="$(conductors_queued)"
+  queued="$(next_queued)"
   next_seen || true
   # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
   # keeps what it printed: its started: lines name conductors that run. A no-agent step while a
@@ -462,11 +542,14 @@ next_report() {
     started="$(conduct_ready)" || started+="${started:+$'\n'}warning: starting conductors for ready work failed (exit $?)"
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi
+  next_reads off
+  skipped="$(report_skipped)"
   if [[ -n "${queued}" ]]; then
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
   fi
   [[ -z "${RELEASE_HELD}" ]] || step+=$'\n'"${RELEASE_HELD}"
+  [[ -z "${skipped}" ]] || step+=$'\n'"${skipped}"
   idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
@@ -493,15 +576,23 @@ next_seen() {
 # blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
 # (kind: lead, or a legacy or unknown kind: agent_kind fails) that a blocked
 # story's depends_on names: the lead's own work that holds an agent's story up while a conductor works.
+# A blocked story with no depends_on (by hand: only the lead readies it) is named the same way, when
+# its kind is one no agent builds: the lead runs it, then finishes it.
 # An escalated story is left out (wait --lead hands it to the escalated step), and so is one with
 # after: (it waits for its epic to finish, as epic_has_stories says). Only a blocked story an agent
 # builds counts, and neither story may sit in an epic the user holds (epic_held).
 blocking_leads() {
   local f b slug blocks
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == ready && -z "$(get_fm "${f}" after)" ]] || continue
-    if agent_kind "$(fm "${f}" kind)"; then continue; fi
-    if is_escalated "${f}" || epic_held "${f}"; then continue; fi
+    [[ -z "$(get_fm "${f}" after)" ]] || continue
+    case "$(fm "${f}" status)" in
+      ready)
+        if agent_kind "$(fm "${f}" kind)"; then continue; fi
+        if is_escalated "${f}" || epic_held "${f}"; then continue; fi ;;
+      blocked) by_hand_blocked "${f}" || continue
+        if agent_kind "$(fm "${f}" kind)" || epic_held "${f}"; then continue; fi ;;
+      *) continue ;;
+    esac
     slug=$(basename "${f}" .md); blocks=""
     while IFS= read -r b; do
       [[ "$(fm "${b}" status)" == blocked && " $(story_deps "${b}") " == *" ${slug} "* ]] || continue
@@ -511,6 +602,30 @@ blocking_leads() {
     done < <(board stories)
     if [[ -n "${blocks}" ]]; then echo "also: lead ${slug} blocks${blocks}"; fi
   done < <(board stories)
+}
+
+# by_hand_blocked <story-file> — true for a blocked story with no depends_on: no merge readies it,
+# so only the lead does (blocked_why's "by hand").
+by_hand_blocked() {
+  [[ "$(fm "$1" status)" == blocked && -z "$(story_deps "$1" | tr -d ' ')" ]]
+}
+
+# lead_blocked <story-file> — true when the story is blocked and every depends_on still open is
+# work no agent builds: a hand step (not a plain slug, such as operator:<x>), a story of a kind no
+# agent builds (agent_kind fails) in any status, or a story blocked by hand. It waits on the lead,
+# not on an agent. An open epic is not one: a conductor builds its stories.
+lead_blocked() {
+  local open p f
+  [[ "$(fm "$1" status)" == blocked ]] || return 1
+  open="$(open_deps "$(story_deps "$1")")"
+  [[ -n "${open}" ]] || return 1
+  for p in ${open}; do
+    [[ "${p}" =~ ^[a-z0-9-]+$ ]] || continue
+    if open_item "${BOARD}/epics/${p}.md"; then return 1; fi
+    f="${BOARD}/stories/${p}.md"
+    [[ -f "${f}" ]] || return 1
+    if agent_kind "$(fm "${f}" kind)" && ! by_hand_blocked "${f}"; then return 1; fi
+  done
 }
 
 # epic_held <story-file> — true when the story's epic is later or draft: the user has not started it.
@@ -523,11 +638,13 @@ epic_held() {
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
 # (epic_holding_deps), or nothing. A split epic (status: split) is never planned: its child epics are.
+# An epic an interrupted /plan-hld's rerun will overwrite (hld_resuming) waits for that rerun.
 plannable_epic() {
   local f held
   while IFS= read -r f; do
     held="$(epic_holding_deps "${f}")" || continue
     [[ -z "${held}" ]] || continue
+    ! hld_resuming "${f}" || continue
     basename "${f}" .md; return
   done < <(board epics)
 }
@@ -722,7 +839,7 @@ staged_chain() {
 stage_of() {
   local v="$1" dq='^"(.*)"$' sq="^'(.*)'\$"
   v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
-  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi
+  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi   # loose-match: ok dq and sq are fixed regexes
   if [[ -z "${v}" ]]; then echo -
   elif [[ "${v}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then echo "${BASH_REMATCH[1]}"
   else echo bad; fi
@@ -1006,10 +1123,64 @@ hld_planned() { local v; v="$(fm_list "$1" planned)"; [[ -n "${v//[[:space:]]/}"
 
 # hld_due <hld file> — for an agreed HLD that no epic names (hld_epics): plan with no planned:
 # (hld_planned), finish with it. Else nothing: an epic carrying its hld: means it was decomposed (an
-# HLD planned through /epic before planned: existed too), and is not planned again.
+# HLD planned through /epic before planned: existed too), and is not planned again. One exception, on
+# a board outside the repo (BOARD_IN_REPO is not 1), where /plan-hld writes epics in place with no PR:
+# an interrupted run leaves epics naming the HLD and no planned:, and when its marker says it wrote
+# them and no work has started on them (hld_resumable) that is plan again, which overwrites them.
 hld_due() {
-  [[ "$(get_fm "$1" status)" == agreed && -z "$(hld_epics "$(basename "$1" .md)" -1)" ]] || return 0
-  if hld_planned "$1"; then echo finish; else echo plan; fi
+  local name; name="$(basename "$1" .md)"
+  [[ "$(get_fm "$1" status)" == agreed ]] || return 0
+  if [[ -z "$(hld_epics "${name}" -1)" ]]; then
+    if hld_planned "$1"; then echo finish; else echo plan; fi
+  elif [[ ${BOARD_IN_REPO} != 1 ]] && ! hld_planned "$1" && hld_resumable "${name}"; then
+    echo plan
+  fi
+  return 0
+}
+
+# hld_blocked <hld file> — why /plan-hld cannot plan the HLD, or nothing. A name board-pr refuses (a
+# character outside a-z, 0-9 and -, which grants and finish_item refuse too, or a leading -) would
+# fail the run only at its end.
+hld_blocked() {
+  [[ "$(basename "$1" .md)" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || echo "its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+}
+
+# The marker /plan-hld writes in <project>/.swarm/<hld name>/ on a board outside the repo: one epic
+# slug per line, every epic the run writes, before it writes any; it removes it once planned: is set.
+HLD_MARKER="writing-epics"
+
+# hld_resumable <hld name> — true when an interrupted /plan-hld wrote the epics naming the HLD and a
+# rerun may overwrite them: its marker (HLD_MARKER) is there and lists each of them, and no work has
+# started on them. Work has started when a story names one in epic: or an epic in parent:, done or not,
+# or when the project's log (EVENTS_LOG) has a conductor started for one (conduct <epic>) or one, or an
+# epic the marker lists, finished (finish <epic>): finish deletes a story on a board outside the repo,
+# so the log is what keeps it. An epic the marker does not list (an older or hand-written one) is not the run's.
+hld_resumable() {
+  local marker f e slugs=" "; marker="${PROJECT_DIR}/.swarm/$1/${HLD_MARKER}"
+  [[ -f "${marker}" ]] || return 1
+  while IFS= read -r f; do
+    f="$(basename "${f}" .md)"
+    grep -qxF -- "${f}" "${marker}" || return 1
+    slugs+="${f} "
+  done < <(hld_epics "$1")
+  while IFS= read -r f; do
+    e="$(fm_list "${f}" epic)"; [[ -z "${e}" || "${slugs}" != *" ${e} "* ]] || return 1
+  done < <(board stories)
+  while IFS= read -r f; do
+    e="$(fm_list "${f}" parent)"; [[ -z "${e}" || "${slugs}" != *" ${e} "* ]] || return 1
+  done < <(board epics)
+  ! awk -F'\t' -v s="${slugs}$(tr '\n' ' ' < "${marker}") " '($2 == "conduct" || $2 == "finish") && index(s, " " $3 " ") { f = 1 }
+    END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+}
+
+# hld_resuming <epic file> — true when the epic's hld: names an HLD that a rerun of an interrupted
+# /plan-hld will overwrite (hld_due says plan): plannable_epic leaves it to that rerun.
+hld_resuming() {
+  local hld
+  [[ ${BOARD_IN_REPO} != 1 ]] || return 1
+  hld="$(slug_list "$(get_fm "$1" hld)")"
+  [[ -n "${hld}" && -f "${BOARD}/hld/${hld}.md" && "$(hld_due "${BOARD}/hld/${hld}.md")" == plan ]]
 }
 
 # hld_pr_open <hld name> <plan|finish> — true while the HLD's plan or finish board PR's worktree
@@ -1041,7 +1212,7 @@ epic_links() {
   local l re='^- \[([A-Za-z0-9._-]+)\]\(\.\./epics/([A-Za-z0-9._-]+)\.md\)$'
   while IFS= read -r l || [[ -n "${l}" ]]; do
     [[ -z "${l//[[:blank:]]/}" ]] && continue
-    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1
+    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1   # loose-match: ok re is a fixed regex
   done
 }
 
@@ -1063,7 +1234,7 @@ epics_last() {
 plan_head() {
   local h n re='^planned: [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   h="$(planned_lines "$2")"
-  [[ "${h}" =~ ${re} ]] || return 1
+  [[ "${h}" =~ ${re} ]] || return 1   # loose-match: ok re is a fixed regex
   [[ "$(hld_due "$1")" == plan ]] || return 1
   n=$(( $(hld_top "$1" | wc -l) ))
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links "$3"
@@ -1187,12 +1358,12 @@ pr_hld() (
   } | one_hld
 )
 
-# grants <story | epic | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
+# grants <story | epic | hld | PR URL> — swarm.sh grants: the agreed HLD over it (item_hld, or pr_hld for a
 # PR) and its grants (hld_grants), one per line, or none. A name that is no story or epic but an HLD
 # in ${BOARD}/hld is that HLD: an agreed one prints itself and its grants, any other none.
 grants() {
   local h g
-  [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | PR URL>"
+  [[ $# -eq 1 ]] || die "usage: swarm.sh grants <story | epic | hld | PR URL>"
   if [[ "$1" == https://* ]]; then h="$(pr_hld "$1")" || exit 1
   # Keep this slug check and the story/epic lookups in step with item_file's.
   elif [[ "$1" =~ ^[a-z0-9-]+$ && ! -f "${BOARD}/stories/$1.md" && ! -f "${BOARD}/epics/$1.md" && -f "${BOARD}/hld/$1.md" ]]; then
@@ -1236,12 +1407,13 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 
 # waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
 # one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
-# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too. A
+# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too, and so
+# is an HLD due a plan that hld_blocked names (`hld cannot be planned: <hld>, <why>`). A
 # staged draft (staged_draft) is listed as `staged epic: <slug>, stage v<T>, after v<P>`, never with
 # /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
 # (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
-  local f kind slug when stage prev waiting=""
+  local f kind slug when stage prev why waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -1280,6 +1452,7 @@ waiting_on_user() {
     if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
     elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
     elif hld_pr_open "${slug}" finish && [[ "$(hld_due "${f}")" == finish ]]; then waiting+="  finish PR awaiting merge: ${slug}"$'\n'
+    elif why="$(hld_blocked "${f}")" && [[ -n "${why}" && "$(hld_due "${f}")" == plan ]]; then waiting+="  hld cannot be planned: ${slug}, ${why}"$'\n'
     fi
   done < <(board hld)
   printf '%s' "${waiting%$'\n'}"
@@ -1342,7 +1515,8 @@ open_deps() {
 blocked_why() {
   local deps open
   deps="$(story_deps "$1")"; open="$(open_deps "${deps}")"
-  if [[ -n "${open}" ]]; then echo "by ${open}"
+  if [[ -n "${open}" ]]; then
+    if lead_blocked "$1"; then echo "by ${open}, which no agent builds"; else echo "by ${open}"; fi
   elif [[ -n "${deps// /}" ]]; then echo "its depends_on is finished: swarm.sh unblock readies it"
   else echo "by hand: no depends_on"
   fi
@@ -1686,6 +1860,8 @@ get_fm() {
 # review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge. A story
 # whose depends_on parents are still open is held instead: back to blocked with held_by: <parents> and
 # its prs: line, its builder, worktree and branch kept, so no merge reaches a child before its parents.
+# A story put in review under merge = human, or one that costs money, is then noted to its conductor
+# (review_note). An epic's review sends no note.
 mark_review() {
   local f url held
   f="$(item_file "${1:?slug}")"; shift
@@ -1700,6 +1876,25 @@ mark_review() {
     die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
   echo "review: $(basename "${f}" .md) $*"
+  # shellcheck disable=SC2154 # load_config assigns it with printf -v
+  if [[ "${f}" == "${BOARD}/stories/"* ]] && { [[ "${CFG_merge}" == human ]] || costs_money "${f}"; }; then
+    review_note "$(basename "${f}" .md)" "$(fm "${f}" epic)" "$*"
+  fi
+}
+
+# review_note <slug> <epic> <pr-urls> — note the running conductor of <epic> (the backlog's when it is
+# empty) that story <slug> is in review and its PRs wait to be merged (conductor_note), unless that
+# conductor ran the review itself (SWARM_AGENT is its name): it knows, and a note would cost it a turn.
+# With none running it writes no inbox; a failed tell is a warning and never fails the review.
+review_note() {
+  local note prs="its PR $3 now waits"
+  [[ "${SWARM_AGENT:-}" != "$(group_conductor "${2:--}")" ]] || return 0
+  [[ "$3" != *" "* ]] || prs="its PRs $3 now wait"
+  note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" \
+    || { echo "warning: could not write a note, so no conductor was told that $1 is in review"; return 0; }
+  printf 'Story %s is in review: %s to be merged.\n' "$1" "${prs}" > "${note}"
+  NOTE_WHAT="that $1 is in review" conductor_note "${2:--}" "${note}"
+  rm -f "${note}"
 }
 
 # review_state <file> <kept> <pr-url>... — mark_review's state: the item in review with prs:
@@ -1732,6 +1927,23 @@ builder_state() {
     || echo unknown
 }
 
+# merged_build <slug> — clear a merged story's build (clear_build), after closing its builder if one
+# is open (still in review, so close counts nothing), and saying so when herdr cannot tell whether one
+# is. A builder whose pane could not be closed (close_pane) may still be working in the worktree, so
+# then the build is kept, with CLOSE_PANE_KEPT set; the caller says what happens to it.
+merged_build() {
+  local builder
+  builder="$(builder_state "$1")"; CLOSE_PANE_KEPT=""
+  [[ "${builder}" != open ]] || close_agent "$1"
+  [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
+  clear_build "$1" "the PR of $1 merged" "[]"
+  [[ "${builder}" != unknown ]] \
+    || echo "build cleared: $1's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close $1"
+}
+
+# pr_state <url> — the PR's state as gh gives it (OPEN, CLOSED or MERGED); fails when gh cannot read it.
+pr_state() { gh pr view "$1" --json state | json "d['state']"; }
+
 # reconcile — for each item in review: finish it once every PR it lists has merged; send it back to
 # ready, saying which, if any closed without merging; otherwise leave it waiting. A story's build is
 # cleared (clear_build) before the pull, while its file still names its repo: always once it merged,
@@ -1745,10 +1957,11 @@ builder_state() {
 # dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
 # there, so the main checkout keeps no edit: after a pull, or with no upstream to pull from, it is
 # marked done; while an unread PR holds the pull, it stays in review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
-# loses its state, however that commit was pulled (drop_gone_state). A red main whose base is green
+# loses its state, however that commit was pulled, and a merged story whose file went in a pull this
+# loop never saw is finished then (drop_gone_state). A red main whose base is green
 # now is cleared, and its unstarted fix retired (green_mains).
 reconcile_board() {
-  local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
+  local f slug url state closed waiting urls unread="" merged=() merged_files=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
     slug="$(basename "${f}" .md)"
@@ -1756,7 +1969,7 @@ reconcile_board() {
     if [[ ${#urls[@]} -eq 0 ]]; then echo "in review with no prs: line: ${slug}"; continue; fi
     closed=""; waiting=0
     for url in "${urls[@]}"; do
-      if ! state="$(gh pr view "${url}" --json state | json "d['state']")"; then
+      if ! state="$(pr_state "${url}")"; then
         echo "cannot read ${url}; ${slug} stays in review"; waiting=1; unread+="${unread:+, }${url} (${slug})"; continue
       fi
       case "${state}" in
@@ -1778,16 +1991,9 @@ reconcile_board() {
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
       if [[ "${f}" == "${BOARD}/stories/"* ]]; then
-        builder="$(builder_state "${slug}")"; CLOSE_PANE_KEPT=""
-        [[ "${builder}" != open ]] || close_agent "${slug}" </dev/null   # stdin is this loop's list
-        # A builder whose pane could not be closed (close_pane) may still be working in the worktree.
-        if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
-          echo "build kept: ${slug}'s builder pane is still open, so its worktree and story/${slug} stay; clear them once it is closed"
-        else
-          clear_build "${slug}" "the PR of ${slug} merged" "[]" </dev/null
-        fi
-        [[ "${builder}" != unknown ]] \
-          || echo "build cleared: ${slug}'s builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close ${slug}"
+        merged_build "${slug}" </dev/null   # stdin is this loop's list
+        [[ -z "${CLOSE_PANE_KEPT}" ]] \
+          || echo "build kept: ${slug}'s builder pane is still open, so its worktree and story/${slug} stay; clear them once it is closed"
       fi
       merged+=("${slug}"); merged_files+=("${f}")
     fi
@@ -1854,9 +2060,13 @@ reconcile() {
 # commit deleted (its PR or a board PR, pulled by reconcile or by hand): it is in neither HEAD nor the
 # main checkout, and was in a commit before. A later item with its slug then starts with no state. A
 # file missing only from the main checkout, or never committed, keeps its state. A board directory
-# that is not there (git removes it with its last file) counts as holding no item.
+# that is not there (git removes it with its last file) counts as holding no item. A story still in
+# review whose PRs all merged (gone_merged: a pull reconcile_board never saw, by hand or by a
+# reconcile that died after it) is finished first, as reconcile_board finishes one: its build cleared
+# (merged_build) and `reconcile <slug> ok (finished)` logged. One whose PR gh cannot read, or whose
+# builder's pane could not be closed, keeps its state and escalated block, for the next reconcile.
 drop_gone_state() {
-  local s n d rel=""
+  local s n d rel="" merged
   # The board's path from the root with a trailing /, or empty when the board is the root.
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
   for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
@@ -1864,8 +2074,75 @@ drop_gone_state() {
     [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
     ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}${d}/${n}.md" 2>/dev/null || continue
     [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}${d}/${n}.md")" ]] || continue
+    # A story's escalated block goes with its state file, which is still here only when the story kept it.
+    [[ "${s}" != "${PROJECT_DIR}/.swarm/escalated/"* || ! -e "${BOARD_STATE_DIR}/stories/${n}" ]] || continue
+    if [[ "${d}" == stories ]]; then
+      # Stopped here, not in gone_merged's subshell, so reconcile ends and logs why.
+      merged="$(gone_merged "${BOARD}/${d}/${n}.md")" \
+        || die "reconcile: ${n}, pulled off the board, has a board state that cannot be read, so it is left as it was; make ${BOARD_STATE_DIR}/stories/${n} readable, or remove it, then run reconcile again"
+      [[ "${merged}" != unread ]] || continue
+      if [[ "${merged}" == merged ]]; then
+        merged_build "${n}"
+        if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+          echo "build kept: ${n}'s builder pane is still open, so its worktree and story/${n} stay, and so does its state; the next reconcile clears them once that pane closes"
+          continue
+        fi
+        record_event reconcile "${n}" "ok (finished)"; echo "merged: ${n}, its file already pulled off the board"
+      fi
+    fi
     state_drop "${BOARD}/${d}/${n}.md"
   done
+}
+
+# gone_merged <story-file> — for a story a pulled commit took off the board, read as reconcile_board
+# reads one in review (fm_gone, pr_state): merged when it is in review and every PR on its prs: line
+# merged, unread when gh cannot read one of them (said on stderr, naming it), else nothing. Fails when
+# its board state cannot be read (fm_gone).
+gone_merged() {
+  local url st out=merged urls prs slug="${1##*/}"
+  slug="${slug%.md}"
+  st="$(fm_gone "$1" status)" || return 1
+  [[ "${st}" == review ]] || return 0
+  prs="$(fm_gone "$1" prs)" || return 1
+  read -r -a urls <<< "${prs}"
+  [[ ${#urls[@]} -gt 0 ]] || return 0
+  for url in "${urls[@]}"; do
+    if ! st="$(pr_state "${url}")"; then
+      echo "cannot read ${url}; ${slug}, pulled off the board, keeps its state until reconcile can read it; if gh never can (its repo deleted or renamed, a bad URL), remove ${BOARD_STATE_DIR}/stories/${slug}, and ${PROJECT_DIR}/.swarm/escalated/${slug} if it is there, by hand" >&2
+      echo unread; return 0
+    fi
+    [[ "${st}" == MERGED ]] || out=""
+  done
+  echo "${out}"
+}
+
+# fm_gone <item-file> <key> — fm, also for an item a pulled commit took off a board in the repo: then
+# its board state's value for <key> (state_name), read as state_value reads it against the copy that
+# commit deleted (gone_copy), so a later commit's value in that copy wins; else that copy's, or nothing.
+# Dies, as state_value does, when the state file is there but cannot be read: the copy's value could
+# be stale (a story in review read as ready).
+fm_gone() {
+  local copy
+  [[ ! -f "$1" ]] || { fm "$1" "$2"; return; }
+  copy="$(gone_copy "$1")"
+  state_name "$1" "$2"
+  [[ ! -f "${STATE_PATH}" || -r "${STATE_PATH}" ]] \
+    || die "board state: cannot read ${STATE_PATH}; make it readable, or remove it to read $1 as its last commit had it"
+  if [[ -f "${STATE_PATH}" ]] && state_read "${STATE_PATH}" - "$2" <<< "${copy}"; then return 0; fi
+  get_fm - "$2" <<< "${copy}"
+}
+
+# gone_copy <item-file> — an item file missing from the main checkout as git last had it: HEAD's copy,
+# else the copy in the parent of the newest commit in HEAD's history that touched it (the one that
+# deleted it). Nothing when the board is not in the repo, or git never had it.
+gone_copy() {
+  local rel="" sha
+  [[ ${BOARD_IN_REPO} == 1 ]] || return 0
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  rel+="${1#"${BOARD}"/}"
+  git -C "${PROJECT_DIR}" show "HEAD:${rel}" 2>/dev/null && return 0
+  sha="$(git -C "${PROJECT_DIR}" log -1 --format=%H HEAD -- "${rel}" 2>/dev/null)" || return 0
+  [[ -z "${sha}" ]] || git -C "${PROJECT_DIR}" show "${sha}^:${rel}" 2>/dev/null || true
 }
 
 # has_upstream — true when the board is in the project repo and its main checkout has an upstream.

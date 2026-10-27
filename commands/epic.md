@@ -21,8 +21,34 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    the title: lowercase it, turn every run of characters other than `a-z` and
    `0-9` into one `-`, and trim `-` from both ends (`Add rate-limiting (v2)!` is
    `add-rate-limiting-v2`). If the slug is empty or `backlog` (the name `conduct --backlog` uses),
-   stop and ask the user for another title. If `docs/epics/<slug>.md` exists (or an epic with this
-   title does) and is `status: draft`, resume it. If it exists with any other status, it is live
+   stop and ask the user for another title. The epic is then `docs/epics/<slug>.md` when that
+   file exists, or else the one whose `# ` heading is this title. Whenever step 1 resolves to an
+   existing file, by argument, by slug or by title, `<slug>` is its name without `.md`, whatever
+   the title says now: an epic's title often differs from its file name. `<name>` below is
+   `<slug>` made clean the same way (lower-cased, each run of characters other than `a-z` and
+   `0-9` one `-`, `-` trimmed from both ends), since `board-pr` refuses any other name.
+   `<name>` names the file, never the title: `board-pr open` tells an agreement PR by the epic
+   its name matches, and the next paragraph looks for a branch of that name.
+
+   First look for an agreement of this epic still waiting, which may have moved a new draft out of
+   the main checkout (step 5): when the branch `board/agree-<name>` exists here or on origin
+   (`git show-ref -q --verify refs/heads/board/agree-<name>`, `git ls-remote --exit-code origin
+   refs/heads/board/agree-<name>`), read its PR (`gh pr list --head board/agree-<name> --state all
+   --json state,url`). An open PR means the user agreed this epic and it waits on that PR: tell them
+   so with its URL, and stop. A merged one: run `swarm.sh board-pr done agree-<name>` and
+   `swarm.sh reconcile`, which pulls the agreed epic, and go on below, where it is live.
+   A closed one: write the epic back from the branch first, as `status: draft` with no `agreed:` line, over
+   any copy in the main checkout, since the branch holds the latest draft: run `git fetch origin
+   board/agree-<name>`, then `git diff --name-only origin/<base>...origin/board/agree-<name>` names
+   its path and `git show origin/board/agree-<name>:<path> > <path>` writes it. Then run `swarm.sh
+   board-pr done agree-<name>` and go on below. No PR on the branch means step 5's `board-pr open`
+   failed after the draft moved: the draft is in the worktree `<repo>-wt/_board-agree-<name>`, so
+   finish step 5 from there (`board-pr open` again), or tell the user and stop. If `git ls-remote`
+   cannot reach origin (with `--exit-code`, exit 2 only means no such branch), or `git fetch` or
+   `gh pr list` fails, stop and tell the user; do not resume co-writing.
+
+   If `docs/epics/<slug>.md` exists and is `status: draft`, resume it. If the epic exists with
+   any other status, it is live
    (active, later, review or done) and not for co-writing: stop, say so with its status, and let
    the user pick another title. Otherwise create `docs/epics/<slug>.md` with this skeleton:
 
@@ -87,8 +113,22 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    together." to a file and run `swarm.sh tell epic-<slug> nudge <file>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
    `status: active`; nothing plans a draft epic. The same edit writes
-   `agreed: <YYYY-MM-DD>` (today's date) into the front matter. Open a PR for the epic with one
-   `swarm.sh codex-review` pass, close the co-author and the reviewer (if it started) by name
+   `agreed: <YYYY-MM-DD>` (today's date) into the front matter. When the board is in the project's
+   repo, make that edit in a board PR named `agree-<name>`. Run `swarm.sh board-pr start
+   agree-<name>`; the worktree it prints starts from origin's base. When the base lacks
+   `docs/epics/<slug>.md` (a new draft), move the agreed file from the main checkout into the
+   worktree with `mv`, so no copy is left to block the pull once the PR merges. When the base has
+   it, copy it over the worktree's, then put the main checkout's copy back as the base has it (`git
+   show origin/<base>:docs/epics/<slug>.md > docs/epics/<slug>.md`), since edits left there block
+   the pull too. Make the edit in the worktree and commit it there (`git add -A`, then `git commit` with the trailers the brief names and `swarm.sh config commit_trailers` prints, and `-S` when `sign_commits` is `true`: a moved
+   draft is untracked until staged, and codex's review skips untracked files), run one `swarm.sh codex-review` pass in the worktree and fix what it finds, then run
+   `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits a fix, pushes and
+   opens the PR (`board-pr open` again pushes a later fix). The pass comes before `open` because
+   step 1 takes an open `agree-<name>` PR as reviewed: a session that stops between the two would
+   otherwise leave a PR that merges unreviewed. A board outside the project's repo is edited where it is. Close the co-author and the reviewer (if it started) by name
    (`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`; never `swarm.sh close
    epic`, which would close every tab whose label starts `epic-`), and tell the user the epic is agreed and
-   that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`).
+   that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`): once its board PR has merged, or at
+   once on a board outside the project's repo. Once that PR has merged or closed, `swarm.sh board-pr
+   done agree-<name>` removes its worktree and branch (step 1 runs it on the next `/epic` of this
+   epic, or run it then).

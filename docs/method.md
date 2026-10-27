@@ -19,8 +19,8 @@ each step is in [`reference.md`](reference.md).
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
-   one at a time. Two stories clash only when their `touches` name the same file in the
-   same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
+   one at a time, and a PR whose base gained code since its CI ran goes back to its builder to merge
+   the base in. Two stories clash only when their `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
    file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
@@ -33,9 +33,9 @@ step (when it says to wait, it also starts a conductor for any ready work that h
 awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
 `depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
-(the lead drops the dependency or names it in the story's `needs:` line). When the step leaves the builders idle and no
-story is buildable, it also prints the project with up to five candidates for a one-off: the findings
-declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
+(the lead drops the dependency or names it in the story's `needs:` line), and a ready story with no build, ready for `queue_minutes`, whose `touches` share no part with a running build
+(the lead sends its conductor a note, or starts it with `swarm.sh story --strict`). When the step leaves the builders idle and no
+story is buildable, it also prints the project with up to five candidates for a one-off: the findings declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
 are the swarm's own list of follow-ups. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
@@ -45,7 +45,7 @@ only once every epic it `depends_on` is done or has only stories in `review` lef
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
 When `next` says to wait on a conductor, it also lists each ready `lead` story that a blocked story
-depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no conductor will build them.
+depends on (`also: lead <slug> blocks <slugs>`). It also lists a story that is blocked with no `depends_on`, if its kind is one no agent builds: only the lead can ready it. A blocked story of a kind an agent builds gets no `also:` line. The lead runs the listed stories while it waits, since no conductor will build them. `status` reads a blocked story's line as `blocked: <slug> (by <parents>, which no agent builds)` when every open parent is work no agent builds. That is a story of a kind no agent builds (in any status), a story blocked with no `depends_on`, or a hand step like `operator:<x>`.
 
 ## Who does what
 
@@ -60,7 +60,7 @@ Three parties do the work, and the plan decides which one does each step, not th
   reviews and runs `lead` stories, never the agents' work. Its messages to agents go through
   `swarm.sh tell`, never a bare `herdr agent prompt`, and when the board is in the project's repo its
   board edits go through `swarm.sh board-pr`, each in its own worktree, never the main checkout
-  (reference.md § The lead). If it stops while `next` names a step it has not started, a hook sends it back once.
+  (reference.md § The lead). Only a plan or agreement board PR gets a codex review; an edit, a hold or a finish lands on green CI. If it stops while `next` names a step it has not started, a hook sends it back once.
 - **Agents** plan, conduct and build everything else, each in its own pane, builders in a worktree too.
 
 A story is `kind: lead`, never an agent's, when it:
@@ -80,7 +80,7 @@ your share of the work before you approve it. A step found during the build that
 `lead` story, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
-step says how the lead learns it is done. A status or flag raised for you says who clears it and how.
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories and for ready stories with no build wake the lead while a conductor works, and `status` and `dash` show them. Stuck agents wake the lead the same way: an agent on a prompt, a dialog, an expired login, an API error no `wait` is resuming, or manual mode gives a `prompt:` line that names who clears it.
 
 ## The board
 
@@ -93,24 +93,24 @@ project). `templates/docs/` holds the READMEs that define each format and an Obs
 ## Configuring a project
 
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir` without
-overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and adds `.swarm/`
-and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it
-writes a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch. It reads
-that branch from the cached `origin/HEAD`, and asks origin only when that is missing, without prompting
-and for at most 15 seconds; with no answer it writes no CI and says so. The step fails, naming the
-target, when make has no `check` target. Its gate, `.github/swarm-board-only.sh`, skips the checks for a
-PR or push that changes only the board's own files (`stories/`, `epics/`, `hld/`, `Board.base` and
-`.obsidian/` under `board_dir`, so other pages in `docs/` still get checked). A board outside the repo
-gets the workflow without the gate. A `ci.yml` that init wrote carries a marker line; init leaves it
-alone after that and only writes the gate again if it is missing. With other workflows already there,
-init leaves them, writes the gate, and prints the step to add to the job that runs your checks. It also
-writes a git pre-commit hook that runs `make check`, skipping a commit that changes only the board's own
-files. While make has no `check` target, the hook only warns; CI is the check that fails. When a hook
-exists, or the repo sets `core.hooksPath`, init writes no hook and prints the lines to add before any
-`exec` in it (for husky, to `.husky/pre-commit`). A global `core.hooksPath` gets no hook and no lines,
-since a hook there runs in every repo. Last, init lists the files it wrote that git does not track yet,
-for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks once
-for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
+overwriting a file (except a `Board.base` that is a past template nobody edited, which gets the current one),
+creates `.claude/swarm/` with a commented `commit_trailers` line, and adds `.swarm/` and the board's Obsidian
+lines to `.gitignore`. It also sets up checks. With no `.github/workflows`, it writes a `ci.yml` that runs
+`make check` on each PR and on pushes to origin's default branch. It reads that branch from the cached
+`origin/HEAD`, and asks origin only when that is missing, without prompting and for at most 15 seconds; with
+no answer it writes no CI and says so. The step fails, naming the target, when make has no `check` target.
+Its gate, `.github/swarm-board-only.sh`, skips the checks for a PR or push that changes only the board's own
+files (`stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under `board_dir`, so other pages in
+`docs/` still get checked). A board outside the repo gets the workflow without the gate. A `ci.yml` that init
+wrote carries a marker line; init leaves it alone after that and only writes the gate again if it is missing.
+With other workflows already there, init leaves them, writes the gate, and prints the step to add to the job
+that runs your checks. It also writes a git pre-commit hook that runs `make check`, skipping a commit that
+changes only the board's own files. While make has no `check` target, the hook only warns; CI is the check
+that fails. When a hook exists, or the repo sets `core.hooksPath`, init writes no hook and prints the lines
+to add before any `exec` in it (for husky, to `.husky/pre-commit`). A global `core.hooksPath` gets no hook
+and no lines, since a hook there runs in every repo. Last, init lists the files it wrote that git does not
+track yet, for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks
+once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments, parsed and never run; an unknown
 key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` prints each setting and its source.

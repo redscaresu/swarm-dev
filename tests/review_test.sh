@@ -98,7 +98,8 @@ case "$1 $2" in
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
-  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w","label":"e"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
@@ -354,7 +355,6 @@ CHECKLIST=(
   "- A new code path must enforce every rule the existing paths enforce."
   "- A zero or empty value shown to a person must say what it means."
   "- A repair path that changes something must say what it did."
-  "- For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it."
   "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
   "- For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
@@ -363,6 +363,11 @@ for l in "${CHECKLIST[@]}"; do
   check "the review agent's and the fallback's briefs carry: ${l:2:40}..." "yes|yes|yes" \
     "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")|$( (( ${#l} < 200 )) && echo yes || echo "no, ${#l} bytes")"
 done
+# checklist_of <brief> — the checklist's "- " lines under its heading, up to the first other line.
+checklist_of() { awk '/^Hold the PR to these as well:$/ { on = 1; next } on && /^- / { print; next } on { exit }' <<< "$1"; }
+WANT="$(printf '%s\n' "${CHECKLIST[@]}")"
+check "both briefs' checklists are CHECKLIST, line for line: the re-read line is the builder's now, the exception line stays" \
+  "${WANT}|${WANT}" "$(checklist_of "${brief}")|$(checklist_of "${fbrief}")"
 SCOPE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
 check "both briefs say, in the same words, a point only a file outside the touches can fix is out of scope and a gap in the PR's own code is a finding" "yes|yes" \
   "$(has "${SCOPE}" "${brief}")|$(has "${SCOPE}" "${fbrief}")"
@@ -586,6 +591,9 @@ cat > "${ROOT}/gh/prlist.json" <<'EOF'
  {"number": 3, "headRefName": "story/a", "headRefOid": "head3", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
  {"number": 4, "headRefName": "story/c", "headRefOid": "head4", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]
 EOF
+# Every PR here was reported opened already (watch_opened_test.sh covers that line), so the checks
+# below see what watch says after it.
+mkdir -p "${w}/.swarm/state"; printf 'opened o/svc#%s\n' 1 2 3 4 5 > "${w}/.swarm/state/watch-seen"
 # Each watch is bounded, so one that polls on fails here rather than hangs the run.
 check "watch --backlog reports a no-epic story's PR and skips every epic story's PR in the same repo" "o/svc #4 story/c checks finished on head4" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --backlog 2>&1)"

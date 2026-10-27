@@ -110,6 +110,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
+| an agent waiting on a prompt or a dialog, or in manual mode | answer the prompt in the pane the lead names, or turn manual mode off there. The lead hears of most within a poll. Manual mode turned on, or a dialog opened, at an idle box can take up to 5 minutes, and a slow pane read ahead of it can add a poll. A ready story's builder in manual mode it handles itself: it closes the pane, then restarts or holds the story |
 | an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
 
 ## Watching it
@@ -117,11 +118,25 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | Command | What it shows |
 |---|---|
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
-| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories and for ready stories with no build. It gives its herdr, gh and claude reads, each agent's pane read included, and its git fetch and ls-remote, 30 seconds in all, and a last `skipped (over 30 s): ...` line names any read it cut. |
 | `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, and how long ready work sat with no build while its conductor ran), how each model did, how well the planner guessed which stories were easy and how big, what each review round found, which agents spend GitHub's API budget, and how long local `make test` runs take by how many ran at once. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
 lists them all.
+
+### Workspace labels
+
+Every herdr workspace swarm.sh opens for a conductor is labelled with the project first:
+
+- `<project> · <epic>`: an epic's conductor and its builders.
+- `<project> · backlog`: the backlog conductor and the one-off stories it builds.
+
+`<project>` is the project folder's name, with a short hash of its path after it when another folder
+of the same name already has a workspace. A conductor reuses a workspace only when its panes say it
+is this project's. Two folders of the same name can still get the same label, for example when
+both start a conductor at the same moment, when one sits in a folder whose name ends in `-wt`, or
+when one's workspace has only its builders left
+([reference.md § Building](docs/reference.md#building)).
 
 ## Cost and safety
 
@@ -142,6 +157,13 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the last tag is under an agreed HLD that lists `release`.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
+- Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
+  refuses it whenever the base has commits the PR's head lacks that change more than board files.
+  The builder merges the base in and pushes. Under `merge = agent` the conductor then reviews and
+  merges the new head ([reference.md § Merging](docs/reference.md#merging)).
+- Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
+  holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
+  PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.
@@ -169,6 +191,10 @@ Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
 
+On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
+`next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
+starts on one of those epics, `next` stops offering it.
+
 ## More
 
 - [The method](docs/method.md): how planning, building and merging work, in short.
@@ -180,6 +206,7 @@ by hand.
 - `make test` and `scripts/test.sh` refuse to run under codex, where `CODEX_SANDBOX` or
   `CODEX_THREAD_ID` is set.
 - Each `make test` run adds a start line and an end line to the main checkout's `.swarm/test-runs.tsv`: its times, `JOBS`, filter, branch, load, CPUs, the other runs going (load, CPUs and runs read again at the end) and its exit status. `swarm.sh flow` reads it in its `test_runs` section: the full runs by how many ran at once, and the median and p90 seconds of builders' runs on `story/*` branches.
+- Each `swarm.sh status`, `next` and `dash` run adds a row to `.swarm/run-times.tsv`: when it started, the command, the seconds it took and the load average. A `dash --watch` adds one, for its first frame. `swarm.sh flow` reads it in its `run_times` section: per command, the runs, the median and p90 seconds, and the share that took over a minute.
 - `make test` runs each test file from its own `TMPDIR` with `SWARM_PROJECT` naming a stand-in project, and fails a file whose `swarm.sh` reaches it: one that does not source `tests/test_helpers.sh` first, and run on its own from a pane would reach the lead's real project. `swarm.sh` also refuses to act on the checkout the tests run from, or a worktree of it, while `SWARM_FORBID_PROJECT` names it, which the runner and the prelude set.
 - To cap how many `make test` runs go at once on your machine, across all projects, write a whole number to `~/.swarm/test-cap`. There is no cap by default: no file, an empty file and 0 all mean none. Each run holds a slot in `~/.swarm/test-slots/` while it goes. A run past the cap prints that it is waiting, with the PID and slot of each run ahead of it, and starts when one of them ends. The wait has no time limit: a run that is stopped (Ctrl-Z) or hung keeps its slot. To free a slot by hand, `rm -r` the slot path the message names. A `make test` that a test starts inside another run takes no slot.
 - `scripts/select-tests.sh` prints the test files that cover this branch's changes against `origin/main`,

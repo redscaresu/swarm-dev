@@ -67,7 +67,7 @@ printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/gh"
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$*" in
   "pr list"*"--state all"*) cat "$H/prs.json" ;;
-  "pr view 5 "*headRefName*) echo "$(cat "$H/head") MERGEABLE main OPEN story/s1" ;;
+  "pr view 5 "*headRefName*) echo "$(cat "$H/head") MERGEABLE main OPEN - story/s1" ;;
   "pr view 5 "*"--json headRefOid "*) cat "$H/head-now" 2>/dev/null || cat "$H/head" ;;
   "api --paginate repos/"*"/pulls?"*) echo "5 $(cat "$H/head") story/s1 $(($(date +%s) - 10))" ;;
   "api repos/"*"/pulls/5 "*) echo MERGEABLE ;;
@@ -108,6 +108,8 @@ fresh() {
   printf '2026-10-01\tcode-sonnet\ts1\tclaude\t%s\thigh\tsess-1\n' "${3:-sonnet}" > "${P}/.swarm/agents.tsv"
   : > "${P}/.swarm/events.tsv"
   echo "w:1 s1" > "${P}/.swarm/state/s1"; echo "s1 w:1" > "${ROOT}/agents"
+  # The PR is already reported opened, on either repo, so a watch here goes on to its red heads.
+  printf 'opened %s#5\n' o/proj o/other > "${P}/.swarm/state/watch-seen"
   echo "[{\"sessionId\":\"sess-1\",\"status\":\"$2\"}]" > "${CLAUDE_STUB_AGENTS}"
   echo "escalate_ladder = $1" > "${P}/.claude/swarm/config"
 }

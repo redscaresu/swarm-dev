@@ -3,10 +3,10 @@
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
-#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
+#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
-#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story, a green PR in review that waits on the user (merge = human, or merge holds it), or a started story with no live agent (no-agent: <slug>, exit: <exit>); print each new one
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (prompt: <agent> (<kind>), exit: <exit>), a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ...), or a ready story with no build past queue_minutes (idle: <story> is ready with no build, exit: <exit>), as next prints them; print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell, watch and a review pane's wait-pr run it themselves
@@ -36,12 +36,12 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile; with merge = human, a story or board PR only under an agreed HLD that grants merge, and even then held for the user when it has costs: money; --release only when at least one story merged since the last tag and every one of them is under an HLD that grants release; --board also refuses a PR that sets an epic active with no ticket (agreed:, parent:, an HLD granting epics, or lead_epics = on)
-#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs within 5 minutes, or still pending after <seconds> (default 1800); from the story's review pane with escalate_ladder set, a red head counts toward the ladder's ci-red step-up, which it runs itself (stepped up: <slug>)
+#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs (or no run of a workflow its pull_request triggers) within 5 minutes, or still pending after <seconds> (default 1800); from the story's review pane with escalate_ladder set, a red head counts toward the ladder's ci-red step-up, which it runs itself (stepped up: <slug>)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
-#   swarm.sh watch [repo...]                                wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit
+#   swarm.sh watch [--epic <slug>|--backlog] [repo...]      wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit; with --epic or --backlog, also once when a story PR of theirs opens
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init [--auto-mode-done]                        from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines, and print the Claude Code steps left to you; --auto-mode-done: record (in .swarm/auto-mode-done) that you ran /auto-mode-setup, writing nothing outside .swarm/
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
@@ -75,10 +75,10 @@ DIE_FILE=""
 DIE_LEVEL=-1
 
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
-# config line) or a set -e stop, exits 2; its temp file (WAIT_PR_TMP) goes either way.
+# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP and its .expected memo) go either way.
 WAIT_PR_RED=""; WAIT_PR_TMP=""
 if [[ "${1:-}" == wait-pr ]]; then
-  trap 'rc=$?; rm -f "${WAIT_PR_TMP}"; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 
 # SWARM_SLEEP_SCALE multiplies the fixed sleeps (nap; default 1, make test sets 0.01). It is checked
@@ -158,8 +158,10 @@ find_project() {
 # dash --project draws only the projects it names, so it runs anywhere: with no project here, the
 # cwd stands in (no config there, so every setting keeps its default). Without SWARM_PROJECT the
 # lookup's only failure is "not in a swarm project"; a bad SWARM_PROJECT still stops it.
+# NO_PROJECT is 1 when the cwd stands in, so run_time_start logs no row there.
+NO_PROJECT=""
 if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]]; then
-  PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
+  PROJECT_DIR="$(find_project 2>/dev/null)" || { PROJECT_DIR="$(pwd -P)"; NO_PROJECT=1; }
 else
   PROJECT_DIR="$(find_project)"
 fi
@@ -202,7 +204,7 @@ CFG_base_branches=""    # empty: origin's default branch; else branches to try i
 CFG_sign_commits=false  # true: every commit and merge is signed (swarm.sh's own and each agent's), or the agent stops
 CFG_merge=human         # human: a PR that is ready waits on the board for you, unless an HLD grants merge (merge_grant)
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?; a busy one whose pane has not changed, stuck
-CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next)
+CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next); a ready story with no build this long gets next's idle: line
 CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_escalate_ladder=""  # empty: off; else models low to high, such as sonnet,opus,fable: step-up hands a build to the next one
@@ -276,7 +278,7 @@ load_config() {
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: lead_epics must be off or on, not '${value}'" ;;
       commit_trailers)
         [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
-          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;
+          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;   # loose-match: ok trailer is a fixed regex
       agent_env)
         # Reserved names are refused once agents.sh, which defines them, is loaded (reserved_env).
         read -r -a words <<< "${value}"   # read, not a bare word list, so a * is never globbed
@@ -448,6 +450,48 @@ agent_name() {
   printf '%s' "${n:0:${AGENT_NAME_MAX}}"
 }
 
+# cut_record <herdr-name> [names] — the one full name this project's records hold (cut_names; <names>
+# is their lines read once, for a caller that asks about many) whose agent name is <herdr-name>. Fails,
+# printing nothing: 1 when none does, 2 when more than one does, since names that share their first
+# AGENT_NAME_MAX characters share herdr's name, which then never says whose it is.
+cut_record() {
+  local n c hit="" k=0
+  while IFS= read -r n; do
+    [[ -n "${n}" ]] || continue
+    # A slug, the usual name, is its own agent name up to the cut; only another name pays agent_name's forks.
+    if [[ "${n}" =~ ^[a-z][a-z0-9_-]*$ ]]; then c="${n:0:${AGENT_NAME_MAX}}"; else c="$(agent_name "${n}")"; fi
+    [[ "${c}" == "$1" ]] || continue
+    hit="${n}"; k=$((k + 1))
+  done < <(printf '%s\n' "${2-$(cut_names)}" | sort -u)
+  [[ ${k} -gt 0 ]] || return 1
+  [[ ${k} -eq 1 ]] || return 2
+  echo "${hit}"
+}
+
+# cut_names — the full names this project's records hold, one a line: the tab records' pane names
+# (.swarm/state; a conductor's line names its role, and its brief its name), the briefs'
+# (.swarm/briefs/<name>.md; <name>.held-findings.md and the like are a build's other files) and the
+# board's stories'. Of .swarm/state it reads the tab records alone, whose names are labels with no
+# dot: a file whose name has one is skipped, since codex's brief copies there (brief-<name>.md) hold
+# prose that can be shaped like a tab record's line, and codex-review.<pid> markers, .tmp files and
+# watch-seen's temporary files are no pane's. An epic named brief-<x> keeps its record brief-<x>,
+# with no dot, so only the dot tells them apart. Like own_panes, it reads only lines shaped like a
+# tab record, and always succeeds.
+cut_names() {
+  local f b files=()
+  for f in "${STATE_DIR}"/*; do
+    b="${f##*/}"
+    [[ -f "${f}" && "${b}" != *.* ]] || continue
+    files+=("${f}")
+  done
+  [[ ${#files[@]} -eq 0 ]] \
+    || awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ && $2 != "conductor" { print $2 }' "${files[@]}" 2>/dev/null || true
+  for f in "${PROJECT_DIR}/.swarm/briefs"/*.md "${BOARD}/stories"/*.md; do
+    f="${f##*/}"; f="${f%.md}"
+    [[ "${f}" == *[.*]* ]] || echo "${f}"
+  done
+}
+
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
 
 # shellcheck source=bin/lib/agents.sh
@@ -530,9 +574,9 @@ dispatch() {
                [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
                unblock_startable "$2"
              else [[ -z "${1:-}" ]] || die "unblock: unknown argument '$1'"; unblock; fi ;;
-    next)   next_report ;;
-    status) status_report "${1:-}" ;;
-    dash)   dash "$@" ;;
+    next)   timed next next_report ;;
+    status) timed status status_report "${1:-}" ;;
+    dash)   timed dash dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     upgrade) require_herdr; upgrade_agents "$@" ;;
     cost)   moved cost "flow's cost section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
@@ -590,9 +634,47 @@ dispatch() {
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
 # The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends.
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
+# status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
 READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _review-red-scan _step"
+
+# timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
+# run_time_start <command> — note the run's start, its time and the 1-minute load average then.
+# run_time_drop — forget it, so the run logs no row (a watch whose first frame failed).
+# run_time_end — append the noted run's row, once: its start (UTC), command, seconds and load (- when
+# uptime gives none). dash --watch calls it after its first frame, which never returns. Only the
+# status, next and dash arms call these: _step and wait --lead read the board as next does, and log
+# nothing. A run that fails before its end logs no row, nor does one with no .swarm/ to log in, or
+# dash --project from outside a project, where the cwd stands in (NO_PROJECT). A clock (now_ms) or a
+# write that fails is skipped, and never fails the run. A run under
+# a timed one (dash --project's frames, dash --check's status, a watch that re-execs itself) is not
+# timed: SWARM_RUN_TIMED, exported by the first, marks it. An agent never inherits it (launch_file
+# unsets it), though next starts conductors.
+RUN_TIMES_LOG="${PROJECT_DIR}/.swarm/run-times.tsv"
+RUN_TIME=""
+timed() { run_time_start "$1"; shift; "$@"; run_time_end; }
+run_time_start() {
+  [[ -z "${SWARM_RUN_TIMED:-}" ]] || return 0
+  export SWARM_RUN_TIMED=1   # set even outside a project, so the frames it draws stay untimed
+  [[ -z "${NO_PROJECT}" ]] || return 0
+  local load at ms
+  load="$(LC_ALL=C uptime 2>/dev/null | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" || load=""
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && ms="$(now_ms 2>/dev/null)" || return 0
+  RUN_TIME="$1 ${at} ${ms} ${load:--}"
+}
+# shellcheck disable=SC2329 # called from dash_watch, in bin/lib/dash.sh
+run_time_drop() { RUN_TIME=""; }
+run_time_end() {
+  [[ -n "${RUN_TIME}" ]] || return 0
+  local cmd at ms load now
+  read -r cmd at ms load <<< "${RUN_TIME}"
+  RUN_TIME=""
+  now="$(now_ms 2>/dev/null)" || return 0
+  ms=$((now - ms))
+  [[ -d "${RUN_TIMES_LOG%/*}" ]] || return 0
+  { printf '%s\t%s\t%d.%03d\t%s\n' "${at}" "${cmd}" $((ms / 1000)) $((ms % 1000)) "${load}" >> "${RUN_TIMES_LOG}"; } 2>/dev/null || true
+}
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {

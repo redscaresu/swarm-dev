@@ -387,6 +387,10 @@ dataset_report() {
 #     there: on a merged PR pass (that round fixed nothing) or merged-after-fixes, else unmerged. --epic keeps only
 #     the PRs of that epic (outcomes epic column) in every block, and a last block lists every PR
 #     block 1 or 2 counted.
+#   run_times: .swarm/run-times.tsv, one row per status, next and dash run (timed), its rows whose
+#     start's local day is in the window: TSV command runs median_s p90_s over_60s, per command, with
+#     the median and p90 (nearest rank) seconds and the share over 60 s. A line with no log, another
+#     with no row in the window. --epic does not narrow it.
 #   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its runs whose start's local day is in the
 #     window, less the interrupted (status 128 or more) and torn. Over the full runs (filter all): TSV
 #     at_once runs median_s p90_s median_load, per runs going at once (the larger of start's and end's,
