@@ -208,8 +208,8 @@ Repeat until a step below says stop:
      and no tell on the way. Run the exit it names. For a ready story it is
      `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
      `swarm.sh hold <slug> <reason>` when it should wait, saying why. A hold only answers the line: if no
-     agent is back by the next poll, it comes back. For a story in review under `merge = agent`
-     it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
+     agent is back by the next poll, it comes back. For a story in review under `merge = agent`,
+     or under a `merge` grant, it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
      no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
      background and act on its exit, not on the line, once per head. On 0, compare the head it
      printed with the `<sha>` in the exit: the same, run the merge; different (pushed since the
@@ -227,7 +227,8 @@ Repeat until a step below says stop:
      wait-pr runs and may come back once after it ends; that needs nothing new. A
      `no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
      line means the PR's review agent never started, or started and went without findings for its
-     head, and no review round is under way. It comes even while the builder works. Run
+     head, and no review round is under way. It comes even while the builder works, and under
+     `merge = human` for a story in review whose HLD grants `merge`, which you land once it is reviewed. Run
      `swarm.sh review-agent <slug> <PR URL>`. Once `review-<slug>` is open, the next poll is quiet.
      If it fails again, its `review-agent <slug>` line in `.swarm/events.tsv` says why. A worktree
      not at the PR's head, or with uncommitted changes, means the builder is still at work: leave it,
@@ -544,7 +545,11 @@ Repeat until a step below says stop:
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
-     story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
+     story: what blocks it; a later story: set it `ready` to start it; a later epic: on the user's go,
+     set it `active` and write `agreed: <today>` (today's date) in the same edit, as /epic does,
+     since board-pr refuses a later epic set active with no ticket, as it does a draft. If it already
+     has `agreed: <today>` (agreed and parked today) on a board in the repo, that date is no ticket: drop
+     the line in one board PR, then set it `active` with `agreed: <today>` in the next; a draft epic:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
      The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
      `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or

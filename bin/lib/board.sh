@@ -1101,11 +1101,11 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 
 # epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
 # line; README.md excepted) that goes active with no ticket, one per line: status: active at the head
-# (raw_status), absent at the base or at any status there but active, later, review, split or done (a
-# draft, none, or a typo), and none of an agreed: date the base did not already have (one left on a
-# draft is stale), a parent: naming another epic that is active or split at the base (so a PR cannot
-# name a parent it adds, or a draft), or an hld: naming an HLD that is agreed and grants epics at
-# both ends (hld_ticket). Nothing with lead_epics = on. <reader>
+# (raw_status), absent at the base or at any status there but active (later, split, review and done
+# too, as a draft, none or a typo), and none of an agreed: date the base did not already have, from
+# today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
+# (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics at both ends
+# (hld_ticket). Nothing with lead_epics = on. <reader>
 # base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
 # A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
@@ -1125,15 +1125,12 @@ epic_unticketed() (
     [[ "$(raw_status <<< "${now}")" == active ]] || continue
     rc=0; was="$("${reader}" base "${p}")" || rc=$?
     [[ ${rc} -le 1 ]] || { echo "cannot read ${p} at the base"; exit 1; }
-    case "$(raw_status <<< "${was}")" in active|later|review|split|done) continue ;; esac
-    s="${s%.md}"; p="$(slug_list "$(get_fm - agreed <<< "${now}")")"
-    [[ ! "${p}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || "${p}" == "$(slug_list "$(get_fm - agreed <<< "${was}")")" ]] || continue
-    p="$(slug_list "$(get_fm - parent <<< "${now}")")"
-    if [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "${s}" ]]; then
-      rc=0; was="$("${reader}" base "${pre}epics/${p}.md")" || rc=$?
-      [[ ${rc} -le 1 ]] || { echo "cannot read ${pre}epics/${p}.md at the base"; exit 1; }
-      case "$(raw_status <<< "${was}")" in active|split) continue ;; esac   # absent: no status
-    fi
+    [[ "$(raw_status <<< "${was}")" != active ]] || continue
+    s="${s%.md}"
+    epic_ticket_agreed "${now}" "${was}" && continue
+    rc=0; epic_ticket_parent "${reader}" "${now}" "${s}" "${pre}epics/" || rc=$?
+    [[ ${rc} -ne 0 ]] || continue
+    [[ ${rc} -eq 1 ]] || exit 1
     p="$(slug_list "$(get_fm - hld <<< "${now}")")"
     if [[ "${p}" =~ ^[A-Za-z0-9._-]+$ ]]; then   # item_hld's pattern: no /
       rc=0; hld_ticket "${reader}" "${pre}hld/${p}.md" "${t}" || rc=$?
@@ -1144,6 +1141,38 @@ epic_unticketed() (
   done <<< "$2"
   printf '%s' "${out}"
 )
+
+# epic_ticket_agreed <head bytes> <base bytes> — epic_unticketed's agreed: ticket: true when the
+# epic's front matter at the head has an agreed: date that its base copy did not already have (an
+# absent one has none), and that date is a real YYYY-MM-DD from today back AGREED_MAX_AGE days: one
+# of those days as date prints them. One left on a draft, or on a later epic agreed before, is
+# stale; an older one, or one after today, was not agreed for this PR. Today is the clock's, not the
+# PR's merge base, which moves when the branch is updated from main. The shape check comes first,
+# so a blank value (a PR that drops the line) never matches a date that failed to print.
+AGREED_MAX_AGE=7
+epic_ticket_agreed() {
+  local d i
+  d="$(slug_list "$(get_fm - agreed <<< "$1")")"
+  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]] || return 1
+  for ((i = 0; i <= AGREED_MAX_AGE; i++)); do
+    [[ "${d}" != "$(date -v-"${i}"d +%F 2>/dev/null || date -d "${i} days ago" +%F)" ]] || return 0
+  done
+  return 1
+}
+
+# epic_ticket_parent <reader> <head bytes> <slug> <epics prefix> — epic_unticketed's parent: ticket:
+# true when the epic's parent: at the head names another epic (not <slug>), read through <reader> at
+# <epics prefix><parent>.md, that is active or split at the base, so a PR cannot name a parent it
+# adds, or a draft; fails 1 when not (absent at the base too); prints why and fails 2 on a read error.
+epic_ticket_parent() {
+  local p was rc=0
+  p="$(slug_list "$(get_fm - parent <<< "$2")")"
+  [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "$3" ]] || return 1
+  was="$("$1" base "$4${p}.md")" || rc=$?
+  [[ ${rc} -le 1 ]] || { echo "cannot read $4${p}.md at the base"; return 2; }
+  case "$(raw_status <<< "${was}")" in active|split) return 0 ;; esac   # absent: no status
+  return 1
+}
 
 # hld_ticket <reader> <hld path> <tmp> — epic_unticketed's hld: ticket: true when the HLD is status:
 # agreed with epics in its grants (hld_grants, which reads a file: <reader>'s bytes go through <tmp>)
@@ -1499,7 +1528,7 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 # /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
 # (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
-  local f kind slug when stage prev why waiting=""
+  local f kind slug when start agreed stage prev why waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -1513,10 +1542,18 @@ waiting_on_user() {
   done < <(board stories)
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in
-      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md)
+      # A later epic going active needs a ticket (epic_unticketed): on the user's go the lead writes
+      # agreed: <today> in the edit that sets it active, as /epic does. On a board in the repo, one agreed
+      # and parked today has that date at the base already, which is no ticket, so its agreed: line goes
+      # in a board PR first. A board outside the repo has no board PR and no guard.
+      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md); start="set it active with agreed: <today> to start it"
+        agreed="$(get_fm "${f}" agreed)"
+        [[ ${BOARD_IN_REPO} != 1 || -z "${agreed}" || "$(slug_list "${agreed}")" != "$(date +%F)" ]] \
+          || start="it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next"
         case "${when}" in
+          "") when=" (${start})" ;;
           declined*) when=" (its unasked plan was ${when})" ;;
-          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}; set it active to start it)"
+          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}; ${start})"
               else when=" (planned unasked on ${when}, no stories yet; run /plan-epic ${slug} again if that plan stopped)"; fi ;;
         esac
         waiting+="  later epic: ${slug}${when}"$'\n' ;;
