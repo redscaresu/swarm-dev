@@ -416,8 +416,8 @@ one_off_started() {
 }
 
 # idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
-# per blocked story whose depends_on story shares no file in touches with it (touches_rows.py
-# --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# per blocked story whose depends_on story shares no touches part with it and is not in its needs:
+# (touches_rows.py --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
 # step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
 # finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
 # quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.

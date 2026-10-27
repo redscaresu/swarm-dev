@@ -706,6 +706,16 @@ fails prints a warning, logs its error as that line's outcome, and changes neith
 status. The warning says to run the `swarm.sh conduct` yourself, or, when an agent's own board merge
 started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
 
+**`next`'s idle dependency line.** After its step, `next` prints `idle: <story> waits on <dep> but
+shares no touches part with it and needs nothing from it` for each blocked story an agent builds,
+with no `held_by:`, whose `depends_on` story an agent builds too and is neither done nor in review.
+Both must have `touches`. It compares them by part, as `story --strict` does: two entries share a
+part when they name the same file and the same first word of the part (past a leading `§`, `#`,
+"the", "a" or "an"), or both name the bare file. Another part of the same file shares nothing. The
+line stays quiet when a word of the story's `needs:` line is the dependency's slug, so
+`needs: <dep> (its --flag)` keeps a dependency the check calls over-broad. The lead
+either drops the dependency or names it in `needs:` (step 1 of `/swarm-dev:swarm`).
+
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
 `zsh -f` (no rc file runs) holding only:
