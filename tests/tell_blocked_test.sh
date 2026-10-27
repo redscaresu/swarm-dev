@@ -9,8 +9,11 @@
 #   waiting: Claude Code lists its session waiting (on a dialog), and herdr reads it blocked, as the
 #     plugin's hook reported. A clear pane is reported idle, then told, also when the box is drawn as
 #     Claude Code draws it (the prompt, then a no-break space). A permission prompt, text typed in the
-#     box, a command running, or manual mode is refused, as is a pane herdr gives no text for, with no
-#     report and no keys;
+#     box, a command running, manual mode, or a menu with no input box under it (the usage-limit menu,
+#     where the tell's Enter would pick an option) is refused, as is a pane herdr gives no text for,
+#     with no report and no keys. A permission prompt is refused also while herdr lists the agent idle
+#     and would take the prompt (its hook's blocked report not yet in): only tell's own pane check
+#     stops the keys then;
 #   herdr:blocked: an agent herdr answers for (a Claude agent with no session on record). Its blocked is
 #     herdr's own read of the screen, so a clear pane gets no report: while herdr still reads it blocked
 #     when it sends, herdr refuses the tell and no key goes, and the refusal says why no report was sent;
@@ -118,13 +121,20 @@ out="$(tell)"
 check "waiting, an empty input box with a no-break space after its prompt: told" "yes 1" "$(said "told b1" "${out}") $(prompts)"
 # <fixture>:<case>:<what tell says the pane shows>
 for fx in "prompt.txt:a permission prompt:a prompt or dialog" "typed-box.txt:text typed in the input box:text in the input box" \
-    "mid-command-manual.txt:a command running over an empty box:a running command" "manual.txt:manual mode under an empty box:manual mode"; do
+    "mid-command-manual.txt:a command running over an empty box:a running command" "manual.txt:manual mode under an empty box:manual mode" \
+    "usage-dialog.txt:the usage-limit menu with no input box:no input box"; do
   shows="${fx##*:}" fx="${fx%:*}"
   setup waiting blocked blocked "${fx%%:*}"
   out="$(tell)"
   check "waiting, ${fx#*:}: refused, naming what the pane shows" yes "$(said "b1 is waiting on dialog open, and its pane shows ${shows}; answer it (herdr agent read b1), then tell it" "${out}")"
   check "waiting, ${fx#*:}: no keys and no report" "0 0" "$(keys) $(reports)"
 done
+# herdr lists it idle and would take the prompt: Claude Code lists the session waiting on a permission
+# prompt before its hook's blocked report reaches herdr, so only tell's own pane check stops the keys.
+setup waiting idle idle prompt.txt
+out="$(tell)"
+check "waiting, a permission prompt, herdr listing it idle: refused, naming what the pane shows" yes "$(said "b1 is waiting on dialog open, and its pane shows a prompt or dialog; answer it (herdr agent read b1), then tell it" "${out}")"
+check "waiting, a permission prompt, herdr listing it idle: no keys and no report" "0 0" "$(keys) $(reports)"
 setup waiting blocked blocked none
 out="$(tell)"
 check "waiting, a pane herdr gives no text for: refused, saying so" yes "$(said "b1 is waiting on dialog open, and its pane could not be read; answer it (herdr agent read b1), then tell it" "${out}")"
