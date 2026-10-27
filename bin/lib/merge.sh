@@ -74,7 +74,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # protection is unprotected only when GitHub says "Branch not protected".
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
-# "<status> <path>" (added, modified, removed, renamed).
+# "<status> <path>", the status as GitHub gives it (added, removed, modified, renamed, copied, changed
+# or unchanged), empty when it gives none.
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
@@ -213,7 +214,7 @@ merge_gone() {
 # and head); any other line as it is.
 unticketed_why() {
   local re='^cannot read (.+) at the (base|head)$' ref="${base}"
-  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }
+  [[ "$1" =~ ${re} ]] || { echo "$1"; return 0; }   # loose-match: ok re is a fixed regex
   [[ "${BASH_REMATCH[2]}" == base ]] || ref="${head:0:7}"
   echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}"
 }
