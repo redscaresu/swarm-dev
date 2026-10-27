@@ -83,15 +83,17 @@ prs() {
 }
 prs MERGEABLE
 ago() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60 * int(sys.argv[1]))))' "$1"; }
+# opened — record e1's PRs (#3, #4) as reported opened, as watch --epic e1 records them.
+opened() { printf 'opened o/svc#%s\n' 3 4 >> "${p}/.swarm/state/watch-seen"; }
 # green <minutes> — h1's, h2's and h5's checks all passed, the last <minutes> ago, with no commit status;
-# watch has already reported them finished, so only a queued line can wake it.
+# watch has already reported them opened and finished, so only a queued line can wake it.
 green() {
   local sha
   for sha in h1 h2 h5; do
     echo "{\"total_count\":2,\"check_runs\":[{\"status\":\"completed\",\"conclusion\":\"success\",\"completed_at\":\"2020-01-01T00:00:00Z\"},{\"status\":\"completed\",\"conclusion\":\"skipped\",\"completed_at\":\"$(ago "$1")\"}]}" > "${ROOT}/runs-${sha}.json"
     rm -f "${ROOT}/status-${sha}.json"
   done
-  printf 'done h1\ndone h2\ndone h5\n' > "${p}/.swarm/state/watch-seen"
+  printf 'done h1\ndone h2\ndone h5\n' > "${p}/.swarm/state/watch-seen"; opened
 }
 # watchrun — what watch --epic e1 printed, or "(still watching)" if it has not returned in 10 seconds.
 # gh.log then holds only this run's calls.
@@ -141,7 +143,7 @@ check "watch says a failed list again once a list between succeeded" 2 \
   "$(SWARM_SLEEP_SCALE=0.01 watchrun >/dev/null; grep -c "^swarm: watch: gh cannot list o/svc's open PRs" "${ROOT}/watch.out")"
 rm -f "${ROOT}/list-flaky" "${ROOT}/list-n"
 # A PR updated after the local clock's now (a clock behind GitHub's) is listed, its age 0.
-prs CONFLICTING; sed -i.bak 's/2026-01-01T00:00:00Z/2099-01-01T00:00:00Z/' "${ROOT}/prlist.json"; : > "${p}/.swarm/state/watch-seen"
+prs CONFLICTING; sed -i.bak 's/2026-01-01T00:00:00Z/2099-01-01T00:00:00Z/' "${ROOT}/prlist.json"; : > "${p}/.swarm/state/watch-seen"; opened
 check "watch lists a PR updated in the local clock's future" "o/svc #3 story/s1 CONFLICTS with its base" "$(watchrun)"
 prs MERGEABLE
 

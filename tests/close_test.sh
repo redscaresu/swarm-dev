@@ -27,7 +27,7 @@ printf '#!/bin/sh\nA="%s"; CLOSED="%s"; H="%s"\n' "${ROOT}/agents" "${CLOSED}" "
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "tab list") [ -e "$H/tablistfail" ] && exit 1
-              echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"},{"tab_id":"w:t10","label":"ce-foo"}]}}' ;;
+              echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"},{"tab_id":"w:t10","label":"ce-foo"},{"tab_id":"w:t12","label":"sp"},{"tab_id":"w:t13","label":"rb"}]}}' ;;
   "tab close") [ -e "$H/tabclosefail" ] && exit 1
                printf '<%s>\n' "$3" >> "${CLOSED}" ;;
   "agent list") [ -e "$H/agentfail" ] && exit 1
@@ -770,6 +770,51 @@ conductor_fixture idle idle; echo "w:p93 cb3" > "${P}/.swarm/state/ce"; echo "cb
 printf '%s\n' "w:p93 w:t7" "w:p91 w:t7" > "${ROOT}/panes"; touch "${ROOT}/agentfail"; rc=0; out="$(cs cb3)" || rc=$?; rm "${ROOT}/agentfail"
 is "with herdr's agent list failing, closing cb3 exits 0, keeps ce for cb1, its state unknown, and closes cb3's pane alone" "0||w:p93|1" \
   "${rc}|$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(grep -c '^kept cb1 (herdr gave no agent list, so its state is unknown) in tab ce:' <<< "${out}")"
+
+# --- A tab close never takes the pane running the command (HERDR_PANE_ID), however idle its agent: a
+# review agent idles in its story's tab while its own swarm.sh tell or merge steps the build up or reconciles.
+# from_pane <pane|-> <arg>... — swarm.sh run from <pane>, or with HERDR_PANE_ID unset for -.
+from_pane() {
+  local p="$1"; shift
+  [[ "${p}" != - ]] || p=""
+  (cd "${P}" && env -u HERDR_PANE_ID ${p:+HERDR_PANE_ID="${p}"} HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1)
+}
+# Backlog story sp, its builder due a step-up, shares its tab (w:t12) with review-sp, idle. The
+# builder's record line has no name, so close finds its pane through herdr and sweeps sp's tab
+# (close_tabs). This file's herdr starts no agent, so the step-up stops once the old builder is
+# closed (escalate_ladder_test.sh starts the next rung); the close is what is checked.
+sp_fixture() {
+  printf '%s\n' "w:p101" "w:p102 review-sp" > "${P}/.swarm/state/sp"
+  printf '%s\n' "sp w:p101" "review-sp w:p102" > "${ROOT}/agents"; printf '%s\n' "w:p101 w:t12" "w:p102 w:t12" > "${ROOT}/panes"
+  : > "${CLOSED}"; : > "${ROOT}/panes-closed"
+}
+item sp "status: ready" "kind: code"; started sp; built sp code
+echo '[{"number":12,"state":"OPEN","url":"'"${U}"'/12","headRefName":"story/sp"}]' > "${ROOT}/prs.json"
+echo "escalate_ladder = sonnet,opus,fable" > "${P}/.claude/swarm/config"
+sp_fixture; out="$(from_pane w:p102 step-up sp findings-3)" || true
+is "step-up sp from review-sp's idle pane closes sp's builder, and keeps review-sp, its tab and its record line, saying why" \
+  "w:p101||w:p102 review-sp|1" \
+  "$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/sp" 2>/dev/null)|$(grep -c '^kept review-sp (the pane running this command) in tab sp:' <<< "${out}")"
+sp_fixture; from_pane - step-up sp findings-3 >/dev/null || true
+is "with HERDR_PANE_ID unset, the same step-up's sweep closes sp's tab, review-sp with it" "<w:t12>|gone" \
+  "$(tr -d '\n' < "${CLOSED}")|$([[ -e "${P}/.swarm/state/sp" ]] && echo kept || echo gone)"
+: > "${P}/.claude/swarm/config"
+# reconcile, run from a merged story's idle review pane, closes its builder and keeps that pane. Backlog
+# story rb's builder, in a record line with no name, sweeps rb's tab (w:t13). Epic story re's builder
+# is the last line of ce-2's record, so its close takes that tab, where review-re was moved by hand
+# (its line still in ce's record).
+item rb "status: review" "kind: code" "prs: ${U}/31"; started rb; echo "${U}/31 MERGED" > "${ROOT}/pr-states"
+printf '%s\n' "w:p103" "w:p104 review-rb" > "${P}/.swarm/state/rb"
+printf '%s\n' "rb w:p103" "review-rb w:p104" > "${ROOT}/agents"; printf '%s\n' "w:p103 w:t13" "w:p104 w:t13" > "${ROOT}/panes"
+: > "${CLOSED}"; : > "${ROOT}/panes-closed"; out="$(from_pane w:p104 reconcile)" || true
+is "reconcile from review-rb's idle pane closes backlog story rb's builder, and keeps review-rb and its tab" "w:p103||w:p104 review-rb|1" \
+  "$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/rb" 2>/dev/null)|$(grep -c '^kept review-rb (the pane running this command) in tab rb:' <<< "${out}")"
+item re "status: review" "kind: code" "epic: ce" "prs: ${U}/32"; started re; echo "${U}/32 MERGED" > "${ROOT}/pr-states"
+printf '%s\n' "w:p90 conductor" "w:p106 review-re" > "${P}/.swarm/state/ce"; echo "w:p105 re" > "${P}/.swarm/state/ce-2"
+printf '%s\n' "conduct-ce w:p90" "re w:p105" "review-re w:p106" > "${ROOT}/agents"; printf '%s\n' "w:p90 w:t7" "w:p105 w:t8" "w:p106 w:t8" > "${ROOT}/panes"
+: > "${CLOSED}"; : > "${ROOT}/panes-closed"; out="$(from_pane w:p106 reconcile)" || true
+is "reconcile from review-re's idle pane closes epic story re's builder, and keeps review-re and tab ce-2, recorded there now" "w:p105||w:p106 review-re|1" \
+  "$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null)|$(grep -c '^kept review-re (the pane running this command) in tab ce-2:' <<< "${out}")"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

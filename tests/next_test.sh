@@ -17,12 +17,14 @@ export PATH="${STUB_BIN}:${PATH}"
 STEPS="${STUB_BIN}/steps"; : > "${STEPS}"
 record_step() { local first="${1%%$'\n'*}"; if [[ -n "${first}" ]]; then echo "${first%% *}" >> "${STEPS}"; fi; }
 
-# item <path> <front-matter line>... — write a board file under docs/.
+# item <path> <front-matter line>... — write a board file under docs/. An HLD ends with ## Epics, as
+# the template's does.
 item() {
-  local path="docs/$1" title; shift
+  local path="docs/$1" title epics=""; shift
   title="$(basename "${path}" .md)"
+  [[ "${path}" != docs/hld/* ]] || epics=$'\n## Epics'
   mkdir -p "$(dirname "${path}")"
-  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
+  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; [[ -z "${epics}" ]] || echo "${epics}"; } > "${path}"
 }
 
 # expect <name> <first line of `next`> <setup...> — build a board with the setup, check next. The
@@ -89,8 +91,17 @@ done
 expect "a blocked HLD does not hide a valid one beside it" "plan-hld b" \
   "item hld/a_b.md 'status: agreed'" "item hld/b.md 'status: agreed'"
 expect "an agreed HLD whose ## Epics holds a hand-written link is still planned" "plan-hld h" \
-  "item hld/h.md 'status: agreed'" \
-  "printf '%s\n' '## Epics' '- [e1](../epics/e1.md)' >> docs/hld/h.md"
+  "item hld/h.md 'status: agreed'" "item epics/e1.md 'status: later'" \
+  "printf '%s\n' '- [e1](../epics/e1.md)' >> docs/hld/h.md"
+# plan_hld puts a plan PR under no grant unless ## Epics is the HLD's last section (epics_last):
+# next offers no /plan-hld that ends in a PR the user must merge by hand, and the gate says why.
+EPICS_LAST="end the HLD with a line that is exactly ## Epics, and after it only blank lines and lines - [<slug>](../epics/<slug>.md) naming epics on the board"
+expect "an agreed HLD with no ## Epics gets no plan-hld step" "gate" \
+  "item hld/h.md 'status: agreed'" "sed -i.bak '/^## Epics\$/d' docs/hld/h.md && rm docs/hld/h.md.bak"
+has_line "the gate says to end the HLD with no ## Epics with one" "  hld cannot be planned: h, ${EPICS_LAST}"
+expect "an agreed HLD with an appendix after ## Epics gets no plan-hld step" "gate" \
+  "item hld/h.md 'status: agreed'" "printf '%s\n' '## Appendix' 'notes' >> docs/hld/h.md"
+has_line "the gate says to end the HLD with an appendix with ## Epics" "  hld cannot be planned: h, ${EPICS_LAST}"
 expect "an open plan PR (its worktree) lets the HLD fall through to the next arm" "escalated esc" \
   "item hld/h.md 'status: agreed'" \
   "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'" \
@@ -118,6 +129,10 @@ OUT_MOVE="mv docs '${HLDEXT}' && mkdir -p .claude/swarm && echo 'board_dir = ${H
 OUT_MARK="mkdir -p .swarm/h && echo e1 > .swarm/h/writing-epics"
 # The decomposition answer alone, even one newer than the HLD, is no evidence the run wrote an epic.
 OUT_LEAD="mkdir -p .swarm/h && echo '{\"epics\": [{\"slug\": \"e1\"}]}' > .swarm/h/hld-lead.json && touch -t 202601010000 docs/hld/h.md"
+# /plan-hld writes in place there, with no plan PR for grants to refuse: a section after ## Epics blocks nothing.
+expect "outside the repo, an agreed HLD with an appendix after ## Epics is still planned" "plan-hld h" \
+  "item hld/h.md 'status: agreed'" "printf '%s\n' '## Appendix' 'notes' >> docs/hld/h.md" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
 expect "outside the repo, epics naming the HLD, no planned: and the run's marker listing them: plan again" "plan-hld h" \
   "${OUT_HLD[@]}" "${OUT_MARK}" "${OUT_MOVE}"
 rm -rf "${HLDEXT}"
@@ -604,7 +619,7 @@ else echo "FAIL beside plan-epic the project is named idle: ${out}"; fails=$((fa
 dir="$(mktemp -d)/my proj" || { echo "mktemp -d failed" >&2; exit 1; }
 mkdir -p "${dir}" && (cd "${dir}" && git init -q && mkdir -p docs/stories .swarm/board-state/stories/a && item stories/a.md 'status: ready' 'kind: code')
 got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2>"${dir}.err"; echo "exit $?")"
-if [[ "${got}" == "story a"*"exit 0" ]] && grep -q '^warning: the idle-dependency check failed' "${dir}.err"; then echo "ok   a failed idle check warns and next still exits 0"
+if [[ "${got}" == "story a"*"exit 0" ]] && grep -q '^warning: the idle check failed' "${dir}.err"; then echo "ok   a failed idle check warns and next still exits 0"
 else echo "FAIL a failed idle check: ${got} $(cat "${dir}.err")"; fails=$((fails + 1)); fi
 (cd "${dir}" && rm -rf .swarm && item stories/a.md 'status: later' 'kind: code' && mkdir .swarm \
   && printf '%s\tk\to/r#1\tone to file\tdeclined\tcodex\tout-of-scope\n' "$(date +%F)" > .swarm/findings.tsv)
@@ -626,7 +641,7 @@ grep -qF '`idle: <story> waits on <dep> but shares no touches part with it and n
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
 grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
-grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
+grep -qF 'a `depends_on` story that shares no `touches` part with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
 }
 if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's critic checks disjoint touches"
 else echo "FAIL${got}"; fails=$((fails + 1)); fi
@@ -1362,7 +1377,7 @@ dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p bin && item stories/s.md 'status: ready' 'kind: code' 'epic: e')
 # shellcheck disable=SC2016 # the stub's own $1
-printf '#!/bin/sh\n[ "$1" != --version ] || { echo "herdr 0.9.5"; exit 0; }\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "herdr 0.9.5"; exit 0; }\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"workspace\":{\"workspace_id\":\"w\"},\"tab\":{\"tab_id\":\"t0\"},\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
 conduct() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" conduct e 2>&1); }
 es="${dir}/.swarm/board-state/epics"
