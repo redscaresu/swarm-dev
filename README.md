@@ -116,6 +116,17 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
 lists them all.
 
+### Workspace labels
+
+Every herdr workspace swarm.sh opens is labelled with the project first, so two swarms on one
+machine never share one:
+
+- `<project> · <epic>`: an epic's conductor and its builders.
+- `<project> · backlog`: the backlog conductor and the one-off stories it builds.
+
+`<project>` is the project folder's name, with a short hash of its path after it when another folder
+of the same name already has a workspace ([reference.md § Building](docs/reference.md#building)).
+
 ## Cost and safety
 
 Every agent is a full Claude Code session on your own logins, so a run spends real tokens. On one
