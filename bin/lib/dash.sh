@@ -558,7 +558,9 @@ dash_no_agent_at() {
 
 # dash_no_agent <herdr agent list> [board] — set next_step's NO_AGENT_NOW (and NO_AGENT_SET) to the
 # no-agent lines read from that list (no_agent_from), asked only while a story could have one (ready,
-# or review under merge = agent); board is dash_render's rows, else the board is read. Used by
+# or review under merge = agent); board is dash_render's rows, else the board is read. A story in review
+# under merge = human whose HLD grants merge, which no_agent_lines gives a no-review: line, does not
+# open that gate: with no other story that does, dash leaves its line out, and wait --lead shows it. Used by
 # dash_render and by `_step --dash`, dash --check's next, which reads herdr's list as dash does,
 # whenever herdr is on PATH, in a pane or not.
 dash_no_agent() {
