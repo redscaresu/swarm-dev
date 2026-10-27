@@ -109,7 +109,10 @@ is one column, top to bottom:
   blocked story, `idle: <story> is ready with no build, exit: <exit>` for a ready one, and
   `idle: epic <epic> can start, ...` or `idle: epic <epic> has no plan running, ...` for an epic. dash works
   them out again every frame from the board, its state and events.tsv, with no gh or herdr call, so a
-  row goes once the dependency is in review or done, or once the story's build starts. A ready story's
+  row goes once the dependency is in review or done, once the story's build starts, or, for an epic
+  row, once the epic is active with stories or its plan runs (a `scope-<epic>` record or its
+  `_board-scope-<epic>` worktree). The step `next` would take goes with the read, so the epic that
+  step names as `plan-epic` gets no row. A ready story's
   row names its exit, so it changes when the story's conductor starts or stops, and `wait --lead`
   wakes the lead again for the changed line. They count toward no warning light. The box is left out
   when there are none, and, with no warning, when the check fails: a frame has no place for one.

@@ -2475,10 +2475,12 @@ status_report() {
     [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
   fi
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  local nx; nx="$(next_lines)"
   echo; echo "Next"
-  next_lines | sed 's/^/  /'
-  # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none.
-  idle_warned | sed 's/^/  /' || true
+  [[ -z "${nx}" ]] || printf '%s\n' "${nx}" | sed 's/^/  /'
+  # A failed check warns on stderr (idle_warned), so a Next with no idle: line means none. The step
+  # next would take goes with it, so the epic that step names gets no idle: line.
+  idle_warned "" "${nx%%$'\n'*}" | sed 's/^/  /' || true
   local skipped; skipped="$(report_skipped)"
   [[ -z "${skipped}" ]] || printf '\n%s\n' "${skipped}"
 }

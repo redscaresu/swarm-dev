@@ -137,8 +137,8 @@ run
 check "next's step is the stage step for the staged draft" "stage v1.3.0" "${STEP}"
 check "next prints the line for the draft with no hld: and none for the one its stage step covers" "$(start b)" "${LINES}"
 
-# An active epic with no plan running: next's plan-epic step names the first plannable epic in board
-# order (a), whatever step comes before it; the others get the line while no plan of them runs.
+# An active epic with no plan running: the epic next's plan-epic step names gets no line; under any
+# other step, every plannable epic with no plan running gets it, the first in board order (a) too.
 board; item epics/e.md "status: active"
 run
 check "a lone active epic with no stories is next's plan-epic step" "plan-epic e" "${STEP}"
@@ -154,7 +154,7 @@ item epics/e7.md "status: active" "depends_on: [ds]"; item epics/ds.md "status: 
 item epics/e8.md "status: active" "parent: p" "depends_on: [p]"; item epics/p.md "status: split"; item epics/k.md "status: active" "parent: p"; item stories/sk.md "status: ready" "kind: code" "epic: k"
 run
 check "the step is a conduct, which next takes before plan-epic" "conduct d" "${STEP}"
-lacks "the first plannable epic in board order is the plan-epic step's: no line" "$(noplan a)"
+has "under a conduct step no step names the first plannable epic, so it gets the line too" "$(noplan a)"
 has "a second active epic with no stories and no plan running gets the line" "$(noplan e)"
 lacks "an active epic whose only story is a lead after: one counts as done (epic_after_only): no line" "$(noplan e3)"
 lacks "an active epic with a story gives no line" "$(noplan e4)"

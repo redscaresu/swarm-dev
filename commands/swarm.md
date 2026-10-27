@@ -100,9 +100,9 @@ Repeat until a step below says stop:
      `unasked_plan:` set (the gate shows its plan or the user's decline), or for the later epic
      `next`'s `plan-epic` step names.
    - `idle: epic <epic> has no plan running, exit: /swarm-dev:plan-epic <epic>`: the epic is active
-     with no stories and nothing in its `depends_on` holds up its planning, but `next`'s `plan-epic`
-     step names an earlier epic, and no plan of this one runs: no `scope-<epic>` record in
-     `.swarm/state` and no open plan board PR. Plan it with the exit, beside the step's epic.
+     with no stories, nothing in its `depends_on` holds up its planning, no plan of it runs (no
+     `scope-<epic>` record in `.swarm/state` and no open plan board PR), and the step above is not
+     `plan-epic` for it. Plan it with the exit, beside the step.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in

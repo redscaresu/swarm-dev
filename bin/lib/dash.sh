@@ -663,8 +663,9 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # Taken whole, never through head: head exits after a line, and where SIGPIPE is ignored (CI) next's
   # second echo prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
   nx="$(next_lines)" || true
-  # next's idle: lines (idle_now), read each frame: board and state only.
-  idle="$(idle_now 2>/dev/null)" || idle=""
+  # next's idle: lines (idle_now), read each frame: board and state only, given the step next would
+  # take, so the epic that step names gets no row.
+  idle="$(idle_now "${nx%%$'\n'*}" 2>/dev/null)" || idle=""
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_IDLE="${idle}" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
