@@ -262,9 +262,10 @@ Repeat until a step below says stop:
      already asked about or run, or whose finish PR is open.
 
      If any `wait` here or below prints `stuck: api error` (exit 4: the agent's turn stopped on an
-     API error three times in a row, and `wait` already told it to carry on each time) or `stuck: no
-     output for <N>m (<pane>)`, read the pane (`herdr agent read <agent>`), tell the user what it
-     shows, and stop for them.
+     API error three times in a row, and `wait` already told it to carry on each time), restart the
+     agent as the first rule at the end of this file says. If it prints `stuck: no output for <N>m
+     (<pane>)`, read the pane (`herdr agent read <agent>`), tell the user what it shows, and stop
+     for them.
 
      If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
      Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and
@@ -517,13 +518,24 @@ is `human` unless `swarm.sh grants <PR URL>` lists `merge` for the PR, and then 
 the user merges it, even when they ask you to, since `swarm.sh merge` refuses it. A release PR is the user's too, unless `swarm.sh merge --release`'s release check finds that an
 HLD granting `release` covers every story merged since the last tag. A `costs: money` PR, or one stacked on one,
 is the user's to merge whatever the grant says. Never give a `lead` story to an agent.
-Three more rules for the lead, from the v0.28.0 retro:
 
-- Plan epics whose plans do not depend on each other at the same time, not one after another. When
-  one epic must come before another, put that order in a story's `depends_on` once the other
-  epic's plan exists.
+Three more rules for the lead:
+
+- Plan epics whose plans do not depend on each other at the same time, not one after another.
+  `next` offers one `plan-epic` at a time, so run `/plan-epic <epic>` for each independent epic at
+  once, each in its own pane. When one epic must come before another, put that order in a story's
+  `depends_on` once the other epic's plan exists. Make the edit in a board PR with
+  `swarm.sh board-pr`, as for every board edit of yours.
 - Restart an agent at its first `Request timed out` or API-error stop that its own retries did not
-  clear. Give the restart a brief that tells it to write its output as it goes.
-- Judge whether an agent is alive from `.swarm/events.tsv` and its PR, never from a pane read alone.
+  clear. `wait` telling it to carry on counts as its retries, so a `stuck: api error` line is
+  that stop. For a builder of a ready story, run `herdr pane close <pane>` if herdr still lists it
+  (`swarm.sh restart` refuses a listed builder), then `swarm.sh restart <slug>`. For a planner or
+  co-author, run its command again. For a conductor, `swarm.sh close conduct-<epic>`, then
+  `swarm.sh conduct <epic>`. Give the restart a brief that tells the agent to write its output as it
+  goes.
+- Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
+  `swarm.sh status` or `swarm.sh wait --stall <slug>`, never from a pane read alone. A planner or
+  conductor has no PR, and the `stall_minutes` check also counts worktree commits, edits, session-log
+  activity and a running suite.
 
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.
