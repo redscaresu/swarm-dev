@@ -14,6 +14,8 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # The herdr stub starts each session's .jsonl here, and a /goal prompt appends the entry
 # HERDR_STUB_GOAL picks: set (the default here), other (a goal for another condition), refused,
 # pasted (the /goal queued as a pasted prompt), or none when empty. A goal wait is short.
