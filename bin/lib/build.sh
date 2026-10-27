@@ -901,12 +901,12 @@ touches_rows() {
 }
 
 # board_pr_merge_rule — who lands a conductor's board PR: the conductor with merge = agent, the user
-# with merge = human.
+# with merge = human. A story-scope edit, a hold or a finish PR gets no codex-review under either.
 board_pr_merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then
-    echo "With merge = human you cannot land that PR: list it in your report for the user."
+    echo "Run no \`swarm.sh codex-review\` on it. With merge = human you cannot land that PR: list it in your report for the user."
   else
-    echo "Land it with \`swarm.sh merge --board <url>\` once its checks are green."
+    echo "Run no \`swarm.sh codex-review\` on it: land it with \`swarm.sh merge --board <url>\` once its checks are green."
   fi
 }
 
@@ -1224,17 +1224,85 @@ $(conduct_merge_rule backlog)
 EOF
 }
 
-# epic_workspace <label> — the herdr workspace labelled <label>, created if there is none. A conductor's
-# label is its epic's parent: (so the child epics of a split one share a workspace), else the epic's own
-# slug. A new workspace's placeholder tab is closed once the caller has added its own.
-epic_workspace() {
-  local label="$1" ws
-  ws=$(herdr workspace list | json "next((w['workspace_id'] for w in d['result']['workspaces'] if w.get('label')=='${label}'),'')")
-  if [[ -z "${ws}" ]]; then
-    ws=$(herdr workspace create --label "${label}" --cwd "${PROJECT_DIR}" --no-focus \
-      | json "d['result']['workspace']['workspace_id']+' '+d['result']['tab']['tab_id']")
+# WORKSPACE_SEP: between the project's label and the rest of a workspace label (`app · <epic>`).
+WORKSPACE_SEP=" · "
+
+# herdr_workspaces — herdr's workspaces, one "<id>\t<label>\t<cwd>\t<others>" line each. A workspace has no cwd
+# of its own in herdr, so it is the cwd of its first pane in herdr's pane list: the conductor's, a
+# review agent's, or, while new, the placeholder's epic_workspace made it with. A pane in a story
+# worktree of this project's repo (<project>-wt/<slug>) counts as the project's, so a workspace whose
+# conductor pane has gone is still its own; one in any other story worktree (<repo>-wt/<slug>, whose
+# project it does not say) is skipped. With no pane left, empty. <others> is 1 when any pane not
+# skipped is in a dir other than the project's (another project's), else 0. Fails when herdr gives no
+# workspace list, or no pane list while it has a workspace.
+herdr_workspaces() {
+  local ws panes='{"result":{"panes":[]}}'
+  ws="$(herdr workspace list 2>/dev/null)" || return 1
+  if [[ "$(json "len(d['result']['workspaces'])" <<< "${ws}")" != 0 ]]; then
+    panes="$(herdr pane list 2>/dev/null)" || return 1
   fi
-  echo "${ws}"
+  SWARM_WS="${ws}" SWARM_PANES="${panes}" python3 -I -c '
+import json, os, sys
+cwd, others = {}, set()
+for p in json.loads(os.environ["SWARM_PANES"])["result"]["panes"]:
+    d = (p.get("cwd") or "").rstrip("/"); parent = os.path.dirname(d)
+    if parent == sys.argv[1] + "-wt":
+        d = sys.argv[1]
+    elif d != sys.argv[1] and parent.endswith("-wt"):
+        continue
+    if d:
+        w = p.get("workspace_id") or p.get("pane_id", "").split(":")[0]
+        cwd.setdefault(w, d)
+        if d != sys.argv[1]:
+            others.add(w)
+for w in json.loads(os.environ["SWARM_WS"])["result"]["workspaces"]:
+    i = w["workspace_id"]
+    print("%s\t%s\t%s\t%d" % (i, w.get("label") or "", cwd.get(i, ""), i in others))' "${PROJECT_DIR}"
+}
+
+# project_label [<herdr_workspaces lines>] — this project's part of its workspace labels: its dir's
+# name, with -<path_hash> after it only when herdr has a workspace labelled `<that name> · ...` whose
+# cwd is another dir (/a/app's is app, then /b/app's is app-<hash>).
+project_label() {
+  local base list="${1-}"
+  base="$(basename "${PROJECT_DIR}")"
+  [[ $# -gt 0 ]] || list="$(herdr_workspaces)" || return 1
+  if P="${base}${WORKSPACE_SEP}" D="${PROJECT_DIR}" awk -F'\t' 'index($2, ENVIRON["P"]) == 1 && $3 != "" && $3 != ENVIRON["D"] { f = 1 } END { exit !f }' <<< "${list}"; then
+    printf '%s-%s' "${base}" "$(path_hash)"
+  else
+    printf '%s' "${base}"
+  fi
+}
+
+# epic_workspace <label> — "<id>\t<workspace label>\t<placeholder tab>": this project's herdr workspace
+# for <label>, created as `<project_label> · <label>` if there is none. A conductor's <label> is its
+# epic's parent: (so the child epics of a split one share a workspace), else the epic's own slug, or
+# backlog. Found by label and cwd (herdr_workspaces), so never another project's: under either form of
+# project_label, since /b/app's turns back to app once /a/app has no workspace, or under the bare
+# <label> an older swarm.sh gave it, and then only with no other project's pane in it (an older
+# swarm.sh put every project's backlog, and each project's same-named epic, in one). A new workspace's placeholder tab is closed once the caller has
+# added its own; a found one has none. Refused, with the reason printed and 1 returned, when herdr
+# gives no list or no new workspace.
+epic_workspace() {
+  local label="$1" list base own want ws tab
+  list="$(herdr_workspaces)" || { echo "conduct: herdr gave no workspace or pane list, so the workspace for ${label} could not be found"; return 1; }
+  base="$(basename "${PROJECT_DIR}")"
+  own="$(project_label "${list}")${WORKSPACE_SEP}${label}"
+  for want in "${own}" "${base}${WORKSPACE_SEP}${label}" "${base}-$(path_hash)${WORKSPACE_SEP}${label}" "${label}"; do
+    ws="$(W="${want}" D="${PROJECT_DIR}" B="${label}" awk -F'\t' '$2 == ENVIRON["W"] && $3 == ENVIRON["D"] && ($2 != ENVIRON["B"] || $4 == 0) { print $1; exit }' <<< "${list}")"
+    [[ -z "${ws}" ]] || { printf '%s\t%s\t\n' "${ws}" "${want}"; return; }
+  done
+  read -r ws tab <<< "$(herdr workspace create --label "${own}" --cwd "${PROJECT_DIR}" --no-focus \
+    | json "d['result']['workspace']['workspace_id']+' '+d['result']['tab']['tab_id']")"
+  [[ -n "${ws}" ]] || { echo "conduct: herdr could not create the workspace ${own}"; return 1; }
+  printf '%s\t%s\t%s\n' "${ws}" "${own}" "${tab}"
+}
+
+# path_hash — 6 hex characters of a checksum of the project's path, which tell two dirs of one name apart.
+path_hash() {
+  local crc
+  crc="$(printf '%s' "${PROJECT_DIR}" | cksum)"
+  printf '%06x' $((${crc%% *} % 16777216))
 }
 
 # conductor_name <epic>|backlog — a conductor's agent name. herdr's names span projects and every
@@ -1242,11 +1310,11 @@ epic_workspace() {
 # of the project's path>: 32 characters at most, distinct for two dirs of one name, and never ending
 # like a retired agent's (-done).
 conductor_name() {
-  local n crc
+  local n
   [[ "$1" == backlog ]] || { agent_name "conduct-$1"; return; }
   # Sanitized before the cut: a multibyte character can become several dashes.
-  n="$(agent_name "conduct-backlog-$(basename "${PROJECT_DIR}")")"; crc="$(printf '%s' "${PROJECT_DIR}" | cksum)"
-  printf '%s-%06x' "${n:0:25}" $((${crc%% *} % 16777216))
+  n="$(agent_name "conduct-backlog-$(basename "${PROJECT_DIR}")")"
+  printf '%s-%s' "${n:0:25}" "$(path_hash)"
 }
 
 # conductor_report <agent> — where a conductor writes its report as its last act.
@@ -1287,10 +1355,11 @@ epic_env() {
 }
 
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
-# stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
+# stories with no epic: conduct-backlog-<project dir> (conductor_name), in its project's backlog workspace
+# (epic_workspace), needing no epic file.
 # Under merge = agent with no allow rule for swarm.sh merge, it dies with merge_rule_stop's line first.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name report why
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws wslabel placeholder out inbox err names tab name report why
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; label=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -1316,18 +1385,21 @@ start_conductor() {
   # events.tsv first: outcomes' held_min ends the run there.
   [[ ! -f "${report}" ]] || record_event report "${epic}" "ok ($(date -u -r "${report}" +%Y-%m-%dT%H:%M:%SZ))"
   rm -f "${report}"
-  read -r ws placeholder <<< "$(epic_workspace "${label}")"
+  out="$(epic_workspace "${label}")" || die "${out}"
+  IFS=$'\t' read -r ws wslabel placeholder <<< "${out}"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
-  # The backlog's tab takes the conductor's name too: every project's backlog tab shares the workspace
-  # named backlog, and close shuts every tab with its label there.
+  # The backlog's tab takes the conductor's name too: an older swarm.sh put every project's backlog tab
+  # in one workspace named backlog, which a project still reuses, and close shuts every tab with its label there.
   tab="${epic}"; [[ "${epic}" != backlog ]] || tab="${name}"
+  # In that workspace, even when the tab's record still lists a live pane in another (a retired
+  # conductor's, in a workspace an older swarm.sh shared): next_pane then opens <tab>-2.
   HERDR_WORKSPACE_ID="${ws}" start_agent "${tab}" "${name}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
   inbox="$(conductor_inbox "${name}")"; rm -f "${inbox}.md" "${inbox}.reading.md" "${inbox}.woke" "${inbox}.later" "${inbox}.upgrade"   # a stale .lock note_lock clears itself
-  echo "workspace ${label} (${ws})"
+  echo "workspace ${wslabel} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.
   # The conductor is already running, so a state file that cannot be written is reported, never

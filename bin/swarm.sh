@@ -3,7 +3,7 @@
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
-#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
+#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), or a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ..., as next prints it); print each new one
@@ -41,7 +41,7 @@
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
-#   swarm.sh watch [repo...]                                wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit
+#   swarm.sh watch [--epic <slug>|--backlog] [repo...]      wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit; with --epic or --backlog, also once when a story PR of theirs opens
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init [--auto-mode-done]                        from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines, and print the Claude Code steps left to you; --auto-mode-done: record (in .swarm/auto-mode-done) that you ran /auto-mode-setup, writing nothing outside .swarm/
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into

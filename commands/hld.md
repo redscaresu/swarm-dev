@@ -23,12 +23,35 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    case), that file is the HLD. Otherwise make a slug from the title: lowercase it, turn every run
    of characters other than `a-z` and `0-9` into one `-`, and trim `-` from both ends (`Add
    rate-limiting (v2)!` is `add-rate-limiting-v2`). If the slug is empty, stop and ask the user
-   for another title. The HLD is then the one whose name, without its leading `YYYY-MM-DD-`, is
+   for another title.
+
+   First look for an agreement of this HLD still waiting, which may have moved a new draft out of
+   the main checkout (step 5): a branch here or on origin named `board/agree-YYYY-MM-DD-<slug>`,
+   any date (`git branch --list 'board/agree-*'`, `git ls-remote origin 'refs/heads/board/agree-*'`;
+   for an argument naming a file, `board/agree-` and that name made clean, as below). Its name
+   after `board/` is the agreement PR's, `agree-<name>`. When there is one, read its PR (`gh pr
+   list --head board/agree-<name> --state all --json state,url`). An open PR means the user agreed
+   this HLD and it waits on that PR: tell them so with its URL, and stop. A merged one: run
+   `swarm.sh board-pr done agree-<name>` and `swarm.sh reconcile`, which pulls the agreed HLD, and
+   go on below, where it is agreed.
+   A closed one: write the HLD back from the branch first, as `status: draft`, over
+   any copy in the main checkout, since the branch holds the latest draft: run `git fetch origin
+   board/agree-<name>`, then `git diff --name-only origin/<base>...origin/board/agree-<name>` names
+   its path and `git show origin/board/agree-<name>:<path> > <path>` writes it. Then run `swarm.sh
+   board-pr done agree-<name>` and go on below. No PR on the branch means step 5's `board-pr open`
+   failed after the draft moved: the draft is in the worktree `<repo>-wt/_board-agree-<name>`, so
+   finish step 5 from there (`board-pr open` again), or tell the user and stop. If `git ls-remote`
+   cannot reach origin (with `--exit-code`, exit 2 only means no such branch), or `git fetch` or
+   `gh pr list` fails, stop and tell the user; do not resume co-writing.
+
+   The HLD is then the one whose name, without its leading `YYYY-MM-DD-`, is
    exactly that slug (`2026-10-23-add-cache.md` is `add-cache`, never `cache`), or else the one
    whose `title:` is this title. Whenever step 1 resolves to an existing file, by name or by
    title, `<file>` is its name without `.md` and `<slug>` is `<file>` without its leading
-   `YYYY-MM-DD-`, whatever the title says now. If that file is `status: draft`, resume it. If it
-   has any other status (agreed or superseded), it is not for co-writing: stop, say so with its
+   `YYYY-MM-DD-`, whatever the title says now. `<name>` below is `<file>` made clean the same way
+   (lower-cased, each run of characters other than `a-z` and `0-9` one `-`, `-` trimmed from both
+   ends), since `board-pr` refuses any other name. If that file is `status: draft`, resume it. If
+   that file has any other status (agreed or superseded), it is not for co-writing: stop, say so with its
    status, and let the user pick another title. Otherwise `<slug>` is the slug made from the
    title and `<file>` is `YYYY-MM-DD-<slug>`, dated today: create `docs/hld/<file>.md` from the
    skeleton in the fenced block of `${CLAUDE_PLUGIN_ROOT}/templates/docs/hld/README.md`: fill in
@@ -75,10 +98,24 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
    together." to a file `<note>` and run `swarm.sh tell hld-<slug> nudge <note>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
-   `status: agreed`; nothing plans epics from a draft HLD. Open a board PR for the HLD with one
-   `swarm.sh codex-review` pass (a board outside the project's repo has no board PR: the HLD is
-   agreed where it is, with no commit), close the co-author and the reviewer (if it started) by name
+   `status: agreed`; nothing plans epics from a draft HLD. When the board is in the project's repo,
+   make that edit in a board PR named `agree-<name>`. Run `swarm.sh board-pr start agree-<name>`;
+   the worktree it prints starts from origin's base. When the base lacks `docs/hld/<file>.md` (a
+   new draft), move the agreed file from the main checkout into the worktree with `mv`, so no copy
+   is left to block the pull once the PR merges. When the base has it, copy it over the worktree's,
+   then put the main checkout's copy back as the base has it (`git show
+   origin/<base>:docs/hld/<file>.md > docs/hld/<file>.md`), since edits left there block the pull too. Set the status in the worktree
+   and stage it (`git add -A` there: a moved draft is untracked until then, and codex's
+   `git diff <merge-base>` shows only tracked files), run one `swarm.sh codex-review` pass there
+   and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`,
+   which commits with the brief's trailers and signing and opens the PR (`board-pr open` again
+   pushes a later fix). The pass comes before `open` because step 1 takes an open `agree-<name>`
+   PR as reviewed: a session that stops between the two would otherwise leave a PR that merges
+   unreviewed. A board outside the project's repo
+   has no board PR: the HLD is agreed where it is, with no commit. Close the co-author and the reviewer (if it started) by name
    (`swarm.sh close hld-<slug>`, then `swarm.sh close hld-review-<slug>`; never `swarm.sh close
    hld`, which would close every tab whose label starts `hld-`), and tell the user the HLD is agreed
    and that `/swarm-dev:swarm` plans it into epics next: once its board PR has merged, or at once on
-   a board outside the project's repo.
+   a board outside the project's repo. Once that PR has merged or closed, `swarm.sh board-pr done
+   agree-<name>` removes its worktree and branch (step 1 runs it on the next `/hld` of this HLD, or
+   run it then).
