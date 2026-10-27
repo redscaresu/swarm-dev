@@ -41,8 +41,10 @@ check "a needs: line that names another story leaves the line" "${LINE}" "$(idle
 # swarm.md's next idle list quotes the line --idle prints, with <story> and <dep> for the slugs:
 # compared with the line itself, as printed for a disjoint pair, not with LINE above.
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
-quoted="$(grep -o '`idle: <story> waits on <dep>[^`]*`' "${REPO}/commands/swarm.md" | head -1 | tr -d '`')"
-check "commands/swarm.md quotes the line touches_rows.py prints" "$(idle "c.sh")" "$(sed 's/<story>/b/; s/<dep>/a/' <<< "${quoted}")"
+# `|| true`: with no such quote, grep's exit 1 under pipefail would end the script with no FAIL line.
+quoted="$(grep -o '`idle: <story> waits on <dep>[^`]*`' "${REPO}/commands/swarm.md" | head -1 | tr -d '`' || true)"
+if [[ -z "${quoted}" ]]; then echo "FAIL commands/swarm.md quotes the line touches_rows.py prints: no \`idle: <story> waits on <dep> ...\` quote in it"; fails=$((fails + 1))
+else check "commands/swarm.md quotes the line touches_rows.py prints" "$(idle "c.sh")" "$(sed 's/<story>/b/; s/<dep>/a/' <<< "${quoted}")"; fi
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

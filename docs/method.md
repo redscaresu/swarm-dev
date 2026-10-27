@@ -33,7 +33,7 @@ step (when it says to wait, it also starts a conductor for any ready work that h
 awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
 `depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
-(the lead drops the dependency or adds the line). When the step leaves the builders idle and no
+(the lead drops the dependency or names it in the story's `needs:` line). When the step leaves the builders idle and no
 story is buildable, it also prints the project with up to five candidates for a one-off: the findings
 declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
