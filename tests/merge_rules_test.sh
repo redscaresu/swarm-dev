@@ -554,6 +554,9 @@ epr() {
 }
 # fx_at <file> <ref> <front-matter line>... — <file> (a basename) as gh reads it at <ref>.
 fx_at() { { echo ---; printf '%s\n' "${@:3}"; echo ---; } > "${FX}/wf.$1.$2"; }
+# day <n> — the local date <n> days before today (-1: tomorrow). An epic's agreed: is a ticket only
+# from today back AGREED_MAX_AGE (board.sh's, 7) days.
+day() { python3 -c 'import datetime, sys; print(datetime.date.today() - datetime.timedelta(days=int(sys.argv[1])))' "$1"; }
 # guarded <case> <epic> — refused naming <epic> and /swarm-dev:epic <epic>.
 guarded() { refused "$1" "${URL} sets $2 ${NT} $2"; }
 hld_read() { grep -qF "repos/o/r/contents/docs/hld/$1.md?ref=main" "${ROOT}/gh.log"; }
@@ -578,7 +581,7 @@ hld_guarded "--board, hld: an agreed HLD whose epics grant the head removes" hx
 epr e1; fx_at hb.md main "status: agreed" "grants: [bogus]"; fx_at e1.md "${H1}" "status: active" "hld: hb"; merge --board "${URL}"
 refused "--board, hld: an HLD with a bad grant value" "--board: docs/hld/hb.md at the base, line 3: grants must be epics, stories, merge or release, so whether ${URL} sets e1 ${UK} e1"
 check "--board, hld: an HLD with a bad grant value: reads the HLD at the base branch" hld_read hb
-epr "a-ok b-no"; fx_at a-ok.md "${H1}" "status: active" "agreed: 2026-01-01"; fx_at b-no.md "${H1}" "status: active"
+epr "a-ok b-no"; fx_at a-ok.md "${H1}" "status: active" "agreed: $(day 0)"; fx_at b-no.md "${H1}" "status: active"
 merge --board "${URL}"; guarded "--board, a ticketed and an unticketed active epic" b-no
 check "--board, a ticketed and an unticketed active epic: does not name the ticketed one" bash -c "! grep -qF a-ok '${ROOT}/out'"
 epr "a-no b-ok"; fx_at a-no.md "${H1}" "status: active"; fx_at b-ok.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"
@@ -588,8 +591,18 @@ epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.${H1}.fail"; m
 refused "--board, a 502 on the epic's read at the head" "--board: gh cannot read docs/epics/e1.md at 1111111, so whether ${URL} sets e1 ${UK} e1"
 epr e1; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.main"; : > "${FX}/wf.e1.md.main.fail"; merge --board "${URL}"
 refused "--board, a 502 on the epic's read at the base" "--board: gh cannot read docs/epics/e1.md at main, so whether ${URL} sets e1 ${UK} e1"
-epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: 2026-01-01"; merge --board "${URL}"
-board_merged "--board, an epic set active with agreed:"
+epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: $(day 0)"; merge --board "${URL}"
+board_merged "--board, an epic set active with agreed: today"
+# agreed: counts from today back AGREED_MAX_AGE (7) days: 6 days ago, and 7 at the limit, merge; 8 days
+# ago, or tomorrow, is refused.
+for n in 6 7; do
+  epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: $(day "${n}")"; merge --board "${URL}"
+  board_merged "--board, agreed: ${n} days ago"
+done
+epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: $(day 8)"; merge --board "${URL}"
+guarded "--board, agreed: 8 days ago, a day past AGREED_MAX_AGE" e1
+epr e1; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active" "agreed: $(day -1)"; merge --board "${URL}"
+guarded "--board, agreed: tomorrow" e1
 # A parent: is a ticket only when it names another epic, active or split at the base (wf.<parent>.md.main).
 parent_read() { grep -qF "repos/o/r/contents/docs/epics/$1.md?ref=main" "${ROOT}/gh.log"; }
 epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; fx_at old.md main "status: active"; merge --board "${URL}"

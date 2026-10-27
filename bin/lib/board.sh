@@ -1005,12 +1005,20 @@ epic_unticketed() (
 )
 
 # epic_ticket_agreed <head bytes> <base bytes> — epic_unticketed's agreed: ticket: true when the
-# epic's front matter at the head has an agreed: YYYY-MM-DD date that its base copy did not already
-# have (an absent one has none). One left on a draft, or on a later epic agreed before, is stale.
+# epic's front matter at the head has an agreed: date that its base copy did not already have (an
+# absent one has none), and that date is a real YYYY-MM-DD from today back AGREED_MAX_AGE days: one
+# of those days as date prints them. One left on a draft, or on a later epic agreed before, is
+# stale; an older one, or one after today, was not agreed for this PR. Today is the clock's, not the
+# PR's merge base, which moves when the branch is updated from main.
+AGREED_MAX_AGE=7
 epic_ticket_agreed() {
-  local d
+  local d i
   d="$(slug_list "$(get_fm - agreed <<< "$1")")"
-  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]]
+  [[ "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]] || return 1
+  for ((i = 0; i <= AGREED_MAX_AGE; i++)); do
+    [[ "${d}" != "$(date -v-"${i}"d +%F 2>/dev/null || date -d "${i} days ago" +%F)" ]] || return 0
+  done
+  return 1
 }
 
 # epic_ticket_parent <reader> <head bytes> <slug> <epics prefix> — epic_unticketed's parent: ticket:

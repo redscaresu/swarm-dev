@@ -83,7 +83,7 @@ opened scope-e "$(codex_line scope-e plan)"
 opened agree-e "$(codex_line agree-e agreement)"
 opened agree-2026-10-25-big-plan "$(codex_line agree-2026-10-25-big-plan agreement)"
 # A new epic agreed in its own PR: /epic moves the draft into the worktree, so only the PR has it.
-opened agree-new "$(codex_line agree-new agreement)" docs/epics/new.md '---\nstatus: active\nagreed: 2026-10-27\n---\n\n# new\n'
+opened agree-new "$(codex_line agree-new agreement)" docs/epics/new.md "---\nstatus: active\nagreed: $(date +%F)\n---\n\n# new\n"
 # --- A story slug that starts like a plan PR names no HLD or epic: a story-scope edit.
 opened plan-hld-gaps "$(none_line plan-hld-gaps "story-scope edit")"
 opened scope-creep "$(none_line scope-creep "story-scope edit")"
