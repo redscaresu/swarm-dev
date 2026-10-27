@@ -334,8 +334,9 @@ launch_file() {
     done
     printf 'export SHELL=%q ZDOTDIR=%q\n' "${AGENT_SHELL%% *}" "$4"
     # The agent's name (its ZDOTDIR's): gh-shim logs its calls under it, and not as the starting
-    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry).
-    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA\n' "${4##*/}"
+    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry). Nor does the agent keep a
+    # timed run's SWARM_RUN_TIMED (next starts conductors), so its own status, next and dash log rows.
+    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA SWARM_RUN_TIMED\n' "${4##*/}"
     # shellcheck disable=SC2016 # the wrapper's own bash expands them
     printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
       "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done"
@@ -412,7 +413,7 @@ RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
 # and <names>), with the restored pane's own values, so no value is written down or put on a command
 # line; sets AGENT_SET as launch_file does, with SWARM_PROJECT, SWARM_RESUME and gh-shim's
 # SWARM_GH_LOG and SWARM_GH_CALLER (its folder first on PATH, so the agent's gh calls log; no
-# SWARM_GH_VIA); and execs its arguments. Python, not bash, so neither a BASH_ENV nor an exported
+# SWARM_GH_VIA, and no SWARM_RUN_TIMED, as launch_file); and execs its arguments. Python, not bash, so neither a BASH_ENV nor an exported
 # function in that environment runs before the scrub or changes it, as none can on a first start through env -i. It also makes the
 # session's own ZDOTDIR (<session>.zdotdir) afresh at 0700 with clean_env's two files, so nothing
 # written there since runs in the restored agent's shells; it empties the folder rather than
@@ -464,6 +465,7 @@ env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(
 env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r},
            SWARM_GH_LOG={gh_log!r}, SWARM_GH_CALLER={name!r}, PATH=":".join(p for p in ({gh_shim!r}, env.get("PATH", "")) if p))
 env.pop("SWARM_GH_VIA", None)
+env.pop("SWARM_RUN_TIMED", None)
 try:
     env["GPG_TTY"] = os.ttyname(0)
 except OSError:

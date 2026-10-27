@@ -155,9 +155,11 @@ widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().sp
 # gh-calls.tsv is gh-shim's log of dash's own gh calls, made before the snapshot so the folder's entry holds.
 : >> "${P}/.swarm/gh-calls.tsv"
 mkdir -p "${P}/.swarm/gh-cache"   # flow's cache of finished GitHub records, which dash's ci refresh (a flow) fills
-# shellcheck disable=SC2010 # names swarm.sh wrote, filtered for the one file dash may write
-snapshot() { (cd "${P}" && find docs .swarm -path .swarm/gh-cache -prune -o -type f ! -name gh-calls.tsv -print0 | sort -z | xargs -0 cksum
-  find docs .swarm -path .swarm/gh-cache -prune -o ! -name gh-calls.tsv -print0 | sort -z | xargs -0 ls -ld) ; }
+# run-times.tsv takes a row per dash run, as gh-calls.tsv takes dash's gh calls: made here, so a run only appends.
+: >> "${P}/.swarm/run-times.tsv"
+# shellcheck disable=SC2010 # names swarm.sh wrote, filtered for the files dash may write
+snapshot() { (cd "${P}" && find docs .swarm -path .swarm/gh-cache -prune -o -type f ! -name gh-calls.tsv ! -name run-times.tsv -print0 | sort -z | xargs -0 cksum
+  find docs .swarm -path .swarm/gh-cache -prune -o ! -name gh-calls.tsv ! -name run-times.tsv -print0 | sort -z | xargs -0 ls -ld) ; }
 before="$(snapshot)"
 
 # --watch off a terminal prints a frame only when it changed, plain, until stopped.
