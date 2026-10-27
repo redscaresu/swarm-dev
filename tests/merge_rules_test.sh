@@ -541,7 +541,7 @@ rm -rf "${P}/docs/hld" "${P}/docs/epics"
 # --- merge --board refuses a PR that sets an epic active with no ticket (epic_unticketed), under
 # either merge mode. gh reads each epic and hld: HLD at the base branch (main) and at the head SHA
 # from wf.<file>.<ref>; the stub keys them by basename, so no HLD shares an epic's name.
-NT="active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
+NT="active with no ticket (agreed: within the last 7 days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
 # A refusal it cannot decide still names the epic: "<why>, so whether <url> sets <epic> ${UK} <epic>".
 UK="active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic"
 # epr <epics> [config line]... — fresh with the config lines, no story s, and a board PR changing

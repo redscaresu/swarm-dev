@@ -342,7 +342,7 @@ is "a medium epic's board PR opens with no split-critic.json" "0 ${URL}" "${rc} 
 # --- An epic that goes active (new, or not active at the base) needs a ticket: agreed:, parent:, an hld:
 # naming an HLD agreed with grants: [epics] at both ends, or lead_epics = on. A refused PR creates no
 # PR and pushes nothing. Fixtures on origin/main go in through the old-split clone.
-NT="goes active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
+NT="goes active with no ticket (agreed: within the last 7 days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
 # on_main <path> <content> — commit <path> with <content> on origin/main, fetched here.
 on_main() {
   mkdir -p "$(dirname "${ROOT}/old-split/$1")"; printf '%b' "$2" > "${ROOT}/old-split/$1"

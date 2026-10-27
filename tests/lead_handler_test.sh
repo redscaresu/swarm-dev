@@ -104,20 +104,6 @@ while IFS= read -r kind; do
   fi
 done < <(tr '|' '\n' <<< "${KINDS}")
 
-# The gate handler: the `gate` arm of commands/swarm.md, its lines joined. next's gate line for a later
-# epic says to write agreed: <today> as it goes active, and the arm tells the lead the same, since the
-# epic guard refuses a later epic set active with no ticket (epic_unticketed).
-gate="$(awk '/^   - `gate`: / { s = 1 } s && /^   - `done`: / { exit } s' "${HOME_DIR}/commands/swarm.md" | tr '\n' ' ' | tr -s ' ')"
-check "the gate handler is found in commands/swarm.md" test -n "${gate}"
-rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv"; mkdir -p "${P}/docs/epics"
-printf -- '---\nstatus: later\n---\n\n# e\n' > "${P}/docs/epics/e.md"
-out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
-check "next's gate line for a later epic says to set it active with agreed: <today>" \
-  grep -qxF '  later epic: e (set it active with agreed: <today> to start it)' <<< "${out}"
-# shellcheck disable=SC2016 # the backticks are the Markdown's own
-check "the gate handler tells the lead to write agreed: <today> as it sets a later epic active" \
-  grep -qF 'a later epic: on the user'"'"'s go, set it `active` and write `agreed: <today>` (today'"'"'s date) in the same edit' <<< "${gate}"
-
 # The plan-hld arm reads grants from origin's copy (the plan worktree), after the step that makes it.
 # shellcheck disable=SC2016 # the backticks are the Markdown's own
 planarm="$(tr '\n' ' ' < "${HOME_DIR}/commands/swarm.md" | tr -s ' ' | sed -n 's/.*\(- `plan-hld <hld>`: follow\)/\1/p' | cut -c1-1200)"

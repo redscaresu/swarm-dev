@@ -1021,8 +1021,8 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 # epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
 # line; README.md excepted) that goes active with no ticket, one per line: status: active at the head
 # (raw_status), absent at the base or at any status there but active (later, split, review and done
-# too, as a draft, none or a typo), and none of an agreed: date the base did not already have
-# (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
+# too, as a draft, none or a typo), and none of an agreed: date the base did not already have, from
+# today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
 # (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics at both ends
 # (hld_ticket). Nothing with lead_epics = on. <reader>
 # base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
@@ -1066,12 +1066,13 @@ epic_unticketed() (
 # absent one has none), and that date is a real YYYY-MM-DD from today back AGREED_MAX_AGE days: one
 # of those days as date prints them. One left on a draft, or on a later epic agreed before, is
 # stale; an older one, or one after today, was not agreed for this PR. Today is the clock's, not the
-# PR's merge base, which moves when the branch is updated from main.
+# PR's merge base, which moves when the branch is updated from main. The shape check comes first,
+# so a blank value (a PR that drops the line) never matches a date that failed to print.
 AGREED_MAX_AGE=7
 epic_ticket_agreed() {
   local d i
   d="$(slug_list "$(get_fm - agreed <<< "$1")")"
-  [[ "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]] || return 1
+  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]] || return 1
   for ((i = 0; i <= AGREED_MAX_AGE; i++)); do
     [[ "${d}" != "$(date -v-"${i}"d +%F 2>/dev/null || date -d "${i} days ago" +%F)" ]] || return 0
   done
