@@ -1518,7 +1518,8 @@ queued_sent() {
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
 # needs the lead, print one line saying which and why, and exit 0. With --epic or --backlog, a story PR
 # first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>), before
-# anything else about it. A PR needs the lead when its checks on a new head have all finished,
+# anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
+# that has had a review agent). A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # when its head has had no check at all for WATCH_STALL_SECS (default 600), or when its head, its
 # checks reported finished, has waited green for a review (queued_line). An agent of this
@@ -1559,8 +1560,9 @@ watch_prs() {
         [[ -n "${n}" ]] || continue
         [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
         # A conductor's watch (heads set) says once that a story PR opened, so it starts the review
-        # agent; from the list alone, before any read of the PR. The lead's bare watch leaves that to it.
-        if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}"; then
+        # agent; from the list and the board alone, before any read of the PR. The lead's bare watch
+        # leaves that to it.
+        if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}" && opened_due "${br#story/}"; then
           echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"; return 0
         fi
         mergeable=""
@@ -1637,6 +1639,18 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     fi
     nap 60
   done
+}
+
+# opened_due <slug> — true when a scoped watch says <slug>'s PR opened: its story is one an agent builds
+# (a lead story's PR is the lead's, as in queued_line); it is no fix-main story, which is in every
+# conductor's scope, so the one opened line watch-seen keeps could go to a conductor that does not
+# build it; and it has never had a review agent (no findings file, none kept aside, no head on record
+# in .swarm/reviews, which nothing removes), so a PR already open and reviewed when a watch first
+# looks is not reviewed again for it.
+opened_due() {
+  local f="${BOARD}/stories/$1.md" r="${PROJECT_DIR}/.swarm/reviews/$1"
+  if [[ -f "${f}" ]] && ! agent_kind "$(fm "${f}" kind)"; then return 1; fi
+  [[ "$1" != fix-main-* && ! -e "${r}.md" && ! -e "${r}.md.prev" && ! -e "${r}.head" ]]
 }
 
 # watch_rows <owner/repo> — watch's list: each open story/* PR as `<number> <head sha> <head ref>
