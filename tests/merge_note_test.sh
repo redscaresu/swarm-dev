@@ -7,7 +7,8 @@
 # reconcile leaves the story in review (it held the pull), CI on main is red, or the merge queue
 # merged a head nobody checked, the note says so and names no story to start. Each herdr call the
 # note makes once the PR has merged is cut off after SWARM_NOTE_HERDR_WAIT, so a herdr that hangs,
-# at once or after one answer, never hangs merge. With no conductor running, or one that has
+# at once or after one answer, never hangs merge. A list herdr gives that does not parse is a warning,
+# never read as no conductor running. With no conductor running, or one that has
 # written its report, no inbox is written and the ready now: line says no conductor runs. A failed
 # tell is a warning. On merge_fixture.sh, whose herdr stub lists conduct-e in a pane this project
 # opened.
@@ -117,6 +118,13 @@ check "a story merge while herdr hangs after one answer: no note goes" no_inbox
 check "a story merge while herdr hangs after one answer: warns that the note failed, not that no conductor runs" \
   said "warning: could not note conduct-e that s2 are ready"
 
+# --- herdr's list does not parse once the PR has merged (it prints "not json" and exits 0): a
+# warning, not a conductor taken for gone, and merge still exits 0.
+story_pr; echo "touch '${ROOT}/agents.garbage'" > "${FX}/on-merge"; merge "${URL}"; rm -f "${ROOT}/agents.garbage"
+is "a story merge whose herdr list does not parse: exits 0" 0 "${rc}"
+check "a story merge whose herdr list does not parse: warns that conduct-e was not told, not that none runs" \
+  said "warning: herdr cannot list its agents, so conduct-e was not told that s2 are ready"
+
 # --- reconcile fails after the merge (its lock held): the note still goes, naming the PR and the
 # failure, and merge still exits non-zero.
 story_pr; mkdir "${LOCK}"; merge SWARM_RECONCILE_WAIT=0 "${URL}"; rmdir "${LOCK}"
@@ -179,6 +187,12 @@ story_pr; rm -f "${P}"/docs/stories/*.md; mkdir "${LOCK}"; echo "touch '${ROOT}/
 merge SWARM_RECONCILE_WAIT=0 SWARM_NOTE_HERDR_WAIT=1 --board "${URL}"; rmdir "${LOCK}"; rm -f "${ROOT}/herdr.hang"
 is "a board merge whose reconcile fails while herdr hangs: exits 0" 0 "${rc}"
 check "a board merge whose reconcile fails while herdr hangs: warns that no conductor was told" \
+  said "warning: herdr cannot list its agents, so no conductor was told that ${URL} merged"
+# The same when herdr's list does not parse: a warning, not a board with no conductor running.
+story_pr; rm -f "${P}"/docs/stories/*.md; mkdir "${LOCK}"; echo "touch '${ROOT}/agents.garbage'" > "${FX}/on-merge"
+merge SWARM_RECONCILE_WAIT=0 --board "${URL}"; rmdir "${LOCK}"; rm -f "${ROOT}/agents.garbage"
+is "a board merge whose reconcile fails and herdr list does not parse: exits 0" 0 "${rc}"
+check "a board merge whose reconcile fails and herdr list does not parse: warns that no conductor was told" \
   said "warning: herdr cannot list its agents, so no conductor was told that ${URL} merged"
 
 finish merge-note

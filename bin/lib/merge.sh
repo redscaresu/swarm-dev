@@ -596,15 +596,16 @@ live_at() {
 # With none running, or only that one, print the ready now: line for [slugs], or nothing without
 # them. A herdr that cannot list its agents, or a tell that fails, is a warning: it never fails. It
 # runs after the PR has merged, so its herdr calls, the list here and those tell_agent makes, are
-# bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), so a read that
-# fails after it is the tell's warning, never a conductor taken for gone.
+# bounded (bound_herdr). The conductor's pane is read from that one list (herdr_from), checked to parse
+# (note_agents), so a list that does not, or a read that fails after it, is a warning, never a
+# conductor taken for gone.
 conductor_note() {
   local name list what="that ${3:-} are ready" later="it finds them on its next pass"
   name="$(group_conductor "$1")"
   [[ -n "${3:-}" ]] || { what="of the merge"; later="it reads the board on its next pass"; }
   (
     bound_herdr
-    if ! list="$(herdr agent list </dev/null 2>/dev/null)"; then
+    if ! list="$(note_agents)"; then
       echo "warning: herdr cannot list its agents, so ${name} was not told ${what}"; exit 0
     fi
     if [[ -z "$(herdr_from "${list}" agent_field "${name}" pane_id)" || -f "$(conductor_report "${name}")" ]]; then
@@ -623,6 +624,16 @@ conductor_note() {
 bound_herdr() {
   # shellcheck disable=SC2329 # called by name, by what runs after it
   herdr() { within "${SWARM_NOTE_HERDR_WAIT:-${HERDR_LIST_WAIT}}" herdr "$@"; }
+}
+
+# note_agents — herdr's agent list (bounded once bound_herdr has run), printed when it reads as one:
+# JSON whose result.agents is a list. Fails otherwise, so a list herdr could not give, or gave cut
+# short, is never read as no agents running.
+note_agents() {
+  local list
+  list="$(herdr agent list </dev/null 2>/dev/null)" || return 1
+  json "isinstance(d['result']['agents'], list) or sys.exit(1)" <<< "${list}" >/dev/null 2>&1 || return 1
+  printf '%s\n' "${list}"
 }
 
 # herdr_from <list> <command>... — run <command> in a subshell where `herdr agent list` prints <list>,
@@ -706,8 +717,8 @@ ready_tell() {
     note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || return 0
     printf 'The board PR %s just merged, but reconcile failed after it (%s), so which stories it made ready is not known until swarm.sh reconcile succeeds.\n' \
       "${url}" "${why:-exit ${rc}}" > "${note}"
-    # One list, bounded as in conductor_note (bound_herdr), names the conductors. On fd 3, as below.
-    if ! list="$(bound_herdr; herdr agent list </dev/null 2>/dev/null)"; then
+    # One list, bounded and read as in conductor_note (note_agents), names the conductors. On fd 3, as below.
+    if ! list="$(bound_herdr; note_agents)"; then
       echo "warning: herdr cannot list its agents, so no conductor was told that ${url} merged"
     else
       while read -r c <&3; do

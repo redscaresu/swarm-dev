@@ -2093,7 +2093,8 @@ A conductor that has written its report counts as not running; with none running
 by then, each herdr call the note makes stops after `SWARM_NOTE_HERDR_WAIT` seconds (30 by
 default). The conductor's pane is read from the note's one list of agents, so a herdr read that
 fails after it is the note's warning, never a conductor taken for gone. A herdr that cannot list its
-agents in that time, or a note that fails, is a warning and never fails the merge.
+agents in that time, or gives a list that does not parse, or a note that fails, is a warning and
+never fails the merge.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
 has not started building, and has a file the board PR itself changes that wasn't buildable on the
