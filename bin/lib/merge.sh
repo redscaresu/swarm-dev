@@ -1471,12 +1471,15 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # retried after WAIT_PR_RETRY and up to half again; the budget is not read for those. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
 # turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
 # That read also takes the PR's mergeable state: CONFLICTING ends it at once (exit 2, naming the base),
-# and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks.
+# and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks,
+# and its head branch: on red, before it exits 1, review_red_scan (run as _review-red-scan, a swarm.sh of
+# its own under the deadline's time left) counts the head toward the ladder's ci-red trigger when the
+# wait runs in that story's review pane.
 wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
-  local spent budget bounded="" changed expect=() unstarted="" item missing gone note noted=""
+  local spent budget bounded="" ref branch="" changed expect=() unstarted="" item missing gone note noted=""
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -1500,14 +1503,14 @@ wait_pr() {
       # A conflicted PR runs no checks, so it ends here. UNKNOWN on an open PR is GitHub still
       # computing: the PR is read again each poll, its checks read beside it, so a red or green
       # check still ends the wait. A merged or closed PR stays UNKNOWN, so it is not read again.
-      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,changedFiles \
-        -q '[.headRefOid, .mergeable, .baseRefName, .state, (.changedFiles | tostring)] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
-      read -r oid mergeable base state changed <<< "${why}"
+      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,changedFiles,headRefName \
+        -q '[.headRefOid, .mergeable, .baseRefName, .state, (.changedFiles | tostring), .headRefName] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
+      read -r oid mergeable base state changed ref <<< "${why}"
       if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
         [[ "${mergeable}" != CONFLICTING ]] || wait_pr_fail "conflicts with ${base}: merge origin/${base} in, then push"
         unknown=""; [[ "${mergeable}/${state}" != UNKNOWN/OPEN ]] || unknown=1
         if [[ -z "${head}" ]]; then
-          head="${oid}"; missed=0; echo "head ${head}"
+          head="${oid}"; branch="${ref}"; missed=0; echo "head ${head}"
           [[ ! "${changed}" =~ ^[0-9]+$ ]] || expect=("${base}" "${n}" "${changed}" "${WAIT_PR_TMP}.expected")
         fi
         [[ -n "${unknown}" ]] || continue
@@ -1527,7 +1530,14 @@ wait_pr() {
       0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; return 0 ;;
       1) echo "red: ${why}"
          # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
-         WAIT_PR_RED=1; return 1 ;;
+         WAIT_PR_RED=1
+         # The ladder's scan (review_red_scan), in a swarm.sh of its own under the deadline's time left, as
+         # every read here: a step-up it runs is killed with it at the deadline, and the lead's exit is
+         # then step-up --resume, as for any step-up killed partway. Set first, so exit 1 stands whatever
+         # the scan does.
+         left=$((limit - (SECONDS - start)))
+         (( left <= 0 )) || SWARM_PROJECT="${PROJECT_DIR}" within "${left}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _review-red-scan "${repo}" "${head}" "${branch}" "${n}" || true
+         return 1 ;;
       2) missed=0
          if [[ "; ${why}; " == *"; no check runs; "* ]]; then
            empty="${empty:-${SECONDS}}"
@@ -2209,29 +2219,37 @@ watch_mergeable() {
   warned=1
 }
 
-# RED_HEADS: `<slug> <sha> <time> <seen|red|green|cancelled|refused>`: each PR head a watch saw,
-# ci_gate's verdict on it once it gave one (cancelled: not green, with no check failed or timed out), and a step-up that closed nothing while it was the PR's head. Only
-# appended to, one short line at a time, so two watches at once lose none.
+# RED_HEADS: `<slug> <sha> <time> <seen|red|green|cancelled|refused>`: each PR head a scan saw (a
+# conductor's watch, or wait-pr from the story's review pane), ci_gate's verdict on it once it gave one
+# (cancelled: not green, with no check failed or timed out), and a step-up that closed nothing while it
+# was the PR's head. A seen line's time is the head's commit time (the committer date GitHub holds; the
+# scan's own time when that read fails), so the build it counts against is the one that pushed it,
+# however late a scan first sees it; the other lines carry the scan's time. Only appended to, one short
+# line at a time, so two scans at once lose none.
 RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 
-# ci_red_scan <owner/repo> <head> <slug> — watch's, with escalate_ladder set: note <head> as seen, the first
-# time any watch sees it, then judge with ci_gate head every head first seen in this build
-# (build_started) and not judged yet, the current one or one replaced since; red, green or cancelled
-# is final, and pending or a failed read is judged again next poll. A head that was there before the
-# build is not this build's. With STEP_UP_RED_HEADS distinct red heads or more, <head> not green,
+# ci_red_scan <owner/repo> <head> <slug> — watch's and review_red_scan's, with escalate_ladder set: note <head> as seen, the first
+# time any scan sees it, at its commit time, then judge with ci_gate head every head committed in this
+# build (build_started) and not judged yet, the current one or one replaced since; red, green or cancelled
+# is final, and pending or a failed read is judged again next scan. A head committed before the
+# build is not this build's, however late it is first seen. With STEP_UP_RED_HEADS distinct red heads or more, <head> not green,
 # the story's builder open (a PR whose builder was closed is the lead's) and idle (one mid-turn is
 # tried again next poll), and no step-up refused on this head, step it up (ladder_step ci-red-<N>)
 # and succeed unless that closed nothing, which is noted (refused) so this head is not tried again;
 # else fail.
 # ponytail: ci_gate reads a head still running on each poll; skip it there if watch's gh calls matter.
 ci_red_scan() {
-  local since now h rc v n out
+  local since now h rc v n out at
   since="$(build_started "$3")"; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   mkdir -p "${RED_HEADS%/*}"; touch "${RED_HEADS}"
-  # A head is noted once, the first time any watch sees it: one there before the build is never this
-  # build's. mine: heads first seen this build, judged: those with a verdict.
-  awk -v s="$3" -v h="$2" '$1 == s && $2 == h { f = 1 } END { exit !f }' "${RED_HEADS}" \
-    || printf '%s %s %s seen\n' "$3" "$2" "${now}" >> "${RED_HEADS}"
+  # A head is noted once, the first time any scan sees it, at its commit time: one committed before the
+  # build is never this build's, even when a review pane's wait-pr first sees it after a step-up. The
+  # scan's own time stands in when the read fails. mine: heads committed this build, judged: those with a verdict.
+  if ! awk -v s="$3" -v h="$2" '$1 == s && $2 == h { f = 1 } END { exit !f }' "${RED_HEADS}"; then
+    at="$(gh api "repos/$1/commits/$2" --jq .commit.committer.date 2>/dev/null)" || at=""
+    [[ "${at}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || at="${now}"
+    printf '%s %s %s seen\n' "$3" "$2" "${at}" >> "${RED_HEADS}"
+  fi
   while read -r h; do
     rc=0; out="$(ci_gate head "$1" "${h}" 2>/dev/null)" || rc=$?
     # Red only for a check that failed or timed out: one cancelled (a newer push, cancel-in-progress)
@@ -2258,6 +2276,38 @@ ci_red_scan() {
   [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" ]] && return 0
   [[ ${rc} != "${STEP_UP_BUSY}" ]] || return 1   # another step-up is running: not a refusal of this head
   printf '%s %s %s refused\n' "$3" "$2" "${now}" >> "${RED_HEADS}"; return 1
+}
+
+# review_red_scan <owner/repo> <head> <head branch> <pr> — wait-pr's, on a red <head> (as _review-red-scan,
+# a swarm.sh of its own that wait-pr runs under its deadline's time left): with escalate_ladder
+# set, when the PR's head branch is story/<slug>, the pane running this is review-<slug>'s by the
+# record merge and tell go by (review_pane) and the PR is in the story's own repo, run
+# ci_red_scan for <slug>, as a conductor's watch --epic or --backlog does. The ladder's red heads are
+# then counted with no watch running; a builder's or the lead's wait-pr counts nothing. A story whose
+# repo cannot be read counts nothing either, and wait-pr says so on stderr. Nor does a head the PR has
+# moved past since wait-pr read it (read again here: the PR's head may be green now), nor a story with
+# env: names, which the review agent lacks (start_agent gives them to builders): a step-up from here
+# would be refused before the close and the head noted refused, which would stop a watch with the
+# names from stepping up on it, so such a story is left to the watch. A watch
+# scanning too is safe: RED_HEADS counts distinct heads, and ladder_step holds the story's lock.
+review_red_scan() {
+  local slug="${3#story/}" f home
+  f="${BOARD}/stories/${slug}.md"
+  [[ -n "${CFG_escalate_ladder:-}" && "$3" == story/* && "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && -n "${HERDR_PANE_ID:-}" ]] || return 1
+  # One answer to "is this pane review-<slug>'s", merge's and tell's: its tab record, its agents.tsv
+  # role and herdr's list (review_pane); a builder's pane or the lead's never counts.
+  [[ "$(review_pane "$(herdr agent list 2>/dev/null)")" == "${slug}" ]] || return 1
+  # wait-pr read the head once, at its start, and may have waited half an hour: a newer head the
+  # builder pushed since is the PR's now, and a red on the old one is not this scan's.
+  [[ "$(gh pr view "$4" --repo "$1" --json headRefOid -q .headRefOid 2>/dev/null)" == "$2" ]] || return 1
+  # The story's env: names are not set in a review pane, so step_up would refuse before the close
+  # (story_env) and the head would be noted refused for the watch too: left to the watch.
+  story_env "${f}" >/dev/null || return 1
+  # GitHub's owner/name, read from the story's repo, against the URL's, whose case may differ.
+  home="$(repo_slug "$(fm "${f}" repo)" 2>/dev/null)" \
+    || { echo "swarm: wait-pr: ${slug}'s repo cannot be read (${home}), so this red head is not counted toward the ladder" >&2; return 1; }
+  [[ "$(tr '[:upper:]' '[:lower:]' <<< "${home}")" == "$(tr '[:upper:]' '[:lower:]' <<< "$1")" ]] || return 1
+  ci_red_scan "$1" "$2" "${slug}"
 }
 
 # ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when
