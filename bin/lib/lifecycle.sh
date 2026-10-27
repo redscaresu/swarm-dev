@@ -88,7 +88,8 @@ board_pr_kind_line() {
 # the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL (its
 # kind's line, board_pr_kind_line, goes to stderr), and refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
 # the worktree and board/<name> here, once the PR on the branch's tip has merged or closed, or, with
-# no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
+# no PR, when the branch has no commit past the base; for a plan PR that closed unmerged, it also
+# removes .swarm/<hld or epic>/critic.json. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
   local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why split="" sign=()
@@ -223,6 +224,11 @@ board_pr() {
       fi
       git -C "${PROJECT_DIR}" worktree prune
       ! git -C "${PROJECT_DIR}" show-ref -q --verify "refs/heads/${b}" || git -C "${PROJECT_DIR}" branch -q -D "${b}"
+      # A plan PR that closed unmerged leaves its critic's answer behind, which lead-stop's plan_drafted
+      # would count as a plan still waiting on the user. A merged one, or a start with no PR, keeps it.
+      if [[ " ${prs} " == *" CLOSED "* && " ${prs} " != *" MERGED "* && "$(board_pr_kind "${name}" "${BOARD}")" == plan ]]; then
+        rm -f "${PROJECT_DIR}/.swarm/${name#*-}/critic.json"
+      fi
       echo "removed ${wt} and ${b}" ;;
   esac
 }
