@@ -1071,9 +1071,12 @@ or the bound is reached, it writes a not-green file and stops: a review file who
 one item, `wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>`. The
 conductor sends that to the builder as a findings round, as any finding, so a PR that stays red
 climbs the findings ladder instead of being reviewed again and again. With `escalate_ladder` set, a
-`wait-pr` that steps the build up ends the agent with `head moved:` too, and one whose step-up failed
-after closing the builder ends it with that `step-up failed:` line as the one finding, which the
-conductor's `tell` then refuses, naming the lead's exit. It
+`wait-pr` that steps the build up ends the agent with `head moved: stepped up: ...`: the PR's head
+has not moved, so the conductor does not start the review again but waits on the new builder, as
+for its own step-ups, and starts the review on the head that builder pushes. One whose step-up
+failed after closing the builder ends the agent with that `step-up failed:` line as the one
+finding; the line itself says to leave the story alone, as `wait --lead` tells the lead, whose exit
+is `step-up --resume`. It
 runs `codex-review` with `SWARM_STORY=<slug>` and, on the story's first round when the PR changes
 code, `/code-review <PR URL>`. From round 2 on it runs codex alone. `review-agent` counts the round
 from the findings `tell` sent the builder since the story's last build started (a step-up or a
@@ -2624,7 +2627,7 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   step-up killed partway.
 
 Each prints `stepped up: <slug> ...`. The conductor's brief tells it to wait on that builder
-again, not to close, retry or tell it; the review agent's brief has it stop with `head moved:` after one from `wait-pr`. A close that a step-up replaced logs no close: the escalate
+again, not to close, retry or tell it; the review agent's brief has it stop with `head moved: stepped up: ...` after one from `wait-pr`, which the conductor's brief reads as a step-up to wait on, not a head to review again. A close that a step-up replaced logs no close: the escalate
 line ends that build. One step-up of a story runs at a time, under `.swarm/locks/step-up-<slug>`, which a
 top-rung hold and `swarm.sh restart` take too. No step-up is tried at the top rung or off the ladder, so the command
 carries on as it would with the ladder empty, apart from the top-rung hold above. A step-up that is refused, or fails before it closes the builder, says why on stderr,

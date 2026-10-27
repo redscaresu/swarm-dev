@@ -1075,7 +1075,7 @@ build_started() {
 }
 
 # ladder_step <slug> <trigger> [findings] — step_up <slug> for a trigger swarm.sh saw itself (close,
-# wait --stall, tell, watch): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
+# wait --stall, tell, watch, a review pane's wait-pr): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
 # builder, and the caller stops; STEP_UP_BUSY when another step-up or a restart of it holds the lock, and the caller
 # touches nothing; any other status when nothing was closed (a refusal, said on stderr,
 # or a failure before the close), and the caller carries on as before. One step-up of a story at a

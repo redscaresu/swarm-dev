@@ -1007,11 +1007,14 @@ EOF
 swarm.sh steps a build up the escalation ladder (${CFG_escalate_ladder}) itself when its builder
 stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${STEP_UP_FINDINGS} of its build
 (tell), or its PR's checks go red on ${STEP_UP_RED_HEADS} heads of its build (\`watch --epic\` or
-\`--backlog\`). That command then prints \`stepped up: <slug>\` (wait prints it in place of
-\`stalled:\`): the next model carries on in the same worktree and branch. Do not close, retry or
-tell that story for it; wait on its builder again. A \`step-up failed: <slug>\` line means the
-step-up stopped after closing the builder. Leave that story alone: \`wait --lead\` tells the lead,
-so it does not go in your report.
+\`--backlog\`, or the review agent's \`wait-pr\` from its own pane). That command then prints
+\`stepped up: <slug>\` (wait prints it in place of \`stalled:\`): the next model carries on in the
+same worktree and branch. Do not close, retry or tell that story for it; wait on its builder again.
+A review file whose \`head moved:\` line names \`stepped up:\` is the review agent reporting one
+from its \`wait-pr\`: the PR's head has not moved, so do not start the review again; wait on the
+builder, then start the review on the head it pushes. A \`step-up failed: <slug>\` line, in a
+command's output or as a review file's one finding, means the step-up stopped after closing the
+builder. Leave that story alone: \`wait --lead\` tells the lead, so it does not go in your report.
 EOF
   local rules sign; sign="$(sign_rule)"
   [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"
