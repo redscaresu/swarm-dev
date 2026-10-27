@@ -327,6 +327,8 @@ item "${B}/epics/p-board.md" "status: active" "hld: plan"
 item "${B}/stories/s-p45.md" "status: review" "epic: p-board" "prs: https://github.com/o/r/pull/45"
 planned 45 plan; pr 45 docs/epics/p-one.md docs/hld/plan.md epics/stray.md
 expect plan-pr-with-file-outside-board-none https://github.com/o/r/pull/45 none
+# p-board leaves plan, so no epic on the board names it and plan is due a plan again (hld_due).
+item "${B}/epics/p-board.md" "status: active"
 # The plan PR moves top-b, an epic under B on the board, to hld: plan: none.
 planned 46 plan; pr 46 docs/epics/top-b.md docs/hld/plan.md; status 46 docs/epics/top-b.md modified
 item "$(at 46 docs/epics/top-b.md)" "status: active" "hld: plan"
@@ -421,6 +423,7 @@ item "${B}/epics/p-draft.md" "status: draft" "hld: plan"
 pr 63 docs/epics/p-draft.md docs/hld/plan.md; status 63 docs/epics/p-draft.md modified
 item "$(at 63 docs/epics/p-draft.md)" "status: active" "hld: plan"; cp "$(at 30 docs/hld/plan.md)" "$(at 63 docs/hld/plan.md)"
 expect plan-pr-activating-epic-none https://github.com/o/r/pull/63 none
+rm "${B}/epics/p-draft.md"   # plan is due a plan again: no epic on the board names it
 # #64 adds p-one and modifies p-board (its body, status kept) under plan: none, its head unread.
 planned 64 plan; pr 64 docs/epics/p-board.md docs/epics/p-one.md docs/hld/plan.md; status 64 docs/epics/p-board.md modified
 item "$(at 64 docs/epics/p-board.md)" "status: active" "hld: plan"
@@ -460,6 +463,12 @@ planned 59 plan; sed -i.bak 's/^planned: .*/planned:/' "$(at 59 docs/hld/plan.md
 expect plan-pr-empty-planned-none https://github.com/o/r/pull/59 none
 planned 85 plan; sed -i.bak 's/^planned: .*/planned: ""/' "$(at 85 docs/hld/plan.md)"
 expect plan-pr-quoted-empty-planned-none https://github.com/o/r/pull/85 none
+# An agreed HLD with no planned: that an epic on the board already names (one planned before planned:
+# existed, or through /epic) is not due a plan either (hld_due): none.
+hld "${B}/hld/plan-ep.md" "title: Plan" "status: agreed" "grants: [merge]"
+item "${B}/epics/ep-board.md" "status: active" "hld: plan-ep"
+planned 86 plan-ep
+expect plan-pr-hld-with-board-epic-none https://github.com/o/r/pull/86 none
 
 # A board at the repo's root (board_dir = .): its hld/, epics/ and stories/ are the PR's paths as they are.
 R="${ROOT}/rootproj"; mkdir -p "${R}/.claude/swarm" "${R}/hld" "${R}/epics" "${R}/stories"

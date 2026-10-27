@@ -1055,16 +1055,16 @@ epics_last() {
 
 # plan_head <hld file> <head copy> <epics dir> — true when <head copy> only plans <hld file>: one
 # planned: line, exactly `planned: YYYY-MM-DD` (what /plan-hld writes, and planned as next reads it,
-# hld_planned), on a board copy that is unplanned as next reads it (an empty planned: there is): a
-# planned HLD is never due a plan (hld_due), so a second plan PR rides no grant. The board's hld_top
-# as its first lines, and after them only blank lines and links to epics in <epics dir>, the board's
-# with the PR's added ones over them (epic_links): the head adds links under the board's last
-# ## Epics and nothing else.
+# hld_planned), on an HLD the board has due a plan as next reads it (hld_due): no epic on the board
+# names it and its planned: is empty there. A planned HLD, or one an epic carries, is never due a
+# plan, so a second plan PR rides no grant. The board's hld_top as its first lines, and after them
+# only blank lines and links to epics in <epics dir>, the board's with the PR's added ones over them
+# (epic_links): the head adds links under the board's last ## Epics and nothing else.
 plan_head() {
   local h n re='^planned: [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   h="$(planned_lines "$2")"
   [[ "${h}" =~ ${re} ]] || return 1
-  ! hld_planned "$1" || return 1
+  [[ "$(hld_due "$1")" == plan ]] || return 1
   n=$(( $(hld_top "$1" | wc -l) ))
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links "$3"
 }
