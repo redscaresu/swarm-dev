@@ -131,8 +131,12 @@ escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv
 # wait-pr's PR (#5, s1's) and its heads, full SHAs as wait-pr reads them.
 URL=https://github.com/o/proj/pull/5
 RA="$(printf '%040d' 0 | tr 0 a)"; RB="$(printf '%040d' 0 | tr 0 b)"; RC="$(printf '%040d' 0 | tr 0 c)"
-# review_pane — review-s1 open in pane w:2 of s1's tab, beside its builder in w:1.
-review_pane() { echo "review-s1 w:2" >> "${ROOT}/agents"; echo "w:2 review-s1" >> "${P}/.swarm/state/s1"; }
+# review_pane — review-s1 open in pane w:2 of s1's tab, beside its builder in w:1, with role review in
+# agents.tsv: the record review_pane (merge's, tell's and now wait-pr's) goes by.
+review_pane() {
+  echo "review-s1 w:2" >> "${ROOT}/agents"; echo "w:2 review-s1" >> "${P}/.swarm/state/s1"
+  printf '2026-10-01\treview\treview-s1\tclaude\topus\thigh\tsess-r\n' >> "${P}/.swarm/agents.tsv"
+}
 # waits <pane> <head>... — wait-pr on s1's PR from <pane> (HERDR_PANE_ID), with no watch running, once
 # per head; WAIT_RCS: each one's exit status, space-separated.
 waits() {

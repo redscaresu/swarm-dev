@@ -1925,8 +1925,8 @@ ci_red_scan() {
 
 # review_red_scan <owner/repo> <head> <head branch> — wait-pr's, on a red <head> (as _review-red-scan,
 # a swarm.sh of its own that wait-pr runs under its deadline's time left): with escalate_ladder
-# set, when the PR's head branch is story/<slug>, the pane running this is review-<slug>'s (the pane
-# herdr lists for that name, one this project opened) and the PR is in the story's own repo, run
+# set, when the PR's head branch is story/<slug>, the pane running this is review-<slug>'s by the
+# record merge and tell go by (review_pane) and the PR is in the story's own repo, run
 # ci_red_scan for <slug>, as a conductor's watch --epic or --backlog does. The ladder's red heads are
 # then counted with no watch running; a builder's or the lead's wait-pr counts nothing. A story whose
 # repo cannot be read counts nothing either, and wait-pr says so on stderr. A watch
@@ -1935,7 +1935,9 @@ review_red_scan() {
   local slug="${3#story/}" f home
   f="${BOARD}/stories/${slug}.md"
   [[ -n "${CFG_escalate_ladder:-}" && "$3" == story/* && "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && -n "${HERDR_PANE_ID:-}" ]] || return 1
-  [[ "$(agent_field "$(agent_name "review-${slug}")" pane_id)" == "${HERDR_PANE_ID}" ]] || return 1
+  # One answer to "is this pane review-<slug>'s", merge's and tell's: its tab record, its agents.tsv
+  # role and herdr's list (review_pane); a builder's pane or the lead's never counts.
+  [[ "$(review_pane "$(herdr agent list 2>/dev/null)")" == "${slug}" ]] || return 1
   # GitHub's owner/name, read from the story's repo, against the URL's, whose case may differ.
   home="$(repo_slug "$(fm "${f}" repo)" 2>/dev/null)" \
     || { echo "swarm: wait-pr: ${slug}'s repo cannot be read (${home}), so this red head is not counted toward the ladder" >&2; return 1; }
