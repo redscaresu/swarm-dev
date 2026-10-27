@@ -726,6 +726,16 @@ the upgrade keeps its workspace and never takes another project's. Otherwise it 
 `close` and `tidy` find tabs and panes from `.swarm/state`, not from labels, so a relabelled
 workspace closes as before.
 
+**`next`'s idle dependency line.** After its step, `next` prints `idle: <story> waits on <dep> but
+shares no touches part with it and needs nothing from it` for each blocked story an agent builds,
+with no `held_by:`, whose `depends_on` story an agent builds too and is neither done nor in review.
+Both must have `touches`. It compares them by part, as `story --strict` does: two entries share a
+part when they name the same file and the same first word of the part (past a leading `§`, `#`,
+"the", "a" or "an"), or both name the bare file. Another part of the same file shares nothing. The
+line stays quiet when a word of the story's `needs:` line is the dependency's slug, so
+`needs: <dep> (its --flag)` keeps a dependency the check calls over-broad. The lead
+either drops the dependency or names it in `needs:` (step 1 of `/swarm-dev:swarm`).
+
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
 `zsh -f` (no rc file runs) holding only:
@@ -2154,10 +2164,21 @@ merge's own `main-ci:` and `fix-main:` lines, and `next`'s why, show them the sa
 (`SWARM_FIX_MAIN_LOG_SECONDS`), however many runs failed, so a slow log cannot hold up the reconcile
 that follows; a run gh cannot read stops at once, and the story names each run it could not read,
 and why. Once the story is written, merge logs `main-red <sha> <owner/repo> <base> <checks>` (the
-repo lowercased), retires an older fix-main story of the same repo and base that nobody has started
-(one merge at a time per repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`, so
-two red merges in one merge-queue batch never retire each other's story),
-so one fix is built per red main, and prints `fix-main: <checks> on <short sha>` with the same lines.
+repo lowercased), and retires each fix-main story of the same repo and base that nobody has started
+and whose red commit another red of that repo and base descends from, its own story included. Merge
+reads which red is newer from the commits. The order the reds were logged in can mislead, since CI
+on an older commit can finish later. The retired story's `fix-main` line says `retired: superseded by
+fix-main-<sha>`, naming a red that no other red descends from. Only a red that no `main-green` has
+cleared, and whose fix-main story is still on the board (started or not), counts. Merge reads the
+commits in the project's clone, and only when the repo is that clone's origin. Before it takes the
+lock below, it asks gh which repo the clone is and fetches the base if a red's commit is missing. A red in
+another repo, a red whose commit the clone lacks, and two reds where neither descends from the
+other retire nothing. At worst one story too many stays on the board, and no fix is lost. One merge at a time per
+repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`. Merge then prints
+`fix-main: <checks> on <short sha>` with the same lines, then `story:` and the story that covers the
+red. When its own story retired at once, that is the newer red's story, and `next` and a clearing
+green treat the newer red as the base's red. When another merge's run retired it since, the line is
+`story: none` and says so.
 When it cannot write the story it says so in a line that does not start `fix-main:`, and leaves the
 red main and fix before it as they were. A red main clears, logging `main-green` and retiring its
 fix-main story if nobody has started it, only on a commit that shows it fixed and has the red
