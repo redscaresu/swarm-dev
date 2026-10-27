@@ -1008,7 +1008,7 @@ wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
-  local spent budget bounded="" changed expect=() unstarted="" item missing
+  local spent budget bounded="" changed expect=() unstarted="" item missing gone
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -1064,9 +1064,9 @@ wait_pr() {
            (( SECONDS - empty < grace )) \
              || wait_pr_fail "no check runs on ${head:0:7} after $((SECONDS - empty))s (${why})"
          fi
-         missing=""
+         missing=""; gone=" (no run on ${head:0:7})"
          while IFS= read -r item; do
-           [[ "${item}" != *" (no run on ${head:0:7})" ]] || missing="${missing:+${missing}, }${item% (no run on *}"
+           [[ "${item%"${gone}"}" == "${item}" ]] || missing="${missing:+${missing}, }${item%"${gone}"}"
          done <<< "${why//; /$'\n'}"
          if [[ -n "${missing}" ]]; then
            unstarted="${unstarted:-${SECONDS}}"
