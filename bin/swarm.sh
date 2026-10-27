@@ -3,7 +3,7 @@
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
-#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
+#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story, a green PR in review that waits on the user (merge = human, or merge holds it), or a started story with no live agent (no-agent: <slug>, exit: <exit>); print each new one

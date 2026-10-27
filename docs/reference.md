@@ -660,7 +660,9 @@ background work. When it starts, an epic still `later` is set `active` (in
 `.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
 stop listing it as waiting on you. It runs in a herdr workspace labelled for its project and the epic's `parent:` if it has one (epics with the same
 parent share it), or else for the epic (see **Workspace labels** below), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
-that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
+that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane always
+opens in the workspace of the agent that starts it: a tab whose panes are in another workspace
+counts as full, so that pane opens `<epic>-2` there instead. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
@@ -735,13 +737,15 @@ one in any other repo's (`<repo>-wt/<slug>`) is skipped, since its path does not
 workspace only when its directory is the project's: one under either form of the project's label, or
 one under the bare `<epic>` or `backlog` label an older swarm.sh gave with no other project's pane in
 it, so a conductor started before the upgrade keeps its workspace and never takes one another project
-shares. Otherwise it makes a new one. When the conductor's tab record still lists a live pane in
-another workspace (a retired conductor's, in a workspace an older swarm.sh shared), the conductor
-opens a tab `<tab>-2` in its own workspace. Labels can still repeat: two projects of one name that
-start a conductor at the same moment both make `<name> · <epic>`, and a project inside a folder
-whose name ends in `-wt` is skipped like a story worktree, so another project of its name takes the
-plain label too. Each still reuses only its own workspace. A workspace left with only other repos'
-builders has no directory, so the next conductor makes a second one.
+shares. Otherwise it makes a new one. A tab record that still lists a live pane in a workspace an
+older swarm.sh shared counts as full (see above), so the conductor, its builders and its review
+agents open a new tab in the project's own workspace. Labels can still repeat, for example: two
+projects of one name that start a conductor at the same moment both make `<name> · <epic>`; a
+project inside a folder whose name ends in `-wt` is skipped like a story worktree, so another
+project of its name takes the plain label too; and a project's workspace with only its builders
+left (in `<project>-wt/<slug>`) has no directory for another project, which makes the plain label
+as well. Each still reuses only its own workspace. A workspace left with only other repos' builders
+has no directory, so the next conductor makes a second one.
 `close` and `tidy` find tabs and panes from `.swarm/state`, not from labels, so a relabelled
 workspace closes as before.
 

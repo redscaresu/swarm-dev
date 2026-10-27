@@ -157,6 +157,14 @@ e_b="$(conduct "${E}" --backlog)"
 check "a conductor whose tab record lists a live pane in another workspace opens in its own, cart · backlog" "cart${SEP}backlog|yes" \
   "${e_b%|*}|$([[ "${e_b#*|}" != "${old_bl}" ]] && echo yes || echo no)"
 
+# --- The same for any later pane in an epic's tab (a builder's, a review agent's), started from the
+# project's own workspace: a tab record whose live pane is in an old shared workspace is not split.
+seed xs "${C}" "${A}"
+xs_ws="$(herdr_q "next(w['workspace_id'] for w in s['workspaces'] if w['label'] == 'xs')")"
+echo "${xs_ws}:p01 s-old" > "${A}/.swarm/state/xs"
+xs_pane="$(cd "${A}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID="${a_x#*|}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" _pane xs "${A}" 2>&1)"
+check "a later pane for a tab whose record is in another workspace opens in the caller's, app · x" "${a_x#*|}" "${xs_pane%%:*}"
+
 # --- A project's workspace under its hashed label is still its own once the plain one is free:
 # with only a/app's own app · ... workspaces, a/app's label is app, and it still finds this one.
 seed "app-$(hash_of "${A}")${SEP}r" "${A}"

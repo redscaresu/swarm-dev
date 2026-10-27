@@ -132,8 +132,9 @@ Every herdr workspace swarm.sh opens for a conductor is labelled with the projec
 
 `<project>` is the project folder's name, with a short hash of its path after it when another folder
 of the same name already has a workspace. A conductor reuses a workspace only when its panes say it
-is this project's. Two folders of the same name can still get the same label: when both start a
-conductor at the same moment, or when one sits in a folder whose name ends in `-wt`
+is this project's. Two folders of the same name can still get the same label, for example when
+both start a conductor at the same moment, when one sits in a folder whose name ends in `-wt`, or
+when one's workspace has only its builders left
 ([reference.md § Building](docs/reference.md#building)).
 
 ## Cost and safety
