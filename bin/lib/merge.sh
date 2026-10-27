@@ -798,13 +798,13 @@ fix_unstarted() {
 # that failed, a repo it cannot tell) retires nothing and covers nothing: one fix too many beats a
 # lost one.
 fix_superseded() {
-  local reds="" s t own origin have tips cands=() nl=$'\n'
+  local reds="" n=0 s t own origin have tips cands=() nl=$'\n'
   while read -r s; do
     [[ "${s}" =~ ^[0-9a-f]{40}$ && -f "${BOARD}/stories/fix-main-${s:0:7}.md" ]] || continue
-    reds+="${reds:+${nl}}${s}"; if fix_unstarted "${s:0:7}"; then cands+=("${s}"); fi
+    reds+="${reds:+${nl}}${s}"; n=$((n + 1)); if fix_unstarted "${s:0:7}"; then cands+=("${s}"); fi
   done <<< "$(key_reds "$1")"
   # Nothing to retire, or no other red to cover it.
-  [[ ${#cands[@]} -gt 0 && "${reds}" == *"${nl}"* ]] || return 0
+  (( ${#cands[@]} > 0 && n > 1 )) || return 0
   origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 0
   own="$(within "${ANCESTRY_WAIT}" gh repo view "${origin}" --json nameWithOwner </dev/null 2>/dev/null | json "d['nameWithOwner'].lower()" 2>/dev/null)" || return 0
   [[ -n "${own}" && "${own}" == "${1%% *}" ]] || return 0
