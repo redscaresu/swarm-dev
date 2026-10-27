@@ -126,7 +126,7 @@ on record, or no log of it, is left alone: Claude Code writes the log before the
 missing one says nothing. Its pane is read again on the next read. A start opens its own session, so
 any turn start in it counts. The line is written only when its command returns, so for a tell any
 turn start later than seven times `PROMPT_TIMEOUT_MS` (7 minutes) before the line counts. A tell
-refuses a working agent. Each of deliver_prompt's two tries can wait two `PROMPT_TIMEOUT_MS`, and
+sends nothing to a working agent (it queues the tell). Each of deliver_prompt's two tries can wait two `PROMPT_TIMEOUT_MS`, and
 with `goal` on the findings' `/goal` can wait two more. So a tell sent within 7 minutes of a turn
 start is left alone: the log cannot tell that turn from one the tell started. An agent that took the
 brief has had a turn, so a later, unrelated paste is left alone. A paste in a prompt already
@@ -1198,23 +1198,25 @@ own token, so a check that stalled past its `.later` never sends a newer tell's 
 when the queue is empty, and also when its plugin version's files are gone after an update. A check
 counts as stopped once its process has ended or it has not looked for 10 minutes. `wait --lead` then
 hands each tell that agent has queued to the lead, as below, so none sits unseen, and the next
-queued tell to that agent starts a new check.
+queued tell to that agent starts a new check. A tell a delivery had claimed when its check stopped
+(`<agent>.<kind>.claimed.<token>`) goes to the lead too, as one that may have arrived.
 
 The check drops a queued tell when the agent's pane has closed, another pane holds its name or its
 Claude session has ended. It also drops one whose tell fails after claiming it, or fails before
-claiming it for the third time, and `wait --lead` drops those of a stopped check. It keeps the text
-of each tell it drops in `.swarm/tells/<agent>.<kind>.undelivered.md`. A tell dropped before any
-`swarm.sh tell` ran for it is logged as `tell:<kind>` with `undelivered: <why>`. A delivery that
-failed already has its own tell's line, and a second line would count findings herdr sent as two
-rounds. `wait --lead` then prints `tell undelivered: <slug> <kind> at <time> (<why>), exit: if it
-still applies, swarm.sh tell <slug> <kind> <file>; then rm <marker> <file>` as an alert, like
-`no-agent:`. A later drop of the same kind replaces the file and the line, and its own time wakes
-the lead again. When the why says herdr may have sent it, the exit is `it may have arrived, so do as
-that says and never send it again as <kind>`, because findings herdr sent count as a round already.
-With goal on, findings that reached the builder before their `/goal` failed count as a round, and
-the line is `tell goal failed: <slug> findings at <time> (<why>), exit: the findings were delivered
-and count as a round, and only their goal failed, so never send them again; then rm <marker>
-<file>`.
+claiming it for the third time, and `wait --lead` drops those of a stopped check. A look that gets
+no agent list from herdr drops nothing, since the agent may still be there, but after 5 such looks
+in a row the check hands every tell it holds to the lead. It keeps the text of each tell it drops in
+`.swarm/tells/<agent>.<kind>.undelivered.md`. A tell dropped before any `swarm.sh tell` ran for it
+is logged as `tell:<kind>` with `undelivered: <why>`. A delivery that failed already has its own
+tell's line, and a second line would count findings herdr sent as two rounds. `wait --lead` then
+prints `tell undelivered: <slug> <kind> at <time> (<why>), exit: if it still applies, swarm.sh tell
+<slug> <kind> <file>; then rm <marker> <file>` as an alert, like `no-agent:`. A later drop of the
+same kind replaces the file and the line, and its own time wakes the lead again. When the why says
+herdr may have sent it, the exit is `it may have arrived, so do as that says and never send it again
+as <kind>`, because findings herdr sent count as a round already. With goal on, findings that
+reached the builder before their `/goal` failed count as a round, and the line is `tell goal failed:
+<slug> findings at <time> (<why>), exit: the findings were delivered and count as a round, and only
+their goal failed, so never send them again; then rm <marker> <file>`.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or

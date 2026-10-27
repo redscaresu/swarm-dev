@@ -3028,7 +3028,7 @@ step_up_closed() {
 # LEAD_RESENT: "<agent>\t<time>\t<command>\t<n>" per events.tsv delivery line resend_pass is done with,
 # <n> telling apart lines alike to the second; the same with "\tpending" for an Enter about to go,
 # "\tresent" once it went, and "\trechecked" once the read after it is done. RESEND_SLACK: how long, in seconds, before a tell's line
-# a turn its prompt started can be stamped: tell refuses a working agent; each of deliver_prompt's two
+# a turn its prompt started can be stamped: tell sends nothing to a working agent (it queues the tell); each of deliver_prompt's two
 # tries waits up to PROMPT_TIMEOUT_MS in herdr's prompt and as long again in prompt_settle; with goal on,
 # findings_goal's send_goal waits two more; and one more covers the reads between them.
 LEAD_RESENT="${LEAD_DIR}/resend"

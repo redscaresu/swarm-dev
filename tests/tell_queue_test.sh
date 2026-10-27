@@ -5,22 +5,24 @@
 # stays busy nothing is sent, and once it is idle the findings go through a tell of their own, logged
 # ok, so they are delivered once and count as one findings round. Two findings tells queued for one
 # busy builder deliver only the newer. A look while herdr's list fails (${ROOT}/listfail) drops
-# nothing. A tell sent at once to an idle builder replaces a queued one of its kind, which is never
-# sent after it (a pending check's .later keeps the queue from starting one until the direct tell is
-# done; a nudge queued next starts the check that would send what is left), nor is one already on its
-# way (b1.findings.sending.<token>, as the check's take leaves it): its delivery, run as the check
-# runs it (VIA), finds it gone and sends nothing. A delivery that finds the builder busy again leaves
-# it on its way, for the check to put back, and one that claims it sends it. One a dead check left on
-# its way is sent by the next check, and a delivery never claims another check's tell (its token). A
-# direct tell that cannot take the queue's lock to replace a queued one sends nothing. A queued tell
-# to a builder whose pane closed, or whose name a new pane holds, is sent to no pane: it is dropped,
-# and wait --lead prints a tell undelivered: line for the lead, again for a later drop of its kind.
-# One herdr sent but never showed taken up (${ROOT}/nosend: no status in its reply, idle on every
-# read) is not to be sent again as findings: its line says it may have arrived, and it counts as one
-# round. Queued findings due a step-up or a top-rung hold while the story's lock is held go back in
-# the queue. A builder at its prompt with a background shell (busy, its turn over) gets its queued
-# tell; mid-turn it waits. A queued tell whose check died goes to the lead through wait --lead, and so
-# does one whose delivery failed before claiming it three times (${ROOT}/childfail). The check is its
+# nothing, and five such looks in a row hand the tell to the lead. A tell sent at once to an idle
+# builder replaces a queued one of its kind, which is never sent after it (a pending check's .later
+# keeps the queue from starting one until the direct tell is done; a nudge queued next starts the
+# check that would send what is left), nor is one already on its way (b1.findings.sending.<token>, as
+# the check's take leaves it): its delivery, run as the check runs it (VIA), finds it gone and sends
+# nothing. A delivery that finds the builder busy again leaves it on its way, for the check to put
+# back, and one that claims it sends it. One a dead check left on its way is sent by the next check,
+# and a delivery never claims another check's tell (its token). A direct tell that cannot take the
+# queue's lock to replace a queued one sends nothing. A queued tell to a builder whose pane closed, or
+# whose name a new pane holds, is sent to no pane: it is dropped, and wait --lead prints a tell
+# undelivered: line for the lead, again for a later drop of its kind. One herdr sent but never showed
+# taken up (${ROOT}/nosend: no status in its reply, idle on every read) is not to be sent again as
+# findings: its line says it may have arrived, and it counts as one round. Queued findings due a
+# step-up or a top-rung hold while the story's lock is held go back in the queue. A builder at its
+# prompt with a background shell (busy, its turn over) gets its queued tell; mid-turn it waits. A
+# queued tell whose check died goes to the lead through wait --lead, and so does one whose delivery
+# failed before claiming it three times (${ROOT}/childfail). One a newer tell replaced on its way
+# while its delivery failed before claiming it (${ROOT}/childreplace) goes nowhere. The check is its
 # own process, so wait --lead's resend pass still reads the pane of an agent a tell waits for. With
 # goal on, findings delivered whose goal then failed (${ROOT}/goalwait) count one round, and the lead
 # is told not to send them again.
@@ -59,6 +61,8 @@ case "$1 $2" in
   "agent list") [ ! -f "$F/listfail" ] || exit 1
     # With childfail, a queued tell's own delivery (its tell's file is a swarm-tell-queued copy) finds no agents.
     if [ -f "$F/childfail" ] && ps -o command= -p "$PPID" | grep -q swarm-tell-queued; then exit 1; fi
+    # With childreplace, a newer tell replaces it on its way (its .sending goes) as its delivery fails.
+    if [ -f "$F/childreplace" ] && ps -o command= -p "$PPID" | grep -q swarm-tell-queued; then rm -f "$F"/proj/.swarm/tells/b1.findings.sending.*; exit 1; fi
     awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
     END { print "]}}" }' "$F/agents" ;;
@@ -254,6 +258,21 @@ out="$(lead)"
 check "a queued tell whose check died: wait --lead hands it to the lead, never sent" "yes|fix round stranded|no|0" \
   "$([[ "${out}" == "tell undelivered: b1 findings at "*" (its queue's check has stopped (its process ended: a closed pane, a restart or a plugin update), so it was never sent), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo "no: ${out}")|$(cat "${U}.md" 2>/dev/null)|$([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)|$(prompts)"
 
+# A tell a delivery claimed (.claimed.<token>) whose check then stopped: wait --lead hands it to the lead as
+# one that may have arrived, never to be sent again.
+fresh; state busy
+mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round claimed\n' > "${Q}/b1.findings.claimed.t3"   # no check holds .later
+check "a tell claimed when its check stopped: wait --lead says it may have arrived, never to send it again" "yes|fix round claimed" \
+  "$([[ "$(lead)" == "tell undelivered: b1 findings at "*" (its check stopped while a delivery of it ran, so b1 may or may not have the brief), exit: it may have arrived, so do as that says and never send it again as findings; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(cat "${U}.md" 2>/dev/null)"
+
+# herdr giving the check no agent list look after look: after TELL_LIST_TRIES (5) looks in a row it hands
+# the tell to the lead, never sent.
+fresh; state busy
+tell "fix round no list" >/dev/null
+touch "${ROOT}/listfail"; settle; rm -f "${ROOT}/listfail"
+check "a queued tell whose check never gets an agent list: to the lead after five looks, never sent" "yes|fix round no list|no|0" \
+  "$([[ "$(lead)" == "tell undelivered: b1 findings at "*" (herdr gave its check no agent list for 5 looks in a row, so it was never sent), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(cat "${U}.md" 2>/dev/null)|$([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)|$(prompts)"
+
 # A delivery whose own tell fails before it claims the tell (here herdr lists no agents to it) puts it
 # back, TELL_QUEUE_TRIES (3) times, then hands it to the lead.
 fresh; state busy
@@ -261,6 +280,14 @@ tell "fix round unreachable" >/dev/null
 touch "${ROOT}/childfail"; state idle; settle; rm -f "${ROOT}/childfail"
 check "a queued tell whose delivery fails before claiming it: three tries, then to the lead, never sent" "3|yes|0" \
   "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && $5 ~ /^could not reach b1/ { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv")|$([[ "$(lead)" == "tell undelivered: b1 findings at "*"; its delivery failed before sending it 3 times), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(prompts)"
+
+# A delivery that fails before claiming its tell while a newer tell replaces it on its way
+# (${ROOT}/childreplace): nothing goes to the lead, so the older findings are never offered again.
+fresh; state busy
+tell "fix round older" >/dev/null
+touch "${ROOT}/childreplace"; state idle; settle; rm -f "${ROOT}/childreplace"
+check "a delivery that fails before claiming a tell a newer one replaced on its way: nothing to the lead, nothing sent" "no|0" \
+  "$(compgen -G "${Q}/*.undelivered" >/dev/null && echo yes || echo no)|$(prompts)"
 
 # The check is its own process (swarm.sh _tell-queue-check), so wait --lead's resend pass still reads the
 # pane of an agent herdr lists idle while a tell waits for it (its session busy).

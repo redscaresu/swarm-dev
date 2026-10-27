@@ -762,7 +762,7 @@ SLOW_PROMPT_TIMEOUT_MS=300000
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
   local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before try sent=0 unread=0 sess="" mark="" line="" resend="" logonly="" was
-  [[ -n "${target}" ]] || target="$(own_target "${name}")"
+  [[ -n "${target}" ]] || target="${TELL_PANE:-$(own_target "${name}")}"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
       || die "${name}: herdr could not send it the prompt; see herdr agent read ${name}"
@@ -1717,14 +1717,15 @@ tell_agent() {
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
   trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
-  findings_goal "$1" "${since}" "${msg}.goal" "${from}"
+  TELL_PANE="${qpane}" findings_goal "$1" "${since}" "${msg}.goal" "${from}"   # its /goal to the same pane
   echo "told ${name}"
 }
 
 # TELL_QUEUE: tells queued for busy agents (tell_queue). <name>.<kind> holds one: a line `<slug> <pane>
 # <from>` (what it was told as, the pane it was for, tell_from's word), then the file told; it is
 # <name>.<kind>.sending.<token> while a check sends it, the token that delivery's own, and
-# <name>.<kind>.tries counts the deliveries that failed before they claimed it. Beside them
+# <name>.<kind>.tries counts the deliveries that failed before they claimed it, and <name>.listfail
+# the looks in a row that got no agent list from herdr. Beside them
 # <name>.lock (note_lock) and <name>.later (its check: tell_check_live); and for a tell no check
 # delivered, <name>.<kind>.undelivered (the line wait --lead prints) and <name>.<kind>.undelivered.md
 # (its text).
@@ -1735,6 +1736,9 @@ TELL_QUEUE="${PROJECT_DIR}/.swarm/tells"
 # counts as stopped.
 TELL_QUEUE_TRIES=3
 TELL_CHECK_DEAD_SECS=600
+# TELL_LIST_TRIES: how many looks in a row may find no agent list from herdr (its count in
+# <name>.listfail) before the check hands every tell it holds to the lead.
+TELL_LIST_TRIES=5
 
 # tell_state <name> <pane> — read_state's word for <name>, busy read as idle once its turn is over,
 # though open background shells keep its session busy: it stopped on an API error (api_stopped), or
@@ -1782,8 +1786,9 @@ tell_unqueue() {
   rmdir "${TELL_QUEUE}/$1.lock"
 }
 
-# tell_claim <name> <kind> <token> — for a delivery from the queue, once <name> reads idle: take its
-# own <name>.<kind>.sending.<token> away under the queue's lock, so no tell after this replaces it;
+# tell_claim <name> <kind> <token> — for a delivery from the queue, once <name> reads idle: rename its
+# own <name>.<kind>.sending.<token> to .claimed.<token> under the queue's lock, so no tell after this
+# replaces it and its check knows it was claimed;
 # fails when a newer tell replaced it first (tell_queue, tell_unqueue, or a later check that put it
 # back), or the lock is held (its check puts it back). The token keeps a delivery from claiming
 # another's: two checks overlap when one stalled past its .later.
@@ -1791,7 +1796,7 @@ tell_claim() {
   local rc=1
   [[ -n "$3" ]] || return 1
   note_lock "${TELL_QUEUE}/$1" || return 1
-  if [[ -e "${TELL_QUEUE}/$1.$2.sending.$3" ]] && rm -f "${TELL_QUEUE}/$1.$2.sending.$3"; then rc=0; fi
+  if [[ -e "${TELL_QUEUE}/$1.$2.sending.$3" ]] && mv -f "${TELL_QUEUE}/$1.$2.sending.$3" "${TELL_QUEUE}/$1.$2.claimed.$3"; then rc=0; fi
   rmdir "${TELL_QUEUE}/$1.lock"
   return "${rc}"
 }
@@ -1855,7 +1860,7 @@ tell_queue_look() {
 tell_queue_strays() {
   local f n seen=" "
   [[ -d "${TELL_QUEUE}" ]] || return 0
-  for f in "${TELL_QUEUE}"/*.findings "${TELL_QUEUE}"/*.nudge "${TELL_QUEUE}"/*.resume "${TELL_QUEUE}"/*.sending.*; do
+  for f in "${TELL_QUEUE}"/*.findings "${TELL_QUEUE}"/*.nudge "${TELL_QUEUE}"/*.resume "${TELL_QUEUE}"/*.sending.* "${TELL_QUEUE}"/*.claimed.*; do
     [[ -e "${f}" ]] || continue
     n="${f##*/}"; n="${n%%.*}"
     [[ "${seen}" != *" ${n} "* ]] || continue
@@ -1864,31 +1869,48 @@ tell_queue_strays() {
   done
 }
 
-# tell_queue_stray <name> — under <name>'s queue lock, with still no live check: take each of its
-# queued tells, one left on its way first, out of the queue and hand it to the lead (tell_undelivered),
-# never sent.
+# tell_queue_stray <name> — tell_queue_handoff for an agent whose check has stopped, while it still has
+# no live check.
 tell_queue_stray() {
-  local f top body i kinds=() tops=() bodies=()
+  tell_queue_handoff "$1" "its queue's check has stopped (its process ended: a closed pane, a restart or a plugin update), so it was never sent" live
+}
+
+# tell_queue_handoff <name> <why> [live] — under <name>'s queue lock (with live, only while no check is
+# live: tell_check_live): take each of its queued tells, one left on its way first, out of the queue
+# and hand it to the lead (tell_undelivered) with <why>, never sent. A tell a delivery claimed
+# (.claimed.<token>) whose check stopped before it saw the delivery end goes too, as one that may or may
+# not have arrived.
+tell_queue_handoff() {
+  local f top body i kinds=() tops=() bodies=() whys=()
   note_lock "${TELL_QUEUE}/$1" || return 0
-  if tell_check_live "$1"; then rmdir "${TELL_QUEUE}/$1.lock"; return 0; fi
+  if [[ -n "${3:-}" ]] && tell_check_live "$1"; then rmdir "${TELL_QUEUE}/$1.lock"; return 0; fi
   for f in "${TELL_QUEUE}/$1".*.sending.*; do [[ ! -e "${f}" ]] || { mv -n "${f}" "${f%.sending.*}" 2>/dev/null || true; rm -f "${f}"; }; done
   while IFS= read -r f; do
     body="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || continue
     if top="$(head -1 "${f}" 2>/dev/null)" && [[ -n "${top}" ]] && tail -n +2 "${f}" > "${body}" && rm -f "${f}" "${f}.tries"; then
-      kinds+=("${f##*.}"); tops+=("${top}"); bodies+=("${body}")
+      kinds+=("${f##*.}"); tops+=("${top}"); bodies+=("${body}"); whys+=("")
     else rm -f "${body}"; fi
   done < <(tell_queued "$1")
+  for f in "${TELL_QUEUE}/$1".*.claimed.*; do
+    [[ -e "${f}" ]] || continue
+    body="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || continue
+    if top="$(head -1 "${f}" 2>/dev/null)" && [[ -n "${top}" ]] && tail -n +2 "${f}" > "${body}" && rm -f "${f}"; then
+      f="${f%.claimed.*}"; kinds+=("${f##*.}"); tops+=("${top}"); bodies+=("${body}"); whys+=("its check stopped while a delivery of it ran, so $1 may or may not have the brief")
+    else rm -f "${body}"; fi
+  done
   rmdir "${TELL_QUEUE}/$1.lock"
   for ((i = 0; i < ${#kinds[@]}; i++)); do
     read -r top _ _ <<< "${tops[i]}"
-    tell_undelivered "$1" "${top}" "${kinds[i]}" "${bodies[i]}" "its queue's check has stopped (its process ended: a closed pane, a restart or a plugin update), so it was never sent" log
+    tell_undelivered "$1" "${top}" "${kinds[i]}" "${bodies[i]}" "${whys[i]:-$2}" log
     rm -f "${bodies[i]}"
   done
 }
 
 # tell_queue_pass <name> — one look at <name>'s queued tells, from one read of herdr's list (none, when
 # that read fails), after putting back a tell a dead or stalled check left on its way (.sending.<token>:
-# a look never starts while its own check sends, so any there is another's). Each queued for a pane that
+# a look never starts while its own check sends, so any there is another's). A look with no list drops
+# nothing, the agent may still be there, but after TELL_LIST_TRIES such looks in a row (tell_count) the
+# check hands every tell it holds to the lead (tell_queue_handoff). Each queued for a pane that
 # no longer holds <name> (closed, or a new agent of the name in another), or every one once its Claude
 # session has ended (gone), goes to the lead (tell_drop), never to another pane. Else, once <name> reads
 # idle as tell reads it (tell_state; waiting or blocked over a clear pane, pane_clear), the oldest is
@@ -1897,8 +1919,13 @@ tell_queue_pass() {
   local list pane state="" f at
   # A tell on its way at the start of a look was left by a check that died or stalled sending it: put it back.
   for f in "${TELL_QUEUE}/$1".*.sending.*; do [[ ! -e "${f}" ]] || tell_requeue "$1" "${f%.sending.*}" "${f}"; done
-  # A list herdr failed to give drops nothing: the agent may still be there.
-  list="$(herdr agent list 2>/dev/null)" && [[ "${list}" == *'"agents"'* ]] || return 0
+  if ! { list="$(herdr agent list 2>/dev/null)" && [[ "${list}" == *'"agents"'* ]]; }; then
+    (( $(tell_count "${TELL_QUEUE}/$1.listfail") >= TELL_LIST_TRIES )) || return 0
+    rm -f "${TELL_QUEUE}/$1.listfail"
+    tell_queue_handoff "$1" "herdr gave its check no agent list for ${TELL_LIST_TRIES} looks in a row, so it was never sent"
+    return 0
+  fi
+  rm -f "${TELL_QUEUE}/$1.listfail"
   pane="$(list_field "$1" pane_id <<< "${list}")"
   [[ -z "${pane}" ]] || state="$(tell_state "$1" "${pane}")"
   while IFS= read -r f; do
@@ -1947,11 +1974,12 @@ tell_drop() {
 # the sender that queued it (SWARM_TELL_QUEUED). It is on its way meanwhile (tell_take's
 # .sending.<token>, this delivery's own). One that tell never claimed (tell_claim: it read <name> busy
 # again, or not idle) goes back in the queue for the next look, until TELL_QUEUE_TRIES deliveries of it
-# have failed so (tell_tries), when it goes to the lead; and so does one it claimed while a
+# have failed so (tell_count), when it goes to the lead; and so does one it claimed while a
 # step-up, restart or hold of its story held the story's lock. One a step-up or top-rung hold took (its
 # handover or lead block holds the findings), or a step-up that failed partway (wait --lead names it),
 # is done. One it claimed and failed otherwise goes to the lead (tell_undelivered) with its error, which
-# that tell logged itself; one a newer tell replaced on its way is gone, and that tell sent nothing.
+# that tell logged itself; one a newer tell replaced on its way is gone (neither .sending nor .claimed is
+# left), and that tell sent nothing, so nothing goes to the lead, whatever its exit.
 tell_queue_send() {
   local f top slug from body out rc=0 why tok back=""
   f="$(tell_queued "$1" | head -1)"
@@ -1961,14 +1989,16 @@ tell_queue_send() {
   if ! top="$(tell_take "$1" "${f}" "${body}" "$2" "${tok}")"; then rm -f "${body}"; return 0; fi
   read -r slug _ from <<< "${top}"
   out="$(SWARM_TELL_QUEUED="$2 ${from} ${tok}" SWARM_PROJECT="${PROJECT_DIR}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" tell "${slug}" "${f##*.}" "${body}" 2>&1)" || rc=$?
-  if [[ -e "${f}.sending.${tok}" ]] && { [[ ${rc} -eq 0 ]] || (( $(tell_tries "${f}") < TELL_QUEUE_TRIES )); }; then
+  if [[ -e "${f}.sending.${tok}" ]] && { [[ ${rc} -eq 0 ]] || (( $(tell_count "${f}.tries") < TELL_QUEUE_TRIES )); }; then
     tell_requeue "$1" "${f}" "${f}.sending.${tok}"; back=1
   elif [[ -e "${f}.sending.${tok}" ]]; then
     why="$(grep '^swarm: ' <<< "${out}" | tail -1)" || why=""
     why="${why#swarm: }"
     tell_unsend "$1" "${f}.sending.${tok}" && rm -f "${f}.tries" \
       && tell_undelivered "$1" "${slug}" "${f##*.}" "${body}" "${why:-its tell exited ${rc}}; its delivery failed before sending it ${TELL_QUEUE_TRIES} times" log
-  elif [[ ${rc} -ne 0 ]]; then
+  elif [[ -e "${f}.claimed.${tok}" ]]; then
+    rm -f "${f}.claimed.${tok}"
+    [[ ${rc} -ne 0 ]] || { rm -f "${f}.tries"; rm -f "${body}"; return 0; }
     why="$(grep '^swarm: ' <<< "${out}" | tail -1)" || why=""
     why="${why#swarm: }"
     case "${why}" in
@@ -1982,13 +2012,14 @@ tell_queue_send() {
   rm -f "${body}"
 }
 
-# tell_tries <entry> — count one more delivery of <entry> that failed before it claimed it, in
-# <entry>.tries, and print the count.
-tell_tries() {
+# tell_count <file> — add one to the count in <file> (none is 0) and print it: a queued tell's
+# deliveries that failed before they claimed it (<entry>.tries), or a check's looks in a row with no
+# agent list (<name>.listfail).
+tell_count() {
   local n
-  n="$(cat "$1.tries" 2>/dev/null)" || n=0
+  n="$(cat "$1" 2>/dev/null)" || n=0
   [[ "${n}" =~ ^[0-9]+$ ]] || n=0
-  n=$((n + 1)); echo "${n}" > "$1.tries" 2>/dev/null || true
+  n=$((n + 1)); echo "${n}" > "$1" 2>/dev/null || true
   echo "${n}"
 }
 
