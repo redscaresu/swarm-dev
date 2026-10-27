@@ -23,6 +23,7 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
+REPORT_SECONDS=30       # how long a report (status, next, dash) may spend on reads that can block (report_read)
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -958,13 +959,60 @@ queue_stopped() {
 # <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
 # its children. Else the command's own status (128+N for a signal). <seconds> is often a deadline's time
 # left, below 0 once a read ran past it: -- keeps perl from taking -1 for a switch of its own (exit 25).
+# @<epoch> in place of <seconds> is a deadline to the millisecond (report_read's), with no floor: under
+# a millisecond before it the command never runs, and within exits 142 at once. A HUP, INT or TERM to
+# within KILLs the command too, exiting 128+N: in a group of its own, it would run on with no alarm.
 within() {
-  perl -e 'my $t = shift; $t = 1 if $t < 1;
+  perl -MTime::HiRes -e 'my $t = shift;
+    if ($t =~ s/^@//) { $t -= Time::HiRes::time(); exit 142 if $t < 0.001 } else { $t = 1 if $t < 1 }
     defined(my $p = fork) or exit 127;
     if (!$p) { setpgrp; exec @ARGV or exit 127 }
-    $SIG{ALRM} = sub { kill "KILL", -$p; exit 142 };
-    alarm $t; waitpid $p, 0;
+    # The parent sets the group too, before the alarm: one that fires first would KILL no group.
+    # It fails harmlessly once the child has run exec, by then in its group. The KILL names the
+    # pid as well, for a signal that lands before either setpgrp.
+    setpgrp $p, $p;
+    my %n = (HUP => 1, INT => 2, TERM => 15);
+    for my $s (keys %n) { $SIG{$s} = sub { kill "KILL", -$p, $p; exit 128 + $n{$s} } }
+    $SIG{ALRM} = sub { kill "KILL", -$p, $p; exit 142 };
+    Time::HiRes::alarm($t); waitpid $p, 0;
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
+}
+
+# report_start — a report (status, next, dash) starts: its reads have REPORT_SECONDS from now, and no
+# read is skipped yet. REPORT_END is that deadline as an epoch to the millisecond: bash's SECONDS counts
+# whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
+# is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
+# has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+report_start() {
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
+  REPORT_SKIP_FILE="${TMPDIR:-/tmp}/swarm-report.$$.${REPORT_END}"
+}
+
+# report_read <name> <command>... — a read that can block (a herdr list or read, a gh call, a git
+# fetch), run within the time the report has left, with its output and status. One cut off there
+# (142, keeping what it printed), or that would start at or past the deadline (142 at once, not run),
+# is recorded as <name> for report_skipped. Reads only: no write and no agent start goes through it.
+# With no report_start it ends the shell it runs in (bash's ${:?}), which a caller's || cannot catch.
+# <command> must be a program: within runs it with perl's exec, so a shell function (a gh or herdr
+# wrapper of swarm.sh's), a builtin or a pipeline is not found, exits 127 and is never named as
+# skipped. Pass the program itself (gh, herdr, git), or `bash -c '<script>' bash <args>` with what the
+# script needs inside it: a function it calls is defined or sourced there.
+report_read() {
+  local name="$1" rc=0; shift
+  within "@${REPORT_END:?report_read: no report_start}" "$@" || rc=$?
+  (( rc != 142 )) || [[ -z "${REPORT_SKIP_FILE:-}" ]] || echo "${name}" >> "${REPORT_SKIP_FILE}"
+  return "${rc}"
+}
+
+# report_skipped — print `skipped (over <REPORT_SECONDS> s): <names>`, each skipped read named once in
+# the order it was first skipped, or nothing when none was, and forget those names by removing the file:
+# so it works in a $( ) as well, and a read skipped after it is named alone by the next call.
+report_skipped() {
+  local names
+  names="$(awk '!seen[$0]++ { printf "%s%s", (n++ ? ", " : ""), $0 }' "${REPORT_SKIP_FILE:-/dev/null}" 2>/dev/null)" || names=""
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  [[ -z "${names}" ]] || echo "skipped (over ${REPORT_SECONDS} s): ${names}"
 }
 
 # rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
