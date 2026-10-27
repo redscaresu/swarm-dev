@@ -131,7 +131,7 @@ has epic-resume-deletes-agreed 'delete any `agreed:` line from the epic.s front 
 for f in templates/docs/epics/README.md board/epics/README.md; do
   t=$(tr '\n' ' ' < "$ROOT/$f" | tr -s ' ')
   has "epic-format-agreed-$f" '^agreed: <YYYY-MM-DD>' "$(cat "$ROOT/$f")"
-  has "epic-format-active-$f" 'new or draft epic goes `active` only with `agreed:`[^.]*`parent:`[^.]*`epics`[^.]*`lead_epics = on`' "$t"
+  has "epic-format-active-$f" 'epic that is not `active` yet \(new, draft, `later`, `split`, `review` or `done`\) goes `active` only with `agreed:`[^.]*`parent:`[^.]*`epics`[^.]*`lead_epics = on`' "$t"
 done
 for f in commands/swarm.md skills/swarm-dev/SKILL.md; do
   s=$(tr '\n' ' ' < "$ROOT/$f" | tr -s ' ')

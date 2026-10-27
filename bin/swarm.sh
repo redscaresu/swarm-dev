@@ -47,6 +47,7 @@
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
 #   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, a read-only agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once
+#   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
 #
@@ -612,7 +613,8 @@ dispatch() {
             esac ;;
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     codex-review) codex_review "${1:-}" ;;
-    review-agent) require_herdr; review_agent "${1:-}" "${2:-}" ;;
+    review-agent) require_herdr
+            if [[ "${1:-}" == --next ]]; then review_next "${2:-}" "${3:-}"; else review_agent "${1:-}" "${2:-}"; fi ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
@@ -991,7 +993,8 @@ main_signal() {
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
 # log one line per item themselves, and merge, intervene and hold (target !) every line they write, so main logs none
 # for them but an interrupt. A tell's command is tell:<kind>, a close's close:<cause> and a
-# board-pr's board-pr:<step>, so the target stays the slug (a board-pr's name). A reset or drop
+# board-pr's board-pr:<step>, and a review-agent --next's review-agent:next with ok (round <n>), so the target
+# stays the slug (a board-pr's name). A reset or drop
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
 # epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
 # nothing, queued for a busy agent or replaced on its way, logs the queued: or replaced: line
@@ -1031,6 +1034,9 @@ main() {
     board-pr) EV_TARGET="${3:-}"; case "${2:-}" in start|open|done) EV_CMD="board-pr:$2" ;; esac ;;
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
     step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
+    # A --next round is no review start, so flow's review-agent starts and review_wait never read it.
+    review-agent) EV_TARGET="${2:-}"
+            if [[ "${EV_TARGET}" == --next ]]; then EV_CMD="review-agent:next"; EV_TARGET="${3:-}"; EV_OK="ok (round $(review_round "${3:-}"))"; fi ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
