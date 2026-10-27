@@ -125,13 +125,15 @@ lists them all.
 
 ### Workspace labels
 
-Every herdr workspace swarm.sh opens for a conductor, and the lead's own, is labelled with its
-project:
+Every herdr workspace swarm.sh opens for a conductor or the lead's agents, and the lead's own, is
+labelled with its project:
 
 - `swarm-lead · <project>`: the lead's own workspace and tab, relabelled by the first swarm.sh
   command the lead runs there after `swarm.sh init`.
 - `<project> · <epic>`: an epic's conductor and its builders.
 - `<project> · backlog`: the backlog conductor and the one-off stories it builds.
+- `<project> · lead-agents`: the agents the lead starts itself, such as the HLD co-author or a
+  planner, so they stay out of the lead's own workspace.
 
 `<project>` is the project folder's name, with a short hash of its path after it when another folder
 of the same name already has a workspace. A conductor reuses a workspace only when its panes say it

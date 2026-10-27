@@ -1394,7 +1394,7 @@ start_conductor() {
   tab="${epic}"; [[ "${epic}" != backlog ]] || tab="${name}"
   # In that workspace, even when the tab's record still lists a live pane in another (a retired
   # conductor's, in a workspace an older swarm.sh shared): next_pane then opens <tab>-2.
-  HERDR_WORKSPACE_ID="${ws}" start_agent "${tab}" "${name}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
+  PANE_WORKSPACE="${ws}" start_agent "${tab}" "${name}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
   inbox="$(conductor_inbox "${name}")"; rm -f "${inbox}.md" "${inbox}.reading.md" "${inbox}.woke" "${inbox}.later" "${inbox}.upgrade"   # a stale .lock note_lock clears itself

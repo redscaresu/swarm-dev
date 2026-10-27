@@ -660,9 +660,10 @@ background work. When it starts, an epic still `later` is set `active` (in
 `.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
 stop listing it as waiting on you. It runs in a herdr workspace labelled for its project and the epic's `parent:` if it has one (epics with the same
 parent share it), or else for the epic (see **Workspace labels** below), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
-that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane always
-opens in the workspace of the agent that starts it: a tab whose panes are in another workspace
-counts as full, so that pane opens `<epic>-2` there instead. A one-off
+that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane
+opens in the workspace of the agent that starts it, or in `<project> · lead-agents` when the lead
+starts it: a tab whose panes are in another workspace counts as full, so that pane opens `<epic>-2`
+there instead. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
@@ -727,6 +728,11 @@ gives one carries the project's label, joined to the rest by ` · `:
 - `<project> · <epic>`: an epic's conductor, its stories' builders and their review agents. For a
   child epic of a split one, `<epic>` is its `parent:`, so the children share the workspace.
 - `<project> · backlog`: the backlog conductor and the one-offs it builds.
+- `<project> · lead-agents`: every agent the lead starts itself, such as the HLD co-author, a
+  planner or a builder it restarts. Its first agent makes the workspace, and swarm.sh keeps its id
+  in `.swarm/lead/agents-workspace`, so the workspace is reused while herdr lists it, even once its
+  panes are all in other repos' worktrees, whose paths say nothing about whose they are. A conductor
+  still opens in its epic's workspace.
 
 `<project>` is the project directory's name. When herdr already lists a workspace labelled
 `<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
