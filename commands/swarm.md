@@ -27,7 +27,10 @@ outside the repo is edited where it is, since `board-pr` refuses it. A conductor
 edit to a story goes through `swarm.sh board-pr` too (its brief says so). `swarm.sh finish` and
 `swarm.sh drop` open their own board PR, `finish-<slug>` or `drop-<slug>`, and print the
 `swarm.sh merge --board <url>` that lands it: run that, or with `merge = human` hand the PR to the
-user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. A `costs: money`
+user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. An edit, a hold
+(`hold-<slug>`) or a finish PR gets no `swarm.sh codex-review`: it lands on green CI alone. Only a
+plan PR (`plan-<hld>`, `scope-<epic>`) or an agreement PR (`agree-<hld or epic>`) gets one codex-review
+pass before it merges; `board-pr open` names the PR's kind on stderr. A `costs: money`
 PR, or one stacked on one, stays the user's to merge, grant or not. Once it has merged, `swarm.sh board-pr done <that name>` clears its worktree away.
 
 `swarm.sh board-pr start <name>` prints the worktree's path, `<repo>-wt/_board-<name>` (beside the
@@ -59,7 +62,10 @@ Repeat until a step below says stop:
    what was closed unmerged; an item whose PR left its file on a board in the repo is marked done
    instead, so run the `swarm.sh finish <slug>` it prints), then `swarm.sh unblock` (it readies stories whose blockers have
    merged), then `swarm.sh next`.
-   Its first line is the step, the rest is why. Tell the user both in one line. Lines that
+   Its first line is the step, the rest is why. Tell the user both in one line. A `skipped (over
+   30 s): <reads>` line names the reads next cut to stay within its time limit, and its step was
+   worked out without them, so it may have missed a working conductor, or one stopped on an expired
+   login or an API error. Run `swarm.sh next` again before acting on a step with that line. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
    - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
@@ -74,6 +80,15 @@ Repeat until a step below says stop:
      `unblock` never readies a blocked story with no dependency left. Make the edit as any board
      edit: through `swarm.sh board-pr` when the board is in the project's repo, where it is when it
      is outside.
+   - `idle: <story> is ready with no build, exit: swarm.sh story --strict <story>`: the story is ready and
+     an agent can build it, its build has not started, and it has been ready for `queue_minutes`.
+     Its `touches` share no part with a story in review or one whose build has started.
+     Nothing holds it back, so start it with the exit. While its conductor runs, the exit is
+     `swarm.sh tell <conductor> note <file>` instead: write a note naming the story and asking the
+     conductor to start it or say why not, and send it. A conductor `next` started itself (its
+     `started:` lines) is already running when the line is worked out, so the line names its note.
+     When the step is `conduct <epic>` for the story's epic, `next` has not started it, so the line
+     still says `swarm.sh story --strict`: run the step instead, and leave the story to that conductor.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
@@ -127,8 +142,8 @@ Repeat until a step below says stop:
      `no backlog conductor started:` says why none did: a conductor that has reported (collect it
      first), a report nobody collected, an expired login or API error, another project's agent
      holding the name, a report newer than every story and epic file (the board must change
-     first), or, under `merge = agent`, no allow rule for `swarm.sh merge` (the user adds the rule the
-     line names). The backlog's can also say its report lists a story under `not started:` whose worktree
+     first), a read it needed cut at next's deadline (run `swarm.sh next` again), or, under
+     `merge = agent`, no allow rule for `swarm.sh merge` (the user adds the rule the line names). The backlog's can also say its report lists a story under `not started:` whose worktree
      is still there, so that build died: clear it first, as the line says. A `warning: ... failed`
      line means the start failed: run the `swarm.sh conduct` it names yourself once the cause is
      fixed. `warning: herdr cannot list its agents ...` means none was started because which
@@ -190,7 +205,10 @@ Repeat until a step below says stop:
      `swarm.sh hold` takes only a ready story. On 2, read why it printed: on a conflict with the
      base, have a builder in the story's worktree merge the base in and push; on a gh error or
      the timeout, run wait-pr once more, and if it ends the same way, list the story in your
-     report with the reason. With no PR URL on the story, find its PR with the
+     report with the reason. On no check runs, or an expected workflow that never started (it
+     names the workflow), read the checks once with `gh pr checks <PR URL>`: have a builder fix a
+     workflow that failed to start, else run wait-pr once more, and if it ends the same way, list
+     the story in your report with the reason. With no PR URL on the story, find its PR with the
      `gh pr list -R <repo> --head story/<slug>` the exit names, and run the review-agent exit. The line is quiet while
      wait-pr runs and may come back once after it ends; that needs nothing new. A
      `no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
@@ -238,7 +256,22 @@ Repeat until a step below says stop:
      findings in the box, is kept: the exit is `swarm.sh tell <slug> nudge <file>`, the file asking
      it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
-     then `swarm.sh conduct <epic>`. Then start
+     then `swarm.sh conduct <epic>`. A
+     `prompt: <agent> (<kind>), exit: <exit>` line means an agent herdr shows blocked, idle or done
+     is stuck, and no agent can clear it. For `(prompt)`, a permission prompt or dialog, tell the
+     user to answer it in the pane the exit names. For `(login)`, tell the user to run `/login`,
+     then send the agent a file asking it to resume with `swarm.sh tell <agent> resume <file>`. For
+     `(api-error)`, which comes only once no `wait` is resuming the agent, read the pane with
+     `herdr agent read <agent>` and tell the user what it shows. For `(manual)`, run the exit: for
+     a ready story's builder it closes the pane and then restarts or holds the story, as a
+     `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
+     pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
+     on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
+     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` or
+     `idle: <story> is ready with no build, exit: <exit>` line is capacity no step uses, a line `next`
+     prints after its step: handle it as step 1's `idle:` list
+     says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
+     then it needs nothing. It comes once, and again only after it has gone from the queue. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
@@ -374,8 +407,11 @@ Repeat until a step below says stop:
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
    - `plan-hld <hld>`: follow `/plan-hld <hld>`. Approving its epics is the user's decision: stop
-     and wait for it, unless `swarm.sh grants <hld>` lists `epics`, which lets it write them active
-     and open the board PR unasked. Its board PR lands like any other: the HLD's `merge` grant
+     and wait for it, unless the grants list `epics`, which lets it write them active
+     and open the board PR unasked. Read the grants from origin's copy of the HLD, never the main
+     checkout's, which may be stale: once `/plan-hld` has made its plan worktree `<wt>` (its
+     **A new worktree** step), run `SWARM_PROJECT=<wt> swarm.sh grants <hld>`. A board outside the project's repo has no
+     worktree: run `swarm.sh grants <hld>` there as it is. Its board PR lands like any other: the HLD's `merge` grant
      covers it under `merge = human`. Once that PR has merged or been closed, run
      `swarm.sh board-pr done plan-<hld>` and `swarm.sh close plan-<hld>`, so an abandoned worktree
      never hides the HLD from `next` and its agents' tab closes.
