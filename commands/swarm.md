@@ -80,6 +80,15 @@ Repeat until a step below says stop:
      `unblock` never readies a blocked story with no dependency left. Make the edit as any board
      edit: through `swarm.sh board-pr` when the board is in the project's repo, where it is when it
      is outside.
+   - `idle: <story> is ready with no build, exit: swarm.sh story --strict <story>`: the story is ready and
+     an agent can build it, its build has not started, and it has been ready for `queue_minutes`.
+     Its `touches` share no part with a story in review or one whose build has started.
+     Nothing holds it back, so start it with the exit. While its conductor runs, the exit is
+     `swarm.sh tell <conductor> note <file>` instead: write a note naming the story and asking the
+     conductor to start it or say why not, and send it. A conductor `next` started itself (its
+     `started:` lines) is already running when the line is worked out, so the line names its note.
+     When the step is `conduct <epic>` for the story's epic, `next` has not started it, so the line
+     still says `swarm.sh story --strict`: run the step instead, and leave the story to that conductor.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
@@ -227,9 +236,10 @@ Repeat until a step below says stop:
      the story's builder and then could not start the next model's. Its conductor leaves the story
      alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says where it stopped,
      and sometimes why. The error is in the output of whatever ran the step-up: read that output
-     in every case before you resume. For a step-up swarm.sh ran itself, it is the
-     conductor's pane: `herdr agent read <conductor>`, the name `swarm.sh status` lists for the
-     story's epic or for the backlog. For one run by hand, it is the command's own output. With
+     in every case before you resume. For a step-up `close`, `tell`, `wait --stall` or `watch` ran,
+     it is the conductor's pane: `herdr agent read <conductor>`, the name `swarm.sh status` lists for
+     the story's epic or for the backlog. For one a review pane's `wait-pr` ran, it is the review
+     agent's pane: `herdr agent read review-<slug>`. For one run by hand, it is the command's own output. With
      no `step-up:failed` line, the step-up was killed partway. Fix the cause the output shows,
      then run the exit. A pane may still be open under the builder's name, kept by the failed
      start or left by a killed step-up. The resume retires an idle agent in it and starts the
@@ -247,9 +257,20 @@ Repeat until a step below says stop:
      findings in the box, is kept: the exit is `swarm.sh tell <slug> nudge <file>`, the file asking
      it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
-     then `swarm.sh conduct <epic>`. An
-     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` line is
-     capacity no step uses, the line `next` prints after its step: handle it as step 1's `idle:` list
+     then `swarm.sh conduct <epic>`. A
+     `prompt: <agent> (<kind>), exit: <exit>` line means an agent herdr shows blocked, idle or done
+     is stuck, and no agent can clear it. For `(prompt)`, a permission prompt or dialog, tell the
+     user to answer it in the pane the exit names. For `(login)`, tell the user to run `/login`,
+     then send the agent a file asking it to resume with `swarm.sh tell <agent> resume <file>`. For
+     `(api-error)`, which comes only once no `wait` is resuming the agent, read the pane with
+     `herdr agent read <agent>` and tell the user what it shows. For `(manual)`, run the exit: for
+     a ready story's builder it closes the pane and then restarts or holds the story, as a
+     `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
+     pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
+     on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
+     `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` or
+     `idle: <story> is ready with no build, exit: <exit>` line is capacity no step uses, a line `next`
+     prints after its step: handle it as step 1's `idle:` list
      says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
      then it needs nothing. It comes once, and again only after it has gone from the queue. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
@@ -387,8 +408,11 @@ Repeat until a step below says stop:
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
    - `plan-hld <hld>`: follow `/plan-hld <hld>`. Approving its epics is the user's decision: stop
-     and wait for it, unless `swarm.sh grants <hld>` lists `epics`, which lets it write them active
-     and open the board PR unasked. Its board PR lands like any other: the HLD's `merge` grant
+     and wait for it, unless the grants list `epics`, which lets it write them active
+     and open the board PR unasked. Read the grants from origin's copy of the HLD, never the main
+     checkout's, which may be stale: once `/plan-hld` has made its plan worktree `<wt>` (its
+     **A new worktree** step), run `SWARM_PROJECT=<wt> swarm.sh grants <hld>`. A board outside the project's repo has no
+     worktree: run `swarm.sh grants <hld>` there as it is. Its board PR lands like any other: the HLD's `merge` grant
      covers it under `merge = human`. Once that PR has merged or been closed, run
      `swarm.sh board-pr done plan-<hld>` and `swarm.sh close plan-<hld>`, so an abandoned worktree
      never hides the HLD from `next` and its agents' tab closes.

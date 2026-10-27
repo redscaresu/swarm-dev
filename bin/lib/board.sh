@@ -425,21 +425,27 @@ one_off_started() {
 }
 
 # idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
-# is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS), from the board and its state
-# alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each call it
-# on every read, so a line goes once its dependency is in review or done. Fails when the check does: a
-# story file reconcile removes between the script's glob and its read is one way.
+# is not in its needs, and per ready story with no build past queue_minutes (touches_rows.py --idle,
+# given SWARM_AGENT_KINDS, SWARM_QUEUE_MINUTES and SWARM_BACKLOG_CONDUCTOR), from the board, its state
+# and events.tsv alone (and one git read of the story branches per checkout with a ready story about to
+# get a line, 5 s at most in all): no gh or herdr call.
+# next (idle_lines), wait --lead (lead_queue), status and dash each call it on every read, so a blocked
+# story's line goes once its dependency is in review or done, and a ready story's once its build starts.
+# Fails when the check does, on either kind of line: a story file reconcile removes between the
+# script's glob and its read is one way.
 idle_now() {
-  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+  # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
+    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
 }
 
 # idle_warned [<tail>] — idle_now's lines. When the check fails: no line, one `warning: the
-# idle-dependency check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
+# idle check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
 # traceback, and exit 1, so a caller can keep what it last saw. next, wait --lead and status read it;
 # dash reads idle_now, a frame having no place for a warning.
 idle_warned() {
   local out
-  out="$(idle_now 2>/dev/null)" || { echo "warning: the idle-dependency check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
+  out="$(idle_now 2>/dev/null)" || { echo "warning: the idle check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
   [[ -z "${out}" ]] || printf '%s\n' "${out}"
 }
 
@@ -1134,10 +1140,15 @@ hld_due() {
 
 # hld_blocked <hld file> — why /plan-hld cannot plan the HLD, or nothing. A name board-pr refuses (a
 # character outside a-z, 0-9 and -, which grants and finish_item refuse too, or a leading -) would
-# fail the run only at its end.
+# fail the run only at its end. On a board in the repo, an HLD whose last section is not ## Epics
+# (epics_last) is planned to the end, but plan_hld puts its plan PR under no grant: it waits on a hand
+# merge.
 hld_blocked() {
-  [[ "$(basename "$1" .md)" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
-    || echo "its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+  if [[ ! "$(basename "$1" .md)" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+  elif [[ ${BOARD_IN_REPO} == 1 ]] && ! epics_last "$1"; then
+    echo "end the HLD with a line that is exactly ## Epics, and after it only blank lines and lines - [<slug>](../epics/<slug>.md) naming epics on the board"
+  fi
 }
 
 # The marker /plan-hld writes in <project>/.swarm/<hld name>/ on a board outside the repo: one epic
@@ -1446,7 +1457,7 @@ waiting_on_user() {
     if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
     elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
     elif hld_pr_open "${slug}" finish && [[ "$(hld_due "${f}")" == finish ]]; then waiting+="  finish PR awaiting merge: ${slug}"$'\n'
-    elif why="$(hld_blocked "${f}")" && [[ -n "${why}" && "$(hld_due "${f}")" == plan ]]; then waiting+="  hld cannot be planned: ${slug}, ${why}"$'\n'
+    elif [[ "$(hld_due "${f}")" == plan ]] && why="$(hld_blocked "${f}")" && [[ -n "${why}" ]]; then waiting+="  hld cannot be planned: ${slug}, ${why}"$'\n'
     fi
   done < <(board hld)
   printf '%s' "${waiting%$'\n'}"
