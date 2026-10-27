@@ -33,8 +33,8 @@ The whole plan runs on origin's copy of the board in the plan worktree, `<wt>` b
   on a resume carries the earlier run's `planned:`. Stop, saying why, when it is not `status:
   agreed`, when its `planned:` has a value (it was planned already; an empty one, `""` or a bare
   `# comment` is none, as `swarm.sh next` reads it), or when an epic on origin already names it:
-  `swarm.sh next` never plans an HLD that epics carry, and a second plan would write its epics
-  again. An epic names it when its front matter's `hld:` is `$1` itself, read as `next` reads it
+  `swarm.sh next` never plans an HLD that epics carry (outside the repo, only to resume an
+  interrupted run, below), and a second plan would write its epics again. An epic names it when its front matter's `hld:` is `$1` itself, read as `next` reads it
   (the lines between the file's first two `---`; quotes, one pair of brackets, a trailing comment
   and whitespace aside; a body line is not read, and `parent:` is not followed). This loop over
   origin's epics prints each that does:
@@ -50,7 +50,11 @@ The whole plan runs on origin's copy of the board in the plan worktree, `<wt>` b
   `grants` read the old HLD, and the answers in `.swarm/$1/` are its. On a stop, remove a `<wt>` you
   just started with `swarm.sh board-pr done plan-$1`; a resumed one holds the earlier run's work, so
   leave it and say so. On a board outside the repo, feed each `docs/epics/*.md` to the same `awk`
-  and `grep`.
+  and `grep`. There an epic naming the HLD is not a stop when the HLD has no `planned:` value,
+  `.swarm/$1/writing-epics` lists every epic naming the HLD, and no story's `epic:` and no epic's
+  `parent:` names one of them, and `.swarm/events.tsv` has no `conduct` or `finish` line for one of
+  them. An interrupted run wrote those epics in place and no work has started on them: resume and
+  overwrite them as below.
 
 A board outside the project's repo has no worktree and no origin: skip the PR, origin and worktree
 steps, run the checks on the board's own files, read and write the board where it is, and read
@@ -128,7 +132,13 @@ $1`, and touches no other file. `swarm.sh grants` puts the board PR under this H
 shape and under none in any other, where the `merge` grant no longer covers it. Commit, run one
 `swarm.sh codex-review` pass there, then `swarm.sh board-pr open plan-$1 "<title>" <body-file>`. If it says
 the PR on the branch has merged or closed, run `swarm.sh board-pr done plan-$1` and start again from
-the top. A board outside the project's repo is written in place: no commit, no board PR.
+the top. A board outside the project's repo is written in place: no commit, no board PR. There,
+before you write any epic, write `<project>/.swarm/$1/writing-epics`, one slug per line: every epic
+this run writes and, on a resume, every slug the file already lists. Remove it once the HLD's
+`planned:` line is written. While it is there and the HLD has no `planned:`, `swarm.sh next` offers
+`plan-hld $1` again to finish the interrupted run. A run interrupted before this file existed has
+none: the user writes it by hand, one slug per epic naming the HLD, after checking that none of
+those epics has work on it.
 
 Once the board PR is open, log every skeptic, codex and critic finding against it, as `/plan-epic`
 does: `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan
