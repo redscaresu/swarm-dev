@@ -2015,8 +2015,10 @@ stacked_lines() {
 # only for codex, an agent with no session recorded, and a retired one.
 # Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS in its place, for a
 # test): status_reads routes every herdr, gh and claude call, and git's fetch and ls-remote, through
-# report_read, its own and those of the functions it calls. A read cut there, or due after it, fails as
-# it would on an error, and report_skipped's line, printed last, names it.
+# report_read, its own and those of the functions it calls; status_report.py's pane reads (one herdr
+# agent read per agent, panes.pane_text) take the deadline and the skip file from the environment and keep
+# to them the same way. A read cut there, or due after it, fails as it would on an error, and
+# report_skipped's line, printed last, names it.
 status_report() {
   local all="${1:-}" agents="" panes waiting sessions noagent
   # Local, so report_start and report_skipped, called from here, read it.
@@ -2055,7 +2057,8 @@ status_report() {
     while read -r pane name; do
       [[ "${own}" != *" ${pane} "* ]] || pane_check "${name}" "${pane}" > /dev/null
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
-    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+    # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.
+    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}" \
       python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
     upgrade_status
   fi
