@@ -63,8 +63,9 @@ fresh; echo '{"status":"ahead"}' > "${FX}/behind"; merge "${URL}"
 refused "a compare with no ahead_by" "cannot tell whether main moved past 1111111's CI: unreadable compare"
 # many <n> <prefix> — <n> paths, <prefix>1.md to <prefix><n>.md.
 many() { local i; for ((i = 1; i <= $1; i++)); do echo "$2${i}.md"; done; }
-fresh; read -ra fs <<< "$(many 300 bin/f | paste -sd' ' -)"; gained 1 "${fs[@]}"; merge "${URL}"
-refused "a compare listing 300 files" "lists 300 files, so it may be cut short"
+# 300 board files: GitHub may have cut the list short, so a file off the board may be missing from it.
+fresh; read -ra fs <<< "$(many 300 docs/stories/f | paste -sd' ' -)"; gained 1 "${fs[@]}"; merge "${URL}"
+refused "a compare listing 300 board files" "lists 300 files, so it may be cut short"
 fresh; gained 1; merge "${URL}"
 refused "a compare listing no file for its commits" "the compare of 1111111 with main lists no file for 1 commit(s)"
 fresh; read -ra fs <<< "$(many 299 docs/stories/f | paste -sd' ' -)"; gained 1 "${fs[@]}"; merge "${URL}"

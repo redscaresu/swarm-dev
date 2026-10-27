@@ -1992,8 +1992,9 @@ no tests, as CI's board-only gate has it, so they do not count. A `README.md` th
 since a test may check it: swarm-dev's own CI gate tests the board READMEs. A compare it cannot read refuses
 too. So does one listing 300 files or more, since GitHub lists no more, and one that lists no file
 for the commits. The check is cautious on purpose. GitHub ran the PR's CI on a merge ref, which may
-already hold some of those commits, and the price is one more CI run. `--board` and `--release`
-skip it. A base with a merge queue skips it too, since the queue tests each PR on top of the base.
+already hold some of those commits, and the price is one more CI run. It leaves only the seconds
+between the compare and the merge: two merges into one base that start that close together can both
+pass, which only a merge queue rules out. `--board` and `--release` skip it. A base with a merge queue skips it too, since the queue tests each PR on top of the base.
 Under `merge_admin = on`, a base that requires PRs to be up to date is still `ci_gate admin`'s to
 refuse. Most refusals go to the lead, but the conductor handles this one. It nudges the builder to
 merge origin/<base> in, re-run the tests and push. Then it waits with `swarm.sh wait-pr`, reviews the
