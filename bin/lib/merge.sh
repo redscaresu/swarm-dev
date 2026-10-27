@@ -2081,10 +2081,13 @@ status_report() {
 # calls it, and nothing runs after it): each of these reads goes through report_read, named by its
 # command and subcommand (gh api by `gh api` alone), with stdin from /dev/null, since within runs it in
 # a process group of its own, where a read of the terminal would stop it until the deadline. Of git,
-# only fetch and ls-remote, which reach origin, go through it; the rest, local or a write (remote
-# set-head), run as they are. A fetch KILLed at the deadline mid-update can leave a <ref>.lock behind,
-# which fails that ref's later fetches until it is removed. A call that already runs under within
-# execs the program itself and keeps its own wait.
+# only fetch and ls-remote, which reach origin, go through it; the rest run as they are. One of those is
+# a network read too: `git remote set-head origin --auto` (base_for, on stacked_child's path, when
+# base_branches is empty) asks origin and writes refs/remotes/origin/HEAD. It is left unbounded on
+# purpose, as a KILL mid-write would leave a stale ref lock. A fetch KILLed at the deadline mid-update
+# can leave such a <ref>.lock behind, which fails that ref's later fetches (builds' and merges' too)
+# until it is removed. A call that already runs under within execs the program itself and keeps its
+# own wait.
 # shellcheck disable=SC2329 # status's callers call these functions by name: herdr, gh, claude, git
 status_reads() {
   herdr() { report_read "herdr $1 $2" herdr "$@" </dev/null; }
@@ -2098,7 +2101,7 @@ status_reads() {
     done
     case "${!i:-}" in
       fetch|ls-remote) report_read "git ${!i}" git "$@" </dev/null ;;
-      *) command git "$@" ;;
+      *) command git "$@" ;;   # remote set-head too: unbounded on purpose (above)
     esac
   }
 }
