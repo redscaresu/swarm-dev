@@ -517,4 +517,13 @@ is `human` unless `swarm.sh grants <PR URL>` lists `merge` for the PR, and then 
 the user merges it, even when they ask you to, since `swarm.sh merge` refuses it. A release PR is the user's too, unless `swarm.sh merge --release`'s release check finds that an
 HLD granting `release` covers every story merged since the last tag. A `costs: money` PR, or one stacked on one,
 is the user's to merge whatever the grant says. Never give a `lead` story to an agent.
+Three more rules for the lead, from the v0.28.0 retro:
+
+- Plan epics whose plans do not depend on each other at the same time, not one after another. When
+  one epic must come before another, put that order in a story's `depends_on` once the other
+  epic's plan exists.
+- Restart an agent at its first `Request timed out` or API-error stop that its own retries did not
+  clear. Give the restart a brief that tells it to write its output as it goes.
+- Judge whether an agent is alive from `.swarm/events.tsv` and its PR, never from a pane read alone.
+
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.
