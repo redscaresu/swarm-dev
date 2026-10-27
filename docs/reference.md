@@ -1292,7 +1292,7 @@ no cause as plain `close`. A close with an unknown cause is refused and logged a
 and the word that was given never reaches the log. `reconcile` and `unblock` write a line
 per item they move. `merge` writes all its own lines, under the story's or epic's slug (the PR URL
 with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
-else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
+else; a base merged into the PR's branch is one `merge base-merged <new head>` line (§ Merging); a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its repo, base and checks;
 an ok one that clears a red main of that repo and base by `main-green`, outcome its repo, base and
@@ -2054,9 +2054,8 @@ main went red. So, on the direct path, a story PR's `merge` compares the head wi
 (`compare <head>...<base>`) once the head is green, just before `gh pr merge`. The direct path is
 every merge that does not join a merge queue: a base with no queue, and every merge under
 `merge_admin = on`, which never reads whether the base has one. When the base has
-commits the head lacks and any of them changes a path off the board, it refuses with `the base
-<base> moved past <sha>'s CI (<n> commits it lacks): merge origin/<base> in, push, and merge the new
-head`. The board's paths are `board_paths`' entries, which the board-only CI gate from `swarm.sh
+commits the head lacks and any of them changes a path off the board, `merge` merges nothing: it has
+GitHub merge the base into the PR's branch instead (Merging the base in, below). The board's paths are `board_paths`' entries, which the board-only CI gate from `swarm.sh
 init` skips: `stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under the board, and only in
 the board's own repo. Commits that change only those run no tests there, so they do not count. A
 `README.md` there counts as code, since a test may check it: swarm-dev's own CI gate tests the board
@@ -2072,9 +2071,44 @@ merge queue closes that window. `--board` and `--release` skip the check. A PR t
 queue skips it too, since the queue tests each PR on top of the base. Under `merge_admin = on` no PR
 joins one, so the check runs on every story merge.
 Under `merge_admin = on`, a base that requires PRs to be up to date is still `ci_gate admin`'s to
-refuse. Most refusals go to the lead, but the conductor handles this one. It nudges the builder to
-merge origin/<base> in, re-run the tests and push. Then it waits with `swarm.sh wait-pr`, reviews the
-new head as for any new head, and merges that head with `--head`.
+refuse.
+
+**Merging the base in.** For a PR whose base moved, `merge` sends `PUT
+repos/<owner>/<repo>/pulls/<n>/update-branch` with `expected_head_sha` set to the head it read, so
+GitHub refuses if the branch moved since. GitHub merges in the background, so `merge` then reads the
+PR's head up to 20 times, 3 seconds apart (`MERGE_UPDATE_READS`, `MERGE_READ_WAIT`), until it moves.
+It accepts the new head only when GitHub made it, its first parent is the old head and its second is
+a commit on the base: the base's head, or a commit behind it (`compare <parent>...<base's head>` says
+`ahead` or `identical`). Then the only new content is the base's. GitHub made it when its committer is
+`web-flow` and its signature is verified, as on GitHub's own merges. A builder's own merge of the
+base, pushed while GitHub's was pending, has the same parents but may hold more. A pusher can name
+`web-flow` as the committer, but cannot sign as GitHub. It logs `merge <slug> base-merged <new head>`
+in events.tsv, so later steps can tell this head from a builder's push, and exits 1 with `base merged:
+<PR URL> is now <new> (<old> with <base> merged in); wait-pr <PR URL>, then merge --head <new head>
+<PR URL>`. It has merged nothing, since the new head's CI has not run yet. It refuses, naming the
+cause, in four cases:
+
+- GitHub answers 422, a conflict: `the base <base> moved past <sha>'s CI (<n> commits it lacks), and
+  GitHub cannot merge it in, a conflict (HTTP 422: <GitHub's message>): merge origin/<base> in,
+  resolve it, push, and merge the new head`. GitHub answers 422 too when the branch moved since
+  `merge` read it, and its message says so.
+- The request fails another way: `..., and asking GitHub to merge it in failed (<error>): merge
+  origin/<base> in, push, and merge the new head`.
+- The head has not moved by the last read: `...; GitHub took the request to merge it in, but its head
+  was still <sha> after 20 reads 3 s apart: pull the branch (GitHub may yet push its merge), merge
+  origin/<base> in, push, and merge the new head`.
+- GitHub did not make the new head, or it has other parents (a builder pushed at the same moment,
+  say), or gh cannot read its parents, the base's head or that compare: `base merge unchecked: <PR URL>'s head moved from <old>
+  to <new>, <why>: review the new head as for any new head`.
+
+Most refusals go to the lead, but the conductor handles these. On `base merged:`, the new head needs
+no new review, since its only new content is the base's. The conductor waits for its CI with the
+`swarm.sh wait-pr` the line names and merges it with the `--head` the line names. If that CI goes red,
+it handles it as a red check, and tells the builder to pull its branch first (`git pull --ff-only`):
+GitHub's merge commit is not in the builder's worktree. On `the base <base> moved past`, it nudges the
+builder to pull its branch, merge origin/<base> in, re-run the tests and push. Then it waits with
+`swarm.sh wait-pr`, reviews the new head as for any new head, and merges that head with `--head`. On
+`base merge unchecked:`, it reviews the new head as for any new head.
 
 **init's Claude Code checks.** An agent's `swarm.sh merge` runs only when a `permissions.allow`
 rule in Claude Code's settings allows it. Without one, under `merge = agent` or an HLD that grants

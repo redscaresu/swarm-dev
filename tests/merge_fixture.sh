@@ -50,6 +50,9 @@ case "$1 $2" in
     [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
     get left "${FX}/readback-left" 0
     if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
+    # The head update-branch moves, once its lag (pr views that still read the old head) is spent.
+    if [ -e "${FX}/pending-head" ]; then get l "${FX}/pending-left" 0
+      if [ "${l}" -gt 0 ]; then echo $((l - 1)) > "${FX}/pending-left"; else mv "${FX}/pending-head" "${FX}/head"; fi; fi
     get st "${FX}/state"; get st "${FX}/state.${3##*/}" "${st}"
     get h "${FX}/head"; get b "${FX}/base"; get mc "${FX}/mergecommit"; get nf "${FX}/nfiles"; get bd "${FX}/body" null; get cm "${FX}/commits" '[{}]'
     printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s}\n' \
@@ -128,6 +131,12 @@ case "$1 $2" in
                    elif [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then serve compare
                    elif [ "${#c}" != 40 ]; then out="$(serve files)" || exit 1; echo "{\"files\":${out}}"
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
+      # PUT pulls/<n>/update-branch, merge's request to merge the base in: ${FX}/update as serve reads it,
+      # and ${FX}/update.422 a 422 with its message. Once it answers, the PR's head becomes
+      # ${FX}/update-head, when there is one, after ${FX}/update-lag more pr views (none by default).
+      */update-branch) if [ -e "${FX}/update.422" ]; then get m "${FX}/update.422"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
+                       serve update
+                       [ ! -e "${FX}/update-head" ] || { cp "${FX}/update-head" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; } ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       # ${FX}/on-contents runs once first: another process's fetch while release_check reads.

@@ -143,9 +143,11 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
 - Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
-  refuses it whenever the base has commits the PR's head lacks that change more than board files. The builder merges the base in and pushes.
-  Under `merge = agent` the conductor then reviews and merges the new head
-  ([reference.md § Merging](docs/reference.md#merging)).
+  does not merge it while the base has commits the PR's head lacks that change more than board files.
+  It has GitHub merge the base into the PR's branch, checks that the new head adds only the base's
+  commits, and stops with a `base merged:` line. Under `merge = agent` the conductor waits for that
+  head's CI and merges it. When GitHub cannot merge the base in (a conflict, say), the builder does,
+  and the conductor reviews and merges the new head ([reference.md § Merging](docs/reference.md#merging)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.
