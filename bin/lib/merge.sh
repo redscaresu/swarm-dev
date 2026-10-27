@@ -31,6 +31,8 @@ PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first 
 REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
 [[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
+BASE_MOVED_WAIT=60      # how long each of base_moved's reads may take, the compare's retries included (SWARM_BASE_MOVED_WAIT, for tests)
+BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
 # named geofabrik or timeout does not make Bad credentials transient.
@@ -93,8 +95,9 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate behind <owner/repo> <sha> <base> <board paths> <wait> — the number of commits <base> has that
 # <sha> lacks (compare <sha>...<base>), then each path they change outside <board paths> (on_board_paths'
 # rule, but a README.md there counts as outside; a renamed file's old path too), one a line. A transient
-# gh error is read again, three reads in all, <wait> apart. A read that fails otherwise, a compare
-# listing 300 files or more (GitHub lists no more) and commits with no file listed fail (3).
+# gh error is read again, three reads in all, <wait> apart. A read that fails otherwise fails (3); a
+# compare listing 300 files or more (GitHub lists no more), or no file for its commits, fails
+# BEHIND_UNLISTED (4), which merging the base in clears.
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
@@ -276,31 +279,44 @@ merged_state() {
 # merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
 merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 
-# base_moved <owner/repo> <pr> <head> <base> — stop a story PR whose base has commits <head> lacks, since
+# base_moved <owner/repo> <head> <base> <pr> — stop a story PR whose base has commits <head> lacks, since
 # CI on <head> never ran with them, unless every path they change is on the board (ci_gate behind,
-# given board_paths; a board README counts as code) and the PR is in the board's own repo: then
-# merge_base_update merges the base into the PR's branch, and merge stops there. Board-only
+# given board_paths; a board README counts as code) and the PR is in the board's own repo. For such a
+# PR, merge_base_update merges the base into its branch, and merge stops there. Board-only
 # commits run no tests, as CI's board-only gate has it. Conservative on purpose: GitHub ran the PR's CI on a merge ref that may hold
 # some of them, and the price is one more CI run. A compare it cannot read refuses too, and so does a
-# board-only gain when the board's repo cannot be read, naming the read. Nothing locks the compare
-# against gh pr merge, so two merges into one base seconds apart can both pass: only a merge queue
-# closes that.
+# board-only gain when the board's repo cannot be read, naming the read. That refusal, and a compare that
+# cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, which clears them: the
+# head is then up to date, so no repo read is needed. Each read stops after
+# BASE_MOVED_WAIT. Nothing locks the compare against gh pr merge, so two merges into one base seconds
+# apart can both pass: only a merge queue closes that.
 base_moved() {
-  local out n p own why
-  out="$(ci_gate behind "$1" "$3" "$4" "$(board_paths)" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")" \
-    && n="${out%%$'\n'*}" && [[ "${n}" =~ ^[0-9]+$ ]] \
-    || merge_fail "cannot tell whether $4 moved past ${3:0:7}'s CI: ${out#error }"
+  local out n p own why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$3 in, push, and merge the new head"
+  why="cannot tell whether $3 moved past ${2:0:7}'s CI"
+  out="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" behind "$1" "$2" "$3" "$(board_paths)" \
+    "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
+  case ${rc} in
+    0) ;;
+    "${BEHIND_UNLISTED}") merge_fail "${why}: ${out#error }: ${fix}" ;;
+    142) merge_fail "${why}: the compare took over ${limit}s" ;;
+    *) merge_fail "${why}: ${out#error }" ;;
+  esac
+  n="${out%%$'\n'*}"
+  [[ "${n}" =~ ^[0-9]+$ ]] || merge_fail "${why}: ${out}"
   [[ ${n} -gt 0 ]] || return 0
   # Only board paths changed. They are the board's repo's alone: in another repo a stories/ file is code.
   if [[ "${out}" != *$'\n'* ]]; then
-    why="cannot tell whether $4 moved past ${3:0:7}'s CI: its ${n} commits change only board paths, and"
+    why+=": its ${n} commits change only board paths, and"
     p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" \
-      || merge_fail "${why} ${PROJECT_DIR}, the board's repo, has no origin"
-    own="$(gh repo view "${p}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
-      || merge_fail "${why} gh cannot tell which GitHub repo the board's origin is"
+      || merge_fail "${why} ${PROJECT_DIR}, the board's repo, has no origin: ${fix}"
+    # gh's own error line goes in the refusal; on success it prints the JSON alone.
+    rc=0; own="$(within "${limit}" gh repo view "${p}" --json nameWithOwner </dev/null 2>&1)" || rc=$?
+    [[ ${rc} -ne 142 ]] || merge_fail "${why} gh did not say within ${limit}s which GitHub repo the board's origin is: ${fix}"
+    [[ ${rc} -eq 0 ]] || merge_fail "${why} gh repo view failed (${own##*$'\n'}): ${fix}"
+    own="$(json "d['nameWithOwner'].lower()" <<< "${own}")" || merge_fail "${why} gh repo view named no GitHub repo: ${fix}"
     [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" != "${own}" ]] || return 0
   fi
-  merge_base_update "$1" "$2" "$3" "$4" "${n}"
+  merge_base_update "$1" "$4" "$2" "$3" "${n}"
 }
 
 # merge_base_update <owner/repo> <pr> <head> <base> <n> — base_moved found <n> commits <head> lacks:
@@ -310,35 +326,38 @@ base_moved() {
 # web-flow and a verified signature, as on GitHub's own merges: a pusher can name web-flow but cannot sign
 # as GitHub, and a builder's own merge of the base, pushed in that moment, has the same parents and may
 # hold more) and its parents are <head>, then a commit on <base> (the base's head, or behind it), so its
-# only new content is the base's. Then log
-# `base-merged <new head>` and stop with a `base merged:` line naming the wait-pr and merge --head that
-# land it. A 422 (a conflict), another failed request and no new head in time refuse with the builder's
-# moved-base line; any other parents, or a read of them that fails, refuse as `base merge unchecked:`,
-# for a review of the new head. It never returns, and never merges.
+# only new content is the base's. Then log `base-merged <new head>` and stop with a `base merged:` line
+# naming the wait-pr and merge --head that land it. A 422 (a conflict), another failed request and no
+# new head in time refuse with base_moved's line, ending as it does in merging the base in; any other
+# head, or a read of it that fails, refuses as `base merge unchecked:`, for a review of the new head.
+# Each read stops after BASE_MOVED_WAIT, as base_moved's do. It never returns, and never merges.
 merge_base_update() {
-  local repo="$1" n="$2" head="$3" base="$4" url="https://github.com/$1/pull/$2" wait out i new="" seen="" ps who sig p1 p2 more tip st why
+  local repo="$1" n="$2" head="$3" base="$4" url="https://github.com/$1/pull/$2" wait out i new="" seen="" ps who sig p1 p2 more tip st why rc=0
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head"
   wait="${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
   why="the base ${base} moved past ${head:0:7}'s CI ($5 commits it lacks)"
-  out="$(gh api -X PUT -f "expected_head_sha=${head}" "repos/${repo}/pulls/${n}/update-branch" 2>&1 > /dev/null)" || {
+  out="$(within "${limit}" gh api -X PUT -f "expected_head_sha=${head}" "repos/${repo}/pulls/${n}/update-branch" 2>&1 > /dev/null < /dev/null)" || rc=$?
+  if [[ ${rc} -eq 142 ]]; then
+    merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s: pull the branch first (GitHub may yet push its merge), then ${fix}"
+  elif [[ ${rc} -ne 0 ]]; then
     out="${out##*$'\n'}"; out="${out#gh: }"
-    [[ "${out}" != *"(HTTP 422)"* ]] \
-      || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out% (HTTP 422)}): merge origin/${base} in, resolve it, push, and merge the new head"
-    merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): merge origin/${base} in, push, and merge the new head"
-  }
+    [[ "${out}" != *"(HTTP 422)"* ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out% (HTTP 422)}): ${fix}"
+    merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${fix}"
+  fi
   # GitHub merges in the background: the head moves a moment after it says yes.
   for ((i = 1; i <= MERGE_UPDATE_READS; i++)); do
-    if out="$(gh pr view "${n}" --repo "${repo}" --json headRefOid | json "d['headRefOid']")"; then
+    if out="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null | json "d['headRefOid']")"; then
       seen=1; [[ "${out}" == "${head}" ]] || { new="${out}"; break; }
     fi
     [[ ${i} -eq ${MERGE_UPDATE_READS} ]] || sleep "${wait}"
   done
   if [[ -z "${new}" ]]; then
     out="its head was still ${head:0:7}"; [[ -n "${seen}" ]] || out="gh could not read its head"
-    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart: pull the branch (GitHub may yet push its merge), merge origin/${base} in, push, and merge the new head"
+    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart: pull the branch first (GitHub may yet push its merge), then ${fix}"
   fi
   why="base merge unchecked: ${url}'s head moved from ${head:0:7} to ${new:0:7}"
   [[ "${new}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "${why}, not a commit SHA: review the new head as for any new head"
-  ps="$(gh api "repos/${repo}/commits/${new}" \
+  ps="$(within "${limit}" gh api "repos/${repo}/commits/${new}" < /dev/null \
     | json "' '.join([(d.get('committer') or {}).get('login') or '-',
                       'verified' if ((d.get('commit') or {}).get('verification') or {}).get('verified') is True else 'unverified']
                      + [p['sha'] for p in d['parents']])")" \
@@ -348,10 +367,10 @@ merge_base_update() {
     || merge_fail "${why}, which GitHub did not make (committer ${who}, signature ${sig}; GitHub's own merges are web-flow's, verified): review the new head as for any new head"
   [[ "${p1}" == "${head}" && "${p2}" =~ ^[0-9a-f]{40}$ && -z "${more}" ]] \
     || merge_fail "${why}, whose parents ($(short_shas "${ps}")) are not ${head:0:7} then a commit on ${base}: review the new head as for any new head"
-  tip="$(gh api "repos/${repo}/branches/${base//\//%2F}" | json "d['commit']['sha']")" \
+  tip="$(within "${limit}" gh api "repos/${repo}/branches/${base//\//%2F}" < /dev/null | json "d['commit']['sha']")" \
     || merge_fail "${why}, and gh cannot read ${base}'s head to check its second parent ${p2:0:7}: review the new head as for any new head"
   if [[ "${p2}" != "${tip}" ]]; then
-    st="$(gh api "repos/${repo}/compare/${p2}...${tip}" | json "d['status']")" \
+    st="$(within "${limit}" gh api "repos/${repo}/compare/${p2}...${tip}" < /dev/null | json "d['status']")" \
       || merge_fail "${why}, and gh cannot tell whether its second parent ${p2:0:7} is on ${base}: review the new head as for any new head"
     [[ "${st}" == ahead || "${st}" == identical ]] \
       || merge_fail "${why}, whose second parent ${p2:0:7} is not on ${base} (compared with ${base}'s head ${tip:0:7}: ${st}): review the new head as for any new head"
@@ -512,7 +531,7 @@ merge_pr() {
   else
     [[ "${only}" != --release ]] || release_moved "${repo}" "${base}" "${head}" "${n}"
     # A story PR whose head's CI ran before code landed on the base: no queue tests the two together.
-    [[ -n "${only}" ]] || base_moved "${repo}" "${n}" "${head}" "${base}"
+    [[ -n "${only}" ]] || base_moved "${repo}" "${head}" "${base}" "${n}"
     why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
     # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
     read -r state oid <<< "$(merged_state "${n}" "${repo}")"

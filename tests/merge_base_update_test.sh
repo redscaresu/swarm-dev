@@ -44,6 +44,7 @@ updated() { grep -qxF "${PUT}" "${ROOT}/gh.log"; }
 # views_after_put — the pr views after the update-branch request: merge's reads of the PR's head.
 views_after_put() { awk -v put="${PUT}" '$0 == put { on = 1; next } on && /^pr view/ { n++ } END { print n + 0 }' "${ROOT}/gh.log"; }
 no_base_merged() { ! logged "^merge s base-merged"; }
+is_zero_views() { [[ "$(views_after_put)" == 0 ]]; }
 MERGED_LINE="base merged: ${URL} is now 3333333 (1111111 with main merged in); wait-pr ${URL}, then merge --head ${H3} ${URL}"
 
 # --- main merged in, the new head's parents the old head and main's head: base merged, no merge.
@@ -97,13 +98,17 @@ refused "main's head gh cannot read" "${UNCHECKED}, and gh cannot read main's he
 # --- GitHub cannot merge main in, or the head never moves: the builder merges it in.
 MOVED="the base main moved past 1111111's CI (1 commits it lacks)"
 moved; echo "merge conflict between base and head" > "${FX}/update.422"; merge "${URL}"
-refused "a conflict" "${MOVED}, and GitHub cannot merge it in, a conflict (HTTP 422: merge conflict between base and head): merge origin/main in, resolve it, push, and merge the new head"
+refused "a conflict" "${MOVED}, and GitHub cannot merge it in, a conflict (HTTP 422: merge conflict between base and head): merge origin/main in, push, and merge the new head"
 check "a conflict: update-branch was asked" updated
 check "a conflict: no base-merged line" no_base_merged
 moved; touch "${FX}/update.fail"; merge "${URL}"
 refused "a failed request" "${MOVED}, and asking GitHub to merge it in failed (HTTP 502): merge origin/main in, push, and merge the new head"
+# A request GitHub never answers is cut at the wait, as base_moved's reads are.
+moved; touch "${FX}/update.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
+refused "a request that hangs" "${MOVED}, and GitHub did not answer the request to merge it in within 2s: pull the branch first (GitHub may yet push its merge), then merge origin/main in, push, and merge the new head"
+check "a request that hangs: no read of the head after it" is_zero_views
 moved; rm "${FX}/update-head"; merge "${URL}"
-refused "a head that never moves" "${MOVED}; GitHub took the request to merge it in, but its head was still 1111111 after 20 reads 0 s apart: pull the branch (GitHub may yet push its merge), merge origin/main in, push, and merge the new head"
+refused "a head that never moves" "${MOVED}; GitHub took the request to merge it in, but its head was still 1111111 after 20 reads 0 s apart: pull the branch first (GitHub may yet push its merge), then merge origin/main in, push, and merge the new head"
 is "a head that never moves: read 20 times, then stops" 20 "$(views_after_put)"
 check "a head that never moves: no base-merged line" no_base_merged
 

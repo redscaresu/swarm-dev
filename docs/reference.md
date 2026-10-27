@@ -2160,10 +2160,15 @@ init` skips: `stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under t
 the board's own repo. Commits that change only those run no tests there, so they do not count. A
 `README.md` there counts as code, since a test may check it: swarm-dev's own CI gate tests the board
 READMEs. When the base gained only board paths and the board's repo cannot be read (no origin, or gh
-cannot tell which GitHub repo it is), `merge` refuses naming that read. A compare it cannot read
+cannot tell which GitHub repo it is), `merge` refuses naming that read, with gh's own error line.
+That refusal also ends `merge origin/<base> in, push, and merge the new head`: once the head has the
+base, there is nothing to read. A compare it cannot read
 refuses too, and so does one listing 300 files or more, since GitHub lists no more, or one that lists
-no file for the commits. A transient gh error (a 5xx, a rate limit, a timeout) is read again, three
-reads in all; any other read error refuses at once. The check is cautious on purpose. GitHub ran the PR's CI
+no file for the commits (a commit and its revert give no file). The 300-file and no-file refusals end
+`merge origin/<base> in, push, and merge the new head` as well, since merging the base in clears them, and the conductor
+handles them as it does the moved-base refusal. A transient gh error (a 5xx, a rate limit, a timeout)
+is read again, three reads in all; any other read error refuses at once. Each read, the compare's
+retries included, stops after 60 seconds and refuses naming the wait. The check is cautious on purpose. GitHub ran the PR's CI
 on a merge ref, which may already hold some of those commits, and the price is one more CI run.
 Nothing locks the compare against the `gh pr merge` that lands the PR. Two merges into one base, such
 as two epics' conductors, can both read the base as unchanged and both land seconds apart. Only a
@@ -2185,30 +2190,37 @@ base, pushed while GitHub's was pending, has the same parents but may hold more.
 `web-flow` as the committer, but cannot sign as GitHub. It logs `merge <slug> base-merged <new head>`
 in events.tsv, so later steps can tell this head from a builder's push, and exits 1 with `base merged:
 <PR URL> is now <new> (<old> with <base> merged in); wait-pr <PR URL>, then merge --head <new head>
-<PR URL>`. It has merged nothing, since the new head's CI has not run yet. It refuses, naming the
-cause, in four cases:
+<PR URL>`. It has merged nothing, since the new head's CI has not run yet. Each of its reads stops
+after 60 seconds (`BASE_MOVED_WAIT`), as the compare's does. It refuses, naming the cause, in five cases, the
+first four ending, as the moved-base refusals do, in `merge origin/<base> in, push, and merge the new
+head`:
 
 - GitHub answers 422, a conflict: `the base <base> moved past <sha>'s CI (<n> commits it lacks), and
-  GitHub cannot merge it in, a conflict (HTTP 422: <GitHub's message>): merge origin/<base> in,
-  resolve it, push, and merge the new head`. GitHub answers 422 too when the branch moved since
-  `merge` read it, and its message says so.
-- The request fails another way: `..., and asking GitHub to merge it in failed (<error>): merge
-  origin/<base> in, push, and merge the new head`.
+  GitHub cannot merge it in, a conflict (HTTP 422: <GitHub's message>): merge origin/<base> in, push,
+  and merge the new head`. GitHub answers 422 too when the branch moved since `merge` read it, and
+  its message says so.
+- The request fails another way: `..., and asking GitHub to merge it in failed (<error>): ...`.
+- GitHub does not answer the request within 60 seconds: `..., and GitHub did not answer the
+  request to merge it in within 60s: pull the branch first (GitHub may yet push its merge), then
+  ...`.
 - The head has not moved by the last read: `...; GitHub took the request to merge it in, but its head
-  was still <sha> after 20 reads 3 s apart: pull the branch (GitHub may yet push its merge), merge
-  origin/<base> in, push, and merge the new head`.
+  was still <sha> after 20 reads 3 s apart: pull the branch first (GitHub may yet push its merge), then
+  ...`.
 - GitHub did not make the new head, or it has other parents (a builder pushed at the same moment,
-  say), or gh cannot read its parents, the base's head or that compare: `base merge unchecked: <PR URL>'s head moved from <old>
-  to <new>, <why>: review the new head as for any new head`.
+  say), or gh cannot read its parents, the base's head or that compare: `base merge unchecked: <PR
+  URL>'s head moved from <old> to <new>, <why>: review the new head as for any new head`.
 
-Most refusals go to the lead, but the conductor handles these. On `base merged:`, the new head needs
-no new review, since its only new content is the base's. The conductor waits for its CI with the
-`swarm.sh wait-pr` the line names and merges it with the `--head` the line names. If that CI goes red,
-it handles it as a red check, and tells the builder to pull its branch first (`git pull --ff-only`):
-GitHub's merge commit is not in the builder's worktree. On `the base <base> moved past`, it nudges the
-builder to pull its branch, merge origin/<base> in, re-run the tests and push. Then it waits with
-`swarm.sh wait-pr`, reviews the new head as for any new head, and merges that head with `--head`. On
-`base merge unchecked:`, it reviews the new head as for any new head.
+Under `merge = agent` the conductor handles these, though most refusals go to the lead. On `base
+merged:`, the new head needs no new review, since its only new content is the base's. The conductor
+waits for its CI with the `swarm.sh wait-pr` the line names and merges it with the `--head` the line
+names. If that CI goes red, it handles it as a red check, and tells the builder to pull its branch
+first (`git pull --ff-only`): GitHub's merge commit is not in the builder's worktree. On a refusal
+that ends `merge origin/<base> in, push, and merge the new head`, it nudges the builder to pull its
+branch, merge origin/<base> in, re-run the tests and push. Then it waits with `swarm.sh wait-pr`,
+reviews the new head as for any new head, and merges that head with `--head`. On `base merge
+unchecked:`, it reviews the new head as for any new head. Under `merge = human`, and when the lead
+merges under a `merge` grant, no conductor merges, so each of these lines goes to whoever ran
+`swarm.sh merge`, with the step to take in its message.
 
 **init's Claude Code checks.** An agent's `swarm.sh merge` runs only when a `permissions.allow`
 rule in Claude Code's settings allows it. Without one, under `merge = agent` or an HLD that grants

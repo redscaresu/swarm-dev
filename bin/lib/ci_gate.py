@@ -2,6 +2,7 @@ import calendar, json, re, signal, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 CI_OK, CI_RED, CI_TIMEOUT, CI_ERROR = 0, 1, 2, 3   # ci_gate main's exit codes (merge.sh's MAIN_CI_*)
+UNLISTED = 4   # behind's exit when the compare cannot list what the base gained (merge.sh's BEHIND_UNLISTED)
 # A gh error worth retrying, as merge.sh's WAIT_PR_TRANSIENT: matched against gh's own words only.
 TRANSIENT = re.compile(r"\b(rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|no such host|network is unreachable|stream error|HTTP (408|429|50[0234]))\b")
 RUN_ID = re.compile(r"https://github\.com/[^ ;]+/actions/runs/([0-9]+)")   # an Actions run's id in a check's URL
@@ -10,6 +11,10 @@ COMPARE_FILES = 300  # the most files the compare API lists; the PR files API li
 
 class Err(Exception):
     """gh failed, or answered something unreadable: main_ci reads again."""
+
+class Unlisted(Err):
+    """behind's compare lists no file for its commits, or may have cut its list short: merging the base
+    in clears it. Exits UNLISTED."""
 
 class Unread(Exception):
     """A workflow written in YAML this does not read: never retried, never skipped."""
@@ -147,7 +152,7 @@ def behind(repo, sha, base, board, wait):
     on_board_paths has them; a README.md there is off the board, since a test may check it (this repo's
     CI gate tests one). A transient gh error (TRANSIENT, in gh's own words) is read again, READ_TRIES
     reads in all, wait seconds apart; any other fails at once. A list of COMPARE_FILES or more may be cut
-    short, and commits with no file listed may be a list GitHub left out: both are errors."""
+    short, and commits with no file listed may be a list GitHub left out: both are Unlisted."""
     path = "repos/%s/compare/%s...%s" % (repo, sha, urllib.parse.quote(base, safe=""))
     for i in range(READ_TRIES):
         try:
@@ -165,9 +170,9 @@ def behind(repo, sha, base, board, wait):
     if not isinstance(n, int):
         raise Err("unreadable compare of %s with %s: ahead_by %r" % (sha[:7], base, n))
     if len(files) >= COMPARE_FILES:
-        raise Err("the compare of %s with %s lists %d files, so it may be cut short" % (sha[:7], base, len(files)))
+        raise Unlisted("the compare of %s with %s lists %d files, so it may be cut short" % (sha[:7], base, len(files)))
     if n and not paths:
-        raise Err("the compare of %s with %s lists no file for %d commit(s)" % (sha[:7], base, n))
+        raise Unlisted("the compare of %s with %s lists no file for %d commit(s)" % (sha[:7], base, n))
     def on(p):
         return p.rsplit("/", 1)[-1] != "README.md" and any(p.startswith(b) if b.endswith("/") else p == b for b in board)
     return n, [p for p in paths if not on(p)]
@@ -827,7 +832,11 @@ try:
             print("; ".join(why))
             sys.exit(1)
     elif mode == "behind":
-        n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b], float(args[3]))
+        try:
+            n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b], float(args[3]))
+        except Unlisted as e:
+            print("error %s" % e)
+            sys.exit(UNLISTED)
         print("\n".join([str(n)] + off))
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
