@@ -4,7 +4,7 @@
 # records' pane names, briefs, stories). Names that share their first 32 characters share the cut,
 # so the checks have two: closing one never closes the other's pane, a tab close names a story from
 # the cut only when it is the one name there (live_agents), and closing a conductor by a cut two
-# epics' briefs share takes neither epic and is refused while herdr lists it live (close_epic). Those
+# epics' briefs share takes neither epic, says so, and is refused while herdr lists it live (close_epic). Those
 # checks fail with cut_record swapped for a prefix match, which takes the first name under the cut.
 # The rest pin what an exact match leaves open: own_pane never maps a long name to a pane by herdr's
 # cut, and the one name under a cut counts only as a story's in a tab close or a conductor's in
@@ -135,8 +135,8 @@ E3="${C#conduct-}"
 fixture "w:t5 ${E1};w:t6 ${E2};w:t8 ${E3}" "w:p50 w:t5;w:p60 w:t6;w:p80 w:t8" "" "${E1}" "w:p50 conductor" "${E2}" "w:p60 conductor" "${E3}" "w:p80 conductor"
 brief "conduct-${E1}"; brief "conduct-${E2}"
 rc=0; close "${C}" || rc=$?
-is "close ${C}, two briefs under it, leaves the tab of epic ${E3} and its record" "0|||w:p80 conductor" \
-  "${rc}|$(closed)|$(cat "${P}/.swarm/state/${E3}" 2>/dev/null)"
+is "close ${C}, two briefs under it, leaves the tab of epic ${E3} and its record, and says the cut is more than one name's" "0|||w:p80 conductor|1" \
+  "${rc}|$(closed)|$(cat "${P}/.swarm/state/${E3}" 2>/dev/null)|$(grep -cF "swarm: close: ${C} is the cut of more than one recorded name, so no epic's tabs were closed: close by the conductor's full name (conduct-<epic>)" "${ROOT}/close.out")"
 
 # A story whose slug starts with conduct- is no conductor: closing its cut never takes the epic tab
 # that the rest of its slug names, though it is the one name under the cut and has a brief.

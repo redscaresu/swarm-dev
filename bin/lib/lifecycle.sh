@@ -1540,7 +1540,8 @@ has_records() {
 # the records hold one name under the cut (cut_record), it is that one's epic if it is a conductor's:
 # conduct-<epic> with its brief, and no story of that name, since a story's slug may start with
 # conduct- too. Two names under the cut, or one that is no conductor's, give nothing: the cut is not
-# this conductor's alone, and the name without conduct- may be a third epic's label.
+# this conductor's alone, and the name without conduct- may be a third epic's label. With two it says
+# so on stderr, since the close goes on and closes no epic's tabs, and stdout is the label.
 close_epic() {
   local full rc=0
   if [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"; return 0; fi
@@ -1549,6 +1550,8 @@ close_epic() {
   if [[ ${rc} -eq 1 ]]; then echo "${1#conduct-}"
   elif [[ ${rc} -eq 0 && "${full}" == conduct-* && -f "${PROJECT_DIR}/.swarm/briefs/${full}.md" && ! -f "${BOARD}/stories/${full}.md" ]]; then
     echo "${full#conduct-}"
+  elif [[ ${rc} -eq 2 ]]; then
+    echo "swarm: close: $1 is the cut of more than one recorded name, so no epic's tabs were closed: close by the conductor's full name (conduct-<epic>)" >&2
   fi
 }
 

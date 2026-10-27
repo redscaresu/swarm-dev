@@ -2271,7 +2271,8 @@ name you give it: its pane, its tabs, and for a conductor the tabs of its epic, 
 its full name gives. herdr and `swarm.sh` print agent names cut at 32 characters, so two long names
 can look the same. A cut stands for a full name only when it is the one name the project's records
 hold under it, counting the pane names in `.swarm/state`, the briefs in `.swarm/briefs` and the
-stories together. When two names share the cut, it stands for neither. An old brief whose name
+stories together. When two names share the cut, it stands for neither: a conductor closed by such a
+cut closes no epic's tabs, and close says so. An old brief whose name
 shares a live slug's first 32 characters keeps that cut ambiguous while it stays, and close errs
 that way on purpose: the pane is kept, or the close refused. A conductor named by its cut closes
 the epic of the one name under the cut when that name is `conduct-<epic>` with a brief and no
