@@ -1734,7 +1734,16 @@ the end of the window. A build with no session log yet starts at 00:00 on its `a
 no earlier than the build before it ended. Such a build counts as built since its story went ready,
 unless a close readied the story. A conductor runs as `held_min` reads it: from an ok `conduct`
 event until the next one, a close of its agent or its report. A backlog run ends on a close of
-`conduct-backlog` or of the project's own backlog conductor name.
+`conduct-backlog` or of the project's own backlog conductor name. Stories count by their full slug
+and conductors by their exact name. A close may name an agent by herdr's name, and a build with no
+session log has only `agents.tsv`'s. Both are agent names, cut to 32 characters, with an `s` in
+front of a slug that starts with a digit. Such a name counts as the one record whose agent name it
+is. The records are the board's stories and those its history deleted, the briefs, `conduct-<epic>`
+for each ok `conduct` event, the slugs session logs name, and the targets of `unblock`, `reset`,
+`reconcile`, `review` and `kept` events. With no record, or two, the name stays as it is, so two
+slugs that share their first 32 characters never merge. A build with no session log under a name
+two or more records share may be any of theirs. While it runs, none of those stories waits idle,
+and any other story clashes with what each of them touches.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying
