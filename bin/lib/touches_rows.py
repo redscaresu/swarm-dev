@@ -1,4 +1,4 @@
-import glob, os, re, sys
+import calendar, collections, glob, os, re, subprocess, sys, time
 
 # pairs(lines, out, stop) — each key's first value, as board.sh's awk reads it: leading spaces dropped.
 def pairs(lines, out, stop=None):
@@ -19,11 +19,11 @@ def front_text(text):
 
 # front(path) — the story's front matter, under what swarm.sh wrote to its state file (state_set),
 # but for a key whose <key>@base: the file no longer has: a later edit to the file wins. The values
-# are compared as state_value compares them, then trimmed.
-def front(path):
+# are compared as state_value compares them, then trimmed. An epic's state is under st_dir.
+def front(path, st_dir=None):
     out, st = front_text(open(path, encoding="utf-8", errors="replace").read()), {}
     try:
-        pairs(open(os.path.join(state, os.path.basename(path)[:-3]), encoding="utf-8", errors="replace").read().split("\n"), st)
+        pairs(open(os.path.join(st_dir or state, os.path.basename(path)[:-3]), encoding="utf-8", errors="replace").read().split("\n"), st)
     except FileNotFoundError:
         pass
     for k, v in st.items():
@@ -83,23 +83,126 @@ def overlap(a, b):
 def deps(fm):
     return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))
 
+# ok_events(path) — {(command, target): [secs, ...]} of events.tsv's ok lines; empty with no file.
+# A line's place in the file adds under a second, so two lines in one second keep their order (a
+# conductor's restart logs the old run's report, then its conduct).
+def ok_events(path):
+    out = collections.defaultdict(list)
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+    except FileNotFoundError:
+        return out
+    for i, e in enumerate(l.split("\t") for l in lines):
+        if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")):
+            try:
+                out[e[1], e[2]].append(calendar.timegm(time.strptime(e[0], "%Y-%m-%dT%H:%M:%SZ")) + i / len(lines))
+            except ValueError:
+                pass
+    return out
+
+def mtimes(*paths):
+    return [os.path.getmtime(p) for p in paths if os.path.exists(p)]
+
+# The events that put a story back to ready, or may have: its board edits are dated by the files' mtimes.
+READIES = ("unblock", "reset", "reset:held", "reconcile", "close")
+GIT_WAIT = 5   # seconds the --idle check's one git read of a checkout's story branches may take
+
 if __name__ == "__main__":
     stories, me, project_dir, repos_dir, state = sys.argv[1:]
     fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
     # --idle: a blocked story an agent builds (SWARM_AGENT_KINDS; a lead story's step is no code to
-    # share), with no needs: line and no held_by: (a review holds it), whose depends_on story an agent
-    # builds, neither done nor in review (unblock stacks on a PR), has touches and shares no file
-    # with it, waits for nothing it uses (idle_lines).
+    # share), with no held_by: (a review holds it), whose depends_on story an agent builds, neither
+    # done nor in review (unblock stacks on a PR), has touches and shares no touches part with it
+    # (overlap, as story --strict compares), and is not named in its needs: line, waits for nothing it
+    # uses (idle_lines).
     if me == "--idle":
         kinds = [""] + os.environ.get("SWARM_AGENT_KINDS", "").split()
         for slug, fm in sorted(fms.items()):
-            files = {e[:2] for e in entries(fm, project_dir, repos_dir)}
-            if fm.get("status") != "blocked" or fm.get("kind", "") not in kinds or fm.get("held_by") or fm.get("needs") or not files:
+            mine = entries(fm, project_dir, repos_dir)
+            if fm.get("status") != "blocked" or fm.get("kind", "") not in kinds or fm.get("held_by") or not mine:
                 continue
-            for d in sorted(deps(fm) & set(fms)):
-                theirs = {e[:2] for e in entries(fms[d], project_dir, repos_dir)}
-                if fms[d].get("status") not in ("done", "review") and fms[d].get("kind", "") in kinds and theirs and not files & theirs:
-                    print(f"idle: {slug} waits on {d} but shares no touches with it")
+            needs = {w.strip(".") for w in re.findall(r"[\w.-]+", fm.get("needs", ""))}
+            for d in sorted(deps(fm) & set(fms) - needs):
+                theirs = entries(fms[d], project_dir, repos_dir)
+                if fms[d].get("status") not in ("done", "review") and fms[d].get("kind", "") in kinds and theirs \
+                        and not any(overlap(e, m) for e in mine for m in theirs):
+                    print(f"idle: {slug} waits on {d} but shares no touches part with it and needs nothing from it")
+        # A ready story next would build (buildable_story: an agent's kind, no epic or an active one,
+        # and not held), with no build started (no worktree, no ok story event since it went ready) and
+        # ready past SWARM_QUEUE_MINUTES (since the newest of its file's and state file's mtimes and
+        # its READIES events), with no story/<slug> branch left (build_exists), that clashes by part
+        # with no running build: a story in review, or any whose build started (a held stacked child
+        # keeps its worktree and PR), unless one depends on the other (a stacked start). Its exit is a
+        # note to its conductor while one runs (an ok conduct event with no close of its agent or
+        # report event since, and no report file), else swarm.sh story --strict, which refuses a clash herdr
+        # shows. events.tsv, the board and one git read per such story: no gh or herdr call.
+        ev, epics = ok_events(os.path.join(project_dir, ".swarm", "events.tsv")), os.path.join(os.path.dirname(stories), "epics")
+        queue = int(os.environ.get("SWARM_QUEUE_MINUTES") or 30) * 60
+
+        def since(slug):
+            return max(mtimes(os.path.join(stories, slug + ".md"), os.path.join(state, slug))
+                       + [t for c in READIES for t in ev[c, slug]], default=0)
+
+        def checkout(fm):
+            # As repo_dir: the project for no repo:, or its own name when the project is a git repo.
+            r = fm.get("repo", "")
+            own = r == os.path.basename(project_dir) and os.path.exists(os.path.join(project_dir, ".git"))
+            return project_dir if r == "" or own else os.path.join(repos_dir, r)
+
+        def started(slug, fm):
+            src = checkout(fm)
+            return os.path.isdir(os.path.join(os.path.dirname(src), os.path.basename(src) + "-wt", slug)) \
+                or any(t >= since(slug) for t in ev["story", slug])
+
+        branches = {}   # checkout -> its story/* branch names, or None once a read timed out
+
+        def branched(slug, fm):
+            # build_exists's other half, read only for a story about to get the line: its story/<slug>
+            # branch. One read of every story/* branch per checkout. A read past GIT_WAIT counts every
+            # branch as there and ends git reads for this call, so a hung git costs at most GIT_WAIT
+            # once and the check stays quiet.
+            src = checkout(fm)
+            if src not in branches:
+                if None in branches.values():
+                    branches[src] = None
+                else:
+                    try:
+                        got = subprocess.run(["git", "-C", src, "for-each-ref", "--format=%(refname)", "refs/heads/story/"],
+                                             capture_output=True, text=True, timeout=GIT_WAIT)
+                        branches[src] = set(got.stdout.split()) if got.returncode == 0 else set()
+                    except subprocess.TimeoutExpired:
+                        branches[src] = None
+            return branches[src] is None or "refs/heads/story/" + slug in branches[src]
+
+        def conductor(epic):
+            # The running conductor's agent name, else None. The backlog's is SWARM_BACKLOG_CONDUCTOR
+            # (conductor_name backlog), or conduct-backlog in older logs. Imported here, as few polls get here.
+            from report import agent_name
+            name = agent_name("conduct-" + epic) if epic else os.environ.get("SWARM_BACKLOG_CONDUCTOR") or "conduct-backlog"
+            names = {name} if epic else {name, "conduct-backlog"}
+            # A report file is the latest run's: start_conductor removes the last one before it starts.
+            if os.path.exists(os.path.join(project_dir, ".swarm", f"conduct-{epic or 'backlog'}.report.md")):
+                return None
+            start = max(ev["conduct", epic or "--backlog"], default=None)
+            ends = [t for (c, who), ts in ev.items() if c.split(":")[0] == "close" and agent_name(who) in names for t in ts] \
+                + ev["report", epic or "backlog"]
+            return None if start is None or any(t >= start for t in ends) else name
+
+        running = [(s, entries(fm, project_dir, repos_dir)) for s, fm in sorted(fms.items())
+                   if fm.get("status") == "review" or started(s, fm)]
+        for slug, fm in sorted(fms.items()):
+            epic = fm.get("epic", "")
+            if fm.get("status") != "ready" or fm.get("kind", "") not in kinds or fm.get("held_by") or started(slug, fm) \
+                    or epic and (not os.path.exists(os.path.join(epics, epic + ".md"))
+                                 or front(os.path.join(epics, epic + ".md"), os.path.join(os.path.dirname(state), "epics")).get("status") != "active") \
+                    or time.time() - since(slug) < queue:
+                continue
+            mine = entries(fm, project_dir, repos_dir)
+            if any(any(overlap(e, m) for e in theirs for m in mine) for s, theirs in running
+                   if s != slug and s not in deps(fm) and slug not in deps(fms[s])) or branched(slug, fm):
+                continue
+            c = conductor(epic)
+            print(f"idle: {slug} is ready with no build, exit: " + (f"swarm.sh tell {c} note <file>" if c else f"swarm.sh story --strict {slug}"))
         sys.exit()
     mine = entries(fms[me], project_dir, repos_dir)
     for slug, fm in sorted(fms.items()):
