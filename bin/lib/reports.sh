@@ -419,7 +419,7 @@ dataset_report() {
 #     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%; then
 #     ready_wait's median and p90 minutes over the first builds dated in the window, merged or not;
-#     then green_to_review's median and p90 minutes over the row's PRs that have one.
+#     then green_to_review's median and p90 minutes over the row's merged PRs that have one.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing but
 # its gh calls' lines in .swarm/gh-calls.tsv (bin/gh-shim's log), its cache of finished GitHub records
 # (GH_CACHE, bin/lib/gh_cache.py; --no-cache reads them all from gh again and rewrites them), the PR heads merge_ins

@@ -8,8 +8,9 @@
 # outcomes' column order, held last). Last, ready_wait's median and p90 (nearest rank) in minutes, over
 # the stories whose first build (the slug's earliest started, as a step-up rung keeps attempts 1 and its
 # own ready_wait_min) is dated in the window and has a ready_wait_min, merged or not (empty with none);
-# an epic with those alone still gets a row. Then green_to_review's median and p90, the same way, over
-# the row's PRs that have a green_to_review_min (empty with none).
+# an epic with those alone still gets a row. Then green_to_review's median and p90 (nearest rank) in
+# minutes, over the row's merged PRs (the ones the phases count) that have a green_to_review_min
+# (empty with none).
 import statistics
 from report import PHASES, pr_key
 STATES = PHASES + ("held",)

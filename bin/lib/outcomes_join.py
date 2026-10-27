@@ -82,7 +82,9 @@ def run_end(run):
     # When a status rollup entry (start, end, conclusion) ended: its completedAt, else its startedAt,
     # which for a commit status is the time it was set (gh exports its createdAt as startedAt, and it
     # has no completedAt); None with neither, or gh's year-1 zero time.
-    t = secs(run[1]) if secs(run[1]) is not None else secs(run[0])
+    t = secs(run[1])
+    if t is None:
+        t = secs(run[0])
     return t if t is not None and t > 0 else None
 
 def green_at(checks):
@@ -99,16 +101,16 @@ def green_at(checks):
     return max(ends) if None not in ends else None
 
 def green_to_review(slug, pr):
-    # green_to_review_min: whole minutes from the PR's green (green_at) to the first review round its
-    # slug started at or after it (round_starts), once the PR was created (a head can go green before
-    # its PR opens, and a round before then is an earlier PR's of the slug) and before the PR closed;
-    # empty with no green or no such round.
+    # green_to_review_min: whole minutes from the later of the PR's green (green_at) and its creation
+    # (a head can go green before its PR opens, and no review of it starts before then; a round before
+    # then is an earlier PR's of the slug) to the first review round its slug started at or after
+    # that, and before the PR closed (round_starts); empty with no green or no such round.
     green, created, closed = green_at(pr[5]), secs(pr[3]), secs(pr[7])
     if green is None:
         return ""
     since = green if created is None else max(green, created)
     start = min((t for t in round_starts[slug] if t >= since and (closed is None or t <= closed)), default=None)
-    return "" if start is None else str(round((start - green) / 60))
+    return "" if start is None else str(round((start - since) / 60))
 
 # outcomes_rows' columns: up to pulls, then the ones printed as they are (started, the four tokens_*,
 # close_cause and the six escalation steps), then the subagent ones (cost, cost by model, tokens), then
@@ -188,9 +190,11 @@ def board_commits(*args):
 # ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
 ready_at, blocked_at = collections.defaultdict(list), collections.defaultdict(list)
 conducting, closed, reported = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
-# round_starts: each slug's review round starts, the review-agent (or review-agent --next's
-# review-agent:next) lines whose outcome is `ok (round <n>)`. A bare ok start is none: the review agent
-# starts at PR open, before its head is green.
+# round_starts: each slug's review round starts: its review-agent lines, the review agent's start,
+# with outcome ok (the plain start, which the conductor runs once the PR's head is green, so it is
+# round 1's start) or `ok (round <n>)`, and review-agent --next's review-agent:next lines
+# (`ok (round <n>)`). green_to_review reads only those at or after the head's green, so a start before
+# it, at PR open say, never counts.
 round_starts = collections.defaultdict(list)
 # Explicit prefixes and no colour, whatever the user's diff.noprefix, diff.dstPrefix or color.ui.
 for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
@@ -213,7 +217,7 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
         reported["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
     elif e[1].split(":")[0] == "close":
         closed[agent_name(e[2])].append(t)
-    elif e[1] in ("review-agent", "review-agent:next") and re.fullmatch(r"ok \(round \d+\)", e[4]):
+    elif e[1] in ("review-agent", "review-agent:next") and (e[4] == "ok" or re.fullmatch(r"ok \(round \d+\)", e[4])):
         round_starts[e[2]].append(t)
 
 def run_ends(epic):
