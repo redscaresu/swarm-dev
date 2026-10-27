@@ -17,12 +17,14 @@ export PATH="${STUB_BIN}:${PATH}"
 STEPS="${STUB_BIN}/steps"; : > "${STEPS}"
 record_step() { local first="${1%%$'\n'*}"; if [[ -n "${first}" ]]; then echo "${first%% *}" >> "${STEPS}"; fi; }
 
-# item <path> <front-matter line>... — write a board file under docs/.
+# item <path> <front-matter line>... — write a board file under docs/. An HLD ends with ## Epics, as
+# the template's does.
 item() {
-  local path="docs/$1" title; shift
+  local path="docs/$1" title epics=""; shift
   title="$(basename "${path}" .md)"
+  [[ "${path}" != docs/hld/* ]] || epics=$'\n## Epics'
   mkdir -p "$(dirname "${path}")"
-  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
+  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; [[ -z "${epics}" ]] || echo "${epics}"; } > "${path}"
 }
 
 # expect <name> <first line of `next`> <setup...> — build a board with the setup, check next. The
@@ -113,8 +115,17 @@ done
 expect "a blocked HLD does not hide a valid one beside it" "plan-hld b" \
   "item hld/a_b.md 'status: agreed'" "item hld/b.md 'status: agreed'"
 expect "an agreed HLD whose ## Epics holds a hand-written link is still planned" "plan-hld h" \
-  "item hld/h.md 'status: agreed'" \
-  "printf '%s\n' '## Epics' '- [e1](../epics/e1.md)' >> docs/hld/h.md"
+  "item hld/h.md 'status: agreed'" "item epics/e1.md 'status: later'" \
+  "printf '%s\n' '- [e1](../epics/e1.md)' >> docs/hld/h.md"
+# plan_hld puts a plan PR under no grant unless ## Epics is the HLD's last section (epics_last):
+# next offers no /plan-hld that ends in a PR the user must merge by hand, and the gate says why.
+EPICS_LAST="end the HLD with a line that is exactly ## Epics, and after it only blank lines and lines - [<slug>](../epics/<slug>.md) naming epics on the board"
+expect "an agreed HLD with no ## Epics gets no plan-hld step" "gate" \
+  "item hld/h.md 'status: agreed'" "sed -i.bak '/^## Epics\$/d' docs/hld/h.md && rm docs/hld/h.md.bak"
+has_line "the gate says to end the HLD with no ## Epics with one" "  hld cannot be planned: h, ${EPICS_LAST}"
+expect "an agreed HLD with an appendix after ## Epics gets no plan-hld step" "gate" \
+  "item hld/h.md 'status: agreed'" "printf '%s\n' '## Appendix' 'notes' >> docs/hld/h.md"
+has_line "the gate says to end the HLD with an appendix with ## Epics" "  hld cannot be planned: h, ${EPICS_LAST}"
 expect "an open plan PR (its worktree) lets the HLD fall through to the next arm" "escalated esc" \
   "item hld/h.md 'status: agreed'" \
   "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'" \
@@ -142,6 +153,10 @@ OUT_MOVE="mv docs '${HLDEXT}' && mkdir -p .claude/swarm && echo 'board_dir = ${H
 OUT_MARK="mkdir -p .swarm/h && echo e1 > .swarm/h/writing-epics"
 # The decomposition answer alone, even one newer than the HLD, is no evidence the run wrote an epic.
 OUT_LEAD="mkdir -p .swarm/h && echo '{\"epics\": [{\"slug\": \"e1\"}]}' > .swarm/h/hld-lead.json && touch -t 202601010000 docs/hld/h.md"
+# /plan-hld writes in place there, with no plan PR for grants to refuse: a section after ## Epics blocks nothing.
+expect "outside the repo, an agreed HLD with an appendix after ## Epics is still planned" "plan-hld h" \
+  "item hld/h.md 'status: agreed'" "printf '%s\n' '## Appendix' 'notes' >> docs/hld/h.md" "${OUT_MOVE}"
+rm -rf "${HLDEXT}"
 expect "outside the repo, epics naming the HLD, no planned: and the run's marker listing them: plan again" "plan-hld h" \
   "${OUT_HLD[@]}" "${OUT_MARK}" "${OUT_MOVE}"
 rm -rf "${HLDEXT}"
