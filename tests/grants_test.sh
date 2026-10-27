@@ -267,9 +267,9 @@ pr() {
 }
 at() { local p="$2"; echo "${FX}/repos_o_r_contents_${p//\//_}_ref=$(printf '%040d' "$1")"; }   # at <n> <path> — <path>'s copy at #<n>'s head, <n> as 40 digits
 status() { sed -i.bak "s|\"status\":\"[a-z]*\",\"filename\":\"$2\"|\"status\":\"$3\",\"filename\":\"$2\"|" "${FX}/repos_o_r_pulls_$1_files_per_page=100"; }
-# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: and ## Epics links
-# (${EPICS}, by default one list-item link each) at the head, and epics p-one and p-two added with
-# hld: <hld>, status: ${EPIC_STATUS} (draft).
+# planned <n> <hld> [hld: of the second epic] — PR #<n> plans <hld>: its planned: (today, as /plan-hld
+# writes it) and ## Epics links (${EPICS}, by default one list-item link each) at the head, and epics
+# p-one and p-two added with hld: <hld>, status: ${EPIC_STATUS} (draft).
 planned() {
   local h="$2" g
   pr "$1" docs/epics/p-one.md docs/epics/p-two.md "docs/hld/$2.md"
@@ -277,9 +277,10 @@ planned() {
   item "$(at "$1" docs/epics/p-two.md)" "status: ${EPIC_STATUS:-draft}" "hld: ${3:-${h}}"
   g="$(get "${B}/hld/$2.md" grants)"
   EPICS="${EPICS-$'- [p-one](../epics/p-one.md)\n- [p-two](../epics/p-two.md)\n'}" \
-    hld "$(at "$1" "docs/hld/$2.md")" "title: Plan" "status: $(get "${B}/hld/$2.md" status)" "planned: 2026-10-24" ${g:+"grants: ${g}"}
+    hld "$(at "$1" "docs/hld/$2.md")" "title: Plan" "status: $(get "${B}/hld/$2.md" status)" "planned: ${TODAY}" ${g:+"grants: ${g}"}
 }
 get() { sed -n "s/^$2: //p" "$1" | head -1; }   # get <file> <key> — its first <key>: value
+TODAY="$(date +%Y-%m-%d)"
 hld "${B}/hld/plan.md" "title: Plan" "status: agreed" "grants: [merge]"
 hld "${B}/hld/plan-nm.md" "title: Plan" "status: agreed"
 hld "${B}/hld/plan-draft.md" "title: Plan" "status: draft" "grants: [merge]"
@@ -400,11 +401,14 @@ for st in added copied; do
   planned 80 plan; status 80 docs/hld/plan.md "${st}"
   unread "plan-pr-${st}-hld-none" https://github.com/o/r/pull/80
 done
-# planned: on the head is exactly a date: prose, or a date with a comment, is none.
+# planned: on the head is exactly a YYYY-MM-DD date: prose, a date with a comment, or one in another
+# order is none.
 planned 81 plan; sed -i.bak 's/^planned: .*/planned: superseded by agent design v2/' "$(at 81 docs/hld/plan.md)"
 expect plan-pr-planned-prose-none https://github.com/o/r/pull/81 none
 planned 82 plan; sed -i.bak 's/^planned: .*/planned: 2026-10-24 # by the agent/' "$(at 82 docs/hld/plan.md)"
 expect plan-pr-planned-comment-none https://github.com/o/r/pull/82 none
+planned 83 plan; sed -i.bak 's/^planned: .*/planned: 24-10-2026/' "$(at 83 docs/hld/plan.md)"
+expect plan-pr-planned-day-first-none https://github.com/o/r/pull/83 none
 # Without the epics grant, each epic the plan adds is a draft: active ones are none, under an HLD that
 # grants epics they are its. An epic on the board, flipped from draft to active or kept as it is, is a
 # modified epic, not an added one: none, whatever its status.
@@ -430,8 +434,9 @@ expect plan-pr-no-head-none https://github.com/o/r/pull/56 none
 item "${B}/hld/plan-noepics.md" "title: Plan" "status: agreed" "grants: [merge]"
 planned 57 plan-noepics
 expect plan-pr-no-epics-heading-none https://github.com/o/r/pull/57 none
-# planned: on the head: two lines, a change to the board's, or the board's deleted is none; the
-# board's kept is plan-p. (An empty planned: on the board, which next reads as unplanned, is #73.)
+# Two planned: lines on the head are none. A board copy already planned is never due a plan
+# (hld_due), so a plan PR on plan-p is none whether its head changes, deletes or keeps the board's
+# planned:. (An empty planned: on the board, which next reads as unplanned, is #73 and #84.)
 hld "${B}/hld/plan-p.md" "title: Plan" "status: agreed" "planned: 2026-10-01" "grants: [merge]"
 planned 52 plan; sed -i.bak '/^planned:/p' "$(at 52 docs/hld/plan.md)"
 expect plan-pr-two-planned-lines-none https://github.com/o/r/pull/52 none
@@ -440,16 +445,21 @@ expect plan-pr-changes-planned-none https://github.com/o/r/pull/53 none
 planned 54 plan-p; sed -i.bak '/^planned:/d' "$(at 54 docs/hld/plan-p.md)"
 expect plan-pr-deletes-planned-none https://github.com/o/r/pull/54 none
 planned 55 plan-p; sed -i.bak 's/^planned: .*/planned: 2026-10-01/' "$(at 55 docs/hld/plan-p.md)"
-expect plan-pr-keeps-planned https://github.com/o/r/pull/55 "$(printf '%s\nmerge' "${B}/hld/plan-p.md")"
-# An empty planned: on the board is unplanned, as next reads it: the head may set it.
+expect plan-pr-keeps-board-planned-none https://github.com/o/r/pull/55 none
+# An empty planned: on the board, bare or "", is unplanned, as next reads it: the head may set it.
 hld "${B}/hld/plan-pe.md" "title: Plan" "status: agreed" "planned:" "grants: [merge]"
 planned 73 plan-pe
 expect plan-pr-sets-empty-planned https://github.com/o/r/pull/73 "$(printf '%s\nmerge' "${B}/hld/plan-pe.md")"
-# A plan PR that adds epics but no planned:, or an empty one, leaves plan unplanned: none.
+hld "${B}/hld/plan-pq.md" "title: Plan" "status: agreed" 'planned: ""' "grants: [merge]"
+planned 84 plan-pq
+expect plan-pr-sets-quoted-empty-planned https://github.com/o/r/pull/84 "$(printf '%s\nmerge' "${B}/hld/plan-pq.md")"
+# A plan PR that adds epics but no planned:, or an empty one (bare or ""), leaves plan unplanned: none.
 planned 58 plan; sed -i.bak '/^planned:/d' "$(at 58 docs/hld/plan.md)"
 expect plan-pr-no-planned-none https://github.com/o/r/pull/58 none
 planned 59 plan; sed -i.bak 's/^planned: .*/planned:/' "$(at 59 docs/hld/plan.md)"
 expect plan-pr-empty-planned-none https://github.com/o/r/pull/59 none
+planned 85 plan; sed -i.bak 's/^planned: .*/planned: ""/' "$(at 85 docs/hld/plan.md)"
+expect plan-pr-quoted-empty-planned-none https://github.com/o/r/pull/85 none
 
 # A board at the repo's root (board_dir = .): its hld/, epics/ and stories/ are the PR's paths as they are.
 R="${ROOT}/rootproj"; mkdir -p "${R}/.claude/swarm" "${R}/hld" "${R}/epics" "${R}/stories"
