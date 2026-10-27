@@ -19,9 +19,10 @@ P="${ROOT}/proj"
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}" CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 # One fixed instant, 2026-07-16 00:30 BST (2026-07-15T23:30:00Z): past midnight in London and not yet
-# in UTC, where a local clock and a UTC one disagree on the day. dash takes it as SWARM_DASH_NOW, and
-# every fixture time below is derived from it, never from the real clock, so the run lasts as long as
-# it likes. TZ is London unless the caller set one.
+# in UTC, where a local clock and a UTC one disagree on the day. dash takes it as SWARM_DASH_NOW. Every
+# relative time below (ago, mins_ago, TODAY) is derived from it, never from the real clock, so the run
+# lasts as long as it likes; the dated fixtures are fixed June and July dates, all before it. TZ is
+# London unless the caller set one.
 export SWARM_DASH_NOW=1784158200 TZ="${TZ:-Europe/London}"
 # ago <minutes> — that long before the fixed now, as events.tsv writes it (UTC); mins_ago <minutes> —
 # the same, as touch -t takes it (local); TODAY — the fixed now's local day, dash's today.
@@ -185,7 +186,7 @@ check "only the stalled builder's pane is asked for its process info, not the co
   test "$(read_panes)" = "w1:p9 "
 check "at 160 columns a working agent's card shows its state age, then the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working 4m  4m +│' <<< "${out}"
 check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 120m +│' <<< "${out}"
-check "with no test run under its pane the builder still needs you" grep -qE '! look at s-three: working [0-9]+ min' <<< "${out}"
+check "with no test run under its pane the builder still needs you" grep -qE '! look at s-three: working 120 min' <<< "${out}"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 120m' <<< "${out}"
 check "a stalled builder needs you" grep -qE '! look at s-three: working 120 min with no commit, edit, session-log write or PR update' <<< "${out}"
@@ -201,14 +202,14 @@ rm "${P}/.claude/swarm/config"
 # pane runs once.
 { cat "${ROOT}/ps.base"; printf '%s\n' '  300   200     05:00 /bin/zsh -c make test' '  310   300     05:00 make test'; } > "${PS_LIST}"
 fresh; out="$(cd "${P}" || exit 1; AR_LOG="${ROOT}/agent-read.log" PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "a stalled builder running make test under its pane is working" grep -qE '● s-three .*working [0-9]+m' <<< "${out}"
+check "a stalled builder running make test under its pane is working" grep -qE '● s-three .*working 120m' <<< "${out}"
 check "a builder running make test is not under needs you" lacks "look at s-three" "${out}"
 check "a frame with a test run reads each agent's pane once: one render" test "$(grep -cx 'w1:p9' "${ROOT}/agent-read.log")" = 1
 # The same run started 100 minutes ago, past 3 x stall_minutes (90), may be hung: stalled, and it needs you.
 { cat "${ROOT}/ps.base"; printf '%s\n' '  300   200  01:40:00 /bin/zsh -c make test' '  310   300  01:40:00 make test'; } > "${PS_LIST}"
 fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "a builder whose make test started past 3 x stall_minutes ago is stalled" grep -qE '! s-three .*stalled [0-9]+m' <<< "${out}"
-check "a builder whose make test started past 3 x stall_minutes ago needs you" grep -qE '! look at s-three: working [0-9]+ min' <<< "${out}"
+check "a builder whose make test started past 3 x stall_minutes ago is stalled" grep -qE '! s-three .*stalled 120m' <<< "${out}"
+check "a builder whose make test started past 3 x stall_minutes ago needs you" grep -qE '! look at s-three: working 120 min' <<< "${out}"
 cp "${ROOT}/ps.base" "${PS_LIST}"
 # A file edited a minute ago in s-three's worktree (its last commit 2 hours old) is a sign of life:
 # working, not stalled. Aged past stall_minutes, it is not: stalled again.
@@ -249,7 +250,7 @@ check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working 4 
 echo 'w1:p1 500' > "${ROOT}/pi.map"
 { cat "${ROOT}/ps.base"; printf '%s\n' '  500     1     08:00 -zsh' '  510   500     07:00 claude' '  520   510     02:00 make check'; } > "${PS_LIST}"
 out="$(PI_MAP="${ROOT}/pi.map" COLUMNS=100 agedash)"
-check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working [0-9]+m +│$' <<< "${out}"
+check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working 4m +│$' <<< "${out}"
 check "a conductor running make check is not under needs you" lacks "look at conduct-e1" "${out}"
 cp "${ROOT}/ps.base" "${PS_LIST}"
 # A session log written a minute ago is a sign of life for any agent with a Claude session: the
