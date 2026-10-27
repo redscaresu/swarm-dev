@@ -127,14 +127,21 @@ still in the box on the read after the Enter wakes the lead through an `.unsent`
 
 **An agent stuck where no agent can help wakes the lead too.** `wait --lead` prints
 `prompt: <agent> (<kind>), exit: <exit>` for an agent this project opened that its one herdr list
-shows blocked, idle or done, and whose pane shows it stuck. It runs after the resend and shares its
-budget (10 seconds a read, none started 20 seconds into the poll's reads). A pane the resend read in
-that poll is not read again, and one it failed to read waits for the next poll. A pane the last poll
-found clear is read again only when the agent's herdr status, or the time its Claude session log last
-changed, differs from that poll's (kept in `.swarm/lead/stuck`). A new stop comes only after a turn, and
-a turn writes the log. A pane last found stuck is read every poll, since the user can clear manual mode
-without a turn, and so is one whose agent has no session log. A working agent's pane is never read. A retired agent (`<name>-done`) is skipped, and so is one a
-`swarm.sh` command is delivering a prompt to, as the resend skips it. The kinds and their exits:
+shows blocked, idle or done, and whose pane shows it stuck. A working agent's pane is never read. These
+are skipped: a retired agent (`<name>-done`), a co-writer that talks with you in its own pane (an
+`agents.tsv` role of `hld` or `epic`), and an agent a `swarm.sh` command is delivering a prompt to, as
+the resend skips it. While `swarm.sh upgrade` runs, no pane is read, as for the resend.
+
+The check runs after the resend and shares its budget: 10 seconds a read, and none started 20 seconds
+into the poll's reads. A pane the resend read in that poll is not read again, and one it failed to read
+waits for the next poll. `.swarm/lead/stuck` keeps, for each agent, its herdr status, the time its
+Claude session log last changed, what its pane showed and when it was last read. A pane last found
+clear is read again when the status or the log time has changed, or after 5 minutes
+(`STUCK_RECHECK`), since manual mode turned on or a dialog opened at an idle box changes neither. A pane
+last found stuck is read every poll, since you can clear it without a turn. Agents are read oldest read
+first, so slow reads that use up one poll's budget leave the rest first in line for the next.
+
+The kinds and their exits:
 
 - `prompt`: a permission prompt, a menu or a dialog waits on an answer, with no command running
   under it. Exit: `the user answers it in pane <pane>`. Claude Code's usage-limit dialog is not one:
@@ -144,14 +151,17 @@ without a turn, and so is one whose agent has no session log. A working agent's 
 - `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
   up. Exit: `herdr agent read <agent>, then tell the user what it shows`.
-- `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
-  `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
-  builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
+- `manual`: the footer under the input box says manual mode, or sits under a permission prompt (a
+  builder in manual mode is nearly always on one). Exit, for a ready story's builder: `herdr pane
+  close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a builder herdr
+  still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
 
 The line wakes the lead once per stop. It stays in `.swarm/lead/seen` while the agent is stuck. A
-skipped agent, a pane read that fails, and a herdr list or `ps` that fails all keep the last poll's
-line, so a missed read neither drops it nor wakes the lead again. The next stop wakes the lead again: one a poll finds after the agent moved on, and
-one found after a turn (its session log changed) even when its line reads the same.
+skipped agent, a pane read that fails, and a herdr list, list parse or `ps` that fails all keep the
+last poll's line, so a missed read neither drops it nor wakes the lead again. A new stop wakes the lead
+even when its line reads the same: one found after the agent moved on, after a turn (its session log
+changed), or in a pane the agent came back in. Manual mode is a state, not a stop, so a builder in it
+answering prompt after prompt wakes the lead once.
 
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It

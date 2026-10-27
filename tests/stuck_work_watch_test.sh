@@ -3,15 +3,18 @@
 # pane this project opened, its pane one of tests/fixtures/panes' stuck screens (a permission prompt, a
 # dialog, an expired login, an API error, manual mode), gives its `prompt: <agent> (<kind>), exit: <exit>`
 # line on one `swarm.sh wait --lead 0`, and the next poll is quiet. Quiet too: an agent mid-command, a
-# working agent (whose pane is never read), and an API error while a `swarm.sh wait` naming the agent runs,
-# which resumes it. A pane read or a herdr list that fails keeps the line from the last poll, so it neither
-# goes nor wakes the lead again. A run with no .swarm/lead/seen yet still prints it, as an alert. Manual
-# mode on a ready story's builder closes its pane, then restarts or holds the story, found by its full slug.
-# A pane is read only when its agent's herdr status or session log changed since the last poll, and never
-# while a swarm.sh command delivers the agent a prompt.
+# working agent (whose pane is never read), a co-writer (/hld), any agent while an upgrade runs, and an API
+# error while a `swarm.sh wait` naming the agent runs, which resumes it. A pane read, a herdr list or a
+# list parse that fails keeps the line from the last poll, so it neither goes nor wakes the lead again. A
+# run with no .swarm/lead/seen yet still prints it, as an alert. A pane found clear is read again only when
+# its agent's status or session log changed, or STUCK_RECHECK passed; a stuck one every poll; none while a
+# swarm.sh command delivers the agent a prompt; and agents not read in a poll whose budget ran out go first
+# in the next. A turn that ends on the same stop, or the same stop in a new pane, wakes the lead again; a
+# prompt over the manual-mode footer is manual, which never does. Manual mode on a ready story's builder
+# closes its pane, then restarts or holds the story, found by its full slug (cut_record).
 # herdr is a stub listing ${ROOT}/agents (failing while ${ROOT}/list-fails exists, cut short while
-# ${ROOT}/list-garbled does), whose agent read logs
-# itself to ${ROOT}/reads and prints ${ROOT}/pane.txt, failing without it.
+# ${ROOT}/list-garbled does), whose agent read logs itself to ${ROOT}/reads, hangs while ${ROOT}/hang-<pane>
+# exists, and prints ${ROOT}/pane.txt, failing without it.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -36,7 +39,7 @@ printf '#!/bin/sh\nR="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "agent list") [ ! -e "${R}/list-fails" ] || exit 1; [ ! -e "${R}/list-garbled" ] || { echo '{"result":'; exit 0; }; printf '{"result":{"agents":[%s]}}\n' "$(cat "${R}/agents" 2>/dev/null)" ;;
-  "agent read") echo "$*" >> "${R}/reads"; cat "${R}/pane.txt" ;;
+  "agent read") echo "$*" >> "${R}/reads"; [ ! -e "${R}/hang-$3" ] || sleep 15; cat "${R}/pane.txt" ;;
   *) echo '{"result":{}}' ;;
 esac
 STUB
@@ -99,7 +102,8 @@ fresh; agent blocked prompt.txt; rm -f "${P}/.swarm/lead/seen"
 check "a first read with no lead/seen yet prints the prompt: line" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
 
 # A pane found clear is read again only when the agent's herdr status or its session log changed since the
-# last poll. A stuck one is read every poll, so a stop cleared with no turn goes.
+# last poll (or STUCK_RECHECK passed, below). A stuck one is read every poll, so a stop cleared with no
+# turn goes.
 fresh; agent blocked mid-command.txt; : > "${ROOT}/reads"
 mkdir -p "${ROOT}/projects/proj"; log="${ROOT}/projects/proj/session-0.jsonl"; : > "${log}"
 printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
@@ -127,11 +131,55 @@ check "and its line stays in the lead's queue" grep -qF "prompt: ${A} (prompt)" 
 kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""
 rm -f "${P}/.swarm/agents.tsv"
 
-# With no session log to say a turn ran, the pane is read each poll: a prompt after a command shows.
-fresh; agent blocked mid-command.txt
-check "an agent mid-command, with no session log, gives no line" test "$(count "prompt: " "$(run)")" = 0
-cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
-check "the next poll, its status unchanged, finds the prompt that followed" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+# A clear pane is read again after STUCK_RECHECK seconds with nothing changed, so manual mode turned on at an
+# idle box shows; with no session log, too, and at once when its status changes.
+fresh; agent idle empty-box.txt; : > "${ROOT}/reads"
+check "an idle agent at an empty box gives no line" test "$(count "prompt: " "$(run)")|$(reads)" = "0|1"
+cp "${FX}/manual.txt" "${ROOT}/pane.txt"
+check "with no session log and nothing changed, the next poll reads no pane" test "$(count "prompt: " "$(run)")|$(reads)" = "0|0"
+awk 'BEGIN { FS = OFS = "\t" } { $5 = 0 } 1' "${P}/.swarm/lead/stuck" > "${ROOT}/stuck" && mv "${ROOT}/stuck" "${P}/.swarm/lead/stuck"
+check "once STUCK_RECHECK has passed, the pane is read again and shows manual mode turned on" \
+  test "$(count "prompt: ${A} (manual)" "$(run)")|$(reads)" = "1|1"
+fresh; agent idle empty-box.txt; run > /dev/null; cp "${FX}/manual.txt" "${ROOT}/pane.txt"; agent blocked manual.txt
+check "a status change reads a clear pane again at once" test "$(count "prompt: ${A} (manual)" "$(run)")" = 1
+
+# A permission prompt over the manual-mode footer is manual mode, and a builder in it answering prompts
+# wakes no one again.
+fresh; agent blocked ruled-dialog.txt
+printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
+check "a permission prompt over the manual-mode footer gives a manual line" test "$(count "prompt: ${A} (manual)" "$(run)")" = 1
+touch -t 203201010000 "${log}"
+check "the next answered prompt, in manual mode still, wakes no one" test "$(count "prompt: " "$(run)")" = 0
+# A co-writer (/hld, /epic) asks the user in its own pane: no line.
+fresh; agent blocked prompt.txt
+printf '2026-10-27\thld\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
+check "an hld co-writer on a prompt gives no line" test "$(count "prompt: " "$(run)")" = 0
+rm -f "${P}/.swarm/agents.tsv"
+
+# An agent back in a new pane that stops on the same login is a new stop.
+fresh; agent blocked login.txt
+check "a login stop gives its line" test "$(count "prompt: ${A} (login)" "$(run)")" = 1
+echo "w:p2 ${A}" > "${P}/.swarm/state/tab"; echo "{\"name\":\"${A}\",\"agent_status\":\"blocked\",\"pane_id\":\"w:p2\"}" > "${ROOT}/agents"
+check "the same login in a new pane wakes the lead again" test "$(count "prompt: ${A} (login)" "$(run)")" = 1
+echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
+
+# While an upgrade runs, which restarts agents through their own prompts, no pane is read and no line comes.
+fresh; agent blocked prompt.txt; : > "${ROOT}/reads"
+fake upgrade --all; echo "${WAITER} - ${ROOT}/upgrade.log" > "${P}/.swarm/upgrade.pid"
+check "while an upgrade runs, no pane is read and no line comes" test "$(count "prompt: " "$(run)")|$(reads)" = "0|0"
+kill "${WAITER}" 2>/dev/null || true; wait "${WAITER}" 2>/dev/null || true; WAITER=""; rm -f "${P}/.swarm/upgrade.pid"
+check "a poll leaves no pane text behind, in .swarm/lead or TMPDIR" \
+  test "$(find "${P}/.swarm/lead/reads" -type f 2>/dev/null | wc -l | tr -d ' ')|$(find "${TMPDIR}" -name 'swarm-reads.*' | wc -l | tr -d ' ')" = "0|0"
+
+# Slow reads that use up the poll's budget leave the agents not read first in line for the next poll.
+fresh; printf '%s\n' "w:p1 ${A}" "w:p2 sww-slow-a" "w:p3 sww-slow-b" "w:p4 sww-slow-c" > "${P}/.swarm/state/tab"
+printf '{"name":"sww-slow-%s","agent_status":"blocked","pane_id":"w:p%s"},' a 2 b 3 c 4 > "${ROOT}/agents"
+printf '{"name":"%s","agent_status":"blocked","pane_id":"w:p1"}' "${A}" >> "${ROOT}/agents"
+touch "${ROOT}/hang-w:p2" "${ROOT}/hang-w:p3" "${ROOT}/hang-w:p4"; cp "${FX}/prompt.txt" "${ROOT}/pane.txt"
+check "three hung reads first in herdr's list use up the budget, so the fourth agent is not read" \
+  test "$(count "prompt: ${A} " "$(run)")" = 0
+check "the next poll reads it first and gives its line" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+rm -f "${ROOT}"/hang-*; echo "w:p1 ${A}" > "${P}/.swarm/state/tab"
 
 # A pane read that fails keeps the line: the poll after it, with the pane back, is quiet too. The status
 # changes between the polls, so each one reads the pane.

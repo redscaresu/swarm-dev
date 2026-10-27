@@ -247,8 +247,8 @@ Repeat until a step below says stop:
      `herdr agent read <agent>` and tell the user what it shows. For `(manual)`, run the exit: for
      a ready story's builder it closes the pane and then restarts or holds the story, as a
      `no-agent:` line would; for any other agent it asks the user to turn manual mode off in its
-     pane. The line comes once per stop: again once the agent has moved on, or after a turn that
-     ends on the same stop. An
+     pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
+     on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
      `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` line is
      capacity no step uses, the line `next` prints after its step: handle it as step 1's `idle:` list
      says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
