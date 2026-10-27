@@ -196,7 +196,10 @@ Repeat until a step below says stop:
      `swarm.sh hold` takes only a ready story. On 2, read why it printed: on a conflict with the
      base, have a builder in the story's worktree merge the base in and push; on a gh error or
      the timeout, run wait-pr once more, and if it ends the same way, list the story in your
-     report with the reason. With no PR URL on the story, find its PR with the
+     report with the reason. On no check runs, or an expected workflow that never started (it
+     names the workflow), read the checks once with `gh pr checks <PR URL>`: have a builder fix a
+     workflow that failed to start, else run wait-pr once more, and if it ends the same way, list
+     the story in your report with the reason. With no PR URL on the story, find its PR with the
      `gh pr list -R <repo> --head story/<slug>` the exit names, and run the review-agent exit. The line is quiet while
      wait-pr runs and may come back once after it ends; that needs nothing new. A
      `no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
