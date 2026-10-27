@@ -31,9 +31,9 @@
 # or SWARM_BACKLOG_CONDUCTOR (conductor_name backlog).
 # ponytail: a build with no close runs to the window's end; read its session log's last entry, as throughput does, if that misleads.
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
-import collections, datetime, functools, glob, os, subprocess, sys, time
+import collections, datetime, functools, glob, os, re, subprocess, sys, time
 import touches_rows
-from report import agent_name, cut_records
+from report import AGENT_NAME_MAX, agent_name, cut_records
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
 project_dir = os.path.dirname(os.path.dirname(findings))
 board, repos_dir = os.environ.get("SWARM_BOARD", ""), os.environ.get("SWARM_REPOS_DIR", "")
@@ -112,8 +112,17 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
 # first 32 characters stay two keys.
 recorded = [os.path.basename(f)[:-3] for d in ([os.path.join(board, "stories")] if board else []) + [os.path.join(os.path.dirname(events), "briefs")]
             for f in glob.glob(os.path.join(glob.escape(d), "*.md")) if "." not in os.path.basename(f)[:-3]]
-recorded += [os.path.basename(f)[:-3] for f in (git("log", "--diff-filter=D", "--name-only", "--format=", "--", "stories/", quiet=True) if board else "").split()
-             if f.endswith(".md")]
+# Those the board's history deleted, read only for a name that may be a cut (AGENT_NAME_MAX long: its
+# story, or any it starts) or start with agent_name's added s (the slug without it), so a run with no
+# such name reads no history.
+deleted = set()
+for n in {e[2] for _, e in evs if e[1].split(":")[0] == "close"} | {r["slug"] for r in rows}:
+    if re.fullmatch(r"s[0-9][a-z0-9_-]*", n):
+        deleted |= {f"stories/{n[1:]}.md"} | ({f"stories/{n[1:]}*.md"} if len(n) == AGENT_NAME_MAX else set())
+    if re.fullmatch(r"[a-z][a-z0-9_-]*", n) and len(n) == AGENT_NAME_MAX:
+        deleted.add(f"stories/{n}*.md")
+recorded += [os.path.basename(f)[:-3] for f in (git("log", "--diff-filter=D", "--name-only", "--format=", "--", *sorted(deleted), quiet=True)
+                                                 if board and deleted else "").split() if f.endswith(".md")]
 recorded += ["conduct-" + e[2] for _, e in evs if e[1] == "conduct" and e[2] != "--backlog"]
 recorded += [r["slug"] for r in rows if r["started"] and agent_name(r["slug"]) != r["slug"]]   # else maybe agents.tsv's name (slug_of)
 recorded += [e[2] for _, e in evs if e[1] in ("unblock", "reset", "reset:held", "reconcile", "review", "kept")]

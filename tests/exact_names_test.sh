@@ -110,6 +110,15 @@ ist "${s32}" es review src/s.sh; ist "${s32}-and-more" el ready src/l.sh; ag "${
 git -C "${I}" add "docs/stories/${s32}.md"; commit "${s32}"; git -C "${I}" rm -q "docs/stories/${s32}.md"; commit "${s32} merged"
 check "idle_slots: a merged 32-character slug's build is not the build of a longer slug that starts with it" \
   "$(idle --until 2026-10-01 --epic el)" $'epic\tidle_min\tno_conductor_min\tmost_ready\nel\t0\t900\t1'
+# The same when the merged one's build has a session log (from 10:00): its slug is still its own.
+s32b="another-merged-story-of-32-chars"; [[ ${#s32b} -eq 32 ]] || { echo "s32b is ${#s32b} long" >&2; exit 1; }
+printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/em.md"
+ist "${s32b}" es review src/t.sh; ist "${s32b}-and-more" em ready src/m.sh; ev 09:00 unblock "${s32b}-and-more"
+printf '{"cwd":"%s/idle-wt/%s","timestamp":"2026-10-01T10:00:00Z"}\n' "${ROOT}" "${s32b}" > "${ROOT}/flow-projects/p/s-s32b.jsonl"
+printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\ts-s32b\n' "${s32b}" >> "${I}/.swarm/agents.tsv"
+git -C "${I}" add "docs/stories/${s32b}.md"; commit "${s32b}"; git -C "${I}" rm -q "docs/stories/${s32b}.md"; commit "${s32b} merged"
+check "idle_slots: a merged 32-character slug's logged build is not the build of a longer slug that starts with it" \
+  "$(idle --until 2026-10-01 --epic em)" $'epic\tidle_min\tno_conductor_min\tmost_ready\nem\t0\t900\t1'
 # Two long stories share a cut, and one of them builds all day with no session log under it. ww,
 # touching the first one's file, waits from 11:00: the build may be that story's, so ww clashes.
 cut2="two-long-stories-that-share-a-cu"
