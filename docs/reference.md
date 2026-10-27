@@ -2199,7 +2199,8 @@ builders wait while its handover is not written or it is not idle, read again ea
 conductor whose turn ended can be woken by a background watch. A conductor that got the request in its
 inbox and is idle with no handover is asked again by prompt, and one whose session is gone is named
 at once. Each round restarts every builder that Claude Code reports idle, or whose turn stopped on an API
-error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
+error, reading the session herdr has in the pane now (a `/clear` moves it), or the one `agents.tsv`
+recorded when herdr lists none, as herdr 0.9.5 does; herdr's wait only wakes
 it to check. Claude Code also reports `busy` for a session whose turn is over but whose background
 shells (a `make test`, a `wait-pr`, a conductor's `watch`) still run, so a session reported busy is
 read from its log too: when its last assistant entry has ended its turn, with no tool call waiting

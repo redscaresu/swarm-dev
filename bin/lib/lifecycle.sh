@@ -3608,7 +3608,7 @@ upgrade_flags() {
 upgrade_state() {
   local s sid
   sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
-  if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"; sid="$(recorded_session "$1")"
+  if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"
   else
     s="$(claude_agents </dev/null | python3 -I -c '
 import json, sys
@@ -3622,7 +3622,7 @@ print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("
   case "${s}" in
     idle|herdr:idle|herdr:done) echo idle ;;
     gone|unknown|herdr:unknown) echo "${s#herdr:}" ;;
-    busy|herdr:working) if api_stopped "$1" "$2" </dev/null || turn_over "${sid}"; then echo idle; else echo busy; fi ;;
+    busy|herdr:working) if api_stopped "$1" "$2" </dev/null || turn_over "${sid:-$(recorded_session "$1")}"; then echo idle; else echo busy; fi ;;
     *) echo busy ;;
   esac
 }

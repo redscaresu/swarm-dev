@@ -2,9 +2,9 @@
 # tell_note_test.sh — `tell conduct-<epic> note <file>` writes the note to the conductor's inbox and,
 # when the conductor's turn has ended (idle, or busy only with background jobs: its session log ends
 # on an assistant entry that ended its turn, system entries aside; its session is agents.tsv's when
-# herdr lists none, as herdr 0.9.5 does), sends it one prompt to process the inbox as its brief
-# says (via <inbox>.reading.md) and end its turn, leaving its waits alone. One mid-turn gets the note
-# and no prompt. One prompt a minute at most (SWARM_NOTE_WAKE_SECS, 4 here), per conductor: a second
+# herdr lists none, as herdr 0.9.5 does; with none recorded either, herdr's working stands), sends it
+# one prompt to process the inbox as its brief says (via <inbox>.reading.md) and end its turn,
+# leaving its waits alone. One mid-turn gets the note and no prompt. One prompt a minute at most (SWARM_NOTE_WAKE_SECS, 4 here), per conductor: a second
 # note within it, after the conductor took the inbox to read it too, or two at once (each prompt
 # takes a second with ${ROOT}/slow), send one prompt now; a deferred check sends one more once the
 # minute is up while the inbox is still there, which also retries a prompt that was dropped (one
@@ -178,13 +178,18 @@ cat > "${CLAUDE_PROJECTS_DIR}/p/sc.jsonl" <<'EOF'
 {"type":"system","subtype":"turn_duration","isMeta":false,"isSidechain":false,"durationMs":0,"messageCount":0}
 EOF
 note >/dev/null
-check "background shells after end_turn, no session from herdr: the note is in its inbox" 1 "$(notes)"
 check "background shells after end_turn, no session from herdr: one prompt" 1 "$(prompts)"
 
 state busy   # the same conductor mid-turn: a tool call waits on its result
 printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{}}],"stop_reason":"tool_use"}}' > "${CLAUDE_PROJECTS_DIR}/p/sc.jsonl"
 note >/dev/null; settle
 check "a tool call waiting on its result, no session from herdr: no prompt" 0 "$(prompts)"
+
+state busy   # no session recorded either (a codex agent, or '-'): herdr's working stands, though a log ends its turn
+printf '2026-10-26\tconduct\tconduct-e\tcodex\tdefault\thigh\t-\n' > "${p}/.swarm/agents.tsv"
+printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"x"}],"stop_reason":"end_turn"}}' > "${CLAUDE_PROJECTS_DIR}/p/sc.jsonl"
+note >/dev/null; settle
+check "no session from herdr or agents.tsv, herdr working: no prompt" 0 "$(prompts)"
 echo "conduct-e w:7 sc" > "${ROOT}/agents"; rm -f "${p}/.swarm/agents.tsv"
 
 state idle; touch "${p}/.swarm/conduct-e.report.md"
