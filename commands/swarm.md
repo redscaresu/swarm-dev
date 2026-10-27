@@ -381,8 +381,10 @@ Repeat until a step below says stop:
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
    - `plan-hld <hld>`: follow `/plan-hld <hld>`. Approving its epics is the user's decision: stop
-     and wait for it, unless `swarm.sh grants <hld>` lists `epics`, which lets it write them active
-     and open the board PR unasked. Its board PR lands like any other: the HLD's `merge` grant
+     and wait for it, unless the grants list `epics`, which lets it write them active
+     and open the board PR unasked. Read the grants from origin's copy of the HLD, never the main
+     checkout's, which may be stale: once `/plan-hld` has made its plan worktree `<wt>` (its
+     **A new worktree** step), run `SWARM_PROJECT=<wt> swarm.sh grants <hld>`. Its board PR lands like any other: the HLD's `merge` grant
      covers it under `merge = human`. Once that PR has merged or been closed, run
      `swarm.sh board-pr done plan-<hld>` and `swarm.sh close plan-<hld>`, so an abandoned worktree
      never hides the HLD from `next` and its agents' tab closes.

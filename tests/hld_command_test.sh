@@ -18,8 +18,8 @@ fails=0
 # The file with line breaks and the brief's "> " quote marks folded to spaces, so a wrapped phrase still matches.
 flat=$(sed 's/^ *> *//' "$F" | tr '\n' ' ' | tr -s ' ')
 
-has() { # <name> <pattern>
-  if grep -qE -- "$2" <<< "$flat"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails + 1)); fi
+has() { # <name> <pattern> [text]
+  if grep -qE -- "$2" <<< "${3-$flat}"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails + 1)); fi
 }
 hasnt() { # <name> <pattern> [text]
   if grep -qE -- "$2" <<< "${3-$flat}"; then echo "FAIL $1"; fails=$((fails + 1)); else echo "ok   $1"; fi
@@ -47,7 +47,18 @@ has agreed-only-on-file 'Once `D/agreed` exists, and only then, on the user.s ag
 has resume-clears 'remove any old `D/ready` and `D/agreed`, on a resume too'
 has agreed-watched-from-step-3 'watch for `D/agreed` from step 3 on'
 has close-by-name '`swarm\.sh close hld-<slug>`, then `swarm\.sh close hld-review-<slug>`'
-has codex-pass 'board PR named `agree-<name>`\. .*run one `swarm\.sh codex-review` pass there and fix what it finds, then run `swarm\.sh board-pr open agree-<name>'
+has codex-pass 'board PR named `agree-<name>`\. .*run one `swarm\.sh codex-review` pass in the worktree and fix what it finds, then run `swarm\.sh board-pr open agree-<name>'
+# Step 5's order, in hld.md and epic.md: board-pr start, the commit, codex-review, board-pr open,
+# the commit and the review in the worktree. If someone drops the commit, or runs the review after open
+# or outside the worktree, this goes red.
+step5_order() { # <label> <file>
+  local s
+  s=$(sed 's/^ *> *//' "$2" | tr '\n' ' ' | tr -s ' ')
+  s="${s#*5. Once \`D/agreed\` exists}"
+  has "$1-step5-start-commit-review-open" 'board-pr start agree-<name>`.*commit it there \(`git add -A`, then `git commit -S`.*`swarm\.sh codex-review` pass in the worktree.*`swarm\.sh board-pr open agree-<name>' "$s"
+}
+step5_order hld "$F"
+step5_order epic "$ROOT/commands/epic.md"
 hasnt no-tab-close 'swarm\.sh close hld`' "${flat//'never `swarm.sh close hld`'/}"
 hasnt no-active 'status: active'
 

@@ -90,6 +90,7 @@ has only-files-hld 'with its `\.json\.partial` the only files it may write'
 has brief-reads-wt 'You are decomposing the agreed HLD `<wt>/docs/hld/\$1\.md`; read it first\. `<wt>` is origin.s copy of the project: read the code, epics and stories there, not in `<project>`, where you run'
 has resume-mtime 'newer than `<wt>/\.git`'
 has stop-when-open 'If the board PR `plan-\$1` is already open \(`gh pr list --head board/plan-\$1 --state open --json url --jq .\.\[\]\.url.` prints a URL\), report its URL and stop'
+has resume-new-wt-origin-ref 'When `<wt>` is new, because the earlier run.s was removed, .* compare against origin.s last change to the HLD instead: `git log -1 --format=%ct origin/<base> -- <board>/hld/\$1\.md`\. An output newer than that commit.s time'
 has resume-worktree 'If `<wt>` exists, run `swarm\.sh board-pr done plan-\$1` first\. .* `<wt> has uncommitted changes`, and `no PR on board/plan-\$1 has its tip \.\.\., and it has commits past origin/<base>`\. On either, resume in `<wt>`, and still run the checks below: origin can have moved since that run'
 has other-refusal-stops 'On any other refusal \(a gh error, a tip that differs from origin.s, a locked worktree, the branch checked out elsewhere\), stop and report it'
 
