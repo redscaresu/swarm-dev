@@ -49,6 +49,10 @@ expect() {
   rm -rf "${dir}" "${dir}-wt"
 }
 
+has_line() { # <name> <line> — a line of next's output in out is <line>
+  if grep -qxF -- "$2" <<< "${out}"; then echo "ok   $1"; else echo "FAIL $1: no line '$2' in: ${out}"; fails=$((fails + 1)); fi
+}
+
 expect "empty board" "done"
 if [[ "${out}" == *"/epic <title>"* ]]; then echo "ok   an empty board names the /epic step"
 else echo "FAIL an empty board does not name /epic <title>: ${out}"; fails=$((fails + 1)); fi
@@ -75,6 +79,15 @@ else echo "FAIL a draft HLD is not named as waiting on the user: ${out}"; fails=
 expect "an agreed HLD with no planned: is planned, a superseded one is not" "plan-hld 2026-01-01-b" \
   "item hld/2026-01-01-b.md 'status: agreed'" \
   "item hld/2026-01-01-c.md 'status: superseded'"
+# board-pr, grants and finish refuse a name outside a-z, 0-9 and -: next offers no /plan-hld that
+# would fail at its end, and the gate names the rename.
+for n in a_b a.b; do
+  expect "an agreed HLD named ${n} gets no plan-hld step" "gate" "item hld/${n}.md 'status: agreed'"
+  has_line "the gate lists the HLD named ${n} with the rename" \
+    "  hld cannot be planned: ${n}, its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+done
+expect "a blocked HLD does not hide a valid one beside it" "plan-hld b" \
+  "item hld/a_b.md 'status: agreed'" "item hld/b.md 'status: agreed'"
 expect "an agreed HLD whose ## Epics holds a hand-written link is still planned" "plan-hld h" \
   "item hld/h.md 'status: agreed'" \
   "printf '%s\n' '## Epics' '- [e1](../epics/e1.md)' >> docs/hld/h.md"
@@ -613,7 +626,7 @@ grep -qF '`idle: <story> waits on <dep> but shares no touches part with it and n
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
 grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
-grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
+grep -qF 'a `depends_on` story that shares no `touches` part with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's critic has no disjoint-touches check"
 }
 if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's critic checks disjoint touches"
 else echo "FAIL${got}"; fails=$((fails + 1)); fi
@@ -754,9 +767,6 @@ expect_release "a working conductor's wait comes before release" "wait conduct-e
 STAGE="item epics/e1.md 'status: active' 'stage: v1.3.0'"
 REVIEW="item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
 HELD="release-held: v1.3.0, open epics: e1, patches only"
-has_line() { # <name> <line> — a line of next's output in out is <line>
-  if grep -qxF -- "$2" <<< "${out}"; then echo "ok   $1"; else echo "FAIL $1: no line '$2' in: ${out}"; fails=$((fails + 1)); fi
-}
 expect_release "an open stage epic and a fix since the tag: the patch on the tag's line, not release v1.3.0" "release v1.2.1 (patch)" 0 \
   "${STAGE}" "${REVIEW}" "echo x > bin/x" "${COMMIT}"
 has_line "an open stage epic: the release-held: line names it" "${HELD}"
