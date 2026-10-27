@@ -9,7 +9,7 @@
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story, a green PR in review that waits on the user (merge = human, or merge holds it), or a started story with no live agent (no-agent: <slug>, exit: <exit>); print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
-#   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell and watch run it themselves
+#   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell, watch and a review pane's wait-pr run it themselves
 #   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
 #   swarm.sh restart <slug>                                start a started story's builder again once herdr no longer lists it, in its worktree, branch and tab: it reopens the builder's last Claude session when its resume command names one that took its brief, else starts a fresh builder on the last model with a handover brief; holds the story's step-up lock; refused while the builder is listed, with no worktree or one off story/<slug> or holding a git step left unfinished, for a story not ready, kind: lead, held or escalated, with a PR merged or set to auto-merge, or with a step-up waiting (step-up --resume)
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not, and prompt one whose turn has ended to read it (once a minute at most, the rest a minute later)
@@ -36,7 +36,7 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile; with merge = human, a story or board PR only under an agreed HLD that grants merge, and even then held for the user when it has costs: money; --release only when at least one story merged since the last tag and every one of them is under an HLD that grants release; --board also refuses a PR that sets an epic active with no ticket (agreed:, parent:, an HLD granting epics, or lead_epics = on)
-#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs within 5 minutes, or still pending after <seconds> (default 1800)
+#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs within 5 minutes, or still pending after <seconds> (default 1800); from the story's review pane with escalate_ladder set, a red head counts toward the ladder's ci-red step-up, which it runs itself (stepped up: <slug>)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
@@ -523,6 +523,8 @@ dispatch() {
     step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
+    # _review-red-scan: wait-pr's, on a red head, under its deadline (review_red_scan); not logged
+    _review-red-scan) review_red_scan "${1:?repo}" "${2:?head}" "${3:-}" ;;
     restart) require_herdr; [[ $# -eq 1 ]] || die "restart: takes one slug (swarm.sh restart <slug>)"; restart_build "$1" ;;
     unblock) if [[ "${1:-}" == --startable ]]; then
                [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
@@ -924,6 +926,7 @@ main() {
                  EV_TARGET="${*:$((FINDING_SKIP + 2)):2}" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     merge|intervene|hold) EV_TARGET='!' ;;
+    _review-red-scan) EV_TARGET='!' ;;   # logs nothing itself: a step-up it runs logs its escalate line
     tidy) EV_TARGET=- ;;
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
     # old form, tell <slug> <file>, would put a path there).

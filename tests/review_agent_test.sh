@@ -175,6 +175,12 @@ check "the brief triages check-run notes and code-scanning alerts before the hea
   "$(has "Exit 0: the head counts green only once you have triaged what \`${sw} findings svc 1\` prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning alerts." "${flat}")|$(has "Nudge the builder with each real one. Rebut the rest with a reason in the PR (\`gh pr comment ${PR} --body" "${flat}")|$(has "Never dismiss an alert." "${flat}")|$(has "\`${sw} tell s1 nudge ${p}/.swarm/reviews/s1.nudge.md\` (never findings, which count as a review round)" "${flat}")"
 check "a red head or a conflict is a nudge naming the check or the base, and with the ladder off no step-up is named" "yes|0" \
   "$(has "Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in." "${flat}")|$(grep -c 'stepped up' <<< "${brief}" || true)"
+# The green step ends: two nudges or two red heads at most, then a findings file the conductor's rules
+# send to the builder (a file with no ## Findings is a review started again, for ever on a PR that
+# stays red); and each nudge file is removed before the Write tool writes it (an earlier round's
+# survives, and the tool refuses to overwrite a file the session has not read).
+check "the green step is bounded, its not-green file is a findings file with the red check as its one item, and the nudge file is removed before each write" "yes|yes|yes" \
+  "$(has "The green step is bounded: at most two nudges, and at most two heads that wait-pr calls red." "${flat}")|$(has "The not-green file is ${p}/.swarm/reviews/s1.md, written with the Write tool: \`head: ${HEAD_SHA}\`, then a \`## Findings\` heading with one line for the builder, \`wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>\`, then a \`## Out of scope\` heading with \`none\`. The conductor sends it to the builder as a findings round, as any finding." "${flat}")|$(has "first remove any earlier nudge file (\`rm -f ${p}/.swarm/reviews/s1.nudge.md\`: the Write tool refuses to overwrite a file this session has not read), then write ${p}/.swarm/reviews/s1.nudge.md with the Write tool" "${flat}")"
 check "a started review agent records the head it reviews, so watch and next do not call the PR queued" "${HEAD_SHA}" \
   "$(cat "${p}/.swarm/reviews/s1.head")"
 check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusals')" "s1	ok" \
@@ -211,8 +217,10 @@ check "round 1's brief asks for codex and /code-review" "yes|yes|yes" \
   "$(has " codex-review " "${r1}")|$(has "review round 1 of the story" "${r1}")|$(has "then run \`/code-review ${PR}\`" "${r1}")"
 check "a round after a step-up is still round 2, and asks for codex alone" "yes|yes|yes|no" \
   "$(has " codex-review " "${r3}")|$(has "review round 2 of the story" "${r3}")|$(has "run codex alone, not \`/code-review\`" "${r3}")|$(grep -qF "/code-review ${PR}" <<< "${r3}" && echo yes || echo no)"
-check "with escalate_ladder set, the brief says a stepped-up build gets no nudge and is waited on" "yes" \
-  "$(has "When it also prints \`stepped up: s4\`, the build's red heads handed it to the next model on the escalation ladder: send no nudge, and wait for the new builder as below." "$(tr -s '[:space:]' ' ' <<< "${r4}")")"
+# A step-up from wait-pr leaves no head to review (stop with head moved:); one that failed after the
+# builder closed leaves no builder to nudge (stop with that line as the one finding, which tell refuses).
+check "with escalate_ladder set, the brief says a stepped-up build gets no nudge and ends the review, and a step-up failed partway ends it with that line as its finding" "yes|yes" \
+  "$(has "When it also prints \`stepped up: s4\`, the build's red heads handed it to the next model on the escalation ladder, and ${HEAD_SHA} is gone: send no nudge; write ${p}/.swarm/reviews/s4.md with the Write tool holding two lines, \`head: ${HEAD_SHA}\` and \`head moved: <that stepped up: line>\`, then stop." "$(tr -s '[:space:]' ' ' <<< "${r4}")")|$(has "When it prints \`step-up failed: s4\` instead, the builder was closed and no new one runs, so no nudge can reach it: write ${p}/.swarm/reviews/s4.md with the Write tool holding \`head: ${HEAD_SHA}\`, a \`## Findings\` heading with that \`step-up failed:\` line as its one item, and a \`## Out of scope\` heading with \`none\`, then stop." "$(tr -s '[:space:]' ' ' <<< "${r4}")")"
 check "round 2 asks for codex only" "yes|yes|yes|no" \
   "$(has " codex-review " "${r4}")|$(has "review round 2 of the story" "${r4}")|$(has "run codex alone, not \`/code-review\`" "${r4}")|$(grep -qF "/code-review ${PR}" <<< "${r4}" && echo yes || echo no)"
 check "herdr lists review-s1 to review-s4 working at once" "review-s1 working|review-s2 working|review-s3 working|review-s4 working" "$(working)"

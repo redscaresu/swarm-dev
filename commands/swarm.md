@@ -213,9 +213,10 @@ Repeat until a step below says stop:
      the story's builder and then could not start the next model's. Its conductor leaves the story
      alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says where it stopped,
      and sometimes why. The error is in the output of whatever ran the step-up: read that output
-     in every case before you resume. For a step-up swarm.sh ran itself, it is the
-     conductor's pane: `herdr agent read <conductor>`, the name `swarm.sh status` lists for the
-     story's epic or for the backlog. For one run by hand, it is the command's own output. With
+     in every case before you resume. For a step-up `close`, `tell`, `wait --stall` or `watch` ran,
+     it is the conductor's pane: `herdr agent read <conductor>`, the name `swarm.sh status` lists for
+     the story's epic or for the backlog. For one a review pane's `wait-pr` ran, it is the review
+     agent's pane: `herdr agent read review-<slug>`. For one run by hand, it is the command's own output. With
      no `step-up:failed` line, the step-up was killed partway. Fix the cause the output shows,
      then run the exit. A pane may still be open under the builder's name, kept by the failed
      start or left by a killed step-up. The resume retires an idle agent in it and starts the
