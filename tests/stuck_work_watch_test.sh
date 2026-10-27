@@ -40,6 +40,7 @@ cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "agent list") [ ! -e "${R}/list-fails" ] || exit 1; [ ! -e "${R}/list-garbled" ] || { echo '{"result":'; exit 0; }; printf '{"result":{"agents":[%s]}}\n' "$(cat "${R}/agents" 2>/dev/null)" ;;
   "agent read") echo "$*" >> "${R}/reads"; [ ! -e "${R}/hang-$3" ] || sleep 15; cat "${R}/pane.txt" ;;
+  "pane send-keys") echo "$*" >> "${R}/keys"; echo '{"result":{}}' ;;
   *) echo '{"result":{}}' ;;
 esac
 STUB
@@ -143,13 +144,36 @@ check "once STUCK_RECHECK has passed, the pane is read again and shows manual mo
 fresh; agent idle empty-box.txt; run > /dev/null; cp "${FX}/manual.txt" "${ROOT}/pane.txt"; agent blocked manual.txt
 check "a status change reads a clear pane again at once" test "$(count "prompt: ${A} (manual)" "$(run)")" = 1
 
-# A permission prompt over the manual-mode footer is manual mode, and a builder in it answering prompts
-# wakes no one again.
+# A permission prompt over the manual-mode footer is manual for a ready story's builder (its restart clears
+# both), and a builder in it answering prompts wakes no one again, working in between or not.
 fresh; agent blocked ruled-dialog.txt
-printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
-check "a permission prompt over the manual-mode footer gives a manual line" test "$(count "prompt: ${A} (manual)" "$(run)")" = 1
+{ echo ---; echo "kind: code"; echo "status: ready"; echo ---; echo; echo "# ${A}"; } > "${B}/${A}.md"
+printf '2026-10-27\tcode\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
+check "a ready builder's permission prompt over the manual-mode footer gives a manual line" \
+  grep -qxF "prompt: ${A} (manual), exit: herdr pane close w:p1 then swarm.sh hold ${A} <reason>" <<< "$(run)"
 touch -t 203201010000 "${log}"
 check "the next answered prompt, in manual mode still, wakes no one" test "$(count "prompt: " "$(run)")" = 0
+agent working ruled-dialog.txt
+check "a poll that sees it working is quiet" test "$(count "prompt: " "$(run)")" = 0
+check "and keeps its manual line in the lead's queue" grep -qF "prompt: ${A} (manual)" "${P}/.swarm/lead/seen"
+agent blocked ruled-dialog.txt; touch -t 203301010000 "${log}"
+check "its next prompt in manual mode, after working, wakes no one" test "$(count "prompt: " "$(run)")" = 0
+rm -f "${B}/${A}.md"
+# For any other agent it is a prompt whose exit turns manual mode off too, and each new one reminds.
+fresh; agent blocked ruled-dialog.txt
+printf '2026-10-27\tconduct\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"
+check "a conductor's prompt over the manual-mode footer is a prompt whose exit turns manual mode off" \
+  grep -qxF "prompt: ${A} (prompt), exit: the user answers it in pane w:p1, and turns manual mode off there" <<< "$(run)"
+touch -t 203401010000 "${log}"
+check "its next prompt after a turn wakes the lead again" test "$(count "prompt: ${A} (prompt)" "$(run)")" = 1
+# A pane the resend submits a brief in this poll is left for the next poll: the text it read is gone.
+fresh; agent idle manual.txt; : > "${ROOT}/keys"
+printf '────────────────\n❯ [Pasted text #1 +40 lines]\n────────────────\n  ⏸ manual mode on · ? for shortcuts\n' > "${ROOT}/pane.txt"
+printf '2026-10-27\tcode\t%s\tclaude\topus\t-\tsession-9\n' "${A}" > "${P}/.swarm/agents.tsv"; : > "${ROOT}/projects/proj/session-9.jsonl"
+printf '%s\tstory\t%s\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${A}" > "${P}/.swarm/events.tsv"
+out="$(run)"
+check "the resend sends Enter to the unsent brief" grep -q "send-keys w:p1 Enter" "${ROOT}/keys"
+check "and the pane it submitted gives no line that poll" test "$(count "prompt: " "${out}")" = 0
 # A co-writer (/hld, /epic) asks the user in its own pane: no line.
 fresh; agent blocked prompt.txt
 printf '2026-10-27\thld\t%s\tclaude\topus\t-\tsession-0\n' "${A}" > "${P}/.swarm/agents.tsv"

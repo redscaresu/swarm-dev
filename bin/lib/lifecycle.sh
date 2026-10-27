@@ -2407,8 +2407,9 @@ lead_queue() {
 # prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
 # (own_panes) that the poll's herdr list (lead_agents) shows blocked, idle or done, and whose pane
 # panes.py's stuck_kind finds stuck: on a prompt or dialog (prompt), an expired login (login), an API
-# error (api-error) or manual mode (manual; a prompt with the manual-mode footer under it is manual
-# too). Skipped: a retired agent (<name>-done), one whose agents.tsv role is in CO_WRITER_ROLES, and
+# error (api-error) or manual mode (manual). A prompt with the manual-mode footer under it is manual
+# for a ready story's builder (manual_slug), whose restart clears both, and for any other agent a
+# prompt whose exit also turns manual mode off. Skipped: a retired agent (<name>-done), one whose agents.tsv role is in CO_WRITER_ROLES, and
 # one a swarm.sh command is delivering to (resend_busy, over one ps read). While an upgrade runs
 # (upgrade_holder) it reads nothing, as resend_pass. lead_wake runs it after resend_pass, inside that
 # pass's read budget (LEAD_READ_DEADLINE: no read starts past it; RESEND_HERDR_WAIT seconds a read),
@@ -2418,7 +2419,7 @@ lead_queue() {
 # A pane last found clear is read again only when its key changed or STUCK_RECHECK seconds have passed;
 # one last found stuck is read every poll, as a user can clear it with no turn. Agents are read in the
 # order of their last read, oldest first, so slow reads that use up the budget leave the rest first in
-# line for the next poll. An api-error line comes only while no `swarm.sh wait` naming the agent runs
+# line for the next poll; its first read goes even past the deadline, so each poll reads at least one. An api-error line comes only while no `swarm.sh wait` naming the agent runs
 # (resend_busy's wait mode, the same ps): a running wait resumes it, and ends once it stops resuming;
 # meanwhile a line already in LEAD_SEEN stays. An agent skipped, unread or whose read failed keeps its
 # line from LEAD_SEEN; a herdr list, ps, list parse or read directory that failed keeps every prompt:
@@ -2426,7 +2427,9 @@ lead_queue() {
 # new stop wakes the lead even when its line reads the same, since LEAD_SEEN forgets the old line: a
 # prompt, login or api-error found in a pane with no record (the agent came back in a new pane), or in
 # one last found stuck after a turn (its session log changed). Manual mode is a state, not a stop: a
-# builder in it answering prompts wakes no one again. The exit: for a prompt, the user answers it in
+# builder in it answering prompts wakes no one again, and while it works (no candidate) its manual
+# record and line are kept (key carry), so a poll that sees it working does not end the state. A pane
+# resend_pass sent Enter to this poll (<pane>.sent in LEAD_READS) is not classified: its read is gone. The exit: for a prompt, the user answers it in
 # its pane; for login, the user runs /login, then a resume tell; for api-error, read the pane and tell
 # the user; for manual, a ready story's builder has its pane closed and then no_agent_exit's restart
 # (restart refuses a builder herdr still lists; cut_record finds its story), and any other agent has
@@ -2453,11 +2456,20 @@ prompt_wanted() {
       if (index(own, " " p " ") && ($0 !~ /"agent_status"/ || $0 ~ /"agent_status" *: *"(blocked|idle|done)"/)) { f = 1; exit }
     } END { exit !f }' <<< "${LEAD_AGENTS}"
 }
+# manual_slug <agent> — the story of a ready story's builder, the one full name its cut agent name maps
+# to (cut_record, none when two share it); nothing for any other agent.
+manual_slug() {
+  local slug
+  is_builder "$1" || return 0
+  slug="$(cut_record "$1")" || return 0
+  [[ -f "${BOARD}/stories/${slug}.md" && "$(fm "${BOARD}/stories/${slug}.md" status)" == ready ]] && echo "${slug}"
+  return 0
+}
 # prompt_seen — the prompt: lines in LEAD_SEEN: what prompt_lines prints when it cannot check, so a
 # stop already seen stays seen.
 prompt_seen() { awk 'index($0, "prompt: ") == 1' "${LEAD_SEEN}" 2>/dev/null || true; }
 prompt_lines() {
-  local rows name pane key last lkey lkind lat at kind out slug dir n=0 text state="" files=() kinds=() i backlog now
+  local rows name pane key last lkey lkind lat at kind out slug footer dir n=0 tried=0 text state="" files=() kinds=() i backlog now
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || { prompt_seen; return 0; }
   if [[ -f "${UPGRADE_PID}" ]] && [[ -n "$(upgrade_holder)" ]]; then prompt_seen; return 0; fi
@@ -2478,14 +2490,20 @@ try:
     for l in open(sys.argv[3], encoding="utf-8", errors="replace"):
         f = l.rstrip("\n").split("\t")
         if len(f) == 5 and f[4].isdigit():
-            read[(f[0], f[1])] = int(f[4])
+            read[(f[0], f[1])] = (int(f[4]), f[3])
 except OSError:
     pass
 rows = []
 for a in json.loads(sys.stdin.read())["result"]["agents"]:
     n, p, st = a.get("name") or "", a.get("pane_id"), a.get("agent_status")
-    if p not in own or st not in ("blocked", "idle", "done") or not re.fullmatch("[a-z][a-z0-9_-]*", n) \
+    if p not in own or not re.fullmatch("[a-z][a-z0-9_-]*", n) \
             or not re.fullmatch("[A-Za-z0-9]+:[A-Za-z0-9]+", p) or re.search(r"-done\d*$", n):
+        continue
+    # Manual mode outlasts a turn: an agent at work whose pane last showed it keeps its record and line
+    # (key carry, never read), so its next stop in manual mode is the same one.
+    if st not in ("blocked", "idle", "done"):
+        if read.get((n, p), (0, ""))[1] == "manual":
+            rows.append((read[(n, p)][0], n, p, "carry"))
         continue
     role, sid = agents.get(n, ("", ""))
     if role in skip:
@@ -2496,7 +2514,7 @@ for a in json.loads(sys.stdin.read())["result"]["agents"]:
             at = str(os.stat(path).st_mtime_ns)
         except OSError:
             pass
-    rows.append((read.get((n, p), 0), n, p, st + ":" + at))
+    rows.append((read.get((n, p), (0, ""))[0], n, p, st + ":" + at))
 for _, n, p, k in sorted(rows, key=lambda r: r[0]):
     print("\t".join((n, p, k)))' "${AGENTS_LOG}" "${CLAUDE_PROJECTS}" "${LEAD_STUCK}" <<< "${LEAD_AGENTS}" 2>/dev/null)" \
     || { prompt_seen; return 0; }
@@ -2511,12 +2529,16 @@ for _, n, p, k in sorted(rows, key=lambda r: r[0]):
     last="$(awk -F'\t' -v n="${name}" -v p="${pane}" '$1 == n && $2 == p { print $3 "\t" $4 "\t" $5; exit }' "${LEAD_STUCK}" 2>/dev/null)" || last=""
     lkey="" lkind="" lat=""; [[ -z "${last}" ]] || IFS=$'\t' read -r lkey lkind lat <<< "${last}"
     kind=unread; text=""; at="${lat:-0}"
-    if resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)"; then :
+    if [[ "${key}" == carry ]] || resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)"; then :
+    # resend_pass submitted the brief in this pane this poll: what it read is gone; the next poll reads.
+    elif [[ -e "${dir}/${pane}.sent" ]]; then :
     elif [[ -f "${dir}/${pane}" ]]; then text="$(cat "${dir}/${pane}")"; at="${now}"
     elif [[ -e "${dir}/${pane}.fail" ]]; then at="${now}"
     elif [[ "${lkey}" == "${key}" && "${lkind}" == - && $((now - ${lat:-0})) -lt ${STUCK_RECHECK} ]]; then kind=-
-    elif (( SECONDS < ${LEAD_READ_DEADLINE:-$((SECONDS + 1))} )); then
-      at="${now}"; text="$(within "${RESEND_HERDR_WAIT}" herdr agent read "${pane}" --source recent-unwrapped </dev/null 2>/dev/null)" || text=""
+    # The poll's first read of its own always goes, past the deadline too: with the oldest read first, a
+    # poll whose budget went before it read anything (a loaded machine) still moves on by one.
+    elif (( ! tried || SECONDS < ${LEAD_READ_DEADLINE:-$((SECONDS + 1))} )); then
+      tried=1; at="${now}"; text="$(within "${RESEND_HERDR_WAIT}" herdr agent read "${pane}" --source recent-unwrapped </dev/null 2>/dev/null)" || text=""
     fi
     if [[ -n "${text}" ]]; then n=$((n + 1)); printf '%s' "${text}" > "${dir}/@${n}"; files+=("${dir}/@${n}"); kind="@${n}"; fi
     state+="${name}"$'\t'"${pane}"$'\t'"${key}"$'\t'"${kind}"$'\t'"${at}"$'\t'"${lkey:--}"$'\t'"${lkind:--}"$'\n'
@@ -2534,7 +2556,7 @@ for f in sys.argv[1:]:
         lines = t.splitlines()
         reply = max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1])
         if any(MANUAL_MODE.match(l) for l in lines[reply + 1:]):
-            k = "manual"
+            k = "manual-prompt"
     print(k)' "${files[@]}" 2>/dev/null)
   fi
   # The new record: what each read found and when; an agent left unread keeps its last kind and key, so
@@ -2543,20 +2565,21 @@ for f in sys.argv[1:]:
   while IFS=$'\t' read -r name pane key kind at lkey lkind; do
     [[ -n "${name}" ]] || continue
     if [[ "${kind}" == @* ]]; then kind="${kinds[$((${kind#@} - 1))]:-unread}"; fi
+    # A prompt over the manual-mode footer: manual for a ready story's builder, whose restart clears both;
+    # for any other agent a prompt the user answers, turning manual mode off too, so each new one reminds.
+    slug=""; footer=""; [[ "${kind}" != manual* ]] || slug="$(manual_slug "${name}")"
+    if [[ "${kind}" == manual-prompt ]]; then if [[ -n "${slug}" ]]; then kind=manual; else kind=prompt; footer=1; fi; fi
     if [[ "${kind}" == unread ]]; then
       [[ "${at}" == 0 && "${lkey}" == - ]] || printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${lkey}" "${lkind/#-/unread}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true
     else printf '%s\t%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${key}" "${kind}" "${at}" >> "${LEAD_STUCK}.tmp" 2>/dev/null || true; fi
     # A wait naming it is still resuming it.
     if [[ "${kind}" == api-error ]] && resend_busy "${name}" "" wait; then kind=unread; fi
     case "${kind}" in
-      prompt) out="the user answers it in pane ${pane}" ;;
+      prompt) out="the user answers it in pane ${pane}${footer:+, and turns manual mode off there}" ;;
       login) out="the user runs /login, then swarm.sh tell ${name} resume <file>" ;;
       api-error) out="herdr agent read ${name}, then tell the user what it shows" ;;
       manual)
-        # The builder's story: the one full name its cut agent name maps to (cut_record), none when two share it.
-        slug=""; ! is_builder "${name}" || slug="$(cut_record "${name}")" || slug=""
-        if [[ -n "${slug}" && -f "${BOARD}/stories/${slug}.md" && "$(fm "${BOARD}/stories/${slug}.md" status)" == ready ]]; then
-          out="herdr pane close ${pane} then $(no_agent_exit "${slug}")"
+        if [[ -n "${slug}" ]]; then out="herdr pane close ${pane} then $(no_agent_exit "${slug}")"
         else out="the user turns manual mode off in pane ${pane}"; fi ;;
       unread) awk -v p="prompt: ${name} (" 'index($0, p) == 1 { print; exit }' "${LEAD_SEEN}" 2>/dev/null || true; continue ;;
       *) continue ;;
@@ -3212,6 +3235,8 @@ sys.exit(12 if t is None else 13 if t else 10)' \
       # Pending first, which counts as not done: a run stopped before the Enter, or an Enter that failed,
       # is tried again next poll, which reads the box again. A file it cannot write gets no Enter.
       printf '%s\tpending\n' "${line}" >> "${LEAD_RESENT}" 2>/dev/null || continue
+      # The text read above is no longer the pane's once Enter may have gone: prompt_lines leaves it.
+      [[ -z "${LEAD_READS}" ]] || : > "${LEAD_READS}/${pane}.sent"
       if ! within "${RESEND_HERDR_WAIT}" herdr pane send-keys "${pane}" Enter </dev/null >/dev/null 2>&1; then
         record_event resend "${name}" "herdr could not send Enter to ${pane}"
         size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))   # past its own line, as below
@@ -3286,8 +3311,10 @@ lead_wake() {
   fi
   now="$(lead_queue)"
   # One read budget and one read per pane for resend_pass and prompt_lines. The reads sit in
-  # .swarm/lead/reads, emptied at each poll's start and end: one wait --lead runs at a time (lead_lock),
-  # and one stopped mid-poll leaves them where the next poll clears them, never in TMPDIR.
+  # .swarm/lead/reads, emptied at each poll's start and end, never in TMPDIR. lead_lock stops an earlier
+  # run's bash, but not a $(prompt_lines) it had started: that subshell runs to its end (up to the read
+  # budget), writing into the reads directory and over LEAD_SEEN and LEAD_STUCK after the new run has, so
+  # a stop it moves out of LEAD_SEEN can wake the lead a second time. Each poll empties the directory first.
   LEAD_READ_DEADLINE=$((SECONDS + RESEND_PASS_WAIT))
   LEAD_READS="${LEAD_DIR}/reads"; rm -rf "${LEAD_READS}"; mkdir -p "${LEAD_READS}" 2>/dev/null || LEAD_READS=""
   resend_pass >/dev/null 2>&1 || true

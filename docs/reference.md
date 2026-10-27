@@ -159,7 +159,8 @@ Claude session log last changed, what its pane showed and when it was last read.
 clear is read again when the status or the log time has changed, or after 5 minutes
 (`STUCK_RECHECK`), since manual mode turned on or a dialog opened at an idle box changes neither. A pane
 last found stuck is read every poll, since you can clear it without a turn. Agents are read oldest read
-first, so slow reads that use up one poll's budget leave the rest first in line for the next.
+first, so slow reads that use up one poll's budget leave the rest first in line for the next. Each
+poll's first read of its own goes even past the budget, so a loaded machine still reads one a poll.
 
 The kinds and their exits:
 
@@ -171,17 +172,20 @@ The kinds and their exits:
 - `api-error`: the turn ended on Claude Code's `API Error:` line. It comes only while no
   `swarm.sh wait` naming the agent runs, since a running `wait` resumes it and ends once it gives
   up. Exit: `herdr agent read <agent>, then tell the user what it shows`.
-- `manual`: the footer under the input box says manual mode, or sits under a permission prompt (a
-  builder in manual mode is nearly always on one). Exit, for a ready story's builder: `herdr pane
-  close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a builder herdr
-  still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
+- `manual`: the footer under the input box says manual mode. Exit, for a ready story's builder:
+  `herdr pane close <pane> then` the restart or hold a `no-agent:` line names (restart refuses a
+  builder herdr still lists). For any other agent: `the user turns manual mode off in pane <pane>`.
+  A permission prompt with that footer under it (a builder in manual mode is nearly always on one)
+  is `manual` for a ready story's builder, whose restart clears both. For any other agent it is a
+  `prompt` whose exit adds `, and turns manual mode off there`.
 
 The line wakes the lead once per stop. It stays in `.swarm/lead/seen` while the agent is stuck. A
 skipped agent, a pane read that fails, and a herdr list, list parse or `ps` that fails all keep the
 last poll's line, so a missed read neither drops it nor wakes the lead again. A new stop wakes the lead
 even when its line reads the same: one found after the agent moved on, after a turn (its session log
 changed), or in a pane the agent came back in. Manual mode is a state, not a stop, so a builder in it
-answering prompt after prompt wakes the lead once.
+answering prompt after prompt wakes the lead once, and its line stays while it works between them. A
+pane the resend sent Enter to in a poll is left for the next poll to read.
 
 **A started story with no agent wakes the lead too.** `wait --lead` also prints
 `no-agent: <slug>, exit: <exit>` for a story whose build started and that nothing works on. It
