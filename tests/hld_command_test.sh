@@ -55,7 +55,7 @@ step5_order() { # <label> <file>
   local s
   s=$(sed 's/^ *> *//' "$2" | tr '\n' ' ' | tr -s ' ')
   s="${s#*5. Once \`D/agreed\` exists}"
-  has "$1-step5-start-commit-review-open" 'board-pr start agree-<name>`.*commit it there \(`git add -A`, then `git commit` with the brief.s trailers, and `-S` when `sign_commits` is on.*`swarm\.sh codex-review` pass in the worktree.*`swarm\.sh board-pr open agree-<name>' "$s"
+  has "$1-step5-start-commit-review-open" 'board-pr start agree-<name>`.*commit it there \(`git add -A`, then `git commit` with the trailers the brief names and `swarm\.sh config commit_trailers` prints, and `-S` when `sign_commits` is `true`.*`swarm\.sh codex-review` pass in the worktree.*`swarm\.sh board-pr open agree-<name>' "$s"
 }
 step5_order hld "$F"
 step5_order epic "$ROOT/commands/epic.md"

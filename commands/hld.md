@@ -105,8 +105,8 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    is left to block the pull once the PR merges. When the base has it, copy it over the worktree's,
    then put the main checkout's copy back as the base has it (`git show
    origin/<base>:docs/hld/<file>.md > docs/hld/<file>.md`), since edits left there block the pull too. Set the status in the worktree
-   and commit it there (`git add -A`, then `git commit` with the brief's trailers, and `-S` when `sign_commits` is on: a moved
-   draft is untracked until staged, and codex sees only committed changes), run one
+   and commit it there (`git add -A`, then `git commit` with the trailers the brief names and `swarm.sh config commit_trailers` prints, and `-S` when `sign_commits` is `true`: a moved
+   draft is untracked until staged, and codex's review skips untracked files), run one
    `swarm.sh codex-review` pass in the worktree and fix what it finds, then run
    `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits a fix, pushes and
    opens the PR (`board-pr open` again pushes a later fix). The pass comes before `open` because step 1 takes an open `agree-<name>`
