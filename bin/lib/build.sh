@@ -196,8 +196,11 @@ in, re-run the tests and push; with no
 builder, start one as the clash rule says for a conflict. Wait for the new
 head's CI with \`swarm.sh wait-pr <PR URL>\` in the background, review the new head as for any new
 head, and merge the head that review passed with \`swarm.sh merge --head <sha> <PR URL>\`, as below.
-When it refuses with \`base merge unchecked:\`, the PR's head moved to something other than <base>
-merged in: review the new head as for any new head.
+When it refuses with \`base merge unchecked:\`, the PR's head moved and merge could not show that its
+only new content is <base>'s: a builder's push, a merge someone made by hand, or GitHub's own merge of
+<base> that touches a file the PR changed too. Review the new head as for any new head. If that review
+sends findings, tell the builder to pull its branch first (\`git pull --ff-only origin story/<slug>\`):
+the new head may be a merge commit its worktree does not have, and its push would be refused.
 
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.

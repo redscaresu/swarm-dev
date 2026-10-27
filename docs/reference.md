@@ -2239,7 +2239,11 @@ story's tracks nothing. On a refusal that ends `merge origin/<base> in, push, an
 head`, it nudges the builder to pull its branch the same way, merge origin/<base> in, re-run the
 tests and push. Then it waits with `swarm.sh wait-pr`,
 reviews the new head as for any new head, and merges that head with `--head`. On `base merge
-unchecked:`, it reviews the new head as for any new head. Under `merge = human`, and when the lead
+unchecked:`, it reviews the new head as for any new head. That head may be a builder's push, a merge
+made by hand, or GitHub's own merge of the base that touches a file the PR changed too. When the
+review sends findings, the conductor tells the builder to pull its branch first with `git pull
+--ff-only origin story/<slug>`, since a merge commit on the branch is not in the builder's worktree
+and its push would be refused. Under `merge = human`, and when the lead
 merges under a `merge` grant, no conductor merges, so each of these lines goes to whoever ran
 `swarm.sh merge`, with the step to take in its message.
 
