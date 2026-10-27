@@ -120,8 +120,8 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    worktree with `mv`, so no copy is left to block the pull once the PR merges. When the base has
    it, copy it over the worktree's, then put the main checkout's copy back as the base has it (`git
    show origin/<base>:docs/epics/<slug>.md > docs/epics/<slug>.md`), since edits left there block
-   the pull too. Make the edit in the worktree and commit it there (`git add -A`, then `git commit -S` with
-   the brief's trailers: a moved draft is untracked until staged, and codex sees only committed
+   the pull too. Make the edit in the worktree and commit it there (`git add -A`, then `git commit` with the brief's trailers, and `-S`
+   when `sign_commits` is on: a moved draft is untracked until staged, and codex sees only committed
    changes), run one `swarm.sh codex-review` pass in the worktree and fix what it finds, then run
    `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits a fix, pushes and
    opens the PR (`board-pr open` again pushes a later fix). The pass comes before `open` because
