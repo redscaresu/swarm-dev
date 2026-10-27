@@ -23,6 +23,7 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
+REPORT_SECONDS=30       # how long a report (status, next, dash) may spend on reads that can block (report_read)
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -90,14 +91,16 @@ ci_gate() {
   python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@"
 }
 
-# merge_caller — why the pane running this may not merge, or nothing when it may. Outside herdr it
-# is the lead's own session, which merges under merge = human too, where merge_grant allows. Inside
-# herdr the pane must be one this project did not start (the lead's), or, with merge = agent, a conductor's; when the
-# pane cannot be identified (no HERDR_PANE_ID, an unreadable tab record, herdr cannot list its
-# agents) it may not. start_agent's guard blocks only a bare `gh pr merge`, so this is what stops a
-# builder merging through swarm.sh.
+# merge_caller <pr-url> [--board|--release] — why the pane running this may not merge <pr-url>, or
+# nothing when it may. Outside herdr it is the lead's own session, which merges under merge = human
+# too, where merge_grant allows. Inside herdr the pane must be one this project did not start (the
+# lead's); with merge = agent, a conductor's; or, under either mode, review-<slug>'s (review_pane) for
+# a PR on story <slug>'s prs: line (pr_stories), with no --board or --release. merge = human's
+# merge_grant then runs for it as for the lead. When the pane cannot be identified (no HERDR_PANE_ID,
+# an unreadable tab record, herdr cannot list its agents) it may not. start_agent's guard blocks
+# only a bare `gh pr merge`, so this is what stops a builder merging through swarm.sh.
 merge_caller() {
-  local f agents panes
+  local f agents panes slug s
   [[ -n "${HERDR_ENV:-}" ]] || return 0
   [[ -n "${HERDR_PANE_ID:-}" ]] || { echo "inside herdr with no HERDR_PANE_ID, the pane running this is unknown"; return 0; }
   [[ ! -e "${STATE_DIR}" || ( -r "${STATE_DIR}" && -x "${STATE_DIR}" ) ]] || { echo "cannot read ${STATE_DIR}, so whose pane this is is unknown"; return 0; }
@@ -113,13 +116,42 @@ merge_caller() {
   if [[ "${CFG_merge}" == agent ]] && [[ "$(SWARM_PANE="${HERDR_PANE_ID}" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name', '').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') for a in d['result']['agents'])" <<< "${agents}" 2>/dev/null)" == True ]]; then
     return 0
   fi
-  echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
+  slug="$(review_pane "${agents}")"
+  if [[ -n "${slug}" ]]; then
+    [[ -z "${2:-}" ]] || { echo "review-${slug} merges only story ${slug}'s PR, never with $2"; return 0; }
+    s="$(pr_stories "$1")" || { echo "a story on the board cannot be read, so whether $1 is story ${slug}'s is unknown"; return 0; }
+    grep -qxF -- "${slug}" <<< "${s}" || echo "review-${slug} merges only a PR on story ${slug}'s prs: line, and $1 is not on it"
+    return 0
+  fi
+  echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent, or review-<slug> for story <slug>'s PR, merges from one"
 }
 
-# merge_grant <pr-url> <head> <base> — under merge = human, why the lead may not merge the PR, or
-# nothing when the one agreed HLD over it at <head> into <base>, the head and base merge pinned
-# (pr_hld), grants merge (hld_grants). A PR whose head or base moved off them, a PR it cannot
-# resolve, or an HLD whose grants: cannot be read (hld_grants' own line says why), waits on the user too.
+# review_pane <agents> — <slug> when the pane running this (HERDR_PANE_ID) is review-<slug>'s by exact
+# record: every tab record for the pane names review-<slug>, not a retired name (-done, -done<N>),
+# the newest agents.tsv line for its agent name (agent_name) has role review, and in <agents>
+# (herdr's agent list) the agent in the pane holds that name. Else nothing: the builder of a story
+# slugged review-x has its tab record named review-x too, but its role there is a builder's; and a
+# record left stale (the agent exited, or retire_agent renamed it in herdr but could not rewrite
+# the record) has no such agent in the pane.
+review_pane() {
+  local f tabs=() name role
+  for f in "${STATE_DIR}"/*; do
+    [[ ! -f "${f}" || "${f}" == *.tmp ]] || tabs+=("${f}")
+  done
+  [[ ${#tabs[@]} -gt 0 ]] || return 0
+  name="$(awk -v p="${HERDR_PANE_ID}" 'NF == 2 && $1 == p { print $2 }' "${tabs[@]}" | sort -u)"
+  [[ "${name}" =~ ^review-[a-z0-9-]+$ && ! "${name}" =~ -done[0-9]*$ ]] || return 0
+  role="$(awk -F'\t' -v n="$(agent_name "${name}")" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)"
+  [[ "${role}" == review ]] || return 0
+  [[ "$(SWARM_PANE="${HERDR_PANE_ID}" SWARM_NAME="$(agent_name "${name}")" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" <<< "$1" 2>/dev/null)" != True ]] \
+    || echo "${name#review-}"
+}
+
+# merge_grant <pr-url> <head> <base> — under merge = human, why the lead, or review-<slug> for its
+# story's PR (merge_caller), may not merge the PR, or nothing when the one agreed HLD over it at
+# <head> into <base>, the head and base merge pinned (pr_hld), grants merge (hld_grants). A PR whose
+# head or base moved off them, a PR it cannot resolve, or an HLD whose grants: cannot be read
+# (hld_grants' own line says why), waits on the user too.
 merge_grant() {
   local h g="" rc=0 now base
   h="$(pr_hld "$1" "$2" "$3")" || rc=$?
@@ -243,7 +275,7 @@ merge_pr() {
   [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
-  why="$(merge_caller)" || why="cannot tell whose pane this is"
+  why="$(merge_caller "${url}" "${only}")" || why="cannot tell whose pane this is"
   [[ -z "${why}" ]] || merge_fail "${why}"
   info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles \
     | json "'%s %s %s %d' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'])")" \
@@ -928,13 +960,60 @@ queue_stopped() {
 # <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
 # its children. Else the command's own status (128+N for a signal). <seconds> is often a deadline's time
 # left, below 0 once a read ran past it: -- keeps perl from taking -1 for a switch of its own (exit 25).
+# @<epoch> in place of <seconds> is a deadline to the millisecond (report_read's), with no floor: under
+# a millisecond before it the command never runs, and within exits 142 at once. A HUP, INT or TERM to
+# within KILLs the command too, exiting 128+N: in a group of its own, it would run on with no alarm.
 within() {
-  perl -e 'my $t = shift; $t = 1 if $t < 1;
+  perl -MTime::HiRes -e 'my $t = shift;
+    if ($t =~ s/^@//) { $t -= Time::HiRes::time(); exit 142 if $t < 0.001 } else { $t = 1 if $t < 1 }
     defined(my $p = fork) or exit 127;
     if (!$p) { setpgrp; exec @ARGV or exit 127 }
-    $SIG{ALRM} = sub { kill "KILL", -$p; exit 142 };
-    alarm $t; waitpid $p, 0;
+    # The parent sets the group too, before the alarm: one that fires first would KILL no group.
+    # It fails harmlessly once the child has run exec, by then in its group. The KILL names the
+    # pid as well, for a signal that lands before either setpgrp.
+    setpgrp $p, $p;
+    my %n = (HUP => 1, INT => 2, TERM => 15);
+    for my $s (keys %n) { $SIG{$s} = sub { kill "KILL", -$p, $p; exit 128 + $n{$s} } }
+    $SIG{ALRM} = sub { kill "KILL", -$p, $p; exit 142 };
+    Time::HiRes::alarm($t); waitpid $p, 0;
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' -- "$@"
+}
+
+# report_start — a report (status, next, dash) starts: its reads have REPORT_SECONDS from now, and no
+# read is skipped yet. REPORT_END is that deadline as an epoch to the millisecond: bash's SECONDS counts
+# whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
+# is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
+# has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+report_start() {
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
+  REPORT_SKIP_FILE="${TMPDIR:-/tmp}/swarm-report.$$.${REPORT_END}"
+}
+
+# report_read <name> <command>... — a read that can block (a herdr list or read, a gh call, a git
+# fetch), run within the time the report has left, with its output and status. One cut off there
+# (142, keeping what it printed), or that would start at or past the deadline (142 at once, not run),
+# is recorded as <name> for report_skipped. Reads only: no write and no agent start goes through it.
+# With no report_start it ends the shell it runs in (bash's ${:?}), which a caller's || cannot catch.
+# <command> must be a program: within runs it with perl's exec, so a shell function (a gh or herdr
+# wrapper of swarm.sh's), a builtin or a pipeline is not found, exits 127 and is never named as
+# skipped. Pass the program itself (gh, herdr, git), or `bash -c '<script>' bash <args>` with what the
+# script needs inside it: a function it calls is defined or sourced there.
+report_read() {
+  local name="$1" rc=0; shift
+  within "@${REPORT_END:?report_read: no report_start}" "$@" || rc=$?
+  (( rc != 142 )) || [[ -z "${REPORT_SKIP_FILE:-}" ]] || echo "${name}" >> "${REPORT_SKIP_FILE}"
+  return "${rc}"
+}
+
+# report_skipped — print `skipped (over <REPORT_SECONDS> s): <names>`, each skipped read named once in
+# the order it was first skipped, or nothing when none was, and forget those names by removing the file:
+# so it works in a $( ) as well, and a read skipped after it is named alone by the next call.
+report_skipped() {
+  local names
+  names="$(awk '!seen[$0]++ { printf "%s%s", (n++ ? ", " : ""), $0 }' "${REPORT_SKIP_FILE:-/dev/null}" 2>/dev/null)" || names=""
+  [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
+  [[ -z "${names}" ]] || echo "skipped (over ${REPORT_SECONDS} s): ${names}"
 }
 
 # rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
