@@ -18,3 +18,4 @@ The 0.28 HLD ships in staged releases (board/hld/2026-10-25-swarm-dev-0-28.md, R
 **Done when:**
 - The tag v0.29.0 exists, `gh release view v0.29.0` shows it, and `swarm.sh version` in the lead session prints 0.29.0.
 - The v0.30.0 stage's epics are active on main.
+- The release notes name the behaviour changes from merge-holds: a PR that changes hooks/, .github/, a root Makefile or .claude/ holds for the user under merge = agent (protected-path-hold); a story PR whose base moved is re-checked before it merges (merge-base-moved, merge-base-update-branch, merge-base-update-wait), at the cost of one more CI run per merge after another.
