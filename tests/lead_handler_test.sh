@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -76,6 +76,10 @@ board() {
     # A blocked story whose dependency, still to build, shares no file in touches with it.
     idle) story s "kind: code" "status: blocked" "depends_on: [d]" "touches: [a.sh]"
           story d "kind: code" "status: ready" "touches: [b.sh]" ;;
+    # An agent blocked on a permission prompt in pane w:p1.
+    prompt) story s "kind: code" "status: ready"; echo "w:p1 s" > "${P}/.swarm/state/tab"
+            echo '{"name":"s","agent_status":"blocked","pane_id":"w:p1"}' > "${ROOT}/agents"
+            cp "${HOME_DIR}/tests/fixtures/panes/prompt.txt" "${ROOT}/pane.txt" ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }
