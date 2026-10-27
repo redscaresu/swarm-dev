@@ -1666,8 +1666,8 @@ is. The records are the board's stories and those its history deleted, the brief
 for each ok `conduct` event, the slugs session logs name, and the targets of `unblock`, `reset`,
 `reconcile`, `review` and `kept` events. With no record, or two, the name stays as it is, so two
 slugs that share their first 32 characters never merge. A build with no session log under a name
-two or more records share may be any of theirs, so it clashes with what each of them touches, the
-waiting story's own aside.
+two or more records share may be any of theirs. While it runs, none of those stories waits idle,
+and any other story clashes with what each of them touches.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying

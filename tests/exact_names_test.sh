@@ -103,13 +103,15 @@ for e in ef el es ep ew; do printf -- '---\nstatus: active\n---\n' > "${I}/docs/
 ist 2fa-login ef ready src/f.sh; ag s2fa-login; ev 10:00 unblock 2fa-login
 check "idle_slots: agents.tsv's s-prefixed name for a slug starting with a digit is that story's build" \
   "$(idle --until 2026-10-01 --epic ef)" "no story of epic ef was ready in the window"
-# A merged story whose slug is exactly 32 characters, built with no session log, and a ready story whose
-# slug runs on from it, unblocked at 09:00 and never built: the merged one's build is not its build.
+# A merged story whose slug is exactly 32 characters, built all day with no session log, and a ready
+# story whose slug runs on from it, unblocked at 09:00 and never built. The build is not keyed as the
+# longer one's, so that story still waits; but agents.tsv's name is its name too, so the build may be
+# its own, and it waits no idle minutes.
 s32="a-merged-story-with-32-character"; [[ ${#s32} -eq 32 ]] || { echo "s32 is ${#s32} long" >&2; exit 1; }
 ist "${s32}" es review src/s.sh; ist "${s32}-and-more" el ready src/l.sh; ag "${s32}"; ev 09:00 unblock "${s32}-and-more"
 git -C "${I}" add "docs/stories/${s32}.md"; commit "${s32}"; git -C "${I}" rm -q "docs/stories/${s32}.md"; commit "${s32} merged"
 check "idle_slots: a merged 32-character slug's build is not the build of a longer slug that starts with it" \
-  "$(idle --until 2026-10-01 --epic el)" $'epic\tidle_min\tno_conductor_min\tmost_ready\nel\t0\t900\t1'
+  "$(idle --until 2026-10-01 --epic el)" $'epic\tidle_min\tno_conductor_min\tmost_ready\nel\t0\t0\t1'
 # The same when the merged one's build has a session log (from 10:00): its slug is still its own.
 s32b="another-merged-story-of-32-chars"; [[ ${#s32b} -eq 32 ]] || { echo "s32b is ${#s32b} long" >&2; exit 1; }
 printf -- '---\nstatus: active\n---\n' > "${I}/docs/epics/em.md"
@@ -121,6 +123,7 @@ check "idle_slots: a merged 32-character slug's logged build is not the build of
   "$(idle --until 2026-10-01 --epic em)" $'epic\tidle_min\tno_conductor_min\tmost_ready\nem\t0\t900\t1'
 # Two long stories share a cut, and one of them builds all day with no session log under it. ww,
 # touching the first one's file, waits from 11:00: the build may be that story's, so ww clashes.
+# (Either of the two, ready, would wait no idle minutes: the build may be its own, as for el above.)
 cut2="two-long-stories-that-share-a-cu"
 ist "${cut2}t-one" ep review src/p.sh; ist "${cut2}t-two" ep blocked src/q.sh; ist ww ew ready src/p.sh; ag "${cut2}"; ev 11:00 unblock ww
 check "idle_slots: a build under a cut two stories share clashes with what either touches" \

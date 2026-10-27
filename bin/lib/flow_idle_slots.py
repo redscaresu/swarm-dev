@@ -113,12 +113,12 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
 recorded = [os.path.basename(f)[:-3] for d in ([os.path.join(board, "stories")] if board else []) + [os.path.join(os.path.dirname(events), "briefs")]
             for f in glob.glob(os.path.join(glob.escape(d), "*.md")) if "." not in os.path.basename(f)[:-3]]
 # Those the board's history deleted, read only for a name that may be a cut (AGENT_NAME_MAX long: its
-# story, or any it starts) or start with agent_name's added s (the slug without it), so a run with no
-# such name reads no history.
+# story, or any it starts) or start with agent_name's added s (its story, and the slug without it), so
+# a run with no such name reads no history.
 deleted = set()
 for n in {e[2] for _, e in evs if e[1].split(":")[0] == "close"} | {r["slug"] for r in rows}:
     if re.fullmatch(r"s[0-9][a-z0-9_-]*", n):
-        deleted |= {f"stories/{n[1:]}.md"} | ({f"stories/{n[1:]}*.md"} if len(n) == AGENT_NAME_MAX else set())
+        deleted |= {f"stories/{n}.md", f"stories/{n[1:]}.md"} | ({f"stories/{n[1:]}*.md"} if len(n) == AGENT_NAME_MAX else set())
     if re.fullmatch(r"[a-z][a-z0-9_-]*", n) and len(n) == AGENT_NAME_MAX:
         deleted.add(f"stories/{n}*.md")
 recorded += [os.path.basename(f)[:-3] for f in (git("log", "--diff-filter=D", "--name-only", "--format=", "--", *sorted(deleted), quiet=True)
@@ -245,11 +245,11 @@ shared = {r["slug"] for r in rows if not r["started"] and len(under[r["slug"]]) 
 
 @functools.lru_cache(maxsize=None)
 def clashes(a, b):
-    # Whether waiting story a clashes with running build b. A shared build clashes with what any of its
-    # stories but a touches, and no depends_on spares it.
+    # Whether waiting story a clashes with running build b. A shared build may be a's own, when a is one
+    # of its stories, and clashes with what any of the others touches; no depends_on spares it.
     xs = known(a)
     if b in shared:
-        return a != b and any(overlap(x, y) for x in xs for n in sorted(under[b] - {a}) for y in known(n))
+        return a != b and (a in under[b] or any(overlap(x, y) for x in xs for n in sorted(under[b] - {a}) for y in known(n)))
     return a != b and any(overlap(x, y) for x in xs for y in known(b)) and a not in needs[b] and b not in needs[a]
 
 runs = {k: conductor_runs(k) for k in {epic_of[s] or "--backlog" for s, _, _ in ready}}
