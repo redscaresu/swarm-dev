@@ -751,7 +751,8 @@ story keeps its worktree). A story it
 depends on, or one that depends on it, does not count, since a stacked story starts on its parent's
 branch. The exit is `swarm.sh tell <conductor> note <file>` while the story's conductor runs (the
 epic's, or the backlog's for a story with no epic). It runs from an ok `conduct` line until a close
-of its agent, a `report` line or its report file. With none running the exit is
+of its agent or a `report` line, and not while its report file is there (`conduct` removes the last
+one before it starts). With none running the exit is
 `swarm.sh story --strict <slug>`, which refuses a clash with a builder herdr lists. The check reads the board, its state and events.tsv, with no gh or herdr
 call.
 

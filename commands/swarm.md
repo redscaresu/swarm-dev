@@ -79,7 +79,9 @@ Repeat until a step below says stop:
      Its `touches` share no part with a story in review or one whose build has started.
      Nothing holds it back, so start it with the exit. While its conductor runs, the exit is
      `swarm.sh tell <conductor> note <file>` instead: write a note naming the story and asking the
-     conductor to start it or say why not, and send it.
+     conductor to start it or say why not, and send it. The exit is read before the step: when the
+     step started a conductor for the story's epic (or the backlog's, for a story with no epic),
+     send that conductor the note in place of `swarm.sh story --strict`.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in

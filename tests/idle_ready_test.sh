@@ -83,6 +83,9 @@ check "a story of an active epic with no conductor running names swarm.sh story 
 event conduct e
 check "a story of an active epic whose conductor runs names a note to it" \
   "idle: a is ready with no build, exit: swarm.sh tell conduct-e note <file>" "$(idle)"
+touch -t "${OLD}" "${CASE}/.swarm/conduct-e.report.md"
+check "a conductor whose report file is there is not running, however old the file" "${LINE}" "$(idle)"
+rm "${CASE}/.swarm/conduct-e.report.md"
 event close conduct-e
 check "a conductor closed since its start is not running" "${LINE}" "$(idle)"
 

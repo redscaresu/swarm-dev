@@ -132,8 +132,8 @@ if __name__ == "__main__":
         # its READIES events), with no story/<slug> branch left (build_exists), that clashes by part
         # with no running build: a story in review, or any whose build started (a held stacked child
         # keeps its worktree and PR), unless one depends on the other (a stacked start). Its exit is a
-        # note to its conductor while one runs (an ok conduct event with no close of its agent, report
-        # event or report file since), else swarm.sh story --strict, which refuses a clash herdr
+        # note to its conductor while one runs (an ok conduct event with no close of its agent or
+        # report event since, and no report file), else swarm.sh story --strict, which refuses a clash herdr
         # shows. events.tsv, the board and one git read per such story: no gh or herdr call.
         ev, epics = ok_events(os.path.join(project_dir, ".swarm", "events.tsv")), os.path.join(os.path.dirname(stories), "epics")
         queue = int(os.environ.get("SWARM_QUEUE_MINUTES") or 30) * 60
@@ -164,10 +164,12 @@ if __name__ == "__main__":
             from report import agent_name
             name = agent_name("conduct-" + epic) if epic else os.environ.get("SWARM_BACKLOG_CONDUCTOR") or "conduct-backlog"
             names = {name} if epic else {name, "conduct-backlog"}
+            # A report file is the latest run's: start_conductor removes the last one before it starts.
+            if os.path.exists(os.path.join(project_dir, ".swarm", f"conduct-{epic or 'backlog'}.report.md")):
+                return None
             start = max(ev["conduct", epic or "--backlog"], default=None)
-            report = os.path.join(project_dir, ".swarm", f"conduct-{epic or 'backlog'}.report.md")
             ends = [t for (c, who), ts in ev.items() if c.split(":")[0] == "close" and agent_name(who) in names for t in ts] \
-                + ev["report", epic or "backlog"] + mtimes(report)
+                + ev["report", epic or "backlog"]
             return None if start is None or any(t >= start for t in ends) else name
 
         running = [(s, entries(fm, project_dir, repos_dir)) for s, fm in sorted(fms.items())
