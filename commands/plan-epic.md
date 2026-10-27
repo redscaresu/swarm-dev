@@ -25,12 +25,12 @@ renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` fo
 `wait` printed `auth`, and wait on each again in the background.
 
 **Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
-its output file. If it exists, parses as JSON and is newer than `docs/epics/$1.md`, reuse it and do not
+its output file. If it exists (a `.partial` file is an unfinished run: ignore it), parses as JSON and is newer than `docs/epics/$1.md`, reuse it and do not
 start that agent again; an older one belongs to a previous plan, so start the agent. A resume also starts a skeptic for each story the critic's file moves to `risk: high` that has no skeptic file yet.
 
 Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; read it first.
 Read-only — write nothing except your output file, never commit, never touch real cloud or
-credentials. Write your output file early and update it as you go, so a timed-out turn loses one item, not all. Cite evidence as file:line. Keep free text short.*
+credentials. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.*
 
 **0. Size** — judge the epic from its **Done when**. An epic of at most 3 stories with no `risk: high` is
 planned by the lead alone: you write the stories in a board-PR worktree (`swarm.sh board-pr start scope-$1`),
@@ -70,7 +70,7 @@ and a merge is never a story of its own; `risk: high` only for real-cloud, teard
 credentials and safety paths; `costs: money` on any story whose merge can spend money (it adds or
 changes a CI job or schedule that runs against real cloud, raises a spend cap, or turns on something
 billed): with `merge = agent`, `swarm.sh merge` holds its PR for the user; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
-check files `AGENTS.md` names as shared) in more than one story; give a story `depends_on` only when it uses something the other adds (named in `needs`) or shares a `touches` part, never for ordering alone: maximise concurrency by default; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file or the function;
+check files `AGENTS.md` names as shared) in more than one story; give a story `depends_on` only when it uses something the other adds (named in `needs`) or shares a `touches` part, never for ordering alone (waiting on a `lead` story's **You:** step is a real need): maximise concurrency by default; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file or the function;
 reuse existing
 stories by slug; record every disagreement with the epic under `contradictions`. If a survey
 failed, it says what it could not check. A check that several stories repeat (a freeze, a pinned
@@ -82,7 +82,7 @@ tell you which of the two broke something, and cannot be rolled back one half at
 
 **3. Verify** — in parallel, a chain at most 3 deep (this session, the one running plan-epic, checks chain depth over the whole graph):
 - one `skeptic-<slug>` per `risk: high` story, role `skeptic`, capped at five (say which were not checked), given the `depends_on` graph. An epic with no `risk: high` story gets no skeptic.
-  It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR (over the cap of one new command or one changed behaviour and about 300 lines in step 2, by its `estimate_lines`), a story that adds detection logic (a new alert, check or classifier) and runs over about 200 lines, an unstated dependency, a `done_when` that passes while the work is broken.
+  It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR (over the cap of one new command or one changed behaviour and about 300 lines in step 2, by its `estimate_lines`), a story that adds detection logic (a new alert, check or classifier) and runs over about 200 lines by its `estimate_lines`, an unstated dependency, a `done_when` that passes while the work is broken.
   Output `{sound, problems:[{why}], fix}`; unsure means `sound: false`.
 - one `codex`, role `codex` (read-only, a different model family): missing stories, stories too
   big for one PR, `done_when` criteria that could pass on broken work, and overlaps within a wave.
@@ -90,7 +90,7 @@ tell you which of the two broke something, and cannot be rolled back one half at
   `gh auth status` first, which fails inside codex's sandbox, and codex then stops without reviewing.
 - one `critic`, role `critic`, given the `depends_on` graph and the waves: what the plan missed — a change the epic's
 **Done when** needs that no story makes, an unrespected constraint, a test or doc nobody updates, a
-  real-cloud step hidden inside an agent story. For every story, skeptic or not, it also checks: a story that should carry `risk: high` (real cloud, teardown, credentials, a safety path) and does not, a `touches` clash inside a wave, a bare-file `touches` entry in a story that changes only part of the file (the finding names the `file:part` entries to write instead), a `depends_on` story that shares no file in `touches` with it and that its `needs` does not name, for each dependency (disjoint touches: drop the dependency, or name it in `needs`), and a `needs` entry that names nothing the dependency's own scope adds (a file or function it creates or changes), a wrong `kind` (an agent story that needs real cloud, credentials or a person), and a missing or wrong `costs: money` (a story whose merge can spend money). A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words for the whole-plan part, plus one short line for each story that has a problem. Output `{findings:[...], stories:[{slug, why}]}`. A story moved to `risk: high` in review (by the critic or this session) gets its `skeptic-<slug>` before the report, within the cap of five.
+  real-cloud step hidden inside an agent story. For every story, skeptic or not, it also checks: a story that should carry `risk: high` (real cloud, teardown, credentials, a safety path) and does not, a `touches` clash inside a wave, a bare-file `touches` entry in a story that changes only part of the file (the finding names the `file:part` entries to write instead), a `depends_on` story that shares no `touches` part with it and that its `needs` does not name, for each dependency (disjoint touches: drop the dependency, or name it in `needs`), and a `needs` entry that names nothing the dependency's own scope adds (a file or function it creates or changes), a wrong `kind` (an agent story that needs real cloud, credentials or a person), and a missing or wrong `costs: money` (a story whose merge can spend money). A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words for the whole-plan part, plus one short line for each story that has a problem. Output `{findings:[...], stories:[{slug, why}]}`. A story moved to `risk: high` in review (by the critic or this session) gets its `skeptic-<slug>` before the report, within the cap of five.
 
 **Then report**, in this order: which stories had a skeptic (or "no skeptic: no `risk: high` story"); refuted stories and why, with the critic's per-story problem lines beside them; contradictions; codex and critic findings
 the plan does not answer; the surviving stories with `kind`, `estimate_lines`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain (this session checks chain depth over the whole graph, since skeptics run only on `risk: high` stories); then **What you will do**: every `lead`
@@ -102,7 +102,7 @@ write the stories and open the board PR without asking, and the report says the 
 did that. Without it, ask. (The small path has already written and committed the stories and run codex: it asks before
 `swarm.sh board-pr open scope-$1 "<title>" <body-file>`, and runs `swarm.sh board-pr done scope-$1` once the PR
 has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
-when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no file in `touches`, `touches`, `estimate_lines`, `easy`, `risk` when
+when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no `touches` part, `touches`, `estimate_lines`, `easy`, `risk` when
 high, `costs: money` when set; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
 scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
 `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and

@@ -91,9 +91,13 @@ has front-matter 'front matter .*`estimate_lines`, `easy`' "$approval"
 has report-estimate 'with `kind`, `estimate_lines`, `touches`' "$flat"
 has readme-keys 'estimate_lines.*easy: true' "$(tr '\n' ' ' < "$ROOT/templates/docs/stories/README.md")"
 has detect-split-step-2 'adds detection logic \(a new alert, check or classifier\) and runs over about 200 lines is split before the board PR' "$step2"
-has detect-split-skeptic 'a story that adds detection logic \(a new alert, check or classifier\) and runs over about 200 lines, an unstated dependency' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
-has depends-on-need-only 'give a story `depends_on` only when it uses something the other adds \(named in `needs`\) or shares a `touches` part, never for ordering alone: maximise concurrency by default' "$step2"
-has write-early 'Write your output file early and update it as you go, so a timed-out turn loses one item, not all\. Cite evidence'
+has detect-split-skeptic 'a story that adds detection logic \(a new alert, check or classifier\) and runs over about 200 lines by its `estimate_lines`, an unstated dependency' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
+has depends-on-need-only 'give a story `depends_on` only when it uses something the other adds \(named in `needs`\) or shares a `touches` part, never for ordering alone \(waiting on a `lead` story.s \*\*You:\*\* step is a real need\): maximise concurrency by default' "$step2"
+has write-early 'Write your findings early to `<output>\.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished' "$flat"
+has resume-ignores-partial 'If it exists \(a `\.partial` file is an unfinished run: ignore it\), parses as JSON' "$flat"
+has depends-on-lead-need 'waiting on a `lead` story.s \*\*You:\*\* step is a real need' "$step2"
+has critic-part-test 'a `depends_on` story that shares no `touches` part with it' "$crit"
+has front-matter-part-test '`needs` when a dependency shares no `touches` part' "$flat"
 hasnt no-blocked-by 'blocked_by'
 hasnt no-verify 'verify'
 hasnt no-version-bump 'needs no version bump'

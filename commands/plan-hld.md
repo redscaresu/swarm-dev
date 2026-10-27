@@ -75,14 +75,14 @@ renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` fo
 `wait` printed `auth`, and wait on each again in the background.
 
 **Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
-its output file. If it exists, parses as JSON and is newer than `<wt>/.git` (when the plan worktree
+its output file. If it exists (a `.partial` file is an unfinished run: ignore it), parses as JSON and is newer than `<wt>/.git` (when the plan worktree
 was started; on a board outside the repo, `docs/hld/$1.md`), reuse it and do not start that agent
 again; an older one belongs to a previous plan, so start the agent.
 
 Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
 you run and which can be behind. Read-only — write nothing but your output file, never commit, never
-touch real cloud or credentials. Write your output file early and update it as you go, so a timed-out turn loses one item, not all. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
+touch real cloud or credentials. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
 `<project>` and the output path written out in full)
 
 1. **Survey** — role `survey`, three in parallel, output `{summary, facts:[{fact, evidence}]}`:
