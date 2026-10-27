@@ -362,8 +362,8 @@ def flow(v):
         raise Unread("%s: a quoted entry holding a comma is not read" % v)
     return [unq(x) for x in v.strip("[]").split(",") if unq(x)]
 
-def push_filters(text):
-    """on: push's filters ({} for none), or None when there is no push trigger. Reads the forms
+def on_filters(text, event):
+    """on: <event>'s filters ({} for none), or None when there is no such trigger. Reads the forms
     workflows use: on: push, on: [push, ...], and a block of events with block or [flow] lists."""
     lines = [re.sub(r"(^|\s)#.*", "", l).rstrip() for l in text.splitlines()]
     top = [i for i, l in enumerate(lines) if re.match(r"""^(on|"on"|'on'|true)\s*:""", l)]
@@ -371,7 +371,7 @@ def push_filters(text):
         raise Unread("no on: key")
     v = lines[top[0]].split(":", 1)[1]
     if v.strip():
-        return {} if "push" in flow(v) else None
+        return {} if event in flow(v) else None
     block = []
     for l in lines[top[0] + 1:]:
         if l and not l[0].isspace() and not l.startswith("-"):
@@ -384,14 +384,14 @@ def push_filters(text):
         if ind(l) != ind(block[0]):
             continue
         if k.startswith("-"):
-            if unq(k[1:]) == "push":
+            if unq(k[1:]) == event:
                 return {}
             continue
         key, _, rest = k.partition(":")
-        if unq(key) != "push":
+        if unq(key) != event:
             continue
         if rest.strip() not in ("", "{}", "null", "~"):
-            raise Unread("push: %s is not read" % rest.strip())
+            raise Unread("%s: %s is not read" % (event, rest.strip()))
         f, key = {}, None
         for c in block[j + 1:]:
             if ind(c) <= ind(l):
@@ -404,7 +404,7 @@ def push_filters(text):
                 key = unq(key)
                 f[key] = flow(rest)
             else:
-                raise Unread("push: %s is not read" % c)
+                raise Unread("%s: %s is not read" % (event, c))
         return f
     return None
 
@@ -468,7 +468,8 @@ def pr_files(repo, n, changed, status=False, base=None, sha=None):
     except (KeyError, TypeError, AttributeError) as e:
         raise Err("unreadable files for #%s: %r" % (n, e))
 
-def expected(repo, sha, base, n, changed):
+def workflows(repo, sha):
+    """Each workflow file in .github/workflows at sha, as (path, text); none when there is no such folder."""
     try:
         out = gh("api", "repos/%s/contents/.github/workflows?ref=%s" % (repo, sha))
     except Err as e:
@@ -480,15 +481,61 @@ def expected(repo, sha, base, n, changed):
         paths = [w["path"] for w in json.loads(out) if w["type"] == "file" and w["name"].endswith((".yml", ".yaml"))]
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise Err("unreadable .github/workflows listing at %s: %r" % (sha[:7], e))
-    want, files = [], pr_files(repo, n, changed)
-    for path in paths:
-        text = gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, path, sha))
+    return [(path, gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, path, sha)))
+            for path in paths]
+
+def expected(repo, sha, base, n, changed):
+    texts = workflows(repo, sha)
+    want, files = [], pr_files(repo, n, changed) if texts else None
+    for path, text in texts:
         try:
-            if covers(push_filters(text), base, files):
+            if covers(on_filters(text, "push"), base, files):
                 want.append(path)
         except Unread as e:
             raise Unread("%s: %s" % (path, e))
     return want
+
+def pr_expected(repo, sha, base, n, changed):
+    """The workflows at sha that a pull_request into base with PR n's files at sha runs (its branches and
+    paths filters), and a line for each whose triggers are not read: that one is not waited on, so the
+    wait is no stricter than with none expected. A head may be the PR's first (opened) or a later one
+    (synchronize), so a types list without both is not waited on either."""
+    texts = workflows(repo, sha)
+    want, unread, files = [], [], pr_files(repo, n, changed, False, base, sha) if texts else None
+    for path, text in texts:
+        try:
+            f = on_filters(text, "pull_request")
+            if covers(f, base, files) and {"opened", "synchronize"} <= set(f.get("types", ["opened", "synchronize"])):
+                want.append(path)
+        except (Unread, re.error) as e:
+            unread.append("%s (triggers not read, so not waited on: %s)" % (path, e))
+    return want, unread
+
+def head_expected(repo, sha, args):
+    """head's red and pending lines for the expected workflows (pr_expected), and its unread lines. Only
+    a pull_request run counts (a push run of the same workflow on sha is not the PR's): none is
+    pending, as is one not finished, and one that finished other than green is red, check run or not. args are <base> <pr> <changed> and, optionally, a file that keeps
+    pr_expected's answer, so a wait that reads sha again reads the workflows once."""
+    memo = args[3] if len(args) > 3 else None
+    try:
+        with open(memo) as fh:
+            want, unread = json.load(fh)
+    except (TypeError, OSError, ValueError):
+        want, unread = pr_expected(repo, sha, args[0], args[1], int(args[2]))
+        if memo:
+            with open(memo, "w") as fh:
+                json.dump([want, unread], fh)
+    if not want:
+        return [], [], unread
+    runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
+            if r.get("head_sha") == sha]
+    red, wait = [], []
+    for p in want:
+        mine = [dict(r, name=p) for r in runs if (r.get("path") or "").split("@")[0] == p and r.get("event") == "pull_request"]
+        if not mine:
+            wait.append("%s (no run on %s)" % (p, sha[:7]))
+        judge(mine, red, wait, [])
+    return red, wait, unread
 
 def required(repo, base):
     """The status checks base requires, as base_rules reads them (context, the app that must report
@@ -672,7 +719,9 @@ try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
         red, wait, ok = checks(repo, args[0])
-        print("; ".join(red + wait or ok))
+        bad, more, unread = head_expected(repo, args[0], args[1:]) if args[1:] else ([], [], [])
+        red, wait = red + bad, wait + more
+        print("; ".join((red + wait or ok) + unread))
         if red or wait:
             sys.exit(1 if red else 2)
     elif mode == "fixed":
