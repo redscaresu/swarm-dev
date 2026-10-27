@@ -68,6 +68,7 @@ cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$*" in
   "pr list"*"--state all"*) cat "$H/prs.json" ;;
   "pr view 5 "*headRefName*) echo "$(cat "$H/head") MERGEABLE main OPEN story/s1" ;;
+  "pr view 5 "*"--json headRefOid "*) cat "$H/head-now" 2>/dev/null || cat "$H/head" ;;
   "api --paginate repos/"*"/pulls?"*) echo "5 $(cat "$H/head") story/s1 $(($(date +%s) - 10))" ;;
   "api repos/"*"/pulls/5 "*) echo MERGEABLE ;;
   "api repos/"*"/commits/"*" --jq .commit.committer.date") sha=$(echo "$*" | sed 's|.*/commits/\([^ /]*\).*|\1|'); cat "$H/commit-$sha" 2>/dev/null || true ;;
@@ -95,7 +96,7 @@ P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
 # (one commit, 2 hours old) on [model] (sonnet), its builder open in pane w:1, and escalate_ladder = <ladder>.
 fresh() {
-  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}"/commit-* "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid" "${ROOT}/after" "${ROOT}/projects/p/sess-1.jsonl"; : > "${ROOT}/run.log"
+  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}"/commit-* "${ROOT}/head-now" "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid" "${ROOT}/after" "${ROOT}/projects/p/sess-1.jsonl"; : > "${ROOT}/run.log"
   "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
   "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
   mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/state"
@@ -267,6 +268,23 @@ for ladder in sonnet,opus,fable ""; do
     waits w:2 "${RA}" "${RB}"; first="$(stepped)"; waits w:2 "${RC}"
     check "a head committed before the build, first seen red by the review pane's wait-pr after it, is not this build's; the two after it are" \
       "ok (stalled: haiku -> sonnet)|ok (stalled: haiku -> sonnet),ok (ci-red-2: sonnet -> opus)|1" "${first}|$(stepped)|$(grep -c " ${RA} " "${P}/.swarm/red-heads.tsv")"
+    # wait-pr reads the head once and may wait half an hour: a red on a head the builder has since
+    # replaced (head-now: the PR's head when the scan reads it again) is not scanned from the review
+    # pane, as the PR's head may be green by then; the same head, still the PR's, is.
+    fresh "${ladder}" idle; review_pane
+    waits w:2 "${RA}"; echo "${RC}" > "${ROOT}/head-now"; waits w:2 "${RB}"
+    first="$(stepped)|$(grep -c " ${RB} " "${P}/.swarm/red-heads.tsv")"; rm -f "${ROOT}/head-now"; waits w:2 "${RB}"
+    check "a red head the PR has moved past by the time wait-pr ends is not scanned from the review pane; the same head, still the PR's, is" \
+      "|0|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
+    # The review agent has none of the story's env: names, so a step-up from its pane would be refused
+    # before the close and the head noted refused, which would stop the conductor's watch, which has
+    # the names, from stepping up on it: a story with env: is left to the watch.
+    fresh "${ladder}" idle; review_pane
+    printf '%s\n' --- "status: ready" "kind: code" "env: [OWG_ENV_NAME]" --- "" "# s1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/s1.md"
+    waits w:2 "${RA}" "${RB}"; first="$(stepped)|$(red_heads)"
+    export OWG_ENV_NAME=x; heads "${RA}" "${RB}"; unset OWG_ENV_NAME
+    check "with an env: name the review pane lacks, its wait-pr steps nothing up and notes no refused head, so a watch with the name steps up on the same heads" \
+      "|no|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
     # A step-up refused after ladder_step's check (here the story is no longer ready) is said, is not
     # logged (a refusal is no sign of life), and is not tried again on the same head.
     fresh "${ladder}" idle; sed -i.bak 's/^status: ready$/status: review/' "${P}/docs/stories/s1.md"

@@ -1218,7 +1218,7 @@ wait_pr() {
          # then step-up --resume, as for any step-up killed partway. Set first, so exit 1 stands whatever
          # the scan does.
          left=$((limit - (SECONDS - start)))
-         (( left <= 0 )) || SWARM_PROJECT="${PROJECT_DIR}" within "${left}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _review-red-scan "${repo}" "${head}" "${branch}" || true
+         (( left <= 0 )) || SWARM_PROJECT="${PROJECT_DIR}" within "${left}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _review-red-scan "${repo}" "${head}" "${branch}" "${n}" || true
          return 1 ;;
       2) missed=0
          if [[ "; ${why}; " == *"; no check runs; "* ]]; then
@@ -1923,13 +1923,17 @@ ci_red_scan() {
   printf '%s %s %s refused\n' "$3" "$2" "${now}" >> "${RED_HEADS}"; return 1
 }
 
-# review_red_scan <owner/repo> <head> <head branch> — wait-pr's, on a red <head> (as _review-red-scan,
+# review_red_scan <owner/repo> <head> <head branch> <pr> — wait-pr's, on a red <head> (as _review-red-scan,
 # a swarm.sh of its own that wait-pr runs under its deadline's time left): with escalate_ladder
 # set, when the PR's head branch is story/<slug>, the pane running this is review-<slug>'s by the
 # record merge and tell go by (review_pane) and the PR is in the story's own repo, run
 # ci_red_scan for <slug>, as a conductor's watch --epic or --backlog does. The ladder's red heads are
 # then counted with no watch running; a builder's or the lead's wait-pr counts nothing. A story whose
-# repo cannot be read counts nothing either, and wait-pr says so on stderr. A watch
+# repo cannot be read counts nothing either, and wait-pr says so on stderr. Nor does a head the PR has
+# moved past since wait-pr read it (read again here: the PR's head may be green now), nor a story with
+# env: names, which the review agent lacks (start_agent gives them to builders): a step-up from here
+# would be refused before the close and the head noted refused, which would stop a watch with the
+# names from stepping up on it, so such a story is left to the watch. A watch
 # scanning too is safe: RED_HEADS counts distinct heads, and ladder_step holds the story's lock.
 review_red_scan() {
   local slug="${3#story/}" f home
@@ -1938,6 +1942,12 @@ review_red_scan() {
   # One answer to "is this pane review-<slug>'s", merge's and tell's: its tab record, its agents.tsv
   # role and herdr's list (review_pane); a builder's pane or the lead's never counts.
   [[ "$(review_pane "$(herdr agent list 2>/dev/null)")" == "${slug}" ]] || return 1
+  # wait-pr read the head once, at its start, and may have waited half an hour: a newer head the
+  # builder pushed since is the PR's now, and a red on the old one is not this scan's.
+  [[ "$(gh pr view "$4" --repo "$1" --json headRefOid -q .headRefOid 2>/dev/null)" == "$2" ]] || return 1
+  # The story's env: names are not set in a review pane, so step_up would refuse before the close
+  # (story_env) and the head would be noted refused for the watch too: left to the watch.
+  story_env "${f}" >/dev/null || return 1
   # GitHub's owner/name, read from the story's repo, against the URL's, whose case may differ.
   home="$(repo_slug "$(fm "${f}" repo)" 2>/dev/null)" \
     || { echo "swarm: wait-pr: ${slug}'s repo cannot be read (${home}), so this red head is not counted toward the ladder" >&2; return 1; }

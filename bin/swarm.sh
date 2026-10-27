@@ -524,7 +524,7 @@ dispatch() {
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     # _review-red-scan: wait-pr's, on a red head, under its deadline (review_red_scan); not logged
-    _review-red-scan) review_red_scan "${1:?repo}" "${2:?head}" "${3:-}" ;;
+    _review-red-scan) review_red_scan "${1:?repo}" "${2:?head}" "${3:-}" "${4:-}" ;;
     restart) require_herdr; [[ $# -eq 1 ]] || die "restart: takes one slug (swarm.sh restart <slug>)"; restart_build "$1" ;;
     unblock) if [[ "${1:-}" == --startable ]]; then
                [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"

@@ -2620,7 +2620,10 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   the story's own repo. The review agent's own waits then count the red heads even when no watch is
   running. A `wait-pr` from the builder's pane or the lead's counts nothing and writes nothing to
   `.swarm/red-heads.tsv`, and so does one on a story whose repo cannot be read, which `wait-pr` says
-  on stderr. A watch and a review agent can both check one PR: each head counts once, however many
+  on stderr. Nor does a red on a head the builder had already replaced by the time `wait-pr` ended
+  (the PR's head may be green by then), nor one on a story with `env:` names, which the review agent
+  does not have, so a step-up from its pane would be refused and would stop the watch's on that head
+  too: such a story is left to the watch. A watch and a review agent can both check one PR: each head counts once, however many
   of them judged it, and only one step-up of a story runs at a time. The scan runs in a swarm.sh of
   its own under `wait-pr`'s deadline, so a read that hangs still ends there; a step-up it started is
   killed with it at that deadline, and the lead's exit is then `step-up --resume`, as for any
