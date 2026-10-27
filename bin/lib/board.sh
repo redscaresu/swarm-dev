@@ -449,11 +449,20 @@ idle_lines() {
 
 # next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
 # report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
-# each runs within the report's deadline. off: the programs again (unset -f).
+# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
+# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
+# later list cut at the deadline cannot hide a conductor an earlier one showed. off: the programs again
+# (unset -f).
 # shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
 next_reads() {
   if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
-  herdr() { report_read "herdr ${*:1:2}" herdr "$@"; }
+  herdr() {
+    if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
+      [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
+      printf '%s\n' "${LEAD_AGENTS}"; return 0
+    fi
+    report_read "herdr ${*:1:2}" herdr "$@"
+  }
   gh() { report_read "gh ${*:1:2}" gh "$@"; }
   claude() { report_read "claude $1" claude "$@"; }
 }
@@ -474,10 +483,11 @@ next_queued() (
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 # The reads that can block, next_step's and conductors_queued's, run with next_reads on, within
 # REPORT_SECONDS of the start. It is off before next_seen's write and conduct_ready, which runs whole
-# and to its end however long it takes: its reads decide each start (a cut agent list would start a
-# second conductor), and a start cut partway would leave a pane with no conductor.
+# and to its end however long it takes, as does the read that decides whether it runs: its reads decide
+# each start (a cut agent list would start a second conductor), and a start cut partway would leave a
+# pane with no conductor.
 next_report() {
-  local tmp step idle queued rest started skipped start=""
+  local tmp step idle queued rest started skipped
   # Local, so the list read below never reaches a later lead_agents.
   # shellcheck disable=SC2034 # no_agent_lines reads them
   local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
@@ -485,25 +495,26 @@ next_report() {
   report_start || die "next: cannot set the report's deadline (perl)"
   # shellcheck disable=SC2064 # the paths are fixed now
   trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}'" EXIT
-  next_reads on
-  # lead_agents runs herdr through within, past next_reads' herdr: no_agent_lines is handed this list
-  # instead, as dash hands it one.
+  # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
+  # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
+  # deadline).
   # shellcheck disable=SC2034 # no_agent_lines reads them
-  if [[ "${HERDR_ENV:-}" == 1 ]] && LEAD_AGENTS="$(herdr agent list </dev/null 2>/dev/null)"; then LEAD_AGENTS_OK=1; else LEAD_AGENTS=""; fi
+  if [[ "${HERDR_ENV:-}" == 1 ]] && LEAD_AGENTS="$(report_read "herdr agent list" herdr agent list </dev/null 2>/dev/null)"; then
+    LEAD_AGENTS_OK=1
+  else LEAD_AGENTS=""; fi
+  next_reads on
   next_step > "${tmp}"
   step="$(< "${tmp}")"
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
   queued="$(next_queued)"
-  # A no-agent step while a conductor works comes where that conductor's wait came, so it starts
-  # conductors too.
-  if [[ "${step}" == "wait "* || ( "${step}" == "no-agent "* && "${HERDR_ENV:-}" == 1 && -n "$(running_conductors)" ) ]]; then start=1; fi
   next_reads off
   skipped="$(report_skipped)"
   next_seen || true
   # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
-  # keeps what it printed: its started: lines name conductors that run.
-  if [[ -n "${start}" ]]; then
+  # keeps what it printed: its started: lines name conductors that run. A no-agent step while a
+  # conductor works comes where that conductor's wait came, so it starts them too.
+  if [[ "${step}" == "wait "* || ( "${step}" == "no-agent "* && "${HERDR_ENV:-}" == 1 && -n "$(running_conductors)" ) ]]; then
     started="$(conduct_ready)" || started+="${started:+$'\n'}warning: starting conductors for ready work failed (exit $?)"
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi

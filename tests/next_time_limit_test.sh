@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # next_time_limit_test.sh — `swarm.sh next` keeps to the report deadline (SWARM_REPORT_SECONDS). With
-# herdr's agent list, gh's PR list or ci_gate's gh read (a head's check runs) sleeping past it, next
-# exits within the deadline plus SLACK, prints its step first and names the cut read in a `skipped
-# (over <n> s):` line; the read started and never finished, so it was cut, not waited for. A
-# conductor start slower than the deadline is never cut: it runs to its end, prints its started: line
-# and logs its conduct line ok. With every read fast, next prints its queued: line and no skipped: line.
-# gh, herdr and claude are stubs on PATH. A slow read logs `<read> start` to slow.log, sleeps, then
-# logs `<read> done`, so whether it was cut does not hang on how busy the machine is. The deadline is
-# long enough for the fast reads before a slow one on a loaded machine (CI's shards run four files at
-# a time); the time check counts swarm.sh's start and its work after the reads in SLACK.
+# herdr's agent list, ci_gate's gh read (a head's check runs) or gh's read of the repo's origin sleeping
+# past it, next prints its step first, names the cut read in a `skipped (over <n> s):` line, and exits
+# soon after the deadline, before the read could have finished: it was cut or skipped, not waited for. A
+# conductor start is never cut: after a slow read used the deadline up, a no-agent step while a
+# conductor works still starts the backlog's conductor, and that start, slower than the deadline, runs
+# to its end and logs its conduct line ok. With every read fast, next reads herdr's agent list once,
+# prints its queued: line and no skipped: line; a SWARM_REPORT_SECONDS that is not a whole number
+# above 0 falls back to 30, so the first read still runs.
+# gh, herdr and claude are stubs on PATH. A slow read logs `<read> start` to slow.log and when it began
+# to <read>.at, sleeps SLEEP, then logs `<read> done`; one the deadline passed before next reached never
+# starts. herdr notes when its first agent list began in first.at: next's first read, made just after the
+# deadline is set. Timing
+# holds on a loaded machine: the fast runs get a deadline far past what their reads take; each slow run's
+# deadline covers the work before its slow read (the herdr list is the first read, the later ones get
+# more); the time check counts from first.at, so from the deadline less its seconds, not from before
+# next starts, and allows SLACK for next's work after the cut.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -22,37 +29,41 @@ export HOME="${ROOT}/home" TMPDIR="${ROOT}/tmp" CLAUDE_CONFIG_DIR="${ROOT}/claud
 mkdir -p "${HOME}" "${TMPDIR}" "${ROOT}/bin"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${ROOT}/bin/claude"
 fails=0
-LIMIT=10   # the deadline next runs under here, in seconds
-SLACK=8    # what next may take past it: its start before the deadline begins, and its work after
-SLEEP=60   # a slow read: far past LIMIT + SLACK
+FAR=600          # the fast runs' deadline: far past what their reads take on any machine
+LIST_LIMIT=5     # the slow herdr list's deadline: it is next's first read
+CHECKS_LIMIT=40  # the slow check-runs read's: it comes after next_step's work and three gh calls
+ORIGIN_LIMIT=20  # the slow origin read's: it comes after a no-agent step's work
+SLACK=60         # what next may take after the deadline, on a loaded machine
+SLEEP=120        # a slow read: past each deadline plus SLACK, so a read next waits for fails the time check
 
 # gh: the project's repo, one open PR on story/s1 (head SHA), and that head's check runs, all passed
-# 40 minutes ago. A file slow-<read> in ROOT makes that read slow: slow-pr the PR list, slow-runs the
-# check runs ci_gate reads.
+# 40 and a half minutes before gh is asked, so ci_gate, reading its clock just after, counts 40. A file slow-<read> in ROOT makes that read slow: slow-origin the repo view,
+# slow-runs the check runs ci_gate reads.
 SHA=1111111111111111111111111111111111111111
-DONE="$(python3 -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 40 * 60)))')"
-printf '#!/bin/sh\nF="%s"\nSLEEP=%s\nSHA=%s\nDONE=%s\n' "${ROOT}" "${SLEEP}" "${SHA}" "${DONE}" > "${ROOT}/bin/gh"
+printf '#!/bin/sh\nF="%s"\nSLEEP=%s\nSHA=%s\n' "${ROOT}" "${SLEEP}" "${SHA}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'EOF'
 # slow <read> — when ROOT has slow-<read>: log its start, sleep, log its end.
-slow() { [ -f "$F/slow-$1" ] || return 0; echo "$1 start" >> "$F/slow.log"; sleep "$SLEEP"; echo "$1 done" >> "$F/slow.log"; }
+slow() { [ -f "$F/slow-$1" ] || return 0; echo "$1 start" >> "$F/slow.log"; date +%s > "$F/$1.at"; sleep "$SLEEP"; echo "$1 done" >> "$F/slow.log"; }
 path=""; for a in "$@"; do case "$a" in repos/*) path="${a%%\?*}" ;; esac; done
 case "$1 $2" in
-  "repo view") echo o/svc; exit 0 ;;
-  "pr list") slow pr; echo "3 $SHA story/s1"; exit 0 ;;
+  "repo view") slow origin; echo o/svc; exit 0 ;;
+  "pr list") echo "3 $SHA story/s1"; exit 0 ;;
 esac
 case "${path}" in
   repos/o/svc/commits/*/check-runs) slow runs
+    DONE="$(perl -MPOSIX=strftime -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - 40 * 60 - 30))')"
     echo '{"total_count":1,"check_runs":[{"status":"completed","conclusion":"success","completed_at":"'"$DONE"'"}]}' ;;
   repos/o/svc/commits/*/status) echo '{"statuses":[],"total_count":0}' ;;
   *) echo "stub gh: unexpected $*" >&2; exit 1 ;;
 esac
 EOF
 # herdr: the agents in ROOT/agents ("<name> <pane>" lines), and a conductor start as next_test's stub
-# makes one. slow-list makes the agent list slow; slow-start makes `agent start` take LIMIT + 3 s.
-printf '#!/bin/sh\nF="%s"\nSLEEP=%s\nSTART=%s\n' "${ROOT}" "${SLEEP}" "$((LIMIT + 3))" > "${ROOT}/bin/herdr"
+# makes one. slow-list makes the agent list slow; slow-start makes `agent start` take ORIGIN_LIMIT + 3 s.
+printf '#!/bin/sh\nF="%s"\nSLEEP=%s\nSTART=%s\n' "${ROOT}" "${SLEEP}" "$((ORIGIN_LIMIT + 3))" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
-slow() { [ -f "$F/slow-$1" ] || return 0; echo "$1 start" >> "$F/slow.log"; sleep "$2"; echo "$1 done" >> "$F/slow.log"; }
+slow() { [ -f "$F/slow-$1" ] || return 0; echo "$1 start" >> "$F/slow.log"; date +%s > "$F/$1.at"; sleep "$2"; echo "$1 done" >> "$F/slow.log"; }
 echo "$*" >> "$F/herdr.log"
+[ "$*" != "agent list" ] || [ -f "$F/first.at" ] || date +%s > "$F/first.at"
 case "$1 $2" in
   "--version ") echo "herdr 0.9.5" ;;
   "workspace list") echo '{"result":{"workspaces":[]}}' ;;
@@ -70,8 +81,7 @@ EOF
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/claude"
 
 # The epic e1 has the code story s1 in review, whose PR #3 is green, and a working conductor,
-# conduct-e1, in a pane this project recorded. No story is ready, so next starts no conductor until
-# the last case adds one.
+# conduct-e1, in a pane this project recorded. No story is ready, so next starts no conductor.
 p="${ROOT}/proj"
 mkdir -p "${p}/.claude/swarm" "${p}/docs/epics" "${p}/docs/stories" "${p}/.swarm/briefs" "${p}/.swarm/state"
 : > "${p}/.claude/swarm/config"
@@ -84,66 +94,89 @@ echo "conduct-e1 w:7" > "${ROOT}/agents"
 check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
-now() { perl -MTime::HiRes=time -e 'printf "%.3f\n", time'; }
-# took <name> <cond> — the last next's run time (TOOK) meets the awk condition on t.
-took() {
-  if awk -v t="${TOOK}" "BEGIN { exit !($2) }"; then echo "ok   $1 (${TOOK} s)"
-  else echo "FAIL $1: $2 with t=${TOOK} s"; fails=$((fails + 1)); fi
-}
-# nextrun [slow-file] — run next with the stubs and the deadline, with ROOT/<slow-file> there if named;
-# OUT holds its stdout, TOOK its seconds, SLOW what slow.log holds (each line once, sorted).
+# nextrun <deadline> [slow-file] — run next with the stubs under SWARM_REPORT_SECONDS=<deadline>, with
+# ROOT/<slow-file> there if named; OUT holds its stdout, ERR its stderr, ENDED when it exited (epoch
+# seconds), and LISTS how many agent lists herdr answered.
 nextrun() {
-  local t0
-  : > "${ROOT}/slow.log"; [[ -z "${1:-}" ]] || touch "${ROOT}/$1"
-  t0="$(now)"
-  OUT="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 SWARM_REPORT_SECONDS="${LIMIT}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2> "${ROOT}/next.err")" || true
-  TOOK="$(awk -v a="${t0}" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }')"
-  [[ -z "${1:-}" ]] || rm "${ROOT}/$1"
-  SLOW="$(sort -u "${ROOT}/slow.log" | paste -sd, -)"
+  : > "${ROOT}/slow.log"; : > "${ROOT}/herdr.log"; rm -f "${ROOT}"/*.at; [[ -z "${2:-}" ]] || touch "${ROOT}/$2"
+  OUT="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 SWARM_REPORT_SECONDS="$1" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2> "${ROOT}/next.err")" || true
+  ENDED="$(date +%s)"; ERR="$(cat "${ROOT}/next.err")"
+  [[ -z "${2:-}" ]] || rm "${ROOT}/$2"
+  LISTS="$(grep -cx 'agent list' "${ROOT}/herdr.log" || true)"
 }
 first() { printf '%s\n' "${OUT%%$'\n'*}"; }
 # skipped — next's skipped: line, or (none).
 skipped() { grep '^skipped ' <<< "${OUT}" || echo "(none)"; }
+# soon <name> <deadline> — next exited within <deadline> + SLACK seconds of its first read (first.at):
+# the report's deadline is no later than that read's start plus <deadline>.
+soon() {
+  local at
+  if ! at="$(cat "${ROOT}/first.at" 2>/dev/null)"; then
+    echo "FAIL $1: herdr's agent list, next's first read, never ran"; fails=$((fails + 1))
+  elif (( ENDED - at < $2 + SLACK )); then echo "ok   $1 ($((ENDED - at)) s after its first read)"
+  else echo "FAIL $1: next exited $((ENDED - at)) s after its first read, not within $2 + ${SLACK} s"; fails=$((fails + 1)); fi
+}
+# waited <read> — `waited for` when next exited SLEEP seconds or more after the slow <read> began (it
+# waited the read out), else `not waited for`, as when the read never began.
+waited() {
+  local at
+  at="$(cat "${ROOT}/$1.at" 2>/dev/null)" && (( ENDED - at >= SLEEP )) && echo "waited for" || echo "not waited for"
+}
 
-# --- Every read fast: the queued: line, and no skipped: line.
-nextrun
+# --- Every read fast: one agent list, the queued: line, and no skipped: line.
+nextrun "${FAR}"
 check "fast reads: next's step comes first" "wait conduct-e1" "$(first)"
+check "fast reads: next reads herdr's agent list once" "1" "${LISTS}"
 check "fast reads: next prints its queued: line" \
   "queued: o/svc #3 story/s1 green 40m with no review on 1111111 (conduct-e1)" "$(grep '^queued: ' <<< "${OUT}" || echo "(none)")"
 check "fast reads: next names no skipped read" "(none)" "$(skipped)"
 
-# --- herdr's agent list is slow: next's step is worked out without it (no conductor seen, so the
-# gate with s1's PR), and the list is named.
-nextrun slow-list
-took "a slow herdr list: next exits within the deadline plus ${SLACK} s" "t < ${LIMIT} + ${SLACK}"
-check "a slow herdr list is cut, not waited for" "list start" "${SLOW}"
-check "a slow herdr list: next's step comes first" "gate" "$(first)"
-check "a slow herdr list: next names it skipped" "skipped (over ${LIMIT} s): herdr agent list" "$(skipped)"
+# --- A SWARM_REPORT_SECONDS that is not a whole number above 0 is 30: herdr's list, the first read, runs.
+for v in 0 abc; do
+  nextrun "${v}"
+  check "SWARM_REPORT_SECONDS=${v} falls back to 30 s: next reads herdr's agent list" "1" "${LISTS}"
+done
 
-# --- gh's PR list is slow: next's step stands, and the list is named.
-nextrun slow-pr
-took "a slow gh pr list: next exits within the deadline plus ${SLACK} s" "t < ${LIMIT} + ${SLACK}"
-check "a slow gh pr list is cut, not waited for" "pr start" "${SLOW}"
-check "a slow gh pr list: next's step comes first" "wait conduct-e1" "$(first)"
-check "a slow gh pr list: next names it skipped" "skipped (over ${LIMIT} s): gh pr list" "$(skipped)"
+# --- herdr's agent list is slow: next's step is worked out without it (no conductor seen, so it
+# conducts the ready story r1's epic), and the list is named.
+printf -- '---\nstatus: ready\nkind: code\nepic: e1\n---\n' > "${p}/docs/stories/r1.md"
+nextrun "${LIST_LIMIT}" slow-list
+rm "${p}/docs/stories/r1.md"
+soon "a slow herdr list: next exits soon after the deadline" "${LIST_LIMIT}"
+check "a slow herdr list is cut, not waited for" "not waited for" "$(waited list)"
+check "a slow herdr list: next's step comes first" "conduct e1" "$(first)"
+check "a slow herdr list: next names it skipped" "skipped (over ${LIST_LIMIT} s): herdr agent list" "$(skipped)"
 
 # --- ci_gate's read of the head's check runs is slow: gh run by python, named as ci_gate's.
-nextrun slow-runs
-took "a slow ci_gate read: next exits within the deadline plus ${SLACK} s" "t < ${LIMIT} + ${SLACK}"
-check "a slow ci_gate read is cut, not waited for" "runs start" "${SLOW}"
+nextrun "${CHECKS_LIMIT}" slow-runs
+soon "a slow ci_gate read: next exits soon after the deadline" "${CHECKS_LIMIT}"
+check "a slow ci_gate read is cut, not waited for" "not waited for" "$(waited runs)"
 check "a slow ci_gate read: next's step comes first" "wait conduct-e1" "$(first)"
-check "a slow ci_gate read: next names it skipped" "skipped (over ${LIMIT} s): ci_gate age" "$(skipped)"
+check "a slow ci_gate read: next names it skipped" "skipped (over ${CHECKS_LIMIT} s): ci_gate age" "$(skipped)"
 
-# --- A conductor start slower than the deadline: the ready one-off b1 has no conductor, so next
-# starts the backlog's, whose agent start takes LIMIT + 3 s. It runs to its end, is printed and is
-# logged ok.
+# --- A start after the deadline is used up, slower than the deadline. n1, in e1, started and its
+# builder closed with no agent since: a no-agent step while conduct-e1 works. The repo's origin read
+# (conductors_queued's) is slow and uses the deadline up; then the ready one-off b1, which no conductor
+# holds, gets the backlog's, whose agent start takes ORIGIN_LIMIT + 3 s. It runs to its end, is printed
+# and is logged ok, and the cut origin read is said to be cut, not missing.
+printf -- '---\nstatus: ready\nkind: code\nepic: e1\n---\n' > "${p}/docs/stories/n1.md"
 printf -- '---\nstatus: ready\nkind: code\n---\n' > "${p}/docs/stories/b1.md"
-nextrun slow-start
-check "a slow conductor start runs to its end" "start done,start start" "${SLOW}"
-check "a slow conductor start: next's step comes first" "wait conduct-e1" "$(first)"
-check "a slow conductor start is printed" "started" \
+mkdir -p "${p}-wt/n1"; echo "w:9 n1" >> "${p}/.swarm/state/tab"
+printf '2026-10-26T10:00:00Z\tstory\tn1\t-\tok\n2026-10-26T10:30:00Z\tclose\tn1\t-\tok\n' >> "${p}/.swarm/events.tsv"
+printf '2026-10-26\tcode\tn1\tclaude\tsonnet\thigh\ts-n1\n' >> "${p}/.swarm/agents.tsv"
+touch "${ROOT}/slow-start"
+nextrun "${ORIGIN_LIMIT}" slow-origin
+rm "${ROOT}/slow-start"
+check "a no-agent step after a slow origin read: next's step comes first" "no-agent n1" "$(first)"
+check "a slow origin read is cut, not waited for" "not waited for" "$(waited origin)"
+check "the start after it runs to its end" "start done,start start" "$(grep '^start ' "${ROOT}/slow.log" | sort -u | paste -sd, -)"
+check "a slow origin read: next names it skipped" "skipped (over ${ORIGIN_LIMIT} s): gh repo view" "$(skipped)"
+check "a slow origin read: next says the read was cut, not that the origin is missing" \
+  "the read of ${p}'s GitHub origin was cut at the report's deadline, so its PRs waiting for a review are unknown" \
+  "$(grep -o "the read of .*GitHub origin.*" <<< "${ERR}" || grep 'GitHub origin' <<< "${ERR}" || echo "(none)")"
+check "a start after the deadline is used up is printed" "started" \
   "$(grep -q '^started: conduct-backlog-.* (swarm.sh conduct --backlog)$' <<< "${OUT}" && echo started || echo "not started: ${OUT}")"
-check "a slow conductor start logs its conduct line ok" "--backlog ok" \
+check "a start after the deadline is used up logs its conduct line ok" "--backlog ok" \
   "$(awk -F'\t' '$2 == "conduct" { print $3 " " $5 }' "${p}/.swarm/events.tsv" 2>/dev/null)"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failure(s)"; exit 1; fi

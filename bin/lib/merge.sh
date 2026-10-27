@@ -24,7 +24,11 @@ HERDR_LIST_WAIT=30      # how long a release's read of herdr's agent list may ta
 UPGRADE_START_WAIT=120  # how long the new version's swarm.sh upgrade may take to start its worker (SWARM_UPGRADE_START_WAIT)
 RELEASE_READ_FLOOR=15   # the least time a release read gets, even past RELEASE_WAIT's deadline
 PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first parent may take (release_parent)
-REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"   # how long a report (status, next, dash) may spend on reads that can block (report_read)
+# REPORT_SECONDS: how long a report (status, next, dash) may spend on reads that can block (report_read):
+# SWARM_REPORT_SECONDS when it is a whole number above 0, else 30. A 0, a negative or a word would put
+# the deadline at the start, so every read would be skipped unrun.
+REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
+[[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -1650,12 +1654,14 @@ watch_scope() {
 }
 
 # repo_slug <name> — the repo's owner/name, from its own origin: repos on one board need not share an
-# owner. Prints why and fails when there is no such repo or it has no GitHub origin.
+# owner. Prints why and fails when there is no such repo, it has no GitHub origin, or the read was cut
+# at a report's deadline (report_read's 142, under next's next_reads), which says nothing of the origin.
 repo_slug() {
-  local src
+  local src rc=0
   src="$(repo_dir "$1")" || { echo "watch $1: ${src}"; return 1; }
-  gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner \
-    || { echo "no GitHub origin for ${src}"; return 1; }
+  gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner || rc=$?
+  (( rc != 142 )) || { echo "the read of ${src}'s GitHub origin was cut at the report's deadline"; return 1; }
+  (( rc == 0 )) || { echo "no GitHub origin for ${src}"; return 1; }
 }
 
 # watch_repos die|warn — set WATCH_REPOS to WATCH_NAMES resolved (repo_slug), each owner/name once: a

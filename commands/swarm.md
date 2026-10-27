@@ -61,8 +61,8 @@ Repeat until a step below says stop:
    merged), then `swarm.sh next`.
    Its first line is the step, the rest is why. Tell the user both in one line. A `skipped (over
    30 s): <reads>` line names the reads next cut to stay within its time limit, and its step was
-   worked out without them. If `herdr agent list` is one of them, the step may have missed a working
-   conductor, so run `swarm.sh next` again before acting on it. Lines that
+   worked out without them, so it may have missed a working conductor, or one stopped on an expired
+   login or an API error. Run `swarm.sh next` again before acting on a step with that line. Lines that
    start `idle:` come after the step and name capacity no step uses; do the step, and handle each
    one too:
    - `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`: the
