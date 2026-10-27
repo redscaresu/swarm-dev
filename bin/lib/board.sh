@@ -415,9 +415,19 @@ one_off_started() {
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
 }
 
-# idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
-# per blocked story whose depends_on story shares no file in touches with it (touches_rows.py
-# --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# idle_now — an idle: line per blocked story whose depends_on story shares no file in touches with it
+# (touches_rows.py --idle, given SWARM_AGENT_KINDS and SWARM_QUEUE_MINUTES), from the board and its
+# state alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each
+# call it on every read, so a line goes once its dependency's merge is reconciled. Fails when the
+# check does.
+idle_now() {
+  # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" \
+    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+}
+
+# idle_lines <step> — what next prints after its step <step>: capacity no step uses. idle_now's
+# lines. And when the step leaves the builders idle (gate, done, escalated, release: no planning
 # step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
 # finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
 # quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.
@@ -426,8 +436,7 @@ IDLE_CANDIDATES=5
 idle_lines() {
   local f found
   # Advisory: a failed check warns, and never fails next.
-  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories" \
-    || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
+  idle_now || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
   case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
   while IFS= read -r f; do
     if buildable_story "${f}"; then return 0; fi

@@ -81,6 +81,8 @@ your share of the work before you approve it. A step found during the build that
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
 step says how the lead learns it is done. A status or flag raised for you says who clears it and how.
+`wait --lead` carries idle capacity too: `next`'s `idle:` lines wake the lead while a conductor
+works, and `status` and `dash` show them.
 
 ## The board
 

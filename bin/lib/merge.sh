@@ -1810,7 +1810,7 @@ stacked_lines() {
 # step-up labelled; a no-review: line, for a PR whose review agent never started or went, as wait
 # --lead prints it; none when there are none), then the agents that need a look or are working, the stacked
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
-# waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
+# waiting on them, and what `next` would do, with next's idle: lines for blocked stories (idle_now); idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
@@ -1865,6 +1865,7 @@ status_report() {
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
   echo; echo "Next"
   next_lines | sed 's/^/  /'
+  idle_now | sed 's/^/  /' || true
 }
 
 # stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no build yet can

@@ -233,7 +233,10 @@ Repeat until a step below says stop:
      findings in the box, is kept: the exit is `swarm.sh tell <slug> nudge <file>`, the file asking
      it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
-     then `swarm.sh conduct <epic>`. Then start
+     then `swarm.sh conduct <epic>`. An
+     `idle: <story> waits on <dep> but shares no touches with it` line is capacity no step uses,
+     the line `next` prints after its step: handle it as step 1's `idle:` list says. It comes once,
+     and again only after it has gone from the queue. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
