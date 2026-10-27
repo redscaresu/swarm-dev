@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # tell_blocked_test.sh — `tell <slug> nudge <file>` to an agent listed as waiting or blocked reads its
 # pane once (pane_clear) and sends the tell only when the pane shows an empty input box with nothing
-# over it; otherwise it refuses as before, says what the read found, and sends no keys. When herdr then
-# refuses the tell as blocked (agent_blocked, before any key), tell reads the pane again (tell_unblock)
-# and, with it clear, reports a Claude agent idle to herdr (herdr_idle: its session and resume
-# command), says so, logs a stale-blocked incident and sends once more. Three ways an agent is listed so:
+# over it; otherwise it refuses as before, says what the pane shows or that it could not be read, and
+# sends no keys. When herdr then refuses the tell as blocked (agent_blocked, before any key), tell
+# reads the pane again (tell_unblock) and, with it clear, reports a Claude agent idle to herdr
+# (herdr_idle: its session and resume command), says so, logs a stale-blocked incident and sends once
+# more. Three ways an agent is listed so:
 #   waiting: Claude Code lists its session waiting (on a dialog), and herdr reads it blocked, as the
 #     plugin's hook reported. A clear pane is reported idle, then told, also when the box is drawn as
 #     Claude Code draws it (the prompt, then a no-break space). A permission prompt, text typed in the
@@ -115,11 +116,13 @@ check "waiting, an empty input box: tell says it reported it idle, and logs a st
 setup waiting blocked blocked nbsp
 out="$(tell)"
 check "waiting, an empty input box with a no-break space after its prompt: told" "yes 1" "$(said "told b1" "${out}") $(prompts)"
-for fx in prompt.txt:"a permission prompt" typed-box.txt:"text typed in the input box" \
-    mid-command-manual.txt:"a command running over an empty box" manual.txt:"manual mode under an empty box"; do
+# <fixture>:<case>:<what tell says the pane shows>
+for fx in "prompt.txt:a permission prompt:a prompt or dialog" "typed-box.txt:text typed in the input box:text in the input box" \
+    "mid-command-manual.txt:a command running over an empty box:a running command" "manual.txt:manual mode under an empty box:manual mode"; do
+  shows="${fx##*:}" fx="${fx%:*}"
   setup waiting blocked blocked "${fx%%:*}"
   out="$(tell)"
-  check "waiting, ${fx#*:}: refused" yes "$(said "b1 is waiting on dialog open, and its pane does not show an empty input box; answer it (herdr agent read b1), then tell it" "${out}")"
+  check "waiting, ${fx#*:}: refused, naming what the pane shows" yes "$(said "b1 is waiting on dialog open, and its pane shows ${shows}; answer it (herdr agent read b1), then tell it" "${out}")"
   check "waiting, ${fx#*:}: no keys and no report" "0 0" "$(keys) $(reports)"
 done
 setup waiting blocked blocked none
@@ -139,7 +142,7 @@ check "herdr:blocked, an empty input box, herdr no longer blocked when it sends:
 check "herdr:blocked, an empty input box, herdr no longer blocked when it sends: one prompt, no report" "1 0" "$(prompts) $(reports)"
 setup idle blocked idle prompt.txt
 out="$(tell)"
-check "herdr:blocked, a permission prompt: refused" yes "$(said "b1 is waiting on a prompt, and its pane does not show an empty input box; answer it (herdr agent read b1), then tell it" "${out}")"
+check "herdr:blocked, a permission prompt: refused" yes "$(said "b1 is waiting on a prompt, and its pane shows a prompt or dialog; answer it (herdr agent read b1), then tell it" "${out}")"
 check "herdr:blocked, a permission prompt: no keys" 0 "$(keys)"
 agent sb; printf '2026-10-27\tcode\tb1\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"   # a codex agent took the name
 setup idle blocked blocked empty-box.txt
@@ -154,7 +157,7 @@ check "session idle, herdr still blocked, an empty input box: reported idle, the
 setup idle blocked blocked prompt.txt
 out="$(tell)"
 check "session idle, herdr blocked, a permission prompt: herdr refuses it (agent_blocked), saying the pane is not clear" yes \
-  "$(said "${REFUSED}; its pane does not show an empty input box" "${out}")"
+  "$(said "${REFUSED}; its pane shows a prompt or dialog" "${out}")"
 check "session idle, herdr blocked, a permission prompt: no keys and no report" "0 0" "$(keys) $(reports)"
 setup idle blocked blocked empty-box.txt; touch "${ROOT}/raise"
 out="$(tell)"

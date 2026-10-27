@@ -987,7 +987,7 @@ a step-up and toward a top-rung hold.
 agent as waiting, and herdr as blocked. For such an agent, `tell` reads the pane once. It sends the
 tell only when the pane shows an empty input box with no command running and no prompt, dialog,
 manual mode, login or API error over it. Otherwise it refuses as before, so its keys never answer a
-permission prompt. The refusal says whether the pane showed something else or could not be read.
+permission prompt. The refusal names what the pane shows instead, or says it could not be read.
 herdr refuses any prompt to an agent it reads as blocked, before sending a key, and clearing a dialog
 fires no hook that would change that. So when herdr refuses a tell that way, `tell` reads the pane
 again. If it is clear, `tell` reports a Claude agent idle to herdr with its session and resume

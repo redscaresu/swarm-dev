@@ -1627,7 +1627,7 @@ note_lock() {
 # review agent from review-<slug>'s pane, else the conductor. Either counts the same: rounds, step-ups
 # and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n from who
+  local kind="$2" f="$3" name msg state since inbox rc pane line n from who found
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1654,8 +1654,8 @@ tell_agent() {
   case "${state}" in
     idle|herdr:idle|herdr:done) ;;
     busy|herdr:working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
-    waiting*|herdr:blocked) rc=0; pane_clear "${pane}" || rc=$?
-      [[ ${rc} -eq 0 ]] || die "${name} is waiting on $(waiting_for "${state}"), and $(pane_unclear "${rc}"); answer it (herdr agent read ${name}), then tell it" ;;
+    waiting*|herdr:blocked) rc=0; found="$(pane_clear "${pane}")" || rc=$?
+      [[ ${rc} -eq 0 ]] || die "${name} is waiting on $(waiting_for "${state}"), and ${found}; answer it (herdr agent read ${name}), then tell it" ;;
     gone) die "${name}: its Claude session has ended (gone); there is no one to tell" ;;
     unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
@@ -1709,27 +1709,33 @@ tell_from() {
 # so a herdr that never answers fails the tell rather than hanging it.
 TELL_HERDR_WAIT=10
 
-# pane_clear <target> — succeed when one read of <target>'s pane shows Claude Code's input box empty
-# with nothing over it: panes.py's stuck_kind names nothing, no command runs (esc to interrupt) after
-# the last reply, and the box (input_box) holds its prompt and nothing typed. A suggestion shown in the
-# box reads as typed, and a pane that is not Claude Code's (codex) has no such box, so neither is
-# clear: a tell is only refused. Fails with 1 when the pane is not clear, 2 when herdr gave no text
-# within TELL_HERDR_WAIT seconds.
+# pane_clear <target> — succeed, printing nothing, when one read of <target>'s pane shows Claude Code's
+# input box empty with nothing over it: panes.py's stuck_kind names nothing, no command runs (esc to
+# interrupt) after the last reply, and the box (input_box) holds its prompt and nothing typed. A
+# suggestion shown in the box reads as typed, and a pane that is not Claude Code's (codex) has no such
+# box, so neither is clear: a tell is only refused. Otherwise fail, printing what the read found as a
+# clause for the refusal: with 1, `its pane shows` a prompt or dialog, a login stop, an API error stop
+# or manual mode (stuck_kind's prompt, login, api-error, manual), a running command, no input box, or
+# text in the input box; with 2, `its pane could not be read` (no text from herdr within TELL_HERDR_WAIT seconds).
 pane_clear() {
   local text
-  text="$(within "${TELL_HERDR_WAIT}" herdr agent read "$1" --source recent-unwrapped </dev/null 2>/dev/null)" && [[ -n "${text}" ]] || return 2
+  text="$(within "${TELL_HERDR_WAIT}" herdr agent read "$1" --source recent-unwrapped </dev/null 2>/dev/null)" && [[ -n "${text}" ]] \
+    || { echo "its pane could not be read"; return 2; }
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, re, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import BOX_PROMPT, MID_COMMAND, input_box, stuck_kind
 t = sys.stdin.read(); lines = t.splitlines(); box = input_box(t) or [""]
 reply = max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1])
 m = BOX_PROMPT.match(box[0])
-sys.exit(0 if m and not "".join([box[0][m.end():]] + box[1:]).strip() and stuck_kind(t) is None
-         and not any(MID_COMMAND in l for l in lines[reply + 1:]) else 1)' <<< "${text}"
+k = stuck_kind(t)
+why = ({"prompt": "a prompt or dialog", "login": "a login stop", "api-error": "an API error stop", "manual": "manual mode"}.get(k, k) if k
+       else "a running command" if any(MID_COMMAND in l for l in lines[reply + 1:])
+       else "no input box" if not m
+       else "text in the input box" if "".join([box[0][m.end():]] + box[1:]).strip() else "")
+if why:
+    print("its pane shows " + why)
+sys.exit(1 if why else 0)' <<< "${text}"
 }
-
-# pane_unclear <rc> — what a pane_clear that failed with <rc> found, for a refusal to say.
-pane_unclear() { if [[ "$1" -eq 2 ]]; then echo "its pane could not be read"; else echo "its pane does not show an empty input box"; fi; }
 
 # tell_unblock <name> <pane> — after herdr refused a prompt to <name> because it reads it blocked
 # (HERDR_BLOCKED_UNSENT): a dialog the user cleared fires no hook, so the blocked its hook reported
@@ -1739,10 +1745,10 @@ pane_unclear() { if [[ "$1" -eq 2 ]]; then echo "its pane could not be read"; el
 # An agent herdr answers for (codex, or a Claude agent with no session on record) gets no report:
 # its blocked is herdr's own read of its screen.
 tell_unblock() {
-  local seen rc=0
+  local seen found rc=0
   seen="$(python3 -I -c 'import time; print(time.time_ns())')" || { echo "the clock could not be read, so no idle report was sent"; return; }
-  pane_clear "$2" || rc=$?
-  [[ ${rc} -eq 0 ]] || { pane_unclear "${rc}"; return; }
+  found="$(pane_clear "$2")" || rc=$?
+  [[ ${rc} -eq 0 ]] || { echo "${found}"; return; }
   herdr_idle "$1" "$2" "${seen}" || rc=$?
   case "${rc}" in
     0) echo reported ;;
