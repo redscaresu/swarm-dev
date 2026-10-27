@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # escalate_triggers_test.sh — with escalate_ladder set, swarm.sh runs step-up itself on each of the four
 # triggers: a close of a builder with no PR (no-pr), a wait --stall that finds it stalled (stalled), a
-# third findings tell (findings-3), and checks finishing red on a second head of its PR (ci-red-2).
-# With the ladder empty none does. conduct_brief names the step-ups only with the ladder on. herdr, gh
-# and claude (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
+# third findings tell (findings-3), and checks finishing red on a second head of its PR (ci-red-2),
+# seen by a conductor's watch or by wait-pr run from the story's review pane. With the ladder empty
+# none does. conduct_brief names the step-ups only with the ladder on. herdr, gh and claude
+# (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -58,15 +59,19 @@ else:
                     END { print "]}}" }' "$H/agents" ;;
 esac
 EOF
-# gh: story/s1 has no PR for close (prs.json), and one open PR whose head is the sha in head for
-# watch. A head's one check run failed unless runs-<sha> says otherwise, and it has a commit status
-# only when status-<sha> names its state.
+# gh: story/s1 has no PR for close (prs.json), and one open PR, #5 on story/s1, whose head is the sha
+# in head for watch and wait-pr. A head's one check run failed unless runs-<sha> says otherwise, it
+# has a commit status only when status-<sha> names its state, and a commit date only when commit-<sha>
+# holds one (else the scan notes it at its own time).
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/gh"
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$*" in
   "pr list"*"--state all"*) cat "$H/prs.json" ;;
+  "pr view 5 "*headRefName*) echo "$(cat "$H/head") MERGEABLE main OPEN - story/s1" ;;
+  "pr view 5 "*"--json headRefOid "*) cat "$H/head-now" 2>/dev/null || cat "$H/head" ;;
   "api --paginate repos/"*"/pulls?"*) echo "5 $(cat "$H/head") story/s1 $(($(date +%s) - 10))" ;;
   "api repos/"*"/pulls/5 "*) echo MERGEABLE ;;
+  "api repos/"*"/commits/"*" --jq .commit.committer.date") sha=$(echo "$*" | sed 's|.*/commits/\([^ /]*\).*|\1|'); cat "$H/commit-$sha" 2>/dev/null || true ;;
   "repo view"*other*) echo o/other ;;
   "repo view"*) echo o/proj ;;
   "api --paginate"*check-runs*) sha=$(echo "$*" | sed 's|.*/commits/\([^/]*\)/.*|\1|'); c=$(cat "$H/runs-$sha" 2>/dev/null || echo failure)
@@ -91,7 +96,7 @@ P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
 # (one commit, 2 hours old) on [model] (sonnet), its builder open in pane w:1, and escalate_ladder = <ladder>.
 fresh() {
-  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid" "${ROOT}/after" "${ROOT}/projects/p/sess-1.jsonl"; : > "${ROOT}/run.log"
+  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}"/commit-* "${ROOT}/head-now" "${ROOT}/startfail" "${ROOT}/quick" "${ROOT}/sid" "${ROOT}/after" "${ROOT}/projects/p/sess-1.jsonl"; : > "${ROOT}/run.log"
   "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
   "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
   mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/state"
@@ -126,6 +131,25 @@ review_open() {
 heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
 attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
 escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+# wait-pr's PR (#5, s1's) and its heads, full SHAs as wait-pr reads them.
+URL=https://github.com/o/proj/pull/5
+RA="$(printf '%040d' 0 | tr 0 a)"; RB="$(printf '%040d' 0 | tr 0 b)"; RC="$(printf '%040d' 0 | tr 0 c)"
+# review_pane — review-s1 open in pane w:2 of s1's tab, beside its builder in w:1, with role review in
+# agents.tsv: the record review_pane (merge's, tell's and now wait-pr's) goes by.
+review_pane() {
+  echo "review-s1 w:2" >> "${ROOT}/agents"; echo "w:2 review-s1" >> "${P}/.swarm/state/s1"
+  printf '2026-10-01\treview\treview-s1\tclaude\topus\thigh\tsess-r\n' >> "${P}/.swarm/agents.tsv"
+}
+# waits <pane> <head>... — wait-pr on s1's PR from <pane> (HERDR_PANE_ID), with no watch running, once
+# per head; WAIT_RCS: each one's exit status, space-separated.
+waits() {
+  local pane="$1" h rc; shift; WAIT_RCS=""
+  for h in "$@"; do
+    echo "${h}" > "${ROOT}/head"; rc=0; HERDR_PANE_ID="${pane}" run wait-pr "${URL}" >/dev/null || rc=$?
+    WAIT_RCS+="${WAIT_RCS:+ }${rc}"
+  done
+}
+red_heads() { [[ -e "${P}/.swarm/red-heads.tsv" ]] && echo yes || echo no; }
 # failed_lines — the outcomes of s1's step-up:failed events.tsv lines, comma-separated.
 failed_lines() { awk -F'\t' '$2 == "step-up:failed" && $3 == "s1" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 
@@ -205,6 +229,18 @@ for ladder in sonnet,opus,fable ""; do
   check "ladder '${ladder}': one red head steps nothing, a second steps up only with the ladder on" "|${want}" "${first}|$(stepped)"
   check "ladder '${ladder}': watch keeps red heads only with the ladder on" "$([[ -n "${ladder}" ]] && echo yes || echo no)" \
     "$([[ -s "${P}/.swarm/red-heads.tsv" ]] && echo yes || echo no)"
+  # With no watch running, the review agent's own wait-pr from review-s1's pane counts the red heads.
+  fresh "${ladder}" idle; review_pane
+  waits w:2 "${RA}"; first="$(stepped)"; rcs="${WAIT_RCS}"; waits w:2 "${RB}"
+  check "ladder '${ladder}': wait-pr from review-s1's pane steps up on the second red head only with the ladder on, exiting 1 (red) each time" \
+    "|${want}|1 1|$([[ -n "${ladder}" ]] && echo yes || echo no)" "${first}|$(stepped)|${rcs} ${WAIT_RCS}|$(red_heads)"
+  # The same red heads seen by wait-pr from the builder's pane, or the lead's (a pane this project did
+  # not open), step nothing up and leave no red-heads.tsv.
+  for pane in w:1 w:0; do
+    fresh "${ladder}" idle; review_pane; waits "${pane}" "${RA}" "${RB}"
+    check "ladder '${ladder}': wait-pr from pane ${pane}, not review-s1's, on two red heads steps nothing up and writes no red-heads.tsv" \
+      "1 1||no" "${WAIT_RCS}|$(stepped)|$(red_heads)"
+  done
 
   if [[ -n "${ladder}" ]]; then
     # A red head of an earlier build (before its newest story line) counts nothing for this one.
@@ -225,6 +261,32 @@ for ladder in sonnet,opus,fable ""; do
     printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
     heads aaaa1111 bbbb2222
     check "a head pending at the step-up, red after it, is not the new build's red head" "ok (stalled: haiku -> sonnet)" "$(stepped)"
+    # With no watch polling, a head is first seen only when the review pane's wait-pr ends red on it, so
+    # its commit time, not that sighting, says which build it is: one the rung before committed, first
+    # seen after the step-up, is never this build's, and is noted (seen) but never judged.
+    fresh "${ladder}" idle; review_pane
+    printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
+    echo 2026-10-01T10:30:00Z > "${ROOT}/commit-${RA}"
+    waits w:2 "${RA}" "${RB}"; first="$(stepped)"; waits w:2 "${RC}"
+    check "a head committed before the build, first seen red by the review pane's wait-pr after it, is not this build's; the two after it are" \
+      "ok (stalled: haiku -> sonnet)|ok (stalled: haiku -> sonnet),ok (ci-red-2: sonnet -> opus)|1" "${first}|$(stepped)|$(grep -c " ${RA} " "${P}/.swarm/red-heads.tsv")"
+    # wait-pr reads the head once and may wait half an hour: a red on a head the builder has since
+    # replaced (head-now: the PR's head when the scan reads it again) is not scanned from the review
+    # pane, as the PR's head may be green by then; the same head, still the PR's, is.
+    fresh "${ladder}" idle; review_pane
+    waits w:2 "${RA}"; echo "${RC}" > "${ROOT}/head-now"; waits w:2 "${RB}"
+    first="$(stepped)|$(grep -c " ${RB} " "${P}/.swarm/red-heads.tsv" || true)"; rm -f "${ROOT}/head-now"; waits w:2 "${RB}"
+    check "a red head the PR has moved past by the time wait-pr ends is not scanned from the review pane; the same head, still the PR's, is" \
+      "|0|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
+    # The review agent has none of the story's env: names, so a step-up from its pane would be refused
+    # before the close and the head noted refused, which would stop the conductor's watch, which has
+    # the names, from stepping up on it: a story with env: is left to the watch.
+    fresh "${ladder}" idle; review_pane
+    printf '%s\n' --- "status: ready" "kind: code" "env: [OWG_ENV_NAME]" --- "" "# s1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/s1.md"
+    waits w:2 "${RA}" "${RB}"; first="$(stepped)|$(red_heads)"
+    export OWG_ENV_NAME=x; heads "${RA}" "${RB}"; unset OWG_ENV_NAME
+    check "with an env: name the review pane lacks, its wait-pr steps nothing up and notes no refused head, so a watch with the name steps up on the same heads" \
+      "|no|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
     # A step-up refused after ladder_step's check (here the story is no longer ready) is said, is not
     # logged (a refusal is no sign of life), and is not tried again on the same head.
     fresh "${ladder}" idle; sed -i.bak 's/^status: ready$/status: review/' "${P}/docs/stories/s1.md"
@@ -278,6 +340,10 @@ for ladder in sonnet,opus,fable ""; do
     fresh "${ladder}" idle
     for h in aaaa1111 bbbb2222; do echo "${h}" > "${ROOT}/head"; run watch >/dev/null || true; done
     check "a bare watch steps up nothing" "" "$(stepped)"
+    # A green head from the review pane, after one red head, adds no line and steps nothing up.
+    fresh "${ladder}" idle; review_pane; echo success > "${ROOT}/runs-${RB}"; waits w:2 "${RA}" "${RB}"
+    check "a green head from review-s1's pane writes no red line and steps nothing up" "1 0||1|0" \
+      "${WAIT_RCS}|$(stepped)|$(grep -c ' red$' "${P}/.swarm/red-heads.tsv")|$(grep -c " ${RB} " "${P}/.swarm/red-heads.tsv" || true)"
     # A head whose checks finished with a commit status still pending is judged once the status is in.
     fresh "${ladder}" idle; echo success > "${ROOT}/runs-aaaa1111"; echo pending > "${ROOT}/status-aaaa1111"
     heads aaaa1111; first="$(stepped)"; echo failure > "${ROOT}/status-aaaa1111"; heads bbbb2222

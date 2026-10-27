@@ -124,9 +124,9 @@ flat() { tr '\n' ' ' < "${REPO}/$1" | tr -s ' '; }
 step() { awk -v n="$2" '$0 ~ "^"n"\\. " { on = 1 } on && $0 ~ "^[0-9]+\\. " && $0 !~ "^"n"\\. " { exit } on' "${REPO}/$1" | tr '\n' ' ' | tr -s ' '; }
 has() { grep -qF -- "$2" <<< "$1"; }
 check "hld.md step 5 runs one codex-review pass, then opens agree-<name>" \
-  has "$(step commands/hld.md 5)" 'run one `swarm.sh codex-review` pass there and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing'
+  has "$(step commands/hld.md 5)" 'run one `swarm.sh codex-review` pass in the worktree and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits a fix, pushes and opens the PR'
 check "epic.md step 5 runs one codex-review pass, then opens agree-<name>" \
-  has "$(step commands/epic.md 5)" 'run one `swarm.sh codex-review` pass there and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing'
+  has "$(step commands/epic.md 5)" 'run one `swarm.sh codex-review` pass in the worktree and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits a fix, pushes and opens the PR'
 # epic.md step 1 names the agreement PR after the resolved file, never the title: board_pr_kind
 # matches the name against the epic files, and an epic's title often differs from its file name.
 named() {

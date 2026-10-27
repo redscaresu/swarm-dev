@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # idle_queue_test.sh — next's idle: line reaches wait --lead, status and dash (idle_now). A blocked story
-# whose dependency, still to build, shares no file in touches with it gives the same idle: line in
+# whose dependency, still to build, shares no touches part with it gives the same idle: line in
 # `swarm.sh wait --lead 0` (once: the next poll is quiet), in `swarm.sh status` and in dash. Once the
 # dependency's PR merges and reconcile and unblock run, the line is gone from all three, and the story
 # that merge readied, with no build, shows in status's next and in dash's idle gauge.
@@ -79,9 +79,9 @@ out="$(run wait --lead 0)"
 # The warning's own text names idle: lines, so the count is of lines that start as one.
 check "a failed check prints no idle: line and wakes no one" test "$(grep -c '^idle: ' <<< "${out}" || true)" = 0
 check "a failed check keeps the idle: line in the lead's seen queue" grep -qxF "${LINE}" "${P}/.swarm/lead/seen"
-check "a failed check's poll prints one warning in wait --lead, with no traceback" test "$(count "warning: the idle-dependency check failed" "${out}")" = 1 -a "$(count "Traceback" "${out}")" = 0
+check "a failed check's poll prints one warning in wait --lead, with no traceback" test "$(count "warning: the idle check failed" "${out}")" = 1 -a "$(count "Traceback" "${out}")" = 0
 out="$(run status)"
-check "status warns on a failed check, with no traceback" test "$(count "warning: the idle-dependency check failed" "${out}")" = 1 -a "$(count "Traceback" "${out}")" = 0
+check "status warns on a failed check, with no traceback" test "$(count "warning: the idle check failed" "${out}")" = 1 -a "$(count "Traceback" "${out}")" = 0
 rm "${ROOT}/bin/python3"
 out="$(run wait --lead 0)"
 check "the good poll after a failed check does not wake the lead again" test "$(count "${LINE}" "${out}")" = 0
