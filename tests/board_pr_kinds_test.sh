@@ -7,7 +7,8 @@
 # get none. Each name runs through board-pr start and open (or finish, or drop) on a local bare
 # origin, with no codex call. merge --board, which never reads the kind, is checked once: refused on
 # a red head, merged on a green one, with no codex call. Then the command files: the plan and
-# agreement steps keep their codex-review pass; /swarm's board-edit paragraph and
+# agreement steps keep their codex-review pass, run before board-pr open, and /epic names its
+# agreement PR after the file; /swarm's board-edit paragraph and
 # board_pr_merge_rule, under both merge modes, give edits, holds and finishes none.
 # The gh stub is merge_fixture.sh's, behind a wrapper that answers pr create; codex is a stub that
 # logs every call to codex.log.
@@ -122,10 +123,17 @@ flat() { tr '\n' ' ' < "${REPO}/$1" | tr -s ' '; }
 # step <file> <n> — step <n>. of a numbered command file, flattened, up to the next step.
 step() { awk -v n="$2" '$0 ~ "^"n"\\. " { on = 1 } on && $0 ~ "^[0-9]+\\. " && $0 !~ "^"n"\\. " { exit } on' "${REPO}/$1" | tr '\n' ' ' | tr -s ' '; }
 has() { grep -qF -- "$2" <<< "$1"; }
-check "hld.md step 5 opens agree-<name> with one codex-review pass" \
-  has "$(step commands/hld.md 5)" 'run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing, then run one `swarm.sh codex-review` pass in the worktree before it merges'
-check "epic.md step 5 opens agree-<name> with one codex-review pass" \
-  has "$(step commands/epic.md 5)" 'run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing, then run one `swarm.sh codex-review` pass in the worktree before it merges'
+check "hld.md step 5 runs one codex-review pass, then opens agree-<name>" \
+  has "$(step commands/hld.md 5)" 'run one `swarm.sh codex-review` pass there and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing'
+check "epic.md step 5 runs one codex-review pass, then opens agree-<name>" \
+  has "$(step commands/epic.md 5)" 'run one `swarm.sh codex-review` pass there and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing'
+# epic.md step 1 names the agreement PR after the resolved file, never the title: board_pr_kind
+# matches the name against the epic files, and an epic's title often differs from its file name.
+named() {
+  has "$(step commands/epic.md 1)" 'by argument, by slug or by title, `<slug>` is its name without `.md`, whatever the title says now' \
+    && has "$(step commands/epic.md 1)" '`<name>` below is `<slug>` made clean the same way'
+}
+check "epic.md step 1 names agree-<name> after the file, never the title" named
 # agreed <file> <what> — step 1 stops while <what>'s agreement PR is open and writes a closed one's
 # draft back before board-pr done, and step 5 clears it once it merged or closed.
 agreed() {

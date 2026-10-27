@@ -57,7 +57,7 @@ story-scope edit:
 - plan: `plan-<hld>` (`/plan-hld`) and `scope-<epic>` (`/plan-epic`). It needs one
   `swarm.sh codex-review` pass before it merges, which those commands run before `open`.
 - agreement: `agree-<hld or epic>`, the HLD or epic the user agreed (`/hld` and `/epic` step 5).
-  One `swarm.sh codex-review` pass before it merges.
+  One `swarm.sh codex-review` pass before it merges, which those commands run before `open` too.
 - finish: `finish-<slug>` and `drop-<slug>`, which `swarm.sh finish` and `swarm.sh drop` open. No
   codex-review.
 - hold: `hold-<slug>`. No codex-review. (`swarm.sh hold` itself only logs.)

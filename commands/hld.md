@@ -104,10 +104,14 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    new draft), move the agreed file from the main checkout into the worktree with `mv`, so no copy
    is left to block the pull once the PR merges. When the base has it, copy it over the worktree's,
    then put the main checkout's copy back as the base has it (`git show
-   origin/<base>:docs/hld/<file>.md > docs/hld/<file>.md`), since edits left there block the pull too. Set the status in the worktree,
-   run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief's
-   trailers and signing, then run one `swarm.sh codex-review` pass in the worktree before it merges
-   (`board-pr open` again pushes its fixes). A board outside the project's repo
+   origin/<base>:docs/hld/<file>.md > docs/hld/<file>.md`), since edits left there block the pull too. Set the status in the worktree
+   and stage it (`git add -A` there: a moved draft is untracked until then, and codex's
+   `git diff <merge-base>` shows only tracked files), run one `swarm.sh codex-review` pass there
+   and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`,
+   which commits with the brief's trailers and signing and opens the PR (`board-pr open` again
+   pushes a later fix). The pass comes before `open` because step 1 takes an open `agree-<name>`
+   PR as reviewed: a session that stops between the two would otherwise leave a PR that merges
+   unreviewed. A board outside the project's repo
    has no board PR: the HLD is agreed where it is, with no commit. Close the co-author and the reviewer (if it started) by name
    (`swarm.sh close hld-<slug>`, then `swarm.sh close hld-review-<slug>`; never `swarm.sh close
    hld`, which would close every tab whose label starts `hld-`), and tell the user the HLD is agreed

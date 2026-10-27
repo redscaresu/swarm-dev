@@ -47,7 +47,7 @@ has agreed-only-on-file 'Once `D/agreed` exists, and only then, on the user.s ag
 has resume-clears 'remove any old `D/ready` and `D/agreed`, on a resume too'
 has agreed-watched-from-step-3 'watch for `D/agreed` from step 3 on'
 has close-by-name '`swarm\.sh close hld-<slug>`, then `swarm\.sh close hld-review-<slug>`'
-has codex-pass 'board PR named `agree-<name>`\. .*run one `swarm\.sh codex-review` pass in the worktree before it merges'
+has codex-pass 'board PR named `agree-<name>`\. .*run one `swarm\.sh codex-review` pass there and fix what it finds, then run `swarm\.sh board-pr open agree-<name>'
 hasnt no-tab-close 'swarm\.sh close hld`' "${flat//'never `swarm.sh close hld`'/}"
 hasnt no-active 'status: active'
 
