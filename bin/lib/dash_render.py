@@ -142,9 +142,12 @@ signs = Signs(E["DASH_EVENTS"], dict(l.split("\t", 1) for l in E.get("DASH_COMMI
 ESCALATE_MODEL = next((p[2] for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "escalate" and len(p) > 3), "")
 ESCALATION = ("escalate", "dialog", "escalated", "reset", "reset:held", "drop")
 escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
+conduct_names = set()   # conduct-<epic> for each epic an ok conduct event started a conductor for
 for f in read_tsv(E["DASH_EVENTS"], 5):
     if f[1] == "reset" and f[4].startswith("ok"):
         was_reset.add(f[2])
+    if f[1] == "conduct" and f[4] == "ok" and f[2] != "--backlog":
+        conduct_names.add("conduct-" + f[2])
     t = epoch(f[0]) if f[1] == "escalate" else None
     if t is None or not escalate_build(f[4], ESCALATE_MODEL):
         continue
@@ -166,9 +169,26 @@ try:   # labels only: without them the tree names each workspace by its id
 except (ValueError, KeyError, TypeError):
     ws_label = {}
 
+# Each name herdr may list -> the one name the records hold under it: the board's stories, and the
+# conductors of the board's epics, of the conducted epics and of the briefs (.swarm/briefs/conduct-
+# <epic>.md); None when two share the cut.
+conductors = cut_records(set(story_by_slug) | {"conduct-" + e for e in epics} | conduct_names
+                         | {os.path.basename(f)[:-3] for f in glob.glob(os.path.join(glob.escape(E["DASH_PROJECT"]), ".swarm", "briefs", "conduct-*.md"))
+                            if "." not in os.path.basename(f)[:-3]})
+
+def conductor_epic(base):
+    # A conductor's epic. A name not AGENT_NAME_MAX long is not cut: its epic on the board, else the
+    # name without conduct-. A name that long may be herdr's cut: the epic of the one name the records
+    # hold under it when that is a conductor's, not a story's. None, or two, give no epic: the cut
+    # name without conduct- may be a third epic's.
+    if len(base) != AGENT_NAME_MAX:
+        return epic_of.get(base) or (base[len("conduct-"):] if base.startswith("conduct-") else "")
+    hit = conductors.get(base) or ""
+    return hit[len("conduct-"):] if hit.startswith("conduct-") and hit not in story_by_slug else ""
+
 def reported(base):
     # A conductor that wrote its report, which the lead has not collected yet.
-    epic = epic_of.get(base) or ("backlog" if base == E.get("DASH_BACKLOG") else base[len("conduct-"):] if base.startswith("conduct-") else "")
+    epic = "backlog" if base == E.get("DASH_BACKLOG") else conductor_epic(base)
     return bool(epic) and os.path.exists(os.path.join(E["DASH_PROJECT"], ".swarm", f"conduct-{epic}.report.md"))
 
 def epic_for(base, slug, tab):
@@ -238,7 +258,8 @@ if agents is not None:
             rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
             s = session_state(E["DASH_AGENTS_LOG"], name, E["DASH_SESSIONS"])
             st, look = shown_state(a, name, s, E["DASH_AGENTS_LOG"], E["DASH_PROJECTS"])
-            if st in ("idle", "done") and reported(base):
+            # A conductor's, as agents.tsv says when it has the agent: a later agent may hold a retired one's name.
+            if st in ("idle", "done") and (rec is None or rec[1] == "conduct") and reported(base):
                 st = "reported"
             slug = story_for(name, story_rows)
             why = s[1] if s and st == "WAITING" else ""

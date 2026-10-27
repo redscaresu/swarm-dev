@@ -33,7 +33,7 @@
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
 import collections, datetime, functools, glob, os, subprocess, sys, time
 import touches_rows
-from report import agent_name
+from report import AGENT_NAME_MAX, cut_records
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
 project_dir = os.path.dirname(os.path.dirname(findings))
 board, repos_dir = os.environ.get("SWARM_BOARD", ""), os.environ.get("SWARM_REPOS_DIR", "")
@@ -95,25 +95,49 @@ def secs(t):
 lo = secs(since) or float("-inf")   # since's 0000-00-00 placeholder does not parse
 hi = min((datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).timestamp(), time.time())
 
-conducts, closes, reports = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
-readies, reviews = collections.defaultdict(list), collections.defaultdict(list)   # by agent_name: ready events; review or kept
-stops = collections.defaultdict(list)   # by agent_name: what ends a build, its closes and reconcile's finishes
+evs = []   # (time, fields) of each ok line
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     e = line.rstrip("\n").split("\t")
     t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
-    if t is None:
-        continue
+    if t is not None:
+        evs.append((t, e))
+
+# Stories are keyed by their full slug, conductors by their exact name. A close may name an agent by
+# herdr's name and a build with no session log has only agents.tsv's, both cut by agent_name to
+# AGENT_NAME_MAX characters: full gives such a name the one full name the records hold under it
+# (cut_records over the board's stories, the briefs, each ok conduct event's conduct-<epic>, each slug
+# a session log names, and the agents' names in events.tsv and outcomes' rows that are not that long,
+# so are no cut), and keeps it as it is when none or two do. Two slugs that share their first 32
+# characters stay two keys.
+def names_agent(e):
+    # An events.tsv line whose target is an agent's name (a story's or a conductor's), not an epic's.
+    return e[1] in ("unblock", "reset", "reset:held", "reconcile", "review", "kept") or e[1].split(":")[0] == "close"
+
+recorded = [os.path.basename(f)[:-3] for d in ([os.path.join(board, "stories")] if board else []) + [os.path.join(os.path.dirname(events), "briefs")]
+            for f in glob.glob(os.path.join(glob.escape(d), "*.md")) if "." not in os.path.basename(f)[:-3]]
+recorded += [n for n in {e[2] for _, e in evs if names_agent(e)} | {r["slug"] for r in rows} if len(n) != AGENT_NAME_MAX]
+# Whole, whatever their length: a conductor's name from its epic, and a build's slug from its session log.
+recorded += ["conduct-" + e[2] for _, e in evs if e[1] == "conduct" and e[2] != "--backlog"] + [r["slug"] for r in rows if r["started"]]
+cuts = cut_records(recorded)
+
+def full(n):
+    return cuts.get(n) or n
+
+conducts, closes, reports = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
+readies, reviews = collections.defaultdict(list), collections.defaultdict(list)   # by full name: ready events; review or kept
+stops = collections.defaultdict(list)   # by full name: what ends a build, its closes and reconcile's finishes
+for t, e in evs:
     if e[1] in ("unblock", "reset", "reset:held") or e[1] == "reconcile" and e[4] == "ok (reopened)":
-        readies[agent_name(e[2])].append(t)
+        readies[full(e[2])].append(t)
     elif e[1] in ("review", "kept"):
-        reviews[agent_name(e[2])].append(t)
+        reviews[full(e[2])].append(t)
     elif e[1] == "conduct":
         conducts[e[2]].append(t)
     elif e[1].split(":")[0] == "close":
-        closes[agent_name(e[2])].append(t)
-        stops[agent_name(e[2])].append(t)
+        closes[full(e[2])].append(t)
+        stops[full(e[2])].append(t)
     elif e[1] == "reconcile" and e[4].startswith("ok (finished"):
-        stops[agent_name(e[2])].append(t)
+        stops[full(e[2])].append(t)
     elif e[1] == "report" and secs(e[4][len("ok ("):-1]) is not None:
         reports["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
 
@@ -122,18 +146,15 @@ def conductor_runs(key):
     if key == "--backlog":
         ends = [t for n in {"conduct-backlog", os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")} - {""} for t in closes[n]]
     else:
-        ends = list(closes[agent_name("conduct-" + key)])
+        ends = list(closes["conduct-" + key])
     report = os.path.join(os.path.dirname(events), f"conduct-{'backlog' if key == '--backlog' else key}.report.md")
     ends += reports[key] + ([os.path.getmtime(report)] if os.path.exists(report) else [])
     starts = sorted(conducts[key])
     return [(s, min([t for t in ends + starts[i + 1:] if t > s] + [hi])) for i, s in enumerate(starts)]
 
-# Stories are keyed by agent_name: a build with no session log has only agents.tsv's name, which
-# agent_name cuts to 32 characters. full_of gives a key's slug, for its story file.
-by_slug, full_of = collections.defaultdict(list), {}   # key -> its rows, in agents.tsv order
+by_slug = collections.defaultdict(list)   # key -> its rows, in agents.tsv order
 for r in rows:
-    by_slug[agent_name(r["slug"])].append(r)
-    full_of[agent_name(r["slug"])] = max(full_of.get(agent_name(r["slug"]), ""), r["slug"], key=len)   # a logged build's full slug
+    by_slug[full(r["slug"])].append(r)
 builds, starts, own = [], collections.defaultdict(list), collections.defaultdict(list)   # (key, start, end); key -> starts; key -> (start, end, its day when it has no start)
 for slug, rs in by_slug.items():
     known, taken, ended = [secs(r["started"]) for r in rs], set(), None
@@ -144,7 +165,7 @@ for slug, rs in by_slug.items():
         if known[i] is None:
             b0 = max(b0, ended) if ended is not None else b0
         upto = next((k for k in known[i + 1:] if k is not None), hi)
-        c = min(((t, k) for k, t in enumerate(stops[agent_name(slug)]) if b0 <= t <= upto and k not in taken), default=None)
+        c = min(((t, k) for k, t in enumerate(stops[slug]) if b0 <= t <= upto and k not in taken), default=None)
         taken.add(c[1] if c else None)   # by index, as throughput's: two in one second are two
         # A close at the next build's start is this build's: the retry started once it closed.
         ended = c[0] if c else upto
@@ -155,13 +176,11 @@ for slug, rs in by_slug.items():
 def sent_back(slug, c):
     # Whether the close at c sent the story back to ready: not the first close after a review or kept
     # event since the build before it started, which leaves the story in review.
-    n = agent_name(slug)
-    since = [r for r in reviews[n] if max((b for b in starts[slug] if b <= c), default=float("-inf")) <= r <= c]
-    return not since or any(max(since) <= x < c for x in closes[n])   # kept and its close share a second
+    since = [r for r in reviews[slug] if max((b for b in starts[slug] if b <= c), default=float("-inf")) <= r <= c]
+    return not since or any(max(since) <= x < c for x in closes[slug])   # kept and its close share a second
 
 def readied(slug):
-    n = agent_name(slug)
-    return readies[n] + [c for c in closes[n] if sent_back(slug, c)]
+    return readies[slug] + [c for c in closes[slug] if sent_back(slug, c)]
 
 def built_since(slug, t, day):
     # A build that ran past t and started at t or later (one with no start: on day or later). A build
@@ -170,7 +189,7 @@ def built_since(slug, t, day):
 
 epic_of, earliest = {}, {}   # key -> its epic; key -> (its first build's start, that build's ready_wait_min)
 for r in rows:
-    t, k = secs(r["started"]), agent_name(r["slug"])
+    t, k = secs(r["started"]), full(r["slug"])
     epic_of[k] = r["epic"] or epic_of.get(k, "")   # a log-less build of a long slug: outcomes found no story, so no epic
     if t is not None and (k not in earliest or t < earliest[k][0]):
         earliest[k] = (t, r["ready_wait_min"])
@@ -191,13 +210,12 @@ for f in sorted(glob.glob(os.path.join(glob.escape(board), "stories", "*.md"))) 
     fm = {} if name == "README" else front(f)
     if not buildable(fm) or fm.get("held_by"):
         continue
-    slug = agent_name(name)
-    full_of[slug] = name
+    slug = name
     commit = board_log("-1", "-s", "--format=%ct", "-G^status:", "--", f"stories/{name}.md").strip()
     t = max(readied(slug) + ([float(commit)] if commit else []), default=None)
     # After a close that sent it back, only a build past it is since (a build with no start after it
     # starts no earlier); else one with no start on its day or later is too.
-    day = "~" if t is None or t in closes[agent_name(slug)] else datetime.date.fromtimestamp(t).isoformat()
+    day = "~" if t is None or t in closes[slug] else datetime.date.fromtimestamp(t).isoformat()
     if t is not None and not built_since(slug, t, day):
         epic_of[slug] = fm.get("epic", "") or epic_of.get(slug, "")   # the board's own word on its epic
         ready.append((slug, t, hi))
@@ -205,8 +223,8 @@ files, needs = {}, {}   # slug -> its touches' entries; slug -> its depends_on
 
 def known(s):
     if s not in files:
-        fm = story(full_of.get(s, s))
-        files[s], needs[s] = entries(fm, project_dir, repos_dir), {agent_name(d) for d in front_deps(fm) if d}
+        fm = story(s)
+        files[s], needs[s] = entries(fm, project_dir, repos_dir), {d for d in front_deps(fm) if d}
     return files[s]
 
 @functools.lru_cache(maxsize=None)
