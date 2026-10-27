@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -76,6 +76,10 @@ board() {
     # A blocked story whose dependency, still to build, shares no file in touches with it.
     idle) story s "kind: code" "status: blocked" "depends_on: [d]" "touches: [a.sh]"
           story d "kind: code" "status: ready" "touches: [b.sh]" ;;
+    # An agent blocked on a permission prompt in pane w:p1.
+    prompt) story s "kind: code" "status: ready"; echo "w:p1 s" > "${P}/.swarm/state/tab"
+            echo '{"name":"s","agent_status":"blocked","pane_id":"w:p1"}' > "${ROOT}/agents"
+            cp "${HOME_DIR}/tests/fixtures/panes/prompt.txt" "${ROOT}/pane.txt" ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }
@@ -100,6 +104,12 @@ while IFS= read -r kind; do
   fi
 done < <(tr '|' '\n' <<< "${KINDS}")
 
+# The plan-hld arm reads grants from origin's copy (the plan worktree), after the step that makes it.
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+planarm="$(tr '\n' ' ' < "${HOME_DIR}/commands/swarm.md" | tr -s ' ' | sed -n 's/.*\(- `plan-hld <hld>`: follow\)/\1/p' | cut -c1-1200)"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the plan-hld arm reads grants from origin's copy, after /plan-hld makes its worktree" grep -qE 'Read the grants from origin.s copy of the HLD, never the main checkout.s.* once `/plan-hld` has made its plan worktree `<wt>` .* run `SWARM_PROJECT=<wt> swarm\.sh grants <hld>`' <<< "${planarm}"
+
 # The gate handler: the `gate` arm of commands/swarm.md, its lines joined. next's gate line for a later
 # epic says to write agreed: <today> as it goes active, and the arm tells the lead the same, since the
 # epic guard refuses a later epic set active with no ticket (epic_unticketed).
@@ -107,12 +117,25 @@ gate="$(awk '/^   - `gate`: / { s = 1 } s && /^   - `done`: / { exit } s' "${HOM
 check "the gate handler is found in commands/swarm.md" test -n "${gate}"
 rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv"; mkdir -p "${P}/docs/epics"
 printf -- '---\nstatus: later\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+# Agreed and parked today: its agreed: date is at the base already, so it is no ticket.
+printf -- '---\nstatus: later\nagreed: %s\n---\n\n# p\n' "$(date +%F)" > "${P}/docs/epics/p.md"
 out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
 check "next's gate line for a later epic says to set it active with agreed: <today>" \
   grep -qxF '  later epic: e (set it active with agreed: <today> to start it)' <<< "${out}"
+check "next's gate line for a later epic agreed today says to drop its agreed: line in a board PR first" \
+  grep -qxF '  later epic: p (it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next)' <<< "${out}"
 # shellcheck disable=SC2016 # the backticks are the Markdown's own
 check "the gate handler tells the lead to write agreed: <today> as it sets a later epic active" \
   grep -qF 'a later epic: on the user'"'"'s go, set it `active` and write `agreed: <today>` (today'"'"'s date) in the same edit' <<< "${gate}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler says what to do for a later epic agreed and parked today" \
+  grep -qF 'If it already has `agreed: <today>` (agreed and parked today) on a board in the repo, that date is no ticket: drop the line in one board PR, then set it `active` with `agreed: <today>` in the next' <<< "${gate}"
+# A board outside a repo has no board PR and no epic guard: the same epic gets the plain line.
+X="${ROOT}/nogit"; mkdir -p "${X}/.claude/swarm" "${X}/docs/stories" "${X}/docs/epics"; : > "${X}/.claude/swarm/config"
+cp "${P}/docs/epics/p.md" "${X}/docs/epics/p.md"
+out="$(cd "${X}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
+check "next's gate line for a later epic agreed today, on a board outside a repo, names no board PR" \
+  grep -qxF '  later epic: p (set it active with agreed: <today> to start it)' <<< "${out}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

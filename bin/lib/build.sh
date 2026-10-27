@@ -293,7 +293,18 @@ mutation_rule() {
 # load_rule <slug> — a builder's cap on load it starts on purpose: 4 CPUs, gone when the check ends.
 load_rule() {
   local slug="$1"
-  printf '%s' "If you load the machine on purpose (stress loops, parallel test repeats, containers), use at most 4 CPUs in all, across everything you run at once (\`docker run --cpus 4\`, or that many loops). Cap your test runner's parallelism at 4 (its jobs or workers setting) too; it counts toward the same 4. Start each load process itself, with no wrapper that forks, record each \`\$!\`, and give it a marker in its command line (an argument \`${slug}-load\`), or wrap each in \`timeout <seconds>\`. Never start load with run_in_background, which outlives the step so its trap never fires, unless it is wrapped in \`timeout <seconds>\` no longer than the check and you kill it when the check ends. Remove leftovers from an earlier step first (\`docker rm -f \$(docker ps -aq --filter label=swarm=${slug})\`). Name and label every container (\`--name ${slug}-load-<n> --label swarm=${slug}\`), and remove them by that label in the trap, or use \`--rm\` and still remove them by name: killing the \`docker run\` client leaves the container running. Stop and remove what you started as soon as the check ends, with a trap that kills each recorded PID on EXIT, INT and TERM, and never leave it running between steps. Before you end any turn, check that none of it is still running, orphaned children too, which a load script that forks and exits leaves behind (\`ps -p <pids>\`, \`pgrep -f ${slug}-load\`, killing what it finds by PID, \`docker ps --filter label=swarm=${slug}\`). Say in the PR how you loaded the machine."
+  printf '%s' "If you load the machine on purpose (stress loops, parallel test repeats, containers), use at most 4 CPUs in all, across everything you run at once (\`docker run --cpus 4\`, or that many loops). Cap your test runner's parallelism at 4 (its jobs or workers setting) too; it counts toward the same 4. Start each load process itself, with no wrapper that forks, record each \`\$!\`, and give it a marker in its command line (an argument \`${slug}-load\`), or wrap each in \`timeout <seconds>\`. Never start load with run_in_background, which outlives the step so its trap never fires, unless it is wrapped in \`timeout <seconds>\` no longer than the check and you kill it when the check ends. Remove leftovers from an earlier step first (\`docker rm -f \$(docker ps -aq --filter label=swarm=${slug})\`). Name and label every container (\`--name ${slug}-load-<n> --label swarm=${slug}\`), and remove them by that label in the trap, or use \`--rm\` and still remove them by name: killing the \`docker run\` client leaves the container running. Stop and remove what you started as soon as the check ends, with a trap that kills each recorded PID on EXIT, INT and TERM, and never leave it running between steps. Before you end any turn, check that none of it is still running, orphaned children too, which a load script that forks and exits leaves behind (\`ps -p <pids>\`, \`pgrep -f '[${slug:0:1}]${slug:1}-load'\`, killing what it finds by PID, \`docker ps --filter label=swarm=${slug}\`). Say in the PR how you loaded the machine. Never poll with a \`pgrep -f\` pattern that matches the poll's own command line or another poll's: such a loop finds itself or its twin and never ends. Poll the PIDs you recorded with \`ps -p <pids>\` (a later step's shell cannot \`wait\` on them), and find load by its \`${slug}-load\` marker with the bracketed pattern above, keeping the bare marker out of the poll's own command."
+}
+
+# review_tests_rule <dir> — what a builder runs after review fixes: only the tests for the change, as
+# a full local run is slow and CI shards the full suite. It names
+# scripts/select-tests.sh only when <dir>, the tree the builder works in, has it.
+review_tests_rule() {
+  if [[ -f "$1/scripts/select-tests.sh" ]]; then
+    printf '%s' "After review fixes, run only the tests mapped to the change (\`scripts/select-tests.sh --run\`) and let CI run the full suite."
+  else
+    printf '%s' "After review fixes, run only the project's own tests for the change and let CI run the full suite."
+  fi
 }
 
 # reply_sentence — what a builder replies, and when: the brief's rule on finishing, and what its goal
@@ -398,8 +409,10 @@ sign_rule() {
 
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules trailers
+  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules trailers tree
   story_ref="$(story_path "${slug}" "${src}")"
+  # The builder's worktree, cut from the base, which src's own checkout need not match; src before one exists.
+  tree="$(worktree_for "${src}" "${slug}")"; [[ -d "${tree}" ]] || tree="${src}"
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   if [[ "${story_ref}" != /* ]]; then
     # The board is in this repo: the PR takes the story off it, and the epic with its last story.
@@ -425,7 +438,7 @@ credentials. Open the PR against \`${base}\`. Before you push, for each function
 or error message the diff changes, re-read its header comment, error text and every README, doc, command
 or skill line that names it, and fix each one that no longer matches. Run \`$(codex_review_cmd "${base}" "${slug}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
-loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
+loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above." "say so in your reply") $(mutation_rule) Record it
 in the PR body. $(load_rule "${slug}") $(reply_sentence)
@@ -1408,6 +1421,6 @@ start_conductor() {
   if err="$(set_fm "${epic_file}" status active 2>&1)"; then
     echo "epic ${epic}: status later -> active (in .swarm/board-state)"
   else
-    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand (${err#swarm: })" >&2
+    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand, with agreed: <today> in the same edit (${err#swarm: })" >&2
   fi
 }
