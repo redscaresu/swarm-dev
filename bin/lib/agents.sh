@@ -624,6 +624,15 @@ session_for_pane() {
   herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
 }
 
+# recorded_session <name> — <name>'s Claude session id as agents.tsv recorded it (panes.py's
+# session_id), or nothing: none, or a codex agent.
+recorded_session() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import session_id
+print(session_id(*sys.argv[1:3]) or "")' "${AGENTS_LOG}" "$1" 2>/dev/null || true
+}
+
 # claude_agents [err-file] — Claude Code's own list of its sessions, as JSON; fails when it cannot be
 # read. Its errors go to <err-file>, else nowhere.
 claude_agents() { claude agents --json 2>"${1:-/dev/null}"; }
