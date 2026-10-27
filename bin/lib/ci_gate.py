@@ -139,14 +139,23 @@ def admin(repo, base, sha, method):
 # GitHub's compare lists this many files at most: a list that long may be cut short.
 COMPARE_FILES = 300
 
-def behind(repo, sha, base, board):
+def behind(repo, sha, base, board, wait):
     """The commits base has that sha lacks, and each path they change that is off board's paths (a
     renamed file's old path too): compare sha...base, whose ahead_by counts them and whose files are
     their changes taken together. A board entry ending in / is a folder, any other a file, as merge.sh's
     on_board_paths has them; a README.md there is off the board, since a test may check it (this repo's
-    CI gate tests one). A list of COMPARE_FILES or more may be cut short, and commits with no file listed
-    may be a list GitHub left out: both are errors."""
-    d = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, sha, urllib.parse.quote(base, safe=""))))
+    CI gate tests one). A transient gh error (TRANSIENT, in gh's own words) is read again, READ_TRIES
+    reads in all, wait seconds apart; any other fails at once. A list of COMPARE_FILES or more may be cut
+    short, and commits with no file listed may be a list GitHub left out: both are errors."""
+    path = "repos/%s/compare/%s...%s" % (repo, sha, urllib.parse.quote(base, safe=""))
+    for i in range(READ_TRIES):
+        try:
+            d = json.loads(gh("api", path))
+            break
+        except Err as e:
+            if i == READ_TRIES - 1 or not TRANSIENT.search(str(e).split(": ", 1)[-1]):
+                raise
+            time.sleep(wait)
     try:
         n, files = d["ahead_by"], d["files"]
         paths = [p for f in files for p in (f["filename"], f.get("previous_filename")) if p]
@@ -724,7 +733,7 @@ try:
             print("; ".join(why))
             sys.exit(1)
     elif mode == "behind":
-        n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b])
+        n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b], float(args[3]))
         print("\n".join([str(n)] + off))
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")

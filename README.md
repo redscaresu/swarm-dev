@@ -138,9 +138,10 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the last tag is under an agreed HLD that lists `release`.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
-- On a base with no merge queue, `swarm.sh merge` refuses a story PR when code landed on the base
-  after the PR's CI ran. The builder merges the base in and pushes, and the new head merges once it
-  is green and reviewed ([reference.md § Merging](docs/reference.md#merging)).
+- On a base with no merge queue, `swarm.sh merge` refuses a story PR whenever the base has commits
+  the PR's head lacks that change more than board files. The builder merges the base in and pushes.
+  Under `merge = agent` the conductor then reviews and merges the new head
+  ([reference.md § Merging](docs/reference.md#merging)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.

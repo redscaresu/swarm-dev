@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # merge_base_moved_test.sh — swarm.sh merge refuses a story PR, green on its head, whose base gained a
 # commit changing a path off the board after the head's CI ran (compare <head>...<base>), and runs no
-# pr merge; a board-only gain, an up-to-date head and a base with a merge queue merge. On
+# pr merge; a board-only gain, an up-to-date head and a base with a merge queue merge. A transient
+# compare error is read again; any other, and a board repo it cannot read, refuse naming it. On
 # merge_fixture.sh, whose stub serves that compare from ${FX}/behind (nothing behind without one).
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
@@ -49,6 +50,12 @@ OTHER=https://github.com/o/other/pull/7
 fresh; item s "status: review" "prs: ${OTHER}"; gained 1 docs/stories/t.md; merge "${OTHER}"
 refused "a PR in another repo: its stories/ file is code" "${MOVED}"
 check "a PR in another repo: compares in that repo" compared o/other "${H1}"
+# The board's repo cannot be read: the failed read is named, not called code on the base.
+fresh; gained 1 docs/stories/t.md; rm "${FX}/origin"; merge "${URL}"
+refused "board files only, gh cannot read the board's repo" \
+  "cannot tell whether main moved past 1111111's CI: its 1 commits change only board paths, and gh cannot tell which GitHub repo the board's origin is"
+fresh; gained 1 docs/stories/t.md; git -C "${P}" remote remove origin; merge "${URL}"; git -C "${P}" remote add origin "${ROOT}/origin.git"
+refused "board files only, the board's repo has no origin" "its 1 commits change only board paths, and ${P}, the board's repo, has no origin"
 
 # --- A head up to date with the base merges.
 fresh; merge "${URL}"
@@ -59,6 +66,17 @@ check "up to date: merges" merged
 # --- A compare it cannot read, or one that may be cut short, refuses and names it.
 fresh; touch "${FX}/behind.fail"; merge "${URL}"
 refused "a failed compare" "cannot tell whether main moved past 1111111's CI: gh api repos/o/r/compare/${H1}...main: gh: HTTP 502"
+reads() { grep -c "/compare/${H1}...main" "${ROOT}/gh.log" || true; }
+is "a failed compare: a 502 is transient, so it is read three times" 3 "$(reads)"
+# One blip is read again, and the second read decides.
+fresh; gained 1 bin/x.sh; touch "${FX}/behind.1.fail"; merge "${URL}"
+refused "a 502 on the first compare, code on the second" "${MOVED}"
+fresh; echo '{"ahead_by":0,"files":[]}' > "${FX}/behind"; touch "${FX}/behind.1.fail"; merge "${URL}"
+is "a 502 on the first compare, up to date on the second: merges after two reads" "0|yes|2" "${rc}|$(merged && echo yes)|$(reads)"
+# A 404 is no blip: one read, then a refusal naming it.
+fresh; echo "Not Found" > "${FX}/behind.404"; merge "${URL}"
+refused "a 404 on the compare" "cannot tell whether main moved past 1111111's CI: gh api repos/o/r/compare/${H1}...main: gh: Not Found (HTTP 404)"
+is "a 404 on the compare: read once" 1 "$(reads)"
 fresh; echo '{"status":"ahead"}' > "${FX}/behind"; merge "${URL}"
 refused "a compare with no ahead_by" "cannot tell whether main moved past 1111111's CI: unreadable compare"
 # many <n> <prefix> — <n> paths, <prefix>1.md to <prefix><n>.md.

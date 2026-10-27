@@ -114,13 +114,14 @@ case "$1 $2" in
       */releases/tags/*) serve release ;;   # its GitHub release
       */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
-      # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind, else
-      # nothing (ahead_by 0). compare/<base>...<head>: compare.<base>, else compare, else for a branch
+      # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind (as serve
+      # reads it, so behind.<n>.fail fails the nth read and behind.404 is a 404), else nothing (ahead_by
+      # 0). compare/<base>...<head>: compare.<base>, else compare, else for a branch
       # base the PR's files (the grant's read at the pinned head, failing as files does), else for a
       # commit base the head holds it (fix-main's compare of a red commit with a green one).
       */compare/*) c="${path##*/compare/}"; to="${c#*...}"; c="${c%%...*}"
                    if [ "${#c}" = 40 ] && [ "${#to}" != 40 ]; then
-                     if [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
+                     if [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ] || [ -e "${FX}/behind.404" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
                    elif [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
                    elif [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then serve compare
                    elif [ "${#c}" != 40 ]; then out="$(serve files)" || exit 1; echo "{\"files\":${out}}"

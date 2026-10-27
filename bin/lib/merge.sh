@@ -73,10 +73,11 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
 # "<status> <path>" (added, modified, removed, renamed).
-# ci_gate behind <owner/repo> <sha> <base> <board paths> — the number of commits <base> has that <sha>
-# lacks (compare <sha>...<base>), then each path they change outside <board paths> (on_board_paths'
-# rule, but a README.md there counts as outside; a renamed file's old path too), one a line. A read that fails, a compare listing 300 files or
-# more (GitHub lists no more) and commits with no file listed fail (3).
+# ci_gate behind <owner/repo> <sha> <base> <board paths> <wait> — the number of commits <base> has that
+# <sha> lacks (compare <sha>...<base>), then each path they change outside <board paths> (on_board_paths'
+# rule, but a README.md there counts as outside; a renamed file's old path too), one a line. A transient
+# gh error is read again, three reads in all, <wait> apart. A read that fails otherwise, a compare
+# listing 300 files or more (GitHub lists no more) and commits with no file listed fail (3).
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
@@ -247,17 +248,24 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # CI on <head> never ran with them, unless every path they change is on the board (ci_gate behind,
 # given board_paths; a board README counts as code) and the PR is in the board's own repo. Board-only
 # commits run no tests, as CI's board-only gate has it. Conservative on purpose: GitHub ran the PR's CI on a merge ref that may hold
-# some of them, and the price is one more CI run. A compare it cannot read refuses too.
+# some of them, and the price is one more CI run. A compare it cannot read refuses too, and so does a
+# board-only gain when the board's repo cannot be read, naming the read. Nothing locks the compare
+# against gh pr merge, so two merges into one base seconds apart can both pass: only a merge queue
+# closes that.
 base_moved() {
-  local out n p own
-  out="$(ci_gate behind "$1" "$2" "$3" "$(board_paths)")" && n="${out%%$'\n'*}" && [[ "${n}" =~ ^[0-9]+$ ]] \
+  local out n p own why
+  out="$(ci_gate behind "$1" "$2" "$3" "$(board_paths)" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")" \
+    && n="${out%%$'\n'*}" && [[ "${n}" =~ ^[0-9]+$ ]] \
     || merge_fail "cannot tell whether $3 moved past ${2:0:7}'s CI: ${out#error }"
   [[ ${n} -gt 0 ]] || return 0
   # Only board paths changed. They are the board's repo's alone: in another repo a stories/ file is code.
-  if [[ "${out}" != *$'\n'* ]] && p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" \
-      && own="$(gh repo view "${p}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
-      && [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]]; then
-    return 0
+  if [[ "${out}" != *$'\n'* ]]; then
+    why="cannot tell whether $3 moved past ${2:0:7}'s CI: its ${n} commits change only board paths, and"
+    p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" \
+      || merge_fail "${why} ${PROJECT_DIR}, the board's repo, has no origin"
+    own="$(gh repo view "${p}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
+      || merge_fail "${why} gh cannot tell which GitHub repo the board's origin is"
+    [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" != "${own}" ]] || return 0
   fi
   merge_fail "the base $3 moved past ${2:0:7}'s CI (${n} commits it lacks): merge origin/$3 in, push, and merge the new head"
 }

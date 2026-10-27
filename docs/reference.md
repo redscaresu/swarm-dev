@@ -1986,15 +1986,20 @@ main went red. So, on a base with no merge queue, a story PR's `merge` compares 
 base (`compare <head>...<base>`) once the head is green, just before `gh pr merge`. When the base has
 commits the head lacks and any of them changes a path off the board, it refuses with `the base
 <base> moved past <sha>'s CI (<n> commits it lacks): merge origin/<base> in, push, and merge the new
-head`. The board's paths are the ones `--board` takes (`stories/`, `epics/`, `hld/`, `Board.base`,
-`.obsidian/` under the board), and only in the board's own repo. Commits that change only those run
-no tests, as CI's board-only gate has it, so they do not count. A `README.md` there counts as code,
-since a test may check it: swarm-dev's own CI gate tests the board READMEs. A compare it cannot read refuses
-too. So does one listing 300 files or more, since GitHub lists no more, and one that lists no file
-for the commits. The check is cautious on purpose. GitHub ran the PR's CI on a merge ref, which may
-already hold some of those commits, and the price is one more CI run. It leaves only the seconds
-between the compare and the merge: two merges into one base that start that close together can both
-pass, which only a merge queue rules out. `--board` and `--release` skip it. A base with a merge queue skips it too, since the queue tests each PR on top of the base.
+head`. The board's paths are `board_paths`' entries, which the board-only CI gate from `swarm.sh
+init` skips: `stories/`, `epics/`, `hld/`, `Board.base` and `.obsidian/` under the board, and only in
+the board's own repo. Commits that change only those run no tests there, so they do not count. A
+`README.md` there counts as code, since a test may check it: swarm-dev's own CI gate tests the board
+READMEs. When the base gained only board paths and the board's repo cannot be read (no origin, or gh
+cannot tell which GitHub repo it is), `merge` refuses naming that read. A compare it cannot read
+refuses too, and so does one listing 300 files or more, since GitHub lists no more, or one that lists
+no file for the commits. A transient gh error (a 5xx, a rate limit, a timeout) is read again, three
+reads in all; any other read error refuses at once. The check is cautious on purpose. GitHub ran the PR's CI
+on a merge ref, which may already hold some of those commits, and the price is one more CI run.
+Nothing locks the compare against the `gh pr merge` that lands the PR. Two merges into one base, such
+as two epics' conductors, can both read the base as unchanged and both land seconds apart. Only a
+merge queue closes that window. `--board` and `--release` skip the check. A base with a merge queue
+skips it too, since the queue tests each PR on top of the base.
 Under `merge_admin = on`, a base that requires PRs to be up to date is still `ci_gate admin`'s to
 refuse. Most refusals go to the lead, but the conductor handles this one. It nudges the builder to
 merge origin/<base> in, re-run the tests and push. Then it waits with `swarm.sh wait-pr`, reviews the
