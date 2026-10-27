@@ -90,6 +90,10 @@ has output-shape 'depends_on, estimate_lines, easy\}\]' "$flat"
 has front-matter 'front matter .*`estimate_lines`, `easy`' "$approval"
 has report-estimate 'with `kind`, `estimate_lines`, `touches`' "$flat"
 has readme-keys 'estimate_lines.*easy: true' "$(tr '\n' ' ' < "$ROOT/templates/docs/stories/README.md")"
+has detect-split-step-2 'adds detection logic \(a new alert, check or classifier\) and runs over about 200 lines is split before the board PR' "$step2"
+has detect-split-skeptic 'a story that adds detection logic \(a new alert, check or classifier\) and runs over about 200 lines, an unstated dependency' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
+has depends-on-need-only 'give a story `depends_on` only when it uses something the other adds \(named in `needs`\) or shares a `touches` part, never for ordering alone: maximise concurrency by default' "$step2"
+has write-early 'Write your output file early and update it as you go, so a timed-out turn loses one item, not all\. Cite evidence'
 hasnt no-blocked-by 'blocked_by'
 hasnt no-verify 'verify'
 hasnt no-version-bump 'needs no version bump'

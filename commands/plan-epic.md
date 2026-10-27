@@ -30,7 +30,7 @@ start that agent again; an older one belongs to a previous plan, so start the ag
 
 Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; read it first.
 Read-only — write nothing except your output file, never commit, never touch real cloud or
-credentials. Cite evidence as file:line. Keep free text short.*
+credentials. Write your output file early and update it as you go, so a timed-out turn loses one item, not all. Cite evidence as file:line. Keep free text short.*
 
 **0. Size** — judge the epic from its **Done when**. An epic of at most 3 stories with no `risk: high` is
 planned by the lead alone: you write the stories in a board-PR worktree (`swarm.sh board-pr start scope-$1`),
@@ -62,7 +62,7 @@ one-repo epic; the review in step 3 is where the plan's bugs turn up.
 `touches` entries are `file:part`, the part starting with the function or section name the story changes. Write a bare file only when the story changes the whole file: a bare file clashes only with the same bare file, so a bare file hides a clash with a story that names a part.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
-`estimate_lines` is the lead's guess at the PR's size; `easy` is true when it is under about 100 lines, adds no new command and no shared helper in `bin/swarm.sh`. A story is capped at one new command or one changed behaviour and about 300 lines; split a bigger one.
+`estimate_lines` is the lead's guess at the PR's size; `easy` is true when it is under about 100 lines, adds no new command and no shared helper in `bin/swarm.sh`. A story is capped at one new command or one changed behaviour and about 300 lines; split a bigger one. A story that adds detection logic (a new alert, check or classifier) and runs over about 200 lines is split before the board PR.
 One agent story is one PR (a `lead` story may end with no PR, for example an approval); `done_when` must be able to fail; `kind` is code | docs | chore |
 lead (real cloud, credentials, or a step by the user, marked **You:**), by swarm-dev
 `docs/method.md` § Who does what; every step in the epic's **Your part** is in a `lead` story,
@@ -70,7 +70,7 @@ and a merge is never a story of its own; `risk: high` only for real-cloud, teard
 credentials and safety paths; `costs: money` on any story whose merge can spend money (it adds or
 changes a CI job or schedule that runs against real cloud, raises a spend cap, or turns on something
 billed): with `merge = agent`, `swarm.sh merge` holds its PR for the user; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
-check files `AGENTS.md` names as shared) in more than one story; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file or the function;
+check files `AGENTS.md` names as shared) in more than one story; give a story `depends_on` only when it uses something the other adds (named in `needs`) or shares a `touches` part, never for ordering alone: maximise concurrency by default; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file or the function;
 reuse existing
 stories by slug; record every disagreement with the epic under `contradictions`. If a survey
 failed, it says what it could not check. A check that several stories repeat (a freeze, a pinned
@@ -82,7 +82,7 @@ tell you which of the two broke something, and cannot be rolled back one half at
 
 **3. Verify** — in parallel, a chain at most 3 deep (this session, the one running plan-epic, checks chain depth over the whole graph):
 - one `skeptic-<slug>` per `risk: high` story, role `skeptic`, capped at five (say which were not checked), given the `depends_on` graph. An epic with no `risk: high` story gets no skeptic.
-  It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR (over the cap of one new command or one changed behaviour and about 300 lines in step 2, by its `estimate_lines`), an unstated dependency, a `done_when` that passes while the work is broken.
+  It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR (over the cap of one new command or one changed behaviour and about 300 lines in step 2, by its `estimate_lines`), a story that adds detection logic (a new alert, check or classifier) and runs over about 200 lines, an unstated dependency, a `done_when` that passes while the work is broken.
   Output `{sound, problems:[{why}], fix}`; unsure means `sound: false`.
 - one `codex`, role `codex` (read-only, a different model family): missing stories, stories too
   big for one PR, `done_when` criteria that could pass on broken work, and overlaps within a wave.

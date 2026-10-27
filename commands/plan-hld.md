@@ -82,7 +82,7 @@ again; an older one belongs to a previous plan, so start the agent.
 Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
 you run and which can be behind. Read-only — write nothing but your output file, never commit, never
-touch real cloud or credentials. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
+touch real cloud or credentials. Write your output file early and update it as you go, so a timed-out turn loses one item, not all. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
 `<project>` and the output path written out in full)
 
 1. **Survey** — role `survey`, three in parallel, output `{summary, facts:[{fact, evidence}]}`:
