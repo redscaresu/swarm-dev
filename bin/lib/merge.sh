@@ -114,7 +114,7 @@ merge_caller() {
   if [[ "${CFG_merge}" == agent ]] && [[ "$(SWARM_PANE="${HERDR_PANE_ID}" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name', '').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') for a in d['result']['agents'])" <<< "${agents}" 2>/dev/null)" == True ]]; then
     return 0
   fi
-  slug="$(review_pane)"
+  slug="$(review_pane "${agents}")"
   if [[ -n "${slug}" ]]; then
     [[ -z "${2:-}" ]] || { echo "review-${slug} merges only story ${slug}'s PR, never with $2"; return 0; }
     s="$(pr_stories "$1")" || { echo "a story on the board cannot be read, so whether $1 is story ${slug}'s is unknown"; return 0; }
@@ -124,10 +124,13 @@ merge_caller() {
   echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent, or review-<slug> for story <slug>'s PR, merges from one"
 }
 
-# review_pane — <slug> when the pane running this (HERDR_PANE_ID) is review-<slug>'s by exact record:
-# every tab record for the pane names review-<slug>, not a retired name (-done, -done<N>), and the
-# newest agents.tsv line for its agent name has role review. Else nothing: the builder of a story
-# slugged review-x has its tab record named review-x too, but its role there is a builder's.
+# review_pane <agents> — <slug> when the pane running this (HERDR_PANE_ID) is review-<slug>'s by exact
+# record: every tab record for the pane names review-<slug>, not a retired name (-done, -done<N>),
+# the newest agents.tsv line for its agent name (agent_name) has role review, and in <agents>
+# (herdr's agent list) the agent in the pane holds that name. Else nothing: the builder of a story
+# slugged review-x has its tab record named review-x too, but its role there is a builder's; and a
+# record left stale (the agent exited, or retire_agent renamed it in herdr but could not rewrite
+# the record) has no such agent in the pane.
 review_pane() {
   local f tabs=() name role
   for f in "${STATE_DIR}"/*; do
@@ -137,7 +140,9 @@ review_pane() {
   name="$(awk -v p="${HERDR_PANE_ID}" 'NF == 2 && $1 == p { print $2 }' "${tabs[@]}" | sort -u)"
   [[ "${name}" =~ ^review-[a-z0-9-]+$ && ! "${name}" =~ -done[0-9]*$ ]] || return 0
   role="$(awk -F'\t' -v n="$(agent_name "${name}")" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)"
-  [[ "${role}" != review ]] || echo "${name#review-}"
+  [[ "${role}" == review ]] || return 0
+  [[ "$(SWARM_PANE="${HERDR_PANE_ID}" SWARM_NAME="$(agent_name "${name}")" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name') == e['SWARM_NAME'] for a in d['result']['agents'])" <<< "$1" 2>/dev/null)" != True ]] \
+    || echo "${name#review-}"
 }
 
 # merge_grant <pr-url> <head> <base> — under merge = human, why the lead, or review-<slug> for its

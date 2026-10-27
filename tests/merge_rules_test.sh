@@ -351,9 +351,9 @@ chmod 644 "${P}/.swarm/state/e"
 fresh; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b --board "${URL}"; refused "--board from a builder's pane" "pane w:b"
 fresh "merge = agent"; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"
 is "--board from a conductor's pane with merge = agent: exits 0" 0 "${rc}"
-# A review agent's pane: its tab record names review-<slug> and the newest agents.tsv line for that
-# name has role review. It merges its own story's PR only, never with --board or --release, under
-# merge = human only where an HLD grants merge.
+# A review agent's pane: its tab record names review-<slug>, the newest agents.tsv line for that name
+# has role review, and herdr's agent in the pane holds that name. It merges its own story's PR only,
+# never with --board or --release, under merge = human only where an HLD grants merge.
 # reviewer <name> [role] — pane w:r is <name>'s: a tab record of its own, herdr's agent, and the one
 # agents.tsv line, with <role> (default review).
 reviewer() {
@@ -397,6 +397,12 @@ own_pr a; reviewer review-a; rm "${P}/.swarm/agents.tsv"; merge HERDR_ENV=1 HERD
 refused "a pane named review-a with no agents.tsv line" "pane w:r is one this project started"
 own_pr a-done; reviewer review-a-done; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
 refused "a review-a-done pane, though its agents.tsv role is review and story a-done lists the PR" "pane w:r is one this project started"
+# A record left stale: herdr's agent in the pane has exited, or retire_agent renamed it there but
+# could not rewrite the record.
+own_pr a; reviewer review-a; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a review-a record whose pane herdr lists no agent in" "pane w:r is one this project started"
+own_pr a; reviewer review-a; printf 'conduct-e w:c\nt w:b\nreview-a-done w:r\n' > "${ROOT}/agents"; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "a review-a record whose pane herdr names review-a-done" "pane w:r is one this project started"
 own_pr a; reviewer review-a; echo 'w:r t' >> "${P}/.swarm/state/e"; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
 refused "a review-a pane that another tab record names t" "pane w:r is one this project started"
 # Back to fresh's board, tab records and agents.
