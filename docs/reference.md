@@ -1021,15 +1021,17 @@ Each agent with a queue has one check running in the background (`<agent>.later`
 does. When the agent is idle, it sends the oldest queued tell through its own `swarm.sh tell`, from
 the same sender, and only to the pane the tell was queued for. That tell is logged like any other,
 so findings count as one round when they are delivered. While the check sends it, the tell is
-`<agent>.<kind>.sending`, and a newer tell of its kind can still replace it until the check's tell
-has read the agent idle and claimed it. A tell replaced that way prints `replaced: <agent>'s queued
+`<agent>.<kind>.sending.<token>`, the token that delivery's own, and a newer tell of its kind can
+still replace it until the check's tell has read the agent idle and claimed it. A delivery claims
+only its own token, so a check that stalled past its `.later` never sends a newer tell's file. A tell replaced that way prints `replaced: <agent>'s queued
 <kind> tell, by a newer one; not sent`, sends nothing, and is logged with that line. If the agent
 is no longer idle by then, the tell goes back in the queue. Findings that find the story's step-up
 lock held (by a step-up, a restart or a hold) go back in the queue too. A step-up or a top-rung
 hold that takes queued findings has delivered them: the handover or the lead's block holds them,
 and `wait --lead` names a step-up that failed. The check ends when the queue is empty. A check
 whose last look is more than twice that minute plus 60 seconds old (three minutes by default)
-counts as dead, and the next queued tell to that agent starts a new one.
+counts as dead, and the next queued tell to that agent starts a new one, which also puts back a
+tell the dead check left on its way.
 
 The check drops a queued tell when the agent's pane has closed, another pane holds its name or its
 Claude session has ended. It also drops one whose tell fails after claiming it. It keeps the text

@@ -8,15 +8,16 @@
 # nothing. A tell sent at once to an idle builder replaces a queued one of its kind, which is never
 # sent after it (a pending check's .later keeps the queue from starting one until the direct tell is
 # done; a nudge queued next starts the check that would send what is left), nor is one already on its
-# way (b1.findings.sending, as the check's take leaves it): its delivery, run as the check runs it
-# (VIA), finds it gone and sends nothing. A delivery that finds the builder busy again leaves it on
-# its way, for the check to put back, and one that claims it sends it. A direct tell that cannot take
-# the queue's lock to replace a queued one sends nothing. A queued tell to a builder whose pane
-# closed, or whose name a new pane holds, is sent to no pane: it is dropped, and wait --lead prints a
-# tell undelivered: line for the lead. One herdr sent but never showed taken up (${ROOT}/nosend: no
-# status in its reply, idle on every read) is not to be sent again as findings: its line says it may
-# have arrived, and it counts as one round. Queued findings due a step-up or a top-rung hold while the
-# story's lock is held go back in the queue.
+# way (b1.findings.sending.<token>, as the check's take leaves it): its delivery, run as the check
+# runs it (VIA), finds it gone and sends nothing. A delivery that finds the builder busy again leaves
+# it on its way, for the check to put back, and one that claims it sends it. One a dead check left on
+# its way is sent by the next check, and a delivery never claims another check's tell (its token). A
+# direct tell that cannot take the queue's lock to replace a queued one sends nothing. A queued tell
+# to a builder whose pane closed, or whose name a new pane holds, is sent to no pane: it is dropped,
+# and wait --lead prints a tell undelivered: line for the lead. One herdr sent but never showed taken
+# up (${ROOT}/nosend: no status in its reply, idle on every read) is not to be sent again as findings:
+# its line says it may have arrived, and it counts as one round. Queued findings due a step-up or a
+# top-rung hold while the story's lock is held go back in the queue.
 # herdr and claude are stubs on PATH. herdr lists the agents in ${ROOT}/agents (`<name> <pane> <status>`)
 # and logs each prompt to ${ROOT}/keys.log; claude agents --json prints ${ROOT}/claude.json, which holds
 # b1's session sb.
@@ -75,7 +76,7 @@ state() {
 # fresh — a new case: no prompts, events, queue or lead line, the last check ended.
 fresh() { settle; rm -rf "${Q}" "${p}/.swarm/lead" "${p}/.swarm/events.tsv"; : > "${ROOT}/keys.log"; }
 # tell <text> — tell b1 findings (or ${KIND}) holding <text>; its output, then `rc=<exit>`. With
-# VIA="<pane> <from>", as the check runs it to deliver a queued tell.
+# VIA="<pane> <from> <token>", as the check runs it to deliver a queued tell.
 tell() {
   local rc=0 out
   echo "$1" > "${ROOT}/msg"
@@ -137,21 +138,34 @@ check "findings told at once while the queue's lock is held: refused, nothing se
   "$([[ "${out}" == *"b1 was not told: its findings tell queued earlier could not be replaced"*"rc=1" ]] && echo yes || echo no) $(prompts) $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)"
 
 fresh; state idle
-mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings.sending"   # on its way, as the check takes it
+mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings.sending.t1"   # on its way, as the check takes it
 check "findings told at once while a queued one is on its way: sent" "told b1 rc=0" "$(tell "fix round B")"
 check "the queued one's delivery, after them: sends nothing" "replaced: b1's queued findings tell, by a newer one; not sent rc=0" \
-  "$(VIA="w:9 conductor" tell "fix round A")"
+  "$(VIA="w:9 conductor t1" tell "fix round A")"
 check "the queued one's delivery, after them: one prompt, the newer, one round" "1 yes no 1" \
   "$(prompts) $(sent "fix round B") $(sent "fix round A") $(rounds)"
 check "the queued one's delivery, after them: logged replaced, not ok" "ok|replaced: b1's queued findings tell, by a newer one; not sent" "$(outcomes)"
 fresh; state busy
-mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings.sending"
-check "a queued tell's delivery that finds the builder busy again: sends nothing" "${QUEUED} rc=0 0" "$(VIA="w:9 conductor" tell "fix round A") $(prompts)"
+mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round left\n' > "${Q}/b1.findings.sending.t0"   # a check died sending it
+KIND=nudge tell "carry on" >/dev/null   # the next queued tell starts a check
+state idle; settle
+check "a tell a dead check left on its way: the next check sends it, then the rest" "2 yes yes" \
+  "$(prompts) $(sent "fix round left") $(sent "carry on")"
+
+fresh; state busy
+mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings.sending.t1"
+check "a queued tell's delivery that finds the builder busy again: sends nothing" "${QUEUED} rc=0 0" "$(VIA="w:9 conductor t1" tell "fix round A") $(prompts)"
 check "a queued tell's delivery that finds the builder busy again: leaves it on its way, for its check to put back" yes \
-  "$([[ -e "${Q}/b1.findings.sending" && ! -e "${Q}/b1.findings" ]] && echo yes || echo no)"
+  "$([[ -e "${Q}/b1.findings.sending.t1" && ! -e "${Q}/b1.findings" ]] && echo yes || echo no)"
 state idle
 check "a queued tell's delivery that claims it: sent, from the sender that queued it" "told b1 rc=0 1 yes" \
-  "$(VIA="w:9 conductor" tell "fix round A") $(prompts) $(sent "From the conductor:")"
+  "$(VIA="w:9 conductor t1" tell "fix round A") $(prompts) $(sent "From the conductor:")"
+
+fresh; state idle   # two checks overlap: a stalled one's delivery (t1) after a newer tell went on its way (t2)
+mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round newer\n' > "${Q}/b1.findings.sending.t2"
+check "a delivery whose tell another check's newer one replaced: sends nothing, leaves the newer on its way" \
+  "replaced: b1's queued findings tell, by a newer one; not sent rc=0 0 yes" \
+  "$(VIA="w:9 conductor t1" tell "fix round older") $(prompts) $([[ -e "${Q}/b1.findings.sending.t2" ]] && echo yes || echo no)"
 
 fresh; state busy
 tell "fix round one" >/dev/null
