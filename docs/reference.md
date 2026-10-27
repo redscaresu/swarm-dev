@@ -63,10 +63,14 @@ waits on the lead's user: every one with `merge = human`, and with `merge = agen
 `swarm.sh merge` holds for them (§ Merging). It prints one line per item and logs one `lead-woken` line for each in events.tsv,
 with the line's kind in the outcome (`ok (held)`, `ok (no-agent)`).
 It also prints `next`'s `idle:` lines for blocked stories (`idle: <story> waits on <dep> but shares
-no touches with it`). Each poll works them out again from the board and its state, with no gh call,
-so a line wakes the lead once and goes once its dependency's merge is reconciled. It wakes the lead
-again only if it comes back. `status` lists the same lines under its Next section, and `dash` in an
-`idle capacity` box.
+no touches part with it and needs nothing from it`). Each poll works them out again from the board and
+its state, with no gh call. A line wakes the lead once and goes once its dependency's merge is
+reconciled. It wakes the lead again only if it comes back. On a run that starts with no
+`.swarm/lead/seen`, the first read saves the lines it finds without waking the lead, as it does held
+lines, so a line already there wakes the lead only when it leaves and comes back. A poll whose check
+fails keeps the lines the last poll saw and prints one `warning: the idle-dependency check failed` line
+on stderr in place of a traceback. `status` lists the same lines under its Next section, with the same
+warning when the check fails, and `dash` in an `idle capacity` box.
 The PR heads are read with gh only on a run's first read and then at most once every 5 minutes
 (`SWARM_LEAD_HEADS_EVERY`, 300 seconds). Each of those reads writes every review item's result to
 `.swarm/lead/heads`. The polls in between read only that file and make no gh call. A PR in review
