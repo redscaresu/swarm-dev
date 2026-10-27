@@ -1533,12 +1533,28 @@ has_records() {
   return 1
 }
 
-# close_epic <conductor> — the label of its epic's tabs: the name without conduct- when that is the
-# full name (the brief start_conductor wrote, .swarm/briefs/<name>.md, has it, or the name is not
-# AGENT_NAME_MAX long, so not cut), else conduct_epic's, from the newest brief with that conductor name.
+# close_epic <conductor> — the label of its epic's tabs, or nothing. It is the name without conduct-
+# when a brief of that name exists (.swarm/briefs/<name>.md, whoever's: start_conductor's, or a
+# builder's whose slug it is, as on main), when the name is not AGENT_NAME_MAX long, so not cut, or
+# when the records hold no name under it. A cut that is the backlog conductor's (conductor_name
+# backlog: AGENT_NAME_MAX long for a project directory name of 9 or more characters, its brief under
+# conduct-backlog, so no record is under the name) is backlog's, as conduct_epic maps it. Else, when
+# the records hold one name under the cut (cut_record), it is that one's epic if it is a conductor's:
+# conduct-<epic> with its brief, and no story of that name, since a story's slug may start with
+# conduct- too. Two names under the cut, or one that is no conductor's, give nothing: the cut is not
+# this conductor's alone, and the name without conduct- may be a third epic's label. With two it says
+# so on stderr, since the close goes on and closes no epic's tabs, and stdout is the label.
 close_epic() {
-  if [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"
-  else conduct_epic "$1"; fi
+  local full rc=0
+  if [[ -f "${PROJECT_DIR}/.swarm/briefs/$1.md" || ${#1} -ne ${AGENT_NAME_MAX} ]]; then echo "${1#conduct-}"; return 0; fi
+  [[ "$1" != "$(conductor_name backlog)" ]] || { echo backlog; return 0; }
+  full="$(cut_record "$1")" || rc=$?
+  if [[ ${rc} -eq 1 ]]; then echo "${1#conduct-}"
+  elif [[ ${rc} -eq 0 && "${full}" == conduct-* && -f "${PROJECT_DIR}/.swarm/briefs/${full}.md" && ! -f "${BOARD}/stories/${full}.md" ]]; then
+    echo "${full#conduct-}"
+  elif [[ ${rc} -eq 2 ]]; then
+    echo "swarm: close: $1 is the cut of more than one recorded name, so no epic's tabs were closed: close by the conductor's full name (conduct-<epic>)" >&2
+  fi
 }
 
 # cut_live <name> — the panes this project recorded where herdr lists an agent under <name>'s agent
@@ -1653,9 +1669,9 @@ record_kept() {
 # <status> <name>" lines, "-" for an agent with no name (CLOSE_AGENTS; CLOSE_AGENTS_OK is empty when
 # herdr gave no agent list), Claude Code's list (CLOSE_CLAUDE, claude_agents' JSON or empty when it
 # failed), the tab records' lines (CLOSE_RECORDS) and the names agents started under (CLOSE_STARTED,
-# agents.tsv's). The open PRs (close_heads) and the stories'
-# agent names (close_stories) are read when first asked for. herdr's status is the word for an agent
-# no session answers for, as in read_state.
+# agents.tsv's). The open PRs (close_heads) and the records' full names (close_stories) are read
+# when first asked for. herdr's status is the word for an agent no session answers for, as in
+# read_state.
 CLOSE_READ=""
 close_lists() {
   [[ -z "${CLOSE_READ}" ]] || return 0
@@ -1687,29 +1703,26 @@ close_heads() {
   return "${rc}"
 }
 
-# close_stories — "<agent name> <slug>" for each story on the board into CLOSE_STORIES, once per close:
-# a long slug's agent is known to herdr by its first AGENT_NAME_MAX characters (agent_name).
+# close_stories — the full names the records hold (cut_names: the stories', the briefs' and the tab
+# records' pane names) into CLOSE_STORIES, once per close, for cut_record to match each herdr name
+# against: a long name's agent is known to herdr by its first AGENT_NAME_MAX characters (agent_name).
 close_stories() {
-  local f
   [[ -z "${CLOSE_STORIES_READ}" ]] || return 0
   CLOSE_STORIES_READ=1
-  for f in "${BOARD}"/stories/*.md; do
-    [[ -f "${f}" ]] || continue
-    f="$(basename "${f}" .md)"; CLOSE_STORIES+="$(agent_name "${f}") ${f}"$'\n'
-  done
+  CLOSE_STORIES="$(cut_names)"
 }
 
 # live_agents <tab-ids> <tab-record> [pane] — set LIVE to each agent in a pane of those tabs, <pane>'s
 # aside, that a tab close must not take, as "<pane>\t<name>\t<why>\t<herdr's name or ->" lines:
 # working or waiting (session_state, else herdr's status), its state unknown (herdr gave no agent
 # list too) or any other not known to be idle or finished, its story's PR open on story/<name>
-# (close_heads) or gh could not say, or, for a name agent_name may have cut, no story found. The panes
-# are herdr's (close_lists), since a pane moved in by hand closes with the tab and one moved out does
+# (close_heads) or gh could not say, or, for a name agent_name may have cut, no story found: the
+# records hold no name under it, or two (cut_record), or one that is no story's. The panes are
+# herdr's (close_lists), since a pane moved in by hand closes with the tab and one moved out does
 # not; the record's stand in when herdr lists none in those tabs. <name> is the record's
-# (record_name), else the story of herdr's name (close_stories), else herdr's, else the pane. A
-# recorded pane with no agent yet is kept (starting); an unrecorded one, or a story whose repo has no
-# origin, has nothing to keep. It runs in close_tabs' own shell, so what close_heads and close_stories
-# read lasts the close.
+# (record_name), else that story's, else herdr's, else the pane. A recorded pane with no agent yet
+# is kept (starting); an unrecorded one, or a story whose repo has no origin, has nothing to keep.
+# It runs in close_tabs' own shell, so what close_heads and close_stories read lasts the close.
 live_agents() {
   local panes pane st who name s f src rc
   LIVE=""
@@ -1731,8 +1744,9 @@ live_agents() {
     [[ "${who}" != - ]] || who=""
     if [[ -z "${name}" && ${#who} -eq ${AGENT_NAME_MAX} ]]; then
       close_stories
-      name="$(awk -v n="${who}" '$1 == n { print $2; exit }' <<< "${CLOSE_STORIES}")"
-      [[ -n "${name}" ]] || { live_line "${pane}" "${who}" "its story could not be found" "${who}"; continue; }
+      # Only a story's: any other name (a review agent's brief) says nothing of what its agent holds.
+      name="$(cut_record "${who}" "${CLOSE_STORIES}")" && [[ -f "${BOARD}/stories/${name}.md" ]] \
+        || { live_line "${pane}" "${who}" "its story could not be found" "${who}"; continue; }
     fi
     name="${name:-${who:-${pane}}}"
     s=herdr; [[ -z "${who}" ]] || s="$(session_state "${who}" "${CLOSE_CLAUDE}" </dev/null)"

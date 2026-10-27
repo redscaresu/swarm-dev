@@ -2389,13 +2389,24 @@ its PRs. It prints each of those agents as `kept`, and still closes the conducto
 close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
 name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or
 its full name gives. herdr and `swarm.sh` print agent names cut at 32 characters, so two long names
-can look the same, and a cut name matches no record. herdr's agent list stands in for a missing
-record only for a name shorter than 32 characters, which herdr holds exactly. When nothing is
-recorded under a longer name and herdr lists a live agent under its first 32 characters, that agent
-may be another's. close then closes, counts, clears and keeps nothing, and fails: close by the full
-recorded name, or close that pane by hand if it is the one you meant. With nothing recorded and
-nothing live under the cut, there is nothing to close by mistake, so the close goes on with no
-pane, as it does for a pane closed by hand.
+can look the same. A cut stands for a full name only when it is the one name the project's records
+hold under it, counting the pane names in `.swarm/state`, the briefs in `.swarm/briefs` and the
+stories together. When two names share the cut, it stands for neither: a conductor closed by such a
+cut closes no epic's tabs, and close says so. An old brief whose name
+shares a live slug's first 32 characters keeps that cut ambiguous while it stays, and close errs
+that way on purpose: the pane is kept, or the close refused. A conductor named by its cut closes
+the epic of the one name under the cut when that name is `conduct-<epic>` with a brief and no
+story has it. With no name under the cut it closes the tabs of the cut minus `conduct-`, as it did
+before, and the backlog conductor's cut is the backlog's. A tab close keeps an agent that herdr
+lists under a cut, printing that its story could not be found, unless the one name under that cut
+is a story's.
+herdr's agent list stands in for a missing pane line only for a name shorter than 32 characters,
+which herdr holds exactly: a longer name's cut may be an agent's with no record of its own. When
+`.swarm/state` records nothing under a longer name and herdr lists a live agent under its first 32
+characters, that agent may be another's. close then closes, counts, clears and keeps nothing, and
+fails: close by the full recorded name, or close that pane by hand if it is the one you meant. With
+nothing recorded and nothing live under the cut, there is nothing to close by mistake, so the close
+goes on with no pane, as it does for a pane closed by hand.
 
 ## Releases
 
