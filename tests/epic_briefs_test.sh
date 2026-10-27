@@ -160,7 +160,7 @@ check "a builder re-reads, before it pushes, the comments and docs naming what i
 # the builder works), and no self-matching pgrep poll.
 selected="run only the tests mapped to the change (\`scripts/select-tests.sh --run\`) and let CI run the full suite."
 own="After review fixes, run only the project's own tests for the change and let CI run the full suite."
-nopoll="Never poll with a \`pgrep -f\` pattern that matches the poll's own command line or another poll's: such a loop finds itself or its twin and never ends. Wait on the PIDs you recorded, and find load by its \`f1-load\` marker with the bracketed pattern above, which cannot match itself."
+nopoll="Never poll with a \`pgrep -f\` pattern that matches the poll's own command line or another poll's: such a loop finds itself or its twin and never ends. Poll the PIDs you recorded with \`ps -p <pids>\` (a later step's shell cannot \`wait\` on them), and find load by its \`f1-load\` marker with the bracketed pattern above, keeping the bare marker out of the poll's own command."
 mkdir -p "${ROOT}/svc/scripts"; : > "${ROOT}/svc/scripts/select-tests.sh"
 plain="$(run _brief f1 | tr -s '[:space:]' ' ')"
 rm -r "${ROOT}/svc/scripts"; mkdir -p "${ROOT}/svc-wt/f1/scripts"; : > "${ROOT}/svc-wt/f1/scripts/select-tests.sh"
