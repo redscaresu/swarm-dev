@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# merge_base_moved_test.sh — swarm.sh merge refuses a story PR, green on its head, whose base gained a
-# commit changing a path off the board after the head's CI ran (compare <head>...<base>), and runs no
-# pr merge; a board-only gain, an up-to-date head and a base with a merge queue merge. A transient
-# compare error is read again; any other, and a board repo it cannot read, refuse naming it. On
-# merge_fixture.sh, whose stub serves that compare from ${FX}/behind (nothing behind without one).
+# merge_base_moved_test.sh — swarm.sh merge runs no pr merge for a story PR, green on its head, whose
+# base gained a commit changing a path off the board after the head's CI ran (compare <head>...<base>):
+# it merges the base into the PR's branch and stops with a base merged: line (merge_base_update_test.sh
+# has the rest of that). A board-only gain, an up-to-date head and a base with a merge queue merge. A
+# transient compare error is read again; any other, and a board repo it cannot read, refuse naming it.
+# On merge_fixture.sh, whose stub serves that compare from ${FX}/behind (nothing behind without one).
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -25,31 +26,47 @@ gained() {
 }
 compared() { grep -qxF "api repos/$1/compare/$2...main" "${ROOT}/gh.log"; }
 not_compared() { ! grep -qF "/compare/${H1}...main" "${ROOT}/gh.log"; }
-MOVED="the base main moved past 1111111's CI (1 commits it lacks): merge origin/main in, push, and merge the new head"
+H3=3333333333333333333333333333333333333333; B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+# updates [head] — GitHub merges main, at ${B}, into the PR's branch at [head] (${H1}), as web-flow with its
+# signature verified: its head becomes ${H3}.
+updates() {
+  echo '{"message":"Updating pull request branch."}' > "${FX}/update"; echo "${H3}" > "${FX}/update-head"
+  printf '{"committer":{"login":"web-flow"},"commit":{"verification":{"verified":true}},"parents":[{"sha":"%s"},{"sha":"%s"}]}\n' "${1:-${H1}}" "${B}" > "${FX}/commit.${H3}"
+  printf '{"commit":{"sha":"%s"}}\n' "${B}" > "${FX}/basehead"
+  # What the merge changes is what main brings.
+  local x='{"files":[{"filename":"bin/x.sh","status":"modified","sha":"b1","patch":"@@ -1 +1 @@\n-a\n+b"}]}'
+  echo "${x}" > "${FX}/compare.${1:-${H1}}...${H3}"; echo "${x}" > "${FX}/compare.${1:-${H1}}...${B}"
+  # The PR's own change, which the merge leaves alone.
+  echo '{"files":[{"filename":"bin/pr.sh","status":"modified","sha":"p1"}]}' > "${FX}/compare.${B}...${1:-${H1}}"
+}
+updated() { grep -qxF "api -X PUT -f expected_head_sha=${H1} repos/$1/pulls/7/update-branch" "${ROOT}/gh.log"; }
+MOVED="base merged: ${URL} is now 3333333 (1111111 with main merged in); wait-pr ${URL}, then merge --head ${H3} ${URL}"
 
-# --- The base gained code after the head's CI ran: refused before pr merge.
-fresh; gained 1 bin/x.sh; merge "${URL}"
+# --- The base gained code after the head's CI ran: merge merges the base in, and no pr merge runs.
+fresh; gained 1 bin/x.sh; updates; merge "${URL}"
 refused "the base gained bin/x.sh" "${MOVED}"
 check "the base gained bin/x.sh: compares the head with the base" compared o/r "${H1}"
-check "the base gained bin/x.sh: logs the refusal" logged "^merge s ${MOVED}$"
+check "the base gained bin/x.sh: asks GitHub to merge main in, pinned to the head" updated o/r
+check "the base gained bin/x.sh: logs base-merged" logged "^merge s base-merged ${H3}$"
 check "the base gained bin/x.sh: the story stays in review" grep -qx "status: review" "${S}"
-fresh; gained 2 docs/stories/t.md bin/x.sh; merge "${URL}"
-refused "the base gained a board file and bin/x.sh" "moved past 1111111's CI (2 commits it lacks)"
+fresh; gained 2 docs/stories/t.md bin/x.sh; updates; merge "${URL}"
+refused "the base gained a board file and bin/x.sh" "${MOVED}"
 fresh; echo '{"ahead_by":1,"files":[{"filename":"docs/stories/t.md","previous_filename":"bin/x.sh","status":"renamed"}]}' > "${FX}/behind"
-merge "${URL}"; refused "the base renamed bin/x.sh onto the board" "${MOVED}"
+updates; merge "${URL}"; refused "the base renamed bin/x.sh onto the board" "${MOVED}"
 
 # --- Board-only commits run no tests: they do not count, in the board's own repo.
 fresh; gained 1 docs/stories/t.md docs/epics/e.md; merge "${URL}"
 is "the base gained only board files: exits 0" 0 "${rc}"
 check "the base gained only board files: merges" merged
-fresh; gained 1 docs/stories/README.md; merge "${URL}"
+fresh; gained 1 docs/stories/README.md; updates; merge "${URL}"
 refused "a board README counts as code: a test may check it" "${MOVED}"
-fresh; gained 1 docs/stories.md; merge "${URL}"
+fresh; gained 1 docs/stories.md; updates; merge "${URL}"
 refused "a file beside the board's folders is not on it" "${MOVED}"
 OTHER=https://github.com/o/other/pull/7
-fresh; item s "status: review" "prs: ${OTHER}"; gained 1 docs/stories/t.md; merge "${OTHER}"
-refused "a PR in another repo: its stories/ file is code" "${MOVED}"
+fresh; item s "status: review" "prs: ${OTHER}"; gained 1 docs/stories/t.md; updates; merge "${OTHER}"
+refused "a PR in another repo: its stories/ file is code" "base merged: ${OTHER} is now 3333333 (1111111 with main merged in)"
 check "a PR in another repo: compares in that repo" compared o/other "${H1}"
+check "a PR in another repo: merges main in in that repo" updated o/other
 # The board's repo cannot be read: the failed read is named, with gh's own line, not called code on the
 # base, and the refusal says to merge the base in, which clears it.
 NOREPO="GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
@@ -74,7 +91,7 @@ refused "a failed compare" "cannot tell whether main moved past 1111111's CI: gh
 reads() { grep -c "/compare/${H1}...main" "${ROOT}/gh.log" || true; }
 is "a failed compare: a 502 is transient, so it is read three times" 3 "$(reads)"
 # One blip is read again, and the second read decides.
-fresh; gained 1 bin/x.sh; touch "${FX}/behind.1.fail"; merge "${URL}"
+fresh; gained 1 bin/x.sh; updates; touch "${FX}/behind.1.fail"; merge "${URL}"
 refused "a 502 on the first compare, code on the second" "${MOVED}"
 fresh; echo '{"ahead_by":0,"files":[]}' > "${FX}/behind"; touch "${FX}/behind.1.fail"; merge "${URL}"
 is "a 502 on the first compare, up to date on the second: merges after two reads" "0|yes|2" "${rc}|$(merged && echo yes)|$(reads)"
@@ -113,7 +130,7 @@ is "--board: exits 0" 0 "${rc}"
 check "--board: no compare read" not_compared
 
 # --- v0.28.0: PR A and PR B are each green on the old base. A merges and changes bin/a.sh; B is then
-# refused, and its head with the base merged in merges. B's PR reads open while A's reconcile runs.
+# not merged: merge merges main into it, and that new head merges. B's PR reads open while A's reconcile runs.
 URL_B=https://github.com/o/r/pull/8
 fresh; item b "status: review" "prs: ${URL_B}"; echo OPEN > "${FX}/state.8"
 echo "echo '{\"ahead_by\":1,\"files\":[{\"filename\":\"bin/a.sh\",\"status\":\"modified\"}]}' > '${FX}/behind'" > "${FX}/on-merge"
@@ -122,13 +139,14 @@ is "v0.28.0: A merges" "0|yes" "${rc}|$(merged && echo yes)"
 # B's PR reads open from here on, as the fixture's one PR state.
 rm "${FX}/state.8"; echo OPEN > "${FX}/state"; echo null > "${FX}/mergecommit"; : > "${ROOT}/gh.log"; echo "${H2}" > "${FX}/head"
 checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"
-merge "${URL_B}"
+updates "${H2}"; merge "${URL_B}"
 is "v0.28.0: B, green on the old base, exits non-zero" 1 "${rc}"
-check "v0.28.0: B is refused, naming the moved base" said "the base main moved past 2222222's CI (1 commits it lacks): merge origin/main in, push, and merge the new head"
+check "v0.28.0: B is not merged: main is merged into it" said "base merged: ${URL_B} is now 3333333 (2222222 with main merged in); wait-pr ${URL_B}, then merge --head ${H3} ${URL_B}"
 check "v0.28.0: no pr merge of B" not_merged
 check "v0.28.0: B compared its head with the base" compared o/r "${H2}"
-H3=3333333333333333333333333333333333333333
-echo "${H3}" > "${FX}/head"; checks "${FX}/${H3}.checks" "$(run test completed success)"; statuses "${FX}/${H3}.status"
+check "v0.28.0: B's branch had main merged in at its head" grep -qxF "api -X PUT -f expected_head_sha=${H2} repos/o/r/pulls/8/update-branch" "${ROOT}/gh.log"
+is "v0.28.0: B's head is now the merge" "${H3}" "$(cat "${FX}/head")"
+checks "${FX}/${H3}.checks" "$(run test completed success)"; statuses "${FX}/${H3}.status"
 rm "${FX}/behind"; merge --head "${H3}" "${URL_B}"
 is "v0.28.0: B's new head, with main merged in, merges" "0|yes" "${rc}|$(merged && echo yes)"
 

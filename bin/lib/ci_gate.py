@@ -177,6 +177,33 @@ def behind(repo, sha, base, board, wait):
         return p.rsplit("/", 1)[-1] != "README.md" and any(p.startswith(b) if b.endswith("/") else p == b for b in board)
     return n, [p for p in paths if not on(p)]
 
+def merged(repo, head, new, second):
+    """The paths new, a merge of second into head, cannot be shown to take whole from second, as a list
+    (empty when none): compare head...new, the merge against head, must list the files compare
+    head...second lists (second against where it and head part), each with the same status, old path and
+    blob, and none of them may be a file compare second...head lists (the PR's own changes since then).
+    So every file the merge changes is the base's own version of a file the PR left alone. A conflict
+    resolved by hand, an edit of the merge's own, a PR edit dropped for the base's version and a file both
+    sides changed are all listed: patches would pass a base change made at another place. A list of
+    COMPARE_FILES or more may be cut short, so it is an error, as is a read that fails."""
+    def files(base, tip):
+        d = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, base, tip)))
+        try:
+            fs = {f["filename"]: f for f in d["files"]}
+        except (KeyError, TypeError) as e:
+            raise Err("unreadable compare of %s with %s: %r" % (base[:7], tip[:7], e))
+        if len(fs) >= COMPARE_FILES:
+            raise Err("the compare of %s with %s lists %d files, so it may be cut short" % (base[:7], tip[:7], len(fs)))
+        return fs
+    def change(f):
+        return f.get("status"), f.get("previous_filename"), f.get("sha")
+    got, want, pr = files(head, new), files(head, second), files(second, head)
+    def paths(f):   # a file's path, and its old one when renamed
+        return {f["filename"], f.get("previous_filename")} - {None}
+    ours = set().union(*map(paths, pr.values()))
+    return [n for n in sorted(set(got) | set(want))
+            if n not in got or n not in want or change(got[n]) != change(want[n]) or paths(got[n]) & ours]
+
 def graphql(query, **v):
     """One GraphQL read: v's ints as -F (typed), every other value as -f (a string)."""
     args = ["api", "graphql"]
@@ -838,6 +865,11 @@ try:
             print("error %s" % e)
             sys.exit(UNLISTED)
         print("\n".join([str(n)] + off))
+    elif mode == "merged":
+        extra = merged(repo, args[0], args[1], args[2])
+        if extra:
+            print(", ".join(extra[:5]) + (" and %d more" % (len(extra) - 5) if len(extra) > 5 else ""))
+            sys.exit(1)
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
     elif mode == "pushed":
