@@ -172,8 +172,10 @@ outcomes_report() {
   # story/<slug> (newest first, as `url state mergedAt createdAt main_merges checks commits closedAt` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
   # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`, and checks is
-  # its head's check runs as startedAt/completedAt joined by semicolons, commits the committedDate of
-  # its commits but those base merges, joined by semicolons), its epic: and
+  # every entry of its head's status rollup as startedAt/completedAt/conclusion joined by semicolons (a
+  # commit status has its state for a conclusion, the time it was set for startedAt, which gh exports
+  # as that, and no completedAt; a time gh does not give is empty, so no entry is dropped), commits the
+  # committedDate of its commits but those base merges, joined by semicolons), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -201,7 +203,7 @@ outcomes_report() {
           | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0] | ltrimstr("\u0027") | rtrimstr("\u0027")
           | ltrimstr("origin/")) == $b);
         .[] | .baseRefName as $b | [.url, .state, .mergedAt // "", .createdAt, ([.commits[] | select(base_merge($b))] | length),
-          ([.statusCheckRollup[]? | select(.startedAt and .completedAt) | .startedAt + "/" + .completedAt] | join(";")),
+          ([.statusCheckRollup[]? | (.startedAt // "") + "/" + (.completedAt // "") + "/" + (.conclusion // .state // "")] | join(";")),
           ([.commits[] | select(base_merge($b) | not) | .committedDate] | join(";")), .closedAt // "",
           ([.statusCheckRollup[]? | select((.status != null and .status != "COMPLETED") or .state == "PENDING" or .state == "EXPECTED")] | length)] | @tsv') 2>/dev/null)"; then
       prs="$(cut -f1-8 <<< "${got}" | tr '\t' ' ' | paste -sd, -)"; asked="${text:+1}"
@@ -416,7 +418,8 @@ dataset_report() {
 #     phase minutes (a merged PR), each PR once by its first build; with --epic, that epic's row alone:
 #     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%; then
-#     ready_wait's median and p90 minutes over the first builds dated in the window, merged or not.
+#     ready_wait's median and p90 minutes over the first builds dated in the window, merged or not;
+#     then green_to_review's median and p90 minutes over the row's PRs that have one.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing but
 # its gh calls' lines in .swarm/gh-calls.tsv (bin/gh-shim's log), its cache of finished GitHub records
 # (GH_CACHE, bin/lib/gh_cache.py; --no-cache reads them all from gh again and rewrites them), the PR heads merge_ins

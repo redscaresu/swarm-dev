@@ -88,8 +88,8 @@ fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
-check "the five phases, then rework, held and ready_wait, are the last columns of outcomes" "$(head -1 <<< "${out}" | awk -F'\t' -v OFS='\t' '{ print $(NF-7), $(NF-6), $(NF-5), $(NF-4), $(NF-3), $(NF-2), $(NF-1), $NF }')" \
-  $'building_min\tci_min\treview_wait_min\tfixing_min\tmerge_wait_min\trework\theld_min\tready_wait_min'
+check "the five phases, then rework, held, ready_wait and green_to_review, are the last columns of outcomes" "$(head -1 <<< "${out}" | awk -F'\t' -v OFS='\t' '{ print $(NF-8), $(NF-7), $(NF-6), $(NF-5), $(NF-4), $(NF-3), $(NF-2), $(NF-1), $NF }')" \
+  $'building_min\tci_min\treview_wait_min\tfixing_min\tmerge_wait_min\trework\theld_min\tready_wait_min\tgreen_to_review_min'
 # The abandoned build has no merge; the retry: fixing 11:35 to 11:40 and 11:55 to 12:10, review wait
 # 11:40 to 11:45, CI 11:45 to 11:55 and 12:15 to 12:20, merge wait 12:10 to 12:15 and 12:20 to 12:30.
 check "each build's minutes split by precedence, summing to its start-to-merge minutes" "$(cols)" "$(printf '%s\n' \
@@ -176,22 +176,75 @@ check "a story ready, then blocked, before its build stays unknown though readie
 cp "${dir}/tis.md" "${P}/docs/stories/tis.md"
 cp "${dir}/events.full" "${E}"
 
+# green_to_review_min: tis's review agent started (a bare ok) at 09:40, before PR #1's head went green
+# at 10:00, the end of the last of its runs (a success, a neutral and a skipped one). A bare ok at 10:05
+# starts no round; round 1 starts at 10:12, so 12, and with no round line it is empty. In this section
+# PR #1 opens at 09:30 (head_runs), since a round counts for a PR only once the PR is open.
+cp "${dir}/prs.json" "${dir}/prs.full"
+crun() { printf '{"name":"t","status":"COMPLETED","conclusion":"%s","startedAt":"%s%s:00Z","completedAt":"%s%s:00Z"}' "$1" "${D}" "$2" "${D}" "$3"; } # <conclusion> <HH:MM start> <HH:MM end>
+head_runs() { # <run>... — PR #1's head's check runs, in place of the fixture's, and its createdAt at ${CREATED:-09:30}
+  local IFS=,
+  python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); d[0]["statusCheckRollup"] = json.loads(sys.argv[2]); d[0]["createdAt"] = sys.argv[3]; json.dump(d, open(sys.argv[4], "w"))' \
+    "${dir}/prs.full" "[$*]" "${D}${CREATED:-09:30}:00Z" "${dir}/prs.json"
+}
+g2r() { outcomes | awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T10:50/ { print "[" $at["green_to_review_min"] "]" }'; }
+head_runs "$(crun SUCCESS 09:50 09:58)" "$(crun NEUTRAL 09:51 10:00)" "$(crun SKIPPED 09:52 09:52)"
+add_events "${D}09:40:00Z"$'\treview-agent\ttis\tw:1\tok' "${D}10:05:00Z"$'\treview-agent\ttis\tw:1\tok' "${D}10:12:00Z"$'\treview-agent\ttis\tw:1\tok (round 1)'
+check "green_to_review_min runs from the head's green to the first round start after it, not a bare ok start" "$(g2r)" "[12]"
+add_events "${D}09:40:00Z"$'\treview-agent\ttis\tw:1\tok' "${D}10:05:00Z"$'\treview-agent\ttis\tw:1\tok'
+check "with no round line, green_to_review_min is empty" "$(g2r)" "[]"
+# A head with a failed check is no green, though round 1 came after its last run. The next head's runs
+# end at 11:00, and its round 2 (review-agent --next's line) at 11:05 gives 5.
+head_runs "$(crun SUCCESS 09:50 10:00)" "$(crun FAILURE 09:50 10:05)"
+add_events "${D}10:12:00Z"$'\treview-agent\ttis\tw:1\tok (round 1)'
+check "a head with a failed check is never green" "$(g2r)" "[]"
+head_runs "$(crun SUCCESS 10:50 11:00)"
+add_events "${D}10:12:00Z"$'\treview-agent\ttis\tw:1\tok (round 1)' "${D}11:05:00Z"$'\treview-agent:next\ttis\tw:1\tok (round 2)'
+check "a later head that goes green counts from its own green" "$(g2r)" "[5]"
+head_runs "$(crun SUCCESS 10:50 11:00)" '{"name":"t","status":"IN_PROGRESS","startedAt":"'"${D}"'10:55:00Z"}'
+check "a head with a run still in progress is not green yet" "$(g2r)" "[]"
+# A commit status has no completedAt; gh gives the time it was set as its startedAt, so it counts at
+# that time. One with no time at all leaves the head's green unknown, and a failed one is no green,
+# though it has no time for the jq to select on.
+head_runs "$(crun SUCCESS 10:50 11:00)" '{"context":"ci/x","state":"SUCCESS","startedAt":"'"${D}"'11:03:00Z"}'
+check "a commit status counts at the time it was set" "$(g2r)" "[2]"
+head_runs "$(crun SUCCESS 10:50 11:00)" '{"context":"ci/x","state":"SUCCESS"}'
+check "a green entry with no time leaves the head's green unknown" "$(g2r)" "[]"
+head_runs "$(crun SUCCESS 10:50 11:00)" '{"context":"ci/x","state":"FAILURE"}'
+check "a failed commit status with no time is no green" "$(g2r)" "[]"
+# PR #1 opens at 11:00 here. Its head went green at 10:30, before that, and the round at 10:45 is an
+# earlier PR's of the slug: its own is the one at 11:10, 40 minutes from its green.
+CREATED=11:00 head_runs "$(crun SUCCESS 10:20 10:30)"
+add_events "${D}10:45:00Z"$'\treview-agent\ttis\tw:1\tok (round 1)' "${D}11:10:00Z"$'\treview-agent:next\ttis\tw:1\tok (round 2)'
+check "a round before the PR was created is not its review" "$(g2r)" "[40]"
+# The fixture's runs carry no conclusion, so outcomes' jq gives an empty one: unknown, never green, as a
+# two-part record cached before conclusions were read is.
+cp "${dir}/prs.full" "${dir}/prs.json"
+add_events "${D}12:25:00Z"$'\treview-agent:next\ttis\tw:1\tok (round 2)'
+check "a run with no conclusion is never green" "$(g2r)" "[]"
+cp "${dir}/events.full" "${E}"
+
 flow() { # [epic [since]] — the time_in_state section alone, as flow runs it, over the outcomes rows
   SWARM_ROWS="${out}" python3 "${ROOT}/bin/lib/flow_report.py" "${2:-0000-00-00}" 9999-12-30 "${1:-}" x x x x x x x "" x time_in_state
 }
 check "flow's epic line counts the PR once and the story's held time, in hours and shares, largest first, a tie in column order" "$(flow)" "$(printf '%s\n' \
-  "## time_in_state" $'epic\tprs\thours\tlargest_first\tready_wait_median\tready_wait_p90' $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240' $'all\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240')"
+  "## time_in_state" $'epic\tprs\thours\tlargest_first\tready_wait_median\tready_wait_p90\tgreen_to_review_median\tgreen_to_review_p90' $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t' $'all\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t')"
 # The rebuild, dated 10-01, is the PR's first build: --since 2026-10-02 leaves the PR out, rather
 # than counting the retry's 55 minutes for it.
 check "a PR counts by its first build, in the window only when that build is" "$(flow "" 2026-10-02 | tail -1)" \
-  $'all\t0\t0\tbuilding:0h/0% ci:0h/0% review_wait:0h/0% fixing:0h/0% merge_wait:0h/0% held:0h/0%\t\t'
+  $'all\t0\t0\tbuilding:0h/0% ci:0h/0% review_wait:0h/0% fixing:0h/0% merge_wait:0h/0% held:0h/0%\t\t\t\t'
 # Another story of e1 that waited 3 h too but whose PR never merged: its held is not the merged PRs'.
 other="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["slug"] = "other"; print }' <<< "${out}")"
-check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
+check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t'
 # A step-up rung of tis at 13:00 keeps attempts 1 and its own held_min (60) and ready_wait_min (480):
 # held and ready_wait both still come from tis's earliest build.
 rung="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["started"] = "'"${D}"'13:00:00Z"; $at["held_min"] = 60; $at["ready_wait_min"] = 480; print }' <<< "${out}")"
-check "held and ready_wait count a stepped-up story by its earliest build, not its rung" "$(out="${out}"$'\n'"${rung}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
-check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
+check "held and ready_wait count a stepped-up story by its earliest build, not its rung" "$(out="${out}"$'\n'"${rung}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t'
+check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t'
+
+# Three merged PRs of e1, 2, 12 and 30 minutes from green to their review: median 12, p90 (nearest rank) 30.
+g2r_rows="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next }
+  $at["started"] ~ /T10:50/ { split("2 12 30", m, " "); for (i = 1; i <= 3; i++) { $at["pr"] = "https://github.com/o/r/pull/2" i; $at["green_to_review_min"] = m[i]; print } }' <<< "${out}")"
+check "time_in_state gives each epic's green_to_review median and p90 over its PRs" "$(out="${out}"$'\n'"${g2r_rows}" flow e1 | tail -1 | cut -f2,7,8)" $'4\t12\t30'
 
 if [[ "${fails}" -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi
