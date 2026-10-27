@@ -4,6 +4,8 @@
 # `swarm.sh wait --lead 0` (once: the next poll is quiet), in `swarm.sh status` and in dash. Once the
 # dependency's PR merges and reconcile and unblock run, the line is gone from all three, and the story
 # that merge readied, with no build, shows in status's next and in dash's idle gauge.
+# A poll whose check fails (a python3 stub that fails touches_rows.py alone) keeps the line the last poll
+# saw, warns once with no traceback (status too), and the good poll after it wakes no one again.
 # gh is a stub answering the dependency's PR as merged; herdr a stub listing no agent; claude the
 # shared stub.
 set -euo pipefail
@@ -12,13 +14,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
+REAL_PY="$(command -v python3)"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
 P="${ROOT}/proj"; B="${P}/docs/stories"; URL=https://github.com/na-owner/na-repo/pull/7
-LINE="idle: s waits on d but shares no touches with it"
+LINE="idle: s waits on d but shares no touches part with it and needs nothing from it"
 mkdir -p "${P}/.claude/swarm" "${B}" "${P}/.swarm/lead" "${ROOT}/bin" "${ROOT}/projects" "${TMPDIR}"
 git -C "${P}" init -q
 echo "merge = human" > "${P}/.claude/swarm/config"
@@ -63,6 +66,25 @@ out="$(run status)"
 check "status prints the idle: line under next" grep -qxF "  ${LINE}" <<< "${out}"
 out="$(run dash)"
 check "dash shows the idle: line" grep -qF "${LINE}" <<< "${out}"
+
+# The check fails for one poll: python3 fails touches_rows.py alone (a story file reconcile removes
+# between the script's glob and its read fails the same way), and every other python3 call runs as is.
+cat > "${ROOT}/bin/python3" <<STUB
+#!/bin/sh
+case "\$1" in *touches_rows.py) echo "Traceback (most recent call last):" >&2; echo "FileNotFoundError: stub" >&2; exit 1 ;; esac
+exec "${REAL_PY}" "\$@"
+STUB
+chmod +x "${ROOT}/bin/python3"
+out="$(run wait --lead 0)"
+# The warning's own text names idle: lines, so the count is of lines that start as one.
+check "a failed check prints no idle: line and wakes no one" test "$(grep -c '^idle: ' <<< "${out}" || true)" = 0
+check "a failed check keeps the idle: line in the lead's seen queue" grep -qxF "${LINE}" "${P}/.swarm/lead/seen"
+check "a failed check warns once in wait --lead, with no traceback" test "$(count "warning: the idle-dependency check failed" "${out}")" = 1 -a "$(count "Traceback" "${out}")" = 0
+out="$(run status)"
+check "status warns on a failed check, with no traceback" test "$(count "warning: the idle-dependency check failed" "${out}")" = 1 -a "$(count "Traceback" "${out}")" = 0
+rm "${ROOT}/bin/python3"
+out="$(run wait --lead 0)"
+check "the good poll after a failed check does not wake the lead again" test "$(count "${LINE}" "${out}")" = 0
 
 # d's PR merges: reconcile takes it off the board, and unblock readies s, which has no build.
 story d "kind: code" "status: review" "prs: ${URL}" "touches: [b.sh]"

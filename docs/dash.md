@@ -116,9 +116,9 @@ is one column, top to bottom:
   every story a close kept (`swarm.sh review` or `swarm.sh close <slug> --drop`). It is left out when
   empty.
 - **Idle capacity**: the `idle:` lines `swarm.sh next` and `wait --lead` print for blocked stories, one
-  row each: `idle: <story> waits on <dep> but shares no touches with it`. dash works them out again
-  every frame from the board and its state, with no gh call, so a row goes once the dependency's merge
-  is reconciled. They count toward no warning light. The box is left out when there are none.
+  row each: `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`.
+  dash works them out again every frame from the board and its state, with no gh call, so a row goes
+  once the dependency's merge is reconciled. They count toward no warning light. The box is left out when there are none.
 - **Running now**: one row per agent open in this project's panes (empty panes and retired agents
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`
   or `agent` line in `events.tsv`, or else from midnight on its `agents.tsv` day) and its last
