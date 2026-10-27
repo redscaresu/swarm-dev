@@ -1446,7 +1446,7 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 # /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
 # (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
-  local f kind slug when stage prev why waiting=""
+  local f kind slug when start agreed stage prev why waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -1461,12 +1461,17 @@ waiting_on_user() {
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in
       # A later epic going active needs a ticket (epic_unticketed): on the user's go the lead writes
-      # agreed: <today> in the edit that sets it active, as /epic does.
-      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md)
+      # agreed: <today> in the edit that sets it active, as /epic does. On a board in the repo, one agreed
+      # and parked today has that date at the base already, which is no ticket, so its agreed: line goes
+      # in a board PR first. A board outside the repo has no board PR and no guard.
+      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md); start="set it active with agreed: <today> to start it"
+        agreed="$(get_fm "${f}" agreed)"
+        [[ ${BOARD_IN_REPO} != 1 || -z "${agreed}" || "$(slug_list "${agreed}")" != "$(date +%F)" ]] \
+          || start="it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next"
         case "${when}" in
-          "") when=" (set it active with agreed: <today> to start it)" ;;
+          "") when=" (${start})" ;;
           declined*) when=" (its unasked plan was ${when})" ;;
-          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}; set it active with agreed: <today> to start it)"
+          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}; ${start})"
               else when=" (planned unasked on ${when}, no stories yet; run /plan-epic ${slug} again if that plan stopped)"; fi ;;
         esac
         waiting+="  later epic: ${slug}${when}"$'\n' ;;
