@@ -258,7 +258,8 @@ story_env() {
   local v n words out="" exported list='^\[[^][]*\]$' epic
   v="$(get_fm "$1" env)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   # An empty env: is no names, unless - items follow it (a block list, at any indent).
-  if { [[ -n "${v}" ]] && [[ ! "${v}" =~ ${list} ]]; } || { [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit }
+  if { [[ -n "${v}" ]] && [[ ! "${v}" =~ ${list} ]]; } ||   # loose-match: ok list is a fixed regex
+      { [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit }
       n == 1 && bare && /^[ \t]*-([ \t]|$)/ { f = 1; exit } n == 1 { bare = /^env:[ \t]*(#.*)?$/ } END { exit !f }' "$1"; }; then
     echo "$1: env: is not a one-line list; write it as env: [NAME, ...]"; return 1
   fi
@@ -333,8 +334,9 @@ launch_file() {
     done
     printf 'export SHELL=%q ZDOTDIR=%q\n' "${AGENT_SHELL%% *}" "$4"
     # The agent's name (its ZDOTDIR's): gh-shim logs its calls under it, and not as the starting
-    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry).
-    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA\n' "${4##*/}"
+    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry). Nor does the agent keep a
+    # timed run's SWARM_RUN_TIMED (next starts conductors), so its own status, next and dash log rows.
+    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA SWARM_RUN_TIMED\n' "${4##*/}"
     # shellcheck disable=SC2016 # the wrapper's own bash expands them
     printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
       "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done"
@@ -411,7 +413,7 @@ RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
 # and <names>), with the restored pane's own values, so no value is written down or put on a command
 # line; sets AGENT_SET as launch_file does, with SWARM_PROJECT, SWARM_RESUME and gh-shim's
 # SWARM_GH_LOG and SWARM_GH_CALLER (its folder first on PATH, so the agent's gh calls log; no
-# SWARM_GH_VIA); and execs its arguments. Python, not bash, so neither a BASH_ENV nor an exported
+# SWARM_GH_VIA, and no SWARM_RUN_TIMED, as launch_file); and execs its arguments. Python, not bash, so neither a BASH_ENV nor an exported
 # function in that environment runs before the scrub or changes it, as none can on a first start through env -i. It also makes the
 # session's own ZDOTDIR (<session>.zdotdir) afresh at 0700 with clean_env's two files, so nothing
 # written there since runs in the restored agent's shells; it empties the folder rather than
@@ -463,6 +465,7 @@ env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(
 env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r},
            SWARM_GH_LOG={gh_log!r}, SWARM_GH_CALLER={name!r}, PATH=":".join(p for p in ({gh_shim!r}, env.get("PATH", "")) if p))
 env.pop("SWARM_GH_VIA", None)
+env.pop("SWARM_RUN_TIMED", None)
 try:
     env["GPG_TTY"] = os.ttyname(0)
 except OSError:
@@ -1314,14 +1317,14 @@ settle() {
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
   [[ -z "${wake}" ]] || hold=$(($(now_ms) + STALL_POLL_MS))
-  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do
+  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do   # loose-match: ok SETTLED is a fixed regex
     t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
     if [[ ${end} -gt ${t0} ]]; then
       herdr agent wait "${target}" --timeout $((end - t0)) >/dev/null 2>"${err}" || timed_out "${err}" || rc=1
     fi
     state="$(session_state "${name}")"
     [[ "${state}" =~ ^(idle|unknown)$ ]] || hold=0
-    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi
+    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi   # loose-match: ok SETTLED is a fixed regex
     if [[ ${rc} -ne 0 ]]; then cat "${err}" >&2; break; fi
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
@@ -1372,12 +1375,14 @@ settle() {
 # (usage_event), counts no nudge or resume, and waits on, a slice at a time, never past its timeout,
 # where it prints usage-limit and fails. A pane that already waits after that choice is the same,
 # with nothing sent; pane_quiet never sees it, so it is never stuck however long it sits.
-# A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
-# one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
-# (login_incident).
+# A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again)
+# or the agent is still working, which is no fault: settle's last read is busy, or it is empty (herdr_wait
+# times out printing nothing) and read_state says busy or herdr:working (tell's working values). The
+# line names that read. One that failed sooner is herdr's wait failing, and logs none. auth logs a
+# login incident (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at hung
+  local answered="" resumed_sum="" pane_kind pane_at hung seen
   deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
@@ -1402,7 +1407,10 @@ wait_agent() {
     fi
     if [[ "${status}" == stuck:* ]]; then echo "${status}"; return "${WAIT_STUCK}"; fi
     if [[ ${rc} -ne 0 ]]; then
-      [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
+      if [[ -z "${SWARM_WAIT_SLICE:-}" && $(($(now_ms) - t0)) -ge ${timeout} ]]; then
+        seen="${status:-$(read_state "${name}")}"
+        [[ "${seen}" == busy || "${seen}" == herdr:working ]] || record_event incident "${name}" "wait-timeout: ${seen}"
+      fi
       echo "${status}"; return "${rc}"
     fi
     lim=""   # settle's own read when it ended on the usage limit; else, idle or waiting, a read here
@@ -1611,8 +1619,11 @@ note_lock() {
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
+# The text sent says who it is from (tell_from, read once, so its header and its /goal agree): the
+# review agent from review-<slug>'s pane, else the conductor. Either counts the same: rounds, step-ups
+# and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n
+  local kind="$2" f="$3" name msg state since inbox rc pane line n from who
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1659,10 +1670,11 @@ tell_agent() {
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
     [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
   fi
+  from="$(tell_from "$1")"; who="the conductor"; [[ "${from}" != review ]] || who="the review agent"
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
-  { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
+  { echo "From ${who}:"; echo; cat "${f}"; } > "${msg}"
   # The file's own first line is what its session log is read for: every tell starts with the header.
   line="$(awk 'NF { print; exit }' "${f}")"
   if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"; echo "told ${name}"; return; fi
@@ -1672,8 +1684,20 @@ tell_agent() {
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
   trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
-  findings_goal "$1" "${since}" "${msg}.goal"
+  findings_goal "$1" "${since}" "${msg}.goal" "${from}"
   echo "told ${name}"
+}
+
+# tell_from <slug> — who a tell to <slug>'s builder is from: review when the pane running it
+# (HERDR_PANE_ID) is review-<slug>'s by review_pane's exact record, the one merge goes by: its tab
+# records name review-<slug> and no retired name, the newest agents.tsv line for that name has role
+# review, and herdr's agent in the pane holds the name. Else conductor: so the builder of a story
+# slugged review-<x>, whose tab record names review-<x> too, is not x's review agent, and a pane
+# whose record is stale or retired is no one's. No pane id, or herdr unable to list, is the conductor.
+tell_from() {
+  local agents=""
+  [[ -z "${HERDR_PANE_ID:-}" ]] || agents="$(herdr agent list 2>/dev/null)" || agents=""
+  if [[ -n "${agents}" && "$(review_pane "${agents}")" == "$1" ]]; then echo review; else echo conductor; fi
 }
 
 # tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other

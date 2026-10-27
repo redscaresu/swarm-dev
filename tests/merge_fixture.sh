@@ -14,6 +14,8 @@ P="${ROOT}/proj"; FX="${ROOT}/fx"; S="${P}/docs/stories/s.md"
 H1=1111111111111111111111111111111111111111; H2=2222222222222222222222222222222222222222
 M=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; URL=https://github.com/o/r/pull/7
 mkdir -p "${P}/.claude/swarm" "${P}/docs/stories" "${P}/.swarm/state" "${ROOT}/bin"
+# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 git -C "${P}" init -q
 # The board's repo has an origin, a local bare repo the gh stub names o/r (${FX}/origin).
 git init -q --bare "${ROOT}/origin.git"; git -C "${P}" remote add origin "${ROOT}/origin.git"

@@ -13,6 +13,8 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
@@ -352,7 +354,6 @@ CHECKLIST=(
   "- A new code path must enforce every rule the existing paths enforce."
   "- A zero or empty value shown to a person must say what it means."
   "- A repair path that changes something must say what it did."
-  "- For each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it."
   "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
   "- For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
@@ -361,6 +362,11 @@ for l in "${CHECKLIST[@]}"; do
   check "the review agent's and the fallback's briefs carry: ${l:2:40}..." "yes|yes|yes" \
     "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")|$( (( ${#l} < 200 )) && echo yes || echo "no, ${#l} bytes")"
 done
+# checklist_of <brief> — the checklist's "- " lines under its heading, up to the first other line.
+checklist_of() { awk '/^Hold the PR to these as well:$/ { on = 1; next } on && /^- / { print; next } on { exit }' <<< "$1"; }
+WANT="$(printf '%s\n' "${CHECKLIST[@]}")"
+check "both briefs' checklists are CHECKLIST, line for line: the re-read line is the builder's now, the exception line stays" \
+  "${WANT}|${WANT}" "$(checklist_of "${brief}")|$(checklist_of "${fbrief}")"
 SCOPE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
 check "both briefs say, in the same words, a point only a file outside the touches can fix is out of scope and a gap in the PR's own code is a finding" "yes|yes" \
   "$(has "${SCOPE}" "${brief}")|$(has "${SCOPE}" "${fbrief}")"
