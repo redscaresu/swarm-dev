@@ -1012,9 +1012,9 @@ stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${ST
 same worktree and branch. Do not close, retry or tell that story for it; wait on its builder again.
 A review file whose \`head moved:\` line names \`stepped up:\` is the review agent reporting one
 from its \`wait-pr\`: the PR's head has not moved, so do not start the review again; wait on the
-builder, then start the review on the head it pushes. A \`step-up failed: <slug>\` line, in a
-command's output or as a review file's one finding, means the step-up stopped after closing the
-builder. Leave that story alone: \`wait --lead\` tells the lead, so it does not go in your report.
+builder, then start the review on the head it pushes. A \`step-up failed: <slug>\` line means the
+step-up stopped after closing the builder. Leave that story alone: \`wait --lead\` tells the lead,
+so it does not go in your report. A review file whose one finding is that line is the same case.
 EOF
   local rules sign; sign="$(sign_rule)"
   [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"
