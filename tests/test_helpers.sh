@@ -9,7 +9,8 @@
 # into, the other SWARM_* settings, and HERDR_SOCKET_PATH, the real herdr. events_test.sh once logged
 # its fixtures into the real .swarm/findings.tsv and events.tsv that way. So this drops every SWARM_*
 # but the two make test sets (SWARM_SLEEP_SCALE, defaulted here as there, and SWARM_NO_CI_REFRESH) and
-# HERDR_SOCKET_PATH. It does not change directory: a test names its files from BASH_SOURCE, which a
+# HERDR_SOCKET_PATH, and HERDR_WORKSPACE_ID, the pane's own workspace, which next_pane compares a tab
+# record's panes with (CI has none; a test that needs one sets it). It does not change directory: a test names its files from BASH_SOURCE, which a
 # direct run gives as a relative path. Each project a test makes is pinned by a cd into it, or by
 # SWARM_PROJECT on the call; make test runs every file from its TMPDIR, outside any git repo, where a
 # call left unpinned stops at "not in a swarm project", so no green test has one. And it names the
@@ -19,7 +20,7 @@
 # are not swarm.sh calls and are not covered. tests/live_logs_test.sh checks that every test sources
 # this first.
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE|SWARM_NO_CI_REFRESH) ;; SWARM_*) unset "${v}" ;; esac; done
-unset HERDR_SOCKET_PATH
+unset HERDR_SOCKET_PATH HERDR_WORKSPACE_ID
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"
 _th_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if _th_common="$(git -C "${_th_repo}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
