@@ -254,13 +254,13 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
 # --release, which refuses there (only --admin merges past a queue). Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged, then for a story story_note notes its
-# conductor, even when reconcile failed; with --board, on a green main with an
+# conductor, saying so when reconcile failed or the queue merged another head; with --board, on a green main with an
 # upstream, ready_tell reconciles and notes conductors of the stories the PR made ready. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy=""
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -442,7 +442,9 @@ merge_pr() {
     # The story's conductor hears it merged now, a failed reconcile too. In the background, so set -e
     # holds inside it; it never fails the merge.
     if [[ -n "${grp}" ]]; then
-      ( set -e; story_note "${grp}" "${rwhy}" ) &
+      [[ -z "${QUEUE_BAD}" ]] || caveat="the merge queue merged a head nobody checked (${QUEUE_BAD}), so start none of the stories waiting on it until what merged is reviewed"
+      [[ -z "${rwhy}" ]] || caveat+="${caveat:+, and }reconcile failed after it (${rwhy}), so which stories it made ready is not known until swarm.sh reconcile succeeds"
+      ( set -e; story_note "${url}" "${MERGE_TARGET}" "${grp}" "${caveat}" ) &
       wait $! || echo "warning: telling the conductor of ${MERGE_TARGET} that ${url} merged failed (exit $?)"
     fi
     [[ -z "${rwhy}" ]] || die "merge: reconcile failed after the merge; run swarm.sh reconcile"
@@ -602,31 +604,42 @@ conductor_note() {
   wait $! || echo "warning: could not note ${name} ${what} (exit $?); ${later}"
 }
 
-# story_note <epic> [why] — once merge has landed a story's PR (merge_pr's local url; MERGE_TARGET is
-# the story) and run reconcile: one note to the conductor of <epic>, the story's (conductor_note), that
-# the PR merged, naming the stories of <epic> it made ready: each blocked one whose depends_on names
-# the story and has no open slug left (open_deps), which the conductor's unblock readies. With [why],
-# reconcile failed, so which those are is not known: the note names [why] instead.
+# story_note <url> <slug> <epic> [why] — once merge has landed story <slug>'s PR <url> and run
+# reconcile: one note to the conductor of <epic>, the story's (conductor_note), that the PR merged and
+# which stories of <epic> it made ready: each blocked one whose depends_on names <slug> and has no
+# open slug left (open_deps), which the conductor's unblock readies. To start are those unblock
+# --startable would print: of a kind an agent builds, in an active epic or none, their build not
+# started. One unblock readies as held (held_kept) is named apart, to merge its base in and be
+# reviewed again, never to start; with no conductor running, the ready now: line marks it (held).
+# With [why], merge's reason the ready ones are not to be started or not known, or with <slug> still
+# in review (reconcile held its pull, or could not read its PR), the note says that in their place.
 story_note() {
-  local f e slugs="" note
-  note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
-  if [[ -n "${2:-}" ]]; then
-    printf 'The PR %s of story %s just merged, but reconcile failed after it (%s), so which stories it made ready is not known until swarm.sh reconcile succeeds.\n' \
-      "${url}" "${MERGE_TARGET}" "$2" > "${note}"
+  local f e s slugs="" held="" list live=1 why="${4:-}" msg note
+  [[ -n "${why}" || "$(fm "${BOARD}/stories/$2.md" status 2>/dev/null)" != review ]] \
+    || why="reconcile has not finished $2 yet (it is still in review), so which stories it made ready is not known until swarm.sh reconcile finishes it"
+  msg="The PR $1 of story $2 just merged"
+  [[ "$3" == - || "$(fm "${BOARD}/epics/$3.md" status 2>/dev/null)" == active ]] || live=""
+  if [[ -n "${why}" ]]; then
+    msg+=", but ${why}."
   else
     while IFS= read -r f; do
-      e="$(fm "${f}" epic)"
-      [[ "${e:--}" == "$1" && "$(fm "${f}" status)" == blocked && " $(story_deps "${f}") " == *" ${MERGE_TARGET} "* ]] || continue
-      [[ -n "$(open_deps "$(story_deps "${f}")")" ]] || slugs+="${slugs:+ }$(basename "${f}" .md)"
+      e="$(fm "${f}" epic)"; s="$(basename "${f}" .md)"
+      [[ "${e:--}" == "$3" && "$(fm "${f}" status)" == blocked && " $(story_deps "${f}") " == *" $2 "* ]] || continue
+      [[ -z "$(open_deps "$(story_deps "${f}")")" ]] || continue
+      if held_kept "${f}"; then held+="${held:+ }${s}"
+      elif [[ -n "${live}" ]] && agent_kind "$(fm "${f}" kind)" && ! one_off_started "${s}"; then slugs+="${slugs:+ }${s}"; fi
     done < <(board stories)
     if [[ -n "${slugs}" ]]; then
-      printf 'The PR %s of story %s just merged, and these stories %s are ready now: %s. Start them now, within your builder limits, rather than on your next pass.\n' \
-        "${url}" "${MERGE_TARGET}" "$(group_of "$1")" "${slugs}" > "${note}"
+      msg+=", and these stories $(group_of "$3") are ready now: ${slugs}. Start them now, within your builder limits, rather than on your next pass."
     else
-      printf 'The PR %s of story %s just merged; it made no story %s ready.\n' "${url}" "${MERGE_TARGET}" "$(group_of "$1")" > "${note}"
+      msg+="; it made no story $(group_of "$3") ready to start."
     fi
+    [[ -z "${held}" ]] || msg+=" These held child reviews waited on it: ${held}. Unblock readies each as held: merge its base in and review it again, and never run swarm.sh story for it."
   fi
-  conductor_note "$1" "${note}" "${slugs}"
+  list="${slugs}"; for s in ${held}; do list+="${list:+ }${s} (held)"; done
+  note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
+  printf '%s\n' "${msg}" > "${note}"
+  conductor_note "$3" "${note}" "${list}"
   rm -f "${note}"
 }
 

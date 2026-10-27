@@ -2078,9 +2078,15 @@ has a run, only those must pass. Without
 For a story's PR it then sends the story's running conductor (the backlog conductor, for a story with
 no epic) one note: the PR merged, and these stories of its epic are ready now. They are the blocked
 stories whose `depends_on` names the merged story and has nothing open left, which the conductor's
-`swarm.sh unblock` readies. When reconcile fails, the note names the failure in place of those
-stories, and merge still exits non-zero after it. A conductor that has written its report counts as not running; with
-none running, merge prints a `ready now:` line for those stories instead. A note that fails is a
+`swarm.sh unblock` readies. It asks the conductor to start only those `unblock --startable` would
+print, so a `kind: lead` story or one whose build is already there is left out. A held child review
+among them is named apart: unblock readies it as held, so the conductor merges its base in and
+reviews it again, and never starts a build for it.
+When reconcile fails, when it leaves the story in review (it held the pull, or could not read the
+PR), or when the merge queue merged a head nobody checked, the note says so in place of those
+stories. After that queue merge it also asks the conductor to start none of them. Merge still exits
+non-zero after a failed reconcile or that queue merge. A conductor that has written its report counts as not running; with
+none running, merge prints a `ready now:` line for those stories instead, a held one marked `(held)`. A note that fails is a
 warning and never fails the merge.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
