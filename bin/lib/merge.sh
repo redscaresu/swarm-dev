@@ -963,12 +963,14 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # retried after WAIT_PR_RETRY and up to half again; the budget is not read for those. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
 # turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
 # That read also takes the PR's mergeable state: CONFLICTING ends it at once (exit 2, naming the base),
-# and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks.
+# and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks,
+# and its head branch: on red, before it exits 1, review_red_scan counts the head toward the ladder's
+# ci-red trigger when the wait runs in that story's review pane.
 wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
-  local spent budget bounded=""
+  local spent budget bounded="" ref branch=""
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -992,13 +994,13 @@ wait_pr() {
       # A conflicted PR runs no checks, so it ends here. UNKNOWN on an open PR is GitHub still
       # computing: the PR is read again each poll, its checks read beside it, so a red or green
       # check still ends the wait. A merged or closed PR stays UNKNOWN, so it is not read again.
-      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state \
-        -q '[.headRefOid, .mergeable, .baseRefName, .state] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
-      read -r oid mergeable base state <<< "${why}"
+      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,headRefName \
+        -q '[.headRefOid, .mergeable, .baseRefName, .state, .headRefName] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
+      read -r oid mergeable base state ref <<< "${why}"
       if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
         [[ "${mergeable}" != CONFLICTING ]] || wait_pr_fail "conflicts with ${base}: merge origin/${base} in, then push"
         unknown=""; [[ "${mergeable}/${state}" != UNKNOWN/OPEN ]] || unknown=1
-        [[ -n "${head}" ]] || { head="${oid}"; missed=0; echo "head ${head}"; }
+        [[ -n "${head}" ]] || { head="${oid}"; branch="${ref}"; missed=0; echo "head ${head}"; }
         [[ -n "${unknown}" ]] || continue
       elif [[ ${rc} -ne 142 ]]; then
         rc=3; why="gh cannot read the head of ${url}: $(tail -1 "${WAIT_PR_TMP}")"
@@ -1014,7 +1016,10 @@ wait_pr() {
       0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; return 0 ;;
       1) echo "red: ${why}"
          # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
-         WAIT_PR_RED=1; return 1 ;;
+         WAIT_PR_RED=1
+         # Set first, so exit 1 stands whatever the scan does; in a condition, as watch calls ci_red_scan.
+         review_red_scan "${repo}" "${head}" "${branch}" || true
+         return 1 ;;
       2) missed=0
          if [[ "; ${why}; " == *"; no check runs; "* ]]; then
            empty="${empty:-${SECONDS}}"
@@ -1661,7 +1666,7 @@ watch_mergeable() {
 # appended to, one short line at a time, so two watches at once lose none.
 RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 
-# ci_red_scan <owner/repo> <head> <slug> — watch's, with escalate_ladder set: note <head> as seen, the first
+# ci_red_scan <owner/repo> <head> <slug> — watch's and review_red_scan's, with escalate_ladder set: note <head> as seen, the first
 # time any watch sees it, then judge with ci_gate head every head first seen in this build
 # (build_started) and not judged yet, the current one or one replaced since; red, green or cancelled
 # is final, and pending or a failed read is judged again next poll. A head that was there before the
@@ -1705,6 +1710,23 @@ ci_red_scan() {
   [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" ]] && return 0
   [[ ${rc} != "${STEP_UP_BUSY}" ]] || return 1   # another step-up is running: not a refusal of this head
   printf '%s %s %s refused\n' "$3" "$2" "${now}" >> "${RED_HEADS}"; return 1
+}
+
+# review_red_scan <owner/repo> <head> <head branch> — wait-pr's, on a red <head>: with escalate_ladder
+# set, when the PR's head branch is story/<slug>, the pane running this is review-<slug>'s (the pane
+# herdr lists for that name, one this project opened) and the PR is in the story's own repo, run
+# ci_red_scan for <slug>, as a conductor's watch --epic or --backlog does. The ladder's red heads are
+# then counted with no watch running; a builder's or the lead's wait-pr counts nothing. A watch
+# scanning too is safe: RED_HEADS counts distinct heads, and ladder_step holds the story's lock.
+review_red_scan() {
+  local slug="${3#story/}" f home
+  f="${BOARD}/stories/${slug}.md"
+  [[ -n "${CFG_escalate_ladder:-}" && "$3" == story/* && "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && -n "${HERDR_PANE_ID:-}" ]] || return 1
+  [[ "$(agent_field "$(agent_name "review-${slug}")" pane_id)" == "${HERDR_PANE_ID}" ]] || return 1
+  # GitHub's owner/name, read from the story's repo, against the URL's, whose case may differ.
+  home="$(repo_slug "$(fm "${f}" repo)" 2>/dev/null)" || return 1
+  [[ "$(tr '[:upper:]' '[:lower:]' <<< "${home}")" == "$(tr '[:upper:]' '[:lower:]' <<< "$1")" ]] || return 1
+  ci_red_scan "$1" "$2" "${slug}"
 }
 
 # ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when

@@ -1037,7 +1037,15 @@ codex and, on its first round when it changes code, the `/code-review` skill. Th
 mergeable, the conductor starts a review agent for it with `swarm.sh review-agent <slug> <PR URL>`.
 It does not wait for other PRs or reviews, and runs one for every green PR at once, so PRs that land
 together are reviewed together. The command returns straight away, and records the head it reviews
-in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab. It
+in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab.
+Before it reviews, it waits for the PR's checks with `swarm.sh wait-pr`, and a head counts green only
+once it has also triaged `swarm.sh findings`, as a conductor does: the notes on every check run and
+the PR's open code-scanning alerts. Each real finding, a red check or a conflict goes to the builder
+as `swarm.sh tell <slug> nudge`; the rest get a reason in a PR comment. After a nudge the agent waits
+for the builder, then for green on the head the builder pushed. When that head is not the one it was
+started on, it writes `head moved: <the green head>` and stops. When the builder goes idle without
+pushing, or `wait-pr` ends the same way twice, it writes `not green: <why>` and stops. Neither file is
+a pass. It
 runs `codex-review` with `SWARM_STORY=<slug>` and, on the story's first round when the PR changes
 code, `/code-review <PR URL>`. From round 2 on it runs codex alone. `review-agent` counts the round
 from the findings `tell` sent the builder since the story's last build started (a step-up or a
@@ -2507,9 +2515,15 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   is judged again on later polls until `ci_gate` calls it red or green, even after a new push. A
   head that was already there when the build started is not counted. The lead's bare `watch` steps
   up nothing.
+- `wait-pr` runs the same check when it ends red in the story's review pane, the pane herdr lists
+  for `review-<slug>`. The `<slug>` comes from the PR's `story/<slug>` branch, and the PR must be in
+  the story's own repo. The review agent's own waits then count the red heads even when no watch is
+  running. A `wait-pr` from the builder's pane or the lead's counts nothing and writes nothing to
+  `.swarm/red-heads.tsv`. A watch and a review agent can both check one PR: each head counts once,
+  however many of them judged it, and only one step-up of a story runs at a time.
 
-Each prints `stepped up: <slug> ...`, and the conductor's brief tells it to wait on that builder
-again, not to close, retry or tell it. A close that a step-up replaced logs no close: the escalate
+Each prints `stepped up: <slug> ...`. The conductor's brief tells it to wait on that builder
+again, not to close, retry or tell it, and the review agent's brief says the same after `wait-pr`. A close that a step-up replaced logs no close: the escalate
 line ends that build. One step-up of a story runs at a time, under `.swarm/locks/step-up-<slug>`, which a
 top-rung hold and `swarm.sh restart` take too. No step-up is tried at the top rung or off the ladder, so the command
 carries on as it would with the ladder empty, apart from the top-rung hold above. A step-up that is refused, or fails before it closes the builder, says why on stderr,
