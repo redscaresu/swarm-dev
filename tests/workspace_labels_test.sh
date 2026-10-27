@@ -35,7 +35,7 @@ check() { # <name> <want> <got>
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nexec python3 "%s/bin/herdr.py" "$@"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat > "${ROOT}/bin/herdr.py" <<'EOF'
-import json, os, sys
+import json, os, sys, time
 H = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 F = os.path.join(H, "herdr.json")
 s = json.load(open(F)) if os.path.exists(F) else {"n": 0, "workspaces": [], "tabs": [], "panes": [], "agents": []}
@@ -49,7 +49,9 @@ def pane(ws, tab, cwd):
 def out(r): print(json.dumps({"result": r}))
 cmd = " ".join(a[:2])
 if a[:1] == ["--version"]: print("herdr 0.9.5")
-elif cmd == "workspace list": out({"workspaces": s["workspaces"]})
+elif cmd == "workspace list":
+    if os.path.exists(os.path.join(H, "hang")): time.sleep(60)
+    out({"workspaces": s["workspaces"]})
 elif cmd == "workspace create":
     ws = "w%d" % new(); tab = ws + ":t0"
     s["workspaces"].append({"workspace_id": ws, "label": opt("--label")})
@@ -77,7 +79,7 @@ elif cmd == "agent rename":
     for g in s["agents"]:
         if a[2] in (g["pane_id"], g["name"]): g["name"] = a[3]
 elif cmd in ("workspace rename", "tab rename"):
-    if os.path.exists(os.path.join(H, "refuse")):
+    if os.path.exists(os.path.join(H, "refuse")) or (a[0] == "tab" and os.path.exists(os.path.join(H, "refuse-tab"))):
         sys.stderr.write("error: rename refused\n"); sys.exit(1)
     k = "workspaces" if a[0] == "workspace" else "tabs"
     for x in s[k]:
@@ -219,7 +221,7 @@ check "close x in a/app closes its tab in app · x, and leaves web · x's" "yes|
 
 # --- The lead's workspace. lead <project> <workspace> [VAR=value...] <command>... runs swarm.sh from the
 # lead's pane in <workspace>'s tab <workspace>:t0, with herdr's socket (a socket file nothing listens
-# on: the stub herdr answers), its stderr appended to ${ROOT}/lead.err.
+# on: the stub herdr answers), its stderr appended to ${ROOT}/lead.err, or to LEAD_ERR when set.
 SOCK="${sock_dir}/h.sock"
 python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "${SOCK}"
 lead() {
@@ -227,11 +229,12 @@ lead() {
   shift 2
   while [[ "${1:-}" == *=* ]]; do vars+=("$1"); shift; done
   (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID="${ws}" HERDR_TAB_ID="${ws}:t0" HERDR_SOCKET_PATH="${SOCK}" \
-    PATH="${ROOT}/bin:${PATH}" ${vars[@]+"${vars[@]}"} bash "${SWARM}" "$@" 2>> "${ROOT}/lead.err")
+    PATH="${ROOT}/bin:${PATH}" ${vars[@]+"${vars[@]}"} bash "${SWARM}" "$@" 2>> "${LEAD_ERR:-${ROOT}/lead.err}")
 }
 ws_of() { herdr_q "next(w['workspace_id'] for w in s['workspaces'] if w['label'] == '$1')"; }
 # labels <workspace> — "<its label>|<its tab <workspace>:t0's label>".
 labels() { herdr_q "'%s|%s' % (next(w['label'] for w in s['workspaces'] if w['workspace_id'] == '$1'), next(t['label'] for t in s['tabs'] if t['tab_id'] == '$1:t0'))"; }
+wlabel() { herdr_q "next(w['label'] for w in s['workspaces'] if w['workspace_id'] == '$1')"; }
 renames() { grep -c '^[a-z]*|rename|' "${ROOT}/herdr.log" || true; }
 calls() { grep -c '' "${ROOT}/herdr.log" || true; }
 record() { cat "$1/.swarm/lead/workspace" 2>/dev/null || echo none; }
@@ -289,6 +292,39 @@ lead "${K}" "${lk}" SWARM_PROJECT="${P}" config > /dev/null
 check "a lead in a folder outside any project, with SWARM_PROJECT naming its project, is labelled for that project" \
   "swarm-lead${SEP}site|swarm-lead${SEP}site" "$(labels "${lk}")"
 
+# After the record is deleted (the retry the refusal names), the lead's own swarm-lead workspaces
+# still count as its own: their dir is the project's, or its board kept outside the repo. A new
+# workspace takes the project's own label, not its hash.
+rm -f "${A}/.swarm/lead/workspace"
+seed "lead a4" "${A}"; la4="$(ws_of "lead a4")"
+lead "${A}" "${la4}" config > /dev/null
+printf 'board_dir = %s\n' "${K}" > "${P}/.claude/swarm/config"; rm -f "${P}/.swarm/lead/workspace"
+seed kanban2 "${K}"; lk2="$(ws_of kanban2)"
+lead "${K}" "${lk2}" SWARM_PROJECT="${P}" config > /dev/null
+check "with the record deleted, the lead's own workspaces (in the project, or its board outside the repo) are no other lead's" \
+  "swarm-lead${SEP}app|swarm-lead${SEP}site" "$(wlabel "${la4}")|$(wlabel "${lk2}")"
+
+# A lead opened in a conductor's workspace leaves the conductor its label, `<project> · <epic>` or an
+# older swarm.sh's bare `<epic>`: said once, and recorded as kept.
+: > "${ROOT}/lead.err"; n="$(renames)"
+lead "${A}" "${a_x#*|}" config > /dev/null
+seed y "${A}"; yws="$(herdr_q "s['workspaces'][-1]['workspace_id']")"
+lead "${A}" "${yws}" config > /dev/null; lead "${A}" "${yws}" config > /dev/null
+check "a lead in a conductor's workspace (app · x, an older bare y) keeps its label, says so once each, and records it as kept" \
+  "${n}|app${SEP}x|y|2|kept" \
+  "$(renames)|$(wlabel "${a_x#*|}")|$(wlabel "${yws}")|$(grep -c 'keeps that label' "${ROOT}/lead.err" || true)|$(awk -F'\t' -v w="${yws}" '$1 == w { print $2 }' "${A}/.swarm/lead/workspace")"
+
+# A hung herdr is cut off (LEAD_HERDR_WAIT, 5 s a call), well before the stub's 60 s. A list herdr does
+# not give records nothing, so the next command labels the workspace.
+seed "lead a5" "${A}"; la5="$(ws_of "lead a5")"
+touch "${ROOT}/hang"; t0=${SECONDS}
+lead "${A}" "${la5}" config > /dev/null
+took=$((SECONDS - t0)); rm -f "${ROOT}/hang"
+r1="$(grep -c "^${la5}${TAB}" "${A}/.swarm/lead/workspace" || true)"
+lead "${A}" "${la5}" config > /dev/null
+check "a hung herdr list is cut off, records nothing, and the next command labels the workspace" \
+  "yes|0|swarm-lead${SEP}app" "$([[ ${took} -lt 40 ]] && echo yes || echo "no, it took ${took}s")|${r1}|$(wlabel "${la5}")"
+
 # An agent's pane, a swarm.sh another one runs, a test hook and a command for another project label
 # nothing. not_lead <what> <folder> [VAR=value...] <command>... runs it from <folder>, in a new
 # workspace of its own: it must send no rename, and the workspace and its tab keep their labels. The
@@ -305,6 +341,7 @@ not_lead "a command with SWARM_AGENT set (a Claude agent's pane)" "${A}" SWARM_A
 not_lead "a command with SWARM_GH_CALLER set (any agent's pane)" "${A}" SWARM_GH_CALLER=build-s1 config board_dir
 not_lead "a swarm.sh another one runs (dash --project's, for another project)" "${K}" SWARM_GH_VIA="swarm.sh dash" SWARM_PROJECT="${B}" config board_dir
 not_lead "a test hook (as lead-stop.sh's _step)" "${A}" _name s1
+LEAD_ERR=/dev/null not_lead "a command whose stderr goes to /dev/null (as the Stop hook's do)" "${A}" config board_dir
 not_lead "a command for another project (SWARM_PROJECT) from a project's folder" "${A}" SWARM_PROJECT="${B}" config board_dir
 
 # A rename herdr refuses is said once and recorded, so the next command tries nothing.
@@ -312,9 +349,18 @@ seed "lead c" "${C}"; lc="$(ws_of "lead c")"
 touch "${ROOT}/refuse"; : > "${ROOT}/lead.err"; n="$(renames)"
 lead "${C}" "${lc}" config board_dir > /dev/null; lead "${C}" "${lc}" config board_dir > /dev/null
 rm -f "${ROOT}/refuse"
-check "a refused rename is said once, recorded as refused, and not tried again" \
-  "1|$((n + 2))|lead c|old|${lc}${TAB}refused" \
-  "$(grep -c 'would not label the lead' "${ROOT}/lead.err" || true)|$(renames)|$(labels "${lc}")|$(record "${C}")"
+check "a refused rename is said once, naming the record to delete to try again, recorded as refused, and not tried again" \
+  "1|$((n + 1))|lead c|old|${lc}${TAB}refused" \
+  "$(grep -c "would not label the lead's workspace.*until you delete ${C}/.swarm/lead/workspace" "${ROOT}/lead.err" || true)|$(renames)|$(labels "${lc}")|$(record "${C}")"
+
+# A tab rename herdr refuses after the workspace's went through: the message and the record say the
+# tab alone was refused.
+seed "lead c2" "${C}"; lc2="$(ws_of "lead c2")"
+touch "${ROOT}/refuse-tab"; : > "${ROOT}/lead.err"
+lead "${C}" "${lc2}" config > /dev/null; rm -f "${ROOT}/refuse-tab"
+check "a refused tab rename: the workspace has its label, the message and record name the tab alone" \
+  "swarm-lead${SEP}web|old|1|0|${lc2}${TAB}swarm-lead${SEP}web${TAB}tab refused" \
+  "$(labels "${lc2}")|$(grep -c 'labelled the lead.s workspace .* but would not label its tab' "${ROOT}/lead.err" || true)|$(grep -c 'would not label the lead.s workspace' "${ROOT}/lead.err" || true)|$(grep "^${lc2}${TAB}" "${C}/.swarm/lead/workspace")"
 
 # --- Agents the lead starts. `swarm.sh agent` from each lead opens its tab in its project's
 # `<project> · lead-agents` workspace, never the lead's own, and the new workspace's placeholder tab
