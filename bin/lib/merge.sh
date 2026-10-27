@@ -133,23 +133,35 @@ merge_grant() {
   [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
 }
 
-# merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
-# branch or head SHA (merge_pr's locals base, head, repo and n), through gh's contents API as
-# release_check reads it; fails 1 when it is absent and 2 on any other failure. At the head a 404 is
-# absent only for a path the PR removes or renames away (merge_gone): one it keeps there means gh
-# cannot read the head (a fork's), where every epic would read as deleted.
-merge_read() {
-  local ref="${head}" q err rc=0
-  [[ "$1" == head ]] || ref="${base}"
-  # Quoted, as pr_hld quotes it, so a # or ? in a name is read as itself.
-  q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$2")" || return 2
+# pr_contents <owner/repo> <ref> <path> — <path> at <ref> (a branch or a SHA), its bytes on stdout,
+# through gh's contents API; fails 1 when it is absent there (HTTP 404) and 2 on any other failure,
+# with gh's error on stderr. The one reader of a file at a PR's ref: merge_read, pr_hld and
+# release_check read through it.
+pr_contents() {
+  local q err rc=0
+  # Quoted, so a # or ? in a name is read as itself.
+  q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$3")" || return 2
   # The file's bytes go to stdout (fd 3); gh's stderr into err, to tell a 404 from the rest.
-  { err="$(gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${ref}" 2>&1 >&3)" || rc=$?; } 3>&1
+  { err="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/${q}?ref=$2" 2>&1 >&3)" || rc=$?; } 3>&1
   [[ ${rc} -ne 0 ]] || return 0
-  [[ "${err}" == *"HTTP 404"* ]] || return 2
-  [[ "$1" == head ]] || return 1
-  err="$(merge_gone)" || return 2
-  grep -qxF -- "$2" <<< "${err}" || return 2
+  [[ "${err}" != *"HTTP 404"* ]] || return 1
+  [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2
+  return 2
+}
+
+# merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
+# branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
+# is absent and 2 on any other failure. At the head a 404 is absent only for a path the PR removes or
+# renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
+# epic would read as deleted.
+merge_read() {
+  local ref="${head}" gone rc=0
+  [[ "$1" == head ]] || ref="${base}"
+  # gh's error is left out: epic_guard's line names the file and the ref it could not read.
+  pr_contents "${repo}" "${ref}" "$2" 2>/dev/null || rc=$?
+  [[ ${rc} -eq 1 && "$1" == head ]] || return "${rc}"
+  gone="$(merge_gone)" || return 2
+  grep -qxF -- "$2" <<< "${gone}" || return 2
   return 1
 }
 
@@ -1246,15 +1258,18 @@ release_parent() {
 # finds HLDs that cover the release since origin's tag (release_tag), and release_docs passes. It
 # fetches origin/<base> once, first, and sets RELEASE_BASE to the commit it fetched, which every check
 # reads (gh at that SHA, git at it), so a base that moves after the fetch reads as moved (release_moved).
+# It reads plugin.json at RELEASE_BASE and <head> through pr_contents, and says which: absent, or unreadable.
 release_check() {
-  local want old new why body was tag
+  local want old new why body was tag rc=0
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
   RELEASE_BASE="$(release_base "$2")" || merge_fail "--release: cannot fetch origin/$2 to check the release against"
-  old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=${RELEASE_BASE}")" \
-    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
-  new="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$3")" \
-    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
+  old="$(pr_contents "$1" "${RELEASE_BASE}" .claude-plugin/plugin.json)" || rc=$?
+  [[ ${rc} -ne 1 ]] || merge_fail "--release: there is no .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
+  [[ ${rc} -eq 0 ]] || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2 at ${RELEASE_BASE:0:7}"
+  rc=0; new="$(pr_contents "$1" "$3" .claude-plugin/plugin.json)" || rc=$?
+  [[ ${rc} -ne 1 ]] || merge_fail "--release: there is no .claude-plugin/plugin.json at ${3:0:7}"
+  [[ ${rc} -eq 0 ]] || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
   why="$(OLD="${old}" NEW="${new}" BASE="$2" python3 -c 'import json,os,re
 e = os.environ
 o, n = json.loads(e["OLD"]), json.loads(e["NEW"])

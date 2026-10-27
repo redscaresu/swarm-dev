@@ -1117,7 +1117,7 @@ plan_hld() {
 # PR_MOVED.
 PR_MOVED=3
 pr_hld() (
-  local s url repo n own="" info="" st="" head="" count base pre p q view="" err plan="" g pin="${2:-}" at=()
+  local s url repo n own="" info="" st="" head="" count base pre p rc view="" err plan="" g pin="${2:-}" at=()
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
@@ -1161,10 +1161,10 @@ pr_hld() (
     [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
     p="${p#"${pre}"}"
     [[ "${p}" =~ ^(epics|stories|hld)/[^/]+\.md$ ]] || continue
-    # Quoted, so a # or ? in a name is read as itself; a 404 is then a file the head does not have.
-    q="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "${pre}${p}")"
-    if gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${q}?ref=${head}" > "${view}/${p}" 2> "${err}"; then continue; fi
-    grep -q 'HTTP 404' "${err}" || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
+    # A 404 is a file the head does not have.
+    rc=0; pr_contents "${repo}" "${head}" "${pre}${p}" > "${view}/${p}" 2> "${err}" || rc=$?
+    [[ ${rc} -ne 0 ]] || continue
+    [[ ${rc} -eq 1 ]] || die "grants: gh cannot read ${pre}${p} at ${url}'s head: $(tail -1 "${err}")"
     [[ -z "${plan}" ]] || return 0   # the plan PR deletes its HLD or an epic: under none
     rm -f "${view}/${p}"
   done <<< "${info}"
