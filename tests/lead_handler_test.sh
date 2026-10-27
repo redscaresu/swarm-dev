@@ -101,6 +101,7 @@ while IFS= read -r kind; do
 done < <(tr '|' '\n' <<< "${KINDS}")
 
 # The plan-hld arm reads grants from origin's copy (the plan worktree), after the step that makes it.
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
 planarm="$(tr '\n' ' ' < "${HOME_DIR}/commands/swarm.md" | tr -s ' ' | sed -n 's/.*\(- `plan-hld <hld>`: follow\)/\1/p' | cut -c1-1200)"
 # shellcheck disable=SC2016 # the backticks are the Markdown's own
 check "the plan-hld arm reads grants from origin's copy, after /plan-hld makes its worktree" grep -qE 'Read the grants from origin.s copy of the HLD, never the main checkout.s.* once `/plan-hld` has made its plan worktree `<wt>` .* run `SWARM_PROJECT=<wt> swarm\.sh grants <hld>`' <<< "${planarm}"
