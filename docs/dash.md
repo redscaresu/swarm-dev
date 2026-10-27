@@ -107,10 +107,13 @@ is one column, top to bottom:
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`), and `review kept story` for
   every story a close kept (`swarm.sh review` or `swarm.sh close <slug> --drop`). It is left out when
   empty.
-- **Idle capacity**: the `idle:` lines `swarm.sh next` and `wait --lead` print for blocked stories, one
-  row each: `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`.
-  dash works them out again every frame from the board and its state, with no gh call, so a row goes
-  once the dependency is in review or done. They count toward no warning light. The box is left out
+- **Idle capacity**: the `idle:` lines `swarm.sh next` and `wait --lead` print, one row each:
+  `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` for a
+  blocked story, and `idle: <story> is ready with no build, exit: <exit>` for a ready one. dash works
+  them out again every frame from the board, its state and events.tsv, with no gh or herdr call, so a
+  row goes once the dependency is in review or done, or once the story's build starts. A ready story's
+  row names its exit, so it changes when the story's conductor starts or stops, and `wait --lead`
+  wakes the lead again for the changed line. They count toward no warning light. The box is left out
   when there are none, and, with no warning, when the check fails: a frame has no place for one.
 - **Running now**: one row per agent open in this project's panes (empty panes and retired agents
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`
