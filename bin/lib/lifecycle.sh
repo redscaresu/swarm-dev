@@ -88,10 +88,12 @@ board_pr_kind_line() {
 # the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL (its
 # kind's line, board_pr_kind_line, goes to stderr), and refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
 # the worktree and board/<name> here, once the PR on the branch's tip has merged or closed, or, with
-# no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
+# no PR, when the branch has no commit past the base; for a plan PR that closed unmerged, it also
+# removes .swarm/<hld or epic>/critic.json when that is no newer than the branch's tip commit, and
+# names it. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why split="" sign=()
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why critic ct split="" sign=()
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -214,6 +216,21 @@ board_pr() {
       f="$(git -C "${PROJECT_DIR}" worktree list --porcelain \
         | awk -v b="branch refs/heads/${b}" -v w="${wt}" '/^worktree / { p = substr($0, 10) } $0 == b && p != w { print p; exit }')"
       [[ -z "${f}" ]] || die "board-pr: ${b} is checked out at ${f}; switch that checkout off it first"
+      # A plan PR that closed unmerged leaves its critic's answer behind, which lead-stop's plan_drafted
+      # would count as a plan still waiting on the user. Only an answer no newer than the branch's tip
+      # commit is that plan's; a re-plan begun before this done writes a newer one, which stays. The kind
+      # is read from the PR's worktree, as open read it: the main checkout may be behind origin.
+      critic=""
+      if [[ " ${prs} " == *" CLOSED "* && " ${prs} " != *" MERGED "* ]]; then
+        rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+        dir="${BOARD}"; [[ ! -d "${wt}" ]] || dir="${wt}${rel:+/${rel%/}}"
+        if [[ "$(board_pr_kind "${name}" "${dir}")" == plan ]]; then
+          critic="${PROJECT_DIR}/.swarm/${name#*-}/critic.json"
+          ct="$(git -C "${PROJECT_DIR}" log -1 --format=%ct "${tip}" 2>/dev/null)" && [[ -f "${critic}" ]] \
+            && python3 -I -c 'import os, sys; sys.exit(int(os.path.getmtime(sys.argv[1])) > int(sys.argv[2]))' "${critic}" "${ct}" \
+            || critic=""
+        fi
+      fi
       # origin first: its delete can fail (the lease, a protected branch), and the local state must
       # then stay for the next run.
       [[ -z "${rtip}" ]] || git -C "${PROJECT_DIR}" push -q --force-with-lease="refs/heads/${b}:${rtip}" origin --delete "${b}" \
@@ -223,7 +240,12 @@ board_pr() {
       fi
       git -C "${PROJECT_DIR}" worktree prune
       ! git -C "${PROJECT_DIR}" show-ref -q --verify "refs/heads/${b}" || git -C "${PROJECT_DIR}" branch -q -D "${b}"
-      echo "removed ${wt} and ${b}" ;;
+      if [[ -n "${critic}" ]]; then
+        rm -f "${critic}"
+        echo "removed ${wt}, ${b} and .swarm/${name#*-}/critic.json"
+      else
+        echo "removed ${wt} and ${b}"
+      fi ;;
   esac
 }
 
@@ -1158,7 +1180,7 @@ build_started() {
 }
 
 # ladder_step <slug> <trigger> [findings] — step_up <slug> for a trigger swarm.sh saw itself (close,
-# wait --stall, tell, watch): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
+# wait --stall, tell, watch, a review pane's wait-pr): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
 # builder, and the caller stops; STEP_UP_BUSY when another step-up or a restart of it holds the lock, and the caller
 # touches nothing; any other status when nothing was closed (a refusal, said on stderr,
 # or a failure before the close), and the caller carries on as before. One step-up of a story at a
