@@ -74,9 +74,9 @@ for entry in json.load(open(sys.argv[1]))["hooks"]["UserPromptSubmit"]:
     for h in entry["hooks"]:
         print(h["command"], h.get("timeout"))' "${REPO}/hooks/hooks.json")"
 # shellcheck disable=SC2016 # the literal hooks.json holds
-check "hooks.json runs it on UserPromptSubmit after agent-state.sh, each with a 5 s timeout" [ "${cmds}" = \
-  '"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh" working 5
-"${CLAUDE_PLUGIN_ROOT}/hooks/user-caught-reminder.sh" 5' ]
+check "hooks.json runs it on UserPromptSubmit after agent-state.sh, each with a 30 s timeout" [ "${cmds}" = \
+  '"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh" working 30
+"${CLAUDE_PLUGIN_ROOT}/hooks/user-caught-reminder.sh" 30' ]
 printed=""
 while IFS= read -r cmd; do
   printed+="$(cd "${other}" && printf '{"cwd":"%s"}' "${project}" | CLAUDE_PLUGIN_ROOT="${REPO}" sh -c "${cmd% *}")"

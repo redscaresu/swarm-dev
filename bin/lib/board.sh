@@ -197,7 +197,8 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     (hld_epics) or, on a board outside the repo, only epics an interrupted run of
 #                     /plan-hld wrote and no work has started on (hld_resumable), and no plan board PR's worktree
 #                     (<repo>-wt/_board-plan-<hld>); with one, this falls through to the steps below
-#                     and the gate lists it (plan PR awaiting merge: <hld>)
+#                     and the gate lists it (plan PR awaiting merge: <hld>). One that hld_blocked
+#                     names is never offered: the gate lists it (hld cannot be planned: <hld>, <why>)
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -300,7 +301,7 @@ next_step() {
   # steps below go on, and is a gate row (waiting_on_user).
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
-    [[ "$(hld_due "${f}")" == plan ]] || continue
+    [[ "$(hld_due "${f}")" == plan && -z "$(hld_blocked "${f}")" ]] || continue
     ! hld_pr_open "${slug}" plan || continue
     echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has not been planned into epics yet: run /plan-hld ${slug}"; return
   done < <(board hld)
@@ -426,7 +427,7 @@ one_off_started() {
 # idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
 # is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS), from the board and its state
 # alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each call it
-# on every read, so a line goes once its dependency's merge is reconciled. Fails when the check does: a
+# on every read, so a line goes once its dependency is in review or done. Fails when the check does: a
 # story file reconcile removes between the script's glob and its read is one way.
 idle_now() {
   SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
@@ -439,7 +440,7 @@ idle_now() {
 idle_warned() {
   local out
   out="$(idle_now 2>/dev/null)" || { echo "warning: the idle-dependency check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
-  printf '%s\n' ${out:+"${out}"}
+  [[ -z "${out}" ]] || printf '%s\n' "${out}"
 }
 
 # idle_lines <step> — what next prints after its step <step>: capacity no step uses. idle_now's
@@ -1080,6 +1081,14 @@ hld_due() {
   return 0
 }
 
+# hld_blocked <hld file> — why /plan-hld cannot plan the HLD, or nothing. A name board-pr refuses (a
+# character outside a-z, 0-9 and -, which grants and finish_item refuse too, or a leading -) would
+# fail the run only at its end.
+hld_blocked() {
+  [[ "$(basename "$1" .md)" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || echo "its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+}
+
 # The marker /plan-hld writes in <project>/.swarm/<hld name>/ on a board outside the repo: one epic
 # slug per line, every epic the run writes, before it writes any; it removes it once planned: is set.
 HLD_MARKER="writing-epics"
@@ -1341,12 +1350,13 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 
 # waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
 # one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
-# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too. A
+# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too, and so
+# is an HLD due a plan that hld_blocked names (`hld cannot be planned: <hld>, <why>`). A
 # staged draft (staged_draft) is listed as `staged epic: <slug>, stage v<T>, after v<P>`, never with
 # /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
 # (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
-  local f kind slug when stage prev waiting=""
+  local f kind slug when stage prev why waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -1385,6 +1395,7 @@ waiting_on_user() {
     if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
     elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
     elif hld_pr_open "${slug}" finish && [[ "$(hld_due "${f}")" == finish ]]; then waiting+="  finish PR awaiting merge: ${slug}"$'\n'
+    elif why="$(hld_blocked "${f}")" && [[ -n "${why}" && "$(hld_due "${f}")" == plan ]]; then waiting+="  hld cannot be planned: ${slug}, ${why}"$'\n'
     fi
   done < <(board hld)
   printf '%s' "${waiting%$'\n'}"

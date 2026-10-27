@@ -41,7 +41,7 @@
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
-#   swarm.sh watch [repo...]                                wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit
+#   swarm.sh watch [--epic <slug>|--backlog] [repo...]      wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit; with --epic or --backlog, also once when a story PR of theirs opens
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init [--auto-mode-done]                        from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines, and print the Claude Code steps left to you; --auto-mode-done: record (in .swarm/auto-mode-done) that you ran /auto-mode-setup, writing nothing outside .swarm/
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
@@ -448,6 +448,48 @@ agent_name() {
   n=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')
   [[ "${n}" =~ ^[a-z] ]] || n="s${n}"
   printf '%s' "${n:0:${AGENT_NAME_MAX}}"
+}
+
+# cut_record <herdr-name> [names] — the one full name this project's records hold (cut_names; <names>
+# is their lines read once, for a caller that asks about many) whose agent name is <herdr-name>. Fails,
+# printing nothing: 1 when none does, 2 when more than one does, since names that share their first
+# AGENT_NAME_MAX characters share herdr's name, which then never says whose it is.
+cut_record() {
+  local n c hit="" k=0
+  while IFS= read -r n; do
+    [[ -n "${n}" ]] || continue
+    # A slug, the usual name, is its own agent name up to the cut; only another name pays agent_name's forks.
+    if [[ "${n}" =~ ^[a-z][a-z0-9_-]*$ ]]; then c="${n:0:${AGENT_NAME_MAX}}"; else c="$(agent_name "${n}")"; fi
+    [[ "${c}" == "$1" ]] || continue
+    hit="${n}"; k=$((k + 1))
+  done < <(printf '%s\n' "${2-$(cut_names)}" | sort -u)
+  [[ ${k} -gt 0 ]] || return 1
+  [[ ${k} -eq 1 ]] || return 2
+  echo "${hit}"
+}
+
+# cut_names — the full names this project's records hold, one a line: the tab records' pane names
+# (.swarm/state; a conductor's line names its role, and its brief its name), the briefs'
+# (.swarm/briefs/<name>.md; <name>.held-findings.md and the like are a build's other files) and the
+# board's stories'. Of .swarm/state it reads the tab records alone, whose names are labels with no
+# dot: a file whose name has one is skipped, since codex's brief copies there (brief-<name>.md) hold
+# prose that can be shaped like a tab record's line, and codex-review.<pid> markers, .tmp files and
+# watch-seen's temporary files are no pane's. An epic named brief-<x> keeps its record brief-<x>,
+# with no dot, so only the dot tells them apart. Like own_panes, it reads only lines shaped like a
+# tab record, and always succeeds.
+cut_names() {
+  local f b files=()
+  for f in "${STATE_DIR}"/*; do
+    b="${f##*/}"
+    [[ -f "${f}" && "${b}" != *.* ]] || continue
+    files+=("${f}")
+  done
+  [[ ${#files[@]} -eq 0 ]] \
+    || awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ && $2 != "conductor" { print $2 }' "${files[@]}" 2>/dev/null || true
+  for f in "${PROJECT_DIR}/.swarm/briefs"/*.md "${BOARD}/stories"/*.md; do
+    f="${f##*/}"; f="${f%.md}"
+    [[ "${f}" == *[.*]* ]] || echo "${f}"
+  done
 }
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
