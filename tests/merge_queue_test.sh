@@ -276,28 +276,7 @@ is "a TERM as queued() installs its handler: a stop (7), and the PR stopped" "7|
 # shellcheck source=/dev/null
 # shellcheck disable=SC2034 # merge.sh reads PROJECT_DIR as it loads
 qrc() { (PROJECT_DIR="${P}"; . "${REPO}/bin/lib/merge.sh"; queue_rc "$@"); }
-# retire_fixes retires only the fix-main stories of its key logged before its own main-red: one logged
-# after it is a newer red main's, which stays (two runs in one batch never retire each other).
-# shellcheck disable=SC2034 # merge.sh's functions read these
-older="$(
-  PROJECT_DIR="${ROOT}/rf"; BOARD="${ROOT}/rf/board"; EVENTS_LOG="${ROOT}/rf/events.tsv"; mkdir -p "${BOARD}/stories"
-  for s in aaaaaaa ccccccc eeeeeee; do : > "${BOARD}/stories/fix-main-${s}.md"
-    printf '2026-10-18T10:00:00Z\tmain-red\t%s\t-\to/r main test (failure)\n' "${s}$(printf '0%.0s' $(seq 1 33))" >> "${EVENTS_LOG}"; done
-  # shellcheck source=/dev/null
-  . "${REPO}/bin/lib/merge.sh"
-  # retire_fixes calls these.
-  # shellcheck disable=SC2317,SC2329
-  fm() { echo ready; }
-  # shellcheck disable=SC2317,SC2329
-  one_off_started() { return 1; }
-  # shellcheck disable=SC2317,SC2329
-  delete_item() { rm "$1"; }
-  # shellcheck disable=SC2317,SC2329
-  record_event() { :; }
-  retire_fixes "o/r main" "ccccccc$(printf '0%.0s' $(seq 1 33))" why > /dev/null
-  find "${BOARD}/stories" -type f -exec basename {} \; | sort | paste -sd' ' -
-)"
-is "retire_fixes retires only the fix-main stories logged before its own" "fix-main-ccccccc.md fix-main-eeeeeee.md" "${older}"
+# Which fix-main story retire_fixes retires, read by commit ancestry: tests/retire_fixes_ancestry_test.sh.
 # unit <dir> — a board in <dir> for merge.sh's functions alone, its gh-free helpers stubbed (sourced
 # in the caller's subshell).
 # shellcheck disable=SC2034 # merge.sh's functions read these

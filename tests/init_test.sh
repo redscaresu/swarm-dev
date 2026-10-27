@@ -2,7 +2,8 @@
 # init_test.sh — swarm.sh init in throwaway git repos: the board from the plugin's templates, never
 # over a file that exists, .claude/swarm/ with a commented commit_trailers line, the .gitignore
 # lines, a CI workflow with a board-only skip, a pre-commit hook, a second run that changes nothing,
-# board_dir, and the refusals outside a repo's root.
+# board_dir, the swarm.sh merge allow rule in Claude Code's settings, auto mode's setup step and
+# init --auto-mode-done, and the refusals outside a repo's root.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -108,6 +109,83 @@ out="$(run "${p}" init || true)"
 check "a changed board file is not overwritten" "mine" "$(cat "${p}/docs/stories/README.md")"
 check "the output names it as left" "yes" "$(has "${out}" "left   docs/stories/README.md (it exists)")"
 check "a missing one is copied back" "yes" "$(has "${out}" "copied docs/Board.base")"
+
+# --- Board.base: every past template in git history, unedited, becomes the current one; an edited one is
+# left with a note. Run against every version, so a template change that leaves its old sha256 out of
+# BOARD_BASE_PAST goes red here.
+repo="$(dirname "${SWARM}")/.."
+current="$(cat "${TEMPLATES}/Board.base")"
+past=0
+while IFS= read -r c; do
+  git -C "${repo}" show "${c}:templates/docs/Board.base" > "${ROOT}/past.base"
+  [[ "$(cat "${ROOT}/past.base")" != "${current}" ]] || continue
+  past=$((past + 1))
+  cp "${ROOT}/past.base" "${p}/docs/Board.base"
+  out="$(run "${p}" init || true)"
+  check "a board holding ${c}'s Board.base gets the current one, and an updated line" "same|yes" \
+    "$(cmp -s "${TEMPLATES}/Board.base" "${p}/docs/Board.base" && echo same || echo differs)|$(has "${out}" "updated docs/Board.base (an older template nobody edited, now the current one)")"
+done < <(git -C "${repo}" log --format=%h -- templates/docs/Board.base)
+check "git history has past Board.base versions to check" "yes" "$([[ ${past} -ge 4 ]] && echo yes || echo no)"
+out="$(run "${p}" init || true)"
+check "a current Board.base is left as it exists" "yes" "$(has "${out}" "left   docs/Board.base (it exists)")"
+git -C "${repo}" show "$(git -C "${repo}" log --format=%h -- templates/docs/Board.base | tail -1):templates/docs/Board.base" \
+  > "${p}/docs/Board.base"
+echo "# mine" >> "${p}/docs/Board.base"
+edited="$(cksum < "${p}/docs/Board.base")"
+out="$(run "${p}" init || true)"
+check "an edited Board.base keeps its bytes" "${edited}" "$(cksum < "${p}/docs/Board.base")"
+check "and gets a note saying how to compare" "yes" \
+  "$(has "${out}" "left   docs/Board.base (edited): the template changed since; compare with diff docs/Board.base $(cd "$(dirname "${SWARM}")/.." && pwd)/templates/docs/Board.base")"
+before="$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
+out="$(run "${p}" init || true)"
+check "a second run updates nothing" "no|${before}" \
+  "$(grep -q '^updated' <<< "${out}" && echo yes || echo no)|$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
+# A Board.base that links to a past template elsewhere is left: cp would write through the link.
+cp "${ROOT}/past.base" "${ROOT}/shared.base"
+rm "${p}/docs/Board.base" && ln -s "${ROOT}/shared.base" "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+check "a symlinked Board.base is left, and the file it names keeps its bytes" "yes|same" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$(cmp -s "${ROOT}/past.base" "${ROOT}/shared.base" && echo same || echo differs)"
+# A dangling symlink is left too, and nothing is written through it to where it points.
+rm "${p}/docs/Board.base" && ln -s "${ROOT}/absent.base" "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+check "a dangling symlinked Board.base is left, and nothing is created where it points" "yes|link|absent" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$([[ -L "${p}/docs/Board.base" ]] && echo link || echo file)|$([[ -e "${ROOT}/absent.base" ]] && echo created || echo absent)"
+# A directory, or a file that cannot be read, is left unread with the same line, not called edited.
+rm "${p}/docs/Board.base" && mkdir "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+check "a directory Board.base is left, as it exists" "yes|no|dir" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$(grep -q '(edited)' <<< "${out}" && echo yes || echo no)|$([[ -d "${p}/docs/Board.base" ]] && echo dir || echo gone)"
+rmdir "${p}/docs/Board.base" && cp "${ROOT}/past.base" "${p}/docs/Board.base" && chmod 000 "${p}/docs/Board.base"
+out="$(run "${p}" init || true)"
+chmod 644 "${p}/docs/Board.base"
+check "an unreadable Board.base is left, as it exists, with its bytes" "yes|no|same" \
+  "$(has "${out}" "left   docs/Board.base (it exists)")|$(grep -q '(edited)' <<< "${out}" && echo yes || echo no)|$(cmp -s "${ROOT}/past.base" "${p}/docs/Board.base" && echo same || echo differs)"
+# A hard link to a past template elsewhere: the board's entry becomes a new file, and the other link
+# keeps its bytes; a cp over the old file would write through the link. A Board.base.tmp beside it is
+# not the replacement's scratch file, and the new file has the mode init's other copies have.
+cp "${ROOT}/past.base" "${ROOT}/linked.base"
+rm "${p}/docs/Board.base" && ln "${ROOT}/linked.base" "${p}/docs/Board.base"
+echo "mine" > "${p}/docs/Board.base.tmp"
+out="$(run "${p}" init || true)"
+check "a hard-linked past Board.base gets the current one, and the file it was linked to keeps its bytes" "yes|same|same" \
+  "$(has "${out}" "updated docs/Board.base (an older template nobody edited, now the current one)")|$(cmp -s "${TEMPLATES}/Board.base" "${p}/docs/Board.base" && echo same || echo differs)|$(cmp -s "${ROOT}/past.base" "${ROOT}/linked.base" && echo same || echo differs)"
+check "a Board.base.tmp beside it keeps its bytes" "mine" "$(cat "${p}/docs/Board.base.tmp")"
+mode() { python3 -I -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$1"; }
+check "the new Board.base has the mode of a file init copied" "$(mode "${p}/docs/epics/README.md")" "$(mode "${p}/docs/Board.base")"
+rm "${p}/docs/Board.base.tmp"
+# Under umask 002 too, the new file has the mode a cp of the template gets there, as init's other copies do.
+cp "${ROOT}/past.base" "${p}/docs/Board.base"
+out="$( (umask 002 && run "${p}" init) || true)"
+(umask 002 && cp "${TEMPLATES}/Board.base" "${ROOT}/mode002.base")
+check "under umask 002, the new Board.base has the mode cp gives" "yes|$(mode "${ROOT}/mode002.base")" \
+  "$(has "${out}" "updated docs/Board.base (an older template nobody edited, now the current one)")|$(mode "${p}/docs/Board.base")"
+# A board directory init cannot write to: init stops, naming the file, which keeps its bytes.
+cp "${ROOT}/past.base" "${p}/docs/Board.base"; chmod u-w "${p}/docs"
+out="$(run "${p}" init || echo "exit=$?")"
+chmod u+w "${p}/docs"
+check "when the board cannot be written, init stops naming Board.base, and the file keeps its bytes" "yes|exit=1|same" \
+  "$(has "${out}" "swarm: init: could not replace docs/Board.base with the current template")|$(tail -n 1 <<< "${out}")|$(cmp -s "${ROOT}/past.base" "${p}/docs/Board.base" && echo same || echo differs)"
 
 # --- board_dir = board: the files land in board/, and the .gitignore lines name it.
 p="${ROOT}/custom"; "${GIT[@]}" init -q "${p}"; origin "${p}"
@@ -248,6 +326,95 @@ printf '.swarm/\r\ndocs/.obsidian/*\r\n!docs/.obsidian/app.json\r\n' > "${q}/.gi
 crlf="$(cksum < "${q}/.gitignore")"
 run "${q}" init >/dev/null || true
 check "a CRLF .gitignore with every line is left as it is" "${crlf}" "$(cksum < "${q}/.gitignore")"
+
+# --- Claude Code's settings: with no permissions.allow rule for swarm.sh merge in the user's settings
+# (the stub CLAUDE_CONFIG_DIR) or the project's two files, init names the rule and the user's file. It
+# reads only that list, so a token under env never reaches its output, and it changes no settings file.
+q="${ROOT}/claude-rule"; "${GIT[@]}" init -q "${q}"; mkdir -p "${CLAUDE_CONFIG_DIR}" "${q}/.claude"
+S_USER="${CLAUDE_CONFIG_DIR}/settings.json" S_PROJ="${q}/.claude/settings.json" S_LOCAL="${q}/.claude/settings.local.json"
+printf '{"projects": {}}\n' > "${CLAUDE_CONFIG_DIR}/.claude.json"
+STEP="Your step: add \"Bash(swarm.sh merge *)\" to permissions.allow in ${S_USER}. Under merge = agent, or an HLD that grants merge, Claude Code refuses every swarm.sh merge an agent runs without it, and you merge each PR by hand."
+TOKEN=ghp_initTestToken0123456789
+# sums — the checksum of each settings file and .claude.json under the stub config dir and the project.
+sums() { find "${CLAUDE_CONFIG_DIR}" "${q}/.claude" \( -name 'settings*.json' -o -name .claude.json \) -type f -exec cksum {} + | LC_ALL=C sort; }
+changed=""
+# rule_init <name> <user> <project> <local> — init in ${q} with these settings files (an empty one is
+# left out), its output in ${out}; a settings file that init changes or adds puts <name> in ${changed}.
+rule_init() {
+  local f before i=2
+  for f in "${S_USER}" "${S_PROJ}" "${S_LOCAL}"; do
+    if [[ -n "${!i}" ]]; then printf '%s\n' "${!i}" > "${f}"; else rm -f "${f}"; fi
+    i=$((i + 1))
+  done
+  before="$(sums)"; out="$(run "${q}" init || true)"
+  [[ "$(sums)" == "${before}" ]] || changed+=" $1"
+}
+rule_init user '{"permissions": {"allow": ["Bash(git status)", "Bash(swarm.sh merge *)"]}}' "" ""
+check "with the rule in the user's settings, init prints no merge-rule step" "no" \
+  "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
+rule_init absent '{"permissions": {"allow": ["Bash(swarm.sh status *)", "Bash(swarm.sh merge)", "Bash(swarm.sh merge --head *)"]}}' '{"permissions": {}}' ""
+check "with no rule that lets swarm.sh merge run, init names the rule, the user's file and the files it read, before the trust step" "yes|yes|yes" \
+  "$(has "${out}" "${STEP}")|$(has "${out}" "Claude Code's settings have no permissions.allow rule that lets swarm.sh merge run (read ${S_USER}, .claude/settings.json, .claude/settings.local.json).")|$(tail -1 <<< "${out}" | grep -q '^Last step: run claude once' && echo yes || echo no)"
+rule_init local '{"permissions": {"allow": ["Bash(git status)"]}}' '{"permissions": {"allow": []}}' '{"permissions": {"allow": ["Bash(swarm.sh merge *)"]}}'
+check "with the rule only in .claude/settings.local.json, init prints no merge-rule step" "no" \
+  "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
+rule_init split '{"permissions": {"allow": ["Bash(swarm.sh merge --head *)", "Bash(swarm.sh merge --release *)"]}}' "" '{"permissions": {"allow": ["Bash(swarm.sh merge --board *)", "Bash(swarm.sh merge https://*)"]}}'
+check "a rule for each form, split across two files, counts as the rule together" "no" \
+  "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
+rule_init no-release '{"permissions": {"allow": ["Bash(swarm.sh merge --head *)", "Bash(swarm.sh merge --board *)", "Bash(swarm.sh merge https://*)"]}}' "" ""
+no_release="$(has "${out}" "${STEP}")"
+rule_init no-plain '{"permissions": {"allow": ["Bash(swarm.sh merge --*)"]}}' "" ""
+check "rules that let --head and --board through but not the lead's --release, or not its plain form, print the step" "yes|yes" \
+  "${no_release}|$(has "${out}" "${STEP}")"
+rule_init one-pr '{"permissions": {"allow": ["Bash(swarm.sh merge */pull/1)"]}}' "" ""
+one_pr="$(has "${out}" "${STEP}")"
+rule_init one-sha '{"permissions": {"allow": ["Bash(swarm.sh merge --head 0123abc *)", "Bash(swarm.sh merge --release --head 0123abc *)", "Bash(swarm.sh merge --board *)", "Bash(swarm.sh merge https://*)"]}}' "" ""
+check "rules tied to one PR number, or to one head SHA, print the step" "yes|yes" "${one_pr}|$(has "${out}" "${STEP}")"
+rule_init broad '{"permissions": {"allow": ["Bash", "Bash(*)"]}}' "" ""
+check "Bash and Bash(*) alone, which auto mode sets aside, print the step" "yes" "$(has "${out}" "${STEP}")"
+rule_init legacy "" '{"permissions": {"allow": ["Bash(swarm.sh merge:*)"]}}' ""
+check "the older :* form in .claude/settings.json counts as the rule" "no" \
+  "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
+rule_init token "{\"env\": {\"GITHUB_TOKEN\": \"${TOKEN}\"}, \"permissions\": {\"allow\": [\"Bash(curl -u ${TOKEN} *)\"]}}" "{\"env\": {\"API_KEY\": \"${TOKEN}\"" ""   # vacuous-test: ok, the project's file is not JSON on purpose
+check "a settings file's env token never reaches init's output, and a broken file counts as no rule" "yes|no" \
+  "$(has "${out}" "${STEP}")|$(grep -qF "${TOKEN}" <<< "${out}" && echo yes || echo no)"
+# A rule scoped to the project's own GitHub repo counts; its origin/HEAD is cached, so init asks no network.
+"${GIT[@]}" -C "${q}" commit -q --allow-empty --no-verify -m seed && git -C "${q}" remote add origin https://github.com/acme/widgets.git
+git -C "${q}" update-ref refs/remotes/origin/main HEAD && git -C "${q}" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+rule_init repo '{"permissions": {"allow": ["Bash(swarm.sh merge --* https://github.com/acme/widgets/pull/*)", "Bash(swarm.sh merge https://github.com/acme/widgets/pull/*)"]}}' "" ""
+check "a rule scoped to the project's GitHub origin counts as the rule" "no" \
+  "$(grep -q 'permissions.allow' <<< "${out}" && echo yes || echo no)"
+check "init changes no settings file and adds none" "" "${changed}"
+
+# --- Auto mode's setup: until the user's settings hold a non-empty autoMode.environment (the list
+# /auto-mode-setup writes) or the user ran init --auto-mode-done, init prints the step. Claude Code takes
+# autoMode from no project settings file, so one there is no record. --auto-mode-done writes the date
+# to .swarm/auto-mode-done and nothing outside .swarm/.
+q="${ROOT}/auto-mode"; "${GIT[@]}" init -q "${q}"; mkdir -p "${q}/.claude"
+AM_STEP="Your step: run /auto-mode-setup once in claude, so no agent's pane stops on the 'Teach auto mode' dialog. Then run swarm.sh init --auto-mode-done here, and init stops printing this step."
+am_step() { grep -q 'auto-mode-setup' <<< "$1" && echo yes || echo no; }
+printf '{"permissions": {"allow": ["Bash(swarm.sh merge *)"]}, "autoMode": {"environment": []}}\n' > "${S_USER}"
+printf '{"autoMode": {"environment": ["Source control: github.com/o"]}}\n' > "${q}/.claude/settings.local.json"
+out="$(run "${q}" init || true)"
+check "with an empty autoMode.environment and one only in the project's settings, init prints the auto mode step and the --auto-mode-done command, before the trust step" "yes|yes" \
+  "$(has "${out}" "${AM_STEP}")|$(tail -1 <<< "${out}" | grep -q '^Last step: run claude once' && echo yes || echo no)"
+printf '{"autoMode": {"environment": ["Source control: github.com/o"]}}\n' > "${S_USER}"
+out="$(run "${q}" init || true)"
+check "with autoMode.environment in the user's settings, init prints no auto mode step" "no" "$(am_step "${out}")"
+printf '{"autoMode": {"environment": []}}\n' > "${S_USER}"
+# outside_swarm — the checksum of every file in the project outside .git/ and .swarm/, and in the stub
+# config dir, which holds the user's settings and .claude.json.
+outside_swarm() {
+  { (cd "${q}" && find . \( -path ./.git -o -path ./.swarm \) -prune -o -type f -exec cksum {} +)
+    find "${CLAUDE_CONFIG_DIR}" -type f -exec cksum {} +; } | LC_ALL=C sort
+}
+before="$(outside_swarm)"; run "${q}" init --auto-mode-done >/dev/null || true
+check "init --auto-mode-done writes today's date to .swarm/auto-mode-done and changes no file outside .swarm/, settings files included" \
+  "$(date +%F)|yes" "$(cat "${q}/.swarm/auto-mode-done" 2>/dev/null || true)|$([[ "$(outside_swarm)" == "${before}" ]] && echo yes || echo no)"
+out="$(run "${q}" init || true)"
+check "after init --auto-mode-done, init prints no auto mode step" "no" "$(am_step "${out}")"
+out="$(run "${q}" init --auto-mode || true)"
+check "init with an argument it does not know refuses with its usage" "yes" "$(has "${out}" "swarm: usage: swarm.sh init [--auto-mode-done]")"
 
 # --- Refusals: a subdirectory names the root; outside git names that.
 mkdir -p "${p}/sub"

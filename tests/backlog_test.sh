@@ -13,6 +13,8 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/projects"
+# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
@@ -119,8 +121,8 @@ rm "${b}/epics/backlog.md"
 run conduct --backlog >/dev/null
 bl="$(cat "${brief}" 2>/dev/null || true)"
 bn="$(sed -n 's/^agent start \(conduct-backlog-[^ ]*\) .*/\1/p' "${ROOT}/herdr.log" | head -1)"
-check "conduct --backlog starts conduct-backlog-<project dir>-<path hash> in a workspace named backlog" "yes|yes" \
-  "$([[ "${bn}" =~ ^conduct-backlog-proj-[0-9a-f]{6}$ ]] && echo yes || echo "no, got: ${bn}")|$(has "workspace create --label backlog" "$(cat "${ROOT}/herdr.log")")"
+check "conduct --backlog starts conduct-backlog-<project dir>-<path hash> in a workspace labelled <project> · backlog" "yes|yes" \
+  "$([[ "${bn}" =~ ^conduct-backlog-proj-[0-9a-f]{6}$ ]] && echo yes || echo "no, got: ${bn}")|$(has "workspace create --label proj · backlog " "$(cat "${ROOT}/herdr.log")")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "the backlog brief names stories with no epic:, story --strict and watch --backlog" "yes|yes|yes|yes" \
   "$(has 'You are the backlog conductor: you build the ready stories on the board with no `epic:`.' "${bl}")|$(has 'Start only stories with no `epic:`, and leave every epic and its stories alone.' "${bl}")|$(has 'swarm.sh story --strict <slug>' "${bl}")|$(has 'swarm.sh watch --backlog` in the background' "${bl}")"
@@ -200,8 +202,8 @@ item "${b}" epics/solo.md "status: active"
 item "${b}" stories/solos.md "status: ready" "kind: code" "epic: solo"
 : > "${ROOT}/herdr.log"
 o1="$(run conduct c1 || echo "exit $?")"; o2="$(run conduct c2 || echo "exit $?")"; o3="$(run conduct solo || echo "exit $?")"
-check "conduct names the workspace for a commented or quoted parent:, else the epic" "yes|yes|yes|2|yes" \
-  "$(has "workspace big-epic (w)" "${o1}")|$(has "workspace big-epic (w)" "${o2}")|$(has "workspace solo (w)" "${o3}")|$(grep -c 'workspace create --label big-epic' "${ROOT}/herdr.log")|$(has "workspace create --label solo " "$(cat "${ROOT}/herdr.log")")"
+check "conduct names the workspace <project> · a commented or quoted parent:, else the epic" "yes|yes|yes|2|yes" \
+  "$(has "workspace proj · big-epic (w)" "${o1}")|$(has "workspace proj · big-epic (w)" "${o2}")|$(has "workspace proj · solo (w)" "${o3}")|$(grep -c 'workspace create --label proj · big-epic ' "${ROOT}/herdr.log")|$(has "workspace create --label proj · solo " "$(cat "${ROOT}/herdr.log")")"
 
 # --- The clash check between two backlog stories compares parts: a bare file does not clash with a
 # part of it, the same part does. Built in svc, a repo beside the project with a main on its remote.
