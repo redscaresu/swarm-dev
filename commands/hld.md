@@ -75,9 +75,17 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
    together." to a file `<note>` and run `swarm.sh tell hld-<slug> nudge <note>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
-   `status: agreed`; nothing plans epics from a draft HLD. Open a board PR for the HLD with one
-   `swarm.sh codex-review` pass (a board outside the project's repo has no board PR: the HLD is
-   agreed where it is, with no commit), close the co-author and the reviewer (if it started) by name
+   `status: agreed`; nothing plans epics from a draft HLD. When the board is in the project's repo,
+   make that edit in a board PR named `agree-<file>`. Run `swarm.sh board-pr start agree-<file>`;
+   the worktree it prints starts from origin's base. When the base lacks `docs/hld/<file>.md` (a
+   new draft), move the agreed file from the main checkout into the worktree with `mv`, so no copy
+   is left to block the pull once the PR merges. When the base has it, copy it over the worktree's,
+   then put the main checkout's copy back as the base has it (`git show
+   origin/<base>:docs/hld/<file>.md > docs/hld/<file>.md`), since edits left there block the pull too. Set the status in the worktree,
+   run `swarm.sh board-pr open agree-<file> "<title>" <body-file>`, which commits with the brief's
+   trailers and signing, then run one `swarm.sh codex-review` pass in the worktree before it merges
+   (`board-pr open` again pushes its fixes). A board outside the project's repo
+   has no board PR: the HLD is agreed where it is, with no commit. Close the co-author and the reviewer (if it started) by name
    (`swarm.sh close hld-<slug>`, then `swarm.sh close hld-review-<slug>`; never `swarm.sh close
    hld`, which would close every tab whose label starts `hld-`), and tell the user the HLD is agreed
    and that `/swarm-dev:swarm` plans it into epics next: once its board PR has merged, or at once on

@@ -27,7 +27,10 @@ outside the repo is edited where it is, since `board-pr` refuses it. A conductor
 edit to a story goes through `swarm.sh board-pr` too (its brief says so). `swarm.sh finish` and
 `swarm.sh drop` open their own board PR, `finish-<slug>` or `drop-<slug>`, and print the
 `swarm.sh merge --board <url>` that lands it: run that, or with `merge = human` hand the PR to the
-user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. A `costs: money`
+user, unless `swarm.sh grants <url>` lists `merge` for it, which lets you run it. An edit, a hold
+(`hold-<slug>`) or a finish PR gets no `swarm.sh codex-review`: it lands on green CI alone. Only a
+plan PR (`plan-<hld>`, `scope-<epic>`) or an agreement PR (`agree-<slug>`) gets one codex-review
+pass before it merges; `board-pr open` names the PR's kind on stderr. A `costs: money`
 PR, or one stacked on one, stays the user's to merge, grant or not. Once it has merged, `swarm.sh board-pr done <that name>` clears its worktree away.
 
 `swarm.sh board-pr start <name>` prints the worktree's path, `<repo>-wt/_board-<name>` (beside the

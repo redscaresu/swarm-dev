@@ -42,11 +42,33 @@ board_read() {
   fi
 }
 
+# board_pr_kind <name> — the kind of the board PR <name>, from its name: plan (plan-<hld>, scope-<epic>),
+# agreement (agree-<slug>), finish (finish-<slug>, drop-<slug>), hold (hold-<slug>), else story-scope edit.
+board_pr_kind() {
+  case "$1" in
+    plan-?* | scope-?*) echo plan ;;
+    agree-?*) echo agreement ;;
+    finish-?* | drop-?*) echo finish ;;
+    hold-?*) echo hold ;;
+    *) echo "story-scope edit" ;;
+  esac
+}
+
+# board_pr_kind_line <name> <url> — open's line on stderr: a plan or agreement PR gets one codex-review
+# pass before it merges; the other kinds none, and land with merge --board on green CI.
+board_pr_kind_line() {
+  local kind; kind="$(board_pr_kind "$1")"
+  case "${kind}" in
+    plan | agreement) echo "board-pr: $1 is a ${kind} PR: run one swarm.sh codex-review pass in its worktree before it merges" ;;
+    *) echo "board-pr: $1 is a ${kind} PR: no codex-review; land it with swarm.sh merge --board $2 on green CI" ;;
+  esac
+}
+
 # board_pr start|open|done <name> ... — the lead's board edits, each in its own worktree, never the
 # main checkout: start makes <repo>-wt/_board-<name> (a path no story slug makes) on a new
 # board/<name> from origin/<base> and prints its path; open <name> "<title>" <body-file> commits every change (all under the board) with
-# the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL, and
-# refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
+# the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL (its
+# kind's line, board_pr_kind_line, goes to stderr), and refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
 # the worktree and board/<name> here, once the PR on the branch's tip has merged or closed, or, with
 # no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
@@ -141,6 +163,7 @@ board_pr() {
       if [[ -n "${split}" ]] && ! grep -qsF "${url}" "${split}/split-pr"; then
         printf '%s\t%s\n' "$(date +%F)" "${url}" > "${split}/split-pr"
       fi
+      board_pr_kind_line "${name}" "${url}" >&2
       echo "${url}" ;;
     done)
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)" || die "board-pr: ${PROJECT_DIR} has no origin"

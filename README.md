@@ -135,6 +135,9 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the last tag is under an agreed HLD that lists `release`.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
+- Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
+  holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
+  PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.

@@ -896,12 +896,12 @@ touches_rows() {
 }
 
 # board_pr_merge_rule — who lands a conductor's board PR: the conductor with merge = agent, the user
-# with merge = human.
+# with merge = human. A story-scope edit, a hold or a finish PR gets no codex-review under either.
 board_pr_merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then
-    echo "With merge = human you cannot land that PR: list it in your report for the user."
+    echo "Run no \`swarm.sh codex-review\` on it. With merge = human you cannot land that PR: list it in your report for the user."
   else
-    echo "Land it with \`swarm.sh merge --board <url>\` once its checks are green."
+    echo "Run no \`swarm.sh codex-review\` on it: land it with \`swarm.sh merge --board <url>\` once its checks are green."
   fi
 }
 

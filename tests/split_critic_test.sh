@@ -72,14 +72,14 @@ is "the refusal is the die alone, with no shell error for the missing file" "swa
 sw agent scope-big split-critic "${P}" critic "${ROOT}/brief.md" >/dev/null
 is "the split critic starts as a critic agent" 1 "$(critics)"
 is "the critic wrote split-critic.json" '{"findings":[{"kind":"split-gap","why":"w","fix":"f"}]}' "$(cat "${P}/.swarm/big/split-critic.json" 2>/dev/null)"
-is "after the critic answered, the split's board PR opens" "${URL}" "$(sw board-pr open scope-big "Split big" "${ROOT}/body.md")"
+is "after the critic answered, the split's board PR opens" "${URL}" "$(sw board-pr open scope-big "Split big" "${ROOT}/body.md" | tail -n 1)"
 
 # --- The medium epic: its board PR opens with no critic. That the medium path starts none is the
 # lead's to follow: plan_epic_test's medium-no-split-critic greps it, and the large path's critic is
 # enforced by board-pr open's refusal above.
 W="$(sw board-pr start scope-med)"
 mkdir -p "${W}/docs/stories"; printf -- '---\nkind: code\nstatus: ready\nepic: med\n---\n\n# med-a\n' > "${W}/docs/stories/med-a.md"
-is "a medium epic's board PR opens" "${URL}" "$(sw board-pr open scope-med "Plan med" "${ROOT}/body.md")"
+is "a medium epic's board PR opens" "${URL}" "$(sw board-pr open scope-med "Plan med" "${ROOT}/body.md" | tail -n 1)"
 
 # The critic's brief comes from commands/plan-epic.md, which the stubs above do not read: pin its line,
 # in the large-epic paragraph, and the **Areas:** line it reads.

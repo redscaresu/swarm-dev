@@ -48,6 +48,22 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   another worktree), and when git cannot remove the worktree (giving git's reason). Origin's
   branch goes first, so when its delete fails the local state is still there for the next run.
 
+**Board PR kinds.** `open` names the PR's kind from its name, on stderr; its stdout stays the URL
+alone. Only a plan or an agreement PR gets a codex review:
+
+- plan: `plan-<hld>` (`/plan-hld`) and `scope-<epic>` (`/plan-epic`). One `swarm.sh codex-review`
+  pass in its worktree before it merges.
+- agreement: `agree-<slug>`, the HLD or epic the user agreed (`/hld` and `/epic` step 5). One
+  `swarm.sh codex-review` pass before it merges.
+- finish: `finish-<slug>` and `drop-<slug>`, which `swarm.sh finish` and `swarm.sh drop` open. No
+  codex-review: land it with `swarm.sh merge --board <url>` on green CI.
+- hold: `hold-<slug>`. No codex-review, landed the same way. (`swarm.sh hold` itself only logs.)
+- story-scope edit: any other name, such as a re-scope, `stage-v<x-y-z>` or `check-<kind>`. No
+  codex-review, landed the same way.
+
+`merge --board` runs no codex for any kind and keeps its CI gate: a PR whose head is not green is
+refused.
+
 Each step logs one `events.tsv` line, `board-pr:start`, `board-pr:open` or `board-pr:done`, with
 the name and `ok` or the refusal. The name may be a story's slug, so these lines are never a sign
 of life for that story's builder.
@@ -373,7 +389,7 @@ sits above the epic: HLD, then epics, then stories. It is optional; a single epi
 3. **Say it is ready.** A reviewer (the `hld-review` role) attacks the draft, its `grants:` included:
    each grant hands agents a step you take today, so it names what goes wrong if the grant is
    misused. Its findings arrive in the co-author's pane.
-4. **Agree it.** Your session sets `status: agreed`, opens a board PR with one codex pass, and
+4. **Agree it.** Your session sets `status: agreed`, opens the board PR `agree-<file>` with one codex pass, and
    closes the panes. Only you agree an HLD, and only you set `superseded`, by hand, when a newer
    one replaces it. Nothing plans a draft.
 
@@ -445,7 +461,7 @@ and line of code after it is for, so you write it with a co-author.
    co-author's pane; go through them there and revise until you are satisfied. You never switch
    tabs.
 4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: active`,
-   opens a PR for the epic (reviewed like any other change), and closes the co-author's pane. Only
+   opens the board PR `agree-<slug>` with one codex pass, and closes the co-author's pane. Only
    you can agree an epic; no agent changes its status, and `next` plans no draft epic.
 5. **Hand over.** Run `/swarm-dev:swarm`. It sees an active epic with no stories and starts
    `/plan-epic`.

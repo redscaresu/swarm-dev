@@ -87,8 +87,18 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    together." to a file and run `swarm.sh tell epic-<slug> nudge <file>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
    `status: active`; nothing plans a draft epic. The same edit writes
-   `agreed: <YYYY-MM-DD>` (today's date) into the front matter. Open a PR for the epic with one
-   `swarm.sh codex-review` pass, close the co-author and the reviewer (if it started) by name
+   `agreed: <YYYY-MM-DD>` (today's date) into the front matter. When the board is in the project's
+   repo, make that edit in a board PR named `agree-<slug>`. Run `swarm.sh board-pr start
+   agree-<slug>`; the worktree it prints starts from origin's base. When the base lacks
+   `docs/epics/<slug>.md` (a new draft), move the agreed file from the main checkout into the
+   worktree with `mv`, so no copy is left to block the pull once the PR merges. When the base has
+   it, copy it over the worktree's, then put the main checkout's copy back as the base has it (`git
+   show origin/<base>:docs/epics/<slug>.md > docs/epics/<slug>.md`), since edits left there block
+   the pull too. Make the edit in the
+   worktree, run `swarm.sh board-pr open agree-<slug> "<title>" <body-file>`, which commits with the
+   brief's trailers and signing, then run one `swarm.sh codex-review` pass in the worktree before it
+   merges (`board-pr open` again pushes its fixes). A board outside the project's repo is edited where it is. Close the co-author and the reviewer (if it started) by name
    (`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`; never `swarm.sh close
    epic`, which would close every tab whose label starts `epic-`), and tell the user the epic is agreed and
-   that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`).
+   that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`): once its board PR has merged, or at
+   once on a board outside the project's repo.
