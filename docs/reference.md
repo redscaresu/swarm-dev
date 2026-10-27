@@ -2082,10 +2082,19 @@ merge's own `main-ci:` and `fix-main:` lines, and `next`'s why, show them the sa
 (`SWARM_FIX_MAIN_LOG_SECONDS`), however many runs failed, so a slow log cannot hold up the reconcile
 that follows; a run gh cannot read stops at once, and the story names each run it could not read,
 and why. Once the story is written, merge logs `main-red <sha> <owner/repo> <base> <checks>` (the
-repo lowercased), retires an older fix-main story of the same repo and base that nobody has started
-(one merge at a time per repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`, so
-two red merges in one merge-queue batch never retire each other's story),
-so one fix is built per red main, and prints `fix-main: <checks> on <short sha>` with the same lines.
+repo lowercased), and retires each fix-main story of the same repo and base that nobody has started
+and whose red commit another red of that repo and base descends from, its own story included. Merge
+reads which red is newer from the commits. The order the reds were logged in can mislead, since CI
+on an older commit can finish later. The retired story's `fix-main` line says `retired: superseded by
+fix-main-<sha>`, naming a red that no other red descends from. Only a red whose fix-main story is
+still on the board counts, started or not: a cleared red's story is gone and covers nothing. Merge reads the commits in the
+project's clone, after fetching the base, and only when the repo is that clone's origin. A red in
+another repo, a red whose commit the clone lacks, and two reds where neither descends from the
+other retire nothing. At worst one story too many stays on the board, and no fix is lost. One merge at a time per
+repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`. Merge then prints
+`fix-main: <checks> on <short sha>` with the same lines, then `story:` and the story that covers the
+red. When its own story retired at once, that is the newer red's story, and `next` and a clearing
+green treat the newer red as the base's red.
 When it cannot write the story it says so in a line that does not start `fix-main:`, and leaves the
 red main and fix before it as they were. A red main clears, logging `main-green` and retiring its
 fix-main story if nobody has started it, only on a commit that shows it fixed and has the red

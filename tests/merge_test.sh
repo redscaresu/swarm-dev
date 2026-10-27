@@ -178,12 +178,16 @@ fresh; red_main "o/r main"; item s "status: review" "prs: https://github.com/O/R
 check "a green merge from O/R clears o/r's red main" logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 fresh; red_main "o/rxx main"; item s "status: review" "prs: https://github.com/o/r.x/pull/7"; merge "https://github.com/o/r.x/pull/7"
 check "a green merge into o/r.x leaves o/rxx's red main" bash -c "! grep -q main-green '${P}/.swarm/events.tsv' && [ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ]"
-# A second red merge before the fix: the older unstarted fix-main story gives way to the newer.
+# A second red merge before the fix: the older unstarted fix-main story gives way to the newer. Which
+# is newer is read from the commits in P's clone, so here H2 and M2 are real ones, M2 a child of H2.
+GP=(git -C "${P}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false); h2_fake="${H2}"
+H2="$("${GP[@]}" commit-tree -m h2 "$("${GP[@]}" mktree < /dev/null)")"; M2="$("${GP[@]}" commit-tree -p "${H2}" -m m2 "$("${GP[@]}" mktree < /dev/null)")"
 failed_job 'x\ty\tz FAIL one\n'; red_main "o/r main"; echo "${M2:=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" > "${FX}/oid"
 cp "${FX}/${M}.checks" "${FX}/${M2}.checks"; statuses "${FX}/${M2}.status"; wfruns "${FX}/${M2}.runs" "$(run ci completed success "${M2}")"
 merge "${URL}"
 check "a second red main: the older unstarted fix-main story is retired, the newer written" and_logged "^fix-main fix-main-${H2:0:7} retired: superseded by fix-main-${M2:0:7}$" \
   bash -c "[ ! -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ] && [ -e '${P}/docs/stories/fix-main-${M2:0:7}.md' ]"
+H2="${h2_fake}"
 # Main gone green another way: reconcile reads the base's head and, green, clears it.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"
 echo "${H2}" > "${FX}/commit.main"; checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"
