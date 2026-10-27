@@ -1007,6 +1007,19 @@ starts `From the review agent:`, and the goal names the review agent's findings.
 once per tell, so the header and the goal agree. The builder of a story slugged `review-<x>` is not
 x's review agent, and tells as the conductor. Findings from either count the same: as a round, toward
 a step-up and toward a top-rung hold.
+`tell` sends only to an idle agent. After the user clears a dialog, Claude Code can still list the
+agent as waiting, and herdr as blocked. For such an agent, `tell` reads the pane once. It sends the
+tell only when the pane shows an empty input box with no command running and no prompt, dialog,
+manual mode, login or API error over it. Otherwise it refuses as before, so its keys never answer a
+permission prompt. The refusal names what the pane shows instead, or says it could not be read.
+herdr refuses any prompt to an agent it reads as blocked, before sending a key, and clearing a dialog
+fires no hook that would change that. So when herdr refuses a tell that way, `tell` reads the pane
+again. If it is clear, `tell` reports a Claude agent idle to herdr with its session and resume
+command, as the agent's Stop hook would. It says so, logs a `stale-blocked` incident, and sends the
+tell once more.
+An agent herdr answers for (codex, or a Claude agent with no session on record) gets no such report:
+its blocked is herdr's own read of its screen. While herdr reads it blocked, the tell fails on
+herdr's refusal even when the pane looks clear, and the message says no report was sent.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or
@@ -1148,7 +1161,8 @@ review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <bra
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. herdr can read a pane idle through a whole turn, so a message or brief
+session is gone or unknown. A builder listed as waiting whose pane shows an empty input box is told
+(§ Building, under **The goal.**). herdr can read a pane idle through a whole turn, so a message or brief
 (a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
 session reads busy or waiting (when it read idle before the send), or its log
 has the message as a new prompt (for a `tell`, the file's first line). herdr's own status, even
@@ -1259,7 +1273,8 @@ its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait
 `wait --until-report` hour that it waits again, and not while the agent is still working: its
 session `busy`, or, for an agent herdr answers for, herdr's `working`), and `login` when it returns `auth`, once per
 expired login: a second wait adds none, and a `tell` (the resume after the `/login`) starts a new
-one. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
+one. `tell` writes `stale-blocked` when herdr refused a tell as blocked though the agent's pane read clear,
+so `tell` reported the agent idle to herdr. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
 unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the waits on that builder write
 none, so one stuck builder is one incident. `swarm.sh intervene <kind> "<one line>"` writes one with
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
