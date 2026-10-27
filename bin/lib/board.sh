@@ -43,13 +43,20 @@ state_value() {
   state_path "$1" "$2"
   [[ -f "${STATE_PATH}" ]] || return 1
   [[ -r "${STATE_PATH}" ]] || die "board state: cannot read ${STATE_PATH}; make it readable, or remove it to read $1 as committed"
-  awk -v k="$2" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+  state_read "${STATE_PATH}" "$1" "$2"
+}
+
+# state_read <state-file> <item-file> <key> — state_value's read of <key> from <state-file>, against
+# <item-file>'s front matter (- for stdin): its value, failing when it has no line for <key> or its
+# <key>@base: is no longer the item's value.
+state_read() {
+  awk -v k="$3" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
     FILENAME == ARGV[1] { if (!h && index($0, k ":") == 1) { v = val($0, length(k) + 1); h = 1 }
       if (!hb && index($0, k "@base:") == 1) { b = val($0, length(k) + 6); hb = 1 }
       next }
     /^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { t = val($0, length(k) + 1); exit }
-    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "${STATE_PATH}" "$1"
+    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "$1" "$2"
 }
 
 # board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
@@ -774,7 +781,7 @@ staged_chain() {
 stage_of() {
   local v="$1" dq='^"(.*)"$' sq="^'(.*)'\$"
   v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
-  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi
+  if [[ "${v}" =~ ${dq} || "${v}" =~ ${sq} ]]; then v="${BASH_REMATCH[1]}"; fi   # loose-match: ok dq and sq are fixed regexes
   if [[ -z "${v}" ]]; then echo -
   elif [[ "${v}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then echo "${BASH_REMATCH[1]}"
   else echo bad; fi
@@ -1139,7 +1146,7 @@ epic_links() {
   local l re='^- \[([A-Za-z0-9._-]+)\]\(\.\./epics/([A-Za-z0-9._-]+)\.md\)$'
   while IFS= read -r l || [[ -n "${l}" ]]; do
     [[ -z "${l//[[:blank:]]/}" ]] && continue
-    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1
+    [[ "${l}" =~ ${re} && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && -f "$1/${BASH_REMATCH[2]}.md" ]] || return 1   # loose-match: ok re is a fixed regex
   done
 }
 
@@ -1161,7 +1168,7 @@ epics_last() {
 plan_head() {
   local h n re='^planned: [0-9]{4}-[0-9]{2}-[0-9]{2}$'
   h="$(planned_lines "$2")"
-  [[ "${h}" =~ ${re} ]] || return 1
+  [[ "${h}" =~ ${re} ]] || return 1   # loose-match: ok re is a fixed regex
   [[ "$(hld_due "$1")" == plan ]] || return 1
   n=$(( $(hld_top "$1" | wc -l) ))
   cmp -s <(hld_top "$1") <(hld_lines "$2" | head -n "${n}") && hld_lines "$2" | tail -n +$((n + 1)) | epic_links "$3"
@@ -1831,6 +1838,23 @@ builder_state() {
     || echo unknown
 }
 
+# merged_build <slug> — clear a merged story's build (clear_build), after closing its builder if one
+# is open (still in review, so close counts nothing), and saying so when herdr cannot tell whether one
+# is. A builder whose pane could not be closed (close_pane) may still be working in the worktree, so
+# then the build is kept, with CLOSE_PANE_KEPT set; the caller says what happens to it.
+merged_build() {
+  local builder
+  builder="$(builder_state "$1")"; CLOSE_PANE_KEPT=""
+  [[ "${builder}" != open ]] || close_agent "$1"
+  [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
+  clear_build "$1" "the PR of $1 merged" "[]"
+  [[ "${builder}" != unknown ]] \
+    || echo "build cleared: $1's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close $1"
+}
+
+# pr_state <url> — the PR's state as gh gives it (OPEN, CLOSED or MERGED); fails when gh cannot read it.
+pr_state() { gh pr view "$1" --json state | json "d['state']"; }
+
 # reconcile — for each item in review: finish it once every PR it lists has merged; send it back to
 # ready, saying which, if any closed without merging; otherwise leave it waiting. A story's build is
 # cleared (clear_build) before the pull, while its file still names its repo: always once it merged,
@@ -1844,10 +1868,11 @@ builder_state() {
 # dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
 # there, so the main checkout keeps no edit: after a pull, or with no upstream to pull from, it is
 # marked done; while an unread PR holds the pull, it stays in review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
-# loses its state, however that commit was pulled (drop_gone_state). A red main whose base is green
+# loses its state, however that commit was pulled, and a merged story whose file went in a pull this
+# loop never saw is finished then (drop_gone_state). A red main whose base is green
 # now is cleared, and its unstarted fix retired (green_mains).
 reconcile_board() {
-  local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
+  local f slug url state closed waiting urls unread="" merged=() merged_files=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
     slug="$(basename "${f}" .md)"
@@ -1855,7 +1880,7 @@ reconcile_board() {
     if [[ ${#urls[@]} -eq 0 ]]; then echo "in review with no prs: line: ${slug}"; continue; fi
     closed=""; waiting=0
     for url in "${urls[@]}"; do
-      if ! state="$(gh pr view "${url}" --json state | json "d['state']")"; then
+      if ! state="$(pr_state "${url}")"; then
         echo "cannot read ${url}; ${slug} stays in review"; waiting=1; unread+="${unread:+, }${url} (${slug})"; continue
       fi
       case "${state}" in
@@ -1877,16 +1902,9 @@ reconcile_board() {
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
       if [[ "${f}" == "${BOARD}/stories/"* ]]; then
-        builder="$(builder_state "${slug}")"; CLOSE_PANE_KEPT=""
-        [[ "${builder}" != open ]] || close_agent "${slug}" </dev/null   # stdin is this loop's list
-        # A builder whose pane could not be closed (close_pane) may still be working in the worktree.
-        if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
-          echo "build kept: ${slug}'s builder pane is still open, so its worktree and story/${slug} stay; clear them once it is closed"
-        else
-          clear_build "${slug}" "the PR of ${slug} merged" "[]" </dev/null
-        fi
-        [[ "${builder}" != unknown ]] \
-          || echo "build cleared: ${slug}'s builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close ${slug}"
+        merged_build "${slug}" </dev/null   # stdin is this loop's list
+        [[ -z "${CLOSE_PANE_KEPT}" ]] \
+          || echo "build kept: ${slug}'s builder pane is still open, so its worktree and story/${slug} stay; clear them once it is closed"
       fi
       merged+=("${slug}"); merged_files+=("${f}")
     fi
@@ -1953,9 +1971,13 @@ reconcile() {
 # commit deleted (its PR or a board PR, pulled by reconcile or by hand): it is in neither HEAD nor the
 # main checkout, and was in a commit before. A later item with its slug then starts with no state. A
 # file missing only from the main checkout, or never committed, keeps its state. A board directory
-# that is not there (git removes it with its last file) counts as holding no item.
+# that is not there (git removes it with its last file) counts as holding no item. A story still in
+# review whose PRs all merged (gone_merged: a pull reconcile_board never saw, by hand or by a
+# reconcile that died after it) is finished first, as reconcile_board finishes one: its build cleared
+# (merged_build) and `reconcile <slug> ok (finished)` logged. One whose PR gh cannot read, or whose
+# builder's pane could not be closed, keeps its state and escalated block, for the next reconcile.
 drop_gone_state() {
-  local s n d rel=""
+  local s n d rel="" merged
   # The board's path from the root with a trailing /, or empty when the board is the root.
   [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
   for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
@@ -1963,8 +1985,75 @@ drop_gone_state() {
     [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
     ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}${d}/${n}.md" 2>/dev/null || continue
     [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}${d}/${n}.md")" ]] || continue
+    # A story's escalated block goes with its state file, which is still here only when the story kept it.
+    [[ "${s}" != "${PROJECT_DIR}/.swarm/escalated/"* || ! -e "${BOARD_STATE_DIR}/stories/${n}" ]] || continue
+    if [[ "${d}" == stories ]]; then
+      # Stopped here, not in gone_merged's subshell, so reconcile ends and logs why.
+      merged="$(gone_merged "${BOARD}/${d}/${n}.md")" \
+        || die "reconcile: ${n}, pulled off the board, has a board state that cannot be read, so it is left as it was; make ${BOARD_STATE_DIR}/stories/${n} readable, or remove it, then run reconcile again"
+      [[ "${merged}" != unread ]] || continue
+      if [[ "${merged}" == merged ]]; then
+        merged_build "${n}"
+        if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+          echo "build kept: ${n}'s builder pane is still open, so its worktree and story/${n} stay, and so does its state; the next reconcile clears them once that pane closes"
+          continue
+        fi
+        record_event reconcile "${n}" "ok (finished)"; echo "merged: ${n}, its file already pulled off the board"
+      fi
+    fi
     state_drop "${BOARD}/${d}/${n}.md"
   done
+}
+
+# gone_merged <story-file> — for a story a pulled commit took off the board, read as reconcile_board
+# reads one in review (fm_gone, pr_state): merged when it is in review and every PR on its prs: line
+# merged, unread when gh cannot read one of them (said on stderr, naming it), else nothing. Fails when
+# its board state cannot be read (fm_gone).
+gone_merged() {
+  local url st out=merged urls prs slug="${1##*/}"
+  slug="${slug%.md}"
+  st="$(fm_gone "$1" status)" || return 1
+  [[ "${st}" == review ]] || return 0
+  prs="$(fm_gone "$1" prs)" || return 1
+  read -r -a urls <<< "${prs}"
+  [[ ${#urls[@]} -gt 0 ]] || return 0
+  for url in "${urls[@]}"; do
+    if ! st="$(pr_state "${url}")"; then
+      echo "cannot read ${url}; ${slug}, pulled off the board, keeps its state until reconcile can read it; if gh never can (its repo deleted or renamed, a bad URL), remove ${BOARD_STATE_DIR}/stories/${slug}, and ${PROJECT_DIR}/.swarm/escalated/${slug} if it is there, by hand" >&2
+      echo unread; return 0
+    fi
+    [[ "${st}" == MERGED ]] || out=""
+  done
+  echo "${out}"
+}
+
+# fm_gone <item-file> <key> — fm, also for an item a pulled commit took off a board in the repo: then
+# its board state's value for <key> (state_name), read as state_value reads it against the copy that
+# commit deleted (gone_copy), so a later commit's value in that copy wins; else that copy's, or nothing.
+# Dies, as state_value does, when the state file is there but cannot be read: the copy's value could
+# be stale (a story in review read as ready).
+fm_gone() {
+  local copy
+  [[ ! -f "$1" ]] || { fm "$1" "$2"; return; }
+  copy="$(gone_copy "$1")"
+  state_name "$1" "$2"
+  [[ ! -f "${STATE_PATH}" || -r "${STATE_PATH}" ]] \
+    || die "board state: cannot read ${STATE_PATH}; make it readable, or remove it to read $1 as its last commit had it"
+  if [[ -f "${STATE_PATH}" ]] && state_read "${STATE_PATH}" - "$2" <<< "${copy}"; then return 0; fi
+  get_fm - "$2" <<< "${copy}"
+}
+
+# gone_copy <item-file> — an item file missing from the main checkout as git last had it: HEAD's copy,
+# else the copy in the parent of the newest commit in HEAD's history that touched it (the one that
+# deleted it). Nothing when the board is not in the repo, or git never had it.
+gone_copy() {
+  local rel="" sha
+  [[ ${BOARD_IN_REPO} == 1 ]] || return 0
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  rel+="${1#"${BOARD}"/}"
+  git -C "${PROJECT_DIR}" show "HEAD:${rel}" 2>/dev/null && return 0
+  sha="$(git -C "${PROJECT_DIR}" log -1 --format=%H HEAD -- "${rel}" 2>/dev/null)" || return 0
+  [[ -z "${sha}" ]] || git -C "${PROJECT_DIR}" show "${sha}^:${rel}" 2>/dev/null || true
 }
 
 # has_upstream — true when the board is in the project repo and its main checkout has an upstream.
