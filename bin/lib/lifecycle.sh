@@ -2240,8 +2240,9 @@ lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers.
 # It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
-# came back to it, since the last pass waits for the next. next's idle: lines (idle_now) come before
-# no_agent_lines', read afresh each poll, so one goes once its dependency's merge is reconciled.
+# came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
+# no_agent_lines', read afresh each poll, so one goes once its dependency's merge is reconciled; a poll
+# whose check fails keeps the ones the last poll saw.
 lead_queue() {
   local f held tag line v keep=""
   while IFS= read -r f; do
@@ -2257,8 +2258,9 @@ lead_queue() {
   done < <(lead_review_items)
   # A verdict on a head read before its item left review says nothing about the head it comes back with.
   [[ ! -f "${LEAD_HEADS}" ]] || { printf '%s' "${keep}" > "${LEAD_HEADS}.tmp" && mv "${LEAD_HEADS}.tmp" "${LEAD_HEADS}"; }
-  # Advisory, as in next: a failed check leaves the other lines.
-  idle_now || true
+  # Advisory, as in next: a failed check warns once on stderr and keeps the idle: lines the last poll
+  # saw (LEAD_SEEN), so the queue does not lose them and the next good poll wakes no one again.
+  idle_warned "the idle: lines the last poll saw stand" || grep '^idle: ' "${LEAD_SEEN}" 2>/dev/null || true
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
 }

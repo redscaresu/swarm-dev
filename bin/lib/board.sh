@@ -416,14 +416,22 @@ one_off_started() {
 }
 
 # idle_now — an idle: line per blocked story whose depends_on story shares no touches part with it and
-# is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS and SWARM_QUEUE_MINUTES), from
-# the board and its state alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status
-# and dash each call it on every read, so a line goes once its dependency's merge is reconciled. Fails
-# when the check does.
+# is not in its needs: (touches_rows.py --idle, given SWARM_AGENT_KINDS), from the board and its state
+# alone: no gh or herdr call. next (idle_lines), wait --lead (lead_queue), status and dash each call it
+# on every read, so a line goes once its dependency's merge is reconciled. Fails when the check does: a
+# story file reconcile removes between the script's glob and its read is one way.
 idle_now() {
-  # shellcheck disable=SC2154 # CFG_queue_minutes is assigned in swarm.sh
-  SWARM_AGENT_KINDS="${AGENT_KINDS}" SWARM_QUEUE_MINUTES="${CFG_queue_minutes}" \
-    python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+}
+
+# idle_warned [<tail>] — idle_now's lines. When the check fails: no line, one `warning: the
+# idle-dependency check failed (touches_rows.py --idle)[; <tail>]` line on stderr in place of Python's
+# traceback, and exit 1, so a caller can keep what it last saw. next, wait --lead and status read it;
+# dash reads idle_now, a frame having no place for a warning.
+idle_warned() {
+  local out
+  out="$(idle_now 2>/dev/null)" || { echo "warning: the idle-dependency check failed (touches_rows.py --idle)${1:+; $1}" >&2; return 1; }
+  printf '%s\n' ${out:+"${out}"}
 }
 
 # idle_lines <step> — what next prints after its step <step>: capacity no step uses. idle_now's
@@ -435,8 +443,8 @@ idle_now() {
 IDLE_CANDIDATES=5
 idle_lines() {
   local f found
-  # Advisory: a failed check warns, and never fails next.
-  idle_now || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
+  # Advisory: a failed check warns (idle_warned), and never fails next.
+  idle_warned "next's step above stands" || true
   case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
   while IFS= read -r f; do
     if buildable_story "${f}"; then return 0; fi
