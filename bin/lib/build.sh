@@ -618,24 +618,47 @@ review_rounds() {
     END { print n + 1, at + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo "1 0"
 }
 
-# review_at_head <slug> <PR URL> [next] — the story's repo, worktree and PR head, in REVIEW_SRC, REVIEW_WT
-# and REVIEW_HEAD, once the worktree is at the PR's head with nothing uncommitted; dies otherwise, as
-# review-agent, or as review-agent --next with next. Not for $(...): main logs its die's message,
-# which no_review_events reads.
+# review_words <slug> [next|recheck] — for review-agent's refusals (its start, --next's or --recheck's):
+# the command, what the refusal left undone and how to try again, in REVIEW_CMD, REVIEW_UNDONE and REVIEW_AGAIN.
+review_words() {
+  case "${2:-}" in
+    next) REVIEW_CMD="review-agent --next"; REVIEW_UNDONE="no round was started"; REVIEW_AGAIN="run swarm.sh review-agent --next $1 <PR URL> again" ;;
+    recheck) REVIEW_CMD="review-agent --recheck"; REVIEW_UNDONE="nothing was written"
+             REVIEW_AGAIN="run swarm.sh review-agent --recheck $1 <PR URL> <old head> <file:line>... again" ;;
+    *) REVIEW_CMD=review-agent; REVIEW_UNDONE="nothing was started"; REVIEW_AGAIN="start the review again" ;;
+  esac
+}
+
+# review_at_head <slug> <PR URL> [next|recheck] — the story's repo, worktree and PR head, in REVIEW_SRC,
+# REVIEW_WT and REVIEW_HEAD, once the worktree is at the PR's head with nothing uncommitted; dies
+# otherwise, as review-agent, or as review-agent --next or --recheck (review_words). Not for $(...): main
+# logs its die's message, which no_review_events reads.
 review_at_head() {
-  local at cmd=review-agent undone="nothing was started" again="start the review again"
-  [[ -z "${3:-}" ]] || { cmd="review-agent --next"; undone="no round was started"; again="run swarm.sh review-agent --next $1 <PR URL> again"; }
+  local at
+  review_words "$1" "${3:-}"
   REVIEW_SRC="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || die "$1: ${REVIEW_SRC}"
   REVIEW_WT="$(worktree_for "${REVIEW_SRC}" "$1")"
   [[ -d "${REVIEW_WT}" ]] || die "$1: no worktree at ${REVIEW_WT}: review-agent reviews a story built here"
   REVIEW_HEAD="$(gh pr view "$2" --json headRefOid --jq .headRefOid 2>/dev/null)" || REVIEW_HEAD=""
-  [[ "${REVIEW_HEAD}" =~ ^[0-9a-f]{40}$ ]] || die "${cmd}: could not read $2's head (gh pr view --json headRefOid)"
+  [[ "${REVIEW_HEAD}" =~ ^[0-9a-f]{40}$ ]] || die "${REVIEW_CMD}: could not read $2's head (gh pr view --json headRefOid)"
   at="$(git -C "${REVIEW_WT}" rev-parse HEAD)"
   [[ "${at}" == "${REVIEW_HEAD}" ]] \
-    || die "${cmd}: $1's worktree is at ${at}, not the PR's head ${REVIEW_HEAD}; ${undone}: wait for its builder, then ${again}"
+    || die "${REVIEW_CMD}: $1's worktree is at ${at}, not the PR's head ${REVIEW_HEAD}; ${REVIEW_UNDONE}: wait for its builder, then ${REVIEW_AGAIN}"
   # Uncommitted work would be reviewed with the head (codex's story prompt includes it).
   [[ -z "$(git -C "${REVIEW_WT}" status --porcelain)" ]] \
-    || die "${cmd}: $1's worktree has uncommitted changes, so it is not the PR's head ${REVIEW_HEAD}; ${undone}: wait for its builder to commit and push, then ${again}"
+    || die "${REVIEW_CMD}: $1's worktree has uncommitted changes, so it is not the PR's head ${REVIEW_HEAD}; ${REVIEW_UNDONE}: wait for its builder to commit and push, then ${REVIEW_AGAIN}"
+}
+
+# review_pane <slug> next|recheck — dies, as review-agent --next or --recheck, unless herdr lists a
+# review-<slug> this project started and this is its pane.
+review_pane() {
+  local pane what="runs its next round"
+  review_words "$1" "$2"; [[ "$2" != recheck ]] || what="runs its wording recheck"
+  pane="$(agent_field "$(agent_name "review-$1")" pane_id)"
+  [[ -n "${pane}" ]] \
+    || die "${REVIEW_CMD}: herdr lists no review-$1 this project started, so ${REVIEW_UNDONE}: start one with swarm.sh review-agent $1 <PR URL>"
+  [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
+    || die "${REVIEW_CMD}: only review-$1, in its pane ${pane}, ${what}, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; ${REVIEW_UNDONE}"
 }
 
 # review_next <slug> <PR URL> — review-agent --next: the next review round of review-<slug>, run from its
@@ -647,15 +670,11 @@ review_at_head() {
 # that round has started already (review_rounds): no findings round since, so its review would be lost.
 # review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
-  local slug="$1" pr="$2" out pane round rounds
+  local slug="$1" pr="$2" out round rounds
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --next: bad slug '${slug}' (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent --next: '${pr}' is not a PR URL (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
-  pane="$(agent_field "$(agent_name "review-${slug}")" pane_id)"
-  [[ -n "${pane}" ]] \
-    || die "review-agent --next: herdr lists no review-${slug} this project started, so no round was started: start one with swarm.sh review-agent ${slug} <PR URL>"
-  [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
-    || die "review-agent --next: only review-${slug}, in its pane ${pane}, runs its next round, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; no round was started"
+  review_pane "${slug}" next
   rounds="$(review_rounds "${slug}")"; round="${rounds% *}"
   [[ "${rounds#* }" -lt "${round}" ]] \
     || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: wait for the conductor's findings tell, then run it again"
@@ -666,6 +685,99 @@ review_next() {
   # The brief pins the head of the round it started: this round's head replaces it there.
   echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}, and write ${out} afresh, its first line \`head: ${REVIEW_HEAD}\` (or, if the worktree moved, \`head moved: <what changed>\` under it)."
   review_round_line "${round}" "${pr}"
+}
+
+# review_recheck <slug> <PR URL> <old head> <file:line>... — review-agent --recheck: the wording recheck,
+# run by review-<slug> from its own pane (review_pane) once its builder has pushed a wording fix. <old head>
+# is the head review-<slug> last reviewed, as .swarm/reviews/<slug>.head records it, with that round's
+# findings file written (review_pass), and each file:line a point its ## Findings name (recheck_named), its
+# line as at <old head>. With the worktree at the PR's new head (review_at_head), it passes when
+# `git diff <old head>..<new head>` changes only the named lines (recheck_hunks) and the new head is green
+# (ci_gate head). A pass writes
+# the new head's findings file, the last one kept as <slug>.md.prev, and .head; main logs it as
+# review-agent:recheck <slug> ok, which counts no round (review_rounds). A refusal writes nothing under
+# .swarm/reviews and names --next, a full round.
+review_recheck() {
+  local slug="$1" pr="$2" old="$3" usage="swarm.sh review-agent --recheck <slug> <PR URL> <old head> <file:line>..."
+  local out repo why point full="a full round is due: swarm.sh review-agent --next $1 $2"
+  [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --recheck: bad slug '${slug}' (${usage})"
+  [[ "${pr}" =~ ^https://[^/[:space:]]+/([^/[:space:]]+/[^/[:space:]]+)/pull/[0-9]+$ ]] \
+    || die "review-agent --recheck: '${pr}' is not a PR URL (${usage})"
+  repo="${BASH_REMATCH[1]}"
+  [[ "${old}" =~ ^[0-9a-f]{40}$ ]] || die "review-agent --recheck: '${old}' is not a full commit SHA (${usage})"
+  shift 3
+  [[ $# -gt 0 ]] || die "review-agent --recheck: no file:line point named (${usage})"
+  for point in "$@"; do
+    [[ "${point}" =~ ^[^[:space:]]+:[0-9]+$ ]] || die "review-agent --recheck: '${point}' is not a file:line point (${usage})"
+  done
+  [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
+  review_pane "${slug}" recheck
+  review_at_head "${slug}" "${pr}" recheck
+  out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
+  [[ "$(cat "${out%.md}.head" 2>/dev/null)" == "${old}" ]] \
+    || die "review-agent --recheck: ${old} is not the head review-${slug} last reviewed (${out%.md}.head); nothing was written: ${full}"
+  # .head is written as a round starts: the round on the old head must have finished, or there is no review to recheck.
+  review_pass "${slug}" "${old}" \
+    || die "review-agent --recheck: ${out} holds no finished review of ${old} (its head: line and a ## Findings section); nothing was written: ${full}"
+  point="$(recheck_named "${out}" "$@")" \
+    || die "review-agent --recheck: ${point} is no point the ## Findings of ${out} name; nothing was written: ${full}"
+  why="$(recheck_hunks "${REVIEW_WT}" "${old}" "${REVIEW_HEAD}" "$@")" \
+    || die "review-agent --recheck: ${old:0:7}..${REVIEW_HEAD:0:7} ${why}; nothing was written: ${full}"
+  why="$(ci_gate head "${repo}" "${REVIEW_HEAD}")" \
+    || die "review-agent --recheck: the head ${REVIEW_HEAD:0:7} is not green: ${why}; nothing was written: ${full}"
+  if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
+  printf '%s\n' "head: ${REVIEW_HEAD}" "" "## Findings" "" \
+    "None: the wording recheck passed. ${old:0:7}..${REVIEW_HEAD:0:7} changes only the lines the last findings named, and the head is green." \
+    "" "## Out of scope" "" "None." > "${out}"
+  echo "${REVIEW_HEAD}" > "${out%.md}.head"
+  echo "wording recheck passed: ${out} holds the findings for ${REVIEW_HEAD}"
+}
+
+# recheck_named <findings file> <file:line>... — nothing when the file's ## Findings section names each
+# point, as a path that may follow a / but no other path character, and no digit after it; else the
+# first it does not, failing. A pass's own findings name no point, so no recheck follows one.
+recheck_named() {
+  awk -v pts="${*:2}" '
+    BEGIN { n = split(pts, w, " ") }
+    /^## / { in_f = ($0 ~ /^## Findings/); next }
+    in_f { for (i = 1; i <= n; i++) for (s = $0; !seen[i] && (k = index(s, w[i])); s = substr(s, k + 1))
+             if (substr(s, k - 1, 1) !~ /[A-Za-z0-9_.-]/ && substr(s, k + length(w[i]), 1) !~ /[0-9]/) seen[i] = 1 }
+    END { for (i = 1; i <= n; i++) if (!seen[i]) { print w[i]; exit 1 } }' "$1"
+}
+
+# recheck_hunks <worktree> <old> <new> <file:line>... — nothing when the diff from <old> to <new> changes
+# only the named lines, as at <old>: every line a hunk removes or rewrites is named, and a hunk that only
+# adds lines has a named line on either side of it; else why not, failing. A file it adds, deletes, renames, changes the
+# mode of or that is binary has no named line, and an empty diff fails too.
+recheck_hunks() {
+  local wt="$1" old="$2" new="$3"; shift 3
+  git -C "${wt}" -c core.quotePath=false diff -U0 --no-color --no-ext-diff --no-textconv --no-renames \
+      --src-prefix=a/ --dst-prefix=b/ "${old}" "${new}" 2>/dev/null \
+    | awk -v pts="$*" '
+      function bad(m) { print m; failed = 1; exit 1 }
+      # A file header past: the file must be named, with only line changes (---/+++, then hunks).
+      function header_done() { if (st == "head" && !(file in want)) bad("changes " (file == "" ? name : file) ", which no file:line point names") }
+      BEGIN { n = split(pts, w, " "); for (i = 1; i <= n; i++) { f = w[i]; sub(/:[0-9]+$/, "", f); want[f] = want[f] " " (substr(w[i], length(f) + 2) + 0) " " } }
+      st == "body" && /^[-+]/ { if (--rem == 0) st = "hunks"; next }
+      /^\\/ && st != "head" { next }   # \ No newline at end of file, after the line it marks
+      /^diff --git / { header_done(); st = "head"; file = ""; name = substr($0, 12); files++; next }
+      st == "head" && /^--- / { if ($0 != "--- /dev/null") file = substr($0, 7); next }
+      st == "head" && /^\+\+\+ / { if ($0 != "+++ /dev/null" && file != substr($0, 7)) file = ""; next }
+      st == "head" && /^index / { next }
+      /^@@ / {
+        header_done(); st = "hunks"
+        o = $2; sub(/^-/, "", o); c = split(o, a, ","); lo = a[1] + 0; cnt = (c > 1 ? a[2] + 0 : 1)
+        hi = (cnt ? lo + cnt - 1 : lo + 1)
+        nw = $3; sub(/^\+/, "", nw); c = split(nw, a, ","); rem = cnt + (c > 1 ? a[2] + 0 : 1)
+        # Every old line the hunk changes must be named; git joins adjacent edits into one hunk.
+        if (cnt) { for (k = lo; k <= hi; k++) if (!index(want[file], " " k " ")) bad("changes " file " at line " k ", which no file:line point names") }
+        else if (!index(want[file], " " lo " ") && !index(want[file], " " hi " ")) bad("adds lines to " file " after line " lo ", and no file:line point names line " lo " or " hi)
+        if (rem > 0) st = "body"
+        next
+      }
+      st == "head" { bad("changes more than lines of " name " (" $0 ")") }
+      { bad("has a line recheck cannot read: " $0) }
+      END { if (failed) exit 1; header_done(); if (!files) { print "changes nothing"; exit 1 } }'
 }
 
 # review_round_line <round> <PR URL> — what review round <round> runs, for review_brief and review_next:
