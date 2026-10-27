@@ -966,6 +966,13 @@ no goal.
 The text `tell` sends starts `From the conductor:`. Run from the pane of the story's review agent
 (`review-<slug>`), it starts `From the review agent:`, and the goal names the review agent's
 findings. Findings from either count the same: as a round, toward a step-up and toward a top-rung hold.
+`tell` sends only to an idle agent. After the user clears a dialog, Claude Code can still list the
+agent as waiting, and herdr as blocked. For such an agent, `tell` reads the pane once. It sends the
+tell only when the pane shows an empty input box with no command running and no prompt, dialog,
+manual mode, login or API error over it. Otherwise it refuses as before, so its keys never answer a
+permission prompt. herdr refuses any prompt to an agent it reads as blocked, and clearing a dialog
+fires no hook that would change that. So when the pane is clear, `tell` first reports a Claude agent
+idle to herdr, with its session and resume command, as the agent's Stop hook would.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or

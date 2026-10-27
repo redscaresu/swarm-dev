@@ -1600,7 +1600,11 @@ note_lock() {
 # read as a flag. Only an idle agent is told (read_state; a busy one whose turn stopped on an API
 # error, api_stopped, counts as idle): it refuses one mid-turn (findings sent then
 # would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
-# or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
+# or of unknown state, rather than waiting on it. A dialog the user cleared can leave an agent listed
+# as waiting or blocked, so for those it reads the pane once (pane_clear) and refuses only when the
+# pane is not clear. herdr refuses a prompt to an agent it reads blocked (agent_blocked, before any
+# key), and a cleared dialog fires no hook, so the blocked its hook reported stays: with the pane
+# clear, tell reports the agent idle to herdr first (herdr_idle). With goal on, findings get a fresh goal (findings_goal).
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
 # the handover brief, and the tell fails, saying so; a step-up that closed nothing sends them as usual.
@@ -1614,7 +1618,7 @@ note_lock() {
 # The text sent says who it is from (tell_from): the review agent from review-<slug>'s pane, else the
 # conductor. Either counts the same: rounds, step-ups and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n
+  local kind="$2" f="$3" name msg state since inbox rc pane line n clear="" seen
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1635,13 +1639,17 @@ tell_agent() {
     note_wake "${name}" "${inbox%.md}" "${pane}"
     echo "noted ${name}"; return
   fi
+  # herdr_idle's --seq, taken before the pane is read: a blocked report a prompt raised after the read
+  # has a later one, so herdr keeps it over the idle report.
+  seen="$(python3 -I -c 'import time; print(time.time_ns())')" || seen=""
   state="$(read_state "${name}")"
   # A turn that stopped on an API error has ended, though open background shells keep its session busy.
   [[ "${state}" != busy ]] || ! api_stopped "${name}" "${pane}" || state=idle
   case "${state}" in
     idle|herdr:idle|herdr:done) ;;
     busy|herdr:working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
-    waiting*|herdr:blocked) die "${name} is waiting on $(waiting_for "${state}"); answer it (herdr agent read ${name}), then tell it" ;;
+    waiting*|herdr:blocked) pane_clear "${pane}" || die "${name} is waiting on $(waiting_for "${state}"); answer it (herdr agent read ${name}), then tell it"
+      clear=1 ;;
     gone) die "${name}: its Claude session has ended (gone); there is no one to tell" ;;
     unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
@@ -1660,6 +1668,12 @@ tell_agent() {
     [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
     [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
+  fi
+  # herdr's blocked for an agent it answers for is its own read of the screen, so it is left to herdr.
+  # For any other, with the pane clear, herdr_idle; if it fails, herdr refuses the tell (agent_blocked).
+  if [[ "${state}" != herdr:* && "$(agent_status "${name}")" == blocked ]]; then
+    [[ -n "${clear}" ]] || ! pane_clear "${pane}" || clear=1
+    [[ -z "${clear}" ]] || herdr_idle "${name}" "${pane}" "${seen}" || true
   fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
@@ -1684,6 +1698,38 @@ tell_from() {
   if [[ -n "${HERDR_PANE_ID:-}" && "${HERDR_PANE_ID}" == "$(agent_field "$(agent_name "review-$1")" pane_id)" ]]; then
     echo "the review agent"
   else echo "the conductor"; fi
+}
+
+# pane_clear <target> — succeed when one read of <target>'s pane (pane_text) shows Claude Code's input
+# box empty with nothing over it: panes.py's stuck_kind names nothing, no command runs (esc to
+# interrupt) after the last reply, and the box (input_box) holds its prompt and nothing typed. A
+# suggestion shown in the box reads as typed, and a pane that is not Claude Code's (codex) has no
+# such box, so neither is clear: a tell is only refused.
+pane_clear() {
+  pane_text "$1" | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, re, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import BOX_PROMPT, MID_COMMAND, input_box, stuck_kind
+t = sys.stdin.read(); lines = t.splitlines(); box = input_box(t) or [""]
+reply = max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1])
+m = BOX_PROMPT.match(box[0])
+sys.exit(0 if m and not "".join([box[0][m.end():]] + box[1:]).strip() and stuck_kind(t) is None
+         and not any(MID_COMMAND in l for l in lines[reply + 1:]) else 1)'
+}
+
+# herdr_idle <name> <pane> <seq> — report <name> idle to herdr, as hooks/agent-state.sh does on Stop:
+# for its Claude session on record (agents.tsv) with a resume command swarm.sh wrote (resume_file's
+# .argv), the session that command resumes (restart_session) and the command. <seq> is the time in
+# nanoseconds from before its pane was read, so herdr keeps a hook report made since over this one.
+# Fails for an agent with no such command (codex), no <seq>, or a report herdr refused.
+herdr_idle() {
+  local session id a resume=()
+  [[ -n "$3" ]] || return 1
+  session="$(awk -F'\t' -v n="$1" 'NF == 7 && $3 == n && $4 == "claude" { s = $7 } END { print s }' "${AGENTS_LOG}" 2>/dev/null)"
+  [[ -n "${session}" && -f "${RESUME_DIR}/${session}.argv" ]] || return 1
+  id="$(restart_session "${session}")" || return 1
+  while IFS= read -r a; do resume+=("${a}"); done < "${RESUME_DIR}/${session}.argv"
+  herdr pane report-agent "$2" --source swarm --agent claude --state idle --seq "$3" \
+    --agent-session-id "${id}" -- "${resume[@]}" >/dev/null 2>&1
 }
 
 # tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other
