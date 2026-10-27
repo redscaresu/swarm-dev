@@ -3,7 +3,7 @@
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
-#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
+#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), or a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ..., as next prints it); print each new one
@@ -36,12 +36,12 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile; with merge = human, a story or board PR only under an agreed HLD that grants merge, and even then held for the user when it has costs: money; --release only when at least one story merged since the last tag and every one of them is under an HLD that grants release; --board also refuses a PR that sets an epic active with no ticket (agreed:, parent:, an HLD granting epics, or lead_epics = on)
-#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs within 5 minutes, or still pending after <seconds> (default 1800)
+#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs (or no run of a workflow its pull_request triggers) within 5 minutes, or still pending after <seconds> (default 1800)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
-#   swarm.sh watch [repo...]                                wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit
+#   swarm.sh watch [--epic <slug>|--backlog] [repo...]      wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit; with --epic or --backlog, also once when a story PR of theirs opens
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init [--auto-mode-done]                        from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines, and print the Claude Code steps left to you; --auto-mode-done: record (in .swarm/auto-mode-done) that you ran /auto-mode-setup, writing nothing outside .swarm/
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
@@ -75,10 +75,10 @@ DIE_FILE=""
 DIE_LEVEL=-1
 
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
-# config line) or a set -e stop, exits 2; its temp file (WAIT_PR_TMP) goes either way.
+# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP and its .expected memo) go either way.
 WAIT_PR_RED=""; WAIT_PR_TMP=""
 if [[ "${1:-}" == wait-pr ]]; then
-  trap 'rc=$?; rm -f "${WAIT_PR_TMP}"; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 
 # SWARM_SLEEP_SCALE multiplies the fixed sleeps (nap; default 1, make test sets 0.01). It is checked

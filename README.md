@@ -117,11 +117,25 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | Command | What it shows |
 |---|---|
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
-| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories. |
+| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories. It gives its herdr, gh and claude reads, each agent's pane read included, and its git fetch and ls-remote, 30 seconds in all, and a last `skipped (over 30 s): ...` line names any read it cut. |
 | `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, and how long ready work sat with no build while its conductor ran), how each model did, how well the planner guessed which stories were easy and how big, what each review round found, which agents spend GitHub's API budget, and how long local `make test` runs take by how many ran at once. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
 lists them all.
+
+### Workspace labels
+
+Every herdr workspace swarm.sh opens for a conductor is labelled with the project first:
+
+- `<project> · <epic>`: an epic's conductor and its builders.
+- `<project> · backlog`: the backlog conductor and the one-off stories it builds.
+
+`<project>` is the project folder's name, with a short hash of its path after it when another folder
+of the same name already has a workspace. A conductor reuses a workspace only when its panes say it
+is this project's. Two folders of the same name can still get the same label, for example when
+both start a conductor at the same moment, when one sits in a folder whose name ends in `-wt`, or
+when one's workspace has only its builders left
+([reference.md § Building](docs/reference.md#building)).
 
 ## Cost and safety
 
@@ -148,6 +162,9 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   commits, and stops with a `base merged:` line. Under `merge = agent` the conductor waits for that
   head's CI and merges it. When GitHub cannot merge the base in (a conflict, say), the builder does,
   and the conductor reviews and merges the new head ([reference.md § Merging](docs/reference.md#merging)).
+- Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
+  holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
+  PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).
 
 Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
 lists them all.

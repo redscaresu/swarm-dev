@@ -197,7 +197,8 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     (hld_epics) or, on a board outside the repo, only epics an interrupted run of
 #                     /plan-hld wrote and no work has started on (hld_resumable), and no plan board PR's worktree
 #                     (<repo>-wt/_board-plan-<hld>); with one, this falls through to the steps below
-#                     and the gate lists it (plan PR awaiting merge: <hld>)
+#                     and the gate lists it (plan PR awaiting merge: <hld>). One that hld_blocked
+#                     names is never offered: the gate lists it (hld cannot be planned: <hld>, <why>)
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -300,7 +301,7 @@ next_step() {
   # steps below go on, and is a gate row (waiting_on_user).
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
-    [[ "$(hld_due "${f}")" == plan ]] || continue
+    [[ "$(hld_due "${f}")" == plan && -z "$(hld_blocked "${f}")" ]] || continue
     ! hld_pr_open "${slug}" plan || continue
     echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has not been planned into epics yet: run /plan-hld ${slug}"; return
   done < <(board hld)
@@ -464,21 +465,69 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
+# next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become
+# report_read calls named for their first words (`herdr agent list`, `gh pr list`, `claude agents`), so
+# each runs within the report's deadline. Inside herdr, `herdr agent list` is answered from the one list
+# next_report read (LEAD_AGENTS), and fails as that read did: every reader sees the same agents, so a
+# later list cut at the deadline cannot hide a conductor an earlier one showed. Each read gets
+# </dev/null, as status_reads' do: within puts it in its own process group, where a read of the
+# terminal would stop on SIGTTIN until the deadline cut it. off: the programs again (unset -f).
+# shellcheck disable=SC2329 # gh and claude are called by the readers next_step and conductors_queued run
+next_reads() {
+  if [[ "$1" == off ]]; then unset -f herdr gh claude; return 0; fi
+  herdr() {
+    if [[ "$*" == "agent list" && "${HERDR_ENV:-}" == 1 ]]; then
+      [[ -n "${LEAD_AGENTS_OK}" ]] || return 1
+      printf '%s\n' "${LEAD_AGENTS}"; return 0
+    fi
+    report_read "herdr ${*:1:2}" herdr "$@" </dev/null
+  }
+  gh() { report_read "gh ${*:1:2}" gh "$@" </dev/null; }
+  claude() { report_read "claude $1" claude "$@" </dev/null; }
+}
+
+# next_queued — conductors_queued with ci_gate run through report_read too: its gh calls are python's,
+# which next_reads' gh never sees. In a subshell, so that ci_gate ends with it.
+# shellcheck disable=SC2329 # queued_line calls it
+next_queued() (
+  ci_gate() { report_read "ci_gate $1" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@" </dev/null; }
+  conductors_queued
+)
+
 # next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
-# conductors_queued's, after its why), its release-held: line, then idle_lines' for it. Both are worked out first
+# conductors_queued's, after its why), its release-held: line, report_skipped's skipped: line, then
+# idle_lines' for it. All are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
+# Every read that can block, next_step's, conductors_queued's and conduct_ready's, runs with next_reads
+# on, within REPORT_SECONDS of the start. conduct_ready fails closed: after a cut read it starts no
+# conductor and names each one it would have started (a cut read could hide a stopped conductor). Each
+# start it makes runs without next_reads' forms, to its end however long it takes: a start cut partway
+# would leave a pane with no conductor. The writes (next_seen's, conduct_ready's events) read nothing
+# next_reads changes.
 next_report() {
-  local tmp step idle queued rest started
+  local tmp step idle queued rest started skipped
+  # Local, so the list read below never reaches a later lead_agents.
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  local LEAD_AGENTS="" LEAD_AGENTS_OK="" LEAD_AGENTS_READ=1
   tmp="$(mktemp)" || die "next: cannot make a temp file"
-  # shellcheck disable=SC2064 # the path is fixed now
-  trap "rm -f '${tmp}'" EXIT
+  report_start || die "next: cannot set the report's deadline (perl)"
+  # shellcheck disable=SC2064 # the paths are fixed now
+  trap "rm -f '${tmp}' '${REPORT_SKIP_FILE}'" EXIT
+  # herdr's agent list, read once, first: next_reads' herdr answers every later list from it, and
+  # no_agent_lines takes it as dash hands it one (lead_agents runs herdr through within, past the
+  # deadline).
+  # shellcheck disable=SC2034 # no_agent_lines reads them
+  if [[ "${HERDR_ENV:-}" == 1 ]] && LEAD_AGENTS="$(report_read "herdr agent list" herdr agent list </dev/null 2>/dev/null)"; then
+    LEAD_AGENTS_OK=1
+  else LEAD_AGENTS=""; fi
+  next_reads on
   next_step > "${tmp}"
   step="$(< "${tmp}")"
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
-  queued="$(conductors_queued)"
+  queued="$(next_queued)"
   next_seen || true
   # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
   # keeps what it printed: its started: lines name conductors that run. A no-agent step while a
@@ -487,11 +536,14 @@ next_report() {
     started="$(conduct_ready)" || started+="${started:+$'\n'}warning: starting conductors for ready work failed (exit $?)"
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi
+  next_reads off
+  skipped="$(report_skipped)"
   if [[ -n "${queued}" ]]; then
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
   fi
   [[ -z "${RELEASE_HELD}" ]] || step+=$'\n'"${RELEASE_HELD}"
+  [[ -z "${skipped}" ]] || step+=$'\n'"${skipped}"
   idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
@@ -1080,6 +1132,14 @@ hld_due() {
   return 0
 }
 
+# hld_blocked <hld file> — why /plan-hld cannot plan the HLD, or nothing. A name board-pr refuses (a
+# character outside a-z, 0-9 and -, which grants and finish_item refuse too, or a leading -) would
+# fail the run only at its end.
+hld_blocked() {
+  [[ "$(basename "$1" .md)" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || echo "its name needs only a-z, 0-9 and -, starting with a letter or digit: rename the file and every hld: that names it"
+}
+
 # The marker /plan-hld writes in <project>/.swarm/<hld name>/ on a board outside the repo: one epic
 # slug per line, every epic the run writes, before it writes any; it removes it once planned: is set.
 HLD_MARKER="writing-epics"
@@ -1341,12 +1401,13 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 
 # waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
 # one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
-# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too. A
+# next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too, and so
+# is an HLD due a plan that hld_blocked names (`hld cannot be planned: <hld>, <why>`). A
 # staged draft (staged_draft) is listed as `staged epic: <slug>, stage v<T>, after v<P>`, never with
 # /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
 # (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
-  local f kind slug when stage prev waiting=""
+  local f kind slug when stage prev why waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -1385,6 +1446,7 @@ waiting_on_user() {
     if [[ "$(fm "${f}" status)" == draft ]]; then waiting+="  draft hld: ${slug}, run /hld ${slug}"$'\n'
     elif hld_pr_open "${slug}" plan && [[ "$(hld_due "${f}")" == plan ]]; then waiting+="  plan PR awaiting merge: ${slug}"$'\n'
     elif hld_pr_open "${slug}" finish && [[ "$(hld_due "${f}")" == finish ]]; then waiting+="  finish PR awaiting merge: ${slug}"$'\n'
+    elif why="$(hld_blocked "${f}")" && [[ -n "${why}" && "$(hld_due "${f}")" == plan ]]; then waiting+="  hld cannot be planned: ${slug}, ${why}"$'\n'
     fi
   done < <(board hld)
   printf '%s' "${waiting%$'\n'}"
@@ -1792,6 +1854,8 @@ get_fm() {
 # review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge. A story
 # whose depends_on parents are still open is held instead: back to blocked with held_by: <parents> and
 # its prs: line, its builder, worktree and branch kept, so no merge reaches a child before its parents.
+# A story put in review under merge = human, or one that costs money, is then noted to its conductor
+# (review_note). An epic's review sends no note.
 mark_review() {
   local f url held
   f="$(item_file "${1:?slug}")"; shift
@@ -1806,6 +1870,25 @@ mark_review() {
     die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
   echo "review: $(basename "${f}" .md) $*"
+  # shellcheck disable=SC2154 # load_config assigns it with printf -v
+  if [[ "${f}" == "${BOARD}/stories/"* ]] && { [[ "${CFG_merge}" == human ]] || costs_money "${f}"; }; then
+    review_note "$(basename "${f}" .md)" "$(fm "${f}" epic)" "$*"
+  fi
+}
+
+# review_note <slug> <epic> <pr-urls> — note the running conductor of <epic> (the backlog's when it is
+# empty) that story <slug> is in review and its PRs wait to be merged (conductor_note), unless that
+# conductor ran the review itself (SWARM_AGENT is its name): it knows, and a note would cost it a turn.
+# With none running it writes no inbox; a failed tell is a warning and never fails the review.
+review_note() {
+  local note prs="its PR $3 now waits"
+  [[ "${SWARM_AGENT:-}" != "$(group_conductor "${2:--}")" ]] || return 0
+  [[ "$3" != *" "* ]] || prs="its PRs $3 now wait"
+  note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" \
+    || { echo "warning: could not write a note, so no conductor was told that $1 is in review"; return 0; }
+  printf 'Story %s is in review: %s to be merged.\n' "$1" "${prs}" > "${note}"
+  NOTE_WHAT="that $1 is in review" conductor_note "${2:--}" "${note}"
+  rm -f "${note}"
 }
 
 # review_state <file> <kept> <pr-url>... — mark_review's state: the item in review with prs:
