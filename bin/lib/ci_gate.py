@@ -136,6 +136,32 @@ def admin(repo, base, sha, method):
             why.append("%s requires the head up to date, and it is %d commit(s) behind %s" % (base, behind, base))
     return why
 
+# GitHub's compare lists this many files at most: a list that long may be cut short.
+COMPARE_FILES = 300
+
+def behind(repo, sha, base, board):
+    """The commits base has that sha lacks, and each path they change that is off board's paths (a
+    renamed file's old path too): compare sha...base, whose ahead_by counts them and whose files are
+    their changes taken together. A board entry ending in / is a folder, any other a file, as merge.sh's
+    on_board_paths has them; a README.md there is off the board, since a test may check it (this repo's
+    CI gate tests one). A list of COMPARE_FILES or more may be cut short, and commits with no file listed
+    may be a list GitHub left out: both are errors."""
+    d = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, sha, urllib.parse.quote(base, safe=""))))
+    try:
+        n, files = d["ahead_by"], d["files"]
+        paths = [p for f in files for p in (f["filename"], f.get("previous_filename")) if p]
+    except (KeyError, TypeError, AttributeError) as e:
+        raise Err("unreadable compare of %s with %s: %r" % (sha[:7], base, e))
+    if not isinstance(n, int):
+        raise Err("unreadable compare of %s with %s: ahead_by %r" % (sha[:7], base, n))
+    if len(files) >= COMPARE_FILES:
+        raise Err("the compare of %s with %s lists %d files, so it may be cut short" % (sha[:7], base, len(files)))
+    if n and not paths:
+        raise Err("the compare of %s with %s lists no file for %d commit(s)" % (sha[:7], base, n))
+    def on(p):
+        return p.rsplit("/", 1)[-1] != "README.md" and any(p.startswith(b) if b.endswith("/") else p == b for b in board)
+    return n, [p for p in paths if not on(p)]
+
 def graphql(query, **v):
     """One GraphQL read: v's ints as -F (typed), every other value as -f (a string)."""
     args = ["api", "graphql"]
@@ -697,6 +723,9 @@ try:
         if why:
             print("; ".join(why))
             sys.exit(1)
+    elif mode == "behind":
+        n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b])
+        print("\n".join([str(n)] + off))
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
     elif mode == "pushed":

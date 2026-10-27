@@ -1913,7 +1913,8 @@ reporting. It reports once no story of the epic that it may start is ready and n
 CI on the base times out, it merges nothing more and stops, and says so in its report. If it goes
 red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below): the conductor starts
 its builder at once, ahead of every other story, and merges nothing else until that fix lands. It stops only when what is left needs the lead: a story only
-the lead can finish, or a merge that `swarm.sh merge` refused or could not confirm. The lead merges
+the lead can finish, or a merge that `swarm.sh merge` refused (except for a base that moved, below) or
+could not confirm. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
 PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (the HLD
 `swarm.sh grants <PR URL>` prints). It reads that grant once the PR's head is green. With the grant,
@@ -1978,6 +1979,25 @@ completed as success, skipped or neutral, and every commit status a success. It 
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
 after the check stops the merge. It never passes `--auto`, except to join a merge queue (below). It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).
+
+**A base that moved.** A PR's CI ran against its base as the base was then. Two PRs can each pass
+alone and break the base together: in v0.28.0, #527 and #530 each passed CI before #529 landed, and
+main went red. So, on a base with no merge queue, a story PR's `merge` compares the head with the
+base (`compare <head>...<base>`) once the head is green, just before `gh pr merge`. When the base has
+commits the head lacks and any of them changes a path off the board, it refuses with `the base
+<base> moved past <sha>'s CI (<n> commits it lacks): merge origin/<base> in, push, and merge the new
+head`. The board's paths are the ones `--board` takes (`stories/`, `epics/`, `hld/`, `Board.base`,
+`.obsidian/` under the board), and only in the board's own repo. Commits that change only those run
+no tests, as CI's board-only gate has it, so they do not count. A `README.md` there counts as code,
+since a test may check it: swarm-dev's own CI gate tests the board READMEs. A compare it cannot read refuses
+too. So does one listing 300 files or more, since GitHub lists no more, and one that lists no file
+for the commits. The check is cautious on purpose. GitHub ran the PR's CI on a merge ref, which may
+already hold some of those commits, and the price is one more CI run. `--board` and `--release`
+skip it. A base with a merge queue skips it too, since the queue tests each PR on top of the base.
+Under `merge_admin = on`, a base that requires PRs to be up to date is still `ci_gate admin`'s to
+refuse. Most refusals go to the lead, but the conductor handles this one. It nudges the builder to
+merge origin/<base> in, re-run the tests and push. Then it waits with `swarm.sh wait-pr`, reviews the
+new head as for any new head, and merges that head with `--head`.
 
 **init's Claude Code checks.** An agent's `swarm.sh merge` runs only when a `permissions.allow`
 rule in Claude Code's settings allows it. Without one, under `merge = agent` or an HLD that grants

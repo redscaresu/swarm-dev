@@ -73,6 +73,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
 # "<status> <path>" (added, modified, removed, renamed).
+# ci_gate behind <owner/repo> <sha> <base> <board paths> — the number of commits <base> has that <sha>
+# lacks (compare <sha>...<base>), then each path they change outside <board paths> (on_board_paths'
+# rule, but a README.md there counts as outside; a renamed file's old path too), one a line. A read that fails, a compare listing 300 files or
+# more (GitHub lists no more) and commits with no file listed fail (3).
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
@@ -239,6 +243,25 @@ merged_state() {
 # merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
 merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 
+# base_moved <owner/repo> <head> <base> — refuse a story PR whose base has commits <head> lacks, since
+# CI on <head> never ran with them, unless every path they change is on the board (ci_gate behind,
+# given board_paths; a board README counts as code) and the PR is in the board's own repo. Board-only
+# commits run no tests, as CI's board-only gate has it. Conservative on purpose: GitHub ran the PR's CI on a merge ref that may hold
+# some of them, and the price is one more CI run. A compare it cannot read refuses too.
+base_moved() {
+  local out n p own
+  out="$(ci_gate behind "$1" "$2" "$3" "$(board_paths)")" && n="${out%%$'\n'*}" && [[ "${n}" =~ ^[0-9]+$ ]] \
+    || merge_fail "cannot tell whether $3 moved past ${2:0:7}'s CI: ${out#error }"
+  [[ ${n} -gt 0 ]] || return 0
+  # Only board paths changed. They are the board's repo's alone: in another repo a stories/ file is code.
+  if [[ "${out}" != *$'\n'* ]] && p="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" \
+      && own="$(gh repo view "${p}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
+      && [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]]; then
+    return 0
+  fi
+  merge_fail "the base $3 moved past ${2:0:7}'s CI (${n} commits it lacks): merge origin/$3 in, push, and merge the new head"
+}
+
 # merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
@@ -248,7 +271,9 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # with no ticket (epic_unticketed, under either merge mode); with --release: the PR is in the
 # project's own repo and every path it changes is .claude-plugin/plugin.json, release_check's, and
 # with merge = human release_check also finds at least one story merged since the last tag, each
-# under an agreed HLD granting release), and ci_gate passes on the head.
+# under an agreed HLD granting release), and ci_gate passes on the head. A story PR on the direct path
+# (no merge queue) is refused too when its base has commits the head lacks that change a path off the
+# board (base_moved): the head's CI never ran with them.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
@@ -373,6 +398,8 @@ merge_pr() {
     [[ -z "${oid}" ]] || oid="$(ci_gate pushed "${repo}" "${base}" "${oid}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")"
   else
     [[ "${only}" != --release ]] || release_moved "${repo}" "${base}" "${head}" "${n}"
+    # A story PR whose head's CI ran before code landed on the base: no queue tests the two together.
+    [[ -n "${only}" ]] || base_moved "${repo}" "${head}" "${base}"
     why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
     # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
     read -r state oid <<< "$(merged_state "${n}" "${repo}")"
