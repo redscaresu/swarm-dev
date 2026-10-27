@@ -169,6 +169,10 @@ Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
 
+On a board inside the project's repo, an agreed HLD must end with a line that is exactly
+`## Epics`, followed only by blank lines and links `- [<slug>](../epics/<slug>.md)` to epics on the
+board. `next` offers no `/plan-hld` for any other HLD, and the gate says what to change.
+
 On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
 `next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
 starts on one of those epics, `next` stops offering it.
