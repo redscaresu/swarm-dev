@@ -41,5 +41,5 @@ Only the user sets `superseded`, by hand, when a later HLD replaces it.
 - `merge`: merge a story PR or board PR under the HLD, even with `merge = human`.
 - `release`: merge a release PR whose stories since the last tag are all under HLDs that grant it.
 
-An absent `grants:` means none. Only the user sets it. `swarm.sh grants <story | epic | PR URL>`
+An absent `grants:` means none. Only the user sets it. `swarm.sh grants <story | epic | hld | PR URL>`
 prints the agreed HLD over an item and its grants, or `none`.
