@@ -35,10 +35,14 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    `swarm.sh board-pr done agree-<name>` and `swarm.sh reconcile`, which pulls the agreed HLD, and
    go on below, where it is agreed.
    A closed one: write the HLD back from the branch first, as `status: draft`, over
-   any copy in the main checkout, since the branch holds the latest draft (`git diff --name-only
-   origin/<base>...board/agree-<name>`
-   names its path; `git show board/agree-<name>:<path> > <path>`, from `origin/board/agree-<name>`
-   when only origin has the branch), then run `swarm.sh board-pr done agree-<name>` and go on below.
+   any copy in the main checkout, since the branch holds the latest draft: run `git fetch origin
+   board/agree-<name>`, then `git diff --name-only origin/<base>...origin/board/agree-<name>` names
+   its path and `git show origin/board/agree-<name>:<path> > <path>` writes it. Then run `swarm.sh
+   board-pr done agree-<name>` and go on below. No PR on the branch means step 5's `board-pr open`
+   failed after the draft moved: the draft is in the worktree `<repo>-wt/_board-agree-<name>`, so
+   finish step 5 from there (`board-pr open` again), or tell the user and stop. If `git ls-remote`
+   cannot reach origin (with `--exit-code`, exit 2 only means no such branch), or `git fetch` or
+   `gh pr list` fails, stop and tell the user; do not resume co-writing.
 
    The HLD is then the one whose name, without its leading `YYYY-MM-DD-`, is
    exactly that slug (`2026-10-23-add-cache.md` is `add-cache`, never `cache`), or else the one

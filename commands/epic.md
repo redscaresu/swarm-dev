@@ -33,10 +33,14 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    so with its URL, and stop. A merged one: run `swarm.sh board-pr done agree-<name>` and
    `swarm.sh reconcile`, which pulls the agreed epic, and go on below, where it is live.
    A closed one: write the epic back from the branch first, as `status: draft` with no `agreed:` line, over
-   any copy in the main checkout, since the branch holds the latest draft (`git diff --name-only
-   origin/<base>...board/agree-<name>`
-   names its path; `git show board/agree-<name>:<path> > <path>`, from `origin/board/agree-<name>`
-   when only origin has the branch), then run `swarm.sh board-pr done agree-<name>` and go on below.
+   any copy in the main checkout, since the branch holds the latest draft: run `git fetch origin
+   board/agree-<name>`, then `git diff --name-only origin/<base>...origin/board/agree-<name>` names
+   its path and `git show origin/board/agree-<name>:<path> > <path>` writes it. Then run `swarm.sh
+   board-pr done agree-<name>` and go on below. No PR on the branch means step 5's `board-pr open`
+   failed after the draft moved: the draft is in the worktree `<repo>-wt/_board-agree-<name>`, so
+   finish step 5 from there (`board-pr open` again), or tell the user and stop. If `git ls-remote`
+   cannot reach origin (with `--exit-code`, exit 2 only means no such branch), or `git fetch` or
+   `gh pr list` fails, stop and tell the user; do not resume co-writing.
 
    If `docs/epics/<slug>.md` exists (or an epic with this title does) and is `status: draft`,
    resume it. If the epic exists with any other status, it is live

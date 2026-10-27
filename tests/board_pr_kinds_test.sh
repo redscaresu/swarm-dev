@@ -135,6 +135,15 @@ agreed() {
 }
 check "hld.md: step 1 stops on an open agree- PR, step 5 runs board-pr done" agreed hld.md HLD
 check "epic.md: step 1 stops on an open agree- PR, step 5 runs board-pr done" agreed epic.md epic
+# unread <file> — step 1 finishes step 5 from the worktree when the branch has no PR, stops when git
+# or gh cannot read the agreement, and fetches the branch before the closed path reads origin's ref.
+unread() {
+  has "$(step "commands/$1" 1)" "No PR on the branch means step 5's \`board-pr open\` failed after the draft moved: the draft is in the worktree \`<repo>-wt/_board-agree-<name>\`, so finish step 5 from there" \
+    && has "$(step "commands/$1" 1)" 'or `gh pr list` fails, stop and tell the user; do not resume co-writing.' \
+    && has "$(step "commands/$1" 1)" 'run `git fetch origin board/agree-<name>`, then `git diff --name-only origin/<base>...origin/board/agree-<name>`'
+}
+check "hld.md: step 1 handles a branch with no PR, a failed read, and fetches the closed branch" unread hld.md
+check "epic.md: step 1 handles a branch with no PR, a failed read, and fetches the closed branch" unread epic.md
 check "plan-epic.md's small path runs one codex-review pass" has "$(flat commands/plan-epic.md)" 'run one `swarm.sh codex-review` pass over them in that worktree'
 check "plan-epic.md's split runs one codex-review pass" has "$(flat commands/plan-epic.md)" 'Then commit (in the worktree), run one `swarm.sh codex-review` pass'
 check "plan-epic.md's full path opens scope-\$1 with one codex-review pass" has "$(flat commands/plan-epic.md)" 'open the board PR `scope-$1` with one `swarm.sh codex-review` pass'
