@@ -2079,7 +2079,8 @@ status_report() {
 }
 
 # status_reads — define herdr, gh, claude and git as functions for the rest of this run (only status
-# calls it, and nothing runs after it): each of these reads goes through report_read, named by its
+# calls it; after status_report only timed's run_time_end runs, which calls none of these): each of
+# these reads goes through report_read, named by its
 # command and subcommand (gh api by `gh api` alone), with stdin from /dev/null, since within runs it in
 # a process group of its own, where a read of the terminal would stop it until the deadline. Of git,
 # only fetch and ls-remote, which reach origin, go through it; the rest run as they are. One of those is
