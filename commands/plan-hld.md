@@ -75,9 +75,9 @@ renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` fo
 `wait` printed `auth`, and wait on each again in the background.
 
 **Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
-its output file. If it exists (a `.partial` file is an unfinished run, not a result: start the agent, which carries on from it), parses as JSON and is newer than `<wt>/.git` (when the plan worktree
+its output file. If it exists, parses as JSON and is newer than `<wt>/.git` (when the plan worktree
 was started; on a board outside the repo, `docs/hld/$1.md`), reuse it and do not start that agent
-again; an older one belongs to a previous plan, so start the agent.
+again; an older one belongs to a previous plan, so start the agent. A `.partial` file is an unfinished run, not a result: start the agent, which carries on from it. Delete a `.partial` that is not newer than the same file first: it belongs to a previous plan.
 
 Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
