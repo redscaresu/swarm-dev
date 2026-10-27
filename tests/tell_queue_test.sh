@@ -171,7 +171,7 @@ check "a queued tell's delivery that finds the builder busy again: leaves it on 
   "$([[ -e "${Q}/b1.findings.sending.t1" && ! -e "${Q}/b1.findings" ]] && echo yes || echo no)"
 state idle
 check "a queued tell's delivery that claims it: sent, from the sender that queued it" "told b1 rc=0 1 yes" \
-  "$(VIA="w:9 conductor t1" tell "fix round A") $(prompts) $(sent "From the conductor:")"
+  "$(VIA="w:9 review t1" tell "fix round A") $(prompts) $(sent "From the review agent:")"
 
 fresh; state idle   # two checks overlap: a stalled one's delivery (t1) after a newer tell went on its way (t2)
 mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round newer\n' > "${Q}/b1.findings.sending.t2"
