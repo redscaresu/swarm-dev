@@ -687,19 +687,22 @@ review_next() {
   review_round_line "${round}" "${pr}"
 }
 
+RECHECK_CI_SECONDS=60   # how long --recheck's read of the new head's CI may take (SWARM_RECHECK_CI_SECONDS)
+
 # review_recheck <slug> <PR URL> <old head> <file:line>... — review-agent --recheck: the wording recheck,
 # run by review-<slug> from its own pane (review_own_pane) once its builder has pushed a wording fix. <old head>
 # is the head review-<slug> last reviewed, as .swarm/reviews/<slug>.head records it, with that round's
-# findings file written (review_pass), and each file:line a point its ## Findings name (recheck_named), its
-# line as at <old head>. With the worktree at the PR's new head (review_at_head), it passes when
-# `git diff <old head>..<new head>` changes only the named lines (recheck_hunks) and the new head is green
-# (ci_gate head). A pass writes
+# findings file written (review_pass), and each file:line a point its ## Findings name, every finding there
+# naming one (recheck_named), its line as at <old head>. With the worktree at the PR's new head
+# (review_at_head), it passes when `git diff <old head>..<new head>` rewrites each named line and nothing
+# else (recheck_hunks) and the new head is green (ci_gate head, within RECHECK_CI_SECONDS). A pass writes
 # the new head's findings file, the last one kept as <slug>.md.prev, and .head; main logs it as
 # review-agent:recheck <slug> ok, which counts no round (review_rounds). A refusal writes nothing under
-# .swarm/reviews and names --next, a full round.
+# .swarm/reviews. One on the old head, its findings, the diff or a red head names --next, a full round;
+# one on CI still running or unread says to run --recheck again, and the rest say what to fix first.
 review_recheck() {
   local slug="$1" pr="$2" old="$3" usage="swarm.sh review-agent --recheck <slug> <PR URL> <old head> <file:line>..."
-  local out repo why point full="a full round is due: swarm.sh review-agent --next $1 $2"
+  local out repo why rc point secs="${SWARM_RECHECK_CI_SECONDS:-${RECHECK_CI_SECONDS}}" full="a full round is due: swarm.sh review-agent --next $1 $2"
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --recheck: bad slug '${slug}' (${usage})"
   [[ "${pr}" =~ ^https://[^/[:space:]]+/([^/[:space:]]+/[^/[:space:]]+)/pull/[0-9]+$ ]] \
     || die "review-agent --recheck: '${pr}' is not a PR URL (${usage})"
@@ -719,12 +722,16 @@ review_recheck() {
   # .head is written as a round starts: the round on the old head must have finished, or there is no review to recheck.
   review_pass "${slug}" "${old}" \
     || die "review-agent --recheck: ${out} holds no finished review of ${old} (its head: line and a ## Findings section); nothing was written: ${full}"
-  point="$(recheck_named "${out}" "$@")" \
-    || die "review-agent --recheck: ${point} is no point the ## Findings of ${out} name; nothing was written: ${full}"
+  why="$(recheck_named "${out}" "${REVIEW_WT}" "$@")" || die "review-agent --recheck: ${why}; nothing was written: ${full}"
   why="$(recheck_hunks "${REVIEW_WT}" "${old}" "${REVIEW_HEAD}" "$@")" \
     || die "review-agent --recheck: ${old:0:7}..${REVIEW_HEAD:0:7} ${why}; nothing was written: ${full}"
-  why="$(ci_gate head "${repo}" "${REVIEW_HEAD}")" \
-    || die "review-agent --recheck: the head ${REVIEW_HEAD:0:7} is not green: ${why}; nothing was written: ${full}"
+  rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${REVIEW_HEAD}" </dev/null 2>&1)" || rc=$?
+  case "${rc}" in
+    0) ;;
+    1) die "review-agent --recheck: the head ${REVIEW_HEAD:0:7} is not green: ${why}; nothing was written: ${full}" ;;
+    2) die "review-agent --recheck: CI on ${REVIEW_HEAD:0:7} has not finished: ${why}; nothing was written: wait for it (swarm.sh wait-pr ${pr}), then ${REVIEW_AGAIN}" ;;
+    *) die "review-agent --recheck: could not read CI on ${REVIEW_HEAD:0:7}: ${why:-no answer within ${secs}s}; nothing was written: ${REVIEW_AGAIN}" ;;
+  esac
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   printf '%s\n' "head: ${REVIEW_HEAD}" "" "## Findings" "" \
     "None: the wording recheck passed. ${old:0:7}..${REVIEW_HEAD:0:7} changes only the lines the last findings named, and the head is green." \
@@ -733,21 +740,31 @@ review_recheck() {
   echo "wording recheck passed: ${out} holds the findings for ${REVIEW_HEAD}"
 }
 
-# recheck_named <findings file> <file:line>... — nothing when the file's ## Findings section names each
-# point, as a path that may follow a / but no other path character, and no digit after it; else the
-# first it does not, failing. A pass's own findings name no point, so no recheck follows one.
+# recheck_named <findings file> <worktree> <file:line>... — nothing when the file's ## Findings section names
+# each point and every finding there (each non-blank line) names one; else why not, failing. A point is
+# named as a whole path, at the start of the line or after a character no path holds, or after
+# <worktree>/, with no digit after it. A pass's own findings name no point, so no recheck follows one.
 recheck_named() {
-  awk -v pts="${*:2}" '
+  awk -v pts="${*:3}" -v wt="$2/" -v f="$1" '
     BEGIN { n = split(pts, w, " ") }
     /^## / { in_f = ($0 ~ /^## Findings/); next }
-    in_f { for (i = 1; i <= n; i++) for (s = $0; !seen[i] && (k = index(s, w[i])); s = substr(s, k + 1))
-             if (substr(s, k - 1, 1) !~ /[A-Za-z0-9_.-]/ && substr(s, k + length(w[i]), 1) !~ /[0-9]/) seen[i] = 1 }
-    END { for (i = 1; i <= n; i++) if (!seen[i]) { print w[i]; exit 1 } }' "$1"
+    !in_f || $0 !~ /[^[:space:]]/ { next }
+    {
+      s = $0; while ((k = index(s, wt))) s = substr(s, 1, k - 1) substr(s, k + length(wt))
+      hit = 0
+      for (i = 1; i <= n; i++) for (t = s; (k = index(t, w[i])); t = substr(t, k + 1))
+        if ((k == 1 || substr(t, k - 1, 1) !~ /[A-Za-z0-9_.\/-]/) && substr(t, k + length(w[i]), 1) !~ /[0-9]/) { seen[i] = hit = 1; break }
+      if (!hit && left == "") left = $0
+    }
+    END {
+      for (i = 1; i <= n; i++) if (!seen[i]) { print w[i] " is no point the ## Findings of " f " name"; exit 1 }
+      if (left != "") { print "the ## Findings of " f " hold a finding that names no point given, which a pass would drop: " left; exit 1 }
+    }' "$1"
 }
 
-# recheck_hunks <worktree> <old> <new> <file:line>... — nothing when the diff from <old> to <new> changes
-# only the named lines, as at <old>: every line a hunk removes or rewrites is named, and a hunk that only
-# adds lines has a named line on either side of it; else why not, failing. A file it adds, deletes, renames, changes the
+# recheck_hunks <worktree> <old> <new> <file:line>... — nothing when the diff from <old> to <new> rewrites
+# each named line, as at <old>, and nothing else: every line a hunk removes or rewrites is named, and no hunk
+# adds more lines than it removes; else why not, failing. A file it adds, deletes, renames, changes the
 # mode of or that is binary has no named line, and an empty diff fails too.
 recheck_hunks() {
   local wt="$1" old="$2" new="$3"; shift 3
@@ -757,7 +774,10 @@ recheck_hunks() {
       function bad(m) { print m; failed = 1; exit 1 }
       # A file header past: the file must be named, with only line changes (---/+++, then hunks).
       function header_done() { if (st == "head" && !(file in want)) bad("changes " (file == "" ? name : file) ", which no file:line point names") }
-      BEGIN { n = split(pts, w, " "); for (i = 1; i <= n; i++) { f = w[i]; sub(/:[0-9]+$/, "", f); want[f] = want[f] " " (substr(w[i], length(f) + 2) + 0) " " } }
+      BEGIN {
+        n = split(pts, w, " ")
+        for (i = 1; i <= n; i++) { f = w[i]; sub(/:[0-9]+$/, "", f); l[i] = f ":" (substr(w[i], length(f) + 2) + 0); want[f] = want[f] " " (substr(w[i], length(f) + 2) + 0) " " }
+      }
       st == "body" && /^[-+]/ { if (--rem == 0) st = "hunks"; next }
       /^\\/ && st != "head" { next }   # \ No newline at end of file, after the line it marks
       /^diff --git / { header_done(); st = "head"; file = ""; name = substr($0, 12); files++; next }
@@ -767,17 +787,21 @@ recheck_hunks() {
       /^@@ / {
         header_done(); st = "hunks"
         o = $2; sub(/^-/, "", o); c = split(o, a, ","); lo = a[1] + 0; cnt = (c > 1 ? a[2] + 0 : 1)
-        hi = (cnt ? lo + cnt - 1 : lo + 1)
-        nw = $3; sub(/^\+/, "", nw); c = split(nw, a, ","); rem = cnt + (c > 1 ? a[2] + 0 : 1)
+        nw = $3; sub(/^\+/, "", nw); c = split(nw, a, ","); nc = (c > 1 ? a[2] + 0 : 1); rem = cnt + nc
+        # A wording fix rewrites lines; more lines than it removes is new text no one reviewed.
+        if (nc > cnt) bad("adds " (nc - cnt) " line(s) to " file " at line " lo ", more than it removes")
         # Every old line the hunk changes must be named; git joins adjacent edits into one hunk.
-        if (cnt) { for (k = lo; k <= hi; k++) if (!index(want[file], " " k " ")) bad("changes " file " at line " k ", which no file:line point names") }
-        else if (!index(want[file], " " lo " ") && !index(want[file], " " hi " ")) bad("adds lines to " file " after line " lo ", and no file:line point names line " lo " or " hi)
+        for (k = lo; k < lo + cnt; k++) { if (!index(want[file], " " k " ")) bad("changes " file " at line " k ", which no file:line point names"); changed[file ":" k] = 1 }
         if (rem > 0) st = "body"
         next
       }
       st == "head" { bad("changes more than lines of " name " (" $0 ")") }
       { bad("has a line recheck cannot read: " $0) }
-      END { if (failed) exit 1; header_done(); if (!files) { print "changes nothing"; exit 1 } }'
+      END {
+        if (failed) exit 1
+        header_done(); if (!files) { print "changes nothing"; exit 1 }
+        for (i = 1; i <= n; i++) if (!(l[i] in changed)) { print "does not change " w[i] ", a named point"; exit 1 }
+      }'
 }
 
 # review_round_line <round> <PR URL> — what review round <round> runs, for review_brief and review_next:

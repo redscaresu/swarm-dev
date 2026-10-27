@@ -96,8 +96,13 @@ awk -v d="${ROOT}" 'BEGIN { printf "[" }
     printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (k++ ? "," : ""), \$3, s }
   END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json"
 EOF
+# With ghhang its api reads hang, and with ghfail they fail.
 cat > "${STUB_BIN}/gh" <<EOF
 #!/bin/sh
+if [ "\$1" = api ]; then
+  [ ! -e "${ROOT}/ghhang" ] || sleep 30
+  [ ! -e "${ROOT}/ghfail" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+fi
 case "\$1 \$3" in
   "api "*/check-runs*) cat "${ROOT}/checks" ;;
   "api "*/status*) echo '{"total_count":0,"statuses":[]}' ;;
@@ -433,7 +438,10 @@ printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:00:00Z story r1 - ok >> "${p}/.swarm
 check "review-agent r1 starts review-r1 for round 1 at the old head" "0|${OLD}" \
   "$(set +e; run review-agent r1 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/r1.head")"
 RP="$(awk '$1 == "review-r1" { p = $2 } END { print p }' "${ROOT}/agents")"
-printf '%s\n' "head: ${OLD}" "## Findings" "ROUND-ONE: doc.md:3 misstates it" > "${p}/.swarm/reviews/r1.md"; done_agent review-r1
+# findings <line>... — round 1's findings file for OLD, those lines under ## Findings; was, its state now.
+findings() { printf '%s\n' "head: ${OLD}" "## Findings" "$@" > "${p}/.swarm/reviews/r1.md"; was="$(reviews_now)"; }
+ROUND1="doc.md:3 misstates it (ROUND-ONE)"   # the point at the start of the line
+findings "${ROUND1}"; done_agent review-r1
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:30:00Z tell:findings r1 - ok >> "${p}/.swarm/events.tsv"
 # fix <sed script> [new file] — a commit on OLD in r1's worktree that edits doc.md (and adds the new file); prints it.
 fix() {
@@ -446,6 +454,7 @@ WIDE="$(fix 's/^line 3$/line three/; s/^line 8$/line eight/')"
 ADJ="$(fix 's/^line [34]$/line three-ish/')"
 OTHER="$(fix 's/^line 3$/line three/' other.txt)"
 NARROW="$(fix 's/^line 3$/line three/')"
+GROW="$(fix '3s/$/ X/; 3G')"   # line 3 reworded, and a line added after it
 # at <sha> — r1's worktree and its PR's head at <sha>. recheck [old head] — review-r1's recheck of doc.md:3.
 at() { "${GIT[@]}" -C "${RW}" reset -q --hard "$1"; echo "$1" > "${ROOT}/head"; }
 recheck() { HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${1:-${OLD}}" doc.md:3; }
@@ -464,7 +473,33 @@ check "--recheck naming a point round 1's findings never named refuses, naming i
 at "${OTHER}"
 check "--recheck on a diff that also adds another file refuses, naming it and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
   "$(set +e; o="$(recheck)"; echo "$?|$(has "changes more than lines of a/other.txt b/other.txt" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+at "${GROW}"
+check "--recheck on a diff that rewords a named line and adds one after it refuses, naming --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "adds 1 line(s) to doc.md at line 3, more than it removes" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 at "${NARROW}"
+findings "${ROUND1}" "codex, doc.md:8, also misstates it"
+check "--recheck that leaves a finding unnamed refuses, naming it and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "names no point given, which a pass would drop: codex, doc.md:8, also misstates it" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "${ROUND1}" "codex, doc.md:5, also misstates it"
+check "--recheck naming a point the diff does not change refuses, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${OLD}" doc.md:3 doc.md:5)"; echo "$?|$(has "does not change doc.md:5, a named point" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "codex, other/doc.md:3, misstates it"
+check "--recheck of doc.md:3 when the findings name other/doc.md:3 refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "doc.md:3 is no point the ## Findings of" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "${ROUND1}"
+echo '{"total_count":1,"check_runs":[{"name":"test","status":"in_progress","conclusion":null}]}' > "${ROOT}/checks"
+check "--recheck while CI runs refuses, saying to wait and run --recheck again, not --next, and changes no file under .swarm/reviews" "1|yes|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "CI on ${NARROW:0:7} has not finished: test (in_progress)" "${o}")|$(has "wait for it (swarm.sh wait-pr ${PR}), then run swarm.sh review-agent --recheck r1" "${o}")|$([[ "${o}" != *--next* ]] && echo yes || echo "no, got: ${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+echo "${GREEN}" > "${ROOT}/checks"; touch "${ROOT}/ghfail"
+check "--recheck when gh cannot read CI refuses, saying to run --recheck again, not --next" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: error gh api" "${o}")|$(has "run swarm.sh review-agent --recheck r1" "${o}")|$([[ "${o}" != *--next* ]] && echo yes || echo "no, got: ${o}")")"
+rm "${ROOT}/ghfail"; touch "${ROOT}/ghhang"
+# The stub's read sleeps 30s; with SWARM_RECHECK_CI_SECONDS=1 the recheck ends well before it. The kill can
+# reach gh first, so ci_gate's own error may come back in place of the timeout: either says the same.
+t0=${SECONDS}
+check "--recheck whose CI read hangs ends after SWARM_RECHECK_CI_SECONDS, saying to run it again, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(SWARM_RECHECK_CI_SECONDS=1 recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: " "${o}")|$( (( SECONDS - t0 < 20 )) && echo yes || echo "no, took $((SECONDS - t0))s")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${ROOT}/ghhang"
 echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"failure","html_url":"u"}]}' > "${ROOT}/checks"
 check "--recheck on a head that is not green refuses, naming --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
   "$(set +e; o="$(recheck)"; echo "$?|$(has "the head ${NARROW:0:7} is not green: test (failure)" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
@@ -477,16 +512,16 @@ check "--recheck before the old head's round wrote its findings refuses and chan
   "$(set +e; o="$(recheck)"; echo "$?|$(has "holds no finished review of ${OLD}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 mv "${ROOT}/r1.md.aside" "${p}/.swarm/reviews/r1.md"
 o="$(recheck)" || echo "FAIL review-agent --recheck r1 exited non-zero: ${o}"
-check "a green head whose diff changes only doc.md:3 passes: the new head's findings file and .head, the old findings kept" \
+check "a green head whose diff changes only doc.md:3, named at the start of its finding, passes: the new head's findings file and .head, the old findings kept" \
   "head: ${NARROW}|yes|yes|${NARROW}|head: ${OLD}" \
   "$(head -1 "${p}/.swarm/reviews/r1.md")|$(grep -qx '## Findings' "${p}/.swarm/reviews/r1.md" && echo yes || echo no)|$(has "the wording recheck passed" "$(cat "${p}/.swarm/reviews/r1.md")")|$(cat "${p}/.swarm/reviews/r1.head")|$(head -1 "${p}/.swarm/reviews/r1.md.prev")"
 check "events.tsv gets review-agent:recheck r1 ok" "review-agent:recheck	r1	ok" \
   "$(awk -F'\t' '$3 == "r1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
 # A round on NARROW names doc.md:10, the last line; its fix leaves it with no newline, which git marks after it.
-printf '%s\n' "head: ${NARROW}" "## Findings" "codex, /wt/doc.md:10, misstates it" > "${p}/.swarm/reviews/r1.md"
+printf '%s\n' "head: ${NARROW}" "## Findings" "codex, ${RW}/doc.md:10, misstates it" > "${p}/.swarm/reviews/r1.md"
 sed '$d' "${RW}/doc.md" > "${RW}/doc.new" && printf 'line ten' >> "${RW}/doc.new" && mv "${RW}/doc.new" "${RW}/doc.md"
 "${GIT[@]}" -C "${RW}" commit -q -am "fix 10" && TEN="$(git -C "${RW}" rev-parse HEAD)" && echo "${TEN}" > "${ROOT}/head"
-check "a fix to a named last line that leaves no newline at its end passes" "0|head: ${TEN}" \
+check "a fix to a named last line that leaves no newline at its end, its finding under the worktree's path, passes" "0|head: ${TEN}" \
   "$(set +e; HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${NARROW}" doc.md:10 >/dev/null; echo "$?")|$(head -1 "${p}/.swarm/reviews/r1.md")"
 check "the recheck counts no round: the next --next prints round 2, as the one findings tell gives" "yes" \
   "$(has "Review round 2 of story r1" "$(HERDR_PANE_ID="${RP}" run review-agent --next r1 "${PR}")")"
