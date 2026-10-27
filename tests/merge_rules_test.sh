@@ -604,9 +604,13 @@ epr e1; fx_at e1.md "${H1}" "status: active" "parent: old"; : > "${FX}/wf.old.md
 refused "--board, parent: a 502 on the parent's read at the base" "--board: gh cannot read docs/epics/old.md at main, so whether ${URL} sets e1 ${UK} e1"
 epr e1; fx_at e1.md "${H1}" "status: active" "parent: dr"; fx_at dr.md main "status: draft"; merge --board "${URL}"
 guarded "--board, parent: a draft epic on the base" e1
-# A base status other than active, later, review, split or done needs a ticket, as a draft does.
+# A base status other than active needs a ticket, as a draft does: later, split, review and done too.
 epr e1; fx_at e1.md main "depends_on: []"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
 guarded "--board, a base epic with no status: line set active" e1
+for st in later split review "done"; do
+  epr e1; fx_at e1.md main "status: ${st}"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
+  guarded "--board, ${st} to active with no ticket" e1
+done
 # A 404 at the head is absent only for a path the PR removes or renames away (its file list, read
 # --slurp): one it keeps there means gh cannot read the head, as for a fork's.
 gone_read() { grep -qF -- "--paginate --slurp repos/o/r/pulls/7/files" "${ROOT}/gh.log"; }
@@ -626,7 +630,16 @@ fx_at e1.md "${H1}" "status: active" "hld: hok"; merge --board "${URL}"
 board_merged "--board, hld: an HLD agreed with grants: [epics] at both ends"
 check "--board, hld: an HLD agreed with grants: [epics] at both ends: reads the HLD at the base branch" hld_read hok
 epr e1 "lead_epics = on"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; board_merged "--board, lead_epics = on, with no ticket"
-epr e1; fx_at e1.md main "status: later"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"; board_merged "--board, later to active"
+# A later epic with no agreed:, parent: or hld: starts on the user's go: the lead writes agreed: <today>
+# in the edit that sets it active, as /epic does.
+epr e1; fx_at e1.md main "status: later"; fx_at e1.md "${H1}" "status: active" "agreed: $(date +%F)"; merge --board "${URL}"
+board_merged "--board, later to active with agreed: <today>"
+# The stage arm's flip (commands/swarm.md): a draft epic with stage: and hld:, under an HLD that grants
+# epics, set active with nothing else changed. Refusing it would strand every staged epic.
+epr e1; fx_at hs.md main "status: agreed" "grants: [epics]"; fx_at hs.md "${H1}" "status: agreed" "grants: [epics]"
+fx_at e1.md main "status: draft" "stage: v0.30.0" "hld: hs"; fx_at e1.md "${H1}" "status: active" "stage: v0.30.0" "hld: hs"
+merge --board "${URL}"; board_merged "--board, a staged draft set active under an HLD granting epics"
+check "--board, a staged draft set active under an HLD granting epics: reads the HLD at the base branch" hld_read hs
 epr e1; fx_at e1.md main "status: active"; fx_at e1.md "${H1}" "status: active" "depends_on: []"; merge --board "${URL}"
 board_merged "--board, a PR that changes no epic's status"
 # Under merge = human the HLD grants merge, not epics: merge_grant lets the lead through (the active
