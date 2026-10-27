@@ -1616,8 +1616,11 @@ note_lock() {
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
+# The text sent says who it is from (tell_from, read once, so its header and its /goal agree): the
+# review agent from review-<slug>'s pane, else the conductor. Either counts the same: rounds, step-ups
+# and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n
+  local kind="$2" f="$3" name msg state since inbox rc pane line n from who
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1664,10 +1667,11 @@ tell_agent() {
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
     [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
   fi
+  from="$(tell_from "$1")"; who="the conductor"; [[ "${from}" != review ]] || who="the review agent"
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
-  { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
+  { echo "From ${who}:"; echo; cat "${f}"; } > "${msg}"
   # The file's own first line is what its session log is read for: every tell starts with the header.
   line="$(awk 'NF { print; exit }' "${f}")"
   if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" tell_deliver "${name}" "${msg}" "${kind}"; echo "told ${name}"; return; fi
@@ -1677,8 +1681,20 @@ tell_agent() {
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
   trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
-  findings_goal "$1" "${since}" "${msg}.goal"
+  findings_goal "$1" "${since}" "${msg}.goal" "${from}"
   echo "told ${name}"
+}
+
+# tell_from <slug> — who a tell to <slug>'s builder is from: review when the pane running it
+# (HERDR_PANE_ID) is review-<slug>'s by review_pane's exact record, the one merge goes by: its tab
+# records name review-<slug> and no retired name, the newest agents.tsv line for that name has role
+# review, and herdr's agent in the pane holds the name. Else conductor: so the builder of a story
+# slugged review-<x>, whose tab record names review-<x> too, is not x's review agent, and a pane
+# whose record is stale or retired is no one's. No pane id, or herdr unable to list, is the conductor.
+tell_from() {
+  local agents=""
+  [[ -z "${HERDR_PANE_ID:-}" ]] || agents="$(herdr agent list 2>/dev/null)" || agents=""
+  if [[ -n "${agents}" && "$(review_pane "${agents}")" == "$1" ]]; then echo review; else echo conductor; fi
 }
 
 # tell_deliver <name> <prompt-file> <kind> — deliver_prompt, failing with its message, after any other
