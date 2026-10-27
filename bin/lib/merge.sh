@@ -41,10 +41,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # files) is pending while it has no pull_request run on <sha> ("<path> (no run on <short sha>)") or its
 # newest one has not finished, and red when that run finished other than success, skipped or neutral.
 # The workflows are read at the PR's merge commit (refs/pull/<pr>/merge), which GitHub runs them from,
-# once it merges <sha>, else at <sha>; Actions' disabled workflows are left out. A workflow whose
+# once it merges <sha>, else at <sha> (a base push since <sha> that adds or widens a pull_request
+# workflow is waited on, though it never ran); Actions' disabled workflows are left out. A workflow whose
 # triggers it cannot read is not waited on, and a second line names it: "not waited on: <path>
-# (triggers not read: <why>)". <memo file> keeps the workflows read at the merge commit, so later
-# reads of <sha> skip them.
+# (triggers not read: <why>)". <memo file> keeps the workflows read, so later reads of <sha> skip them.
 # ci_gate fixed <owner/repo> <sha> <base> <red sha> <board paths> <check>... — succeed when <sha>
 # shows the red main at <red sha> of <base> fixed, judged at the newest commit from <sha> back (first
 # parents) that changes a file outside <board paths> (a board-only commit's CI may skip its tests),

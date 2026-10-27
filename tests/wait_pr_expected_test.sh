@@ -121,9 +121,12 @@ page "${FX}/checks.2" check_runs "$(check_run gitleaks completed failure)"; wait
 is "a workflow the merge commit does not have: exits 0" 0 "${rc}"
 fresh; mkdir "${FX}/wf.${MERGE}"; cp "${FX}/wf/gitleaks.yml" "${FX}/wf.${MERGE}/"
 printf '{"sha":"%s","parents":[{"sha":"%s"},{"sha":"%s"}]}\n' "${MERGE}" "${B}" "${B}" > "${FX}/merge"
-page "${FX}/checks.2" check_runs "$(check_run gitleaks completed failure)"; wait_pr
+page "${FX}/checks.4" check_runs "$(check_run gitleaks completed failure)"; wait_pr
 is "a stale merge ref: the head's workflows are waited on" 1 "${rc}"
 check "a stale merge ref: pending, naming the head's workflow" said "pending: .github/workflows/ci.yml (no run on ${H:0:7})"
+# The head's answer is kept too: three pending reads read the merge ref and the workflows once.
+is "a stale merge ref: read once per wait" 1 "$(grep -c 'commits/refs/pull/7/merge' "${ROOT}/gh.log")"
+is "a stale merge ref: the workflows read once per wait" 1 "$(grep -c 'contents/.github/workflows/ci.yml' "${ROOT}/gh.log")"
 
 # A merge ref GitHub has not made yet (422) gives the head's workflows; any other failed read of it
 # is an error, never a quiet fall back to the head.

@@ -498,20 +498,23 @@ def expected(repo, sha, base, n, changed):
 
 def pr_tree(repo, sha, n):
     """The commit GitHub runs PR n's pull_request workflows from, its merge commit (refs/pull/<n>/merge)
-    once that merges sha, else sha; and whether it is the merge commit. A ref that is missing (GitHub
-    has not made it, 404 or 422) or stale (it merges an older head) gives sha, the workflows the PR's own
-    files name; any other failed or odd read is an Err, read again as any other."""
+    once that merges sha, else sha. A ref that is missing (GitHub has not made it, 404 or 422) or stale
+    (it merges an older head) gives sha, the workflows the PR's own files name; any other failed or odd
+    read is an Err, read again as any other. The ref is read as it is now, but the runs came from the
+    merge commit at push time, and GitHub rebuilds the ref when the base moves: a base commit since the
+    push that adds a pull_request workflow, or widens one's branches or paths, is waited on though it
+    never ran, and the wait ends with exit 2 after the grace until the base is merged in and pushed."""
     try:
         d = json.loads(gh("api", "repos/%s/commits/refs/pull/%s/merge" % (repo, n)))
         parents = [p.get("sha") for p in d["parents"][1:]]
         merge = d["sha"]
     except Err as e:
         if re.search(r"HTTP (404|422)", str(e)):
-            return sha, False
+            return sha
         raise
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise Err("unreadable refs/pull/%s/merge: %r" % (n, e))
-    return (merge, True) if sha in parents else (sha, False)
+    return merge if sha in parents else sha
 
 def inactive(repo):
     """The workflow files Actions has disabled (by hand, for inactivity, on a fork): it runs none of them."""
@@ -521,11 +524,9 @@ def inactive(repo):
 def pr_expected(repo, sha, base, n, changed):
     """The workflows a pull_request into base with PR n's files at sha runs, read at pr_tree (their
     branches and paths filters; none Actions has disabled); a line for each whose triggers are not read,
-    which is not waited on, so the wait is no stricter than with none expected; and whether they were
-    read at the merge commit. A head may be the PR's first (opened) or a later one (synchronize), so a
-    types list without both is not waited on either."""
-    tree, merged = pr_tree(repo, sha, n)
-    texts = workflows(repo, tree)
+    which is not waited on, so the wait is no stricter than with none expected. A head may be the PR's
+    first (opened) or a later one (synchronize), so a types list without both is not waited on either."""
+    texts = workflows(repo, pr_tree(repo, sha, n))
     want, unread, files = [], [], None
     if texts:
         off = inactive(repo)
@@ -538,7 +539,7 @@ def pr_expected(repo, sha, base, n, changed):
                 want.append(path)
         except (Unread, re.error) as e:
             unread.append("%s (triggers not read: %s)" % (path, e))
-    return want, unread, merged
+    return want, unread
 
 def run_path(r):
     """A workflow run's file, without the @<ref> a reusable workflow's path carries."""
@@ -554,14 +555,15 @@ def head_expected(repo, sha, args):
     the newest pull_request run of each counts (a push run on sha is not the PR's, and a run a reopen
     or a newer run replaced is over): none is pending, as is one not finished, and one that finished
     other than green is red, check run or not. args are <base> <pr> <changed> and, optionally, a file
-    that keeps pr_expected's answer once read at the merge commit, so a wait reads the workflows once."""
+    that keeps pr_expected's answer, so a wait reads the workflows once, at the merge commit or the head
+    as pr_tree found it on the first read."""
     memo = args[3] if len(args) > 3 else None
     try:
         with open(memo) as fh:
             want, unread = json.load(fh)
     except (TypeError, OSError, ValueError):
-        want, unread, merged = pr_expected(repo, sha, args[0], args[1], int(args[2]))
-        if memo and merged:
+        want, unread = pr_expected(repo, sha, args[0], args[1], int(args[2]))
+        if memo:
             with open(memo, "w") as fh:
                 json.dump([want, unread], fh)
     if not want:
