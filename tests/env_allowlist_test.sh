@@ -280,6 +280,8 @@ check "and it reaches a builder whose story names no env:" "provider-key" "$(var
 session="$(awk -F'\t' '$3 == "co-author" { s = $7 } END { print s }' "${p}/.swarm/agents.tsv")"
 check "its restart wrapper keeps it from the restored pane, and still drops a name nothing gave it" "PROVIDER_KEY=restored|" \
   "$(env -i PATH=/usr/bin:/bin PROVIDER_KEY=restored FAKE_SECRET=restored python3 -I "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/${session}.py" env | grep -E '^(PROVIDER_KEY|FAKE_SECRET)=' | paste -sd'|' -)|"
+check "its restart wrapper drops a timed run's SWARM_RUN_TIMED, and keeps the other SWARM_* settings" "SWARM_MERGE_CI_SECONDS=7|" \
+  "$(env -i PATH=/usr/bin:/bin SWARM_MERGE_CI_SECONDS=7 SWARM_RUN_TIMED=1 python3 -I "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/${session}.py" env | grep -E '^(SWARM_MERGE_CI_SECONDS|SWARM_RUN_TIMED)=' | paste -sd'|' -)|"
 # config_refused <agent_env value> <the refusal's text> — the config stops swarm.sh, naming its line, before any pane opens.
 config_refused() {
   local n o

@@ -1205,11 +1205,11 @@ line of the error that stopped it, or `failed (exit N)` when the error came from
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
 `cost`, `outcomes`, `flow`, `dataset`, `review-yield`, `features`, `lessons`, `findings`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
-`tidy` without `--yes`), so a new command is logged until someone names it read-only. `status`,
-`next` and `dash` log their run times to a file of their own instead (the run-times log, below). The
+`tidy` without `--yes`), so a new command is logged until someone names it read-only. The
 exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each API-error resume as
 `resume <agent>`, and `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`.
-The stall rule skips those lines, because none is a sign of life. Something that went wrong is an `incident` line,
+The stall rule skips those lines, because none is a sign of life. `status`, `next` and `dash` log
+their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
 `wait-timeout` when its wait runs out (not when herdr's wait fails sooner, and not for a
 `wait --until-report` hour that it waits again), and `login` when it returns `auth`, once per
@@ -1275,9 +1275,9 @@ and the 1-minute load average at its start (`-` when `uptime` gives none). Nothi
 there: `_step`, which the lead's stop hook runs, and the polls of `wait --lead` read the board as
 `next` does but log no row. A `dash --watch` logs its first frame only. A `swarm.sh` run under a
 timed one (each project `dash --project` draws, the `status` that `dash --check` reads, a watch that
-restarts itself on a new version) logs none, so a run is one row. A run that fails logs none, and
-neither does a project with no `.swarm/` yet, as when `dash --project` runs outside any project. A
-write that fails never fails the command. `flow`'s `run_times` section reads it.
+restarts itself on a new version) logs none, so a run is one row. A run that fails logs none, nor
+does a watch whose first frame failed, a project with no `.swarm/` yet, or a `dash --project` run
+outside any project. A clock or a write that fails never fails the command. `flow`'s `run_times` section reads it.
 
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost

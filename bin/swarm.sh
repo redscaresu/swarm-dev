@@ -158,8 +158,10 @@ find_project() {
 # dash --project draws only the projects it names, so it runs anywhere: with no project here, the
 # cwd stands in (no config there, so every setting keeps its default). Without SWARM_PROJECT the
 # lookup's only failure is "not in a swarm project"; a bad SWARM_PROJECT still stops it.
+# NO_PROJECT is 1 when the cwd stands in, so run_time_start logs no row there.
+NO_PROJECT=""
 if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]]; then
-  PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
+  PROJECT_DIR="$(find_project 2>/dev/null)" || { PROJECT_DIR="$(pwd -P)"; NO_PROJECT=1; }
 else
   PROJECT_DIR="$(find_project)"
 fi
@@ -591,11 +593,13 @@ READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dat
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
+# run_time_drop — forget it, so the run logs no row (a watch whose first frame failed).
 # run_time_end — append the noted run's row, once: its start (UTC), command, seconds and load (- when
 # uptime gives none). dash --watch calls it after its first frame, which never returns. Only the
 # status, next and dash arms call these: _step and wait --lead read the board as next does, and log
-# nothing. A run that fails before its end logs no row, nor does one with no .swarm/ to log in (dash
-# --project from outside a project, where the cwd stands in), and a write that fails is skipped. A run under
+# nothing. A run that fails before its end logs no row, nor does one with no .swarm/ to log in, or
+# dash --project from outside a project, where the cwd stands in (NO_PROJECT). A clock (now_ms) or a
+# write that fails is skipped, and never fails the run. A run under
 # a timed one (dash --project's frames, dash --check's status, a watch that re-execs itself) is not
 # timed: SWARM_RUN_TIMED, exported by the first, marks it. An agent never inherits it (launch_file
 # unsets it), though next starts conductors.
@@ -604,17 +608,22 @@ RUN_TIME=""
 timed() { run_time_start "$1"; shift; "$@"; run_time_end; }
 run_time_start() {
   [[ -z "${SWARM_RUN_TIMED:-}" ]] || return 0
-  export SWARM_RUN_TIMED=1
-  local load
+  export SWARM_RUN_TIMED=1   # set even outside a project, so the frames it draws stay untimed
+  [[ -z "${NO_PROJECT}" ]] || return 0
+  local load at ms
   load="$(LC_ALL=C uptime 2>/dev/null | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" || load=""
-  RUN_TIME="$1 $(date -u +%Y-%m-%dT%H:%M:%SZ) $(now_ms) ${load:--}"
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && ms="$(now_ms 2>/dev/null)" || return 0
+  RUN_TIME="$1 ${at} ${ms} ${load:--}"
 }
+# shellcheck disable=SC2329 # called from dash_watch, in bin/lib/dash.sh
+run_time_drop() { RUN_TIME=""; }
 run_time_end() {
   [[ -n "${RUN_TIME}" ]] || return 0
-  local cmd at ms load
+  local cmd at ms load now
   read -r cmd at ms load <<< "${RUN_TIME}"
   RUN_TIME=""
-  ms=$(($(now_ms) - ms))
+  now="$(now_ms 2>/dev/null)" || return 0
+  ms=$((now - ms))
   [[ -d "${RUN_TIMES_LOG%/*}" ]] || return 0
   { printf '%s\t%s\t%d.%03d\t%s\n' "${at}" "${cmd}" $((ms / 1000)) $((ms % 1000)) "${load}" >> "${RUN_TIMES_LOG}"; } 2>/dev/null || true
 }

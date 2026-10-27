@@ -446,6 +446,7 @@ dash_watch() {
       # Keep the error line on screen: cut the rest to one line short of the terminal's height.
       [[ ${tty} == 0 || ${DASH_H} -lt 2 ]] || tpl="$(head -n $((DASH_H - 1)) <<< "${tpl}")"
       tpl+=$'\n'"(dash: this render failed; retrying in ${every}s)"
+      run_time_drop   # a watch whose first frame failed logs no row, as a run that fails logs none
     fi
     frame="${tpl//HH:MM:SS/$(date +%H:%M:%S)}"
     if [[ ${tty} == 0 ]]; then
