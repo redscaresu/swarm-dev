@@ -2112,8 +2112,11 @@ the board's own repo. Commits that change only those run no tests there, so they
 READMEs. When the base gained only board paths and the board's repo cannot be read (no origin, or gh
 cannot tell which GitHub repo it is), `merge` refuses naming that read. A compare it cannot read
 refuses too, and so does one listing 300 files or more, since GitHub lists no more, or one that lists
-no file for the commits. A transient gh error (a 5xx, a rate limit, a timeout) is read again, three
-reads in all; any other read error refuses at once. The check is cautious on purpose. GitHub ran the PR's CI
+no file for the commits (a commit and its revert give no file). The 300-file and no-file refusals end
+`merge origin/<base> in, push, and merge the new head` as well, since merging the base in clears them, and the conductor
+handles them as it does the moved-base refusal. A transient gh error (a 5xx, a rate limit, a timeout)
+is read again, three reads in all; any other read error refuses at once. Each read, the compare's
+retries included, stops after 60 seconds and refuses naming the wait. The check is cautious on purpose. GitHub ran the PR's CI
 on a merge ref, which may already hold some of those commits, and the price is one more CI run.
 Nothing locks the compare against the `gh pr merge` that lands the PR. Two merges into one base, such
 as two epics' conductors, can both read the base as unchanged and both land seconds apart. Only a

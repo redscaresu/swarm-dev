@@ -70,7 +70,8 @@ case "$1 $2" in
     [ ! -e "${FX}/on-merge" ] || sh "${FX}/on-merge"
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
-  "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
+  # With ${FX}/origin.hang, the nameWithOwner read first sleeps a minute.
+  "repo view") case "$*" in *nameWithOwner*) [ ! -e "${FX}/origin.hang" ] || sleep 60; cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
   # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none; with ${FX}/prlist.<slug>.fail, a 5xx.
   "pr list") h=""; prev=""; for a in "$@"; do [ "${prev}" != --head ] || h="${a##*/}"; prev="${a}"; done
              [ ! -e "${FX}/prlist.${h}.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
@@ -118,11 +119,12 @@ case "$1 $2" in
       */branches/*) serve branch ;;
       # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind (as serve
       # reads it, so behind.<n>.fail fails the nth read and behind.404 is a 404), else nothing (ahead_by
-      # 0). compare/<base>...<head>: compare.<base>, else compare, else for a branch
+      # 0); with ${FX}/behind.hang it first sleeps a minute. compare/<base>...<head>: compare.<base>, else compare, else for a branch
       # base the PR's files (the grant's read at the pinned head, failing as files does), else for a
       # commit base the head holds it (fix-main's compare of a red commit with a green one).
       */compare/*) c="${path##*/compare/}"; to="${c#*...}"; c="${c%%...*}"
                    if [ "${#c}" = 40 ] && [ "${#to}" != 40 ]; then
+                     [ ! -e "${FX}/behind.hang" ] || sleep 60
                      if [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ] || [ -e "${FX}/behind.404" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
                    elif [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
                    elif [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then serve compare
