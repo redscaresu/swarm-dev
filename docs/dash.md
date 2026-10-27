@@ -104,6 +104,11 @@ is one column, top to bottom:
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`), and `review kept story` for
   every story a close kept (`swarm.sh review` or `swarm.sh close <slug> --drop`). It is left out when
   empty.
+- **Idle capacity**: the `idle:` lines `swarm.sh next` and `wait --lead` print for blocked stories, one
+  row each: `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`.
+  dash works them out again every frame from the board and its state, with no gh call, so a row goes
+  once the dependency is in review or done. They count toward no warning light. The box is left out
+  when there are none, and, with no warning, when the check fails: a frame has no place for one.
 - **Running now**: one row per agent open in this project's panes (empty panes and retired agents
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`
   or `agent` line in `events.tsv`, or else from midnight on its `agents.tsv` day) and its last
@@ -126,8 +131,8 @@ is one column, top to bottom:
   counted from the board repo's history: story files deleted on its base branch (and on HEAD) whose
   front matter named the epic, once per slug, when any deletion closed the story: its own PR's
   merge (the commit names `story/<slug>`), its own work (a squash merge: the commit also changes a
-  file that is neither the board's own, its `stories/`, `epics/`, `Board.base` and `README.md`, nor
-  a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
+  file that is neither the board's own, its `stories/`, `epics/`, `hld/`, `.obsidian/`, `Board.base`
+  and `README.md`, nor a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
   the swarm's logged `finish`, or a last status of `done` or `review` or a `prs:` line. A story
   still on the board here is open, and a re-scope counts as nothing. The row's symbol is ○
   when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. A working
