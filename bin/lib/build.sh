@@ -20,7 +20,7 @@ findings_goal() {
 merge_rule() {
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
-  else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
+  else echo "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge)."; fi
 }
 # wait_pr_rule <then> <report> <head> — how every agent waits on a PR's CI: on <head> (wait-pr's --head:
 # right after a push GitHub can still report the old head), <then>, what it does on red, a conflict or a head the PR never got,
@@ -46,56 +46,32 @@ stop_rule() {
 fix_running() { printf '%s' "(a fix-main story you started counts as running until its PR merges)"; }
 # base_stop — the broken base a merging conductor stops on: a red one has a fix-main story to build.
 base_stop() { printf '%s' "CI on the base timed out, or is red with no \`fix-main:\` line"; }
-# The review every story's PR passes before its builder is closed. The builder keeps its context
-# until then, so findings go back to it rather than to a fresh agent that has none. Each PR gets its
-# own review agent (review_agent) as soon as it is green, so PRs that land together are reviewed at
-# once; the agent runs codex, so the conductor runs it only in codex's place when it was skipped.
+# review_rule — who reviews a story's PR: its own review agent (review_agent, review_brief), which waits
+# for green, triages, reviews each head, tells the builder its findings, logs them, and merges the PR or
+# hands it to the user. The conductor starts it once per PR, on watch's opened line (or a queued: line,
+# or for a kept: story), and is never in the loop after: two in it would send findings and count rounds
+# twice.
 review_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
-A story is reviewed only when its latest head has passed a review agent's review. The moment a
-story's PR head is green and mergeable, start one with \`${sw} review-agent <slug> <PR URL>\`.
-Never wait for other PRs or reviews to gather first: run one review agent for every green PR at
-once, with no cap below the number of green PRs. When \`swarm.sh watch\` prints, or the lead sends
-you, \`queued: <repo> #<n> <branch> green <m>m with no review on <sha>\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
-or has uncommitted changes: wait for the builder, then start it again. The review agent, review-<slug>, never edits the PR's code and runs in
-the story's worktree: it runs codex-review with the story's slug and, on the story's first round
-only, when the PR changes code (not only docs, board files or a dependency bump),
-\`/code-review <PR>\` (review-agent counts the rounds itself), judges only the story's touches
-and **Done when**, and writes ${PROJECT_DIR}/.swarm/reviews/<slug>.md only when a round passes or
-it stops: a \`head: <SHA>\` line naming the commit it reviewed, then on a pass a \`## Findings\`
-section with none to fix and a \`## Handled by the review agent\` section of the points it declined
-or found out of scope, logged and rebutted already, or on a stop a \`stopped: <why>\` line; the
-findings it sends the builder itself are in <slug>.round.md beside it. On a pass it runs
-\`swarm.sh review <slug> --head <SHA> <PR URL>\` itself, then merges the PR (merge = agent, or an HLD that
-grants merge) or leaves it for the user. Wait on each with
-\`swarm.sh wait review-<slug>\` in the background, triage that story's file, then close the review
-agent (\`swarm.sh close review-<slug>\`) whatever it found. A file with a \`head moved:\` line, or
-with no \`## Findings\` section, is not a pass: start the review again. When the wait returns with
-no findings file (it timed out, or the agent waits on a prompt, is gone or needs a login), close the
-review agent, never answering its prompt, and start the review again, or read the
-diff yourself as for a skipped codex. Send the real findings to the story's
-builder with \`${sw} tell <slug> findings <file>\` (a file holding the findings and what to
-decline). Log each item of the out-of-scope section with
-\`log-finding --declined out-of-scope --reviewer <who>\`, as below.
-When a review agent reports \`codex skipped: <why>\` (its file's second line says so too), read the diff yourself in codex's place.
-Wait for the builder, then start a new review agent on its new head.
-A round is one review whose findings you sent to the builder (\`swarm.sh tell <slug> findings\`); a
-review started again (head moved, no \`## Findings\` section, a review agent that timed out or
-crashed) is not one. A review on the latest head whose findings you fix none of is a pass: one with
-no findings, or whose every finding you decline (a nit, low value, out of scope, wrong, or a point
-already declined). Never send such a review to the builder. Rebut each declined finding in the PR
-with a reason, log it with \`log-finding --declined <reason> --reviewer <who>\` as below: nit for
-a nit, an edge case or a low-value point, out-of-scope or wrong where they apply, and a point
-already declined with the reason it was first declined with.
-Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
-(\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
-not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
-its latest head has passed. Act on each review the moment it finishes: once a PR's latest head has
-passed, merge it (or hand it over, as below) at once, and never hold a finished review result back
-while other reviews run.
-
-$(finding_rule)
+A story is reviewed only by its review agent, review-<slug>, which you start and then leave alone.
+When \`swarm.sh watch\` prints \`<repo> #<n> story/<slug> opened\`, a PR of yours has opened: start
+its review agent once, at once, with \`${sw} review-agent <slug> <PR URL>\`. It returns at once.
+Start one for every PR that opens, with no cap, and never hold one back for other PRs or reviews.
+When \`swarm.sh watch\` prints, or the lead sends you, \`queued: <repo> #<n> <branch> green <m>m
+with no review on <sha>\`, that head has had no review: start its review agent then, the same way.
+A story \`swarm.sh status\` lists as \`kept:\` (a close kept its PR unreviewed) gets one the same
+way: first make sure its builder is open, since the review agent sends it the findings (with none,
+start one in its worktree as the Stacked rule says for \`(no builder)\`, with a brief that names the
+story and its PR), then start the review agent on the line's PR. A \`kept:\` line with more than one
+PR is the lead's: list it in your report. When review-agent refuses (the story's worktree is not at
+the PR's head or has uncommitted changes, or review-<slug> is still reviewing), whatever the
+refusal says to do next, start it again on \`swarm.sh watch\`'s next line for that PR.
+The review agent waits for the PR's checks, triages them, reviews each head, sends its findings to
+the builder, logs them, and merges the PR or hands it to the user. Never wait on a PR or a review
+agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or
+merge a story's PR: each is the review agent's, and doing it as well would send findings twice and
+count a round twice.
 EOF
 }
 
@@ -145,24 +121,26 @@ denylist, docs-misstate-code, fails-open); reuse one that
 already lists when it fits.
 EOF
 }
-# conduct_merge_rule <epic>|backlog — how a conductor hands over or merges a reviewed PR: an epic's, or
-# with backlog the backlog conductor's, whose stories have no epic to review or finish.
+# conduct_merge_rule <epic>|backlog — what a conductor does about its stories' merges, which their review
+# agents make or hand to the user (review_rule): it merges no story PR, starts what each merge note in
+# its inbox made startable, lists the PRs that wait on the user and, for an epic, puts the epic in review
+# or finishes it; with backlog the backlog conductor's, whose stories have no epic to review or finish.
 conduct_merge_rule() {
-  local scope="of this epic" epic_end="" backlog=""
+  local scope="of this epic" epic_end="" backlog="" kept
   [[ "$1" != backlog ]] || { backlog=1; scope="with no epic"; }
+  kept="A story \`swarm.sh status\` lists as \`kept:\` is not in review for this: a close kept its PR
+unreviewed, so it waits for the review agent you start for it (above)."
   if [[ "${CFG_merge}" == human ]]; then
     [[ -n "${backlog}" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
 \`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge.
-A story \`swarm.sh status\` lists as \`kept:\` is not in review for this: a close kept its PR unreviewed,
-so review it (and run \`swarm.sh review <slug> <PR URL>\` once it passes) first."
+${kept}"
     cat <<EOF
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
-When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
-\`swarm.sh close <slug>\`. Then $(startable_rule "$1")
-$(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
-to merge\`), the story is blocked again with its build kept: close its builder with a bare
-\`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its build, and go on.
+A story's review agent hands its PR to the user itself, with \`swarm.sh review\`.
+
+$(merge_note_rule "$1")
+$(stacked_start_rule)
 $(held_ready_rule)${epic_end}
 EOF
   else
@@ -173,55 +151,28 @@ the last story merged and the epic's **Done when** holds; on a board in the repo
 which you land with the \`swarm.sh merge --board\` line it prints. Never finish the epic while a story
 of it is still in review (a \`costs: money\` one waits for the user's merge): once the Done when will
 hold when they merge, run \`swarm.sh review <epic> <every PR URL still waiting>\` instead, and the
-epic leaves the board once they all merge. A story \`swarm.sh status\` lists as \`kept:\` does not count
-as in review: a close kept its PR unreviewed, so review it first."
+epic leaves the board once they all merge. ${kept}"
     cat <<EOF
-A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge,
-as with merge = human. When its PR is green and reviewed,
-run \`swarm.sh review <slug> <PR URL>\` and \`swarm.sh close <slug>\`, never \`swarm.sh merge\`, which
-refuses it (\`held: <slug> costs money\`). Leave the PR for the user, and list it in your report
-under Waits on the user. When \`swarm.sh merge\` refuses any other PR with \`held: ... the user merges
-it\` (a parent it stacks on costs money, or another \`costs:\` value), do the same: close its builder,
-leave the PR for the user and list it.
+A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR
+yourself. A story whose front matter says \`costs: money\` (merging it can spend money) is the user's
+to merge, as with merge = human: \`swarm.sh merge\` holds it for the user (\`held: <slug> costs
+money\`), and its review agent leaves the PR there, as it does every PR merge holds. List each such
+PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\` or \`(protected path)\`) in
+your report under Waits on the user.
 
-When \`swarm.sh merge\` prints \`base merged: <PR URL> is now <new> (<old> with <base> merged in)\`, it
-merged nothing: code landed on <base> after <old>'s CI ran, so it had GitHub merge <base> into the
-PR's branch and checked that the new head's only new content is <base>'s. That head needs no new
-review. Run the \`swarm.sh wait-pr <PR URL>\` the line names in the background and, once it exits 0,
-the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of the findings file's head: line.
-If that CI goes red, handle it as a red check, telling the builder to pull its branch first
-(\`git pull --ff-only origin story/<slug>\`, naming the branch: its worktree tracks origin/<base>, or
-nothing when stacked): GitHub's merge commit is not in its worktree.
-When \`swarm.sh merge\` refuses with a line that ends \`merge origin/<base> in, push, and merge the new
-head\` (\`the base <base> moved past <sha>'s CI\` when GitHub could not merge it in, or a compare that
-cannot list what the base gained), it merged nothing: code may have landed on <base> after that head's
-CI ran, so the two were never tested together. This refusal is yours to handle, not the lead's. Send
-the builder a nudge with \`swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review
-round) telling it to pull its branch (\`git pull --ff-only origin story/<slug>\`), merge origin/<base>
-in, re-run the tests and push; with no
-builder, start one as the clash rule says for a conflict. Wait for the new
-head's CI with \`swarm.sh wait-pr <PR URL>\` in the background, review the new head as for any new
-head, and merge the head that review passed with \`swarm.sh merge --head <sha> <PR URL>\`, as below.
-When it refuses with \`base merge unchecked:\`, the PR's head moved and merge could not show that its
-only new content is <base>'s: a builder's push, a merge someone made by hand, or GitHub's own merge of
-<base> that touches a file the PR changed too. Review the new head as for any new head. If that review
-sends findings, tell the builder to pull its branch first (\`git pull --ff-only origin story/<slug>\`):
-the new head may be a merge commit its worktree does not have, and its push would be refused.
-
-$(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
-printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
-
-Then, in this run, $(startable_rule "$1")
-$(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
-to merge\`), the story is blocked again and nothing merges: leave its builder open, unless that line
-says \`(costs money)\`. The user merges that parent, maybe days later, so close its builder with a
-bare \`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its build, as with
-merge = human.
+$(merge_note_rule "$1")
+$(stacked_start_rule)
 $(held_ready_rule) After a
 cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
 story ${scope} that is yours to start is ready and none is running $(fix_running), or $(base_stop).${epic_end}
 EOF
   fi
+}
+
+# merge_note_rule <epic>|backlog — a merge note in the conductor's inbox (story_note) is its cue to start
+# what the merge made ready, through the startable pass after each inbox pass.
+merge_note_rule() {
+  printf '%s' "A note in your inbox that a story's PR just merged is the cue to start what that merge made ready. After each inbox pass, $(startable_rule "$1")"
 }
 
 # startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story
@@ -249,69 +200,14 @@ of the base is the Stacked line \`<slug>: merge origin/<base> (<parents> merged)
 \`swarm.sh status\` prints for it: the same instruction, so act on that line alone, as the Stacked
 rule above says, and start at most one builder for it. A \`<slug>: could not check ...\` line in its
 place means nothing is known: read status again after your next wait. Only with no Stacked line for
-it at all does its branch have the base already. Then review its new head as any other story's PR.
+it at all does its branch have the base already. Then start its review agent, as the review rule
+above says for an opened PR.
 EOF
 }
 
 # stacked_start_rule — what unblock's (stacked on <parents>) means, for both merge modes.
 stacked_start_rule() {
   printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
-}
-
-# pin_rule — with merge = agent and a PR per story, the head a review passed is its findings file's
-# head: line (review_agent pins it), checked against the PR's head before the merge.
-pin_rule() {
-  cat <<EOF
-The head a review passed is the \`head:\` line of the story's findings file
-(${PROJECT_DIR}/.swarm/reviews/<slug>.md). Once the review passes, read the PR's head
-(\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`); if it is not that SHA, the head
-moved: review the new head.
-EOF
-}
-
-# pinned_merge_rule <review args> — with merge = agent, how a conductor merges a reviewed PR: put the
-# item in review, then swarm.sh merge pinned to the head it reviewed, which reconciles: all at once on a
-# base with a merge queue, so the queue batches them, else one at a time.
-pinned_merge_rule() {
-  cat <<EOF
-Merge a PR only when it is green and reviewed, and only through \`swarm.sh merge\`: run
-\`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>\`, never
-\`gh pr merge\` or \`gh api\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
-repo's merge method, squash when allowed
-(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), with no --auto
-where the base has no merge queue, and only once every check on that head has completed and passed, which it checks itself. On a base
-with a merge queue it enqueues that head with \`--auto --match-head-commit\` instead and waits for the
-queue, which tests it on top of the base and the PRs ahead of it. A PR the queue drops prints
-\`dequeued (<reason>): <checks>\` and merged nothing: handle it like a red check. Send the failing
-checks to the builder with \`swarm.sh tell <slug> findings <file>\`, telling it to merge
-origin/<base> in, fix what broke and push; then review the new head and merge it again. The first
-\`swarm.sh merge\` shows whether the base has a merge queue. Where it prints \`merge queue: <base> has
-one\`, start \`swarm.sh merge\` for every PR whose latest head passed review as soon as it passes,
-without waiting for the ones before it to merge, so the queue tests them together and merges them in
-batches. Where it prints \`merged: <PR URL> (...); waiting for CI on <base>\`, or before any merge has
-printed either, run one \`swarm.sh merge\` at a time: start the next only after the previous one has
-exited, its base CI and reconcile done. Run each in the background (Bash \`run_in_background\`)
-and wait for it: it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the merge commit on the
-base, then runs \`swarm.sh reconcile\`, never a plain \`git pull\`, which pulls the board and finishes the item. If
-it exits non-zero, read why: a refusal before \`gh pr merge\` ran merged nothing; \`unconfirmed\`
-means \`gh pr merge\` ran but the PR never read as merged (a merge queue may hold it), so check it by
-hand. A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing
-more until it is green, and say so in your report. $(fix_main_rule)
-EOF
-}
-
-# fix_main_rule — what a merging conductor does when swarm.sh merge finds the base red (fix_main).
-fix_main_rule() {
-  cat <<EOF
-On a red base \`swarm.sh merge\` prints \`fix-main: <checks> on <short sha>\` with the failed jobs'
-FAIL lines, and writes the one-off story fix-main-<short sha> (kind code, no epic, those lines in
-its body). On \`fix-main\`, start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`,
-ahead of every other story and whatever your scope, and review and merge its PR as any story's: it
-is the one merge allowed while the base is red. Never wait on an unrelated PR to fix it. With no
-\`fix-main:\` line (CI on the base timed out, or merge says it could not write the story), find the
-PR pair that broke it (this PR and one merged before it, each green alone), open the fix or list it
-for the lead, and say so in your report.
-EOF
 }
 
 # A test that passes with its fix removed proves nothing; a builder shows each one can fail, and
@@ -596,14 +492,15 @@ build_story() {
 }
 
 # review_agent <slug> <PR URL> — start review-<slug> on a story's PR in the story's worktree and tab,
-# with role review and review_brief, and return at once: the conductor waits on it with `swarm.sh
-# wait review-<slug>`, which returns once the agent has written its findings file. It reviews the
+# with role review and review_brief, and return at once: the conductor that starts it never waits on it;
+# the lead may, with `swarm.sh wait review-<slug>`, which returns once the agent has written its
+# findings file. It reviews the
 # PR's head, and only when the worktree is at it with nothing uncommitted; the file's head: line
 # names that commit. Refused, starting nothing and touching no file, when
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
-# the conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
+# a reader of it sees only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
 # which review_on_head reads. Its later rounds run in the same session, through review_next.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head moved errf err round
@@ -1045,12 +942,12 @@ EOF
 }
 
 # review_handoff <slug> <PR URL> <findings file> <head> <swarm.sh> — the review brief's pass step. A round
-# with nothing to fix writes its review file first: the conductor's wait ends on it, and once the PR
+# with nothing to fix writes its review file first: a wait on the agent ends on it, and once the PR
 # merges, the merge's reconcile, run from this pane, retires the agent and removes its worktree, so a
 # file written after would never come. Then it puts the story in review pinned to <head>, the head it
 # reviewed (swarm.sh review --head, which refuses a moved head), and, under merge = agent or when
-# swarm.sh grants names merge for the PR, merges that head, pinned as pinned_merge_rule pins a
-# conductor's (swarm.sh merge --head); otherwise the review is the handoff to the user. A moved head
+# swarm.sh grants names merge for the PR, merges that head, pinned with swarm.sh merge --head, which
+# checks the PR is still at it; otherwise the review is the handoff to the user. A moved head
 # turns the file into a head moved: one, and whoever started the agent starts a new one on it.
 # <swarm.sh> is the brief's swarm.sh with SWARM_PROJECT, as every call in it.
 review_handoff() {
@@ -1064,7 +961,7 @@ review_handoff() {
   fi
   cat <<EOF
 A round with nothing to fix is a pass, of $4, the head on ${3}'s \`head:\` line. Write the review to
-${3} first: the conductor's wait ends on it, and once the PR merges, the merge's reconcile retires you
+${3} first: a wait on you ends on it, and once the PR merges, the merge's reconcile retires you
 and removes this worktree, so a file written after would never come. Then hand the PR on: run
 \`$5 review $1 --head $4 $2\`, which puts the story in review. ${next}
 When review or merge refuses because the PR's head is no longer $4 (a push since your review), that
@@ -1089,7 +986,7 @@ EOF
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: it never
 # edits the code, the story's touches and Done when, the green step first (wait-pr, then triage of the PR's check-run notes
-# and code-scanning alerts as green_rule's, each real one, red check or conflict sent to the builder as a
+# and code-scanning alerts, each real one, red check or conflict sent to the builder as a
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
@@ -1242,8 +1139,7 @@ one line per finding to fix: its reviewer (codex, fallback or code-review), file
 none, say so. Under a \`## Handled by the review agent\` heading, the same for each finding you
 declined, with its reason, and for each point a reviewer raised that only a change to a file
 outside the touches can fix, marked out of scope; with none, say so. Use no \`## Declined\` or
-\`## Out of scope\` heading: the conductor's rules log and rebut what they find under those, and
-you have done both already.
+\`## Out of scope\` heading: you have logged and rebutted those already.
 
 $(review_handoff "$1" "$2" "$4" "$5" "${sw}")
 
@@ -1446,11 +1342,10 @@ stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${ST
 \`--backlog\`, or the review agent's \`wait-pr\` from its own pane). That command then prints
 \`stepped up: <slug>\` (wait prints it in place of \`stalled:\`): the next model carries on in the
 same worktree and branch. Do not close, retry or tell that story for it; wait on its builder again.
-A review file whose \`head moved:\` line names \`stepped up:\` is the review agent reporting one
-from its \`wait-pr\`: the PR's head has not moved, so do not start the review again; wait on the
-builder, then start the review on the head it pushes. A \`step-up failed: <slug>\` line means the
-step-up stopped after closing the builder. Leave that story alone: \`wait --lead\` tells the lead,
-so it does not go in your report. A review file whose one finding is that line is the same case.
+A review agent whose \`wait-pr\` steps the build up stops there; the head the new builder pushes
+gets a new one on \`swarm.sh watch\`'s \`queued:\` line, as the review rule says. A
+\`step-up failed: <slug>\` line means the step-up stopped after closing the builder. Leave that
+story alone: \`wait --lead\` tells the lead, so it does not go in your report.
 EOF
   local rules sign; sign="$(sign_rule)"
   [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"
@@ -1462,20 +1357,6 @@ Your last act, after everything else: write your report (what merged, what is le
 the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
 treats that file as the only sign you have finished: being idle while you wait on your own
 background work is not.
-EOF
-}
-
-# The green rule every conductor follows, whatever it opens PRs for.
-green_rule() {
-  cat <<EOF
-A PR is green only when every check on its head has passed and you have triaged the output of
-\`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
-conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
-PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
-never dismiss an alert. A PR's head is the <sha> \`swarm.sh watch\` printed for it (\`checks finished on
-<sha>\`), never your checkout's HEAD: you work from the main checkout, on the base. For a head watch has not printed,
-pass the \`<new head>\` a \`base merged:\` line names, or, after a builder's push, the sha the builder reported, else \`git -C ../<repo>-wt/<slug> rev-parse HEAD\` in its worktree;
-never a fresh \`gh pr view\` read, which right after a push can still name the old head, as an unpinned wait-pr can. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR never got the head you named: never wait on <X> instead; send the builder a nudge naming both shas, so it pushes again and reports its HEAD, or report it to the lead." "report it to the lead" "<sha>")
 EOF
 }
 
@@ -1509,7 +1390,7 @@ transcript is \`${CLAUDE_PROJECTS}/*/<session>.jsonl\`, where <session> is field
 character outside a-z, 0-9, _ and - made -, an s in front unless it starts with a letter, then cut
 to 32 characters. That line is the current build. Read the reply first: \`IMPOSSIBLE:\` or the story's reply. Then read
 the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the cause:
-- met: the story's reply is there. Review it as below; the closes after review or merge stay bare.
+- met: the story's reply is there. Its PR's review agent reviews it (below).
 - impossible: the reply starts \`IMPOSSIBLE:\`.
   Run \`swarm.sh close <slug> impossible --drop\`, which makes the story \`kind: lead\`, and list it for the lead.
 - stalled: \`wait --stall\` returned stalled.$([[ -z "${CFG_escalate_ladder:-}" ]] || echo " (With escalate_ladder set, a stall it steps up prints \`stepped up:\` instead: wait on the builder again, and close nothing.)")
@@ -1603,8 +1484,9 @@ Unblock's \`ready:\` lines and the Stacked lines cover the whole board: act only
   first start a builder in the child's worktree (\`<repo>-wt/<child>\` beside its repo) with
   \`swarm.sh agent <tab> <child> <worktree> <role> <brief>\`, where <tab> is the child's \`epic:\` (its
   slug when it has none), <role> is what \`swarm.sh _role <child>\` prints, and the brief says the
-  same and to reply with the PR URL. Any review of the child from before that merge is stale: review
-  the new head. The line stays until the child pushes the merge, so send each merge once: until the
+  same and to reply with the PR URL. Any review of the child from before that merge is stale: once
+  its builder replies that it pushed, start the child's review agent on the new head, as the review
+  rule below says. The line stays until the child pushes the merge, so send each merge once: until the
   child's builder replies to that tell (or brief), skip a line for the same child and ref.
 - \`<child>: lost story/<p>\`: on a ready child whose builder is open, run \`swarm.sh close <child>
   paused --drop\`, which holds it for the lead. If the line ends \`(no builder)\`, or close prints
@@ -1644,7 +1526,7 @@ conduct_story_mode() {
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as reference.md
 § Building describes: pick waves of \`ready\` stories that do not clash,
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
+\`swarm.sh watch --epic ${epic}\` in the background, and start a review agent for each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
 
 $(clash_rule)
@@ -1654,8 +1536,6 @@ $(stacked_rule "${epic}")
 $(auth_rule)$(goal_rule_if_on)
 
 $(give_up_rule)
-
-$(green_rule)
 
 $(review_rule)
 
@@ -1679,12 +1559,12 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`."
 Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as reference.md
 § Building describes: pick waves of them that do not clash, start each with
 \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch --backlog\` in the background, and review each PR. Each story's base branch is in
-its brief, .swarm/briefs/<slug>.md.
+\`swarm.sh watch --backlog\` in the background, and start a review agent for each PR. Each story's
+base branch is in its brief, .swarm/briefs/<slug>.md.
 
 A ready story whose worktree exists (\`<repo>-wt/<slug>\` beside its repo) has already started: never
 run \`swarm.sh story\` for it again. Wait on its builder with \`swarm.sh wait <slug>\` in the
-background, then review its PR as below. If it has no builder and no PR, the build died: do not
+background; its PR gets its review agent as below. If it has no builder and no PR, the build died: do not
 start it, and report it as not started, with the reason \`build died\`. A held child unblock readied
 (\`(held: ...)\`, with \`held_by:\` in its front matter) is the exception: follow the rule for
 \`(held: ...)\` below instead.
@@ -1699,8 +1579,6 @@ $(stacked_rule backlog)
 $(auth_rule)$(goal_rule_if_on)
 
 $(give_up_rule)
-
-$(green_rule)
 
 $(review_rule)
 

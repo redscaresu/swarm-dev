@@ -183,12 +183,37 @@ check "the brief has the agent write the file, starting with the head reviewed a
   "$(has "Its first line is \`head: ${HEAD_SHA}\`; when codex was skipped, its second is \`codex skipped: <why>\`." "${brief}")|$(has "prints nothing" "${brief}")|$([[ -d "${p}/.swarm/reviews" ]] && echo yes || echo no)"
 check "the brief says to wait for codex-review to exit, never to stop early on a usage limit" "yes|no" \
   "$(has "Wait for it to exit, and act on what it prints last" "$(tr -s '[:space:]' ' ' <<< "${brief}")")|$(grep -q "do not wait" <<< "${brief}" && echo yes || echo no)"
-# The green step comes before the review: wait-pr, then the triage green_rule asks of a conductor.
+# The green step comes before the review: wait-pr, then the triage of check-run notes and alerts.
 # Each swarm.sh call names the project: the agent runs in the story's worktree, outside it.
 flat="$(tr -s '[:space:]' ' ' <<< "${brief}")"; sw="SWARM_PROJECT=${p} ${SWARM}"
+# The sentence finding_rule gives every review agent: which --reviewer value names which reviewer.
+MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\` (fallback when it printed \"reviewed by fallback\"), code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
+# logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
+# and text and run as written: the outcome and reviewer of the row each logs, then has for MAPPING.
+logs_findings() {
+  local f="${p}/.swarm/findings.tsv" line n
+  while IFS= read -r line; do
+    line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"; line="${line//<reason>/nit}"; line="${line//<n>/1}"
+    line="${line%%\"<*}\"text\""   # the text placeholder is the last word
+    n=0; [[ ! -f "${f}" ]] || n="$(wc -l < "${f}")"
+    if ! (cd "${ROOT}" && env -u SWARM_PROJECT bash -c "${line}" >/dev/null 2>&1); then printf 'failed: %s|' "${line}"; continue; fi
+    [[ "$(wc -l < "${f}")" -eq $((n + 1)) ]] && printf '%s|' "$(tail -1 "${f}" | cut -f5,6 | tr '\t' ' ')" || printf 'no row|'
+  done < <(grep -E '^    SWARM_PROJECT=.* log-finding ' <<< "$1")
+  has "${MAPPING}" "$(tr -s '[:space:]' ' ' <<< "$1")"
+}
+LOGS_FINDINGS="fixed codex|declined codex|yes"
+check "the review agent's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${brief}")"
+# The kinds command finding_rule gives, run as written against another log: only kinds with a fixed,
+# escaped or pre-outcome row (never one only declined or filed), and no error with no log at all.
+kinds_cmd="$(grep -B1 '^already lists when it fits' <<< "${brief}" | head -1 | tr -d '`')"
+kinds_log="${ROOT}/kinds/.swarm/findings.tsv"; mkdir -p "${kinds_log%/*}"
+printf '2026-01-01\tfixed-kind\to/r#1\tx\tfixed\tcodex\n2026-01-01\tdeclined-kind\to/r#2\tx\tdeclined\tcodex\tnit\n2026-01-01\told-kind\to/r#3\tx\n2026-01-01\tescaped-kind\to/r#4\tx\tescaped\tescaped\n2026-01-01\tfiled-kind\to/r#5\tx\tfiled\tcodex\n' > "${kinds_log}"
+check "finding_rule's kinds command lists only kinds with a fixed, escaped or pre-outcome row" "escaped-kind|fixed-kind|old-kind" \
+  "$(bash -c "${kinds_cmd//${p}/${ROOT}/kinds}" | paste -sd'|' -)"
+check "finding_rule's kinds command prints nothing, not an error, with no findings log" "" "$(bash -c "${kinds_cmd//${p}/${ROOT}/none}" 2>&1)"
 check "the brief waits for green with wait-pr on the PR, naming the project, before the review, and again after each push" "yes|yes|yes" \
   "$(has "Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr ${PR}\` in the background and wait for it to exit, never a loop of your own" "${flat}")|$(awk '/ wait-pr / && !w { w = NR } / codex-review / && !c { c = NR } END { print (w && c && w < c) ? "yes" : "no" }' <<< "${brief}")|$(has "After each nudge, wait for the builder the same way, then wait for green again on the head it pushed." "${flat}")"
-check "the brief triages check-run notes and code-scanning alerts before the head counts green, as green_rule does" "yes|yes|yes|yes" \
+check "the brief triages check-run notes and code-scanning alerts before the head counts green" "yes|yes|yes|yes" \
   "$(has "Exit 0: the head counts green only once you have triaged what \`${sw} findings svc 1\` prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning alerts." "${flat}")|$(has "Nudge the builder with each real one. Rebut the rest with a reason in the PR (\`gh pr comment ${PR} --body" "${flat}")|$(has "Never dismiss an alert." "${flat}")|$(has "\`${sw} tell s1 nudge ${p}/.swarm/reviews/s1.nudge.md\` (never findings, which count as a review round)" "${flat}")"
 check "a red head or a conflict is a nudge naming the check or the base, and with the ladder off no step-up, running or done, is named" "yes|0|0" \
   "$(has "Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in." "${flat}")|$(grep -c 'stepped up' <<< "${brief}" || true)|$(grep -c 'stepping up' <<< "${brief}" || true)"
@@ -219,14 +244,14 @@ check "the brief writes the review file only on a pass or a stop, tells the roun
 # A findings tell herdr sent but did not see taken up fails, yet counts as a round: the agent carries on,
 # and resends the findings as a nudge only when the builder's pane shows they never arrived.
 # A wait right after the builder's push names the pushed head, since GitHub can still report the old one;
-# and the pass file's declined and out-of-scope sections say the agent logged and rebutted them, so the
-# conductor's unchanged rules do not log or rebut them again.
+# and the pass file's declined and out-of-scope points sit under the agent's own heading, logged and
+# rebutted already.
 check "the brief waits on a just-pushed head with wait-pr --head, names the exit for a push that never landed, and ends the green step on a builder idle without a commit" "yes|yes|yes|yes" \
   "$(has "A wait on a head the builder has just pushed is \`${sw} wait-pr --head <that head, from git rev-parse HEAD> ${PR}\`: right after a push GitHub can still report the old head, which the plain wait-pr would call green." "${flat}")|$(has "When HEAD moved, run the green step above on it, with wait-pr --head as there: its first line names the head it waits on, so once it has run on that head the PR has it" "${flat}")|$(has "when wait-pr exits 2 with \`the PR's head is <X>, not <sha>\`, the PR never got the head you named (a push that did not land): never wait on <X> instead; nudge the builder naming both shas, so it pushes again, then wait for it and run wait-pr --head again on its HEAD, which a push alone does not change." "${flat}")|$(has "when the builder goes idle without a commit (\`git rev-parse HEAD\` is still the head you waited on) after a nudge that asked for a fix (after one that asked for a push, run wait-pr --head on that HEAD first, as above, and only a second miss ends the step)" "${flat}")"
-# The agent's declined and out-of-scope points go under one heading the conductor's rules name no action
-# for: review_rule logs and rebuts what it finds under a declined or out-of-scope section.
+# The agent's declined and out-of-scope points go under one heading of its own: it has logged and
+# rebutted them, and no ## Declined or ## Out of scope heading asks anyone to again.
 check "the brief puts declined and out-of-scope points under one heading of the review agent's own, and has the agent write no ## Declined or ## Out of scope heading" "yes|0|0" \
-  "$(has "Under a \`## Handled by the review agent\` heading, the same for each finding you declined, with its reason, and for each point a reviewer raised that only a change to a file outside the touches can fix, marked out of scope; with none, say so. Use no \`## Declined\` or \`## Out of scope\` heading: the conductor's rules log and rebut what they find under those, and you have done both already." "${flat}")|$(grep -c "a \`## Declined\` heading" <<< "${flat}" || true)|$(grep -c "a \`## Out of scope\` heading" <<< "${flat}" || true)"
+  "$(has "Under a \`## Handled by the review agent\` heading, the same for each finding you declined, with its reason, and for each point a reviewer raised that only a change to a file outside the touches can fix, marked out of scope; with none, say so. Use no \`## Declined\` or \`## Out of scope\` heading: you have logged and rebutted those already." "${flat}")|$(grep -c "a \`## Declined\` heading" <<< "${flat}" || true)|$(grep -c "a \`## Out of scope\` heading" <<< "${flat}" || true)"
 # A tell to a busy builder is queued, not refused (main's tell queue): the brief tells nothing again,
 # and waits out the turn the tell was queued behind and its delivery before it waits for the fix.
 # shellcheck disable=SC2016 # the brief's command, pinned as the text it prints

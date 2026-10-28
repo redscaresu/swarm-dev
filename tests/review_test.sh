@@ -310,8 +310,8 @@ check "merge = agent keeps the guard on a story agent and on the conductor, whic
 check "a story agent's and a conductor's sessions carry SWARM_AGENT, their name, for the guard hook" "yes|yes" \
   "$(has '"SWARM_AGENT":"g2"' "$(grep "^agent start g2 " "${ROOT}/herdr.log")")|$(
   has '"SWARM_AGENT":"conduct-e"' "$(grep "^agent start conduct-e " "${ROOT}/herdr.log" | tail -1)")"
-check "a builder's brief says who merges: a human, or with merge = agent the conductor or the lead" "yes|yes" \
-  "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
+check "a builder's brief says who merges: a human, or with merge = agent the story's review agent or the lead" "yes|yes" \
+  "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
 
 # --- The review agent's and the fallback reviewer's briefs: the lead's checklist, and each line of the

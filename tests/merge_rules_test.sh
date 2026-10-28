@@ -839,17 +839,17 @@ for c in e --backlog; do
   b="${P}/.swarm/briefs/conduct-${c#--}.md"; rm -f "${b}"
   (cd "${P}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" conduct "${c}" >/dev/null 2>&1) || true
   check "the ${c#--} conductor's brief (merge = agent) names costs: money" grep -qF 'costs: money' "${b}"
-  check "the ${c#--} conductor's brief (merge = agent) leaves such a PR for the user" grep -qF 'Leave the PR for the user' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) has the review agent leave such a PR for the user" grep -qF 'and its review agent leaves the PR there' "${b}"
+  # The review agent hands such a PR over: a brief that again has the conductor run review and close
+  # the builder itself drives the PR beside its review agent.
   # shellcheck disable=SC2016 # the backticks are the brief's
-  check "the ${c#--} conductor's brief (merge = agent) hands such a PR over and closes its builder, as merge = human does" \
-    grep -qF 'run `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`, never `swarm.sh merge`' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) never hands such a PR over or closes its builder itself" \
+    bash -c '! grep -qF "and \`swarm.sh close <slug>\`, never \`swarm.sh merge\`" "$1"' _ "${b}"
   # shellcheck disable=SC2016 # the backticks are the brief's
   check "the ${c#--} conductor's brief (merge = agent) reports, not waits, on a strict refusal ending (costs money)" \
     grep -qF 'If the refusal ends `(costs money)`, only the user merges the named story, maybe days later: do not wait for it' "${b}"
-  check "the ${c#--} conductor's brief (merge = agent) closes a held child's builder when its held line says (costs money)" \
-    grep -qF 'leave its builder open, unless that line' "${b}"
-  check "the ${c#--} conductor's brief (merge = agent) treats any held: refusal from merge as the user's" \
-    grep -qF 'refuses any other PR with' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) treats every PR merge holds as the user's" \
+    grep -qF 'as it does every PR merge holds' "${b}"
 done
 check "the epic conductor's brief (merge = agent) never finishes the epic under a story still in review" \
   grep -qF 'Never finish the epic while a story' "${P}/.swarm/briefs/conduct-e.md"
