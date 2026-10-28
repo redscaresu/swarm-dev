@@ -19,8 +19,8 @@ each step is in [`reference.md`](reference.md).
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
-   one at a time. Two stories clash only when their `touches` name the same file in the
-   same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
+   one at a time. A PR whose base gained code since its CI ran gets the base merged in on GitHub
+   (by its builder on a conflict) and runs CI again before it merges. Two stories clash only when their `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
    file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
@@ -33,9 +33,9 @@ step (when it says to wait, it also starts a conductor for any ready work that h
 awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
 `next` prints `idle:` lines for capacity nothing uses: a blocked story an agent builds whose
 `depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
-(the lead drops the dependency or names it in the story's `needs:` line). When the step leaves the builders idle and no
-story is buildable, it also prints the project with up to five candidates for a one-off: the findings
-declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
+(the lead drops the dependency or names it in the story's `needs:` line), and a ready story with no build, ready for `queue_minutes`, whose `touches` share no part with a running build
+(the lead sends its conductor a note, or starts it with `swarm.sh story --strict`). When the step leaves the builders idle and no
+story is buildable, it also prints the project with up to five candidates for a one-off: the findings declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
 are the swarm's own list of follow-ups. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
@@ -80,7 +80,7 @@ your share of the work before you approve it. A step found during the build that
 `lead` story, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
-step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories wake the lead while a conductor works, and `status` and `dash` show them.
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how. `wait --lead` carries idle capacity too: `next`'s `idle:` lines for blocked stories and for ready stories with no build wake the lead while a conductor works, and `status` and `dash` show them. Stuck agents wake the lead the same way: an agent on a prompt, a dialog, an expired login, an API error no `wait` is resuming, or manual mode gives a `prompt:` line that names who clears it.
 
 ## The board
 
@@ -121,7 +121,7 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main`. A repo that has none of them stops the command |
 | `sign_commits` | `false` | `true`: every builder's and conductor's brief tells it to sign each commit and merge with `-S`, and to stop if it cannot; `swarm.sh board-pr`'s commit and a stacked start's merge pass `-S` too |
-| `merge` | `human` | `human`: a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one; under that grant a story's review agent may also merge that story's PR. `agent`: the conductor merges, and so may a story's review agent for that story's PR, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
+| `merge` | `human` | `human`: a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one; under that grant a story's review agent may also merge that story's PR. `agent`: the conductor merges, and so may a story's review agent for that story's PR, except a story with `costs: money` or a story PR that changes `.claude/`, `.github/`, `hooks/` or a root makefile, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task. To `wait` and `dash`, a test suite running in the agent's pane (`make test`, `make check`, `scripts/test.sh`) is work for up to 3 times this long, so it is neither stalled nor stuck (reference.md § Building) |
 | `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
@@ -135,7 +135,7 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage limit. Empty skips the review (reference.md § Building) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference.md § Settings) |
 | `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference.md § Settings) |
-| `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: a new or draft epic goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
+| `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: an epic that is not `active` yet (new, draft, `later`, `split`, `review` or `done`) goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
 | `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
 | `agent_env` | empty | variable names, separated by spaces, that every agent of every role gets with your session's values, such as a provider's key and endpoint (reference.md § Settings) |
 

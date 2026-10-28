@@ -50,6 +50,9 @@ case "$1 $2" in
     [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
     get left "${FX}/readback-left" 0
     if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
+    # The head update-branch moves, once its lag (pr views that still read the old head) is spent.
+    if [ -e "${FX}/pending-head" ]; then get l "${FX}/pending-left" 0
+      if [ "${l}" -gt 0 ]; then echo $((l - 1)) > "${FX}/pending-left"; else mv "${FX}/pending-head" "${FX}/head"; fi; fi
     get st "${FX}/state"; get st "${FX}/state.${3##*/}" "${st}"
     get h "${FX}/head"; get b "${FX}/base"; get mc "${FX}/mergecommit"; get nf "${FX}/nfiles"; get bd "${FX}/body" null; get cm "${FX}/commits" '[{}]'
     printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s}\n' \
@@ -70,7 +73,14 @@ case "$1 $2" in
     [ ! -e "${FX}/on-merge" ] || sh "${FX}/on-merge"
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
-  "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
+  # With ${FX}/origin.hang, the nameWithOwner read first sleeps a minute; with ${FX}/origin.fail it
+  # prints that to stderr and fails.
+  "repo view") case "$*" in
+                 *nameWithOwner*) [ ! -e "${FX}/origin.hang" ] || sleep 60
+                                  [ ! -e "${FX}/origin.fail" ] || { cat "${FX}/origin.fail" >&2; exit 1; }
+                                  cat "${FX}/origin" ;;
+                 *) cat "${FX}/repo" ;;
+               esac ;;
   # The merged PRs of --head story/<slug>: ${FX}/prlist.<slug>, else none; with ${FX}/prlist.<slug>.fail, a 5xx.
   "pr list") h=""; prev=""; for a in "$@"; do [ "${prev}" != --head ] || h="${a##*/}"; prev="${a}"; done
              [ ! -e "${FX}/prlist.${h}.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
@@ -116,14 +126,40 @@ case "$1 $2" in
       */releases/tags/*) serve release ;;   # its GitHub release
       */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
-      # compare/<base>...<head>: compare.<base>, else compare, else for a branch base the PR's files
-      # (the grant's read at the pinned head, failing as files does), else for a commit base the head
-      # holds it (fix-main's compare of a red commit with a green one).
-      */compare/*) c="${path##*/compare/}"; c="${c%%...*}"
-                   if [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
-                   elif [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then serve compare
+      # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind (as serve
+      # reads it, so behind.<n>.fail fails the nth read and behind.404 is a 404), else nothing (ahead_by
+      # 0); with ${FX}/behind.hang it first sleeps a minute. compare/<base>...<head>: compare.<base>...<head>,
+      # else compare.<base>, else compare, else for a branch
+      # base the PR's files (the grant's read at the pinned head, failing as files does), else for a
+      # commit base the head holds it (fix-main's compare of a red commit with a green one). A branch
+      # base's compare lists the PR's files too, as GitHub's does: a fixture with no files key gets
+      # ${FX}/files as it is, so protected_hold's read of the pinned head, at the same URL as merge_admin's
+      # behind_by read, sees the files whatever a case wrote the fixture for. With ${FX}/compare.hang a
+      # branch base's compare first sleeps a minute; compare.<base>.404 is a 404 with its message.
+      */compare/*) c="${path##*/compare/}"; to="${c#*...}"; c="${c%%...*}"
+                   [ "${#c}" = 40 ] || [ ! -e "${FX}/compare.hang" ] || sleep 60
+                   if [ "${#c}" = 40 ] && [ "${#to}" != 40 ]; then
+                     [ ! -e "${FX}/behind.hang" ] || sleep 60
+                     if [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ] || [ -e "${FX}/behind.404" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
+                   elif [ -e "${FX}/compare.${c}...${to}" ] || [ -e "${FX}/compare.${c}" ] || [ -e "${FX}/compare.${c}.404" ] || [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then
+                     if [ -e "${FX}/compare.${c}...${to}" ]; then out="$(serve "compare.${c}...${to}")" || exit 1   # one pair of commits
+                     elif [ -e "${FX}/compare.${c}" ] || [ -e "${FX}/compare.${c}.404" ]; then out="$(serve "compare.${c}")" || exit 1
+                     else out="$(serve compare)" || exit 1; fi
+                     case "${out}" in
+                       *'"files"'*) ;;
+                       *) [ "${#c}" = 40 ] || { f="$(put "${FX}/files")"; if [ "${out}" = '{}' ]; then out="{\"files\":${f}}"; else out="${out%\}},\"files\":${f}}"; fi; } ;;
+                     esac
+                     echo "${out}"
                    elif [ "${#c}" != 40 ]; then out="$(serve files)" || exit 1; echo "{\"files\":${out}}"
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
+      # PUT pulls/<n>/update-branch, merge's request to merge the base in: ${FX}/update as serve reads it,
+      # and ${FX}/update.422 a 422 with its message; with ${FX}/update.hang it first sleeps a minute.
+      # Whatever it answers, the PR's head becomes ${FX}/update-head, when there is one, after
+      # ${FX}/update-lag more pr views (none by default): with update.422, another merge's request went first.
+      */update-branch) [ ! -e "${FX}/update.hang" ] || sleep 60
+                       [ ! -e "${FX}/update-head" ] || { cp "${FX}/update-head" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; }
+                       if [ -e "${FX}/update.422" ]; then get m "${FX}/update.422"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
+                       serve update ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       # ${FX}/on-contents runs once first: another process's fetch while release_check reads.

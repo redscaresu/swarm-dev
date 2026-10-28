@@ -79,9 +79,21 @@ renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` fo
 `wait` printed `auth`, and wait on each again in the background.
 
 **Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
-its output file. If it exists, parses as JSON and is newer than `<wt>/.git` (when the plan worktree
-was started; on a board outside the repo, `docs/hld/$1.md`), reuse it and do not start that agent
-again; an older one belongs to a previous plan, so start the agent. A `.partial` file is an unfinished run, not a result: start the agent, which carries on from it. Delete a `.partial` that is not newer than the same file first: it belongs to a previous plan.
+its output file. A file in `.swarm/$1/` counts only when this attempt wrote it against the tree
+`<wt>` holds, so clear the others first. The two checks below apply only to a board in the project's
+repo; a board outside it has no board PR and no `base-rev`, so skip them there.
+
+- **Another attempt.** Run `gh pr list --head board/plan-$1 --state all --json createdAt --jq
+  '.[].createdAt'`. If it fails, stop and report it: an error prints no date, and reads as no PR.
+  A PR created after `.swarm/$1/base-rev` was written belongs to the attempt that wrote it, which
+  is over: delete `.swarm/$1/`. An older PR belongs to an attempt already cleared.
+- **Another tree.** `.swarm/$1/base-rev` holds `git -C <wt> merge-base HEAD origin/<base>`, the
+  commit `<wt>` was made from, which the briefs read. When the file is missing or holds another
+  commit, delete `.swarm/$1/`'s outputs and `.partial` files and write the file again.
+
+Then reuse an output that exists, parses as JSON and is newer than `.swarm/$1/base-rev` (the
+reference; on a board outside the repo, `docs/hld/$1.md`, with no `base-rev`), and do not start that
+agent again; an older one belongs to a previous plan, so start the agent. A `.partial` file is an unfinished run, not a result: start the agent, which carries on from it. Delete a `.partial` that is not newer than that same reference first: it belongs to a previous plan.
 
 Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where

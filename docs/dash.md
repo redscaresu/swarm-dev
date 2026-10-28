@@ -9,6 +9,19 @@ so it asks herdr for the agents whenever `herdr` is on your PATH. It never chang
 state or the logs, and never opens or closes a pane. In a folder with no board it stops with one line
 naming `swarm.sh init`.
 
+Each frame gives its reads of herdr, Claude Code's session list, GitHub and each agent's pane 30
+seconds in all (`SWARM_REPORT_SECONDS` sets a different number of seconds), counted from the frame's
+start, so on a busy machine dash's own work between the reads takes part of them. The GitHub reads
+come first and may use half of them at most, so herdr's reads keep the rest when GitHub is slow. A
+read still running at the deadline is stopped, and a read that comes later is skipped. dash draws
+the frame from what the other reads gave, then names the stopped and skipped reads on its last line:
+`skipped (over 30 s): gh PR states, herdr agent list`. So `--watch` draws its first frame within
+about 30 seconds plus its own work, even when herdr or GitHub hangs. When the GitHub reads are cut
+short, dash keeps what they got; a PR they did not reach keeps the state from whichever run last
+read it, until a run reaches it again, and one no run has read shows as its URL. With `--project`
+each project's frame has 30 seconds of its own. `dash --check` reads everything in full, and so do
+the `status` and `next` it compares with.
+
 To watch more than one project, name each with `--project <dir>`: `swarm.sh dash --project
 ~/src/app --project ~/src/infra` draws app's screen and then infra's, each headed by its project's
 name, with the legend once at the bottom. `--watch` on a terminal redraws them together as one
@@ -80,7 +93,10 @@ is one column, top to bottom:
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
   pane, nudges, resumes, incidents and failed tells excepted), `agree` a draft epic, `staged epic
   <slug>: stage v<T>, after v<P>` for a staged draft epic, which the lead sets active once the base
-  has a tag at or above `v<P>` and which gets no `agree draft epic` row, and `no agent on story` for
+  has a tag at or above `v<P>` and which gets no `agree draft epic` row, `set draft epic <slug>
+  active: <why>` for a draft epic the lead sets active with no agreement (its `parent:` is active or
+  split, an agreed HLD over it grants `epics`, or `lead_epics = on`), which gets no `agree draft epic`
+  row either, and `no agent on story` for
   a started story that no agent works on any more. That last row is the `no-agent:`
   line `swarm.sh wait --lead` wakes the lead with. It names the story and what to run:
   `swarm.sh hold <slug> <reason>` for a ready story, and for one in review `swarm.sh merge` once a
@@ -100,14 +116,17 @@ is one column, top to bottom:
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
   you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic) and
   everything else from the list above moves to this box under it: every `merge`, `answer`, `close`,
-  `look at`, `staged epic` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
+  `look at`, `staged epic`, `set draft epic <slug> active` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`), and `review kept story` for
   every story a close kept (`swarm.sh review` or `swarm.sh close <slug> --drop`). It is left out when
   empty.
-- **Idle capacity**: the `idle:` lines `swarm.sh next` and `wait --lead` print for blocked stories, one
-  row each: `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`.
-  dash works them out again every frame from the board and its state, with no gh call, so a row goes
-  once the dependency is in review or done. They count toward no warning light. The box is left out
+- **Idle capacity**: the `idle:` lines `swarm.sh next` and `wait --lead` print, one row each:
+  `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` for a
+  blocked story, and `idle: <story> is ready with no build, exit: <exit>` for a ready one. dash works
+  them out again every frame from the board, its state and events.tsv, with no gh or herdr call, so a
+  row goes once the dependency is in review or done, or once the story's build starts. A ready story's
+  row names its exit, so it changes when the story's conductor starts or stops, and `wait --lead`
+  wakes the lead again for the changed line. They count toward no warning light. The box is left out
   when there are none, and, with no warning, when the check fails: a frame has no place for one.
 - **Running now**: one row per agent open in this project's panes (empty panes and retired agents
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`

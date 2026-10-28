@@ -83,7 +83,7 @@ opened scope-e "$(codex_line scope-e plan)"
 opened agree-e "$(codex_line agree-e agreement)"
 opened agree-2026-10-25-big-plan "$(codex_line agree-2026-10-25-big-plan agreement)"
 # A new epic agreed in its own PR: /epic moves the draft into the worktree, so only the PR has it.
-opened agree-new "$(codex_line agree-new agreement)" docs/epics/new.md '---\nstatus: active\nagreed: 2026-10-27\n---\n\n# new\n'
+opened agree-new "$(codex_line agree-new agreement)" docs/epics/new.md "---\nstatus: active\nagreed: $(date +%F)\n---\n\n# new\n"
 # --- A story slug that starts like a plan PR names no HLD or epic: a story-scope edit.
 opened plan-hld-gaps "$(none_line plan-hld-gaps "story-scope edit")"
 opened scope-creep "$(none_line scope-creep "story-scope edit")"
@@ -124,9 +124,9 @@ flat() { tr '\n' ' ' < "${REPO}/$1" | tr -s ' '; }
 step() { awk -v n="$2" '$0 ~ "^"n"\\. " { on = 1 } on && $0 ~ "^[0-9]+\\. " && $0 !~ "^"n"\\. " { exit } on' "${REPO}/$1" | tr '\n' ' ' | tr -s ' '; }
 has() { grep -qF -- "$2" <<< "$1"; }
 check "hld.md step 5 runs one codex-review pass, then opens agree-<name>" \
-  has "$(step commands/hld.md 5)" 'run one `swarm.sh codex-review` pass there and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing'
+  has "$(step commands/hld.md 5)" 'run one `swarm.sh codex-review` pass in the worktree and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits a fix, pushes and opens the PR'
 check "epic.md step 5 runs one codex-review pass, then opens agree-<name>" \
-  has "$(step commands/epic.md 5)" 'run one `swarm.sh codex-review` pass there and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits with the brief'"'"'s trailers and signing'
+  has "$(step commands/epic.md 5)" 'run one `swarm.sh codex-review` pass in the worktree and fix what it finds, then run `swarm.sh board-pr open agree-<name> "<title>" <body-file>`, which commits a fix, pushes and opens the PR'
 # epic.md step 1 names the agreement PR after the resolved file, never the title: board_pr_kind
 # matches the name against the epic files, and an epic's title often differs from its file name.
 named() {

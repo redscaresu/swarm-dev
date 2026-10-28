@@ -4,7 +4,8 @@
 # several run side by side, and each is waited on alone. herdr is a stub on PATH whose agents stay
 # working until the test marks them done (done <name>): its agent wait blocks until then, or its
 # timeout. The claude stub lists their sessions busy until then, idle after. gh's PR head is the
-# file ${ROOT}/head.
+# file ${ROOT}/head, and its check runs on any commit the file ${ROOT}/checks. review-agent --next runs
+# a later round in review-<slug>'s own session, and --recheck passes a wording fix on its diff alone.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -95,7 +96,21 @@ awk -v d="${ROOT}" 'BEGIN { printf "[" }
     printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (k++ ? "," : ""), \$3, s }
   END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json"
 EOF
-printf '#!/bin/sh\ncat "%s/head"\n' "${ROOT}" > "${STUB_BIN}/gh"
+# With ghhang its api reads hang for 300s, and with ghfail they fail.
+cat > "${STUB_BIN}/gh" <<EOF
+#!/bin/sh
+if [ "\$1" = api ]; then
+  [ ! -e "${ROOT}/ghhang" ] || sleep 300
+  [ ! -e "${ROOT}/ghfail" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+fi
+case "\$1 \$3" in
+  "api "*/check-runs*) cat "${ROOT}/checks" ;;
+  "api "*/status*) echo '{"total_count":0,"statuses":[]}' ;;
+  *) cat "${ROOT}/head" ;;
+esac
+EOF
+GREEN='{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
+echo "${GREEN}" > "${ROOT}/checks"
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh" "${ROOT}/sessions"; mkdir -p "${ROOT}/done" "${ROOT}/waiting" "${ROOT}/gone"; echo '[]' > "${ROOT}/claude.json"
 done_agent() { touch "${ROOT}/done/$1"; echo "done $1" >> "${ROOT}/herdr.log"; "${ROOT}/sessions"; }
 
@@ -166,6 +181,21 @@ check "the brief has the agent write the file, starting with the head reviewed a
   "$(has "Its first line is \`head: ${HEAD_SHA}\`; when codex was skipped, its second is \`codex skipped: <why>\`." "${brief}")|$(has "prints nothing" "${brief}")|$([[ -d "${p}/.swarm/reviews" ]] && echo yes || echo no)"
 check "the brief says to wait for codex-review to exit, never to stop early on a usage limit" "yes|no" \
   "$(has "Wait for it to exit, and act on what it prints last" "$(tr -s '[:space:]' ' ' <<< "${brief}")")|$(grep -q "do not wait" <<< "${brief}" && echo yes || echo no)"
+# The green step comes before the review: wait-pr, then the triage green_rule asks of a conductor.
+# Each swarm.sh call names the project: the agent runs in the story's worktree, outside it.
+flat="$(tr -s '[:space:]' ' ' <<< "${brief}")"; sw="SWARM_PROJECT=${p} ${SWARM}"
+check "the brief waits for green with wait-pr on the PR, naming the project, before the review, and again after each push" "yes|yes|yes" \
+  "$(has "Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr ${PR}\` in the background and wait for it to exit, never a loop of your own" "${flat}")|$(awk '/ wait-pr / && !w { w = NR } / codex-review / && !c { c = NR } END { print (w && c && w < c) ? "yes" : "no" }' <<< "${brief}")|$(has "After each nudge, wait for the builder the same way, then wait for green again on the head it pushed." "${flat}")"
+check "the brief triages check-run notes and code-scanning alerts before the head counts green, as green_rule does" "yes|yes|yes|yes" \
+  "$(has "Exit 0: the head counts green only once you have triaged what \`${sw} findings svc 1\` prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning alerts." "${flat}")|$(has "Nudge the builder with each real one. Rebut the rest with a reason in the PR (\`gh pr comment ${PR} --body" "${flat}")|$(has "Never dismiss an alert." "${flat}")|$(has "\`${sw} tell s1 nudge ${p}/.swarm/reviews/s1.nudge.md\` (never findings, which count as a review round)" "${flat}")"
+check "a red head or a conflict is a nudge naming the check or the base, and with the ladder off no step-up is named" "yes|0" \
+  "$(has "Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in." "${flat}")|$(grep -c 'stepped up' <<< "${brief}" || true)"
+# The green step ends: two nudges or two red heads at most, then a findings file the conductor's rules
+# send to the builder (a file with no ## Findings is a review started again, for ever on a PR that
+# stays red); and each nudge file is removed before the Write tool writes it (an earlier round's
+# survives, and the tool refuses to overwrite a file the session has not read).
+check "the green step is bounded, its not-green file is a findings file with the red check as its one item, and the nudge file is removed before each write" "yes|yes|yes" \
+  "$(has "The green step is bounded: at most two nudges, and at most two heads that wait-pr calls red." "${flat}")|$(has "The not-green file is ${p}/.swarm/reviews/s1.md, written with the Write tool: \`head: ${HEAD_SHA}\`, then a \`## Findings\` heading with one line for the builder, \`wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>\`, then a \`## Out of scope\` heading with \`none\`. The conductor sends it to the builder as a findings round, as any finding." "${flat}")|$(has "first remove any earlier nudge file (\`rm -f ${p}/.swarm/reviews/s1.nudge.md\`: the Write tool refuses to overwrite a file this session has not read), then write ${p}/.swarm/reviews/s1.nudge.md with the Write tool" "${flat}")"
 check "a started review agent records the head it reviews, so watch and next do not call the PR queued" "${HEAD_SHA}" \
   "$(cat "${p}/.swarm/reviews/s1.head")"
 check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusals')" "s1	ok" \
@@ -188,7 +218,10 @@ printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T09:00:00Z tell:findings s3 - ok 2026-10
   2026-10-16T10:30:00Z tell:findings s3 - ok 2026-10-16T10:40:00Z escalate s3 - ok \
   2026-10-16T10:00:00Z story s4 - ok 2026-10-16T10:30:00Z tell:findings s4 - ok >> "${p}/.swarm/events.tsv"
 back=""; echo "head: STALE" > "${p}/.swarm/reviews/s2.md"
+# With the ladder on, the briefs say what a step-up printed by wait-pr means.
+echo "escalate_ladder = sonnet,opus" > "${p}/.claude/swarm/config"
 for s in s2 s3 s4; do back+="${s}:$(start "${s}") "; done
+: > "${p}/.claude/swarm/config"
 check "a start removes the story's findings file from an earlier head, and leaves no copy aside, so its wait cannot end on it" "no|no" \
   "$([[ -e "${p}/.swarm/reviews/s2.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/reviews/s2.md.prev" ]] && echo yes || echo no)"
 check "review-agent s2 to s4 each return within 10s while no review is done" "s2:back:0 s3:back:0 s4:back:0 " "${back}"
@@ -199,6 +232,10 @@ check "round 1's brief asks for codex and /code-review" "yes|yes|yes" \
   "$(has " codex-review " "${r1}")|$(has "review round 1 of the story" "${r1}")|$(has "then run \`/code-review ${PR}\`" "${r1}")"
 check "a round after a step-up is still round 2, and asks for codex alone" "yes|yes|yes|no" \
   "$(has " codex-review " "${r3}")|$(has "review round 2 of the story" "${r3}")|$(has "run codex alone, not \`/code-review\`" "${r3}")|$(grep -qF "/code-review ${PR}" <<< "${r3}" && echo yes || echo no)"
+# A step-up from wait-pr leaves no head to review (stop with head moved:); one that failed after the
+# builder closed leaves no builder to nudge (stop with that line as the one finding, which tell refuses).
+check "with escalate_ladder set, the brief says a stepped-up build gets no nudge and ends the review, and a step-up failed partway ends it with that line as its finding" "yes|yes" \
+  "$(has "When it also prints \`stepped up: s4\`, the build's red heads handed it to the next model on the escalation ladder, and ${HEAD_SHA} is gone: send no nudge; write ${p}/.swarm/reviews/s4.md with the Write tool holding two lines, \`head: ${HEAD_SHA}\` and \`head moved: <that stepped up: line>\`, then stop." "$(tr -s '[:space:]' ' ' <<< "${r4}")")|$(has "When it prints \`step-up failed: s4\` instead, the builder was closed and no new one runs, so no nudge can reach it: write ${p}/.swarm/reviews/s4.md with the Write tool holding \`head: ${HEAD_SHA}\`, a \`## Findings\` heading with that \`step-up failed:\` line as its one item, and a \`## Out of scope\` heading with \`none\`, then stop." "$(tr -s '[:space:]' ' ' <<< "${r4}")")"
 check "round 2 asks for codex only" "yes|yes|yes|no" \
   "$(has " codex-review " "${r4}")|$(has "review round 2 of the story" "${r4}")|$(has "run codex alone, not \`/code-review\`" "${r4}")|$(grep -qF "/code-review ${PR}" <<< "${r4}" && echo yes || echo no)"
 check "herdr lists review-s1 to review-s4 working at once" "review-s1 working|review-s2 working|review-s3 working|review-s4 working" "$(working)"
@@ -359,6 +396,186 @@ echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s7.md"; touch "${ROOT}/quick"
 check "a review written while its brief is delivered survives the start, and the old one is gone" "back:0|head: NEW-REVIEW|no" \
   "$(start s7)|$(cat "${p}/.swarm/reviews/s7.md" 2>/dev/null)|$([[ -e "${p}/.swarm/reviews/s7.md.prev" ]] && echo yes || echo no)"
 rm "${ROOT}/quick"
+
+# --- review-agent --next: review-n1's next round, run from its own pane in the same session.
+# reviews_now — every file under .swarm/reviews with its checksum, so a refusal is seen to change none.
+reviews_now() { (cd "${p}/.swarm/reviews" && cksum -- * | sort); }
+for s in n1 n2; do
+  sed "s/s4/${s}/g" "${b}/stories/s4.md" > "${b}/stories/${s}.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${s}" "${ROOT}/svc-wt/${s}" origin/main
+done
+# Started in the foreground, so its pane is on record (and its files written) before the checks below.
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T11:00:00Z story n1 - ok >> "${p}/.swarm/events.tsv"
+check "review-agent n1 starts review-n1 for round 1" "0" "$(set +e; run review-agent n1 "${PR}" >/dev/null; echo "$?")"
+NP="$(awk '$1 == "review-n1" { p = $2 } END { print p }' "${ROOT}/agents")"
+check "review-n1 has a pane on record" "yes" "$([[ -n "${NP}" ]] && echo yes || echo no)"
+echo "head: ${HEAD_SHA} ROUND-ONE" > "${p}/.swarm/reviews/n1.md"; done_agent review-n1
+echo STALE > "${p}/.swarm/reviews/n1.head"
+echo mark >> "${ROOT}/herdr.log"; was="$(reviews_now)"
+check "--next before any findings tell refuses, as round 1 is a plain review-agent start, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "there is no next round" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T11:30:00Z tell:findings n1 - ok >> "${p}/.swarm/events.tsv"
+check "--next from another pane refuses, naming review-n1's pane, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID=w:999 run review-agent --next n1 "${PR}")"; echo "$?|$(has "only review-n1, in its pane ${NP}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+check "--next with no review-n2 listed refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n2 "${PR}")"; echo "$?|$(has "herdr lists no review-n2" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+echo 0123456789abcdef0123456789abcdef01234567 > "${ROOT}/head"
+check "--next with the worktree off the PR's head refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "not the PR's head 0123456789abcdef" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+echo "${HEAD_SHA}" > "${ROOT}/head"
+printf '%s\n' --- "status: ready" "kind: code" --- > "${b}/stories/review-n1.md"
+check "--next with a board story named review-n1 refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "the board has a story named review-n1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${b}/stories/review-n1.md"; touch "${ROOT}/listfail"
+check "--next when herdr cannot list its agents says to run --next again, not to start a review agent, and changes no file under .swarm/reviews" "1|yes|no|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "run swarm.sh review-agent --next n1 <PR URL> again once herdr answers" "${o}")|$(grep -qF "start one with" <<< "${o}" && echo yes || echo no)")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${ROOT}/listfail"; echo wip > "${ROOT}/svc-wt/n1/wip.txt"
+check "--next with uncommitted work refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "has uncommitted changes" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${ROOT}/svc-wt/n1/wip.txt"
+o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")" || echo "FAIL review-agent --next n1 exited non-zero: ${o}"
+check "after one ok findings tell, --next from review-n1's pane prints round 2 and the codex-alone instruction" "yes|yes" \
+  "$(has "Review round 2 of story n1" "${o}")|$(has "This is review round 2 of the story: run codex alone, not \`/code-review\`" "${o}")"
+check "and it writes the PR's head, moves n1.md to n1.md.prev, and starts no agent" "${HEAD_SHA}|no|head: ${HEAD_SHA} ROUND-ONE|0" \
+  "$(cat "${p}/.swarm/reviews/n1.head")|$([[ -e "${p}/.swarm/reviews/n1.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/n1.md.prev")|$(started)"
+check "events.tsv gets review-agent:next n1 ok (round 2), and no review-agent line for it" "review-agent:next	n1	ok (round 2)|1" \
+  "$(awk -F'\t' '$3 == "n1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(awk -F'\t' '$2 == "review-agent" && $3 == "n1"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
+check "with review-n1 live and no findings file, a plain review-agent n1 still refuses, starting nothing" "1|yes|0" \
+  "$(set +e; o="$(run review-agent n1 "${PR}")"; echo "$?|$(has "review-n1 is still reviewing" "${o}")")|$(started)"
+# Round 2's review is written; a second --next with no findings tell since would put it aside unread.
+echo "head: ${HEAD_SHA} ROUND-TWO" > "${p}/.swarm/reviews/n1.md"; was="$(reviews_now)"
+check "a second --next with no findings tell since refuses and keeps round 2's review" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "round 2 of n1 has started already" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# A findings tell herdr sent but did not see taken up is a round, as the ladder counts it.
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T12:00:00Z tell:findings n1 - "review-n1: the brief was not taken up: herdr sent it the brief twice" >> "${p}/.swarm/events.tsv"
+check "after a findings tell logged 'herdr sent it the brief', --next prints round 3, not round 2 again" "yes" \
+  "$(has "Review round 3 of story n1" "$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")")"
+# A new build: two ok findings tells, then a findings-3 step-up whose brief carried the third findings.
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T13:00:00Z story n1 - ok 2026-10-16T13:05:00Z review-agent n1 - ok 2026-10-16T13:10:00Z tell:findings n1 - ok \
+  2026-10-16T13:20:00Z tell:findings n1 - ok 2026-10-16T13:30:00Z escalate n1 - "ok (findings-3: sonnet -> opus)" >> "${p}/.swarm/events.tsv"
+check "after two ok findings tells and a findings-3 step-up, --next prints round 4" "yes" \
+  "$(has "Review round 4 of story n1" "$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")")"
+# A new build starts while review-n1's pane is still open: its story event resets the count, so no
+# findings went to this build and --next has no round to start. Once findings go to it, the open
+# review-n1 is still the earlier build's: no review-agent start is on record in this one.
+echo "head: ${HEAD_SHA} ROUND-FOUR" > "${p}/.swarm/reviews/n1.md"
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:00:00Z story n1 - ok >> "${p}/.swarm/events.tsv"; was="$(reviews_now)"
+check "after a new build's story event, --next refuses, as round 1 is a plain review-agent start, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "there is no next round" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:10:00Z tell:findings n1 - ok >> "${p}/.swarm/events.tsv"
+check "after findings to a new build with no review-agent start in it, --next refuses the earlier build's review-n1 and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "review-n1 is from an earlier build" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+
+# --- review-agent --recheck: review-r1 passes a wording fix to the named lines on its diff alone.
+RW="${ROOT}/svc-wt/r1"
+sed "s/s4/r1/g" "${b}/stories/s4.md" > "${b}/stories/r1.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/r1 "${RW}" origin/main
+seq 1 10 | sed 's/^/line /' > "${RW}/doc.md"
+"${GIT[@]}" -C "${RW}" add doc.md && "${GIT[@]}" -C "${RW}" commit -q -m doc
+OLD="$(git -C "${RW}" rev-parse HEAD)"; echo "${OLD}" > "${ROOT}/head"
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:00:00Z story r1 - ok >> "${p}/.swarm/events.tsv"
+check "review-agent r1 starts review-r1 for round 1 at the old head" "0|${OLD}" \
+  "$(set +e; run review-agent r1 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/r1.head")"
+RP="$(awk '$1 == "review-r1" { p = $2 } END { print p }' "${ROOT}/agents")"
+# findings <line>... — round 1's findings file for OLD, those lines under ## Findings; was, its state now.
+findings() { printf '%s\n' "head: ${OLD}" "## Findings" "$@" > "${p}/.swarm/reviews/r1.md"; was="$(reviews_now)"; }
+ROUND1="doc.md:3 misstates it (ROUND-ONE)"   # the point at the start of the line
+findings "${ROUND1}"; done_agent review-r1
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:30:00Z tell:findings r1 - ok >> "${p}/.swarm/events.tsv"
+# fix <sed script> [new file] — a commit on OLD in r1's worktree that edits doc.md (and adds the new file); prints it.
+fix() {
+  "${GIT[@]}" -C "${RW}" reset -q --hard "${OLD}"
+  sed -e "$1" "${RW}/doc.md" > "${RW}/doc.new" && mv "${RW}/doc.new" "${RW}/doc.md"
+  [[ -z "${2:-}" ]] || echo new > "${RW}/$2"
+  "${GIT[@]}" -C "${RW}" add -A && "${GIT[@]}" -C "${RW}" commit -q -m fix && git -C "${RW}" rev-parse HEAD
+}
+WIDE="$(fix 's/^line 3$/line three/; s/^line 8$/line eight/')"
+ADJ="$(fix 's/^line [34]$/line three-ish/')"
+OTHER="$(fix 's/^line 3$/line three/' other.txt)"
+NARROW="$(fix 's/^line 3$/line three/')"
+GROW="$(fix '3s/$/ X/; 3G')"   # line 3 reworded, and a line added after it
+# at <sha> — r1's worktree and its PR's head at <sha>. recheck [old head] — review-r1's recheck of doc.md:3.
+at() { "${GIT[@]}" -C "${RW}" reset -q --hard "$1"; echo "$1" > "${ROOT}/head"; }
+recheck() { HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${1:-${OLD}}" doc.md:3; }
+was="$(reviews_now)"
+at "${WIDE}"
+check "--recheck on a diff that also changes an unnamed line refuses, naming the line and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "changes doc.md at line 8, which no file:line point names" "${o}")|$(has "a full round is due: swarm.sh review-agent --next r1 ${PR}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# git joins edits to lines 3 and 4 into one hunk, which holds the named line 3.
+at "${ADJ}"
+check "--recheck on a diff that also changes the unnamed line next to the named one refuses, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "changes doc.md at line 4, which no file:line point names" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# Line 8 passes the hunk check once named, but round 1's findings named only doc.md:3.
+at "${WIDE}"
+check "--recheck naming a point round 1's findings never named refuses, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${OLD}" doc.md:3 doc.md:8)"; echo "$?|$(has "doc.md:8 is no point the ## Findings of" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+at "${OTHER}"
+check "--recheck on a diff that also adds another file refuses, naming it and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "changes more than lines of a/other.txt b/other.txt" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+at "${GROW}"
+check "--recheck on a diff that rewords a named line and adds one after it refuses, naming --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "adds 1 line(s) to doc.md at line 3, more than it removes" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+at "${NARROW}"
+findings "${ROUND1}" "codex: the summary misstates the flow"
+check "--recheck that leaves a finding with no file:line refuses, naming it and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "names no point given, which a pass would drop: codex: the summary misstates the flow" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# One finding citing two points, rechecked with one: the other half would go unfixed.
+findings "codex, doc.md:3 and doc.md:8 misstate it"
+check "--recheck of one point of a finding that cites two refuses, naming the other and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "cite doc.md:8, which is no point given, so a pass would drop it: codex, doc.md:3 and doc.md:8 misstate it" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# The same two lines in shorthand: a list after the citation, and a bare :8 later in the finding.
+findings "codex, doc.md:3,8 misstate it"
+check "--recheck of doc.md:3 when a finding cites doc.md:3,8 refuses, naming the list and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "cite doc.md:3,8, which is no point given" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "codex, doc.md:3 (and :8) misstate it"
+check "--recheck of doc.md:3 when a finding cites doc.md:3 (and :8) refuses, naming :8 and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "cite :8, which is no point given" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "${ROUND1}" "codex, doc.md:5, also misstates it"
+check "--recheck naming a point the diff does not change refuses, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${OLD}" doc.md:3 doc.md:5)"; echo "$?|$(has "does not change doc.md:5, a named point" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "codex, other/doc.md:3, misstates it"
+check "--recheck of doc.md:3 when the findings name other/doc.md:3 refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "doc.md:3 is no point the ## Findings of" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "${ROUND1}"
+echo '{"total_count":1,"check_runs":[{"name":"test","status":"in_progress","conclusion":null}]}' > "${ROOT}/checks"
+check "--recheck while CI runs refuses, saying to wait and run --recheck again, not --next, and changes no file under .swarm/reviews" "1|yes|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "CI on ${NARROW:0:7} has not finished: test (in_progress)" "${o}")|$(has "wait for it (swarm.sh wait-pr ${PR}), then run swarm.sh review-agent --recheck r1" "${o}")|$([[ "${o}" != *--next* ]] && echo yes || echo "no, got: ${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+echo "${GREEN}" > "${ROOT}/checks"; touch "${ROOT}/ghfail"
+check "--recheck when gh cannot read CI refuses, saying to run --recheck again, not --next, and changes no file under .swarm/reviews" "1|yes|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: error gh api" "${o}")|$(has "run swarm.sh review-agent --recheck r1" "${o}")|$([[ "${o}" != *--next* ]] && echo yes || echo "no, got: ${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${ROOT}/ghfail"; touch "${ROOT}/ghhang"
+# The stub's read sleeps 300s; with SWARM_RECHECK_CI_SECONDS=1 the recheck ends long before it, under 120s
+# on a loaded machine too. The kill can reach gh first, so ci_gate's own error may come back in place of
+# the timeout: either says the same.
+t0=${SECONDS}
+check "--recheck whose CI read hangs ends after SWARM_RECHECK_CI_SECONDS, saying to run it again, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(SWARM_RECHECK_CI_SECONDS=1 recheck)"; echo "$?|$(has "could not read CI on ${NARROW:0:7}: " "${o}")|$( (( SECONDS - t0 < 120 )) && echo yes || echo "no, took $((SECONDS - t0))s")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${ROOT}/ghhang"
+echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"failure","html_url":"u"}]}' > "${ROOT}/checks"
+check "--recheck on a head that is not green refuses, naming --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "the head ${NARROW:0:7} is not green: test (failure)" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+echo "${GREEN}" > "${ROOT}/checks"
+check "--recheck from an old head other than the one review-r1 last reviewed refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(recheck "${WIDE}")"; echo "$?|$(has "${WIDE} is not the head review-r1 last reviewed" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# .head names OLD from the moment round 1 started: until its findings file is written there is no review to recheck.
+mv "${p}/.swarm/reviews/r1.md" "${ROOT}/r1.md.aside"; was="$(reviews_now)"
+check "--recheck before the old head's round wrote its findings refuses and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "holds no finished review of ${OLD}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+mv "${ROOT}/r1.md.aside" "${p}/.swarm/reviews/r1.md"
+o="$(recheck)" || echo "FAIL review-agent --recheck r1 exited non-zero: ${o}"
+check "a green head whose diff changes only doc.md:3, named at the start of its finding, passes: the new head's findings file and .head, the old findings kept" \
+  "head: ${NARROW}|yes|yes|${NARROW}|head: ${OLD}" \
+  "$(head -1 "${p}/.swarm/reviews/r1.md")|$(grep -qx '## Findings' "${p}/.swarm/reviews/r1.md" && echo yes || echo no)|$(has "the wording recheck passed" "$(cat "${p}/.swarm/reviews/r1.md")")|$(cat "${p}/.swarm/reviews/r1.head")|$(head -1 "${p}/.swarm/reviews/r1.md.prev")"
+check "events.tsv gets review-agent:recheck r1 ok" "review-agent:recheck	r1	ok" \
+  "$(awk -F'\t' '$3 == "r1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
+# A round on NARROW names doc.md:10, the last line; its fix leaves it with no newline, which git marks after it.
+printf '%s\n' "head: ${NARROW}" "## Findings" "codex, ${RW}/doc.md:10, misstates it" > "${p}/.swarm/reviews/r1.md"
+sed '$d' "${RW}/doc.md" > "${RW}/doc.new" && printf 'line ten' >> "${RW}/doc.new" && mv "${RW}/doc.new" "${RW}/doc.md"
+"${GIT[@]}" -C "${RW}" commit -q -am "fix 10" && TEN="$(git -C "${RW}" rev-parse HEAD)" && echo "${TEN}" > "${ROOT}/head"
+check "a fix to a named last line that leaves no newline at its end, its finding under the worktree's path, passes" "0|head: ${TEN}" \
+  "$(set +e; HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${NARROW}" doc.md:10 >/dev/null; echo "$?")|$(head -1 "${p}/.swarm/reviews/r1.md")"
+check "the recheck counts no round: the next --next prints round 2, as the one findings tell gives" "yes" \
+  "$(has "Review round 2 of story r1" "$(HERDR_PANE_ID="${RP}" run review-agent --next r1 "${PR}")")"
 
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 

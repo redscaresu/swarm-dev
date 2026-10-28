@@ -2,6 +2,7 @@ import calendar, json, re, signal, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 CI_OK, CI_RED, CI_TIMEOUT, CI_ERROR = 0, 1, 2, 3   # ci_gate main's exit codes (merge.sh's MAIN_CI_*)
+UNLISTED = 4   # behind's exit when the compare cannot list what the base gained (merge.sh's BEHIND_UNLISTED)
 # A gh error worth retrying, as merge.sh's WAIT_PR_TRANSIENT: matched against gh's own words only.
 TRANSIENT = re.compile(r"\b(rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|no such host|network is unreachable|stream error|HTTP (408|429|50[0234]))\b")
 RUN_ID = re.compile(r"https://github\.com/[^ ;]+/actions/runs/([0-9]+)")   # an Actions run's id in a check's URL
@@ -10,6 +11,10 @@ COMPARE_FILES = 300  # the most files the compare API lists; the PR files API li
 
 class Err(Exception):
     """gh failed, or answered something unreadable: main_ci reads again."""
+
+class Unlisted(Err):
+    """behind's compare lists no file for its commits, or may have cut its list short: merging the base
+    in clears it. Exits UNLISTED."""
 
 class Unread(Exception):
     """A workflow written in YAML this does not read: never retried, never skipped."""
@@ -136,6 +141,68 @@ def admin(repo, base, sha, method):
         if behind:
             why.append("%s requires the head up to date, and it is %d commit(s) behind %s" % (base, behind, base))
     return why
+
+# GitHub's compare lists this many files at most: a list that long may be cut short.
+COMPARE_FILES = 300
+
+def behind(repo, sha, base, board, wait):
+    """The commits base has that sha lacks, and each path they change that is off board's paths (a
+    renamed file's old path too): compare sha...base, whose ahead_by counts them and whose files are
+    their changes taken together. A board entry ending in / is a folder, any other a file, as merge.sh's
+    on_board_paths has them; a README.md there is off the board, since a test may check it (this repo's
+    CI gate tests one). A transient gh error (TRANSIENT, in gh's own words) is read again, READ_TRIES
+    reads in all, wait seconds apart; any other fails at once. A list of COMPARE_FILES or more may be cut
+    short, and commits with no file listed may be a list GitHub left out: both are Unlisted."""
+    path = "repos/%s/compare/%s...%s" % (repo, sha, urllib.parse.quote(base, safe=""))
+    for i in range(READ_TRIES):
+        try:
+            d = json.loads(gh("api", path))
+            break
+        except Err as e:
+            if i == READ_TRIES - 1 or not TRANSIENT.search(str(e).split(": ", 1)[-1]):
+                raise
+            time.sleep(wait)
+    try:
+        n, files = d["ahead_by"], d["files"]
+        paths = [p for f in files for p in (f["filename"], f.get("previous_filename")) if p]
+    except (KeyError, TypeError, AttributeError) as e:
+        raise Err("unreadable compare of %s with %s: %r" % (sha[:7], base, e))
+    if not isinstance(n, int):
+        raise Err("unreadable compare of %s with %s: ahead_by %r" % (sha[:7], base, n))
+    if len(files) >= COMPARE_FILES:
+        raise Unlisted("the compare of %s with %s lists %d files, so it may be cut short" % (sha[:7], base, len(files)))
+    if n and not paths:
+        raise Unlisted("the compare of %s with %s lists no file for %d commit(s)" % (sha[:7], base, n))
+    def on(p):
+        return p.rsplit("/", 1)[-1] != "README.md" and any(p.startswith(b) if b.endswith("/") else p == b for b in board)
+    return n, [p for p in paths if not on(p)]
+
+def merged(repo, head, new, second):
+    """The paths new, a merge of second into head, cannot be shown to take whole from second, as a list
+    (empty when none): compare head...new, the merge against head, must list the files compare
+    head...second lists (second against where it and head part), each with the same status, old path and
+    blob, and none of them may be a file compare second...head lists (the PR's own changes since then).
+    So every file the merge changes is the base's own version of a file the PR left alone. A conflict
+    resolved by hand, an edit of the merge's own, a PR edit dropped for the base's version and a file both
+    sides changed are all listed: patches would pass a base change made at another place. A list of
+    COMPARE_FILES or more may be cut short, so it is an error, as is a read that fails."""
+    def files(base, tip):
+        d = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, base, tip)))
+        try:
+            fs = {f["filename"]: f for f in d["files"]}
+        except (KeyError, TypeError) as e:
+            raise Err("unreadable compare of %s with %s: %r" % (base[:7], tip[:7], e))
+        if len(fs) >= COMPARE_FILES:
+            raise Err("the compare of %s with %s lists %d files, so it may be cut short" % (base[:7], tip[:7], len(fs)))
+        return fs
+    def change(f):
+        return f.get("status"), f.get("previous_filename"), f.get("sha")
+    got, want, pr = files(head, new), files(head, second), files(second, head)
+    def paths(f):   # a file's path, and its old one when renamed
+        return {f["filename"], f.get("previous_filename")} - {None}
+    ours = set().union(*map(paths, pr.values()))
+    return [n for n in sorted(set(got) | set(want))
+            if n not in got or n not in want or change(got[n]) != change(want[n]) or paths(got[n]) & ours]
 
 def graphql(query, **v):
     """One GraphQL read: v's ints as -F (typed), every other value as -f (a string)."""
@@ -444,17 +511,35 @@ def covers(f, base, files):
             return False
     return True
 
-def pr_files(repo, n, changed, status=False, base=None, sha=None):
+def pr_files(repo, n, changed, status=False, base=None, sha=None, hold=None):
     """Every path PR n changes, a renamed file's old one too, or None when fewer than its changed
     count come back (the API lists 3000 at most). With base and sha, the files of base...sha
     instead, the PR's files at that head whatever head it has now (the API lists 300 at most). With
-    status, each as "<status> <path>": added, modified, removed, renamed or copied, empty when the
-    API gives none."""
-    got = []
+    status, each as "<status> <path>": added, modified, removed, renamed or copied, empty when the API
+    gives none. With hold, the seconds between reads for protected_hold's read, and only there: a
+    transient gh error (TRANSIENT, in gh's own words) is read again, READ_TRIES reads in all, and a
+    list the compare cannot give is an Err that says why (it lists COMPARE_FILES at most, so a PR of
+    more is never listed, a PR of no file has none, and a shorter list than changed is cut), where
+    every other caller gets None or [] as before."""
+    got, tries = [], READ_TRIES if hold is not None else 1
     if sha:
-        got = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha))).get("files")
+        if hold is not None and changed > COMPARE_FILES:
+            raise Err("the compare of %s with %s lists at most %d files, and the PR changes %d, so it cannot list them all" % (base, sha[:7], COMPARE_FILES, changed))
+        if hold is not None and not changed:
+            raise Err("the PR changes no file")
+        path = "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha)
+        for i in range(tries):
+            try:
+                got = json.loads(gh("api", path)).get("files")
+                break
+            except Err as e:
+                if i == tries - 1 or not TRANSIENT.search(str(e).split(": ", 1)[-1]):
+                    raise
+                time.sleep(hold)
         if not isinstance(got, list):
             raise Err("unreadable files for %s...%s" % (base, sha[:7]))
+        if hold is not None and len(got) != changed:
+            raise Err("the compare of %s with %s lists %d of the %d files the PR changes" % (base, sha[:7], len(got), changed))
     else:
         for d in docs("repos/%s/pulls/%s/files?per_page=100" % (repo, n)):
             if not isinstance(d, list):
@@ -791,6 +876,18 @@ try:
         if why:
             print("; ".join(why))
             sys.exit(1)
+    elif mode == "behind":
+        try:
+            n, off = behind(repo, args[0], args[1], [b for b in args[2].split("\n") if b], float(args[3]))
+        except Unlisted as e:
+            print("error %s" % e)
+            sys.exit(UNLISTED)
+        print("\n".join([str(n)] + off))
+    elif mode == "merged":
+        extra = merged(repo, args[0], args[1], args[2])
+        if extra:
+            print(", ".join(extra[:5]) + (" and %d more" % (len(extra) - 5) if len(extra) > 5 else ""))
+            sys.exit(1)
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
     elif mode == "pushed":
@@ -802,7 +899,7 @@ try:
         print(msg)
         sys.exit(rc)
     elif mode in ("files", "files-status"):
-        files = pr_files(repo, args[0], int(args[1]), mode == "files-status", *args[2:4])
+        files = pr_files(repo, args[0], int(args[1]), mode == "files-status", *args[2:4], hold=float(args[4]) if len(args) > 4 else None)
         if not files:
             raise Err("gh listed no files, or fewer than the PR changes")
         print("\n".join(files))

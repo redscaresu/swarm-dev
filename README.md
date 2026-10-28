@@ -48,8 +48,9 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
    "an". A bare file does not clash with a part of that file.
 4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
    the agreed HLD over its work lists `merge` in its `grants:`.
-   With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
-   waits for you. In that mode no conductor starts until your Claude Code settings allow
+   With `merge = agent`, the conductor merges it, except a story marked `costs: money` and a story PR
+   that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, which always wait for you.
+   In that mode no conductor starts until your Claude Code settings allow
    `swarm.sh merge` (step 3 of Getting started names the rule). `swarm.sh conduct` prints the rule
    to add, and so does `swarm.sh next` while it waits on a working conductor. After a merge, main is
    judged by the checks it requires, and any other red check prints a `warning:` line. A required
@@ -104,20 +105,22 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | a draft HLD | finish it with the co-author, then agree it; its `grants:` are yours to set |
 | proposed epics | agree each with `/swarm-dev:epic`, or say what to change |
 | a draft epic | finish it with the co-author, then agree it |
+| a draft epic the lead sets active (`draft epic: <slug>, the lead sets it active (<why>)`) | nothing: its `parent:` is active or split, an agreed HLD over it grants `epics`, or `lead_epics = on`, so the lead sets it active in a board PR |
 | a staged epic (`staged epic: <slug>, stage v<T>, after v<P>`) | nothing: once the base has a tag at or above `v<P>`, the lead sets it active in a board PR, which you merge unless `merge = agent` or the HLD grants `merge`. Leave that PR unmerged to say not yet. To take an epic out of its stage, drop its `stage:` or `hld:` |
 | proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it. For a `later` epic, say go and the lead sets it `active` with `agreed: <today>` |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
+| an agent waiting on a prompt or a dialog, or in manual mode | answer the prompt in the pane the lead names, or turn manual mode off there. The lead hears of most within a poll. Manual mode turned on, or a dialog opened, at an idle box can take up to 5 minutes, and a slow pane read ahead of it can add a poll. A ready story's builder in manual mode it handles itself: it closes the pane, then restarts or holds the story |
 | an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
 
 ## Watching it
 
 | Command | What it shows |
 |---|---|
-| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
-| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories. It gives its herdr, gh and claude reads, each agent's pane read included, and its git fetch and ls-remote, 30 seconds in all, and a last `skipped (over 30 s): ...` line names any read it cut. |
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day. Each frame gives its herdr, Claude Code and GitHub reads 30 seconds in all; a read still running then is cut, and the frame names it ([details](docs/dash.md)). |
+| `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories and for ready stories with no build. It gives its herdr, gh and claude reads, each agent's pane read included, and its git fetch and ls-remote, 30 seconds in all, and a last `skipped (over 30 s): ...` line names any read it cut. |
 | `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, and how long ready work sat with no build while its conductor ran), how each model did, how well the planner guessed which stories were easy and how big, what each review round found, which agents spend GitHub's API budget, and how long local `make test` runs take by how many ran at once. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
@@ -156,9 +159,16 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. `swarm.sh merge` reads the grant at the head it merges, and refuses if a push has moved
   the head. Under `merge = human`, the lead merges a release only when every story merged since
-  the last tag is under an agreed HLD that lists `release`.
+  the last tag is under an agreed HLD that lists `release`. Under either mode, a PR that changes
+  `.claude/`, `.github/`, `hooks/` or a root `Makefile` waits for you to merge it by hand.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
+- Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
+  does not merge it while the base has commits the PR's head lacks that change more than board files.
+  It has GitHub merge the base into the PR's branch, checks that the new head adds only the base's
+  commits, and stops with a `base merged:` line. Under `merge = agent` the conductor waits for that
+  head's CI and merges it. When GitHub cannot merge the base in (a conflict, say), the builder does,
+  and the conductor reviews and merges the new head ([reference.md § Merging](docs/reference.md#merging)).
 - Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
   holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
   PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).
@@ -179,8 +189,9 @@ claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swa
 ```
 
 Restart Claude Code afterwards. Agents already running stay on the old version until
-`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. upgrade runs
-detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
+`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. A builder
+waits while the Claude review agent reviewing its PR is busy and still on the old version. upgrade
+runs detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
 
 An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
 `next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
@@ -188,6 +199,10 @@ An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage
 Upgrading to 0.27: an HLD that was split into epics before 0.27 has no `planned:` line. Once its
 epics leave the board, `next` offers to plan it again. Add `planned: <date>` to its front matter
 by hand.
+
+On a board inside the project's repo, an agreed HLD must end with a line that is exactly
+`## Epics`, followed only by blank lines and links `- [<slug>](../epics/<slug>.md)` to epics on the
+board. `next` offers no `/plan-hld` for any other HLD, and the gate says what to change.
 
 On a board outside the project's repo, `/plan-hld` writes epics in place. If a run stops part way,
 `next` offers `/plan-hld <hld>` again, and the rerun overwrites the epics that run wrote. Once work
