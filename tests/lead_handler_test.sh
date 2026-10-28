@@ -4,15 +4,16 @@
 # kind, reads the queue once (`swarm.sh wait --lead 0`), and checks the line came out and that the handler
 # names it as a backticked `<kind>: ` line. A kind on GAPS is a known gap, printed but not yet handled.
 # Both lists are |-separated, as a kind may hold a space.
-# gh is a stub answering a green head; herdr a stub listing ${ROOT}/agents (no agent when it is missing),
-# whose agent read prints ${ROOT}/pane.txt.
+# gh is a stub answering a green head, whose pr list prints ${ROOT}/prs.json (no PR when it is missing) and
+# repo view the origin's owner/name;
+# herdr a stub listing ${ROOT}/agents (no agent when it is missing), whose agent read prints ${ROOT}/pane.txt.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt|unmerged|conflict"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -23,10 +24,13 @@ P="${ROOT}/proj"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111; URL=https://github.com/na-owner/na-repo/pull/41
 mkdir -p "${P}/.claude/swarm" "${B}" "${P}/.swarm/state" "${ROOT}/bin"
 git -C "${P}" init -q
+git -C "${P}" remote add origin https://github.com/na-owner/na-repo.git
 
-printf '#!/bin/sh\nH="%s"\n' "${H}" > "${ROOT}/bin/gh"
+printf '#!/bin/sh\nH="%s"\nR="%s"\n' "${H}" "${ROOT}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 case "$*" in
+  "pr list"*) cat "${R}/prs.json" 2>/dev/null || echo '[]' ;;
+  "repo view"*) echo na-owner/na-repo ;;
   "pr view"*) read -r _ || true; echo "${H}" ;;
   *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
   *status*) echo '{"total_count":0,"statuses":[]}' ;;
@@ -48,10 +52,16 @@ check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "
 story() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${B}/$1.md"; }
 ev() { printf '%s\t%s\t%s\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3:-ok}" >> "${P}/.swarm/events.tsv"; }
 
+# pr_json <mergeable> — gh pr list's one PR: story s's, opened two hours ago, its one check passed.
+pr_json() {
+  printf '[{"url":"%s","headRefName":"story/s","headRefOid":"%s","mergeable":"%s","createdAt":"%s","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}]}]\n' \
+    "${URL}" "${H}" "$1" "$(perl -MPOSIX -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - 7200))')" > "${ROOT}/prs.json"
+}
+
 # board <kind> — a board on which lead_queue prints a line of <kind>, and nothing else.
 board() {
   rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
-    "${ROOT}/agents" "${ROOT}/pane.txt" "${P}/.swarm/state/tab"
+    "${ROOT}/agents" "${ROOT}/pane.txt" "${P}/.swarm/state/tab" "${ROOT}/prs.json" "${P}/.swarm/reviews"
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
   echo "merge = human" > "${P}/.claude/swarm/config"
   case "$1" in
@@ -80,6 +90,12 @@ board() {
     prompt) story s "kind: code" "status: ready"; echo "w:p1 s" > "${P}/.swarm/state/tab"
             echo '{"name":"s","agent_status":"blocked","pane_id":"w:p1"}' > "${ROOT}/agents"
             cp "${HOME_DIR}/tests/fixtures/panes/prompt.txt" "${ROOT}/pane.txt" ;;
+    # A ready story's PR, reviewed on its green head two hours ago and still open.
+    unmerged) story s "kind: code" "status: ready"; mkdir -p "${P}/.swarm/reviews"
+              printf 'head: %s\n\n## Findings\n\nnone\n' "${H}" > "${P}/.swarm/reviews/s.md"
+              perl -e 'my $t = time - 7200; utime $t, $t, shift' "${P}/.swarm/reviews/s.md"
+              pr_json MERGEABLE ;;
+    conflict) story s "kind: code" "status: ready"; pr_json CONFLICTING ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }
