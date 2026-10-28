@@ -73,7 +73,7 @@ check "1 with the ladder on, a stepped up: stop, whose head did not move, sends 
 check "1 with the ladder off, the brief names no step-up" no "$(has 'stepped up' "${brief}")"
 check "1 the pass step's moved head sends the stop note before it stops" yes \
   "$(has 'then send the conductor the stop note, as below, naming that `head moved:` line, and stop' "${brief}")"
-check "1 the stop note goes to s1's epic conductor" yes "$(has 'note '"${F%.md}"'.stop.md`' "${brief}")"
+check "1 the stop note goes to s1's epic conductor" yes "$(has 'tell conduct-e note '"${F%.md}"'.stop.md`' "${brief}")"
 rule="$(flat "$(lib review_rule)")"
 check "1 the conductor starts a new review on a head moved: note" yes \
   "$(has 'A why that starts `head moved:` names a head that review agent never reviewed: start the review agent again on the PR at once' "${rule}")"
@@ -119,9 +119,16 @@ rm -f "${F}"; mv "${B}/stories/s1.md.bak" "${B}/stories/s1.md"
 check "3 the conductor starts nothing on a pass refusal" yes \
   "$(has 'When review-agent refuses because its findings file is a pass of that head and the story is no longer ready, the review passed and its hand-off has the PR: start nothing for that head' "${rule}")"
 
-# --- 4. A held: stop note waits for the parent's merge.
-check "4 a held: stop note nudges no builder and starts no review" yes \
-  "$(has 'A why that starts `held: <slug> waits for <p> to merge` is a stacked story `swarm.sh review` held until its parents merge: nudge no builder and start no review agent' "${rule}")"
+# --- 4. A held: stop note waits for the parent's merge. The note is the one an agent writes from what
+# swarm.sh review prints when it holds a stacked story (its die, so after `swarm: `), as review_handoff
+# says, matched against the pattern the rule gives, with its placeholders filled.
+held="$(lib 'review_state() { REVIEW_HELD=p; }; money_walk() { :; }; mark_review s1 '"${URL}" || true)"
+check "4 swarm.sh review's hold is printed after swarm: " yes "$(has 'swarm: held: s1 waits for p to merge' "${held}")"
+note="review-s1 stopped on ${HB}: ${held%%$'\n'*}"
+pat="$(sed -n 's/.*A why that holds `\(held: <slug> waits for <p> to merge\)` (swarm\.sh review.s refusal, which it prints after `swarm: `) is a stacked story `swarm\.sh review` held until its parents merge: nudge no builder and start no review agent.*/\1/p' <<< "${rule}")"
+pat="${pat//<slug>/s1}"; pat="${pat//<p>/p}"
+check "4 the rule's held: pattern matches the note an agent writes, and nudges no builder and starts no review" yes \
+  "$([[ -n "${pat}" && "${note}" == *"${pat}"* ]] && echo yes || echo "no: pattern '${pat}', note '${note}'")"
 check "4 the new head after the parent's merge gets its review" yes \
   "$(has 'once <p> merges, the Stacked rule above has its builder merge it in, and that new head gets its review agent then' "${rule}")"
 
@@ -158,21 +165,65 @@ check "6 a stop note with no conductor running wakes the lead" "${LINE}" "$(poll
 check "6 it wakes the lead once" "" "$(poll)"
 rm -rf "${P}/.swarm/lead"
 check "6 it is an alert: a run's first read prints it" "${LINE}" "$(poll)"
+# A conductor has the note only when the tell reached it (tell's .told marker) and it still runs.
+running() { printf '{"name":"conduct-e","agent_status":"working","pane_id":"w:p1"}' > "${ROOT}/agents"; echo "w:p1 conduct-e" > "${P}/.swarm/state/tab"; }
+fresh_lead; running
+check "6 a conductor started after a failed tell never got the note: the line comes" "${LINE}" "$(poll)"
+mkdir -p "${P}/.swarm/briefs"; echo brief > "${P}/.swarm/briefs/conduct-e.md"; touch -t 202610280900 "${P}/.swarm/briefs/conduct-e.md"
+told() { echo conduct-e > "${STOP%.md}.told"; touch -t "$1" "${STOP%.md}.told"; }
+touch -t 202610281000 "${STOP}"; told 202610281000
 fresh_lead
-printf '{"name":"conduct-e","agent_status":"working","pane_id":"w:p1"}' > "${ROOT}/agents"; echo "w:p1 conduct-e" > "${P}/.swarm/state/tab"
-check "6 a running conductor has the note: no line" "" "$(poll)"
-mkdir -p "${P}/.swarm"; echo report > "${P}/.swarm/conduct-e.report.md"
+check "6 a running conductor the tell reached has the note: no line" "" "$(poll)"
+touch -t 202610281100 "${P}/.swarm/briefs/conduct-e.md"
+fresh_lead
+check "6 that conductor started again since (its inbox cleared): the line comes" "${LINE}" "$(poll)"
+touch -t 202610280900 "${P}/.swarm/briefs/conduct-e.md"
+touch -t 202610281200 "${STOP}"
+fresh_lead
+check "6 a newer note than the tell's marker: the line comes" "${LINE}" "$(poll)"
+touch -t 202610281000 "${STOP}"
+echo report > "${P}/.swarm/conduct-e.report.md"
 fresh_lead
 check "6 a conductor that wrote its report has stopped: the line comes" "${LINE}" "$(poll)"
-rm -f "${P}/.swarm/conduct-e.report.md"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
-# review-agent's start removes the earlier agent's note, so the line goes; a refused or failed start keeps it.
+rm -f "${P}/.swarm/conduct-e.report.md" "${STOP%.md}.told" "${P}/.swarm/briefs/conduct-e.md"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
+# The tell itself leaves the marker: swarm.sh tell <conductor> note <stop note>, to conduct-e in its pane.
+running
+(cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:p9 \
+  bash "${SWARM}" tell conduct-e note "${STOP}" > /dev/null 2>&1) || true
+check "6 a stop note told to a conductor leaves a marker naming it" conduct-e "$(cat "${STOP%.md}.told" 2>/dev/null)"
+rm -f "${STOP%.md}.told" "${P}/.swarm/inbox/conduct-e.md"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
+
+# A story in review is shown only while a review agent still acts on it: not once merge held it for the user.
+sed -i.bak 's/^status: ready/status: review/' "${B}/stories/s1.md"; rm -f "${B}/stories/s1.md.bak"
+echo "merge = agent" > "${P}/.claude/swarm/config"
+fresh_lead
+check "6 a story in review its review agent still merges (merge = agent): the line comes" "${LINE}" "$(poll)"
+printf '2026-10-28T11:00:00Z\tmerge\ts1\tw:1\theld: s1 costs money; the user merges it\n' > "${P}/.swarm/events.tsv"
+fresh_lead
+check "6 a story in review that merge held for the user's merge: no line" "" "$(poll)"
+: > "${P}/.swarm/events.tsv"; rm -f "${P}/.claude/swarm/config"
+fresh_lead
+check "6 a story in review under merge = human, the user's: no line" "" "$(poll)"
+sed -i.bak 's/^status: review/status: ready/' "${B}/stories/s1.md"; rm -f "${B}/stories/s1.md.bak"
+
+# review-agent's start removes the earlier agent's note, so the line goes; a refused start, or a failed one
+# with no agent running, keeps it; an unclear start whose agent runs drops it.
 stubs='review_at_head() { REVIEW_SRC="${SRC}"; REVIEW_WT="${WT}"; REVIEW_HEAD="${HB}"; }
   require_trusted() { :; }; require_claude() { :; }; free_agent_name() { :; }; base_for() { echo main; }'
 # review-<slug> still open with no findings file: review-agent refuses before it touches a file.
 lib "${stubs}; agent_field() { echo w:p7; }; start_agent() { :; }; review_agent s1 ${URL}" > /dev/null || true
 check "6 a refused review-agent start keeps the note" "${NOTE}" "$(cat "${STOP}" 2>/dev/null)"
-lib "set -o pipefail; ${stubs}; agent_field() { :; }; start_agent() { return 1; }; review_start_failed() { echo start failed; }; review_agent s1 ${URL}" > "${ROOT}/failed" || true
-check "6 a review-agent start that fails puts the note back" "start failed|${NOTE}" "$(cat "${ROOT}/failed")|$(cat "${STOP}" 2>/dev/null)"
+# herdr surely sent nothing and no pane is listed: review_start_failed dies.
+lib "set -o pipefail; ${stubs}; agent_field() { :; }; herdr() { :; }; start_agent() { echo no pane >&2; return 1; }; review_agent s1 ${URL}" > "${ROOT}/failed" 2>&1 || true
+check "6 a review-agent start that fails with no agent running puts the note back" "yes|${NOTE}" \
+  "$(has 'review-agent: review-s1 did not start' "$(cat "${ROOT}/failed")")|$(cat "${STOP}" 2>/dev/null)"
+# The brief may have gone out, and the agent the start left runs (busy): review_start_failed returns.
+lib "set -o pipefail; ${stubs}; agent_field() { [[ ! -e '${ROOT}/began' ]] || echo w:p7; }; read_state() { echo busy; }
+  start_agent() { touch '${ROOT}/began'; echo herdr sent it the brief >&2; return 1; }; review_agent s1 ${URL}" > "${ROOT}/failed" 2>&1 || true
+rm -f "${ROOT}/began"
+check "6 an unclear start whose agent runs drops the earlier agent's note" "yes|no|no" \
+  "$(has 'but the agent is running' "$(cat "${ROOT}/failed")")|$( [[ -f "${STOP}" ]] && echo yes || echo no)|$( [[ -f "${STOP}.prev" ]] && echo yes || echo no)"
+echo "${NOTE}" > "${STOP}"
 lib "${stubs}; agent_field() { :; }; start_agent() { :; }; review_agent s1 ${URL}" > /dev/null
 check "6 a review-agent start removes the earlier agent's note" "no|no" "$( [[ -f "${STOP}" ]] && echo yes || echo no)|$( [[ -f "${STOP}.prev" ]] && echo yes || echo no)"
 fresh_lead
@@ -185,6 +236,33 @@ sed -i.bak 's/^status: done/status: ready/' "${B}/stories/s1.md"; rm -f "${B}/st
 rm -f "${STOP}"
 fresh_lead
 check "6 no stop note: no line" "" "$(poll)"
+
+# --- 1 (wait --lead). A pass refusal changes nothing for no-review: under merge = agent, after a pass of
+# HB, review --head and a merge held for the user, the conductor's restart on that head is refused; the
+# story's no-review: line stays quiet, since its exit would be refused the same way. A failed start in
+# its place does fire, so the setup can. gh fails here, offline; s1's builder is listed (no no-agent:).
+printf '#!/bin/sh\nexit 1\n' > "${ROOT}/bin/gh"; chmod +x "${ROOT}/bin/gh"
+echo "merge = agent" > "${P}/.claude/swarm/config"
+sed -i.bak 's/^status: ready/status: review/' "${B}/stories/s1.md"; rm -f "${B}/stories/s1.md.bak"
+printf 'prs: [%s]\n' "${URL}" > "${ROOT}/prs"; sed -i.bak "/^status: review/r ${ROOT}/prs" "${B}/stories/s1.md"; rm -f "${B}/stories/s1.md.bak"
+mkdir -p "${ROOT}/proj-wt/s1"
+printf 'head: %s\n## Findings\nnone\n## Handled by the review agent\nnone\n' "${HB}" > "${F}"; echo "${HB}" > "${F%.md}.head"
+printf '{"name":"s1","agent_status":"idle","pane_id":"w:p2"}' > "${ROOT}/agents"; echo "w:p2 s1" > "${P}/.swarm/state/tab"
+pass_refused="review-agent: ${F} is a pass of ${HB}, the PR's head, and s1 is no longer ready, so its hand-off (review, then merge or the user's merge) has the PR; nothing was started: a conductor starts nothing for this head, and the lead moves ${F} aside first to review it again"
+ev() { printf '2026-10-28T1%s:00:00Z\t%s\ts1\tw:1\t%s\n' "$1" "$2" "$3" >> "${P}/.swarm/events.tsv"; }
+: > "${P}/.swarm/events.tsv"; ev 0 story ok; ev 1 review-agent ok; ev 2 review "ok (${URL})"; ev 3 merge "held: s1 costs money; the user merges it"
+ev 4 review-agent "review-agent: review-s1 did not start (its pane w:p9 is closed)"
+fresh_lead
+check "1 a failed review-agent start after the pass fires no-review: (the setup can fire it)" yes "$(has 'no-review: s1' "$(poll)")"
+: > "${P}/.swarm/events.tsv"; ev 0 story ok; ev 1 review-agent ok; ev 2 review "ok (${URL})"; ev 3 merge "held: s1 costs money; the user merges it"
+ev 4 review-agent "${pass_refused}"
+fresh_lead
+check "1 a review-agent refused on a passed head fires no no-review:" no "$(has 'no-review:' "$(poll)")"
+printf '2026-10-28T15:00:00Z\tclose\treview-s1\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
+fresh_lead
+check "1 nor once review-s1 is closed" no "$(has 'no-review:' "$(poll)")"
+rm -f "${F}" "${F%.md}.head" "${P}/.claude/swarm/config" "${ROOT}/bin/gh"; rm -rf "${ROOT}/proj-wt"; : > "${P}/.swarm/events.tsv"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
+sed -i.bak -e 's/^status: review/status: ready/' -e '/^prs: /d' "${B}/stories/s1.md"; rm -f "${B}/stories/s1.md.bak"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

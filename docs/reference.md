@@ -387,11 +387,16 @@ and `tell goal failed:` lines (§ A tell to a busy agent is queued) on its first
 writes its note to `.swarm/reviews/<slug>.stop.md` and tells it to the story's conductor (§ Building).
 `wait --lead` prints
 `stopped: <slug> (<the note>), exit: act on its why as <conductor>'s review rule says, or start a conductor for the story and send it the note with swarm.sh tell <conductor> note <file>`
-for each such file whose story is on the board and not done, whose conductor runs in no pane
-of the poll's herdr list or has written its report. `review-agent` removes the note when it starts
-a new agent, so the line goes then. A start that fails puts the note back. A note whose tell failed, or that reached a
-conductor that has since stopped, comes to the lead this way. It reads the same herdr list as `no-agent:`;
-a poll whose list failed keeps the `stopped:` lines it saw last.
+for each such file whose story is on the board and not done, unless a conductor has the note. A
+conductor has it only when the note's `tell` reached it: `tell <conductor> note` then leaves
+`.swarm/reviews/<slug>.stop.told` naming the conductor. That conductor must still run in a pane of
+the poll's herdr list with no report written, and must not have been started again since, because a
+new start clears its inbox. So a note whose tell failed comes to the lead even after a conductor
+starts for the story, and so does one that reached a conductor that has since stopped. A story in
+review that no review agent still acts on gets no line: one whose merge `held:` it for the user's
+merge waits on the user. `review-agent` removes the note when it starts a new agent, so the line goes
+then; a start that fails with no agent running puts the note back. It reads the same herdr list as
+`no-agent:`; a poll whose list failed keeps the `stopped:` lines it saw last.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
@@ -1508,8 +1513,10 @@ starts. When `review-agent` refuses because the
 worktree is not at the PR's head or has uncommitted changes, the conductor
 starts it again once its `wait` on the builder returns, or on `watch`'s next line for that PR,
 whichever comes first; a refusal because the agent is still reviewing needs nothing, since that
-agent has the PR. A second refusal on the same head with the builder idle needs nothing either: the
-head is one GitHub made by merging the base in, which the review agent merging the PR waits on. From then on the PR is the review agent's: the
+agent has the PR. A refusal that says the PR's head is GitHub's merge of the base needs nothing
+either: the review agent merging the PR waits on that head. With no such head, a second refusal on
+the same head with the builder idle has the builder pull the PR's head (below, under a worktree
+behind the PR). From then on the PR is the review agent's: the
 conductor never waits on the PR or the agent, reads its review file, triages, tells the builder
 findings, logs a finding, closes the agent or merges. The command returns straight away, and records the head it reviews
 in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, never edits the PR's code and runs in the story's worktree and tab.
@@ -1566,7 +1573,7 @@ branch `story/<slug>`, so a story with two PRs never finishes with one of them s
 Waiting for the new head), so after `base merged:` the agent leaves it running until it exits. A
 `base merged, <cause>:` refusal goes back to the conductor or the lead as any other refusal does. A
 `held:` refusal leaves the PR for you. A stacked story that `review` holds until its parents merge
-(`held: <slug> waits for <p> to merge`) sends that line as its stop note. The conductor then nudges
+(`held: <slug> waits for <p> to merge`, printed after `swarm: `) sends that line as its stop note. The conductor then nudges
 no builder and starts no review agent. Once <p> merges, its Stacked rule has the builder merge it
 in, and the new head gets a review agent.
 It replies with the file and what the last command printed. A round whose findings the builder
@@ -1649,9 +1656,10 @@ How each kind of stop reaches an owner:
 - A fix-main story. It has no epic, but an epic's conductor builds it. The review agent's stop note
   goes to the conductor that started its build (the pane on its `story` line in events.tsv, named in
   a tab record as a conductor), as a merge note does, not to the backlog's.
-- No conductor. When the conductor the note went to is not running (no pane, or its report
-  written), `wait --lead` prints `stopped: <slug> (<the note>), exit: ...` until a review agent
-  starts on the story again or it leaves the board.
+- No conductor. When the note's tell reached no conductor that still runs (no pane, its report
+  written, or started again since), `wait --lead` prints `stopped: <slug> (<the note>), exit: ...`
+  until a review agent starts on the story again or it leaves the board. A story in review that
+  waits on the user's merge gets none.
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. There are two exceptions, and both are findings even when the file to fix

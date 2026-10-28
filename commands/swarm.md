@@ -348,11 +348,13 @@ Repeat until a step below says stop:
      `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. A
      `stopped: <slug> (review-<slug> stopped on <sha>: <why>), exit: <exit>` line is a review
      agent's stop note that no running conductor has: its tell failed, or the conductor it reached
-     has stopped. To hand it to a conductor, start one for the story's epic and send it the note
-     with the `swarm.sh tell <conductor> note <file>` the exit names. Otherwise act on the
+     has stopped or was started again since (a new start clears its inbox). To hand it to a
+     conductor, make sure one runs for the story's epic and send it the note with the
+     `swarm.sh tell <conductor> note <file>` the exit names, which hides the line while that
+     conductor runs. Otherwise act on the
      why yourself, as the `kept:` arm above says for a review file with a `stopped:` or `head moved:`
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
-     waits for <p> to merge` why waits for <p>'s merge, and a builder that pushed nothing gets one
+     waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board.
      Each line comes once, and again only after it has gone from the queue. Unlike `held:` and `merge:` lines, `unmerged:`, `conflict:` and `stopped:` lines come on a
      run's first read too. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If

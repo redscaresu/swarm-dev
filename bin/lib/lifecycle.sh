@@ -2727,21 +2727,33 @@ pr_lines() {
 
 # stop_lines — `stopped: <slug> (<the stop note>), exit: <exit>` for each review agent's stop note
 # (.swarm/reviews/<slug>.stop.md, which review_brief has it write and tell its conductor) that no
-# conductor has: its story is on the board and not done (review_agent removes the note when it starts
-# a new agent, so one left is the newest agent's), and the conductor the note went to (story_conductor) runs in no pane
-# of the poll's herdr list (LEAD_AGENTS) or has written its report, so the note's tell failed or reached
-# a conductor that has stopped. A poll with no herdr list keeps the stopped: lines LEAD_SEEN has, so a
-# missed read neither drops a line nor wakes the lead with it again.
+# conductor has. Its story is on the board and not done (review_agent removes the note when it starts
+# a new agent, so one left is the newest agent's), and, in review, still a review agent's to act on
+# (review_agent_owns): one that waits on the user's merge (a merge held: hand-off) is not the lead's.
+# A conductor has the note only when its tell reached one (tell's .told marker beside the note, no
+# older than it, naming the conductor) that still runs in a pane of the poll's herdr list (LEAD_AGENTS)
+# with no report written and was not started again since (its brief no newer than the marker: a new
+# start clears its inbox). A tell that failed leaves no marker, so a conductor started later, which
+# never got the note, hides nothing. A poll with no herdr list keeps the stopped: lines LEAD_SEEN has,
+# so a missed read neither drops a line nor wakes the lead with it again.
 stop_lines() {
-  local f slug story cond note
+  local f slug story cond note told
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   if [[ -z "${LEAD_AGENTS_OK}" ]]; then grep '^stopped: ' "${LEAD_SEEN}" 2>/dev/null || true; return 0; fi
   for f in "${PROJECT_DIR}"/.swarm/reviews/*.stop.md; do
     [[ -f "${f}" ]] || continue
     slug="${f##*/}"; slug="${slug%.stop.md}"; story="${BOARD}/stories/${slug}.md"
-    [[ -f "${story}" && "$(fm "${story}" status)" != "done" ]] || continue
+    [[ -f "${story}" ]] || continue
+    case "$(fm "${story}" status)" in
+      done) continue ;;
+      review) review_agent_owns "${story}" || continue ;;
+    esac
+    told="$(cat "${f%.md}.told" 2>/dev/null)" || told=""
+    if [[ -n "${told}" && ! "${f}" -nt "${f%.md}.told" && -n "$(list_field "${told}" pane_id <<< "${LEAD_AGENTS}")" \
+          && ! -f "$(conductor_report "${told}")" && ! "${PROJECT_DIR}/.swarm/briefs/conduct-$(conduct_epic "${told}").md" -nt "${f%.md}.told" ]]; then
+      continue
+    fi
     cond="$(story_conductor "${slug}")"
-    [[ -z "$(list_field "${cond}" pane_id <<< "${LEAD_AGENTS}")" || -f "$(conductor_report "${cond}")" ]] || continue
     note="$(head -1 "${f}" | tr -d '\r')"
     echo "stopped: ${slug} (${note}), exit: act on its why as ${cond}'s review rule says, or start a conductor for the story and send it the note with swarm.sh tell <conductor> note ${f}"
   done
@@ -3100,7 +3112,8 @@ no_agent_busy() {
 # .swarm/briefs/review-<slug>.md: an ok one, or one that failed after the brief (review_start_failed's
 # messages, or its mktemp), else 0: a preflight that fails leaves an earlier attempt's brief. A refusal that leaves an earlier ok start of this build, not closed since, in place
 # (review-<slug> still reviewing, or its name still held: free_agent_name's refusals name it) changes
-# nothing; with no such start, the name is held by something else, and the refusal is a failed start. A slug whose
+# nothing; with no such start, the name is held by something else, and the refusal is a failed start. A
+# refusal of a head whose findings file passes it changes nothing either, whatever came before it. A slug whose
 # ok start an ok close of review-<slug> (full or cut name) followed is left out: the close is the
 # conductor's own act.
 no_review_events() {
@@ -3118,6 +3131,8 @@ no_review_events() {
     ($3 in me) && ($2 == "review-agent" || ($2 == "review-agent:next" && $5 ~ /^ok/)) {
       s = $3; ok1 = $5 ~ /^ok/
       if (!ok1 && on[s] && ok[s] && !shut[s] && (index($5, " is still reviewing ") || index($5, rn[s] ": ") == 1 || index($5, "review-" s ": ") == 1)) next
+      # A refusal of a head that passed its review starts nothing and leaves that review in place.
+      if (!ok1 && index($5, "review-agent: ") == 1 && index($5, " is a pass of ")) next
       on[s] = 1; ok[s] = ok1; shut[s] = 0; url[s] = "-"; after[s] = 0
       wrote[s] = ok1 || $5 == "review-agent: mktemp failed; nothing was started" ||
         index($5, "review-agent: review-" s " did not start") == 1 || index($5, "review-agent: review-" s q "s start was unclear") == 1 ||

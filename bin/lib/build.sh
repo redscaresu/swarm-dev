@@ -124,8 +124,9 @@ stopped before a pass, and the story is yours again. A why that starts \`head mo
 that review agent never reviewed: start the review agent again on the PR at once, as above (on
 review-agent's refusals, do as above; one that says review-<slug> is still working is that agent
 ending the turn that sent the note: start it again once \`swarm.sh wait review-<slug>\` returns,
-in the background, the one wait on a review agent you run). A why that starts \`held: <slug> waits
-for <p> to merge\` is a stacked story \`swarm.sh review\` held until its parents merge: nudge no
+in the background, the one wait on a review agent you run). A why that holds \`held: <slug> waits
+for <p> to merge\` (swarm.sh review's refusal, which it prints after \`swarm: \`) is a stacked story
+\`swarm.sh review\` held until its parents merge: nudge no
 builder and start no review agent; once <p> merges, the Stacked rule above has its builder merge it
 in, and that new head gets its review agent then. Otherwise act on <why> as on your own wait on that builder:
 a stalled or stuck builder by the give-up and stuck rules above. When the builder is idle and pushed
@@ -629,7 +630,8 @@ review_agent() {
   # status decides.
   errf="$(mktemp)" || die "review-agent: mktemp failed; nothing was started"
   # An earlier agent's stop note goes aside the same way, so a stop file left is the newest agent's
-  # (stop_lines), and comes back when the start fails and the new agent wrote none.
+  # (stop_lines). It comes back when review_start_failed dies (no agent runs) and the new agent wrote
+  # none, and goes for good once an agent runs: a started one, or an unclear start whose agent runs.
   rm -f "${out%.md}.head"; moved=""
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
   if [[ -f "${out%.md}.stop.md" ]]; then mv "${out%.md}.stop.md" "${out%.md}.stop.md.prev"; fi
@@ -638,8 +640,8 @@ review_agent() {
     rm -f "${out}.prev" "${out%.md}.stop.md.prev" "${errf}"
   else
     err="$(cat "${errf}")"; rm -f "${errf}"
-    [[ -e "${out%.md}.stop.md" || ! -f "${out%.md}.stop.md.prev" ]] || mv "${out%.md}.stop.md.prev" "${out%.md}.stop.md"
-    review_start_failed "${slug}" "${moved}" "${err}"
+    review_start_failed "${slug}" "${moved}" "${err}" "${out%.md}.stop.md"
+    rm -f "${out%.md}.stop.md.prev"
   fi
   echo "${head}" > "${out%.md}.head"
 }
@@ -920,8 +922,14 @@ above, then run \`/code-review $2\`."
   fi
 }
 
-# review_start_failed <slug> <moved> <err> — after review_agent's start of review-<slug> failed with
+# stop_back [stop] — put back the stop note review_agent moved aside to <stop>.prev, unless <stop> is
+# empty or a stop note is there again (the new agent's).
+stop_back() { [[ -z "${1:-}" || -e "$1" || ! -f "$1.prev" ]] || mv "$1.prev" "$1"; }
+
+# review_start_failed <slug> <moved> <err> [stop] — after review_agent's start of review-<slug> failed with
 # <err> (its stderr), the last findings file moved aside to <slug>.md.prev when <moved> is non-empty.
+# Each time it dies, it first puts back the stop note review_agent moved aside to <stop>.prev, unless a
+# stop note is at <stop> again (stop_back): no agent runs, so the last one's stop still stands.
 # Returns, so review_agent records the head, only when the start was unclear and the agent runs: <err>
 # says the brief may have gone out (deliver_prompt's sent or unread tries) and read_state calls it busy
 # or waiting (herdr's working or blocked for codex), or idle with its session log showing the brief
@@ -949,14 +957,17 @@ review_start_failed() {
   fi
   case "${unclear}:${state}" in
     yes:unlisted)
+      stop_back "${4:-}"
       die "review-agent: review-$1's start was unclear and herdr could not list its agents, so its state is unknown${kept}; no head is on record. A conductor starts nothing; once herdr answers, the lead looks at it (herdr agent read ${name}) and, to review again, closes it and runs swarm.sh review-agent $1 <PR URL>" ;;
     yes:none|yes:gone|yes:herdr:) ;;   # nothing runs to have the brief
     yes:busy|yes:running|yes:waiting*|yes:herdr:working|yes:herdr:blocked)
       echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: it has the PR, so a conductor starts nothing; the lead may wait for it with swarm.sh wait review-$1"
       return 0 ;;
     yes:auth)
+      stop_back "${4:-}"
       die "review-agent: review-$1 took its brief and stopped on an expired login${kept}; no head is on record. A conductor starts nothing: only the user's /login clears it, and then the lead closes it (herdr pane close ${pane}) and runs swarm.sh review-agent $1 <PR URL>" ;;
     yes:*)
+      stop_back "${4:-}"
       die "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}; no head is on record. A conductor starts nothing; the lead looks at it (herdr agent read ${name}) and, to review again, closes it (herdr pane close ${pane}) and runs swarm.sh review-agent $1 <PR URL>" ;;
   esac
   if [[ -n "${pane}" ]]; then
@@ -965,6 +976,7 @@ review_start_failed() {
   fi
   if [[ -n "$2" && ! -f "${f}" ]]; then mv "${f}.prev" "${f}"; back="; ${f} is put back"; fi
   [[ ! -f "${f}.prev" ]] || back+="; the last review is kept aside in ${f}.prev"
+  stop_back "${4:-}"
   die "review-agent: review-$1 did not start${note}${back}"
 }
 
