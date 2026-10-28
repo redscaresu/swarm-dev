@@ -713,20 +713,25 @@ lead_blocked() {
 
 # agent_work_left <epic> — true while a story of <epic> (- for the stories with no epic, the backlog's),
 # of a kind an agent builds (agent_kind), is still an agent's: ready (to start, building, or with its PR
-# open and not yet in review), blocked but not lead_held (it waits on the lead), or in review with a review agent still to act on it (review_agent_owns); a story in review is
-# otherwise the user's. A fix-main story counts for every group, in any status, once its build has
-# started (one_off_started): it has no epic, and the conductor that started it owns it until its PR
-# merges. conductor_note's finish: line is its negation.
+# open and not yet in review), unless reconcile reopened it after its PR closed unmerged (the lead's);
+# blocked but not lead_held (it waits on the lead); or in review with a review agent still to act on it
+# (review_agent_owns); a story in review is otherwise the user's. A fix-main story has no epic: it counts
+# only for the group whose conductor started it (fix_main_owner), once its build has started
+# (one_off_started), in any status until its PR merges; one not started yet is nobody's. Stories the
+# brief has the conductor list for the lead without a board mark (a build that died, a not held: line)
+# still count: the brief exempts them. conductor_note's finish: line is its negation.
 agent_work_left() {
   local f slug e
   while IFS= read -r f; do
     slug="$(basename "${f}" .md)"; e="$(fm "${f}" epic)"
-    # A started fix-main story counts in any status, in review too, until its PR merges.
-    if [[ "${slug}" == fix-main-* && -z "${e}" ]] && one_off_started "${slug}"; then return 0; fi
-    [[ "${e:--}" == "$1" ]] || continue
     agent_kind "$(fm "${f}" kind)" || continue
+    if [[ "${slug}" == fix-main-* && -z "${e}" ]]; then
+      one_off_started "${slug}" && [[ "$(fix_main_owner "${slug}")" == "$1" ]] && return 0
+      continue
+    fi
+    [[ "${e:--}" == "$1" ]] || continue
     case "$(fm "${f}" status)" in
-      ready) return 0 ;;
+      ready) [[ "$(last_event "${slug}")" == $'reconcile\tok (reopened)' ]] || return 0 ;;
       blocked) lead_held "${f}" || return 0 ;;
       review) ! review_agent_owns "${f}" || return 0 ;;
     esac
@@ -734,11 +739,32 @@ agent_work_left() {
   return 1
 }
 
+# fix_main_owner <slug> — the group (an epic, or - for the backlog) whose conductor started fix-main
+# story <slug>: the pane of its last ok story line in events.tsv, named in a tab record of this project
+# (.swarm/state) as a conductor. Nothing when the lead or an unknown pane started it.
+fix_main_owner() {
+  local pane name e
+  pane="$(awk -F'\t' -v s="$1" '$2 == "story" && $3 == s && index($5, "ok") == 1 { p = $4 } END { print p }' "${EVENTS_LOG}" 2>/dev/null)"
+  [[ -n "${pane}" && "${pane}" != - ]] || return 0
+  name="$(awk -v p="${pane}" 'NF == 2 && $1 == p { n = $2 } END { print n }' "${STATE_DIR}"/* 2>/dev/null)"
+  [[ "${name}" == conduct-* ]] || return 0
+  e="$(conduct_epic "${name}")" || return 0
+  if [[ "${e}" == backlog ]]; then echo -; else echo "${e}"; fi
+}
+
+# note_group <slug> <epic> — the group a note about story <slug> goes to: <epic> (- for none), or for a
+# fix-main story its owner's (fix_main_owner) when one is known, since that conductor started it.
+note_group() {
+  local o=""
+  [[ "$1" != fix-main-* ]] || o="$(fix_main_owner "$1")"
+  echo "${o:-${2:--}}"
+}
+
 # lead_held <story-file> [seen] — true for a blocked story no agent can move until the lead acts: one
 # blocked by hand (by_hand_blocked), or one whose every open depends_on is the lead's, as lead_blocked
 # reads it (a hand step, or a story of a kind no agent builds or blocked by hand), or an agent's story
-# that is itself lead_held, so a chain of agent stories under a lead story waits too. [seen]
-# (space-separated slugs) ends a depends_on cycle, as not held.
+# that is itself lead_held, so a chain of agent stories under a lead story waits too. A depends_on
+# cycle ([seen], space-separated slugs) waits on the lead as well: no merge can break it.
 lead_held() {
   local p f open seen
   seen="${2:-} $(basename "$1" .md)"
@@ -747,36 +773,36 @@ lead_held() {
   open="$(open_deps "$(story_deps "$1")")"
   [[ -n "${open}" ]] || return 1
   for p in ${open}; do
-    [[ "${p}" =~ ^[a-z0-9-]+$ ]] || continue
+    [[ "${p}" =~ ^[a-z0-9-]+$ && " ${seen} " != *" ${p} "* ]] || continue
     f="${BOARD}/stories/${p}.md"
-    [[ -f "${f}" && " ${seen} " != *" ${p} "* ]] || return 1
+    [[ -f "${f}" ]] || return 1
     agent_kind "$(fm "${f}" kind)" || continue
     lead_held "${f}" "${seen}" || return 1
   done
 }
 
 # review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:
-# one a close kept unreviewed (kept:) with one PR, which waits for its review agent (one with several
-# is the lead's, as review_rule says), or one its review agent merges
-# next, under merge = agent or an agreed HLD over it that grants merge, unless it costs money
-# (costs_tag) or every PR of it is held for the user's merge on a protected path (protected_holds,
-# without the stale holds it leaves out: a new head the review agent works on is its own). A
-# protected PR under a grant has no such hold recorded, so it counts until it merges: a finish: held
-# back only keeps the conductor waiting, where one sent early lets it report mid-merge.
+# one a close kept unreviewed (kept:) with one PR (story_prs), which waits for its review agent (one
+# with several is the lead's, as review_rule says), or one its review agent merges next, under merge =
+# agent or an HLD merge grant (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge
+# has already refused or held it since its last review (merge_refused): that PR waits on the user.
 review_agent_owns() {
-  local u h held
-  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ "$(fm "$1" prs | wc -w)" -eq 1 ]]; return; fi
+  local slug
+  slug="$(basename "$1" .md)"
+  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ "$(story_prs "$1" | wc -w)" -eq 1 ]]; return; fi
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
-  if [[ "${CFG_merge}" != agent ]]; then
-    h="$(item_hld "$1")"
-    [[ -n "${h}" ]] && grep -qxF merge <<< "$(hld_grants "${h}" 2>/dev/null)" || return 1
-  fi
+  [[ "${CFG_merge}" == agent ]] || no_agent_granted "${slug}" || return 1
   [[ -z "$(costs_tag "$1")" ]] || return 1
-  held="$(protected_holds | awk '{ print $1 }')"
-  for u in $(fm "$1" prs); do
-    grep -qxF -- "${u}" <<< "${held}" || return 0
-  done
-  return 1
+  ! merge_refused "${slug}"
+}
+
+# merge_refused <slug> — true when events.tsv has a merge line for <slug> after its last ok review
+# line, and the last such merge did not succeed: a hold (costs money, a protected path), a refusal (a
+# head not green, the epic guard) or a merge left unconfirmed. A new review clears it.
+merge_refused() {
+  awk -F'\t' -v s="$1" '$3 == s && $2 == "review" && index($5, "ok") == 1 { m = "" }
+    $3 == s && $2 == "merge" { m = $5 }
+    END { exit !(m != "" && index(m, "ok") != 1) }' "${EVENTS_LOG}" 2>/dev/null
 }
 
 # epic_held <story-file> — true when the story's epic is later or draft: the user has not started it.
@@ -1953,7 +1979,7 @@ unblock_startable() {
     f="${BOARD}/stories/${slug}.md"; why=""
     open="$(open_deps "$(story_deps "${f}")")"
     [[ -z "${open}" ]] || why="stacked on ${open}"
-    if [[ "$(last_event "${slug}")" == $'reconcile	ok (reopened)' ]]; then
+    if [[ "$(last_event "${slug}")" == $'reconcile\tok (reopened)' ]]; then
       why="its PR$(fm "${f}" prs | sed 's/^./ &/') was closed unmerged"
     fi
     echo "startable: ${slug}${why:+ (${why})}"
@@ -2284,7 +2310,7 @@ review_heads() {
 }
 
 # review_note <slug> <epic> <pr-urls> — note the running conductor of <epic> (the backlog's when it is
-# empty) that story <slug> is in review and its PRs wait to be merged (conductor_note), unless that
+# empty; for a fix-main story, the conductor that started it, note_group) that story <slug> is in review and its PRs wait to be merged (conductor_note), unless that
 # conductor ran the review itself (SWARM_AGENT is its name): it knows, and a note would cost it a turn.
 # With none running it writes no inbox; a failed tell is a warning and never fails the review. The
 # note ends with conductor_note's finish: line once the epic has no agent work left.
@@ -2295,7 +2321,7 @@ review_note() {
   note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" \
     || { echo "warning: could not write a note, so no conductor was told that $1 is in review"; return 0; }
   printf 'Story %s is in review: %s to be merged.\n' "$1" "${prs}" > "${note}"
-  NOTE_FINISH=1 NOTE_WHAT="that $1 is in review" conductor_note "${2:--}" "${note}"
+  NOTE_FINISH=1 NOTE_WHAT="that $1 is in review" conductor_note "$(note_group "$1" "$2")" "${note}"
   rm -f "${note}"
 }
 
