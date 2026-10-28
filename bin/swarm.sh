@@ -6,13 +6,13 @@
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
-#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (prompt: <agent> (<kind>), exit: <exit>), a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ...), or a ready story with no build past queue_minutes (idle: <story> is ready with no build, exit: <exit>), as next prints them; print each new one
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (prompt: <agent> (<kind>), exit: <exit>), a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ...), or a ready story with no build past queue_minutes (idle: <story> is ready with no build, exit: <exit>), as next prints them, a reviewed green story PR left unmerged past queue_minutes (unmerged: <slug> <PR URL>, ...), or a story PR that conflicts with its base (conflict: <slug> <PR URL>, ...); print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell, watch and a review pane's wait-pr run it themselves
 #   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
 #   swarm.sh restart <slug>                                start a started story's builder again once herdr no longer lists it, in its worktree, branch and tab: it reopens the builder's last Claude session when its resume command names one that took its brief, else starts a fresh builder on the last model with a handover brief; holds the story's step-up lock; refused while the builder is listed, with no worktree or one off story/<slug> or holding a git step left unfinished, for a story not ready, kind: lead, held or escalated, with a PR merged or set to auto-merge, or with a step-up waiting (step-up --resume)
-#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not, and prompt one whose turn has ended to read it (once a minute at most, the rest a minute later)
+#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents, or queue it for a busy one's next idle; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not, and prompt one whose turn has ended to read it (once a minute at most, the rest a minute later)
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
@@ -206,7 +206,7 @@ CFG_base_branches=""    # empty: origin's default branch; else branches to try i
 CFG_sign_commits=false  # true: every commit and merge is signed (swarm.sh's own and each agent's), or the agent stops
 CFG_merge=human         # human: a PR that is ready waits on the board for you, unless an HLD grants merge (merge_grant)
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?; a busy one whose pane has not changed, stuck
-CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next); a ready story with no build this long gets next's idle: line
+CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next); a ready story with no build this long gets next's idle: line; a reviewed story PR left unmerged this long gets wait --lead's unmerged: line
 CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_escalate_ladder=""  # empty: off; else models low to high, such as sonnet,opus,fable: step-up hands a build to the next one
@@ -632,6 +632,7 @@ dispatch() {
     _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
+    _tell-queue-check) tell_queue_check "${1:-}" "${2:-}" ;;      # tell_queue_later's check on a busy agent's queued tells
     wait)   wait_command "$@" ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
@@ -644,7 +645,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _review-red-scan _step"
+READ_ONLY_COMMANDS="dash status next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
@@ -1001,7 +1002,10 @@ main_signal() {
 # review-agent:recheck, so the target
 # stays the slug (a board-pr's name). A reset or drop
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
-# epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held.
+# epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
+# nothing, queued for a busy agent or replaced by a newer one (on its way, or sent or queued since it
+# read the agent's state), logs the queued: or replaced: line tell_outcome leaves in the die file, so
+# it counts as no round.
 main() {
   local rc why a
   [[ "${1:-}" != init ]] || init_check
@@ -1065,6 +1069,8 @@ main() {
     :   # a step-up took the close's place (close_agent): its escalate line ends that build
   elif [[ "${EV_CMD}" == restart ]]; then
     :   # restart_build logged its own ok line, naming how it started the builder
+  elif [[ "${EV_CMD}" == tell:* ]] && why="$(head -1 "${EV_ERR}" 2>/dev/null)" && [[ "${why}" == queued:* || "${why}" == replaced:* ]]; then
+    record_event "${EV_CMD}" "${EV_TARGET}" "${why}"   # tell_outcome's: nothing sent, so not ok
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
   fi
