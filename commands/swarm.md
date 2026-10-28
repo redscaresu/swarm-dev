@@ -332,8 +332,8 @@ Repeat until a step below says stop:
      its next head needs a review of its own. Before the merge, if the story is not in review yet,
      close its builder if one is open (`swarm.sh close <slug> met`) and run
      `swarm.sh review <slug> <PR URL>`, as the `kept:` arm does, so merge finds the PR on the story.
-     Under `merge = agent`, run the merge, or tell the story's conductor to merge it if one runs for
-     its epic. Under `merge = human`, run it only when `swarm.sh grants <PR URL>` lists `merge`;
+     Under `merge = agent`, run the merge yourself: no conductor merges a story's PR. Under
+     `merge = human`, run it only when `swarm.sh grants <PR URL>` lists `merge`;
      otherwise tell the user it waits on their merge. A
      `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` line means an open PR of
      a ready or in-review story an agent builds conflicts with its base, so its checks will never run.

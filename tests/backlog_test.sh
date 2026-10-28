@@ -135,7 +135,7 @@ run `swarm.sh story` for it again.' "${bl}")|$(has 'report it as not started, wi
 `not started: <slug> (<the refusal'"'"'s first line>)`.' "${bl}")|$(grep -c 'swarm.sh story <slug>' <<< "${bl}" || true)"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = human, the backlog brief leaves the handover to the review agent, never runs swarm.sh merge, and stops when nothing is left" "yes|no|yes|no" \
-  "$(has 'A story'"'"'s review agent hands its PR to the user itself, with `swarm.sh review`.' "${bl}")|$(hasnt "swarm.sh merge" "${bl}")|$(has 'Stop when no ready story with no `epic:` that you may start is left and none is running.' "${bl}")|$(hasnt "swarm.sh review <epic>" "${bl}")"
+  "$(has 'A story'"'"'s review agent hands its PR to the user itself, with `swarm.sh review`, unless an HLD' "${bl}")|$(hasnt "swarm.sh merge --" "${bl}")|$(has 'Stop when no ready story with no `epic:` that you may start is left and none is running.' "${bl}")|$(hasnt "swarm.sh review <epic>" "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = human, a refusal naming another one-off in review is reported as not started, not waited on" "yes" \
   "$(has "Report the

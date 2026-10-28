@@ -31,8 +31,8 @@ wait_pr_rule() {
     "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again." \
     "If it ends the same way twice, stop and $2."
 }
-# stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
-# waits out every running build. The backlog conductor has no Done when: it stops once its stories
+# stop_rule <epic> — when a conductor stops. With merge = agent its stories' PRs merge while it runs,
+# so it also waits out every running build. The backlog conductor has no Done when: it stops once its stories
 # are all started and finished.
 stop_rule() {
   if [[ "$1" == backlog ]]; then
@@ -41,16 +41,17 @@ stop_rule() {
   elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
   else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running $(fix_running), or when $(base_stop)."; fi
 }
-# fix_running — a merging epic conductor's fix-main story has no epic, yet it is the conductor's own to
-# review and merge: until it merges, the epic's stop and report rules count it as running.
+# fix_running — a fix-main story an epic conductor started has no epic, yet the conductor built it:
+# until its PR merges, the epic's stop and report rules count it as running.
 fix_running() { printf '%s' "(a fix-main story you started counts as running until its PR merges)"; }
-# base_stop — the broken base a merging conductor stops on: a red one has a fix-main story to build.
+# base_stop — the broken base a conductor stops on under merge = agent: a red one has a fix-main story
+# to build.
 base_stop() { printf '%s' "CI on the base timed out, or is red with no \`fix-main:\` line"; }
 # review_rule — who reviews a story's PR: its own review agent (review_agent, review_brief), which waits
 # for green, triages, reviews each head, tells the builder its findings, logs them, and merges the PR or
-# hands it to the user. The conductor starts it once per PR, on watch's opened line (or a queued: line,
-# or for a kept: story), and is never in the loop after: two in it would send findings and count rounds
-# twice.
+# hands it to the user. The conductor starts it on watch's opened line (or a queued: line, or for a kept:
+# story), and again on each new head's checks-finished line, which review-agent refuses while the last one
+# still reviews; it is never in the loop otherwise: two in it would send findings and count rounds twice.
 review_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
@@ -60,6 +61,10 @@ its review agent once, at once, with \`${sw} review-agent <slug> <PR URL>\`. It 
 Start one for every PR that opens, with no cap, and never hold one back for other PRs or reviews.
 When \`swarm.sh watch\` prints, or the lead sends you, \`queued: <repo> #<n> <branch> green <m>m
 with no review on <sha>\`, that head has had no review: start its review agent then, the same way.
+When \`swarm.sh watch\` prints \`<repo> #<n> story/<slug> checks finished on <sha>\` for a PR of
+yours, start its review agent again the same way: the one before may have stopped on an older head
+(a push it did not review, a base merged in, a nudge to the builder after a failed merge). While it
+still reviews, review-agent refuses and nothing starts.
 A story \`swarm.sh status\` lists as \`kept:\` (a close kept its PR unreviewed) gets one the same
 way: first make sure its builder is open, since the review agent sends it the findings (with none,
 start one in its worktree as the Stacked rule says for \`(no builder)\`, with a brief that names the
@@ -68,12 +73,21 @@ PR is the lead's: list it in your report. When review-agent refuses because revi
 still reviewing, that agent has the PR: start nothing. When it refuses because the story's worktree
 is not at the PR's head or has uncommitted changes, the builder is still at work: whatever the
 refusal says to do next, start it again once \`swarm.sh wait <slug>\` on that builder returns, or
-on \`swarm.sh watch\`'s next line for that PR, whichever comes first.
+on \`swarm.sh watch\`'s next line for that PR, whichever comes first. If it refuses so again on the
+same head with the builder idle, start nothing more for that head: it is one GitHub made by merging
+the base in (\`base merged:\`), and the review agent merging the PR waits on it itself.
 The review agent waits for the PR's checks, triages them, reviews each head, sends its findings to
 the builder, logs them, and merges the PR or hands it to the user. Never wait on a PR or a review
 agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or
 merge a story's PR: each is the review agent's, and doing it as well would send findings twice and
 count a round twice.
+A note in your inbox that says \`review-<slug> stopped on <sha>: <why>\` is a review agent that
+stopped before a pass, and the story is yours again. Act on <why> as on your own wait on that builder:
+a stalled or stuck builder by the give-up and stuck rules above. When the builder is idle and pushed
+nothing (\`no fix pushed\`, or a red head left as it was), nudge it once, naming the stop line, and
+start the review agent again once \`swarm.sh wait <slug>\` returns. A second stop of the story for
+the same reason, a story held for the lead, a refused tell or a failed step-up goes in your report
+for the lead.
 EOF
 }
 
@@ -90,7 +104,7 @@ codex_review_cmd() {
 codex_rule() {
   # shellcheck disable=SC2154 # assigned in another file
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
-  printf '%s' 'Wait for codex-review to exit, and act on what it prints last: a usage limit it prints early may be followed by a fallback'"'"'s review. If it ends on codex'"'"'s usage limit or on "codex skipped: ...", do not run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
+  printf '%s' 'Wait for codex-review to exit, and act on what it prints last: a usage limit it prints early may be followed by a fallback'"'"'s review. If it ends on codex'"'"'s usage limit or on "codex skipped: ...", do not run it again: a builder carries on without it, whoever reviews the PR reads the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
   printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit", a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" in place of codex skipped.'
 }
 # finding_rule — every fixed finding feeds the outer loop (outcomes' recurring block); declined ones
@@ -113,8 +127,8 @@ no new round. <n> is 0 for a finding on a plan or a board PR.
 it is real but not worth the change, and wrong when it is mistaken.
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
 \`swarm.sh codex-review\` (fallback when it printed "reviewed by fallback"), code-review for /code-review's, ci for the PR review bot's or a
-\`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for
-one from the lead's own reading.
+\`swarm.sh findings\` note's, conductor for one from your own reading of the diff (a review agent's
+own reading keeps the conductor's old value), and lead only for one from the lead's own reading.
 When a fix finds a defect in work that already merged, log it as \`--reviewer escaped\` against the
 PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
@@ -139,7 +153,13 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 ${kept}"
     cat <<EOF
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
-A story's review agent hands its PR to the user itself, with \`swarm.sh review\`.
+A story's review agent hands its PR to the user itself, with \`swarm.sh review\`, unless an HLD
+grants merge, when it merges the PR itself. A note that says \`Story <slug> is in review: ...\` is
+that handover: unless \`swarm.sh grants <PR URL>\` lists \`merge\` (the review agent then merges
+it, and the merge closes the builder), close the story's builder with a bare \`swarm.sh close
+<slug>\`, which counts nothing for a story in review, since the user may take days.
+
+$(fix_main_rule)
 
 $(merge_note_rule "$1")
 $(stacked_start_rule)
@@ -179,8 +199,9 @@ merge_note_rule() {
   printf '%s' "A note in your inbox that a story's PR just merged is the cue to start what that merge made ready. After each inbox pass, $(startable_rule "$1")"
 }
 
-# fix_main_rule — with merge = agent, a review agent's merge that turns the base red writes a fix-main
-# story, which next names to the lead, whose note asks a running conductor to build it. It is outside
+# fix_main_rule — a review agent's merge that turns the base red (merge = agent, or under merge = human
+# an HLD's merge grant) writes a fix-main story, which next names to the lead, whose note asks a running
+# conductor to build it. It is outside
 # every epic, and watch says no fix-main PR opened (opened_due), so the conductor starts its review agent
 # from the builder's reply.
 fix_main_rule() {
@@ -527,7 +548,7 @@ review_agent() {
   # An open review-<slug> with no findings file is still reviewing (idle while its codex runs), and
   # free_agent_name would retire it as finished.
   [[ -f "${out}" || -z "$(agent_field "$(agent_name "review-${slug}")" pane_id)" ]] \
-    || die "review-agent: review-${slug} is still reviewing (no ${out} yet); nothing was started: wait for it with swarm.sh wait review-${slug}, close it, then start the review again"
+    || die "review-agent: review-${slug} is still reviewing (no ${out} yet); nothing was started: it still has the PR, so a conductor starts nothing; the lead may wait for it with swarm.sh wait review-${slug}, close it, then start the review again"
   # What start_agent would refuse on, before any file is touched.
   require_trusted "${wt}"; require_claude; free_agent_name "$(agent_name "review-${slug}")"
   base="$(base_for "${src}")"
@@ -960,10 +981,13 @@ EOF
 # reviewed (swarm.sh review --head, which refuses a moved head), and, under merge = agent or when
 # swarm.sh grants names merge for the PR, merges that head, pinned with swarm.sh merge --head, which
 # checks the PR is still at it; otherwise the review is the handoff to the user. A moved head
-# turns the file into a head moved: one, and whoever started the agent starts a new one on it.
+# turns the file into a head moved: one, and the conductor starts a new agent on the new head once
+# watch reports its checks finished. A base merged in whose CI goes red, or a moved base merge refuses
+# on, has the agent nudge the builder (pull the branch first) and stop; its push is a new head, which
+# the conductor gives a new agent the same way.
 # <swarm.sh> is the brief's swarm.sh with SWARM_PROJECT, as every call in it.
 review_handoff() {
-  local merge next
+  local merge next nudge="${3%.md}.nudge.md"
   merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit: after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == agent ]]; then
@@ -979,20 +1003,28 @@ and removes this worktree, so a file written after would never come. Then hand t
 When review or merge refuses because the PR's head is no longer $4 (a push since your review), that
 head has had no review, and you do not review it in this session. Write ${3} again with the Write tool,
 holding two lines, \`head: $4\` and
-\`head moved: <the head review or merge named>\`, then stop: whoever started you (the conductor, or the
-lead for a kept story) starts a new review agent on the new head. When it was merge that refused,
+\`head moved: <the head review or merge named>\`, then stop: the conductor starts a new review agent
+on the new head once watch reports its checks finished (the lead does when no conductor runs). When it was merge that refused,
 review had already put the story in review: your reply's first line says \`$1 is in review on
 <the new head>, which nobody reviewed\`.
 When merge prints \`base merged: <PR URL> is now ...\`, it merged nothing: GitHub merged the base into
 the PR's branch, and that head needs no new review. With <new head> the full SHA the line's
 \`merge --head\` names, run \`$5 wait-pr --head <new head> $2\` in the background and, once it exits 0,
-\`$5 merge --head <new head> $2\`, as above.
+\`$5 merge --head <new head> $2\`, as above. When that wait-pr exits 1 (a red check) or with a
+conflict, nudge the builder as the green step says (${nudge}, then \`$5 tell $1 nudge ${nudge}\`),
+naming the red check or the base, and telling it to pull its branch first (\`git pull --ff-only
+origin story/$1\`): GitHub's merge commit is not in its worktree. Then stop.
+When merge refuses with a line that ends \`merge origin/<base> in, push, and merge the new head\`, it
+merged nothing: nudge the builder the same way, telling it to pull its branch (\`git pull --ff-only
+origin story/$1\`), merge origin/<base> in, re-run the tests and push. Then stop. After either nudge,
+the head the builder pushes gets a new review agent from the conductor once watch reports its checks
+finished.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff.
 Once the last of these commands has exited, run nothing more in this worktree (a merge removes it):
 reply with ${3}, what the last command printed, and \`codex skipped: <why>\` when codex was, then
 stop. On any other refusal or failure
 (a story held until its parents merge, a story with a PR you did not review, a red base),
-reply the same way: the conductor or the lead acts on it.
+reply the same way: a held story's parents' merge readies it again, and the rest are the lead's.
 EOF
 }
 
@@ -1014,12 +1046,13 @@ EOF
 # pushed) writes <findings file> with head: and stopped: lines and no ## Findings: no pass.
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
-  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" repo ladder="" stepped="" agent
+  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" agent cond
   cr="$(review_round_line "$6" "$2")"
   sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
   # findings takes the story's repo by name; a story with no repo: is in the project's own.
   repo="$(fm "${story}" repo)"; [[ -n "${repo}" ]] || repo="$(basename "${PROJECT_DIR}")"
   agent="$(agent_name "$1")"   # the builder's herdr name, which herdr agent read takes
+  cond="$(fm "${story}" epic 2>/dev/null || true)"; cond="$(group_conductor "${cond:--}")"   # the conductor a stop is told to
   # Only with the ladder on does a wait-pr from this pane step the build up (review_red_scan), or a
   # wait --stall step up a stalled build.
   [[ -z "${CFG_escalate_ladder:-}" ]] || ladder="
@@ -1080,8 +1113,12 @@ as above. Otherwise wait for the builder once more, as above: that turn is the o
 ${4} is read as a finished review of the head on its \`head:\` line the moment it exists, so write it
 only when a round passes, or when you stop. To stop before a round passes, write ${4} with the Write
 tool holding two lines, \`head: <the PR's head as you last saw it>\` and \`stopped: <why: what tell or
-wait printed, or that no fix was pushed>\`, reply with the same, and stop: with no \`## Findings\`
-heading it is no pass, and the conductor takes the story from there.
+wait printed, or that no fix was pushed>\`. Then tell the conductor, which reads no review file: after
+\`rm -f ${stop}\`, write ${stop} with the Write tool holding one line, \`review-$1 stopped on <that
+head>: <the stopped: line's why>\`, and run \`${sw} tell ${cond} note ${stop}\`. Reply with the same,
+and stop: with no \`## Findings\` heading it is no pass, and the conductor takes the story from there.
+When that tell fails (no conductor runs for the story), your reply's first line says so: the lead
+takes it.
 
 Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr $2\` in the
 background and wait for it to exit, never a loop of your own; it prints the head it waits on first.
@@ -1125,7 +1162,9 @@ Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background)
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
 Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
 a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
-again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. When it prints
+again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`, and in a round
+with no \`/code-review\`, you read the diff yourself in codex's place, so the round is never a pass
+on no review at all. When it prints
 \`reviewed by fallback <model>: codex usage limit\`, a fallback agent reviewed in codex's place: report
 its findings as codex's, under that line, and log each with \`--reviewer fallback\`, as below. ${cr}
 
@@ -1355,7 +1394,7 @@ stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${ST
 \`stepped up: <slug>\` (wait prints it in place of \`stalled:\`): the next model carries on in the
 same worktree and branch. Do not close, retry or tell that story for it; wait on its builder again.
 A review agent whose \`wait-pr\` steps the build up stops there; the head the new builder pushes
-gets a new one on \`swarm.sh watch\`'s \`queued:\` line, as the review rule says. A
+gets a new one on the \`checks finished\` line \`swarm.sh watch\` prints for it, as the review rule says. A
 \`step-up failed: <slug>\` line means the step-up stopped after closing the builder. Leave that
 story alone: \`wait --lead\` tells the lead, so it does not go in your report.
 EOF
@@ -1433,10 +1472,10 @@ EOF
 # answers Fable's usage-credits consent, which is not giving up. With goal on, an idle builder is the
 # goal rule's, and the stall close names its cause.
 give_up_rule() {
-  local retry idle="when it is idle with no PR after wait's nudges, " close="\`swarm.sh close <slug> --drop\`" one="That is the one close before a review passes." goal=""
+  local retry idle=", or when it is idle with no PR after wait's nudges" close="\`swarm.sh close <slug> --drop\`" one="That is the one close before a review passes." goal=""
   if [[ "${CFG_goal}" != off ]]; then
     idle=""
-    close="\`swarm.sh close <slug> stalled --drop\` for a stall, or \`swarm.sh close <slug> met --drop\` when review has not converged"
+    close="\`swarm.sh close <slug> stalled --drop\`"
     one="Those and the goal rule's closes are the only ones before a review passes."
     goal="
 A builder idle short of its reply is not one to give up on here: it is the goal rule's, which picks
@@ -1450,8 +1489,8 @@ its close and whether the story is started again."
   fi
   cat <<EOF
 Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled with no hung command to
-stop (below), or stalls again after you stopped one, ${idle}or when review has not converged in the
-rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
+stop (below), or stalls again after you stopped one${idle}. A PR's review rounds are its review agent's
+and the ladder's to limit, never yours. Run ${close}: on a code, docs or chore story still \`ready\` it
 counts the attempt and clears its worktree, branch and PR (a bare close keeps an open PR). ${one} Start the story again in a later
 wave with \`swarm.sh story --strict <slug>\`, and never choose a model: ${retry}${goal}
 A stalled line ends \`; longest-running: ...\`, and after \`stepped up:\` the same text is a line of

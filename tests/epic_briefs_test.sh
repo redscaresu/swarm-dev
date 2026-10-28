@@ -265,6 +265,15 @@ merge_note() {
 run conduct --backlog >/dev/null || true
 check "with merge = human, neither the epic's nor the backlog's conductor brief has a wait-pr step, a green rule, a merge or a close after a review" "${HANDS_OFF}|${HANDS_OFF}" \
   "$(hands_off "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(hands_off "$(cat "${p}/.swarm/briefs/conduct-backlog.md")")"
+# Under merge = human an HLD's merge grant lets a review agent merge and turn the base red: if the
+# human-mode brief drops the fix-main rule, the lead's note asks for a build the brief never allows.
+# Under merge = human the user may take days to merge a handed-over PR: if the brief drops the close on
+# the handover note, every such builder stays open that long.
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "with merge = human, both briefs close the builder on the handover note unless an HLD grants merge" "yes|yes" \
+  "$(has 'unless `swarm.sh grants <PR URL>` lists `merge` (the review agent then merges it, and the merge closes the builder), close the story'"'"'s builder with a bare `swarm.sh close <slug>`' "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has 'unless `swarm.sh grants <PR URL>` lists `merge` (the review agent then merges it, and the merge closes the builder), close the story'"'"'s builder with a bare `swarm.sh close <slug>`' "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")"
+check "with merge = human, both briefs start a fix-main story at once whatever their scope, and its review agent from the builder's reply" "yes|yes|yes|yes" \
+  "$(has "start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "once its builder replies with the PR URL." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")|$(has "once its builder replies with the PR URL." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")"
 check "with merge = human, both conductor briefs start every startable story after each inbox pass, and the epic's still puts the epic in review" "yes|yes|yes" \
   "$(merge_note "$(cat "${p}/.swarm/briefs/conduct-f.md")" f)|$(merge_note "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" --backlog)|$(has "swarm.sh review <epic> <every PR URL still waiting>" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 docs="$(cd "$(dirname "${SWARM}")/../docs" && cat method.md reference.md | tr -s '[:space:]' ' ')"
