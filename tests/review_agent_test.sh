@@ -719,17 +719,13 @@ check "a grants lookup that fails twice hands the PR to the user, saying so" "ye
 check "a moved head after a pass writes head moved: and stops, names who restarts the review, and flags a story left in review" "yes|yes|yes|0" \
   "$(has "When review or merge refuses because the PR's head is no longer ${HEAD_SHA} (a push since your review), that head has had no review, and you do not review it in this session." "${abrief}")|$(has "Write ${p}/.swarm/reviews/h1.md again with the Write tool, holding two lines, \`head: ${HEAD_SHA}\` and \`head moved: <the head review or merge named>\`, then stop: whoever started you (the conductor, or the lead for a kept story) starts a new review agent on the new head." "${abrief}")|$(has "your reply's first line says \`h1 is in review on <the new head>, which nobody reviewed\`" "${abrief}")|$(grep -c "that head has had no review: run" <<< "${abrief}" || true)"
 # from_pane <slug> <command> — <command> as review-<slug> runs it: from its pane, in its story's
-# worktree, with SWARM_AGENT its name as start_agent gives it (AS=<name> in its place, to run as
-# another), the merge stub's gh first and merge's CI waits cut short.
+# worktree, with SWARM_AGENT its name as start_agent gives it, the merge stub's gh first and merge's
+# CI waits cut short.
 from_pane() {
   local pane; pane="$(awk -v n="review-$1" '$1 == n { p = $2 } END { print p }' "${ROOT}/agents")"
   (cd "${ROOT}/svc-wt/$1" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID="${pane}" PATH="${MGH}:${STUB_BIN}:${PATH}" \
-    SWARM_AGENT="${AS:-review-$1}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 SWARM_MERGE_CI_SECONDS=5 bash -c "$2" 2>&1)
+    SWARM_AGENT="review-$1" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 SWARM_MERGE_CI_SECONDS=5 bash -c "$2" 2>&1)
 }
-# Epic e's conductor runs, in pane w:960, so a review that notes it has one to note.
-cname="$(run _conductor e)"
-echo "${cname} w:960 sess-ce" >> "${ROOT}/agents"; echo "w:960 ${cname}" >> "${p}/.swarm/state/e"; "${ROOT}/sessions"
-noted() { compgen -G "${p}/.swarm/inbox/${cname}*" > /dev/null && echo yes || echo no; }
 # fm_of <slug> <key> — <key> of the story as swarm.sh reads it: its state over its front matter.
 # shellcheck source=/dev/null
 fm_of() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${b}/stories/$1.md" "$2"); }
@@ -747,9 +743,6 @@ rm "${FXH}/prlist.h2"
 o="$(from_pane h2 "${h_review}")" || echo "FAIL the brief's review --head for h2 exited non-zero: ${o}"
 check "with the head the review passed, h2 goes to review with its PR, logged as review h2 ok (<PR URL>)" "review|${PRB}|ok (${PRB})" \
   "$(fm_of h2 status)|$(fm_of h2 prs)|$(awk -F'\t' '$2 == "review" && $3 == "h2" { l = $5 } END { print l }' "${p}/.swarm/events.tsv")"
-# The conductor waits on review-h2's own file: a note from the agent's review would cost it a turn.
-check "the review agent's own review sends the conductor no note; the same review run as the lead does" "no|yes" \
-  "$(noted)|$(AS=lead from_pane h2 "${h_review}" > /dev/null; noted)"
 # One review agent passes one PR: a review --head that does not name every PR on prs: would replace the
 # line and drop the others, so the story could finish without them.
 check "review --head naming one PR while prs: lists another refuses, naming it, and leaves prs: as it was" "1|yes|${PRB}" \

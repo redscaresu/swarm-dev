@@ -1511,8 +1511,7 @@ the agent then writes `head moved:` and stops, and whoever started it (the condu
 a kept story) starts a new review agent on the new head. When it was `merge` that refused, the story
 is already in review on a head nobody reviewed, and the agent's reply says so first. `review --head`
 also refuses while the story has a PR the agent did not review, on its `prs:` line or open from its
-branch `story/<slug>`, so a story with two PRs never finishes with one of them still open. The note
-`review` sends a conductor is not sent when the story's own review agent runs it. When merge prints `base merged:`, the agent waits for CI on the
+branch `story/<slug>`, so a story with two PRs never finishes with one of them still open. When merge prints `base merged:`, the agent waits for CI on the
 new head (`wait-pr --head`) and merges it as the line says. A `held:` refusal leaves the PR for you.
 It replies with the file and what the last command printed. A round whose findings the builder
 declined, each with a reason the agent accepts, and pushed nothing for, passes the same way. Every

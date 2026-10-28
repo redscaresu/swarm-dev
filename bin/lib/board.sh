@@ -2114,13 +2114,11 @@ review_heads() {
 
 # review_note <slug> <epic> <pr-urls> — note the running conductor of <epic> (the backlog's when it is
 # empty) that story <slug> is in review and its PRs wait to be merged (conductor_note), unless that
-# conductor ran the review itself, or the story's own review agent did, which merges the PR next under
-# a grant and whose review file the conductor waits on (SWARM_AGENT is either name): a note would cost
-# it a turn, or say the PR waits when it is about to merge. With none running it writes no inbox; a
-# failed tell is a warning and never fails the review.
+# conductor ran the review itself (SWARM_AGENT is its name): it knows, and a note would cost it a turn.
+# With none running it writes no inbox; a failed tell is a warning and never fails the review.
 review_note() {
   local note prs="its PR $3 now waits"
-  [[ "${SWARM_AGENT:-}" != "$(group_conductor "${2:--}")" && "${SWARM_AGENT:-}" != "$(agent_name "review-$1")" ]] || return 0
+  [[ "${SWARM_AGENT:-}" != "$(group_conductor "${2:--}")" ]] || return 0
   [[ "$3" != *" "* ]] || prs="its PRs $3 now wait"
   note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" \
     || { echo "warning: could not write a note, so no conductor was told that $1 is in review"; return 0; }
