@@ -34,11 +34,13 @@ get() { local v="${3-}"; if [ -e "$2" ]; then v=""; IFS= read -r v < "$2" || tru
 # put <file> — print <file>, as cat would but with no fork, ending its last line with a newline.
 put() { local l; while IFS= read -r l || [ -n "${l}" ]; do printf '%s\n' "${l}"; done < "$1"; }
 # serve <key> — the fixture <key>.<n> on the nth read of <key> when there is one, else <key>; with
-# <key>.fail, print that (a partial answer) and fail; with <key>.<n>.fail, fail the nth read only;
-# with <key>.404, a 404 with its message; with none of them, a 404 Not Found.
+# <key>.fail, print that (a partial answer) and fail; with <key>.<n>.fail, fail the nth read only, its
+# text the error when it has one (else a 502); with <key>.404, a 404 with its message; with none of
+# them, a 404 Not Found.
 serve() {
   local n m; get n "${FX}/$1.n" 0; n=$((n + 1)); echo "${n}" > "${FX}/$1.n"
   if [ -e "${FX}/$1.fail" ]; then put "${FX}/$1.fail"; echo "gh: HTTP 502" >&2; exit 1; fi
+  if [ -s "${FX}/$1.${n}.fail" ]; then put "${FX}/$1.${n}.fail" >&2; exit 1; fi
   if [ -e "${FX}/$1.${n}.fail" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
   if [ -e "${FX}/$1.${n}" ]; then put "${FX}/$1.${n}"
   elif [ -e "${FX}/$1" ]; then put "${FX}/$1"
@@ -55,8 +57,12 @@ case "$1 $2" in
       if [ "${l}" -gt 0 ]; then echo $((l - 1)) > "${FX}/pending-left"; else mv "${FX}/pending-head" "${FX}/head"; fi; fi
     get st "${FX}/state"; get st "${FX}/state.${3##*/}" "${st}"
     get h "${FX}/head"; get b "${FX}/base"; get mc "${FX}/mergecommit"; get nf "${FX}/nfiles"; get bd "${FX}/body" null; get cm "${FX}/commits" '[{}]'
-    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s}\n' \
-      "${st}" "${h}" "${b}" "${mc}" "${nf}" "${bd}" "${cm}" ;;
+    get mg "${FX}/mergeable" MERGEABLE
+    # With -q (wait-pr's read), jq gives what gh would.
+    q=""; prev=""; for a in "$@"; do [ "${prev}" != -q ] || q="${a}"; prev="${a}"; done
+    out="$(printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s,"mergeable":"%s","headRefName":"story/s"}\n' \
+      "${st}" "${h}" "${b}" "${mc}" "${nf}" "${bd}" "${cm}" "${mg}")"
+    if [ -n "${q}" ]; then printf '%s\n' "${out}" | jq -r "${q}"; else printf '%s\n' "${out}"; fi ;;
   "pr merge")
     case " $* " in *" --disable-auto "*) exit 0 ;; esac
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
@@ -100,6 +106,9 @@ case "$1 $2" in
   # Coloured, as with CLICOLOR_FORCE or GH_FORCE_TTY, unless asked for --color never.
   "pr diff") case "$*" in *"--color never"*) cat "${FX}/diff" ;; *) sed "s/^/$(printf '\033')[1m/" "${FX}/diff" ;; esac ;;
   api*)
+    # gh api rate_limit (wait-pr's read of a spent budget): ${FX}/rate_limit as the --jq filter gives it
+    # ("<reset epoch> <reset time>"), else nothing (the budget is not spent).
+    if [ "$2" = rate_limit ]; then [ ! -e "${FX}/rate_limit" ] || put "${FX}/rate_limit"; exit 0; fi
     for a in "$@"; do path="${a}"; done
     sha="${path#*/commits/}"; sha="${sha%%/*}"
     case "${path}" in
@@ -112,10 +121,14 @@ case "$1 $2" in
                out="$(serve queue)" || exit 1; echo "${out}"
                case "${out}" in *'"state":"MERGED"'*) echo MERGED > "${FX}/state"; printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit" ;; esac ;;
       */check-runs*) serve "${sha}.checks"
-                     # The head moves once its checks are read, before the merge.
+                     # The head moves once its checks are read, before the merge; with move-head.<sha>, once
+                     # <sha>'s are read while it is the head (a push during merge's wait on it).
                      get h "${FX}/head"; [ "${sha}" != "${h}" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head"
+                     get h "${FX}/head"; [ "${sha}" != "${h}" ] || [ ! -e "${FX}/move-head.${sha}" ] || cp "${FX}/move-head.${sha}" "${FX}/head"
                      # ${FX}/on-checks runs once then: another PR landing on the base while merge runs.
-                     get h "${FX}/head"; [ "${sha}" != "${h}" ] || [ ! -e "${FX}/on-checks" ] || { sh "${FX}/on-checks"; rm -f "${FX}/on-checks"; } ;;
+                     get h "${FX}/head"; [ "${sha}" != "${h}" ] || [ ! -e "${FX}/on-checks" ] || { sh "${FX}/on-checks"; rm -f "${FX}/on-checks"; }
+                     # ${FX}/on-checks.<sha> runs once when <sha>'s checks are read: another run's work during merge's wait.
+                     [ ! -e "${FX}/on-checks.${sha}" ] || { sh "${FX}/on-checks.${sha}"; rm -f "${FX}/on-checks.${sha}"; } ;;
       */commits/*/status*) serve "${sha}.status" ;;
       *event=merge_group*) serve mgruns ;;
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
@@ -155,7 +168,8 @@ case "$1 $2" in
                    elif [ "${#c}" != 40 ]; then out="$(serve files)" || exit 1; echo "{\"files\":${out}}"
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       # PUT pulls/<n>/update-branch, merge's request to merge the base in: ${FX}/update as serve reads it,
-      # and ${FX}/update.422 a 422 with its message; with ${FX}/update.hang it first sleeps a minute.
+      # and ${FX}/update.422 (or update.422.<expected_head_sha>, for that request alone) a 422 with its
+      # message; with ${FX}/update.hang it first sleeps a minute.
       # Whatever it answers, the PR's head becomes ${FX}/update-head.<expected_head_sha>, else
       # ${FX}/update-head, when there is one, after
       # ${FX}/update-lag more pr views (none by default): with update.422, another merge's request went first.
@@ -163,7 +177,8 @@ case "$1 $2" in
                        e=""; for a in "$@"; do case "${a}" in expected_head_sha=*) e="${a#*=}" ;; esac; done
                        u="${FX}/update-head"; [ ! -e "${u}.${e}" ] || u="${u}.${e}"
                        [ ! -e "${u}" ] || { cp "${u}" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; }
-                       if [ -e "${FX}/update.422" ]; then get m "${FX}/update.422"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
+                       k="${FX}/update.422"; [ ! -e "${k}.${e}" ] || k="${k}.${e}"
+                       if [ -e "${k}" ]; then get m "${k}"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
                        serve update ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one. With

@@ -61,7 +61,7 @@ fresh; gained 1 bin/x.sh; updates; merge "${URL}"
 merged_in "the base gained bin/x.sh"
 check "the base gained bin/x.sh: compares the head with the base" compared o/r "${H1}"
 check "the base gained bin/x.sh: asks GitHub to merge main in, pinned to the head" updated o/r
-check "the base gained bin/x.sh: logs base-merged" logged "^merge s base-merged ${H3}$"
+check "the base gained bin/x.sh: logs base-merged" logged "^merge s base-merged ${H3} from ${H1}$"
 fresh; gained 2 docs/stories/t.md bin/x.sh; updates; merge "${URL}"
 merged_in "the base gained a board file and bin/x.sh"
 fresh; echo '{"ahead_by":1,"files":[{"filename":"docs/stories/t.md","previous_filename":"bin/x.sh","status":"renamed"}]}' > "${FX}/behind"

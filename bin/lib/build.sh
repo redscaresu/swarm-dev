@@ -187,18 +187,22 @@ leave the PR for the user and list it.
 When \`swarm.sh merge\` prints \`base merged: <PR URL> is now <new> (<old> with <base> merged in)\`,
 code landed on <base> after <old>'s CI ran, so it had GitHub merge <base> into the PR's branch and
 checked that the new head's only new content is <base>'s. That head needs no new review: where you
-compare heads, a head events.tsv records as \`merge <slug> base-merged <sha>\` counts as reviewed when
-the head it was made from was, and \`swarm.sh watch\` prints no line that sends it to review. Merge
+compare heads, a head events.tsv records as \`merge <slug> base-merged <sha> from <head>\` counts as
+reviewed when <head> was, and \`swarm.sh watch\` prints no line that sends it to review. Merge
 then waits for that head's CI, checks <base> again (merging it in again if it moved, ${MERGE_BASE_ROUNDS}
 rounds at most) and merges the new head itself, so it can run up to $((MERGE_CI_SECONDS / 60)) minutes
-longer for each round: leave it to finish. If it refuses with \`base merged, <cause>:\` (the new head
-red, no check runs on it, a timeout, or <base> still moving), it merged nothing, and the PR's head is
-GitHub's merge commit, which the builder's worktree does not have. Any nudge you send the builder for it
-tells it to pull its branch first (\`git pull --ff-only origin story/<slug>\`, naming the branch: its
-worktree tracks origin/<base>, or nothing when stacked). Handle a red as a red check. On any other
-cause, run the \`swarm.sh wait-pr --head <new head> <PR URL>\` the refusal names in the background and,
-once it exits 0, the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of the findings
-file's head: line.
+longer for each round: leave it to finish. If it prints \`already merged:\`, the PR
+merged while it waited (another \`swarm.sh merge\`, or by hand), and merge reconciled the board. If it refuses
+with \`base merged, <cause>:\`, it merged nothing, and the PR's head is GitHub's merge commit, which
+the builder's worktree does not have. Any nudge you send the builder for it tells it to pull its branch
+first (\`git pull --ff-only origin story/<slug>\`, naming the branch: its worktree tracks origin/<base>,
+or nothing when stacked). Handle a \`red\` as a red check, a \`conflict\` as the refusal below that ends
+\`merge origin/<base> in, push, and merge the new head\`, and a \`head moved\` (a push while merge
+waited) by reviewing the new head as for any new head. On any other cause (\`no check runs\`,
+\`no workflow run\`, \`timed out\`, \`unread\`, \`still moving\`), and when merge cannot take its lock
+again after the wait, run the \`swarm.sh wait-pr --head <new head> <PR URL>\` the line names in the
+background and, once it exits 0, the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of
+the findings file's head: line.
 When \`swarm.sh merge\` refuses with a line that ends \`merge origin/<base> in, push, and merge the new
 head\` (\`the base <base> moved past <sha>'s CI\` when GitHub could not merge it in, or a compare that
 cannot list what the base gained), it merged nothing: code may have landed on <base> after that head's
@@ -960,20 +964,32 @@ review_start_failed() {
   die "review-agent: review-$1 did not start${note}${back}"
 }
 
-# review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is
-# <sha>, and it has a ## Findings section and no head moved: line (review_rule's test).
+# BASE_MERGED_LINKS: how many base-merged heads review_pass follows back from a head to a reviewed one.
+BASE_MERGED_LINKS=10
+
+# review_pass <slug> <sha> [<links>] — true when <slug>'s findings file is a pass on <sha>: its head:
+# line is <sha>, and it has a ## Findings section and no head moved: line (review_rule's test). A head
+# that merge made by merging the base into the PR (events.tsv's `base-merged <sha> from <head>`,
+# base_merged_from) passes when the head it was made from does, since its only new content is the
+# base's; <links> counts the heads followed so far, BASE_MERGED_LINKS at most.
 review_pass() {
-  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
-  grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.md" from
+  if grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"; then return 0; fi
+  (( ${3:-0} < BASE_MERGED_LINKS )) || return 1
+  from="$(base_merged_from "$1" "$2")"
+  [[ -n "${from}" && "${from}" != "$2" ]] && review_pass "$1" "${from}" $(( ${3:-0} + 1 ))
 }
 
 # review_on_head <slug> <sha> — true while <sha> has a review agent's review, for watch and next
-# (queued_line): its findings file for <sha> is a pass, or, with no file for <sha> yet, a review agent
+# (queued_line): its findings file for <sha> is a pass, <sha> is a head merge made from a head that
+# passed (review_pass), or, with no file for <sha> yet, a review agent
 # started on it (.swarm/reviews/<slug>.head) and review-<slug> is still open in a pane this project
 # opened. One that crashed, was closed or tidied, or that herdr cannot list, is no review.
 review_on_head() {
   local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
   if grep -qx "head: $2" "${f}" 2>/dev/null; then review_pass "$1" "$2"; return; fi
+  # A head merge made from a reviewed head by merging the base in (review_pass) is reviewed too.
+  if review_pass "$1" "$2"; then return 0; fi
   [[ "$(cat "${f%.md}.head" 2>/dev/null)" == "$2" && -n "$(agent_field "$(agent_name "review-$1")" pane_id)" ]]
 }
 
@@ -1062,7 +1078,7 @@ EOF
 # <swarm.sh> is the brief's swarm.sh with SWARM_PROJECT, as every call in it.
 review_handoff() {
   local merge next
-  merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit: after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
+  merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit. When the base gained code since $4's CI ran, it first has GitHub merge the base into the PR's branch and waits up to $((MERGE_CI_SECONDS / 60)) minutes for that new head's CI, ${MERGE_BASE_ROUNDS} rounds at most; after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, or the head it made by merging the base in, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == agent ]]; then
     next="Then merge the PR: ${merge}"
@@ -1081,10 +1097,10 @@ holding two lines, \`head: $4\` and
 lead for a kept story) starts a new review agent on the new head. When it was merge that refused,
 review had already put the story in review: your reply's first line says \`$1 is in review on
 <the new head>, which nobody reviewed\`.
-When merge prints \`base merged: <PR URL> is now ...\`, it merged nothing: GitHub merged the base into
-the PR's branch, and that head needs no new review. With <new head> the full SHA the line's
-\`merge --head\` names, run \`$5 wait-pr --head <new head> $2\` in the background and, once it exits 0,
-\`$5 merge --head <new head> $2\`, as above.
+When merge prints \`base merged: <PR URL> is now ...\`, GitHub merged the base into the PR's branch:
+that head needs no new review, and merge goes on to wait for its CI and merge it, so leave it running
+until it exits. When it prints \`already merged:\`, the PR merged elsewhere while it waited,
+and merge reconciled the board. A \`base merged, <cause>:\` refusal is one of the other refusals below.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff.
 Once the last of these commands has exited, run nothing more in this worktree (a merge removes it):
 reply with ${3}, what the last command printed, and \`codex skipped: <why>\` when codex was, then
@@ -1481,7 +1497,7 @@ conclusion, and open code-scanning alerts. Fix each real one; rebut the rest wit
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
 never dismiss an alert. A PR's head is the <sha> \`swarm.sh watch\` printed for it (\`checks finished on
 <sha>\`), never your checkout's HEAD: you work from the main checkout, on the base. For a head watch has not printed,
-pass the \`<new head>\` a \`base merged:\` line names, or, after a builder's push, the sha the builder reported, else \`git -C ../<repo>-wt/<slug> rev-parse HEAD\` in its worktree;
+pass the full SHA a \`base merged, <cause>:\` refusal names after \`wait-pr --head\`, or, after a builder's push, the sha the builder reported, else \`git -C ../<repo>-wt/<slug> rev-parse HEAD\` in its worktree;
 never a fresh \`gh pr view\` read, which right after a push can still name the old head, as an unpinned wait-pr can. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR never got the head you named: never wait on <X> instead; send the builder a nudge naming both shas, so it pushes again and reports its HEAD, or report it to the lead." "report it to the lead" "<sha>")
 EOF
 }

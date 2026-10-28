@@ -3,7 +3,7 @@
 # merge asks GitHub to merge the base into the PR's branch (update-branch, pinned to the head it
 # read), reads the PR's head until it moves, and accepts the new head only when GitHub made it, its
 # parents are the old head, then a commit on the base, and it changes only what that commit brings. It
-# logs base-merged <new head>, prints a base merged: line, waits for the new head's CI and merges it
+# logs base-merged <new head> from <old head>, prints a base merged: line, waits for the new head's CI and merges it
 # (merge_base_update_wait_test.sh has the wait and its refusals). Any other head, a
 # conflict, another failed request, a request with no answer and a head that never moves refuse, naming
 # the cause, and merge nothing; a 422 once the head has moved checks that head. On merge_fixture.sh, whose stub serves
@@ -63,14 +63,14 @@ views_after_put() { awk -v put="${PUT}" '$0 == put { on = 1; next } on && /^pr v
 no_base_merged() { ! logged "^merge s base-merged"; }
 is_zero_views() { [[ "$(views_after_put)" == 0 ]]; }
 # merged_in <name> [PR URL] — the last merge merged main into the PR (${URL}, or [PR URL]) and said so,
-# waited for ${H3}'s CI and merged ${H3}; events.tsv has base-merged ${H3}, then merge ok.
+# waited for ${H3}'s CI and merged ${H3}; events.tsv has base-merged ${H3} from ${H1}, then merge ok.
 merged_in() {
   local u="${2:-${URL}}" r; r="${u#https://github.com/}"; r="${r%/pull/*}"
   is "$1: exits 0" 0 "${rc}"
   check "$1: says main merged in" said "base merged: ${u} is now 3333333 (1111111 with main merged in); waiting up to 60s for its CI"
-  check "$1: waits for the new head's CI" grep -qF "api --paginate repos/${r}/commits/${H3}/check-runs" "${ROOT}/gh.log"
+  is "$1: reads the new head's CI before the merge" yes "$(c="$(grep -nF "api --paginate repos/${r}/commits/${H3}/check-runs" "${ROOT}/gh.log" | head -1 | cut -d: -f1)"; m="$(grep -n "^pr merge" "${ROOT}/gh.log" | head -1 | cut -d: -f1)"; [[ -n "${c}" && -n "${m}" ]] && (( c < m )) && echo yes || echo no)"
   check "$1: merges the new head" grep -qxF "pr merge 7 --repo ${r} --squash --match-head-commit ${H3}" "${ROOT}/gh.log"
-  is "$1: base-merged, then merge ok" "merge s base-merged ${H3}|merge s ok" "$(events | grep '^merge ' | paste -sd'|' -)"
+  is "$1: base-merged, then merge ok" "merge s base-merged ${H3} from ${H1}|merge s ok" "$(events | grep '^merge ' | paste -sd'|' -)"
 }
 
 # --- main merged in, the new head's parents the old head and main's head: base merged, then that head merges.

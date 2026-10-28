@@ -454,7 +454,7 @@ merged_state() {
 # flist), when the guard made one, goes with it. main logs nothing for merge.
 merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; [[ -z "${flist:-}" ]] || rm -f "${flist}"; die "merge: $1"; }
 
-# base_moved <owner/repo> <head> <base> <pr> — stop a story PR whose base has commits <head> lacks, since
+# base_moved <owner/repo> <head> <base> <pr> [<merged>] — stop a story PR whose base has commits <head> lacks, since
 # CI on <head> never ran with them, unless every path they change is on the board (ci_gate behind,
 # given board_paths; a board README counts as code) and the PR is in the board's own repo. For such a
 # PR it sets BASE_BEHIND to the number of commits and fails, and base_rounds merges the base in. It
@@ -463,23 +463,25 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; [[ -z "${flist:-}" ]] 
 # some of them, and the price is one more CI run. A compare it cannot read refuses too, and so does a
 # board-only gain when the board's repo cannot be read, naming the read. That refusal, and a compare that
 # cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, which clears them: the
-# head is then up to date, so no repo read is needed. Each read stops after
+# head is then up to date, so no repo read is needed. With <merged> set, <head> is GitHub's merge of the
+# base, which the builder's worktree lacks, so each refusal says to pull the branch first. Each read stops after
 # BASE_MOVED_WAIT. Within one project, merge_pr holds merge_lock from this compare through the merge and
 # its read back, so two direct merges into one base cannot both pass it; merges from two projects, or by
 # hand, still can: only a merge queue closes that.
 base_moved() {
-  local out n p own why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$3 in, push, and merge the new head"
+  local out n p own why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$3 in, push, and merge the new head" tail=""
   why="cannot tell whether $3 moved past ${2:0:7}'s CI"
+  [[ -z "${5:-}" ]] || { fix="pull the branch first (it holds GitHub's merge ${2:0:7}), then ${fix}"; tail="; $(pull_first)"; }
   out="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" behind "$1" "$2" "$3" "$(board_paths)" \
     "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
   case ${rc} in
     0) ;;
     "${BEHIND_UNLISTED}") merge_fail "${why}: ${out#error }: ${fix}" ;;
-    142) merge_fail "${why}: the compare took over ${limit}s" ;;
-    *) merge_fail "${why}: ${out#error }" ;;
+    142) merge_fail "${why}: the compare took over ${limit}s${tail}" ;;
+    *) merge_fail "${why}: ${out#error }${tail}" ;;
   esac
   n="${out%%$'\n'*}"
-  [[ "${n}" =~ ^[0-9]+$ ]] || merge_fail "${why}: ${out}"
+  [[ "${n}" =~ ^[0-9]+$ ]] || merge_fail "${why}: ${out}${tail}"
   [[ ${n} -gt 0 ]] || return 0
   # Only board paths changed. They are the board's repo's alone: in another repo a stories/ file is code.
   if [[ "${out}" != *$'\n'* ]]; then
@@ -497,7 +499,7 @@ base_moved() {
   return 1
 }
 
-# merge_base_update <owner/repo> <pr> <head> <base> <n> — base_moved found <n> commits <head> lacks:
+# merge_base_update <owner/repo> <pr> <head> <base> <n> [<merged>] — base_moved found <n> commits <head> lacks:
 # ask GitHub to merge <base> into the PR's branch (PUT pulls/<pr>/update-branch, expected_head_sha
 # <head>, so a push since then stops it), read the PR's head up to MERGE_UPDATE_READS times,
 # MERGE_READ_WAIT apart, until it moves, and accept the new head only when GitHub made it (committer
@@ -507,30 +509,33 @@ base_moved() {
 # file it changes is that commit's own version of a file the PR left alone (ci_gate merged: GitHub's web
 # editor also makes such commits, with a conflict resolved by hand; a file the PR changed too goes to
 # review), so its only new content is the base's. Then log
-# `base-merged <new head>`, print a `base merged:` line and set BASE_NEW to the new head, for base_rounds
-# to wait on and merge. A 422 while the head is still <head> is a conflict; a 422 once it has moved (a push since
+# `base-merged <new head> from <head>`, print a `base merged:` line and set BASE_NEW to the new head, for
+# base_rounds to wait on and merge. A 422 while the head is still <head> is a conflict; a 422 once it has moved (a push since
 # merge read it, or GitHub's merge for another merge of this PR) sends that head through the same
 # checks. A conflict, another failed request, a request with no answer in time and a head that never
-# moves refuse with base_moved's line, ending as it does in merging the base in; any other head, or a
+# moves refuse with base_moved's line, ending as it does in merging the base in; with <merged> set,
+# <head> is GitHub's earlier merge, which the builder's worktree lacks, so each of those says to pull
+# the branch first. Any other head, or a
 # read of it that fails, refuses as `base merge unchecked:`, for a review of the new head. Each read
 # stops after BASE_MOVED_WAIT, as base_moved's do. It returns only with BASE_NEW set, and never merges.
 merge_base_update() {
   local repo="$1" n="$2" head="$3" base="$4" url="https://github.com/$1/pull/$2" wait out i new="" seen="" ps who sig p1 p2 more tip st why rc=0
-  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head"
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head" first=""
   wait="${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
   why="the base ${base} moved past ${head:0:7}'s CI ($5 commits it lacks)"
+  [[ -z "${6:-}" ]] || first="pull the branch first (it holds GitHub's merge ${head:0:7}), then "
   out="$(within "${limit}" gh api -X PUT -f "expected_head_sha=${head}" "repos/${repo}/pulls/${n}/update-branch" 2>&1 > /dev/null < /dev/null)" || rc=$?
   if [[ ${rc} -eq 142 ]]; then
-    merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s: pull the branch first (GitHub may yet push its merge), then ${fix}"
+    merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s: ${first:-pull the branch first (GitHub may yet push its merge), then }${fix}"
   elif [[ ${rc} -ne 0 ]]; then
     out="${out##*$'\n'}"; out="${out#gh: }"
-    [[ "${out}" == *"(HTTP 422)"* ]] || merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${fix}"
+    [[ "${out}" == *"(HTTP 422)"* ]] || merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${first}${fix}"
     # A 422 is a conflict while the head is still <head>. GitHub gives one too once the head has moved:
     # a push since merge read it, or GitHub's merge for another merge of this PR. That head is checked below.
     out="${out% (HTTP 422)}"
     new="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null | json "d['headRefOid']")" && [[ -n "${new}" ]] \
-      || merge_fail "${why}, and GitHub would not merge it in (HTTP 422: ${out}), and gh cannot read the head again to tell a conflict from a branch that moved: pull the branch first, then ${fix}"
-    [[ "${new}" != "${head}" ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out}): ${fix}"
+      || merge_fail "${why}, and GitHub would not merge it in (HTTP 422: ${out}), and gh cannot read the head again to tell a conflict from a branch that moved: ${first:-pull the branch first, then }${fix}"
+    [[ "${new}" != "${head}" ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out}): ${first}${fix}"
   fi
   # GitHub merges in the background: the head moves a moment after it says yes.
   if [[ -z "${new}" ]]; then
@@ -543,7 +548,7 @@ merge_base_update() {
   fi
   if [[ -z "${new}" ]]; then
     out="its head was still ${head:0:7}"; [[ -n "${seen}" ]] || out="gh could not read its head"
-    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart: pull the branch first (GitHub may yet push its merge), then ${fix}"
+    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart: ${first:-pull the branch first (GitHub may yet push its merge), then }${fix}"
   fi
   why="base merge unchecked: ${url}'s head moved from ${head:0:7} to ${new:0:7}"
   [[ "${new}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "${why}, not a commit SHA: review the new head as for any new head"
@@ -574,86 +579,120 @@ merge_base_update() {
     142) merge_fail "${why}, and gh did not say within ${limit}s what it changes: review the new head as for any new head" ;;
     *) merge_fail "${why}, and what it changes cannot be read (${out#error }): review the new head as for any new head" ;;
   esac
-  record_event merge "${MERGE_TARGET}" "base-merged ${new}"
+  record_event merge "${MERGE_TARGET}" "base-merged ${new} from ${head}"
   echo "base merged: ${url} is now ${new:0:7} (${head:0:7} with ${base} merged in); waiting up to ${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}s for its CI"
   BASE_NEW="${new}"
 }
 
 # base_rounds — merge_pr's moved-base step for a story PR on the direct path, on its locals repo, n,
-# head, base, changed and url: while base_moved finds code on the base that head lacks,
-# merge_base_update has GitHub merge the base in, head becomes the new head, and base_ci waits for its
-# green. Then base_moved runs again, right before gh pr merge. A base that has moved again after
-# MERGE_BASE_ROUNDS rounds refuses, naming them. It returns with head the one to merge. A PR that no
-# longer reads open after a wait (another merge run landed it meanwhile, whose merge the base now holds)
-# returns at once: gh pr merge's read-back then finds it merged, as for any second merge of a PR. It
-# frees merge_pr's merge_lock (lock) while it merges the base in and waits, which can take
-# MERGE_CI_SECONDS, so other merges into the base go on meanwhile, and takes it again before the
-# next base check.
+# head, base, url and lock: while base_moved finds code on the base that head lacks, merge_base_update
+# has GitHub merge the base in, head becomes the new head, and base_wait waits for its green. Then
+# base_pr_now reads the PR again and base_moved runs again, right before gh pr merge. A head an earlier
+# merge run made this way (base_merged) gets the same wait first, not only merge_pr's plain head check,
+# which reads no expected workflow. A base that has moved again after MERGE_BASE_ROUNDS rounds refuses,
+# naming them. It returns with head the one to merge, or with BASE_LANDED set when the PR merged
+# elsewhere meanwhile.
 base_rounds() {
-  local round old st
+  local round old merged waited=""
+  BASE_LANDED=""
+  if base_merged "${MERGE_TARGET}" "${head}"; then
+    old="$(base_merged_from "${MERGE_TARGET}" "${head}")"
+    base_wait "${old:-${head}}" || return 0
+    waited=1
+  fi
   for ((round = 0; ; round++)); do
-    if [[ ${round} -gt 0 ]]; then
-      st="$(within "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" gh pr view "${n}" --repo "${repo}" --json state < /dev/null | json "d['state']")" || st=""
-      [[ -z "${st}" || "${st}" == OPEN ]] || return 0
-    fi
-    if base_moved "${repo}" "${head}" "${base}" "${n}"; then return 0; fi
-    [[ ${round} -lt ${MERGE_BASE_ROUNDS} ]] || merge_fail "base merged, still moving: ${base} gained code ${head:0:7} lacks again after ${round} rounds of merging it into ${url} and waiting for CI (MERGE_BASE_ROUNDS); ${head:0:7} is green on ${base} as it was: merge --head ${head} ${url} once ${base} is quiet; $(pull_first)"
-    rm -rf "${lock}"; trap - EXIT
+    if [[ -n "${waited}" ]] && ! base_pr_now; then return 0; fi
+    # After a round, or for a head an earlier merge run made (base_merged), the branch holds GitHub's
+    # merge, which the builder's worktree lacks: every refusal from here says to pull first.
+    merged=""; if [[ ${round} -gt 0 ]] || base_merged "${MERGE_TARGET}" "${head}"; then merged=1; fi
+    if base_moved "${repo}" "${head}" "${base}" "${n}" "${merged}"; then return 0; fi
+    [[ ${round} -lt ${MERGE_BASE_ROUNDS} ]] || merge_fail "base merged, still moving: ${base} gained code ${head:0:7} lacks again after ${round} rounds of merging it into ${url} and waiting for CI (MERGE_BASE_ROUNDS); ${head:0:7} is green on ${base} as it was: once ${base} is quiet, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"
+    rm -rf "${lock}"; lock=""; trap - EXIT
     old="${head}"
-    merge_base_update "${repo}" "${n}" "${head}" "${base}" "${BASE_BEHIND}"
+    merge_base_update "${repo}" "${n}" "${head}" "${base}" "${BASE_BEHIND}" "${merged}"
     head="${BASE_NEW}"
-    base_ci "${repo}" "${n}" "${old}" "${head}" "${base}" "${changed}"
-    merge_lock "${repo}" "${base}"; lock="${MERGE_LOCK}"
-    # shellcheck disable=SC2064 # the path is fixed now
-    trap "rm -rf '${lock}'" EXIT
+    base_wait "${old}" || return 0
+    waited=1
   done
+}
+
+# base_wait <old> — base_rounds' wait on head, GitHub's merge of the base into <old>: free merge_pr's
+# merge_lock (lock) for it, as base_ci can take MERGE_CI_SECONDS and other merges into the base go on
+# meanwhile, then take it again before the next base check (a refusal to take it names the new head).
+# A wait that fails refuses with base_ci's line, unless base_pr_now finds a push or a PR merged
+# elsewhere meanwhile, which outranks what the wait saw; fails (BASE_LANDED set) for the latter.
+base_wait() {
+  [[ -z "${lock}" ]] || rm -rf "${lock}"
+  lock=""; trap - EXIT
+  if ! base_ci "${repo}" "${n}" "$1" "${head}" "${base}"; then
+    base_pr_now || return 1
+    merge_fail "${BASE_CI_WHY}"
+  fi
+  merge_lock "${repo}" "${base}" "GitHub's merge of ${base} made ${head:0:7}, which is green: once that merge is done, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"
+  lock="${MERGE_LOCK}"
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -rf '${lock}'" EXIT
+}
+
+# base_pr_now — after base_rounds' wait, read the PR again (merge_pr's locals repo, n, head, base and
+# url) and succeed while it is open at head. One that reads MERGED merged elsewhere meanwhile (another
+# swarm.sh merge, or by hand): set BASE_LANDED and fail. One closed, or at another head (a push during the wait), refuses.
+# A read that fails succeeds: base_moved's compare and gh pr merge's pinned head still guard the merge.
+base_pr_now() {
+  local info="" st h
+  info="$(within "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" gh pr view "${n}" --repo "${repo}" --json state,headRefOid < /dev/null \
+    | json "d['state'] + ' ' + d['headRefOid']")" || info=""
+  read -r st h <<< "${info}"
+  [[ -n "${st}" && "${h}" =~ ^[0-9a-f]{40}$ ]] || return 0
+  if [[ "${st}" == MERGED ]]; then BASE_LANDED=1; return 1; fi
+  [[ "${st}" == OPEN ]] || merge_fail "${url} is ${st}, not open: it closed while merge waited on ${head:0:7}"
+  [[ "${h}" == "${head}" ]] \
+    || merge_fail "base merged, head moved: ${url}'s head moved from ${head:0:7}, GitHub's merge of ${base}, to ${h:0:7} while merge waited on its CI: review the new head as for any new head; $(pull_first)"
 }
 
 # pull_first — what each refusal after a base merge tells the builder: GitHub's merge commit is on the
 # PR's branch but not in the builder's worktree, so a push from there would be refused.
 pull_first() { echo "the builder pulls its branch (git pull --ff-only) before it pushes: GitHub's merge commit is not in its worktree"; }
 
-# base_ci <owner/repo> <pr> <old> <new> <base> <changed> — wait for green on <new>, the head
-# merge_base_update made of <old> with <base> merged in: ci_gate head on it, with each workflow a
-# pull_request into <base> runs with the PR's <changed> files (read once, kept in a memo file, as
-# wait-pr's are), every MERGE_POLL seconds, as merge's own CI wait polls, for up to MERGE_CI_SECONDS.
-# Return once it is green. Refuse, merging nothing, on red (naming the red checks), on no check runs
-# MERGE_CI_GRACE after the first read that found none, at the deadline (naming what is still pending)
-# and on WAIT_PR_TRIES failed reads in a row. Each refusal says what to run next and that the builder
-# pulls its branch first (pull_first).
+# base_ci <owner/repo> <pr> <old> <new> <base> — wait for green on <new>, the head merge_base_update made
+# of <old> with <base> merged in, with wait-pr's own loop (wait_pr --head <new>, in a subshell, its lines
+# printed as they come): ci_gate head and the workflows a pull_request runs, every MERGE_POLL seconds for
+# up to MERGE_CI_SECONDS, a spent rate limit waited out, a conflict with the base ending it. Its grace for
+# no check runs, or an expected workflow with no run, is MERGE_CI_GRACE here, not WAIT_PR_GRACE. Succeed
+# on green. Else set BASE_CI_WHY to the refusal, `base merged, <cause>:` with the cause read from how
+# wait-pr ended (red, no check runs, no workflow run, conflict, timed out, head moved, unread), then
+# what to run next, and fail.
 base_ci() {
-  local repo="$1" n="$2" old="$3" new="$4" base="$5" changed="$6" url="https://github.com/$1/pull/$2" memo end why rc
-  local limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}"
-  local poll="${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" empty="" missed=0 what="no read of it finished" who next
+  local repo="$1" n="$2" old="$3" new="$4" base="$5" url="https://github.com/$1/pull/$2" out rc cause why who next
   who="${url}'s head ${new:0:7} (${old:0:7} with ${base} merged in)"
-  next="wait-pr --head ${new} ${url}, then merge --head ${new} ${url}"
-  memo="$(mktemp "${TMPDIR:-/tmp}/swarm-base-ci.XXXXXX")" || merge_fail "base merged, unread: mktemp failed, so CI on ${who} was not read: ${next}; $(pull_first)"
-  # A deadline to the millisecond, as within's @<epoch> takes it: a test's SWARM_MERGE_CI_SECONDS may be a fraction.
-  end="$(epoch_in "${limit}")"
-  while :; do
-    rc=0; why="$(within "@${end}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${new}" "${base}" "${n}" "${changed}" "${memo}" < /dev/null)" || rc=$?
-    # A second line names the workflows not waited on: not the verdict.
-    why="${why%%$'\n'*}"
-    [[ ${rc} -eq 2 || ${rc} -eq 3 ]] || rm -f "${memo}"
-    case ${rc} in
-      0) return 0 ;;
-      1) merge_fail "base merged, red: ${who} is red: ${why}; $(pull_first), then fixes it and pushes" ;;
-      2) missed=0; what="${why}"
-         if [[ "; ${why}; " == *"; no check runs; "* ]]; then
-           empty="${empty:-$(epoch_in "${grace}")}"
-           if epoch_past "${empty}"; then
-             rm -f "${memo}"
-             merge_fail "base merged, no check runs: ${who} has no check run ${grace}s after the first read that found none (${why}): ${next}; $(pull_first)"
-           fi
-         fi ;;
-      142) merge_fail "base merged, timed out: ${who} is not green after ${limit}s, still pending: ${what}: ${next}; $(pull_first)" ;;
-      *) if ((++missed >= WAIT_PR_TRIES)); then
-           rm -f "${memo}"
-           merge_fail "base merged, unread: gh cannot read CI on ${who}, ${missed} reads in a row (${why#error }): ${next}; $(pull_first)"
-         fi ;;
-    esac
-    sleep "${poll}"
-  done
+  next="wait-pr --head ${new} ${url}, then merge --head ${new} ${url}; $(pull_first)"
+  out="$(mktemp "${TMPDIR:-/tmp}/swarm-base-ci.XXXXXX")" \
+    || { BASE_CI_WHY="base merged, unread: mktemp failed, so CI on ${who} was not read: ${next}"; return 1; }
+  ( trap 'rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}' EXIT
+    SWARM_WAIT_PR_GRACE="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" wait_pr --head "${new}" "${url}" ) 2>&1 | tee "${out}"
+  rc="${PIPESTATUS[0]}"
+  case ${rc} in
+    0) rm -f "${out}"; return 0 ;;
+    1) cause=red; why="$(sed -n 's/^red: //p' "${out}" | tail -1)" ;;
+    *) why="$(sed -n 's/^swarm: wait-pr: //p' "${out}" | tail -1)"
+       case "${why}" in
+         "timed out"*|"rate limited"*) cause="timed out" ;;
+         "no check runs"*) cause="no check runs" ;;
+         "conflicts with"*) cause=conflict ;;
+         "the PR's head is"*) cause="head moved" ;;
+         *": a pull_request into "*) cause="no workflow run" ;;
+         *) cause=unread ;;
+       esac ;;
+  esac
+  rm -f "${out}"
+  case "${cause}" in
+    red) BASE_CI_WHY="base merged, red: ${who} is red: ${why}; $(pull_first), then fixes it and pushes" ;;
+    # Ends as base_moved's refusals do, so the conductor sends the builder to merge the base in.
+    conflict) BASE_CI_WHY="base merged, conflict: ${who} conflicts with ${base}: pull the branch first (it holds GitHub's merge ${new:0:7}), then merge origin/${base} in, push, and merge the new head" ;;
+    "head moved") BASE_CI_WHY="base merged, head moved: ${who}: ${why}: review the new head as for any new head; $(pull_first)" ;;
+    *) BASE_CI_WHY="base merged, ${cause}: ${who}: ${why:-wait-pr exited ${rc}}: ${next}" ;;
+  esac
+  return 1
 }
 
 # epoch_in <seconds> — the epoch <seconds> from now, to the millisecond: a deadline for within's
@@ -664,17 +703,25 @@ epoch_in() { perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "$1";
 epoch_past() { perl -MTime::HiRes=time -e 'exit(time >= shift ? 0 : 1)' -- "$1"; }
 
 # base_merged <slug> <sha> — succeed when events.tsv records <sha> as a head merge made by merging the
-# base into <slug>'s PR (merge_base_update's `merge <slug> base-merged <sha>`): merge waits for its CI
-# and merges it itself, and its only new content is the base's, so it is no new work for a review.
+# base into <slug>'s PR (merge_base_update's `merge <slug> base-merged <sha> from <head>`; `base-merged
+# <sha>` alone before it named the head): merge waits for its CI and merges it itself, and its only new
+# content is the base's, so it is no new work for a review.
 base_merged() {
-  awk -F'\t' -v t="$1" -v o="base-merged $2" '$2 == "merge" && $3 == t && $5 == o { f = 1; exit } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+  awk -F'\t' -v t="$1" -v o="base-merged $2" '$2 == "merge" && $3 == t && ($5 == o || index($5, o " from ") == 1) { f = 1; exit } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
-# merge_lock <owner/repo> <base> — take this project's lock on direct merges into <base> of <repo>,
+# base_merged_from <slug> <sha> — the head events.tsv records <sha> as made from by merging the base
+# into <slug>'s PR (`base-merged <sha> from <head>`), or nothing.
+base_merged_from() {
+  awk -F'\t' -v t="$1" -v o="base-merged $2 from " '$2 == "merge" && $3 == t && index($5, o) == 1 { h = substr($5, length(o) + 1) } END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
+# merge_lock <owner/repo> <base> [<then>] — take this project's lock on direct merges into <base> of <repo>,
 # .swarm/merge-<owner>-<repo>-<base>.lock: a directory holding this swarm.sh's pid ($$, which outlives
 # the dispatch subshell), its path in MERGE_LOCK. A stale lock (merge_lock_stale) was left by a merge
 # that died holding it, and is taken over (merge_lock_clear). A live one is waited on, a second at a
-# time, for MERGE_LOCK_WAIT seconds; then merge refuses, naming its pid, and nothing was merged.
+# time, for MERGE_LOCK_WAIT seconds; then merge refuses, naming its pid, and nothing was merged, then
+# <then>, what to do next (by default, to run this again once that merge is done).
 MERGE_LOCK=""
 merge_lock() {
   local lock="${PROJECT_DIR}/.swarm/merge-${1//\//-}-${2//\//-}.lock" pid i wait="${SWARM_MERGE_LOCK_WAIT:-${MERGE_LOCK_WAIT}}"
@@ -683,7 +730,7 @@ merge_lock() {
     if mkdir "${lock}" 2>/dev/null; then echo "$$" > "${lock}/pid"; MERGE_LOCK="${lock}"; return 0; fi
     pid="$(cat "${lock}/pid" 2>/dev/null)" || pid=""
     if merge_lock_stale "${lock}" "${pid}" && merge_lock_clear "${lock}" "${pid}"; then continue; fi
-    (( i < wait )) || merge_fail "another swarm.sh merge into $2 of $1 has held ${lock} (pid ${pid:-not yet written}) for ${wait}s; nothing was merged: run this again once that merge is done"
+    (( i < wait )) || merge_fail "another swarm.sh merge into $2 of $1 has held ${lock} (pid ${pid:-not yet written}) for ${wait}s; nothing was merged: ${3:-run this again once that merge is done}"
     sleep 1
   done
 }
@@ -756,7 +803,10 @@ short_shas() {
 # MERGE_BASE_ROUNDS rounds (base_rounds), and the head merged is the last new head, which ci_gate admin
 # checks again with merge_admin = on. A red new head, one
 # with no check runs within MERGE_CI_GRACE, a timeout and a base still moving after those rounds
-# refuse, each as `base merged, <cause>:`, saying the builder pulls its branch before it pushes.
+# refuse, each as `base merged, <cause>:`, saying the builder pulls its branch before it pushes, and so
+# do a push and a conflict during the wait (base_ci, base_pr_now). A PR merged elsewhere meanwhile
+# ends this one as `already merged:`, merging nothing and logging `merged elsewhere`, then reconciles. A
+# head an earlier merge run made this way gets the same wait before its base check.
 # On the direct path, the base check through the merge read back runs under merge_lock, one merge
 # into a repo's base at a time; base_rounds frees it while it merges the base in and waits on the new
 # head, and takes it again before the next base check.
@@ -901,6 +951,23 @@ merge_pr() {
     # base_rounds merges the base in and waits for the new head's CI, and head becomes that head.
     if [[ -z "${only}" ]]; then
       before="${head}"; base_rounds
+      if [[ -n "${BASE_LANDED}" ]]; then
+        # It merged while this run waited, by another swarm.sh merge or by hand: no merge ok and no wait
+        # for CI on the base, which are the merge's own. Reconcile still runs, as nothing else may: it
+        # takes its turn and finds nothing left after another run's.
+        [[ -z "${lock}" ]] || rm -rf "${lock}"
+        trap - EXIT
+        record_event merge "${MERGE_TARGET}" "merged elsewhere"
+        echo "already merged: ${url} merged while this run waited on ${head:0:7}, by another swarm.sh merge or by hand; reconciling"
+        # shellcheck disable=SC2034 # read in another file
+        ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
+        wait $! || {
+          rrc=$?; rwhy="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
+          record_event reconcile - "${rwhy:-failed (exit ${rrc})}"
+          die "merge: reconcile failed after the merge; run swarm.sh reconcile"
+        }
+        return 0
+      fi
       # --admin skips every rule on the base, and ci_gate admin read the head before the base merged in.
       if [[ "${head}" != "${before}" && "${CFG_merge_admin}" == on ]]; then
         why="$(ci_gate admin "${repo}" "${base}" "${head}" "${method}")" \
@@ -2380,13 +2447,13 @@ watch_repos() {
 # queued_line <owner/repo> <n> <sha> <branch> — "queued: <repo> #<n> <branch> green <m>m with no review
 # on <sha7>" for an open, mergeable PR (the caller's to check; an open PR has not merged) whose story an
 # agent builds (agent_kind: a lead story's PR is the lead's), with no review agent's review on <sha>
-# (review_on_head), that is no head merge made by merging the base in (base_merged: merge's own), and
+# (review_on_head, which counts a head merge made from a reviewed head), and
 # green by ci_gate's rule for queue_minutes or more (ci_gate age). The file
 # checks come first, so a reviewed head costs no gh call. Nothing otherwise, or when gh cannot tell.
 queued_line() {
   local slug="${4#story/}" m
   if [[ -f "${BOARD}/stories/${slug}.md" ]] && ! agent_kind "$(fm "${BOARD}/stories/${slug}.md" kind)"; then return 0; fi
-  if review_on_head "${slug}" "$3" || base_merged "${slug}" "$3"; then return 0; fi
+  if review_on_head "${slug}" "$3"; then return 0; fi
   m="$(ci_gate age "$1" "$3" 2>/dev/null)" || return 0
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${m}" =~ ^[0-9]+$ ]] && (( m >= CFG_queue_minutes )); then echo "queued: $1 #$2 $4 green ${m}m with no review on ${3:0:7}"; fi
@@ -2509,9 +2576,10 @@ watch_prs() {
         unread="${unread// ${repo}#${n} / }"; read -r total pending <<< "${runs}"
         if [[ "${total}" -gt 0 && "${pending}" == 0 ]]; then
           # A head merge made by merging the base in (base_merged) is merge's own to wait on and merge,
-          # and needs no review: it is marked done and queued, so no line about it starts one.
+          # and needs no review: it is marked done with no line. Its conflict read stays, and queued_line
+          # judges it as any head (review_pass counts it reviewed when the head it was made from was).
           if base_merged "${br#story/}" "${sha}"; then
-            printf 'done %s\nqueued %s\n' "${sha}" "${sha:0:7}" >> "${seen}"; continue
+            echo "done ${sha}" >> "${seen}"; continue
           fi
           echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"; return 0
         fi
@@ -2669,6 +2737,8 @@ review_red_scan() {
   local slug="${3#story/}" f home
   f="${BOARD}/stories/${slug}.md"
   [[ -n "${CFG_escalate_ladder:-}" && "$3" == story/* && "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && -n "${HERDR_PANE_ID:-}" ]] || return 1
+  # A head merge made by merging the base in is not the builder's: merge handles its red (base_ci).
+  ! base_merged "${slug}" "$2" || return 1
   # One answer to "is this pane review-<slug>'s", merge's and tell's: its tab record, its agents.tsv
   # role and herdr's list (review_pane); a builder's pane or the lead's never counts.
   [[ "$(review_pane "$(herdr agent list 2>/dev/null)")" == "${slug}" ]] || return 1
