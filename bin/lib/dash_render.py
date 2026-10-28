@@ -320,10 +320,10 @@ for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
                   "epic": epic_for("", None, re.sub(r"^epic-", "", wt))})
 
 # Needs you: only what you act on, each as a short action. With lead = session a lead session acts
-# for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft epic) and
-# the rest goes to the lead's queue (lq); with lead off, lq is needs you. Of the stories with a
+# for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft epic only
+# you agree) and the rest goes to the lead's queue (lq); with lead off, lq is needs you. Of the stories with a
 # **You:** step only the first is listed, with +N more for the rest (more).
-need, blocked, later, green, need_slugs, held_seen, staged = [], 0, 0, 0, set(), set(), set()
+need, blocked, later, green, need_slugs, held_seen, no_agree = [], 0, 0, 0, set(), set(), set()
 LEAD = E.get("DASH_LEAD") == "session"
 queue = []
 lq = queue if LEAD else need
@@ -349,12 +349,18 @@ for l in lines("DASH_WAITING"):
     if l.startswith("later "):
         later += 1
         continue
+    # A draft the lead may set active unagreed (waiting_on_user's lead line) is the lead's, with no agree row.
+    m = re.match(r"draft epic: (\S+), the lead sets it active \((.*)\)$", l)
+    if m:
+        no_agree.add(m.group(1))
+        add(lq, bang + [(f"set draft epic {m.group(1)} active: ", ""), (m.group(2), "dim")], ("epics", m.group(1)))
+        continue
     if l.startswith(("draft epic: ", "draft hld: ")):
         continue  # the board's draft epics and HLDs have their own needs-you row below
     # A staged draft waits on its stage's tag, then on the lead's stage step: no agree row.
     m = re.match(r"staged epic: (\S+), (stage \S+, after \S+)$", l)
     if m:
-        staged.add(m.group(1))
+        no_agree.add(m.group(1))
         add(lq, bang + [(f"staged epic {m.group(1)}: ", ""), (m.group(2), "dim")], ("epics", m.group(1)))
         continue
     m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
@@ -443,7 +449,7 @@ for r in recs:
         add(lq, bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")], item)
 lq += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
 for b in board:
-    if b[0] == "epics" and b[2] == "draft" and b[1] not in staged:
+    if b[0] == "epics" and b[2] == "draft" and b[1] not in no_agree:
         add(need, bang + [(f"agree draft epic {b[1]}: ", ""), (f"/epic {b[1]}", "dim")], ("epics", b[1]))
     if b[0] == "hld" and b[2] == "draft":
         add(need, bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")], ("hld", b[1]))

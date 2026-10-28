@@ -295,8 +295,9 @@ printf '%s\treview\ts-one\tw1:p1\tok\n' "$(ago 1)" >> "${P}/.swarm/events.tsv"
 check "a line from a conductor's own pane is a sign of life" grep -qE '● conduct-e1 +conduct +opus·high +working 1m +│$' <<< "$(COLUMNS=100 agedash)"
 rm "${P}/.claude/swarm/config"
 
-# Every process-info read came from dash.sh's bash, none from the render's python.
-from_bash() { local n; n="$(wc -l < "${PI_LOG}")"; [[ ${n} -gt 0 && "$(grep -cE '^w[0-9]+:p[0-9]+ (.*/)?bash$' "${PI_LOG}")" -eq ${n} ]]; }
+# Every process-info read came from dash.sh: its bash, or the perl of report_read's within, which runs
+# the read under dash's deadline (dash_deadline). None from the render's python.
+from_bash() { local n; n="$(wc -l < "${PI_LOG}")"; [[ ${n} -gt 0 && "$(grep -cE '^w[0-9]+:p[0-9]+ (.*/)?(bash|perl)$' "${PI_LOG}")" -eq ${n} ]]; }
 check "every herdr process-info read comes from dash.sh, none from dash_render.py" from_bash
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

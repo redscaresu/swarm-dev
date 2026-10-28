@@ -174,6 +174,20 @@ check "a paths filter that misses the PR's files: no pending line" test "$(grep 
 fresh; printf 'on:\n  pull_request:\n    paths: ["bin/**"]\n' > "${FX}/wf/ci.yml"; page "${FX}/checks.2" check_runs "$(check_run gitleaks completed failure)"; wait_pr
 is "a paths filter that matches the PR's files: waited on" 1 "${rc}"
 check "a paths filter that matches the PR's files: pending, naming it" said "pending: .github/workflows/ci.yml (no run on ${H:0:7})"
+
+# --- The PR's file list read for the filters keeps its old shape: a PR of no file has none, and a compare
+# that lists fewer than the PR changes is no list, so a paths filter is waited on (fail closed). Neither
+# ends the wait with an error: only swarm.sh merge's protected-path hold asks why a list cannot come.
+fresh; echo 0 > "${FX}/changed"; echo '{"files":[]}' > "${FX}/files"
+page "${FX}/checks.2" check_runs "$(check_run gitleaks completed failure)"; wait_pr
+is "a PR of no file: still waits on the pull_request workflow" 1 "${rc}"
+check "a PR of no file: pending, naming it" said "pending: .github/workflows/ci.yml (no run on ${H:0:7})"
+check "a PR of no file: no error about its files" test "$(grep -c 'changes no file' "${ROOT}/out")" -eq 0
+fresh; echo 3 > "${FX}/changed"; printf 'on:\n  pull_request:\n    paths: ["docs/**"]\n' > "${FX}/wf/ci.yml"
+page "${FX}/checks.2" check_runs "$(check_run gitleaks completed failure)"; wait_pr
+is "a compare that lists fewer files than the PR changes: a paths filter is waited on" 1 "${rc}"
+check "a compare that lists fewer files than the PR changes: pending, naming it" said "pending: .github/workflows/ci.yml (no run on ${H:0:7})"
+check "a compare that lists fewer files than the PR changes: no error about its files" test "$(grep -c 'of the 3 files' "${ROOT}/out")" -eq 0
 # A head may be the PR's first (opened) or a later push (synchronize): types without both are not waited on.
 fresh; printf 'on:\n  pull_request:\n    types: [synchronize]\n' > "${FX}/wf/ci.yml"; wait_pr
 is "types with no opened: exits 0" 0 "${rc}"

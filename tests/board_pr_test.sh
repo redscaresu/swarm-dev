@@ -75,6 +75,9 @@ branch() { git -C "${P}" show-ref -q --verify "refs/heads/$1"; }
 # pr <state> [sha] — the one PR the gh stub lists from now on: <state>, its head board/x's tip or <sha>.
 pr() { printf '[{"state":"%s","url":"%s","headRefOid":"%s"}]\n' "$1" "${URL}" "${2:-$(git -C "${P}" rev-parse board/x)}" > "${ROOT}/prs"; }
 on_origin() { git -C "${P}" ls-remote --exit-code origin "refs/heads/$1" >/dev/null 2>&1; }
+# day <n> — the local date <n> days before today (-1: tomorrow). An epic's agreed: is a ticket only
+# from today back AGREED_MAX_AGE (board.sh's, 7) days.
+day() { python3 -c 'import datetime, sys; print(datetime.date.today() - datetime.timedelta(days=int(sys.argv[1])))' "$1"; }
 
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
@@ -331,7 +334,7 @@ reset_log; bpr open scope-old "Add old-b" "${ROOT}/body.md"
 is "a later board PR on an already-split epic opens with no split-critic.json" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
 is "it leaves the first split's record as it was" "2026-01-01	https://github.com/o/r/pull/1" "$(cat "${P}/.swarm/old/split-pr")"
 bpr start scope-med; mkdir -p "${ROOT}/proj-wt/_board-scope-med/board/epics"
-printf -- '---\nstatus: active\nagreed: 2026-01-01\n---\n\n# med\n' > "${ROOT}/proj-wt/_board-scope-med/board/epics/med.md"
+printf -- '---\nstatus: active\nagreed: %s\n---\n\n# med\n' "$(day 0)" > "${ROOT}/proj-wt/_board-scope-med/board/epics/med.md"
 echo story > "${ROOT}/proj-wt/_board-scope-med/board/stories/med-a.md"
 reset_log; bpr open scope-med "Plan med" "${ROOT}/body.md"
 is "a medium epic's board PR opens with no split-critic.json" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
@@ -339,7 +342,7 @@ is "a medium epic's board PR opens with no split-critic.json" "0 ${URL}" "${rc} 
 # --- An epic that goes active (new, or not active at the base) needs a ticket: agreed:, parent:, an hld:
 # naming an HLD agreed with grants: [epics] at both ends, or lead_epics = on. A refused PR creates no
 # PR and pushes nothing. Fixtures on origin/main go in through the old-split clone.
-NT="goes active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
+NT="goes active with no ticket (agreed: within the last 7 days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic"
 # on_main <path> <content> — commit <path> with <content> on origin/main, fetched here.
 on_main() {
   mkdir -p "$(dirname "${ROOT}/old-split/$1")"; printf '%b' "$2" > "${ROOT}/old-split/$1"
@@ -357,10 +360,15 @@ guard_refused() {
 }
 guard_opens() { reset_log; bpr open "$1" "Epic" "${ROOT}/body.md"; is "$2 opens" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"; }
 on_main board/epics/flip.md '---\nstatus: draft\n---\n\n# flip\n'
-on_main board/epics/stale.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# stale\n'
+# TODAY: a date inside AGREED_MAX_AGE all through the run (a day old by then at most), so only the
+# rule a case is about refuses it.
+TODAY="$(day 0)"
+on_main board/epics/stale.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# stale\n"
 on_main board/epics/fresh.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# fresh\n'
 on_main board/epics/selfp.md '---\nstatus: draft\n---\n\n# selfp\n'
 on_main board/epics/pdraft.md '---\nstatus: draft\n---\n\n# pdraft\n'
+on_main board/epics/pact.md '---\nstatus: active\n---\n\n# pact\n'
+on_main board/epics/pstale.md '---\nstatus: draft\n---\n\n# pstale\n'
 on_main board/epics/nostat.md '---\ndepends_on: []\n---\n\n# nostat\n'
 # was-<status>.md: an epic at each status but active (and draft, above) on origin/main.
 for st in later split review "done"; do on_main "board/epics/was-${st}.md" "---\nstatus: ${st}\n---\n\n# was-${st}\n"; done
@@ -381,7 +389,7 @@ git -C "${ROOT}/proj-wt/_board-new" add -A && git -C "${ROOT}/proj-wt/_board-new
 guard_opens new "after the refusal, the same epic committed as status: draft"
 bpr start flip; ep flip epics/flip.md '---\nstatus: active\n---\n\n# flip\n'
 guard_refused flip "a draft-to-active flip with no ticket" "flip ${NT} flip"
-bpr start stale; ep stale epics/stale.md '---\nstatus: active\nagreed: 2026-01-01\n---\n\n# stale\n'
+bpr start stale; ep stale epics/stale.md "---\nstatus: active\nagreed: ${TODAY}\n---\n\n# stale\n"
 guard_refused stale "a draft's stale agreed: left as it was on the flip to active" "stale ${NT} stale"
 bpr start body; ep body epics/e-body.md '---\ndepends_on: []\n---\n\n# e-body\nstatus: active\n'
 guard_refused body "an epic active by a body status: line, as fm reads it" "e-body ${NT} e-body"
@@ -391,6 +399,12 @@ bpr start padd; ep padd epics/p-added.md '---\nstatus: draft\n---\n'; ep padd ep
 guard_refused padd "parent: an epic the same PR adds" "e-padd ${NT} e-padd"
 bpr start pdr; ep pdr epics/e-pdr.md '---\nstatus: active\nparent: pdraft\n---\n'
 guard_refused pdr "parent: a draft epic on main" "e-pdr ${NT} e-pdr"
+# parent: counts at the head too when the PR changes it: one PR cannot take the parent out of active
+# (to a draft, or deleted) and add an active child.
+bpr start pdem; ep pdem epics/pact.md '---\nstatus: draft\n---\n\n# pact\n'; ep pdem epics/e-pdem.md '---\nstatus: active\nparent: pact\n---\n'
+guard_refused pdem "parent: an active epic the same PR sets back to a draft" "e-pdem ${NT} e-pdem"
+bpr start pdel; rm "${ROOT}/proj-wt/_board-pdel/board/epics/pact.md"; ep pdel epics/e-pdel.md '---\nstatus: active\nparent: pact\n---\n'
+guard_refused pdel "parent: an active epic the same PR deletes" "e-pdel ${NT} e-pdel"
 bpr start nst; ep nst epics/nostat.md '---\nstatus: active\ndepends_on: []\n---\n\n# nostat\n'
 guard_refused nst "an epic with no status: at the base, flipped to active" "nostat ${NT} nostat"
 # selfp is on the base, so only the own-slug rule refuses it.
@@ -400,7 +414,7 @@ guard_refused pself "parent: the epic's own slug" "selfp ${NT} selfp"
 bpr start hmv; ep hmv epics/e-hmv.md '---\nstatus: active\nhld: h-move\n---\n'
 on_main board/hld/h-move.md '---\nstatus: superseded\ngrants: [epics]\n---\n'
 guard_refused hmv "hld: an HLD superseded on origin/main since the start" "e-hmv ${NT} e-hmv"
-bpr start fch; ep fch epics/e-fch.md '---\nstatus: active\nagreed: 2026-01-01\n---\n'; touch "${ROOT}/fetch.fail"
+bpr start fch; ep fch epics/e-fch.md "---\nstatus: active\nagreed: ${TODAY}\n---\n"; touch "${ROOT}/fetch.fail"
 guard_refused fch "a failed fetch of origin/main" "board-pr: cannot fetch origin's base branch"
 rm "${ROOT}/fetch.fail"
 bpr start hd; ep hd hld/h-draft.md '---\nstatus: agreed\ngrants: [epics]\n---\n'; ep hd epics/e-hd.md '---\nstatus: active\nhld: h-draft\n---\n'
@@ -429,7 +443,7 @@ for st in later split review "done"; do
   bpr start "w${st}"; ep "w${st}" "epics/was-${st}.md" "---\nstatus: active\n---\n\n# was-${st}\n"
   guard_refused "w${st}" "${st} to active with no ticket" "was-${st} ${NT} was-${st}"
 done
-bpr start two1; ep two1 epics/a-ok.md '---\nstatus: active\nagreed: 2026-01-01\n---\n'; ep two1 epics/b-no.md '---\nstatus: active\n---\n'
+bpr start two1; ep two1 epics/a-ok.md "---\nstatus: active\nagreed: ${TODAY}\n---\n"; ep two1 epics/b-no.md '---\nstatus: active\n---\n'
 guard_refused two1 "two active epics, the ticketed one first" "b-no ${NT} b-no"
 check "the ticketed one first: the refusal does not name it" bash -c "! grep -qF a-ok '${ROOT}/err'"
 bpr start two2; ep two2 epics/a-no.md '---\nstatus: active\n---\n'; ep two2 epics/b-ok.md '---\nstatus: active\nparent: old\n---\n'
@@ -438,10 +452,25 @@ check "the unticketed one first: the refusal does not name the ticketed one" bas
 
 bpr start hok; ep hok epics/e-hok.md '---\nstatus: active\nhld: h-ok\n---\n'
 guard_opens hok "hld: an HLD agreed with grants: [epics] at both ends"
-bpr start fresh; ep fresh epics/fresh.md '---\nstatus: active\nagreed: 2026-02-02\n---\n\n# fresh\n'
-guard_opens fresh "a draft flipped to active with a new agreed: date"
+bpr start fresh; ep fresh epics/fresh.md "---\nstatus: active\nagreed: ${TODAY}\n---\n\n# fresh\n"
+guard_opens fresh "a draft flipped to active with a new agreed: date, today's"
+# agreed: counts from today back AGREED_MAX_AGE (7) days: 6 days ago opens; 8 days ago, or tomorrow, is
+# refused.
+bpr start a6; ep a6 epics/e-a6.md "---\nstatus: active\nagreed: $(day 6)\n---\n"
+guard_opens a6 "agreed: 6 days ago, a day inside AGREED_MAX_AGE"
+bpr start a8; ep a8 epics/e-a8.md "---\nstatus: active\nagreed: $(day 8)\n---\n"
+guard_refused a8 "agreed: 8 days ago, a day past AGREED_MAX_AGE" "e-a8 ${NT} e-a8"
+bpr start anext; ep anext epics/e-anext.md "---\nstatus: active\nagreed: $(day -1)\n---\n"
+guard_refused anext "agreed: tomorrow" "e-anext ${NT} e-anext"
 bpr start hdot; ep hdot epics/e-hdot.md '---\nstatus: active\nhld: H.dot\n---\n'
 guard_opens hdot "hld: an HLD name item_hld takes (capitals and a dot)"
+bpr start pok; ep pok epics/pact.md '---\nstatus: active\n---\n\n# pact, edited\n'; ep pok epics/e-pok.md '---\nstatus: active\nparent: pact\n---\n'
+guard_opens pok "parent: an epic active on main that the same PR edits and leaves active"
+# A parent the PR leaves alone is read on origin/main only: this branch was cut while pstale was a
+# draft, and main has set it active since.
+bpr start pst; ep pst epics/e-pst.md '---\nstatus: active\nparent: pstale\n---\n'
+on_main board/epics/pstale.md '---\nstatus: active\n---\n\n# pstale\n'
+guard_opens pst "parent: a draft at the branch's start that origin/main has set active since"
 # A later epic with no agreed:, parent: or hld: starts on the user's go: the lead writes agreed: <today>
 # in the edit that sets it active, as /epic does.
 bpr start later; ep later epics/was-later.md "---\nstatus: active\nagreed: $(date +%F)\n---\n\n# was-later\n"
