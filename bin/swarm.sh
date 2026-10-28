@@ -191,6 +191,8 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 # that caused it. launch_file drops the via, so an agent's own swarm.sh starts afresh. A dash
 # --project runs swarm.sh again for each project, so each one's calls land in its own log.
 GH_VIA="${1:-}"
+# Set when another swarm.sh runs this one, which passes its SWARM_GH_VIA on (lead_rename reads it).
+NESTED_CALL="${SWARM_GH_VIA:+1}"
 export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_VIA="${SWARM_GH_VIA:-swarm.sh ${GH_VIA//[^a-z-]/}}"
 # First, not just present: a folder with a gh before it would take swarm.sh's calls past the shim.
 GH_SHIM="${SWARM_HOME}/bin/gh-shim"
@@ -550,6 +552,9 @@ hold() {
 # dispatch <command> [args] — run one command.
 dispatch() {
   cmd="${1:-}"; shift || true
+  # The lead's first command labels its herdr workspace; the test hooks and lead-stop.sh's _step
+  # (whose stderr the hook drops, which would hide a refusal) do not.
+  [[ "${cmd}" == _* ]] || lead_rename
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
     agent)  require_herdr; agent_cmd "$@" ;;

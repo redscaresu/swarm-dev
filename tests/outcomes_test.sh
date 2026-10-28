@@ -93,6 +93,10 @@ R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https
 R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	0	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}	e0	2026-10-03T10:00:00Z	true	0		${E4}"
 check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells by kind (bare as findings, refused left out), closes (close:stalled among them), findings, attempts, start to the second, tokens by type" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
+# Columns are only appended: green_to_review_min is the last, and the 39 above keep their places.
+hdr="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" outcomes | sed -n 1p)"
+check "green_to_review_min is outcomes' last column, and every earlier column keeps its position" \
+  "$(awk -F'\t' '{ print $NF }' <<< "${hdr}")|$(cut -f1-39 <<< "${hdr}")" "green_to_review_min|${HEAD}"
 check "--since leaves earlier rows out, and attempts still count them" \
   "$(outcomes "${dir}/bin" --since 2026-10-03)" "$(printf '%s\n' "${HEAD}" "${R3}")"
 nopr() { awk -F'\t' -v OFS='\t' '{ $14 = $33 = 0; $15 = $16 = $31 = $32 = $34 = $35 = "" } 1' <<< "$1"; }
