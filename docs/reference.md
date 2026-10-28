@@ -2555,7 +2555,8 @@ which `next` names to the lead first; the lead's note asks the conductor to star
 once, ahead of every other story and whatever its scope, under either merge setting. `watch` says no
 fix-main PR opened, so the conductor starts that PR's review agent once the builder replies with its
 URL. A merge that `swarm.sh merge` refused or could not confirm, other than `held:`, a `base merged:`
-line or a moved base (below), ends the review agent with the line in its reply, and is the lead's. The lead merges
+line or a moved base (below), ends the review agent with the line in its reply and in a stop note to
+its conductor, which nudges the builder on a dequeue and reports the rest for the lead. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
 PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (the HLD
 `swarm.sh grants <PR URL>` prints). It reads that grant once the PR's head is green. With the grant,
@@ -2799,8 +2800,8 @@ tracks nothing. The conductor starts a new review agent on the head the builder 
 reports its checks finished, so that head is reviewed before it merges. A `base merged, head moved:`
 refusal is a moved head: the review agent stops with `head moved:`, and the new head is reviewed the
 same way. Any other refusal, another `base merged, <cause>:` or a merge lock it could not take again
-included, ends the review agent with the line in its reply, which names the next step, and the lead
-acts on it. On `base merge unchecked:`, the new head is reviewed as any new head, the same way. That
+included, ends the review agent with the line in its reply and in a stop note to its conductor, which
+acts on a dequeue and reports the rest for the lead; with no conductor running, the lead acts on it. On `base merge unchecked:`, the new head is reviewed as any new head, the same way. That
 head may be a builder's push, a merge made by hand, or GitHub's own merge of the base that touches a
 file the PR changed too. When that review sends findings, the builder pulls its branch first, since
 a merge commit on the branch is not in its worktree and its push would be refused.
@@ -2878,9 +2879,10 @@ queued or waiting for auto-merge, find it out of the queue and not merged. `merg
 `merge dequeued (<GitHub's reason>): <checks>` line naming the checks that were red or unfinished on
 the merge group's commit. That commit is the one seen while the PR was queued, or, for a PR that
 joined and left between two reads, the one its `merge_group` run names; the reason is GitHub's only
-for a removal after this enqueue. The conductor handles a dequeue like a red check: it sends the
-failing checks to the builder, which merges the base in and pushes, then reviews and merges the new
-head. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
+for a removal after this enqueue. The review agent that ran `merge` sends its conductor a stop note
+naming the dequeue (`review-<slug> stopped on <sha>: ...`), and the conductor handles it like a red
+check: it nudges the builder with the failing checks, the builder merges the base in and pushes, and
+the new head gets a review agent of its own, which merges it once it passes. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
 while `merge` enqueues or waits each turn auto-merge off and take the PR out of the queue. Each is logged as
 unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not undo for you to do by
 hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
