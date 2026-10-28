@@ -119,7 +119,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 
 | Command | What it shows |
 |---|---|
-| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day. Each frame gives its herdr, Claude Code and GitHub reads 30 seconds in all; a read still running then is cut, and the frame names it ([details](docs/dash.md)). |
 | `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories and for ready stories with no build. It gives its herdr, gh and claude reads, each agent's pane read included, and its git fetch and ls-remote, 30 seconds in all, and a last `skipped (over 30 s): ...` line names any read it cut. |
 | `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, and how long ready work sat with no build while its conductor ran), how each model did, how well the planner guessed which stories were easy and how big, what each review round found, which agents spend GitHub's API budget, and how long local `make test` runs take by how many ran at once. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
@@ -159,7 +159,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the last tag is under an agreed HLD that lists `release`. Under either mode, a PR that changes
   `.claude/`, `.github/`, `hooks/` or a root `Makefile` waits for you to merge it by hand.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
-  `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
+  `swarm.sh board-pr open`, and a plain `swarm.sh merge` refuses a story PR that sets an epic
+  `active` with no ticket in the same way ([reference.md § Merging](docs/reference.md#merging)).
 - Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
   does not merge it while the base has commits the PR's head lacks that change more than board files.
   It has GitHub merge the base into the PR's branch, checks that the new head adds only the base's

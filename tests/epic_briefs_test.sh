@@ -219,7 +219,20 @@ check "both briefs say what to do on wait-pr's other exit 2s, ending with a repo
 check "the conductor sends a red check or a conflict to the builder as a nudge, not findings" "yes" \
   "$(has "nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 check "the builder and conductor briefs wait on CI only with wait-pr, never a loop of their own" "yes|yes|yes" \
-  "$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 fix the red check; on a conflict, do as above." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 or a conflict, send the story's builder a nudge with" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own" "$(cat "${p}/.swarm/briefs/g1.md")")"
+  "$(has "<PR URL>\` (in the background), never a loop of your own: on exit 1 fix the red check; on a conflict, do as above." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "<PR URL>\` (in the background), never a loop of your own: on exit 1 or a conflict, send the story's builder a nudge with" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "<PR URL>\` (in the background), never a loop of your own" "$(cat "${p}/.swarm/briefs/g1.md")")"
+# Why: right after its own push GitHub can still report the old head, whose green ends an unpinned
+# wait-pr before the pushed head ran a check. A builder pins its worktree's head; the conductor works
+# from the main checkout, where git rev-parse HEAD names the base, so it pins the head watch printed.
+check "the builder's wait-pr is pinned to its worktree's head" "yes|yes" \
+  "$(has "wait-pr --head \"\$(git rev-parse HEAD)\" <PR URL>\` (in the background)" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "wait-pr --head \"\$(git rev-parse HEAD)\" <PR URL>\` (in the background)" "$(cat "${p}/.swarm/briefs/g1.md")")"
+check "the conductor's wait-pr is pinned to the head watch printed, never git rev-parse" "yes|yes|" \
+  "$(has "wait-pr --head <sha> <PR URL>\` (in the background)" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "A PR's head is the <sha> \`swarm.sh watch\` printed for it (\`checks finished on" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(grep -F 'wait-pr --head' "${p}/.swarm/briefs/conduct-f.md" | grep -F 'git rev-parse' || true)"
+# Why: watch has printed no head for one a base merged: line made, or a builder pushed after a nudge; a wait
+# pinned to watch's last head ends "the PR's head is X, not <sha>" after the grace, and each brief needs its way out.
+check "the conductor's brief pins the sha the builder pushed for a wait watch has not printed, never a fresh gh pr view read, and nudges on a head the PR never got" "yes|yes|" \
+  "$(has "pass the \`<new head>\` a \`base merged:\` line names, or, after a builder's push, the sha the builder reported, else \`git -C ../<repo>-wt/<slug> rev-parse HEAD\` in its worktree;" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "the PR never got the head you named: never wait on <X> instead; send the builder a nudge naming both shas, so it pushes again and reports its HEAD, or report it to the lead." "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(grep -F 'headRefOid -q .headRefOid' "${p}/.swarm/briefs/conduct-f.md" || true)"
+check "the builder's brief reads a head the PR never got as its branch having moved: pull it by name, then wait on the new HEAD" "yes|yes" \
+  "$(has "the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/f1\`)" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "push, and wait again on the new HEAD." "$(cat "${p}/.swarm/briefs/f1.md")")"
 # clash_brief <brief> — the clash rule (per repo), the merge-base-in rule (a nudge; a busy builder waited
 # on, a closed one started again), the pass rule (a round defined, decline reasons kept), then the
 # old file-level wording.
