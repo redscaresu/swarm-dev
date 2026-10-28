@@ -41,14 +41,15 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
    one run is split into smaller epics first.
 3. **Build.** A conductor agent starts one builder per story. Each builder works in its own git
    worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
-   fixes what they find. A story that fails twice is rebuilt once on Fable, the most capable model,
+   fixes what they find. When a review finds nothing left to fix, the review agent merges the PR
+   or hands it to you (step 4). A story that fails twice is rebuilt once on Fable, the most capable model,
    then handed to the lead. One story waits for another only when they clash: their `touches`
    name the same file in the same repo, and either the same part or both the bare file. Parts match
    on their first word (a function or section name), skipping a leading `§`, `#`, "the", "a" or
    "an". A bare file does not clash with a part of that file.
-4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
-   the agreed HLD over its work lists `merge` in its `grants:`.
-   With `merge = agent`, the conductor merges it, except a story marked `costs: money` and a story PR
+4. **Merge.** By default you merge each green, reviewed PR yourself. The lead, or the PR's review
+   agent, merges one only when the agreed HLD over its work lists `merge` in its `grants:`.
+   With `merge = agent`, the review agent or the conductor merges it, except a story marked `costs: money` and a story PR
    that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, which always wait for you.
    In that mode no conductor starts until your Claude Code settings allow
    `swarm.sh merge` (step 3 of Getting started names the rule). `swarm.sh conduct` prints the rule
@@ -153,8 +154,9 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
 
 - No agent touches real cloud or credentials. That work is a `lead` story, done in your session
   while you watch.
-- Agents start with a short list of environment variables. A token you exported reaches a builder
-  only when its story names it under `env:`.
+- Agents start with a short list of environment variables. Any other variable you exported reaches
+  an agent only when its story names it under `env:` or the board's config lists it in `agent_env`.
+  With Foundry on, its `ANTHROPIC_FOUNDRY_*` and model settings pass to every agent too.
 - In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
   go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
