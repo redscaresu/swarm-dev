@@ -671,19 +671,23 @@ base_ci() {
   ( trap 'rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}' EXIT
     SWARM_WAIT_PR_GRACE="${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}" wait_pr --head "${new}" "${url}" ) 2>&1 | tee "${out}"
   rc="${PIPESTATUS[0]}"
-  case ${rc} in
-    0) rm -f "${out}"; return 0 ;;
-    1) cause=red; why="$(sed -n 's/^red: //p' "${out}" | tail -1)" ;;
-    *) why="$(sed -n 's/^swarm: wait-pr: //p' "${out}" | tail -1)"
-       case "${why}" in
-         "timed out"*|"rate limited"*) cause="timed out" ;;
-         "no check runs"*) cause="no check runs" ;;
-         "conflicts with"*) cause=conflict ;;
-         "the PR's head is"*) cause="head moved" ;;
-         *": a pull_request into "*) cause="no workflow run" ;;
-         *) cause=unread ;;
-       esac ;;
-  esac
+  [[ ${rc} -ne 0 ]] || { rm -f "${out}"; return 0; }
+  # An exit 1 is red only with wait-pr's red: line: swarm.sh's wait-pr trap, which turns any other exit 1
+  # (a die, a failed sleep) into 2, does not run in this subshell.
+  why=""; [[ ${rc} -ne 1 ]] || why="$(sed -n 's/^red: //p' "${out}" | tail -1)"
+  if [[ -n "${why}" ]]; then
+    cause=red
+  else
+    why="$(sed -n 's/^swarm: wait-pr: //p' "${out}" | tail -1)"
+    case "${why}" in
+      "timed out"*|"rate limited"*) cause="timed out" ;;
+      "no check runs"*) cause="no check runs" ;;
+      "conflicts with"*) cause=conflict ;;
+      "the PR's head is"*) cause="head moved" ;;
+      *": a pull_request into "*) cause="no workflow run" ;;
+      *) cause=unread ;;
+    esac
+  fi
   rm -f "${out}"
   case "${cause}" in
     red) BASE_CI_WHY="base merged, red: ${who} is red: ${why}; $(pull_first), then fixes it and pushes" ;;
@@ -694,13 +698,6 @@ base_ci() {
   esac
   return 1
 }
-
-# epoch_in <seconds> — the epoch <seconds> from now, to the millisecond: a deadline for within's
-# @<epoch> and epoch_past, since bash's SECONDS counts whole seconds and takes no fraction.
-epoch_in() { perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "$1"; }
-
-# epoch_past <epoch> — succeed once <epoch> has passed.
-epoch_past() { perl -MTime::HiRes=time -e 'exit(time >= shift ? 0 : 1)' -- "$1"; }
 
 # base_merged <slug> <sha> — succeed when events.tsv records <sha> as a head merge made by merging the
 # base into <slug>'s PR (merge_base_update's `merge <slug> base-merged <sha> from <head>`; `base-merged
