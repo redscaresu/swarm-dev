@@ -136,6 +136,17 @@ cp "${P}/docs/epics/p.md" "${X}/docs/epics/p.md"
 out="$(cd "${X}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
 check "next's gate line for a later epic agreed today, on a board outside a repo, names no board PR" \
   grep -qxF '  later epic: p (set it active with agreed: <today> to start it)' <<< "${out}"
+# A draft under lead_epics = on is the lead's: next's gate line says so, and the arm reads the setting
+# through swarm.sh config, which takes the default and a bad value as swarm.sh does, not from the file.
+printf -- '---\nstatus: draft\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+printf 'merge = human\nlead_epics = on\n' > "${P}/.claude/swarm/config"
+out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
+check "next's gate line for a draft under lead_epics = on says the lead sets it active" \
+  grep -qxF '  draft epic: e, the lead sets it active (lead_epics = on)' <<< "${out}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler reads lead_epics with swarm.sh config" grep -qF '`lead_epics` is `on` (`swarm.sh config lead_epics` prints it)' <<< "${gate}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler names next's lead line for a draft" grep -qF '`draft epic: <slug>, the lead sets it active (<why>)`' <<< "${gate}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

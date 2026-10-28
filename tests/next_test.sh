@@ -72,6 +72,30 @@ expect "a draft epic is in the gate beside a lead story" "gate" \
   "item stories/l.md 'status: ready' 'kind: lead'"
 if [[ "${out}" == *"lead: l"* && "${out}" == *"draft epic: e1, run /epic e1"* ]]; then echo "ok   the gate lists the lead story and the draft epic"
 else echo "FAIL the gate does not list both the lead story and the draft epic: ${out}"; fails=$((fails + 1)); fi
+# A draft the epic guard would let go active unagreed is the lead's: a parent: naming a split epic (kid,
+# itself the split's open child), an hld: naming an agreed HLD that grants epics (underh). A parent: of
+# a draft (dkid), an HLD without the grant (underg) and a plain draft keep the /epic path.
+expect "drafts the lead may set active are in the gate" "gate" \
+  "item epics/par.md 'status: split'" "item epics/kid.md 'status: draft' 'parent: par'" \
+  "item hld/h.md 'status: agreed' 'grants: [epics]'" "item epics/underh.md 'status: draft' 'hld: h'" \
+  "item hld/g.md 'status: agreed' 'grants: [merge]'" "item epics/underg.md 'status: draft' 'hld: g'" \
+  "item epics/plain.md 'status: draft'" "item epics/dkid.md 'status: draft' 'parent: plain'"
+has_line "a draft whose parent: is split is the lead's" "  draft epic: kid, the lead sets it active (parent par is split)"
+has_line "a draft under an HLD granting epics is the lead's" "  draft epic: underh, the lead sets it active (hld h grants epics)"
+has_line "a draft whose parent: is a draft keeps the /epic path" "  draft epic: dkid, run /epic dkid"
+has_line "a draft under an HLD without the epics grant keeps the /epic path" "  draft epic: underg, run /epic underg"
+has_line "a plain draft keeps the /epic path" "  draft epic: plain, run /epic plain"
+# An active parent with a story, so next reaches the gate instead of offering to plan it.
+expect "a draft whose parent: is active is in the gate" "gate" \
+  "item epics/par.md 'status: active'" "item stories/ps.md 'status: later' 'epic: par'" \
+  "item epics/kid.md 'status: draft' 'parent: par'"
+has_line "a draft whose parent: is active is the lead's" "  draft epic: kid, the lead sets it active (parent par is active)"
+# A draft with a stage: next cannot open (no hld:) is never the lead's this way: it goes through /epic.
+expect "with lead_epics = on any draft is the lead's" "gate" \
+  "item epics/plain.md 'status: draft'" "item epics/st.md 'status: draft' 'stage: v1.4.0'" \
+  "mkdir -p .claude/swarm && echo 'lead_epics = on' > .claude/swarm/config"
+has_line "with lead_epics = on a plain draft is the lead's" "  draft epic: plain, the lead sets it active (lead_epics = on)"
+has_line "with lead_epics = on a draft whose stage: next cannot open keeps the /epic path" "  draft epic: st, run /epic st"
 # A draft HLD waits on the user, listed under waiting on you; a superseded one, and the README, are not.
 expect "a draft HLD waits on the user" "gate" \
   "item hld/2026-01-01-a.md 'status: draft'"

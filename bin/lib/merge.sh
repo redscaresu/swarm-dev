@@ -258,7 +258,7 @@ epic_guard() {
     # Outside the $(...), where a merge_fail would not stop this.
     why="$(epic_unticketed merge_read "${p}")" \
       || merge_fail "${pre}$(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
-    [[ -z "${why}" ]] || merge_fail "${pre}${url} sets ${s} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
+    [[ -z "${why}" ]] || merge_fail "${pre}${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${files}"
 }
 
