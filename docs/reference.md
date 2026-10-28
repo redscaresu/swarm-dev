@@ -1444,7 +1444,8 @@ real and inside the story goes to the builder to fix. It declines the rest, each
 wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in one PR comment. It logs each declined finding at once, with
 `log-finding --declined <reason> --reviewer <who> --round <n>`; a finding a fallback reviewer raised
 in codex's place is logged with `--reviewer fallback`. It logs the ones to fix once the
-builder has pushed: from the builder's reply and the new diff, each one fixed as fixed, and each one
+builder has pushed and `wait-pr --head` has found the PR at that head, never from the worktree's
+commit alone: from the builder's reply and the new diff, each one fixed as fixed, and each one
 the builder declined with a reason the agent accepts as declined, rebutted in the PR; one declined
 with a reason it rejects is not logged and comes up again next round. Then it writes the review. A round with nothing
 to fix is a pass: the agent writes it to its review file, `.swarm/reviews/<slug>.md`, replies with
@@ -1455,8 +1456,12 @@ and the merge rules, so the agent writes it only on a pass or when it stops. It 
 `swarm.sh wait --stall <slug>` and `swarm.sh tell <slug> findings <the round file>`, so the findings
 go at once and count their round now; a tell that finds the builder busy is queued and sent when its
 turn ends (above), and the agent then waits out that turn, then the delivery (its marks under
-`.swarm/tells/` gone but `.sent`; an `.undelivered.md` there stops the agent), before it waits for
-the fix. Every wait on the builder is `wait --stall`, and the agent
+`.swarm/tells/` gone but `.sent`, 15 minutes at most, since a check that has not looked for 10
+minutes counts as stopped; an `.undelivered.md` there, or the limit, stops the agent). A delivery
+that held the story for the lead or stepped the build up leaves `.sent` too, so before it waits for
+the fix the agent reads the story's `held_for:` line, which stops it, and the events log's
+`escalate` line for a findings step-up, after which it tells the new builder nothing and waits on
+it. Every wait on the builder is `wait --stall`, and the agent
 carries on when it prints `idle`, or `done` for a builder with no Claude session. With
 `escalate_ladder` set, a stall it steps up (`stepped up:`), or a step-up or restart already running
 (`stepping up:`), is waited on again, and a build stepped up after the round's findings were told
@@ -1523,7 +1528,12 @@ parents, the brief names their branches: their code is in the diff against the b
 lists it neither as a finding nor as out of scope. The conductor waits on each review in the background
 with `swarm.sh wait review-<slug>`. A review agent goes idle while its codex runs in the
 background, so for an agent agents.tsv records as role `review`, that wait, like a conductor's,
-holds on until the findings file exists, and fails if it times out without one. The conductor
+holds on until the findings file exists, and fails if it times out without one. That wait's limit
+is an hour by default (`swarm.sh wait review-<slug> [ms]`); a review agent that spans rounds (a
+builder's fix, CI, a codex run each) can outlive it, and the conductor then closes it and starts the
+review again, which is no round. The review file now holds a pass or a stop (above), and the
+agent sends its own findings; the conductor's rules below still read it as the old flow's file,
+until conduct-brief-hands-off rewrites them. The conductor
 then triages that story's file, and closes the review agent whatever
 it found. A file with a `head moved:` line, or with no findings section, is not a pass: the
 conductor starts the review again. When the wait returns with no file (a timeout, a prompt, a gone
