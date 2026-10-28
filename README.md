@@ -123,6 +123,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day. Each frame gives its herdr, Claude Code and GitHub reads 30 seconds in all; a read still running then is cut, and the frame names it ([details](docs/dash.md)). |
 | `swarm.sh status` | First, a No agent section for any story whose build started but has no agent working on it, or whose PR's review agent never started or went, each with the command that fixes it. Then agents that need a look, what waits on you, and what runs next, with any `idle:` lines `next` prints for blocked stories, ready stories with no build, epics that can start and active epics with no plan running. It gives its herdr, gh and claude reads, each agent's pane read included, and its git fetch and ls-remote, 30 seconds in all, and a last `skipped (over 30 s): ...` line names any read it cut. |
+| `swarm.sh where <agent>` | Which workspace and tab one of this project's agents is in, and its pane id. `<agent>` is a story's slug, `review-<slug>`, `conduct-<epic>` or the agent's herdr name. |
 | `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build, how long a green PR waited for its next review round, and how long ready work sat with no build while its conductor ran), how each model did, how well the planner guessed which stories were easy and how big, what each review round found, which agents spend GitHub's API budget, and how long local `make test` runs take by how many ran at once. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
@@ -170,11 +171,13 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   `swarm.sh board-pr open`, and a plain `swarm.sh merge` refuses a story PR that sets an epic
   `active` with no ticket in the same way ([reference.md § Merging](docs/reference.md#merging)).
 - Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
-  does not merge it while the base has commits the PR's head lacks that change more than board files.
-  It has GitHub merge the base into the PR's branch, checks that the new head adds only the base's
-  commits, and stops with a `base merged:` line. Under `merge = agent` the story's review agent waits
-  for that head's CI and merges it. When GitHub cannot merge the base in (a conflict, say), the builder
-  does, and the new head is reviewed before it merges ([reference.md § Merging](docs/reference.md#merging)).
+  does not merge a head that lacks commits on the base that change more than board files. It has
+  GitHub merge the base into the PR's branch and checks that the new head adds only the base's
+  commits. Then it waits up to 30 minutes for the new head's CI and merges that head, so the merge
+  takes longer.
+  If the base moves again during the wait, it does all this again, for 3 rounds at most. When GitHub cannot merge
+  the base in (a conflict, say), the builder does, and the new head is reviewed before it merges
+  ([reference.md § Merging](docs/reference.md#merging)).
 - Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
   holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
   PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).

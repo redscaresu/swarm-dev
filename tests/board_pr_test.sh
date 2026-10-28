@@ -516,12 +516,15 @@ bpr start lead; ep lead epics/e-lead.md '---\nstatus: active\n---\n'
 guard_opens lead "lead_epics = on, with no ticket"
 printf 'board_dir = board\n' > "${P}/.claude/swarm/config"
 
-# --- board_dir = .: the whole repo is the board, so open takes any file.
+# --- board_dir = .: the board is its own paths at the root (board_paths), as merge --board has it, so
+# open takes a story and refuses any other file.
 printf 'board_dir = .\n' > "${P}/.claude/swarm/config"
-bpr start y; echo changed > "${ROOT}/proj-wt/_board-y/bin/tool"
+bpr start y; mkdir -p "${ROOT}/proj-wt/_board-y/stories"; echo changed > "${ROOT}/proj-wt/_board-y/stories/root-y.md"
 reset_log; bpr open y "Root board edit" "${ROOT}/body.md"
 is "board_dir = .: open exits 0" 0 "${rc}"
 is "board_dir = .: open prints the PR URL" "${URL}" "$(cat "${ROOT}/out")"
+bpr start yb; echo changed > "${ROOT}/proj-wt/_board-yb/bin/tool"
+guard_refused yb "board_dir = .: a file off the board's paths" "board-pr: bin/tool is outside the board's paths (stories/, epics/, hld/, Board.base, .obsidian/)"
 # git C-quotes a path with a " in it ("epics/a\"b.md"), which would miss the epics/ prefix: refused.
 bpr start q; mkdir -p "${ROOT}/proj-wt/_board-q/epics"; printf -- '---\nstatus: active\n---\n' > "${ROOT}/proj-wt/_board-q/epics/a\"b.md"
 guard_refused q "board_dir = .: an active epic whose name holds a quote" 'board-pr: "epics/a\"b.md" has a quote, backslash, tab or newline in its name; rename it'
