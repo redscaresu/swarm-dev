@@ -350,6 +350,17 @@ check "lead = session, merge = agent: the story's other PR is the lead's, on an 
   has "! merge p-prot: https://github.com/o/l/pull/22" "${queue}"
 check "lead = session, merge = agent: a costs: money merge, an untagged one and a granted one are drawn as before" \
   test "$(has "! merge l#5 (✓ green) m-paid (costs money)" "${needs}" && has "! merge l#1 (✓ green) m-green" "${queue}" && has "! merge g-ok: https://github.com/o/l/pull/7" "${queue}" && echo yes)" = yes
+# An epic in review listing the held PR too: one row for it, as for a held costs: money PR.
+litem epics/ep-prot.md '' 'status: review' 'prs: https://github.com/o/l/pull/21'; out="$(ldash 100)"
+check "lead = session, merge = agent: a held protected-path PR a story and its epic both list is one row" \
+  test "$(grep -c 'l#21' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
+# A held PR of a costs: money story carries both tags.
+litem stories/p-both.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/23'
+printf 'protected: https://github.com/o/l/pull/23 0123456789abcdef0123456789abcdef01234567 1793000000 hooks/x.sh\n' > "${L}/.swarm/board-state/stories/p-both"
+out="$(ldash 100)"
+check "lead = session, merge = agent: a costs: money story's held protected-path PR is under needs you with both tags" \
+  has "! merge p-both (costs money) (protected path): https://github.com/o/l/pull/23" "$(joined "$(lbox "needs you" "${out}")")"
+rm -f "${L}/docs/epics/ep-prot.md" "${L}/docs/stories/p-both.md" "${L}/.swarm/board-state/stories/p-both"
 chk="$(cd "${L}" && env -u HERDR_ENV -u SWARM_PROJECT COLUMNS=100 CLAUDE_STUB_AGENTS="${ROOT}/l.json" PATH="${ROOT}/lbin:${PATH}" bash "${SWARM}" dash --check 2>&1)" && chk_rc=0 || chk_rc=$?
 check "lead = session, merge = agent: dash --check agrees on a protected-path merge row" \
   test "${chk_rc}" -eq 0 -a "$(grep -c 'every dash figure agrees' <<< "${chk}")" -eq 1
