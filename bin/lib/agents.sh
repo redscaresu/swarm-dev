@@ -2499,10 +2499,9 @@ agent_where() {
 # JSON (a failed read), is -. Fails, printing why, when the agent list is not JSON or names no such agent
 # in this project's panes.
 agent_where_in() {
-  SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_WS="$3" SWARM_TABS="$4" python3 -I -c '
+  SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_WS="$3" SWARM_TABS="$4" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
-sys.path.insert(0, sys.argv[2])
-from panes import herdr_labels, pane_where
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import herdr_labels, pane_where
 e = os.environ
 try:
     agents = json.loads(sys.argv[1])["result"]["agents"]
@@ -2512,7 +2511,7 @@ a = next((a for a in agents if a.get("name") == e["SWARM_NAME"] and a.get("pane_
 if a is None:
     print("herdr lists no agent called %s in this project'"'"'s panes" % e["SWARM_NAME"]); sys.exit(1)
 ws, tab = pane_where(a["pane_id"], (a,), herdr_labels(e["SWARM_WS"], "workspaces", "workspace_id"), herdr_labels(e["SWARM_TABS"], "tabs", "tab_id"))
-print("%s\t%s\t%s" % (a["pane_id"], ws, tab))' "$2" "${SWARM_HOME}/bin/lib"
+print("%s\t%s\t%s" % (a["pane_id"], ws, tab))' "$2"
 }
 
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
