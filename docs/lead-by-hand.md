@@ -14,13 +14,14 @@ should get shorter.
 
 **Symptom.** A PR is on its third or later findings round, each round finding new edge cases, or
 codex raises a point the builder already declined with evidence.
-**Check.** Read the findings file (`.swarm/reviews/<slug>.md`). Is any finding a regression this PR
+**Check.** Read the round's findings (`.swarm/reviews/<slug>.round.md`, or `<slug>.md` once the
+review agent has stopped). Is any finding a regression this PR
 introduces, or a line that is now false about the code?
 **Step.** Send one last round that fixes only those. Send it as a nudge
 (`swarm.sh tell <slug> nudge <file>`), not as findings. Then accept: `swarm.sh review <slug> <PR URL>`,
 then, with `merge = agent` or an HLD `merge` grant, `swarm.sh merge --head <full sha> <PR URL>`;
 otherwise the PR waits for the user's merge. File the rest as a follow-up story.
-**Side effect.** A findings tell counts a round; with `escalate_ladder` set, the `step_up_findings`-th
+**Side effect.** A findings tell counts a round once it is delivered; with `escalate_ladder` set, the `step_up_findings`-th
 round (default 3) steps the builder up to the next model, and on the top rung a round can hold the
 story for the lead. A nudge counts no round.
 **Issue.** [#685](https://github.com/redscaresu/swarm-dev/issues/685), and
