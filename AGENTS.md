@@ -118,7 +118,7 @@ Useful while it runs:
   patch release soon after it merges, so running projects get it. The lead cuts it, through the
   release arm below; a builder's story PR never bumps the version.
 - Docs move with behaviour: a PR that changes what a user runs, sees or must do updates every doc
-  that states it (README.md, `docs/`, `commands/`) in the same PR, never a later one.
+  that states it (README.md, AGENTS.md, `docs/`, `commands/`, `skills/swarm-dev/`) in the same PR, never a later one.
 
 ## Working on this repository
 
@@ -167,14 +167,17 @@ want the whole suite locally.
 Development rules for anyone, agent or person, working in this repository:
 
 - Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
-- Unset `SWARM_PROJECT` for test runs and anything test-like (`env -u SWARM_PROJECT make test ...`):
-  a builder's shell exports it, and a test then reaches the real repo.
+- Unset `SWARM_PROJECT` for any test-like command run outside `make test` (a `swarm.sh` call by
+  hand, a hook): a builder's shell exports it, and the call then reaches the real repo.
+  `make test` already unsets it.
 - Never run `flow`, `dash`, `outcomes` or `dataset` against the real repo in a loop, in parallel or
-  over days, even when a story's Done when names a multi-day window. Run `--since <today>` once,
-  after `gh api rate_limit`, and say so in the PR. After a test run, check that no `dash_slow.py` or
-  `swarm.sh flow --since` from your worktree is left.
-- Load the machine with at most 4 CPUs in all, and tear every load process and container down when
-  the check ends.
+  over days, even when a story's Done when names a multi-day window. Run it once, after
+  `gh api rate_limit`, and say so in the PR: `flow` and `outcomes` with `--since <today>`, `dash` and
+  `dataset` as they are (they take no `--since`). After a test run, check that no `dash_slow.py` or
+  `swarm.sh flow --since` from your worktree is left. Kill by PID only what names your worktree or
+  a test temp dir.
+- A stress or load run uses at most 4 CPUs in all, with `make test` at `JOBS=4` or fewer, and you
+  tear every load process and container down when the check ends.
 - Prove a mutation without git: copy the file aside, break the original, then copy it back. With
   more than two proofs, or one on a SLOW test file, break the fix in a copy of the worktree without
   `.git`, run `make test TESTS=<file> JOBS=1 TEST_RUNS_LOG=` there, keep the FAIL lines and delete
