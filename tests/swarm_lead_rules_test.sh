@@ -49,7 +49,7 @@ check "cross-epic order goes in depends_on through board-pr" yes \
 check "restart at the first API-error stop, naming each route" yes \
   "$(has "${DOC}" 'Restart an agent at its first .Request timed out. or API-error stop that its own retries did not clear.*`swarm.sh restart <slug>`.*`swarm.sh review-agent <slug> <PR URL>`.*`swarm.sh conduct --backlog`')"
 check "the restart is followed by a tell, since restart and conduct take no brief" yes \
-  "$(has "${DOC}" 'take no brief.*to write its output as it goes.*`tell` queues a nudge to a working builder and delivers it when its turn ends, so send `swarm.sh tell <slug> nudge <file>` at once.*`swarm.sh tell <conductor> note <file>` goes in busy or not')"
+  "$(has "${DOC}" 'take no brief.*to write its output as it goes.*A builder comes back working, so run `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background: the tell goes once its turn ends. A wait that times out or prints anything but `idle` or `done`.*sends nothing: deal with what it printed, then send the file again the same way.*`swarm.sh tell <conductor> note <file>` goes in busy or not')"
 check "the stuck: api error arm follows the restart rule by name" yes \
   "$(has "${DOC}" 'prints .stuck: api error. .exit 4.*restart the agent as the restart rule under "Three more rules for the lead" says')"
 check "a conductor is closed only when the restart rule says so" yes \

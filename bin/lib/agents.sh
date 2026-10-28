@@ -1342,6 +1342,9 @@ WAIT_STALLED=3
 # WAIT_STUCK: the exit code of any `wait` that returns "stuck: ..." (an API error resumes did not
 # clear, or a pane quiet for stall_minutes): distinct from a stall, which a conductor closes on.
 WAIT_STUCK=4
+# WAIT_NOT_IDLE: the exit code of `wait --idle` when the wait ended 0 on anything but idle or done.
+# shellcheck disable=SC2034 # read in another file
+WAIT_NOT_IDLE=5
 
 # timed_out <stderr file> — true when herdr's failed agent wait only timed out.
 timed_out() { grep -q '"timeout"' "$1"; }
