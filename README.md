@@ -132,7 +132,7 @@ Every herdr workspace swarm.sh opens for a conductor, and the lead's own, is lab
 project:
 
 - `swarm-lead · <project>`: the lead's own workspace and tab, relabelled by the first swarm.sh
-  command the lead runs there after `swarm.sh init`.
+  command the lead runs there after `swarm.sh init` (any but `version` and `update`).
 - `<project> · <epic>`: an epic's conductor and its builders.
 - `<project> · backlog`: the backlog conductor and the one-off stories it builds.
 

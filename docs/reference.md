@@ -869,10 +869,11 @@ has no directory, so the next conductor makes a second one.
 `close` and `tidy` find tabs and panes from `.swarm/state`, not from labels, so a relabelled
 workspace closes as before.
 
-The first `swarm.sh` command the lead runs in a workspace, whatever the command, once the project is
-set up (the `init` that sets it up comes before there is a lead), labels that workspace and its tab
-(`herdr workspace rename`, `herdr tab rename`) and adds the workspace's id to
-`.swarm/lead/workspace`, one line per workspace. A later command from any workspace listed there
+The first `swarm.sh` command the lead runs in a workspace, once the project is set up, labels that
+workspace and its tab (`herdr workspace rename`, `herdr tab rename`) and adds the workspace's id to
+`.swarm/lead/workspace`, one line per workspace. The `init` that sets the project up comes before
+there is a lead, and `version` and `update` run before swarm.sh looks for a project, so none of the
+three labels anything. A later command from any workspace listed there
 sends herdr nothing, so a lead that moves to another workspace and back has only the new one
 labelled. Each time it labels one, it drops from the record any workspace herdr no longer lists, and
 any lead workspace herdr lists with another label; a refused or kept workspace stays recorded while
@@ -887,10 +888,13 @@ tab alone, and records it, so it does not try again there; the message names
 `.swarm/lead/workspace`, which you delete to try again. A lead opened in a workspace swarm.sh
 labelled for a conductor or its agents (`<project> · <label>`, or an older swarm.sh's bare `backlog`
 or `<epic>`) leaves it that label, says so once and records it as `kept`, so the next `conduct`
-still finds it. The lead's `<project>` also gets the hash when herdr lists another lead's
-`swarm-lead · <that name>` workspace: one the record does not hold with that label and whose
-directory is neither in the project nor in its board, so the second lead of one name gets a label of
-its own and the lead's own workspaces never count. Two first commands at the same moment both send
+still finds it. The same goes for a workspace another project's lead labelled, `swarm-lead · <name>`
+with a directory in neither this project nor its board: its label stays, so the other lead's record
+stays true. The lead's `<project>` also gets
+the hash when herdr lists another lead's `swarm-lead · <that name>` workspace: one the record does
+not hold with that label and whose directory is neither in the project nor in its board, so the
+second lead of one name gets a label of its own and the lead's own workspaces never count. Two
+first commands at the same moment both send
 the rename; a record line is lost only when their writes land at the same instant, and that
 workspace's next command labels it again. swarm.sh tells the lead the way the plugin's Stop hook
 does: a session with no agent's environment (no `SWARM_AGENT` or `SWARM_GH_CALLER`), in a swarm

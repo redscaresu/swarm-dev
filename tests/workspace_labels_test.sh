@@ -6,7 +6,8 @@
 # and tidy still find a conductor's tab in its relabelled workspace. herdr, gh and claude are stubs on
 # PATH; herdr's state (${ROOT}/herdr.json) is shared by every project. The lead's first command in
 # a workspace labels it and its tab `swarm-lead · <project>`, once; an agent's, a nested swarm.sh's
-# and a test hook's label nothing.
+# and a test hook's label nothing, and one in a conductor's or another project's lead's workspace
+# keeps its label.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -313,6 +314,15 @@ lead "${A}" "${yws}" config > /dev/null; lead "${A}" "${yws}" config > /dev/null
 check "a lead in a conductor's workspace (app · x, an older bare y) keeps its label, says so once each, and records it as kept" \
   "${n}|app${SEP}x|y|2|kept" \
   "$(renames)|$(wlabel "${a_x#*|}")|$(wlabel "${yws}")|$(grep -c 'keeps that label' "${ROOT}/lead.err" || true)|$(awk -F'\t' -v w="${yws}" '$1 == w { print $2 }' "${A}/.swarm/lead/workspace")"
+
+# A lead opened in a workspace another project's lead labelled (`swarm-lead · app`, its pane in a/app)
+# leaves it that label and its tab's too: said once, and recorded as kept, so the first lead's record
+# stays true.
+: > "${ROOT}/lead.err"; n="$(renames)"
+lead "${B}" "${la}" config > /dev/null; lead "${B}" "${la}" config > /dev/null
+check "a lead in another project's lead workspace (swarm-lead · app, in a/app) keeps its label, says so once, and records it as kept" \
+  "${n}|swarm-lead${SEP}app|swarm-lead${SEP}app|1|kept" \
+  "$(renames)|$(labels "${la}")|$(grep -c "labelled for another project's lead, so it keeps that label" "${ROOT}/lead.err" || true)|$(awk -F'\t' -v w="${la}" '$1 == w { print $2 }' "${B}/.swarm/lead/workspace")"
 
 # A hung herdr is cut off (SWARM_LEAD_HERDR_WAIT, 3 s here), well before the stub's 60 s. A list herdr
 # does not give records nothing, so the next command labels the workspace.
