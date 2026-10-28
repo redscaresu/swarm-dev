@@ -1483,7 +1483,7 @@ rate_reset() {
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
-# wait-pr [--timeout <seconds>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
+# wait-pr [--timeout <seconds>] [--head <sha>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
 # MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
 # that changes. Exits 0 when all are green, printing each check; 1 on red; 2 on anything else, since a
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
@@ -1502,6 +1502,9 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # the reset. A later one, or one with the budget left (GitHub's secondary limit), is a transient error,
 # retried after WAIT_PR_RETRY and up to half again; the budget is not read for those. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
 # turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
+# Right after a push GitHub can still report the old head, so --head <sha> (a full SHA or a prefix of 7
+# or more) reads the PR again each poll until its head starts with <sha>, reading no checks before
+# then; still another head WAIT_PR_GRACE after the first read that found one ends it, naming both.
 # That read also takes the PR's mergeable state: CONFLICTING ends it at once (exit 2, naming the base),
 # and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks,
 # and its head branch: on red, before it exits 1, review_red_scan (run as _review-red-scan, a swarm.sh of
@@ -1512,14 +1515,19 @@ wait_pr() {
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
   local spent budget bounded="" ref branch="" changed expect=() unstarted="" item missing gone note noted=""
+  local want="" stale="" usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
   done
-  if [[ "${1:-}" == --timeout ]]; then limit="${2:-}"; bounded=1; shift 2 || shift; fi
+  while [[ "${1:-}" == --timeout || "${1:-}" == --head ]]; do
+    if [[ "$1" == --timeout ]]; then limit="${2:-}"; bounded=1
+    else want="${2:-}"; [[ "${want}" =~ ^[0-9a-f]{7,40}$ ]] || wait_pr_fail "--head '${want}' is not a commit SHA (7 to 40 hex digits); ${usage}"; fi
+    shift 2 || shift
+  done
   url="${1:-}"
   [[ "${limit}" =~ ^[0-9]+$ && $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
-    || wait_pr_fail "usage: swarm.sh wait-pr [--timeout <seconds>] <pr-url>"
+    || wait_pr_fail "${usage}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
   limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry}))
@@ -1538,7 +1546,14 @@ wait_pr() {
       why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,changedFiles,headRefName \
         -q '[.headRefOid, .mergeable, .baseRefName, .state, (.changedFiles | tostring), .headRefName] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
       read -r oid mergeable base state changed ref <<< "${why}"
-      if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
+      if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ && -z "${head}" && -n "${want}" && "${oid:0:${#want}}" != "${want}" ]]; then
+        # Not --head's head yet: pending, its checks not read. Its mergeable state is that head's, so
+        # a conflict the push fixed does not end the wait.
+        stale="${stale:-${SECONDS}}"
+        (( SECONDS - stale < grace )) \
+          || wait_pr_fail "the PR's head is ${oid}, not ${want}, $((SECONDS - stale))s after the first read that found it"
+        rc=2; why="head ${oid:0:7}, not ${want}"
+      elif [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
         [[ "${mergeable}" != CONFLICTING ]] || wait_pr_fail "conflicts with ${base}: merge origin/${base} in, then push"
         unknown=""; [[ "${mergeable}/${state}" != UNKNOWN/OPEN ]] || unknown=1
         if [[ -z "${head}" ]]; then
@@ -1603,6 +1618,7 @@ wait_pr() {
            # The grace for a head with no check runs pauses with the wait: the budget ran out, not CI.
            [[ -z "${empty}" ]] || empty=$((empty + pause))
            [[ -z "${unstarted}" ]] || unstarted=$((unstarted + pause))
+           [[ -z "${stale}" ]] || stale=$((stale + pause))
            if [[ -z "${bounded}" ]]; then limit=$((limit + pause))
            elif (( pause >= limit - (SECONDS - start) )); then
              wait_pr_fail "rate limited: GitHub's API budget resets at ${at}, past --timeout ${limit}s"

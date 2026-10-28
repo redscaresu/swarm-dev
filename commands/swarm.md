@@ -372,8 +372,10 @@ Repeat until a step below says stop:
      dashes (v0.30.0 gives `stage-v0-30-0`). Open it: `swarm.sh board-pr start <name>`, set each
      named epic's `status: active` there and change nothing else, then `swarm.sh board-pr open <name>
      "Start stage v<S>" <body-file>`, its body naming the epics and the tag. Run `swarm.sh wait-pr
-     <url>` in the background and wait for it; if it does not exit 0, tell the user what it printed
-     and stop. Land it with `swarm.sh merge --board <url>` when `swarm.sh config merge` prints
+     --head "$(git -C <worktree> rev-parse HEAD)" <url>` in the background, with `<worktree>` the path
+     `board-pr start` printed, and wait for it; if it does not exit 0, tell the user what it printed
+     and stop. Without `--head`, wait-pr waits on the head GitHub reports first, which right after
+     your push can still be the old one. Land it with `swarm.sh merge --board <url>` when `swarm.sh config merge` prints
      `agent` or `swarm.sh grants <url>` lists `merge`, then go back to 1. Otherwise hand the PR to
      the user: the `epics` grant lets you set the epics active, not merge the PR. If merge refuses,
      stop and tell the user what it printed. Under `merge = human` with no `merge` grant, the user
@@ -391,7 +393,8 @@ Repeat until a step below says stop:
      stage is not held behind the worktree, and go back to 1: after a PR closed without merging,
      `next` names `stage v<S>` again and you open a new one. On any other failure, stop and tell
      the user what it printed. With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh
-     wait-pr <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>`
+     wait-pr --head "$(git -C ../<repo>-wt/_board-<name> rev-parse HEAD)" <url>` in the background, with
+     `../<repo>-wt/_board-<name>` the worktree `board-pr start` made, wait for it, and land it with `swarm.sh merge --board <url>`
      when it exits 0, then go back to 1; if it does not, or merge refuses, tell the user what it
      printed and stop. Under `merge = human` with no `merge` grant, it is the user's: stop.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
@@ -488,11 +491,15 @@ Repeat until a step below says stop:
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
      release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md
      and docs/ did not, unless that line is there (a change only to commands/*.md counts as its own
-     docs). Run `swarm.sh wait-pr <PR URL>` in the
-     background and wait for it. If it exits 1, a check is red. A release PR may change only the
+     docs). Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with
+     `<head>` the `git rev-parse HEAD` of the release worktree you pushed from, or, for a
+     `release/v<new>` PR that was already open, the head it reports (`gh pr view <PR URL> --json
+     headRefOid -q .headRefOid`). Without `--head`, wait-pr waits on the head GitHub reports first,
+     which right after your push can still be the old one. If it exits 1, a check is red. A release PR may change only the
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
-     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
+     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
+     one you named: tell the user
      what it printed and stop. Run
      `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it,
      under `merge = human` too: there it merges only when HLDs granting `release` cover the release.
