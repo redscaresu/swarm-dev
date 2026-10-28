@@ -2477,6 +2477,31 @@ own_target() {
   echo "${pane}"
 }
 
+# agent_where <agent> — "<pane>\t<workspace label>\t<tab label>" of this project's agent called
+# <agent> (a slug, review-<slug>, conduct-<epic> or a herdr agent name, cut as agent_name cuts it),
+# from one herdr agent list, workspace list and tab list (every workspace's tabs). Only an agent in a
+# pane own_panes recorded counts: herdr lists every project's agents, and another project's may hold
+# the name. A label herdr gives none of is -. Fails, printing why, when herdr gives no list or lists
+# no such agent in this project's panes.
+agent_where() {
+  local name agents workspaces tabs
+  name="$(agent_name "$1")"
+  agents="$(herdr agent list 2>/dev/null)" || { echo "herdr gave no agent list"; return 1; }
+  workspaces="$(herdr workspace list 2>/dev/null)" || { echo "herdr gave no workspace list"; return 1; }
+  tabs="$(herdr tab list 2>/dev/null)" || { echo "herdr gave no tab list"; return 1; }
+  SWARM_NAME="${name}" SWARM_PANES="$(own_panes)" SWARM_WS="${workspaces}" SWARM_TABS="${tabs}" python3 -I -c '
+import json, os, sys
+e = os.environ
+a = next((a for a in json.load(sys.stdin)["result"]["agents"]
+          if a.get("name") == e["SWARM_NAME"] and a.get("pane_id") in e["SWARM_PANES"].split()), None)
+if a is None:
+    print("herdr lists no agent called %s in this project'"'"'s panes" % e["SWARM_NAME"]); sys.exit(1)
+ws = a.get("workspace_id") or a["pane_id"].split(":")[0]
+wl = next((w.get("label") for w in json.loads(e["SWARM_WS"])["result"]["workspaces"] if w.get("workspace_id") == ws), "")
+tl = next((t.get("label") for t in json.loads(e["SWARM_TABS"])["result"]["tabs"] if t.get("tab_id") == a.get("tab_id")), "")
+print("%s\t%s\t%s" % (a["pane_id"], wl or "-", tl or "-"))' <<< "${agents}"
+}
+
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
 # retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
 # its slot in the tab's state under that name, so no later agent is split into it.
