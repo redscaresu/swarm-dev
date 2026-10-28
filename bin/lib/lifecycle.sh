@@ -2331,45 +2331,67 @@ heads_green() {
 }
 
 # lead_review_items — waiting_on_user's review items as the lead's queue weighs them: a `kept: <slug>
-# <PR URL>... (not reviewed)` line as it is, and with merge = human (or for a costs: money item, under
-# merge = agent too) `<tag> merge: <slug> <PR URL>...` for a story or epic awaiting a merge, <tag> 1 for
-# a costs: money one, else -. It reads files only.
+# <PR URL>... (not reviewed)` line as it is, and with merge = human (or for a held item, under merge =
+# agent too) `<tag> merge: <slug> <PR URL>...` for a story or epic awaiting a merge, <tag> p for a row
+# of PRs held for a protected path (its ` (protected path)` tag, with or without costs money), 1 for a
+# costs: money one, else -. It reads files only.
 lead_review_items() {
   local line tag
   # waiting_on_user's last line has no newline.
   while IFS= read -r line || [[ -n "${line}" ]]; do
     # A kept story (a give-up's PR, not reviewed) is the lead's to look at, never one to merge.
     if [[ "${line}" == "  kept: "* ]]; then echo "${line#  }"; continue; fi
-    # With merge = agent only a costs: money item waits on the user: merge holds it for them.
+    case "${line}" in
+      "  awaiting your merge (protected path): "* | "  awaiting your merge (costs money) (protected path): "*) tag=p ;;
+      "  awaiting your merge (costs money): "*) tag=1 ;;
+      "  awaiting your merge: "*) tag=- ;;
+      *) continue ;;
+    esac
+    # With merge = agent only a held item waits on the user: merge holds it for them.
     # shellcheck disable=SC2154 # assigned in another file
-    [[ "${CFG_merge}" == human || "${line}" == "  awaiting your merge (costs money): "* ]] || continue
-    tag=-; [[ "${line}" != "  awaiting your merge (costs money): "* ]] || tag=1
-    line="${line/#  awaiting your merge (costs money): /  awaiting your merge: }"
-    [[ "${line}" == "  awaiting your merge: "* ]] || continue
-    line="${line#  awaiting your merge: }"; line="${line#epic }"
+    [[ "${CFG_merge}" == human || "${tag}" != - ]] || continue
+    line="${line#*): }"; line="${line#  awaiting your merge: }"; line="${line#epic }"
     echo "${tag} merge: ${line}"
   done < <(waiting_on_user)
+}
+
+# lead_merge_shown <tag> <merge: line> <holds> — the line as lead_queue prints it, and so as LEAD_SEEN
+# holds it: for a protected-path row (tag p) the line, then ` (held: changes <path>[, <path>]...; exit:
+# the user merges it)`, each path its PR's in <holds> (protected_holds); any other line as it is.
+# LEAD_HEADS keeps the bare line, whose every word after the slug is a PR URL.
+lead_merge_shown() {
+  local u p paths=""
+  [[ "$1" == p ]] || { echo "$2"; return 0; }
+  for u in ${2#merge: * }; do
+    p="$(awk -v u="${u}" '$1 == u { sub(/^[^ ]+ /, ""); print; exit }' <<< "$3")"
+    [[ -z "${p}" || ", ${paths}, " == *", ${p}, "* ]] || paths+="${paths:+, }${p}"
+  done
+  echo "$2 (held: changes ${paths}; exit: the user merges it)"
 }
 
 # lead_heads — the heads pass: read the PR heads of each review item lead_review_items lists
 # (heads_green) and write its verdict to LEAD_HEADS, `<verdict> merge: <slug> <PR URL>...`: green when
 # every head is, unread when none is red but one could not be read, red otherwise. wait_lead runs it on a
 # run's first read and then at most once every LEAD_HEADS_EVERY seconds, as does open_story_prs beside it,
-# so the polls between make no gh call. A costs: money PR an earlier item already reports is not read again, and that item gets no verdict.
+# so the polls between make no gh call. A held PR (costs: money or a protected path) an earlier item already
+# reports is not read again, and that item gets no verdict. Whether the lead has seen an item is read from
+# LEAD_SEEN in its printed form (lead_merge_shown).
 lead_heads() {
-  local tag line slug prs rc v urls="" u new seen=" " red="|"
+  local tag line slug prs rc v urls="" u new seen=" " red="|" holds shown
   : > "${LEAD_GREEN}.new"; : > "${LEAD_HEADS}.new"
+  holds="$(protected_holds)"
   while read -r tag line; do
     [[ "${tag}" != kept: ]] || continue
     slug="${line#merge: }"; slug="${slug%% *}"; prs="${line#merge: "${slug}"}"; urls+="${prs}"; rc=0
-    if [[ "${tag}" == 1 ]]; then
+    shown="$(lead_merge_shown "${tag}" "${line}" "${holds}")"
+    if [[ "${tag}" != - ]]; then
       # A held PR is reported once, under the first item listing it (a story and its epic both may).
       new=""; for u in ${prs}; do [[ "${seen}" == *" ${u} "* ]] || new=1; done
       [[ -n "${new}" ]] || continue
     fi
     # shellcheck disable=SC2086 # prs: is a space-separated list of URLs
     heads_green ${prs} || rc=$?
-    if [[ ${rc} -eq 0 && -n "${LEAD_CACHED}" ]] && ! grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; then
+    if [[ ${rc} -eq 0 && -n "${LEAD_CACHED}" ]] && ! grep -qxF "${shown}" "${LEAD_SEEN}" 2>/dev/null; then
       # About to wake the lead: a cached head can have gone red on a re-run since, so read each one again.
       # shellcheck disable=SC2086 # as above
       LEAD_FRESH=1 heads_green ${prs} || rc=$?
@@ -2379,7 +2401,7 @@ lead_heads() {
     case "${rc}" in 0) v=green ;; 2) v=unread ;; *) v=red ;; esac
     echo "${v} ${line}" >> "${LEAD_HEADS}.new"
     # Seen once reported: a later item listing the PR still wakes the lead when this one was not green.
-    [[ "${tag}" != 1 ]] || ! lead_head_wakes "${v}" "${line}" || seen+="${prs# } "
+    [[ "${tag}" == - ]] || ! lead_head_wakes "${v}" "${shown}" || seen+="${prs# } "
   done < <(lead_review_items)
   mv "${LEAD_HEADS}.new" "${LEAD_HEADS}"
   # A green head this pass did not reach (gh failed, or an earlier PR of its item was red) stays cached
@@ -2392,7 +2414,7 @@ lead_heads() {
 }
 
 # lead_head_wakes <verdict> <merge: line> — true when a review item with that verdict is in the lead's
-# queue: green, or unread while LEAD_SEEN has it, so a gh error wakes no one.
+# queue: green, or unread while LEAD_SEEN has the line (as lead_merge_shown prints it), so a gh error wakes no one.
 lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "$2" "${LEAD_SEEN}" 2>/dev/null; }; }
 
 LEAD_PRS="${LEAD_DIR}/prs"            # the open story PRs the last heads pass read (open_story_prs), for pr_lines
@@ -2530,7 +2552,8 @@ pr_lines() {
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
-# heads pass's (lead_heads), wakes the lead (lead_head_wakes). Then, from no_agent_lines record: `step-up
+# heads pass's (lead_heads), wakes the lead (lead_head_wakes), with ` (held: changes <path>; exit: the user
+# merges it)` after the URLs of a row held for a protected path (lead_merge_shown). Then, from no_agent_lines record: `step-up
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
 # after closing its builder, `no-agent: <slug>, exit: <exit>` for a started story no agent works
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
@@ -2544,7 +2567,8 @@ pr_lines() {
 # no_agent_lines', read afresh each poll, so one goes once its dependency is in review or done; a poll
 # whose check fails keeps the ones the last poll saw.
 lead_queue() {
-  local f held tag line v keep=""
+  local f held tag line v keep="" holds shown
+  holds="$(protected_holds)"
   while IFS= read -r f; do
     held="$(get_fm "${f}" held_for)"
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
@@ -2554,7 +2578,8 @@ lead_queue() {
     if [[ "${tag}" == kept: ]]; then echo "kept: ${line}"; continue; fi
     v="$(awk -v l="${line}" 'substr($0, index($0, " ") + 1) == l { print $1; exit }' "${LEAD_HEADS}" 2>/dev/null)" || v=""
     [[ -z "${v}" ]] || keep+="${v} ${line}"$'\n'
-    ! lead_head_wakes "${v}" "${line}" || echo "${line}"
+    shown="$(lead_merge_shown "${tag}" "${line}" "${holds}")"
+    ! lead_head_wakes "${v}" "${shown}" || echo "${shown}"
   done < <(lead_review_items)
   # A verdict on a head read before its item left review says nothing about the head it comes back with.
   [[ ! -f "${LEAD_HEADS}" ]] || { printf '%s' "${keep}" > "${LEAD_HEADS}.tmp" && mv "${LEAD_HEADS}.tmp" "${LEAD_HEADS}"; }
