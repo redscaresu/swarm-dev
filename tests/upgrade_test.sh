@@ -612,9 +612,10 @@ review_b1 busy; sed -i.bak 's/{"sessionId":"s1","status":"idle"},//' "${H}/claud
 WAIT_MS=300 upgrade e
 check "a gone builder is named for its session, not held by its busy review agent" "1|1|0|" \
   "${rc}|$(grep -cx "b1: left on 0.21.0: its Claude session is gone, so it is not restarted" "${H}/out")|$(grep -c '^b1: .*review agent' "${H}/out")|$(calls 'agent start')"
-# A review agent busy through the one round that reads idle at the end, from Claude Code's 6th read
-# on, still names idle b1, which it held.
-review_b1 busy; echo '5 s/"sr","status":"busy"/"sr","status":"idle"/' > "${H}/flip"
+# A review agent busy through the one round that reads idle at the end, from Claude Code's 7th read
+# on (the round reads its list 6 times: 3 for the conductor, then b1, b1's hold and review-b1),
+# still names idle b1, which it held.
+review_b1 busy; echo '6 s/"sr","status":"busy"/"sr","status":"idle"/' > "${H}/flip"
 WAIT_MS=1 upgrade e
 check "a builder its review agent held in the last round is named for it, though that agent reads idle at the end" "1|1|" \
   "${rc}|$(grep -cx 'b1: left on 0.21.0: its review agent review-b1 stayed busy' "${H}/out")|$(calls 'agent start')"
