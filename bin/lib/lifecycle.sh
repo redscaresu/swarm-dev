@@ -2294,7 +2294,8 @@ close_tab() {
 }
 
 LEAD_POLL="${SWARM_LEAD_POLL:-30}"    # seconds between wait --lead's reads of the board, at least 1
-# wait --lead's own files, kept out of STATE_DIR, whose files close reads as tab records.
+# wait --lead's own files and lead_rename's record, kept out of STATE_DIR, whose files close reads
+# as tab records.
 LEAD_DIR="${PROJECT_DIR}/.swarm/lead"
 LEAD_SEEN="${LEAD_DIR}/seen"          # the lead's queue at wait --lead's last read, kept across runs
 # shellcheck disable=SC2034 # board.sh reads it
