@@ -2966,6 +2966,14 @@ Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
+Every builder, review agent and conductor brief lists the forms the guard passes:
+`cd <dir> || exit 1 && <command>`, `swarm.sh merge <PR URL>` alone in its
+call, text that mentions a merge written through the Write tool or a quoted heredoc
+(`--body "$(cat <<'EOF' ... EOF)"`), and waits through `swarm.sh wait` and `swarm.sh wait-pr`. It
+also shows a delete auto mode runs with no permission prompt: `rm -rf` on a path spelled out in full.
+A path built from variables, such as `rm -rf "$SP/$m"`, stopped a builder on a prompt.
+`tests/guard_forms_test.sh` feeds each of those Bash forms to the guard.
+
 An agent's guards come from the flags it starts with: `--disallowedTools` (no `gh pr merge`, and for
 the fallback reviewer no file tools, commit or push) and `--settings`, which sets `SWARM_AGENT`.
 When herdr restarts, it reopens each agent's pane and resumes the session. On its own it would run

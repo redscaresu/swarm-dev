@@ -16,11 +16,26 @@ findings_goal() {
   send_goal "$1" "$3" findings "$2"
 }
 
-# The merge and review rules, shared by the briefs.
+# The merge and review rules, shared by the briefs. merge_rule ends with guard_rule, so a builder's
+# brief has the guard's forms.
 merge_rule() {
   # shellcheck disable=SC2154 # assigned in another file
-  if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
-  else echo "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge)."; fi
+  if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges). $(guard_rule)"
+  else echo "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge). $(guard_rule)"; fi
+}
+# guard_rule — the command forms hooks/merge-guard.sh passes, and a delete auto mode runs with no
+# permission prompt, for the builder (through merge_rule), review and conductor briefs. Bash that writes
+# merge text to a file is a raw merge to the guard, so that text goes through the Write tool or a quoted
+# heredoc in the command. tests/guard_forms_test.sh feeds each Bash form to the guard.
+# shellcheck disable=SC2016 # the forms are shown, not run
+guard_rule() {
+  printf '%s ' 'The plugin'"'"'s guard hook checks each Bash call, and these forms pass it.' \
+    'Write `cd <dir> || exit 1 && <command>`, never `cd <dir>; <command>`.' \
+    'A `swarm.sh merge <PR URL>` goes alone in its Bash call, joined to nothing.' \
+    'Text that mentions a merge (a PR body, a comment) goes in a file through the Write tool, or into the command as a quoted heredoc, `--body "$(cat <<'"'EOF'"' ... EOF)"`.' \
+    'Bash that writes it to a file, through a redirect or tee, is refused as a raw merge, since that file could be run.' \
+    'Wait on an agent with `swarm.sh wait <name>` and on CI with `swarm.sh wait-pr <PR URL>`, in the background, never a loop of your own.'
+  printf '%s' 'Delete with the path spelled out in full, `rm -rf <absolute path>`: auto mode runs that with no permission prompt, where a path built from variables, ~ or a glob, such as `rm -rf "$SP/$m"`, stops you on one.'
 }
 # wait_pr_rule <then> <report> <head> — how every agent waits on a PR's CI: on <head> (wait-pr's --head:
 # right after a push GitHub can still report the old head), <then>, what it does on red, a conflict or a head the PR never got,
@@ -1022,7 +1037,7 @@ EOF
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
-# changes code, and the project's rules. After each review it fixes or declines each finding, logs each
+# changes code, the guard's forms (guard_rule) and the project's rules. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
 # before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,
@@ -1061,6 +1076,8 @@ and wait on it again."
 Review $2, the PR of story $1, at its head $5, in this worktree. Never edit, commit or push here:
 the builder changes the code. Merge only as the pass step below says. The files you write are
 ${4}, ${round} and, to nudge the builder, ${nudge}.
+
+$(guard_rule)
 
 The story touches: $(fm "${story}" touches)
 
@@ -1317,6 +1334,7 @@ board_pr_merge_rule() {
 }
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
+# It has the guard's forms (guard_rule), as every brief does.
 # The epic backlog is the backlog conductor's: the ready stories with no epic.
 conduct_brief() {
   local epic="$1" inbox scope="Stay inside this epic: start no story outside it, and leave the HLD and other epics alone."
@@ -1342,6 +1360,8 @@ EOF
 ${scope} A
 story whose \`kind\` is set and is not code, docs or chore (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
+
+$(guard_rule)
 
 When the board is in the project's repo, make a scope or body edit to a story in a board PR
 (\`swarm.sh board-pr\`), as the lead does, never in the main checkout. $(board_pr_merge_rule) A builder
