@@ -77,7 +77,11 @@ base_stop() { printf '%s' "CI on the base timed out, or is red with no \`fix-mai
 # for green, triages, reviews each head, tells the builder its findings, logs them, and merges the PR or
 # hands it to the user. The conductor starts it on watch's opened line (or a queued: line, or for a kept:
 # story), and again on each new head's checks-finished line, which review-agent refuses while the last one
-# still reviews; it is never in the loop otherwise: two in it would send findings and count rounds twice.
+# still reviews or once the head has passed; it is never in the loop otherwise: two in it would send
+# findings and count rounds twice. A review agent's stop note hands the story back: on head moved: it
+# starts a new one, on review's held: it waits for the parent's merge, and on the rest it acts as on its
+# own wait on the builder. A second worktree refusal on one head with no base-merged line has the
+# builder pull the PR's head.
 review_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
@@ -90,7 +94,9 @@ with no review on <sha>\`, that head has had no review: start its review agent t
 When \`swarm.sh watch\` prints \`<repo> #<n> story/<slug> checks finished on <sha>\` for a PR of
 yours, start its review agent again the same way: the one before may have stopped on an older head
 (a push it did not review, a base merged in, a nudge to the builder after a failed merge). While it
-still reviews, review-agent refuses and nothing starts.
+still reviews, review-agent refuses and nothing starts; the stop note below starts it once that one
+stops. When review-agent refuses because its findings file is a pass of that head and the story is no
+longer ready, the review passed and its hand-off has the PR: start nothing for that head.
 A story \`swarm.sh status\` lists as \`kept:\` (a close kept its PR unreviewed) gets one the same
 way: first make sure its builder is open, since the review agent sends it the findings (with none,
 start one in its worktree as the Stacked rule says for \`(no builder)\`, with a brief that names the
@@ -99,16 +105,27 @@ PR is the lead's: list it in your report. When review-agent refuses because revi
 still reviewing, that agent has the PR: start nothing. When it refuses because the story's worktree
 is not at the PR's head or has uncommitted changes, the builder is still at work: whatever the
 refusal says to do next, start it again once \`swarm.sh wait <slug>\` on that builder returns, or
-on \`swarm.sh watch\`'s next line for that PR, whichever comes first. If it refuses so again on the
-same head with the builder idle, start nothing more for that head: it is one GitHub made by merging
-the base in (\`base merged:\`), and the review agent merging the PR waits on it itself.
+on \`swarm.sh watch\`'s next line for that PR, whichever comes first. When the refusal says the PR's
+head is GitHub's merge of the base (events.tsv's \`base-merged <sha>\`), start nothing for that head:
+the review agent merging the PR waits on it itself. If it refuses so again on the same head with the
+builder idle and no such line, the builder's worktree is behind the PR: nudge it once, with a file
+telling it to pull the PR's head (\`git pull --ff-only origin story/<slug>\`), as
+\`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>\` in the background, and start
+the review agent again once the next \`swarm.sh wait <slug>\` on it returns.
 The review agent waits for the PR's checks, triages them, reviews each head, sends its findings to
 the builder, logs them, and merges the PR or hands it to the user. Never wait on a PR or a review
-agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or
+agent (but the one wait the stop note below names), read a review file, triage, tell a builder findings, log a finding, close a review agent or
 merge a story's PR: each is the review agent's, and doing it as well would send findings twice and
 count a round twice.
 A note in your inbox that says \`review-<slug> stopped on <sha>: <why>\` is a review agent that
-stopped before a pass, and the story is yours again. Act on <why> as on your own wait on that builder:
+stopped before a pass, and the story is yours again. A why that starts \`head moved:\` names a head
+that review agent never reviewed: start the review agent again on the PR at once, as above (on
+review-agent's refusals, do as above; one that says review-<slug> is still working is that agent
+ending the turn that sent the note: start it again once \`swarm.sh wait review-<slug>\` returns,
+in the background, the one wait on a review agent you run). A why that starts \`held: <slug> waits
+for <p> to merge\` is a stacked story \`swarm.sh review\` held until its parents merge: nudge no
+builder and start no review agent; once <p> merges, the Stacked rule above has its builder merge it
+in, and that new head gets its review agent then. Otherwise act on <why> as on your own wait on that builder:
 a stalled or stuck builder by the give-up and stuck rules above. When the builder is idle and pushed
 nothing (\`no fix pushed\`, or a red head left as it was), nudge it once, with a file naming the stop
 line, as \`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>\` in the background
@@ -548,6 +565,8 @@ build_story() {
   else git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"; fi
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
+  rm -f "$(build_conductor "${slug}")"
+  [[ "${SWARM_AGENT:-}" != conduct-* ]] || printf '%s\n' "${SWARM_AGENT}" > "$(build_conductor "${slug}")"
   story_brief "${slug}" "${src}" "${base}" > "${prompt}"
   [[ -z "${parents}" ]] || printf '%s\n' "This story is stacked: your branch starts on the branches of ${parents}, whose PRs are still open. Open your PR against \`${base}\` all the same, with \`Merge after ${STACK_PRS}\` in its body." >> "${prompt}"
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
@@ -568,7 +587,9 @@ build_story() {
 # findings file. It reviews the
 # PR's head, and only when the worktree is at it with nothing uncommitted; the file's head: line
 # names that commit. Refused, starting nothing and touching no file, when
-# the board has a story named review-<slug> (its builder would hold the same agent name), or when
+# the board has a story named review-<slug> (its builder would hold the same agent name), when its
+# findings file is a pass of the PR's head (review_pass) and the story has left ready (the pass's
+# hand-off ran), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
 # a reader of it sees only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
@@ -583,6 +604,10 @@ review_agent() {
   [[ -n "$(story_items "${story}" 'Done when')" ]] || die "${slug}: ${story} has no **Done when** with an item under it"
   review_at_head "${slug}" "${pr}"; src="${REVIEW_SRC}"; wt="${REVIEW_WT}"; head="${REVIEW_HEAD}"
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
+  # A second review of a passed head could send findings to a PR its hand-off is already merging. A
+  # story still ready never got that hand-off (review --head failed), so a new review is its way on.
+  [[ "$(fm "${story}" status)" == ready ]] || ! review_pass "${slug}" "${head}" \
+    || die "review-agent: ${out} is a pass of ${head}, the PR's head, and ${slug} is no longer ready, so its hand-off (review, then merge or the user's merge) has the PR; nothing was started: a conductor starts nothing for this head, and the lead moves ${out} aside first to review it again"
   # An open review-<slug> with no findings file is still reviewing (idle while its codex runs), and
   # free_agent_name would retire it as finished.
   [[ -f "${out}" || -z "$(agent_field "$(agent_name "review-${slug}")" pane_id)" ]] \
@@ -652,7 +677,9 @@ review_words() {
 
 # review_at_head <slug> <PR URL> [next|recheck] — the story's repo, worktree and PR head, in REVIEW_SRC,
 # REVIEW_WT and REVIEW_HEAD, once the worktree is at the PR's head with nothing uncommitted; dies
-# otherwise, as review-agent, or as review-agent --next or --recheck (review_words). Not for $(...): main
+# otherwise, as review-agent, or as review-agent --next or --recheck (review_words). review-agent's
+# refusal of a worktree behind a head GitHub made by merging the base in (base_merged) says so, and
+# that no review starts for it. Not for $(...): main
 # logs its die's message, which no_review_events reads.
 review_at_head() {
   local at
@@ -663,8 +690,12 @@ review_at_head() {
   REVIEW_HEAD="$(gh pr view "$2" --json headRefOid --jq .headRefOid 2>/dev/null)" || REVIEW_HEAD=""
   [[ "${REVIEW_HEAD}" =~ ^[0-9a-f]{40}$ ]] || die "${REVIEW_CMD}: could not read $2's head (gh pr view --json headRefOid)"
   at="$(git -C "${REVIEW_WT}" rev-parse HEAD)"
-  [[ "${at}" == "${REVIEW_HEAD}" ]] \
-    || die "${REVIEW_CMD}: $1's worktree is at ${at}, not the PR's head ${REVIEW_HEAD}; ${REVIEW_UNDONE}: wait for its builder, then ${REVIEW_AGAIN}"
+  if [[ "${at}" != "${REVIEW_HEAD}" ]]; then
+    # A head GitHub made by merging the base in is the merge's to wait on, never the builder's to push.
+    [[ -n "${3:-}" ]] || ! base_merged "$1" "${REVIEW_HEAD}" \
+      || die "${REVIEW_CMD}: $1's worktree is at ${at}, not the PR's head ${REVIEW_HEAD}, which is GitHub's merge of the base into the PR (events.tsv's base-merged ${REVIEW_HEAD}); ${REVIEW_UNDONE}: the swarm.sh merge that made it waits on it and merges it, so start no review for it"
+    die "${REVIEW_CMD}: $1's worktree is at ${at}, not the PR's head ${REVIEW_HEAD}; ${REVIEW_UNDONE}: wait for its builder, then ${REVIEW_AGAIN}"
+  fi
   # Uncommitted work would be reviewed with the head (codex's story prompt includes it).
   [[ -z "$(git -C "${REVIEW_WT}" status --porcelain)" ]] \
     || die "${REVIEW_CMD}: $1's worktree has uncommitted changes, so it is not the PR's head ${REVIEW_HEAD}; ${REVIEW_UNDONE}: wait for its builder to commit and push, then ${REVIEW_AGAIN}"
@@ -1038,12 +1069,21 @@ EOF
     "Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
 }
 
-# story_conductor <slug> — the conductor a review agent of <slug> tells when it stops: its epic's, or the
-# backlog conductor's for a story with no epic (group_conductor).
+# story_conductor <slug> — the conductor a review agent of <slug> tells when it stops: its epic's, or for
+# a story with no epic the conductor that started its build (build_conductor; an epic's conductor builds
+# a fix-main story), else the backlog conductor's (group_conductor).
 story_conductor() {
-  local e; e="$(fm "${BOARD}/stories/$1.md" epic 2>/dev/null || true)"
+  local e c; e="$(fm "${BOARD}/stories/$1.md" epic 2>/dev/null || true)"
+  if [[ -z "${e}" ]] && c="$(cat "$(build_conductor "$1")" 2>/dev/null)" && [[ "${c}" == conduct-* ]]; then
+    echo "${c}"; return
+  fi
   group_conductor "${e:--}"
 }
+
+# build_conductor <slug> — the file that names the conductor that started <slug>'s build (SWARM_AGENT
+# at swarm.sh story), which build_story writes and story_conductor reads; absent for a build the lead
+# started.
+build_conductor() { echo "${PROJECT_DIR}/.swarm/briefs/$1.conductor"; }
 
 # review_handoff <slug> <PR URL> <findings file> <head> <swarm.sh> — the review brief's pass step. A round
 # with nothing to fix writes its review file first: a wait on the agent ends on it, and once the PR
@@ -1052,8 +1092,8 @@ story_conductor() {
 # reviewed (swarm.sh review --head, which refuses a moved head), and, under merge = agent or when
 # swarm.sh grants names merge for the PR, merges that head, pinned with swarm.sh merge --head, which
 # checks the PR is still at it; otherwise the review is the handoff to the user. A moved head
-# turns the file into a head moved: one, and the conductor starts a new agent on the new head once
-# watch reports its checks finished. A base merged in whose CI goes red or conflicts (base merged,
+# turns the file into a head moved: one and sends the conductor (story_conductor) a stop note naming it,
+# on which it starts a new agent on the new head. A base merged in whose CI goes red or conflicts (base merged,
 # red: or conflict:), or a moved base merge refuses on, has the agent nudge the builder (pull the branch
 # first) and stop; its push is a new head, which the conductor gives a new agent the same way. Any other
 # refusal or failure (a dequeue, an unconfirmed merge, a red or timed-out base after it) sends the
@@ -1077,8 +1117,9 @@ and removes this worktree, so a file written after would never come. Then hand t
 When review or merge refuses because the PR's head is no longer $4 (a push since your review), that
 head has had no review, and you do not review it in this session. Write ${3} again with the Write tool,
 holding two lines, \`head: $4\` and
-\`head moved: <the head review or merge named>\`, then stop: the conductor starts a new review agent
-on the new head once watch reports its checks finished (the lead does when no conductor runs). When it was merge that refused,
+\`head moved: <the head review or merge named>\`, then send the conductor the stop note, as below,
+naming that \`head moved:\` line, and stop: the conductor starts a new review agent on the new head on
+that note (the lead does when no conductor runs). When it was merge that refused,
 review had already put the story in review: your reply's first line says \`$1 is in review on
 <the new head>, which nobody reviewed\`.
 When merge prints \`base merged: <PR URL> is now ...\`, GitHub merged the base into the PR's branch:
@@ -1124,10 +1165,11 @@ EOF
 # is checked with review-agent --recheck (review_recheck), whose pass writes <findings file>, then review_handoff; its
 # refusal naming --next counts the round (review_rounds), and --next runs the full round. A stop before a
 # pass (a wait that ends other than idle, a refused tell, no fix pushed) writes <findings file> with head:
-# and stopped: lines and no ## Findings: no pass.
+# and stopped: lines and no ## Findings: no pass. Each stop, and each stop on a moved head (head moved:),
+# sends the story's conductor (story_conductor) a stop note.
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
-  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" agent cond
+  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" stepnote="" agent cond
   cr="$(review_round_line "$6" "$2")"
   sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
   # findings takes the story's repo by name; a story with no repo: is in the project's own.
@@ -1144,6 +1186,9 @@ review_brief() {
   so no nudge can reach it: write ${4} with the Write tool holding \`head: <the head wait-pr waited
   on>\`, a \`## Findings\` heading with that \`step-up failed:\` line as its one item, and a
   \`## Handled by the review agent\` heading with \`none\`, then stop."
+  # A stepped up: stop names no new head (the ladder's alone), so it sends no moved-head stop note.
+  [[ -z "${CFG_escalate_ladder:-}" ]] || stepnote=", unless that line names a \`stepped up:\` build, whose head has not moved (the
+new builder's push gets its review from watch)"
   [[ -z "${CFG_escalate_ladder:-}" ]] || stepped=" When it prints \`stepped up: $1\`, the stalled build went to
 the next model on the escalation ladder, and when it prints \`stepping up: $1\`, another step-up or a
 restart of it is running: in both cases, wait on it the same way. A build stepped up after this
@@ -1202,6 +1247,10 @@ head>: <the stopped: line's why>\`, and run \`${sw} tell ${cond} note ${stop}\`.
 and stop: with no \`## Findings\` heading it is no pass, and the conductor takes the story from there.
 When that tell fails (no conductor runs for the story), your reply's first line says so: the lead
 takes it.
+A stop on a moved head, wherever this brief or \`review-agent --next\` has you write ${4} with a
+\`head moved:\` line, sends the conductor the same stop note once ${4} is written, its why that
+\`head moved:\` line${stepnote}: watch's \`checks finished\` line for the new head may have come while you were
+still in this session, when the conductor's start was refused, so the note is what starts its review.
 
 Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr $2\` in the
 background and wait for it to exit, never a loop of your own; it prints the head it waits on first.

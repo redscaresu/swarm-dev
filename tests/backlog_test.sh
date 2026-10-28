@@ -170,7 +170,8 @@ for which in bl eb; do
   # shellcheck disable=SC2016 # the backticks are the brief's
   check "the ${which} brief's review paragraph starts review-agent on watch's opened line, on queued: and for a kept: PR, and never waits on a PR or a review agent" "yes|yes|yes|yes" \
     "$(has '`<repo> #<n> story/<slug> opened`, a PR of yours has opened: start its review agent once, at once, with `'"${SWARM}"' review-agent <slug> <PR URL>`.' "${rflat}")|$(has '`queued: <repo> #<n> <branch> green <m>m with no review on <sha>`, that head has had no review: start its review agent then, the same way.' "${rflat}")|$(has 'lists as `kept:` (a close kept its PR unreviewed) gets one the same way' "${rflat}")|$(has 'Never wait on a PR or a review agent' "${rflat}")"
-  check "the ${which} brief never waits on a review agent, tells findings, logs a declined finding or reviews the moment a head is green" "0|0|0|0" \
+  # Its one wait on a review agent: on a head moved: stop note, while the agent that sent it ends its turn.
+  check "the ${which} brief waits on a review agent only once, and never tells findings, logs a declined finding or reviews the moment a head is green" "1|0|0|0" \
     "$(grep -c 'swarm.sh wait review-<slug>' <<< "${all}" || true)|$(grep -c 'tell <slug> findings' <<< "${all}" || true)|$(grep -c 'log-finding --declined' <<< "${all}" || true)|$(grep -c "The moment a story's PR head is green" <<< "${all}" || true)"
 done
 check "the conductor briefs have no batch wording" "no|no|no|no" \

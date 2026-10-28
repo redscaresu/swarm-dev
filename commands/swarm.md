@@ -195,7 +195,10 @@ Repeat until a step below says stop:
      `swarm.sh wait review-<slug>` in the background. When review-agent refuses because the
      worktree is not at the PR's head or has uncommitted changes, the builder is still at work:
      wait for it with `swarm.sh wait --stall <slug>` in the background, then start the review agent
-     again. The review agent waits for green, reviews each head, tells the builder its findings
+     again. When the refusal says the PR's head is GitHub's merge of the base, the merge that
+     made it waits on it and merges it: start no review for it. When review-agent refuses
+     because the findings file is a pass of the PR's head, that head passed and its hand-off ran:
+     start nothing, and move the file aside first only to review it again. The review agent waits for green, reviews each head, tells the builder its findings
      (which counts the round and applies the ladder) and runs the later rounds itself. While it is
      open, never triage its review file, tell the builder findings or merge the PR yourself: the
      findings would go out twice and the round would count twice. Its wait returns once the agent
@@ -342,9 +345,17 @@ Repeat until a step below says stop:
      wait exits 0 only when it prints `idle` or `done`, once the builder's turn is over. A wait that times out or prints anything but `idle` or `done` (`stuck:`, `auth`, `waiting`, `gone`) sends nothing: deal with what it printed, then send the file again the same way. If no builder is open, start one in the
      story's worktree with `swarm.sh agent`, as the `kept:` arm says. If the story has no worktree, add
      one on the PR's branch first: `git -C <repo> fetch origin story/<slug>`, then
-     `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. Each line comes once, and again
-     only after it has gone from the queue. Unlike `held:` and `merge:` lines, both come on a run's
-     first read too. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
+     `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. A
+     `stopped: <slug> (review-<slug> stopped on <sha>: <why>), exit: <exit>` line is a review
+     agent's stop note that no running conductor has: its tell failed, or the conductor it reached
+     has stopped. To hand it to a conductor, start one for the story's epic and send it the note
+     with the `swarm.sh tell <conductor> note <file>` the exit names. Otherwise act on the
+     why yourself, as the `kept:` arm above says for a review file with a `stopped:` or `head moved:`
+     line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
+     waits for <p> to merge` why waits for <p>'s merge, and a builder that pushed nothing gets one
+     nudge. The line goes once a review agent starts on the story again or it leaves the board.
+     Each line comes once, and again only after it has gone from the queue. Unlike `held:` and `merge:` lines, `unmerged:`, `conflict:` and `stopped:` lines come on a
+     run's first read too. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.

@@ -2725,6 +2725,28 @@ pr_lines() {
     }' <(stories_fm status kind kept repo) "${LEAD_PRS}")
 }
 
+# stop_lines — `stopped: <slug> (<the stop note>), exit: <exit>` for each review agent's stop note
+# (.swarm/reviews/<slug>.stop.md, which review_brief has it write and tell its conductor) that no
+# conductor has: its story is on the board and not done, no review agent started on it since (its .head
+# is older than the note, or gone), and the conductor the note went to (story_conductor) runs in no pane
+# of the poll's herdr list (LEAD_AGENTS) or has written its report, so the note's tell failed or reached
+# a conductor that has stopped. A poll with no herdr list keeps the stopped: lines LEAD_SEEN has, so a
+# missed read neither drops a line nor wakes the lead with it again.
+stop_lines() {
+  local f slug story cond note
+  [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+  if [[ -z "${LEAD_AGENTS_OK}" ]]; then grep '^stopped: ' "${LEAD_SEEN}" 2>/dev/null || true; return 0; fi
+  for f in "${PROJECT_DIR}"/.swarm/reviews/*.stop.md; do
+    [[ -f "${f}" ]] || continue
+    slug="${f##*/}"; slug="${slug%.stop.md}"; story="${BOARD}/stories/${slug}.md"
+    [[ -f "${story}" && "$(fm "${story}" status)" != "done" && "${f}" -nt "${f%.stop.md}.head" ]] || continue
+    cond="$(story_conductor "${slug}")"
+    [[ -z "$(list_field "${cond}" pane_id <<< "${LEAD_AGENTS}")" || -f "$(conductor_report "${cond}")" ]] || continue
+    note="$(head -1 "${f}" | tr -d '\r')"
+    echo "stopped: ${slug} (${note}), exit: act on its why as ${cond}'s review rule says, or start a conductor for the story and send it the note with swarm.sh tell <conductor> note ${f}"
+  done
+}
+
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
@@ -2735,7 +2757,8 @@ pr_lines() {
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
 # after closing its builder, `no-agent: <slug>, exit: <exit>` for a started story no agent works
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
-# events.tsv line for a story whose missing agent no event explains yet. wait --lead adds `unsent brief:
+# events.tsv line for a story whose missing agent no event explains yet. Then stop_lines' `stopped: <slug>
+# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs).
@@ -2775,6 +2798,7 @@ lead_queue() {
   idle_warned "the idle: lines the last poll saw stand" || grep '^idle: ' "${LEAD_SEEN}" 2>/dev/null || true
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
+  stop_lines
   pr_lines
 }
 
@@ -3714,7 +3738,7 @@ unsent_lines() {
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
 # alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `prompt:`, `unmerged:`,
-# `conflict:`, `tell undelivered:` and `tell goal failed:` lines) and saves the rest.
+# `conflict:`, `stopped:`, `tell undelivered:` and `tell goal failed:` lines) and saves the rest.
 lead_wake() {
   local now line new="" slug u
   lead_agents
@@ -3749,7 +3773,7 @@ lead_wake() {
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
       || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* \
             && "${line}" != "prompt: "* && "${line}" != "unmerged: "* && "${line}" != "conflict: "* \
-            && "${line}" != "tell undelivered: "* && "${line}" != "tell goal failed: "* ]] || new+="${line}"$'\n'
+            && "${line}" != "stopped: "* && "${line}" != "tell undelivered: "* && "${line}" != "tell goal failed: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
@@ -3812,7 +3836,7 @@ lead_lock() {
 # lines, are read only in a heads pass (lead_heads, open_story_prs), on its first read and then at most once
 # every LEAD_HEADS_EVERY seconds. The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts
-# (no-agent:, step-up failed:, unsent brief:, prompt:, unmerged:, conflict:). At the timeout (default an hour) it fails with nothing printed. It edits
+# (no-agent:, step-up failed:, unsent brief:, prompt:, unmerged:, conflict:, stopped:). At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file, and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
