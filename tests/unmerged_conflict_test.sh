@@ -9,11 +9,12 @@
 # commit status with no check run, a lead story's, a done story's and a fork's. Then each line wakes the lead once,
 # stands through a gh failure, a timeout and an UNKNOWN mergeable, wakes it again once it comes back, and
 # comes on a run's first read; polls between heads passes make no gh call; a PR swarm.sh merge is merging
-# gets no unmerged:; a failed read warns once it has failed SWARM_LEAD_PRS_WARN_AFTER passes in a row. Last,
-# with two repos, a story/<slug> PR counts only in its story's own repo.
+# gets no unmerged:, and a poll that cannot read the process list adds no unmerged: and keeps the one a PR
+# had; a failed read warns once it has failed SWARM_LEAD_PRS_WARN_AFTER passes in a row. Last, with two
+# repos, a story/<slug> PR counts only in its story's own repo.
 # gh is a stub whose repo view names the origin's owner/repo and whose pr list prints ${ROOT}/prs.json
 # (failing while ${ROOT}/gh-fail exists, hanging while ${ROOT}/gh-slow does), logging each call; herdr a
-# stub listing ${ROOT}/agents.
+# stub listing ${ROOT}/agents; ps the real one, failing while ${ROOT}/ps-fail exists.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -62,7 +63,8 @@ case "$1 $2" in
   *) echo '{"result":{}}' ;;
 esac
 STUB
-chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
+printf '#!/bin/sh\n[ ! -e "%s/ps-fail" ] || exit 1\nexec %s "$@"\n' "${ROOT}" "$(command -v ps)" > "${ROOT}/bin/ps"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ps"
 
 LISTS='^pr list .*--json url,headRefName,headRefOid,'   # open_story_prs' gh pr list in gh.log
 fails=0
@@ -183,6 +185,13 @@ perl -e 'sleep 600' 'swarm.sh merge' "$(url 1)" & mpid=$!
 out="$(lead)"; kill "${mpid}" 2>/dev/null || true; wait "${mpid}" 2>/dev/null || true
 check "no unmerged: for a PR a swarm.sh merge is merging" none "unmerged: a " "${out}"
 lead >/dev/null
+# A process list that cannot be read may hide such a merge: a's line, due again, is withheld; t's, seen, stands.
+touch "${ROOT}/ps-fail"
+grep -vxF "${UA}" "${P}/.swarm/lead/seen" > "${ROOT}/seen" || true; cp "${ROOT}/seen" "${P}/.swarm/lead/seen"
+silent "a poll that cannot read the process list adds no unmerged:"
+check "and keeps the unmerged: line a PR had" has "${UT}" "$(cat "${P}/.swarm/lead/seen")"
+rm "${ROOT}/ps-fail"
+check "once ps reads again, only the unmerged: it withheld wakes the lead" test "$(grep '^unmerged: ' <<< "$(lead)")" == "${UA}"
 touch "${ROOT}/gh-fail"
 silent "a repo gh cannot list wakes no one"
 check "its lines stand in the queue through the failure" has "${UA}" "$(cat "${P}/.swarm/lead/seen")"

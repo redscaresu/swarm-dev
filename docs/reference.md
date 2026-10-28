@@ -132,7 +132,9 @@ whether a builder is at work or not. For each one it prints:
   neutral), with at least one check run. A required check that never reported is not seen; `swarm.sh merge`
   runs the full rule. There is no `unmerged:` line for a kept story's PR (its `kept:` line comes first), for
   a PR that already has a `merge:` line, or for one a running `swarm.sh merge` is merging, such as a PR
-  waiting in a merge queue (one `ps` read, only on a poll that has such a line due).
+  waiting in a merge queue (one `ps` read, only on a poll that has such a line due). When that `ps` read
+  fails, nothing says whether a merge is running: the PR keeps the `unmerged:` line it had in
+  `.swarm/lead/seen`, and gets no new one until a poll reads the process list again.
 - `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` when GitHub reads the PR as
   conflicting with its base, which runs no checks on it.
 

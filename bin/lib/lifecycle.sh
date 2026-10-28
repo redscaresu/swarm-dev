@@ -2479,9 +2479,10 @@ findings_open() {
 # already has a merge: line (lead_review_items), or one a `swarm.sh merge` is merging now (one ps read, only
 # when such a line is due). A PR whose mergeable state GitHub is still working out (UNKNOWN), and each story of a
 # repo the pass could not read, keeps its lines from LEAD_SEEN, so a lapse in the read neither drops a line nor
-# wakes the lead with it again.
+# wakes the lead with it again. So does, for its unmerged: line, a PR on a poll whose ps read failed: as in
+# no_agent_lines, a process list that could not be read says nothing about a running merge.
 pr_lines() {
-  local slug url head mg ck opened kept m out items="" ps="" got=0
+  local slug url head mg ck opened kept m out items="" ps="" got=0 psok=1
   [[ -s "${LEAD_PRS}" ]] || return 0
   while read -r slug url head mg ck opened kept; do
     if [[ "${url}" == - ]]; then
@@ -2498,8 +2499,10 @@ pr_lines() {
     # shellcheck disable=SC2154 # assigned in another file
     (( m >= CFG_queue_minutes )) || continue
     # The reads below are the poll's, made once and only for a line that is due.
-    if (( got == 0 )); then got=1; items="$(lead_review_items)"; ps="$(ps -A -ww -o command= 2>/dev/null)" || ps=""; fi
+    if (( got == 0 )); then got=1; items="$(lead_review_items)"; ps="$(ps -A -ww -o command= 2>/dev/null)" || psok=0; fi
     awk -v u="${url}" '$2 == "merge:" { for (i = 4; i <= NF; i++) if ($i == u) f = 1 } END { exit !f }' <<< "${items}" && continue
+    # A process list that could not be read may hide a merge of this PR: keep the line it had, and add none.
+    if (( psok == 0 )); then grep -F "unmerged: ${slug} ${url}," "${LEAD_SEEN}" 2>/dev/null || true; continue; fi
     awk -v u="${url}" 'index($0, "swarm.sh merge") { for (i = 1; i <= NF; i++) if ($i == u) f = 1 } END { exit !f }' <<< "${ps}" && continue
     out="swarm.sh merge --head ${head} ${url}"
     ! findings_open "${PROJECT_DIR}/.swarm/reviews/${slug}.md" \
