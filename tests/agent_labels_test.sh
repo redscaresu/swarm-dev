@@ -70,7 +70,8 @@ project "${B}" $'w2:p1 s1'
 
 # report <project> <command>... — its output from <project>, herdr's log emptied first.
 report() { : > "${ROOT}/herdr.log"; (cd "$1" || exit 1; shift; HERDR_ENV=1 DASH_W=200 bash "${SWARM}" "$@" 2>&1) || true; }
-# row <agent> <output> — <agent>'s row: status's from two spaces in, dash's from its symbol on.
+# row <agent> <output> — <agent>'s row: status's from two spaces in, dash's from its symbol on. A tree tab
+# heading is two spaces in from the border; an agent row's stem is deeper, so `^│  [├└]─ ` takes headings alone.
 row() { sed -n "s/^  $1  .*\\[\\(.*\\)\\]\$/\\1/p; s/^│   [^ ] $1  .*  \\(w[0-9]:p[0-9] in .*›[^│]*[^ │]\\) *│.*/\\1/p" <<< "$2"; }
 lists() { grep -c "^$1 list\$" "${ROOT}/herdr.log" || true; }
 
@@ -94,7 +95,7 @@ check "dash: b's s1 names b's pane, workspace and tab" "w2:p1 in b · e2 › e2-
 # herdr tabs, and t3's label is t1's, so a tree keyed by label would merge them.
 out="$(report "${A}" dash --tree)"
 check "dash --tree heads a's agents by its workspace label" "a · e1" "$(sed -n 's/^│ \(a · e1\) *│.*/\1/p' <<< "${out}")"
-check "dash --tree heads a's agents by herdr's tab labels, not their record's name, one heading per tab" "e1,e1-2,e1" "$(sed -n 's/^│ *[├└]─ \([^ ]*\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
+check "dash --tree heads a's agents by herdr's tab labels, not their record's name, one heading per tab" "e1,e1-2,e1" "$(sed -n 's/^│  [├└]─ \([^│]*[^ │]\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
 check "dash --tree shows s3's pane on its row" "w1:p3" "$(sed -n 's/^│[ │]*└─ [^ ] s3  .* \(w1:p3\) *│.*/\1/p' <<< "${out}")"
 
 # where names s3's tab and workspace as status does: from herdr's pane list, when its agent entry has none.
@@ -110,7 +111,7 @@ out="$(report "${A}" dash)"
 check "dash: with no workspace or tab list, the workspace is - and the tab its record's name" "w1:p1 in - › t1" "$(row s1 "${out}")"
 out="$(report "${A}" dash --tree)"
 check "dash --tree: with no workspace list, the workspace heading is its id" "w1" "$(sed -n 's/^│ \(w1\) *│.*/\1/p' <<< "${out}")"
-check "dash --tree: with no tab list, each tab is headed by its record's name and its id" "t1 (w1:t1),t1 (w1:t2),t1 (w1:t3)" "$(sed -n 's/^│ *[├└]─ \([^│]*[^ │]\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
+check "dash --tree: with no tab list, each tab is headed by its record's name and its id" "t1 (w1:t1),t1 (w1:t2),t1 (w1:t3)" "$(sed -n 's/^│  [├└]─ \([^│]*[^ │]\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
 check "where: with no workspace or tab list, the workspace is - and the tab its record's name" "s1: pane w1:p1, workspace -, tab t1" \
   "$(cd "${A}" || exit 1; HERDR_ENV=1 bash "${SWARM}" where s1 2>&1)"
 rm "${ROOT}/fail-workspace" "${ROOT}/fail-tab"
