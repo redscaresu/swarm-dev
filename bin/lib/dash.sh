@@ -786,7 +786,7 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
 
 # swarms — every swarm herdr runs on this machine, from its workspace, pane and agent lists, each
 # read once: each workspace labelled `swarm-lead · <label>` as a project, headed by <label> and its
-# dir, then its workspaces, the lead's first, each with its agents and their states. A workspace's
+# dir, then its workspaces, the lead's first, each with its agents' names. A workspace's
 # dirs are its panes' cwds, each taken up to the nearest folder with .claude/swarm/config, as
 # lead_project finds the lead's project, and one in a story worktree (<dir>-wt/<slug>, or a folder
 # in it) as <dir>; the lead's dir is its first pane's. Another workspace is a project's when one of its dirs is the lead's, or holds
@@ -840,7 +840,7 @@ for p in panes:
     if c:
         dirs.setdefault(ws_of(p), []).append(project(c))
 for a in agents:
-    held.setdefault(ws_of(a), []).append("%s (%s)" % (a.get("name") or a.get("pane_id"), a.get("agent_status") or "unknown"))
+    held.setdefault(ws_of(a), []).append(a.get("name") or a.get("pane_id"))
 leads = [(w["workspace_id"], w["label"][len(lead):], (dirs.get(w["workspace_id"]) or [""])[0])
          for w in workspaces if (w.get("label") or "").startswith(lead)]
 if not leads:

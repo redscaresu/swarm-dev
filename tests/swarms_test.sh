@@ -89,22 +89,22 @@ EOF
 swarms_in() { (cd "$1" || exit 1; shift; rc=0; bash "${SWARM}" swarms "$@" 2>&1 || rc=$?; echo "${rc}"); }
 
 want="app  ${A}
-  swarm-lead · app: L1:p1 (working)
-  app · e1: conduct-e1 (working), s1 (idle)
+  swarm-lead · app: L1:p1
+  app · e1: conduct-e1, s1
   app · lead-agents: no agents
 app-2  ${A2}
   swarm-lead · app-2: no agents
-  app-2 · e2: conduct-e2 (working), s2 (idle)
+  app-2 · e2: conduct-e2, s2
 app-1a2b3c  ${B}
   swarm-lead · app-1a2b3c: no agents
-  app-1a2b3c · e3: conduct-e3 (working), s3 (blocked)
-  app · e4: conduct-e4 (idle)
+  app-1a2b3c · e3: conduct-e3, s3
+  app · e4: conduct-e4
 svc  ${ROOT}/d/svc-board
   swarm-lead · svc: no agents
-  svc · e9: conduct-e9 (working)
+  svc · e9: conduct-e9
 web  ${ROOT}/home/web-board
   swarm-lead · web: no agents
-  web · e10: conduct-e10 (idle)
+  web · e10: conduct-e10
 0"
 : > "${ROOT}/herdr.log"
 check "each lead lists only its own project's workspaces and agents" "${want}" "$(swarms_in "${A}")"
