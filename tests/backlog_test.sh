@@ -134,8 +134,8 @@ check "the backlog brief never runs story for a started story, and reports one i
 run `swarm.sh story` for it again.' "${bl}")|$(has 'report it as not started, with the reason `build died`.' "${bl}")|$(has 'one line each:
 `not started: <slug> (<the refusal'"'"'s first line>)`.' "${bl}")|$(grep -c 'swarm.sh story <slug>' <<< "${bl}" || true)"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "with merge = human, the backlog brief hands over with swarm.sh review, never swarm.sh merge, and stops when nothing is left" "yes|no|yes|no" \
-  "$(has 'run `swarm.sh review <slug> <PR URL>`' "${bl}")|$(hasnt "swarm.sh merge" "${bl}")|$(has 'Stop when no ready story with no `epic:` that you may start is left and none is running.' "${bl}")|$(hasnt "swarm.sh review <epic>" "${bl}")"
+check "with merge = human, the backlog brief leaves the handover to the review agent, never runs swarm.sh merge, and stops when nothing is left" "yes|no|yes|no" \
+  "$(has 'A story'"'"'s review agent hands its PR to the user itself, with `swarm.sh review`, unless an HLD' "${bl}")|$(hasnt "swarm.sh merge --" "${bl}")|$(has 'Stop when no ready story with no `epic:` that you may start is left and none is running.' "${bl}")|$(hasnt "swarm.sh review <epic>" "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = human, a refusal naming another one-off in review is reported as not started, not waited on" "yes" \
   "$(has "Report the
@@ -157,16 +157,24 @@ check "once the backlog conductor has reported, next collects it" "collect ${bn}
 run close "${bn}" >/dev/null
 run close conduct-e >/dev/null   # next started it: e has a ready story and no conductor
 
-# --- The epic conductor's brief: the same review paragraph, and no 'or verify'.
+# --- The epic conductor's brief: the same review paragraph, and no 'or verify'. The paragraph starts each
+# PR's review agent once and leaves it alone: if a brief again waits on reviews, tells findings or logs
+# them, the review agent and the conductor would both drive one PR, and these go red.
 run conduct e >/dev/null
 eb="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the backlog brief's review paragraph is the epic conductor's" "same" \
-  "$([[ -n "$(para "A story is reviewed only when" "${bl}")" && "$(para "A story is reviewed only when" "${bl}")" == "$(para "A story is reviewed only when" "${eb}")" ]] && echo same || echo differs)"
+  "$([[ -n "$(para "A story is reviewed only by" "${bl}")" && "$(para "A story is reviewed only by" "${bl}")" == "$(para "A story is reviewed only by" "${eb}")" ]] && echo same || echo differs)"
 check "the epic conductor keeps its scope and drops 'or verify'" "yes|no" "$(has "Stay inside this epic" "${eb}")|$(hasnt "or verify" "${eb}")"
-flat="$(tr -s '[:space:]' ' ' <<< "${eb}")"
-# shellcheck disable=SC2016 # the backticks are the brief's
-check "the conductor briefs review each PR the moment it is green and merge the moment it passes, with no batch wording" "yes|yes|yes|yes|no|no|no|no" \
-  "$(has "The moment a story's PR head is green and mergeable, start one with" "${flat}")|$(has 'run one review agent for every green PR at once, with no cap below the number of green PRs.' "${flat}")|$(has '`queued: <repo> #<n> <branch> green <m>m with no review on <sha>`, that PR has waited: start its review agent now.' "${flat}")|$(has "once a PR's latest head has passed, merge it (or hand it over, as below) at once, and never hold a finished review result back while other reviews run." "${flat}")|$(hasnt batch "${eb}${bl}")|$(hasnt "later round" "${eb}${bl}")|$(hasnt "wait for any" "${eb}${bl}")|$(hasnt "Do not wait for other PRs" "${eb}${bl}")"
+for which in bl eb; do
+  rflat="$(tr -s '[:space:]' ' ' <<< "$(para "A story is reviewed only by" "${!which}")")"; all="$(tr -s '[:space:]' ' ' <<< "${!which}")"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  check "the ${which} brief's review paragraph starts review-agent on watch's opened line, on queued: and for a kept: PR, and never waits on a PR or a review agent" "yes|yes|yes|yes" \
+    "$(has '`<repo> #<n> story/<slug> opened`, a PR of yours has opened: start its review agent once, at once, with `'"${SWARM}"' review-agent <slug> <PR URL>`.' "${rflat}")|$(has '`queued: <repo> #<n> <branch> green <m>m with no review on <sha>`, that head has had no review: start its review agent then, the same way.' "${rflat}")|$(has 'lists as `kept:` (a close kept its PR unreviewed) gets one the same way' "${rflat}")|$(has 'Never wait on a PR or a review agent' "${rflat}")"
+  check "the ${which} brief never waits on a review agent, tells findings, logs a declined finding or reviews the moment a head is green" "0|0|0|0" \
+    "$(grep -c 'swarm.sh wait review-<slug>' <<< "${all}" || true)|$(grep -c 'tell <slug> findings' <<< "${all}" || true)|$(grep -c 'log-finding --declined' <<< "${all}" || true)|$(grep -c "The moment a story's PR head is green" <<< "${all}" || true)"
+done
+check "the conductor briefs have no batch wording" "no|no|no|no" \
+  "$(hasnt batch "${eb}${bl}")|$(hasnt "later round" "${eb}${bl}")|$(hasnt "wait for any" "${eb}${bl}")|$(hasnt "Do not wait for other PRs" "${eb}${bl}")"
 check "with merge = human, the epic conductor still puts the epic in review" "yes" "$(has "swarm.sh review <epic> <every PR URL still waiting>" "${eb}")"
 run close conduct-e >/dev/null
 
@@ -180,11 +188,11 @@ bl="$(cat "${brief}")"
 check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does, unless it costs money" "yes" \
   "$(has 'If the refusal ends `(costs money)`, only the user merges the named story, maybe days later: do not wait for it, and report yours as `not started: <slug> (waits on <other>'"'"'s merge)`.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "with merge = agent, the backlog conductor also stops when CI on the base timed out or is red with no fix-main line" "yes|yes" \
-  "$(has 'that you may start is left and none is running, or when CI on the base timed out, or is red with no `fix-main:` line.' "${bl}")|$(has 'On `fix-main`, start its builder at once' "${bl}")"
+check "with merge = agent, the backlog conductor also stops when CI on the base timed out or is red with no fix-main line" "yes" \
+  "$(has 'that you may start is left and none is running, or when CI on the base timed out, or is red with no `fix-main:` line.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "with merge = agent, the backlog brief merges with swarm.sh merge --head, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
-  "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story it prints as `startable:` (every ready backlog story whose build has not started' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
+check "with merge = agent, the backlog brief leaves the merge to the review agent, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
+  "$(has "A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR yourself." "$(tr -s '[:space:]' ' ' <<< "${bl}")")|$(has 'start each story it prints as `startable:` (every ready backlog story whose build has not started' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
 
 check "with merge = agent, the backlog conductor starts every ready story with no epic and no build after a merge and after a note" "3|yes|no" "$(startable_bl "${bl}")"
 run close "${bn}" >/dev/null

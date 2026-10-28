@@ -299,22 +299,21 @@ rc=0; run story --strict ov2 >/dev/null || rc=$?
 check "a counted close --drop of a readied held child drops held_by: and its prs:, so it no longer holds other stories back" \
   "hp|${URL}/12|1||no|0" "${held}|$(fm hc attempts)|$(fm hc held_by)$(fm hc prs)|$(exists "${ROOT}/svc-wt/hc")|${rc}"
 
-# --- The conductor briefs: start stacked stories, hold, and close (human) or keep (agent) the builder.
+# --- The conductor briefs: start stacked stories and act on a held child unblock readies. A stacked
+# story's review, and the hold review puts on it, are its review agent's, so the brief says nothing of them.
 run conduct --backlog >/dev/null || true
 cb="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "the merge = human brief drops 'stays blocked until the human merges', and names stacked starts, the hold, the bare close and the held child readied" \
-  "no|yes|yes|yes|${HELD_READY}" \
-  "$(hasnt "stays blocked until the human merges" "${cb}")|$(has 'A story printed `(stacked on <parents>)` starts on its parents'"'"' branches' "${cb}")|$(
-  has 'When `swarm.sh review` holds a stacked story instead (`held: <slug> waits for <p> to merge`)' "${cb}")|$(
-  has 'close its builder with a bare `swarm.sh close <slug>`, which counts nothing for a blocked story and keeps its build' "${cb}")|$(held_ready "${cb}")"
+check "the merge = human brief drops 'stays blocked until the human merges' and the hold review puts on a stacked story, and names stacked starts and the held child readied" \
+  "no|no|yes|${HELD_READY}" \
+  "$(hasnt "stays blocked until the human merges" "${cb}")|$(hasnt 'When `swarm.sh review` holds a stacked story instead' "${cb}")|$(
+  has 'A story printed `(stacked on <parents>)` starts on its parents'"'"' branches' "${cb}")|$(held_ready "${cb}")"
 run close "$(sed -n 's/^agent start \(conduct-backlog-[^ ]*\) .*/\1/p' "${ROOT}/herdr.log" | tail -1)" >/dev/null || true
 echo "merge = agent" > "${p}/.claude/swarm/config"
 run conduct --backlog >/dev/null || true
 cb="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "the merge = agent brief keeps a held child's builder open, and says what to do once unblock readies it" "yes|${HELD_READY}" \
-  "$(has 'leave its builder open' "${cb}")|$(held_ready "${cb}")"
+check "the merge = agent brief says what to do once unblock readies a held child" "${HELD_READY}" "$(held_ready "${cb}")"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

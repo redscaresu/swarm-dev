@@ -61,7 +61,7 @@ also run one by one, and which each wait for the user's approval:
 | Epics | `/plan-hld <hld>` | `docs/epics/<slug>.md` per epic, as drafts the user agrees one by one through `/epic`, or `active` at once when the HLD grants `epics` |
 | Epic | `/epic <title>` | `docs/epics/<slug>.md`, a draft co-written in its own pane and attacked by a reviewer; `active` once the user agrees it |
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval; a large epic is split into child epics first |
-| Build | `swarm.sh conduct <epic-slug>` or `conduct --backlog` | a fresh conductor that builds the epic (or the ready stories with no epic), starts a review agent per green PR, and merges only with `merge = agent` |
+| Build | `swarm.sh conduct <epic-slug>` or `conduct --backlog` | a fresh conductor that builds the epic (or the ready stories with no epic) and starts a review agent on each PR as it opens; the review agent merges the PR, or hands it to the user with `merge = human` |
 
 Useful while it runs:
 

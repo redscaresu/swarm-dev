@@ -40,16 +40,17 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
    refute them. You approve the result, which is then written to the board. An epic too large for
    one run is split into smaller epics first.
 3. **Build.** A conductor agent starts one builder per story. Each builder works in its own git
-   worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
-   fixes what they find. When a review finds nothing left to fix, the review agent merges the PR
-   or hands it to you (step 4). A story that fails twice is rebuilt once on Fable, the most capable model,
+   worktree and opens a PR. When the PR opens, the conductor starts a review agent for it, and from
+   then on the PR is that agent's: the conductor never reviews or merges it. Once CI is green, the
+   review agent and codex review the PR, and the builder fixes what they find. When a review finds
+   nothing left to fix, the review agent merges the PR or hands it to you (step 4). A story that fails twice is rebuilt once on Fable, the most capable model,
    then handed to the lead. One story waits for another only when they clash: their `touches`
    name the same file in the same repo, and either the same part or both the bare file. Parts match
    on their first word (a function or section name), skipping a leading `§`, `#`, "the", "a" or
    "an". A bare file does not clash with a part of that file.
 4. **Merge.** By default you merge each green, reviewed PR yourself. The lead, or the PR's review
    agent, merges one only when the agreed HLD over its work lists `merge` in its `grants:`.
-   With `merge = agent`, the review agent or the conductor merges it, except a story marked `costs: money` and a story PR
+   With `merge = agent`, the review agent merges it, except a story marked `costs: money` and a story PR
    that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, which always wait for you.
    In that mode no conductor starts until your Claude Code settings allow
    `swarm.sh merge` (step 3 of Getting started names the rule). `swarm.sh conduct` prints the rule
@@ -175,7 +176,7 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   commits. Then it waits up to 30 minutes for the new head's CI and merges that head, so the merge
   takes longer.
   If the base moves again during the wait, it does all this again, for 3 rounds at most. When GitHub cannot merge
-  the base in (a conflict, say), the builder does, and the conductor reviews and merges the new head
+  the base in (a conflict, say), the builder does, and the new head is reviewed before it merges
   ([reference.md § Merging](docs/reference.md#merging)).
 - Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
   holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
