@@ -1627,9 +1627,13 @@ note_lock() {
 # counted as taken up at once) has the tell queued for its next idle instead (tell_queue), and a tell
 # sent at once replaces a queued one of its kind (tell_unqueue). The newer of two tells of a kind is
 # the one that read the agent's state later (born, time.time_ns): under the queue's lock, a tell is
-# the older when a tell of its kind that read the state after it has since been sent at once, or is
-# queued or on its way now, and it is dropped as replaced (tell_newer_sent, tell_replaced) whether it
-# found the agent busy or idle, so two tells at once never land in the wrong order. It refuses one waiting on a prompt
+# the older when a tell of its kind that read the state after it has since gone, or is queued or on
+# its way now, and it is dropped as replaced (tell_newer_sent, tell_replaced) whether it found the
+# agent busy or idle. The lock covers that decision, not the send, so a tell is marked on its way
+# until herdr has it (tell_inflight: .claimed.<token> for a queued one, .direct.<pid> for one sent at
+# once), and a newer tell of its kind that reads the agent idle meanwhile is queued behind it, not
+# sent at once. So a tell of a kind lands after every older one that went and before every newer
+# one, and the older of two that overlap counts no round after the newer. It refuses one waiting on a prompt
 # (the text would land in the dialog), gone, or of unknown state, rather than waiting on it. A
 # delivery from the queue (tell_queue_send) names the pane it was queued for, sent to no other, and
 # its sender and token (SWARM_TELL_QUEUED), and sends nothing once a newer tell replaced it
@@ -1651,7 +1655,7 @@ note_lock() {
 # review agent from review-<slug>'s pane, else the conductor. Either counts the same: rounds, step-ups
 # and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n from who found qpane qfrom qtok born
+  local kind="$2" f="$3" name msg state since inbox rc pane line n from who found qpane qfrom qtok born inflight=""
   # Unset once read, so no agent this tell starts (a step-up) inherits it.
   read -r qpane qfrom qtok <<< "${SWARM_TELL_QUEUED:-}"; unset SWARM_TELL_QUEUED
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
@@ -1689,12 +1693,22 @@ tell_agent() {
   esac
   if [[ -z "${qpane}" ]]; then
     rc=0; tell_unqueue "${name}" "${kind}" "${born}" || rc=$?
-    [[ ${rc} -ne 1 ]] || die "tell: ${name} was not told: its queue's lock (${TELL_QUEUE}/${name}.lock) could not be taken, so a ${kind} tell queued earlier could not be replaced; tell it again"
-    [[ ${rc} -eq 0 ]] || { tell_replaced "${name}" "${kind}"; return; }
-  elif ! tell_claim "${name}" "${kind}" "${qtok}"; then
-    if [[ -e "${TELL_QUEUE}/${name}.${kind}.sending.${qtok}" ]]; then tell_outcome "queued: ${name} (its queue's lock is held); sent at the next look"
-    else tell_outcome "replaced: ${name}'s queued ${kind} tell, by a newer one; not sent"; fi
-    return
+    case "${rc}" in
+      0) inflight="${TELL_QUEUE}/${name}.${kind}.direct.$$"   # tell_unqueue left it: on its way until this tell ends
+         # shellcheck disable=SC2064 # expand now: the path is this tell's own
+         trap "rm -f '${inflight}'" EXIT ;;
+      1) die "tell: ${name} was not told: its queue's lock (${TELL_QUEUE}/${name}.lock) could not be taken, so a ${kind} tell queued earlier could not be replaced; tell it again" ;;
+      2) tell_replaced "${name}" "${kind}"; return ;;
+      *) tell_queue "$1" "${name}" "${kind}" "${f}" "${pane} $(tell_from "$1")" "${born}"; return ;;   # one of its kind is on its way: this goes behind it
+    esac
+  else
+    rc=0; tell_claim "${name}" "${kind}" "${qtok}" || rc=$?
+    if [[ ${rc} -eq 3 ]]; then tell_outcome "queued: ${name} (a ${kind} tell sent at once is on its way to it); sent at the next look"; return
+    elif [[ ${rc} -ne 0 ]]; then
+      if [[ -e "${TELL_QUEUE}/${name}.${kind}.sending.${qtok}" ]]; then tell_outcome "queued: ${name} (its queue's lock is held); sent at the next look"
+      else tell_outcome "replaced: ${name}'s queued ${kind} tell, by a newer one; not sent"; fi
+      return
+    fi
   fi
   if [[ "${kind}" == findings ]] && top_rung "$1"; then
     n=$(( $(findings_told "$1" "$(top_rung_since "$1")") + 1 ))
@@ -1713,7 +1727,7 @@ tell_agent() {
   from="${qfrom:-$(tell_from "$1")}"; who="the conductor"; [[ "${from}" != review ]] || who="the review agent"
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
-  trap "rm -f '${msg}' '${msg}.goal'" EXIT
+  trap "rm -f '${msg}' '${msg}.goal' ${inflight:+'${inflight}'}" EXIT
   { echo "From ${who}:"; echo; cat "${f}"; } > "${msg}"
   # The file's own first line is what its session log is read for: every tell starts with the header.
   line="$(awk 'NF { print; exit }' "${f}")"
@@ -1723,7 +1737,7 @@ tell_agent() {
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
-  trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
+  trap "rc=\$?; rm -f '${msg}' '${msg}.goal' ${inflight:+'${inflight}'}; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
   TELL_PANE="${qpane}" findings_goal "$1" "${since}" "${msg}.goal" "${from}"   # its /goal to the same pane
   echo "told ${name}"
 }
@@ -1733,8 +1747,9 @@ tell_agent() {
 # agent's state, time.time_ns), then the file told; it is <name>.<kind>.sending.<token> while a check
 # sends it, the token that delivery's own, and <name>.<kind>.tries counts the deliveries that failed
 # before they claimed it. <name>.<kind>.sent holds the born of the last tell of <kind> that went, sent
-# at once (tell_unqueue) or claimed by its delivery (tell_claim), and <name>.listfail the looks in a
-# row that got no agent list from herdr, each
+# at once (tell_unqueue) or claimed by its delivery (tell_claim); <name>.<kind>.direct.<pid> marks one
+# sent at once on its way, until the tell ends (tell_inflight), as .claimed.<token> marks a queued one;
+# and <name>.listfail the looks in a row that got no agent list from herdr, each
 # check's own (tell_queue_later starts it afresh). Beside them
 # <name>.lock (note_lock) and <name>.later (its check: tell_check_live); and for a tell no check
 # delivered, <name>.<kind>.undelivered (the line wait --lead prints) and <name>.<kind>.undelivered.md
@@ -1766,9 +1781,10 @@ tell_state() {
 # (.sending.<token>, tell_take's): the newer goes. Under the queue's lock, so one check stays pending
 # (tell_queue_later), and so that a tell older than one of its kind sent at once, queued or on its way
 # since it read the state (tell_newer_sent) goes nowhere (tell_replaced): the agent went idle and
-# busy again meanwhile, or two tells read it busy at once. [queued], a delivery that found <name> busy
-# again, writes nothing: its check puts the tell back (tell_queue_send). Either way it ends with the
-# queued: line (tell_outcome), so findings count as a round only once they are sent.
+# busy again meanwhile, or two tells read it busy at once. A tell that read <name> idle while one of
+# its kind was on its way (tell_inflight) is queued here too, behind it. [queued], a delivery that
+# found <name> busy again, writes nothing: its check puts the tell back (tell_queue_send). Either way
+# it ends with the queued: line (tell_outcome), so findings count as a round only once they are sent.
 tell_queue() {
   local q="${TELL_QUEUE}/$2" tmp=""
   if [[ -z "${7:-}" ]]; then
@@ -1797,19 +1813,41 @@ tell_replaced() { tell_outcome "replaced: $1's $2 tell, by a newer one sent or q
 # lock: drop <name>'s tell of <kind> queued or on its way (.sending.<token>, not yet claimed by its
 # delivery), since a tell sent at once is the newer, and the queued one sent after it would count a
 # findings round twice; and record <born>, when this tell read the state, as <name>.<kind>.sent, so
-# a tell that read it before, and takes the lock after, knows it is the older. Fails with 1 when it
-# cannot take the lock, so nothing is sent, and with 2 when this tell is itself the older
-# (tell_newer_sent): then nothing is dropped, and it is not sent.
+# a tell that read it before, and takes the lock after, knows it is the older; and mark this tell on
+# its way (<name>.<kind>.direct.<pid>, the caller's to remove when it ends), so a newer tell of the kind
+# that reads <name> idle before herdr has this one queues behind it. Fails with 1 when it cannot take
+# the lock, so nothing is sent; with 2 when this tell is itself the older (tell_newer_sent), when
+# nothing is dropped and it is not sent; and with 3 when a tell of <kind> is on its way (tell_inflight),
+# when nothing is dropped and the caller queues it.
 tell_unqueue() {
   local rc=0
   mkdir -p "${TELL_QUEUE}" 2>/dev/null || true
   note_lock "${TELL_QUEUE}/$1" || return 1
   if tell_newer_sent "$1" "$2" "$3"; then rc=2
+  elif tell_inflight "$1" "$2"; then rc=3
   else
     rm -f "${TELL_QUEUE}/$1.$2" "${TELL_QUEUE}/$1.$2.sending."* "${TELL_QUEUE}/$1.$2.tries"
     echo "$3" > "${TELL_QUEUE}/$1.$2.sent" 2>/dev/null || true
+    : > "${TELL_QUEUE}/$1.$2.direct.$$" 2>/dev/null || true
   fi
   rmdir "${TELL_QUEUE}/$1.lock"
+  return "${rc}"
+}
+
+# tell_inflight <name> <kind> — with the queue's lock held: succeed while a tell of <kind> is on its way
+# to <name>, from the lock that let it go until herdr has it: a queued one its delivery claimed
+# (<name>.<kind>.claimed.<token>, the token's first part its check's pid, which waits on the delivery)
+# or one sent at once (<name>.<kind>.direct.<pid>, the tell's own), its process alive. A mark whose
+# process has died counts for nothing: a .direct is removed (its tell was killed sending), a .claimed
+# is left for the lead (tell_queue_strays).
+tell_inflight() {
+  local f pid rc=1
+  for f in "${TELL_QUEUE}/$1.$2.claimed."* "${TELL_QUEUE}/$1.$2.direct."*; do
+    [[ -e "${f}" ]] || continue
+    if [[ "${f}" == *.claimed.* ]]; then pid="${f##*.claimed.}"; pid="${pid%%.*}"; else pid="${f##*.}"; fi
+    if [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; then rc=0
+    elif [[ "${f}" == *.direct.* ]]; then rm -f "${f}"; fi
+  done
   return "${rc}"
 }
 
@@ -1832,15 +1870,17 @@ tell_newer_sent() {
 # own <name>.<kind>.sending.<token> to .claimed.<token> under the queue's lock, so no tell after this
 # replaces it and its check knows it was claimed, and record its born as the last of its kind that
 # went (<name>.<kind>.sent, as tell_unqueue does for a tell sent at once), so a direct tell that read
-# the state before it and stalled is dropped as the older, not sent after it. Fails when a newer tell
-# replaced it first (tell_queue, tell_unqueue, or a later check that put it back), or the lock is held
-# (its check puts it back). The token keeps a delivery from claiming another's: two checks overlap when
-# one stalled past its .later.
+# the state before it and stalled is dropped as the older, not sent after it. Fails with 1 when a
+# newer tell replaced it first (tell_queue, tell_unqueue, or a later check that put it back), or the
+# lock is held (its check puts it back); and with 3 while a tell of <kind> is on its way already
+# (tell_inflight: one sent at once, or another check's), when it is left on its way for the next look.
+# The token keeps a delivery from claiming another's: two checks overlap when one stalled past its .later.
 tell_claim() {
   local rc=1 t=""
   [[ -n "$3" ]] || return 1
   note_lock "${TELL_QUEUE}/$1" || return 1
-  if [[ -e "${TELL_QUEUE}/$1.$2.sending.$3" ]] && mv -f "${TELL_QUEUE}/$1.$2.sending.$3" "${TELL_QUEUE}/$1.$2.claimed.$3"; then
+  if [[ -e "${TELL_QUEUE}/$1.$2.sending.$3" ]] && tell_inflight "$1" "$2"; then rc=3
+  elif [[ -e "${TELL_QUEUE}/$1.$2.sending.$3" ]] && mv -f "${TELL_QUEUE}/$1.$2.sending.$3" "${TELL_QUEUE}/$1.$2.claimed.$3"; then
     rc=0
     read -r _ _ _ t 2>/dev/null < "${TELL_QUEUE}/$1.$2.claimed.$3" || t=""
     [[ ! "${t}" =~ ^[0-9]+$ ]] || tell_newer_sent "$1" "$2" "${t}" || echo "${t}" > "${TELL_QUEUE}/$1.$2.sent" 2>/dev/null || true

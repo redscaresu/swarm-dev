@@ -1192,8 +1192,13 @@ leaves it in `.swarm/tells/<agent>.<kind>.sent`, and a queued one carries it in 
 queue's lock, a tell is the older when a tell of its kind that read the state after it has since gone,
 or is now queued or on its way, whether this one then found the agent busy or idle. It prints
 `replaced: <agent>'s <kind> tell, by a newer one
-sent or queued meanwhile; not sent`, queues and sends nothing, and is logged with that line. Two
-tells to one agent at once then never land in the wrong order, and the older never counts a round
+sent or queued meanwhile; not sent`, queues and sends nothing, and is logged with that line. The
+lock covers that decision, not the send. So a tell on its way is marked until herdr has it:
+`<agent>.<kind>.claimed.<token>` for a queued one its delivery claimed, `<agent>.<kind>.direct.<pid>`
+for one sent at once. A newer tell of that kind that reads the agent idle meanwhile is queued behind
+it, not sent at once, and a queued one's delivery waits for the next look. A mark whose process has
+died counts for nothing. So a tell of a kind lands after every older tell of that kind that went and
+before every newer one, the older of two that overlap is dropped, and the older never counts a round
 after the newer.
 
 Each agent with a queue has one check running in the background. It is its own process (`swarm.sh

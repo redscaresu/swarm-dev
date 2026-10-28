@@ -18,7 +18,10 @@
 # tell run with TQ_CALLER=slow) while a newer one is sent at once or queued is dropped as replaced
 # when it takes the lock, and one sent at once that read the state before the time in
 # b1.findings.sent (the last sent at once) or in a queued one's line is dropped the same way, the
-# queued one kept. A queued tell to a builder whose pane closed, or
+# queued one kept. While a tell is on its way to the builder (herdr's prompt for "fix round A" waits
+# for ${ROOT}/promptslow to go), a queued one its delivery claimed or one sent at once, a newer tell that
+# reads the builder idle is queued behind it, and lands after it; a mark whose process is dead
+# (b1.findings.direct.<pid>, b1.findings.claimed.<token>) holds nothing up. A queued tell to a builder whose pane closed, or
 # whose name a new pane holds, is sent to no pane: it is dropped, and wait --lead prints a tell
 # undelivered: line for the lead, again for a later drop of its kind. One herdr sent but never showed
 # taken up (${ROOT}/nosend: no status in its reply, idle on every read) is not to be sent again as
@@ -76,6 +79,7 @@ case "$1 $2" in
     END { print "]}}" }' "$F/agents" ;;
   "agent get") printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$(awk -v p="$3" '$2 == p { print $3 }' "$F/agents")" ;;
   "agent prompt") echo "$*" >> "$F/keys.log"
+    case "$*" in *"fix round A"*) while [ -f "$F/promptslow" ]; do sleep 0.1; done ;; esac   # that tell stays on its way until the test lets its prompt through; any other prompt goes at once
     if [ -f "$F/blocked" ]; then echo '{"error":{"code":"agent_blocked"}}' >&2; exit 1; fi   # refused before anything was sent
     [ -f "$F/nosend" ] || echo '{"result":{"agent":{"agent_status":"working"}}}'
     [ ! -f "$F/goalwait" ] || echo '[{"sessionId": "sb", "status": "waiting", "waitingFor": "permission prompt"}]' > "$F/claude.json" ;;
@@ -210,6 +214,39 @@ check "findings told at once, older than the last sent at once: replaced, nothin
 rm -f "${Q}/b1.findings.sent"; printf 'b1 w:9 conductor %s\nfix round newer\n' "${after}" > "${Q}/b1.findings"
 check "findings told at once, older than one queued: replaced, nothing sent, the queued one kept" "${REPLACED} rc=0 0 yes" \
   "$(tell "fix round older") $(prompts) $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)"
+
+# order <a> <b> — yes when herdr got a prompt holding <a> before one holding <b>.
+order() { local a b; a="$(grep -n -F -- "$1" "${ROOT}/keys.log" | head -1 | cut -d: -f1)"; b="$(grep -n -F -- "$2" "${ROOT}/keys.log" | head -1 | cut -d: -f1)"; [[ -n "${a}" && -n "${b}" && ${a} -lt ${b} ]] && echo yes || echo "no (${a:-none} ${b:-none})"; }
+
+# A queued tell's delivery has claimed it and is sending it (herdr's prompt waits) when a newer tell
+# reads the builder idle: the newer is queued behind it, not sent at once, and lands after it.
+fresh; state busy
+tell "fix round A" >/dev/null
+touch "${ROOT}/promptslow"; state idle
+until_ok compgen -G "${Q}/b1.findings.claimed.*" >/dev/null || true   # the check's delivery claimed it, and waits in herdr's prompt
+check "findings told at once while a queued one's delivery is sending: queued behind it, nothing sent at once" "${QUEUED} rc=0 yes 1" \
+  "$(tell "fix round B") $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no) $(prompts)"
+rm -f "${ROOT}/promptslow"; settle
+check "findings told at once while a queued one's delivery is sending: the older lands first, two rounds in that order" "2 yes 2" \
+  "$(prompts) $(order "fix round A" "fix round B") $(rounds)"
+
+# The same with the older sent at once: it is marked on its way (b1.findings.direct.<pid>) until it ends.
+fresh; state idle; touch "${ROOT}/promptslow"
+tell "fix round A" > "${ROOT}/a.out" &
+apid=$!
+until_ok compgen -G "${Q}/b1.findings.direct.*" >/dev/null || true
+check "findings told at once while another is being sent at once: queued behind it, nothing more sent" "${QUEUED} rc=0 yes 1" \
+  "$(tell "fix round B") $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no) $(prompts)"
+rm -f "${ROOT}/promptslow"; wait "${apid}" || true; settle
+check "findings told at once while another is being sent at once: the first lands first, its mark gone, two rounds" "told b1 rc=0|2 yes 2|no" \
+  "$(cat "${ROOT}/a.out")|$(prompts) $(order "fix round A" "fix round B") $(rounds)|$(compgen -G "${Q}/b1.findings.direct.*" >/dev/null && echo yes || echo no)"
+
+# A mark whose process is dead holds nothing up: a tell killed sending leaves a .direct, a check that
+# died leaves a .claimed. The tell goes, the dead .direct is removed, the .claimed is left for the lead.
+fresh; state idle; mkdir -p "${Q}"
+: > "${Q}/b1.findings.direct.999999"; printf 'b1 w:9 conductor\nfix round stale\n' > "${Q}/b1.findings.claimed.t9"
+check "findings told at once past marks whose processes are dead: sent, the dead .direct removed, the .claimed kept for the lead" "told b1 rc=0 1 no yes" \
+  "$(tell "fix round C") $(prompts) $([[ -e "${Q}/b1.findings.direct.999999" ]] && echo yes || echo no) $([[ -e "${Q}/b1.findings.claimed.t9" ]] && echo yes || echo no)"
 
 fresh; state idle
 mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings.sending.t1"   # on its way, as the check takes it
