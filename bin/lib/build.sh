@@ -1065,9 +1065,10 @@ head has had no review: run \`$5 review-agent --next $1 $2\` and do the round it
 When --next refuses too (no findings went to the builder since this round began), write ${3} with the
 Write tool holding two lines, \`head: $4\` and \`head moved: <the head review or merge named>\`, then
 stop: the review starts again on the new head.
-When merge prints \`base merged: <PR URL> is now <new head> ...\`, it merged nothing: GitHub merged the
-base into the PR's branch, and that head needs no new review. Run \`$5 wait-pr $2\` in the background
-and, once it exits 0, \`$5 merge --head <new head> $2\`, as above.
+When merge prints \`base merged: <PR URL> is now ...\`, it merged nothing: GitHub merged the base into
+the PR's branch, and that head needs no new review. With <new head> the full SHA the line's
+\`merge --head\` names, run \`$5 wait-pr --head <new head> $2\` in the background and, once it exits 0,
+\`$5 merge --head <new head> $2\`, as above.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff.
 Then reply with ${3}, what the last command printed, and \`codex skipped: <why>\` when codex was, then
 stop. On any other refusal or failure (a story held until its parents merge, a red base), reply the
