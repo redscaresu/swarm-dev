@@ -570,7 +570,7 @@ merge_pr() {
     files="$(cut -d' ' -f2- <<< "${files}")"
     # A story PR in another repo (its story's repo:) changes that repo's epics/, not the board's. gh
     # is asked only for a PR with a path under the board's epics/.
-    if [[ $'\n'"${files}" == *$'\n'"${rel:+${rel}/}epics/"* ]] && other_repo "${repo}"; then files=""; fi
+    if [[ $'\n'"${files}" == *$'\n'"${rel:+${rel}/}epics/"* ]] && other_repo "${repo}"; then files=""; fi   # loose-match: ok a whole line's prefix, the board's epics/
   fi
   [[ "${only}" == --release ]] || epic_guard
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
