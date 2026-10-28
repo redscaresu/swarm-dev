@@ -319,9 +319,9 @@ epic_guard() {
 }
 
 # board_epics — each line of stdin that is a board epic, <board>/epics/<slug>.md with no subfolder and
-# not README.md (merge_pr's local rel): the paths epic_unticketed reads.
+# not README.md (merge_pr's local rel, board_rel's path with its /): the paths epic_unticketed reads.
 board_epics() {
-  awk -v p="${rel:+${rel}/}epics/" 'index($0, p) == 1 { s = substr($0, length(p) + 1); if (s ~ /^[^\/]+\.md$/ && s != "README.md") print }'
+  awk -v p="${rel}epics/" 'index($0, p) == 1 { s = substr($0, length(p) + 1); if (s ~ /^[^\/]+\.md$/ && s != "README.md") print }'
 }
 
 # story_elsewhere — whether the story PR is in another repo than the board's, whose epics/ are that
