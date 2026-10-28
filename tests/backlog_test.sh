@@ -134,8 +134,8 @@ check "the backlog brief never runs story for a started story, and reports one i
 run `swarm.sh story` for it again.' "${bl}")|$(has 'report it as not started, with the reason `build died`.' "${bl}")|$(has 'one line each:
 `not started: <slug> (<the refusal'"'"'s first line>)`.' "${bl}")|$(grep -c 'swarm.sh story <slug>' <<< "${bl}" || true)"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "with merge = human, the backlog brief leaves the handover to the review agent, never runs swarm.sh merge, and stops when nothing is left" "yes|no|yes|no" \
-  "$(has 'A story'"'"'s review agent hands its PR to the user itself, with `swarm.sh review`, unless an HLD' "${bl}")|$(hasnt "swarm.sh merge --" "${bl}")|$(has 'Stop when no ready story with no `epic:` that you may start is left and none is running.' "${bl}")|$(hasnt "swarm.sh review <epic>" "${bl}")"
+check "with merge = human, the backlog brief leaves the handover to the review agent, never runs swarm.sh merge, and stops only once no agent work is left" "yes|no|yes|no" \
+  "$(has 'A story'"'"'s review agent hands its PR to the user itself, with `swarm.sh review`, unless an HLD' "${bl}")|$(hasnt "swarm.sh merge --" "${bl}")|$(has 'ends `finish: the backlog has no agent work left` says none is' "$(tr -s '[:space:]' ' ' <<< "${bl}")")|$(hasnt "swarm.sh review <epic>" "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = human, a refusal naming another one-off in review is reported as not started, not waited on" "yes" \
   "$(has "Report the
@@ -189,7 +189,7 @@ check "with merge = agent, the backlog conductor waits on its own one-off's merg
   "$(has 'If the refusal ends `(costs money)`, only the user merges the named story, maybe days later: do not wait for it, and report yours as `not started: <slug> (waits on <other>'"'"'s merge)`.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog conductor also stops when CI on the base timed out or is red with no fix-main line" "yes" \
-  "$(has 'that you may start is left and none is running, or when CI on the base timed out, or is red with no `fix-main:` line.' "${bl}")"
+  "$(has 'The one exception: stop and report at once when CI on the base timed out, or is red with no `fix-main:` line.' "$(tr -s '[:space:]' ' ' <<< "${bl}")")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog brief leaves the merge to the review agent, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
   "$(has "A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR yourself." "$(tr -s '[:space:]' ' ' <<< "${bl}")")|$(has 'start each story it prints as `startable:` (every ready backlog story whose build has not started' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"

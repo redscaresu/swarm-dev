@@ -723,6 +723,15 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
 }
 expect_conductor "idle conductor without a report is still waited on" "wait conduct-e1" no
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
+# After the epic's last merge its conductor reports (the finish: note) with stories of it still on the
+# board that hold no agent work: one in review, the user's to merge, and one blocked on a kind: lead
+# story. The report alone is the finish sign: if next waited on those stories, the lead never collects it.
+expect_conductor "a conductor that reported after its epic's last merge is collected, with a story in review and a lead-blocked one left" \
+  "collect conduct-e" yes e "the conductor conduct-e has finished and written its report" \
+  "mkdir -p docs/epics && printf -- '---\nstatus: active\n---\n' > docs/epics/e.md" \
+  "printf -- '---\nstatus: review\nepic: e\nprs: https://github.com/o/r/pull/1\n---\n' > docs/stories/r.md" \
+  "printf -- '---\nstatus: ready\nkind: lead\nepic: e\n---\n' > docs/stories/l.md" \
+  "printf -- '---\nstatus: blocked\nepic: e\ndepends_on: [l]\n---\n' > docs/stories/b.md"
 # A conductor whose turn stopped on an API error (herdr idle, its pane ending on the error) is named a stall.
 expect_conductor "a conductor stopped on an API error: next names the stop" "wait conduct-e1" no e1 "stuck: *API error*" \
   "printf '%s\n' '⏺ Waiting on the builders.' '⏺ API Error: Connection dropped (ECONNRESET)' > screen"

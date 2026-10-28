@@ -54,15 +54,19 @@ wait_pr_rule() {
     "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again." \
     "If it ends the same way twice, stop and $2."
 }
-# stop_rule <epic> — when a conductor stops. With merge = agent its stories' PRs merge while it runs,
-# so it also waits out every running build. The backlog conductor has no Done when: it stops once its stories
-# are all started and finished.
+# stop_rule <epic> — when a conductor stops: only once no agent work is left in its scope (what
+# agent_work_left counts), which the finish: line on a merge or handover note says (conductor_note). It
+# then closes the review agents it left and writes its report. A story blocked only on the lead's work
+# (lead_blocked) holds nothing: it is listed for the user. With merge = agent a broken base stops it too.
 stop_rule() {
-  if [[ "$1" == backlog ]]; then
-    printf '%s' "Stop when no ready story with no \`epic:\` that you may start is left and none is running"
-    if [[ "${CFG_merge}" == human ]]; then echo "."; else echo ", or when $(base_stop)."; fi
-  elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
-  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running $(fix_running), or when $(base_stop)."; fi
+  local scope="of this epic" fin="epic $1"
+  [[ "$1" != backlog ]] || { scope="with no \`epic:\`"; fin="the backlog"; }
+  printf '%s' "Never write your report while agent work is left: a story ${scope} of a kind an agent builds that is ready (to start, building, or with its PR open and not yet in review), blocked on work an agent builds (not blocked by hand), or in review with its review agent still to merge it (not one \`swarm.sh merge\` has held for the user or the lead since), or kept by a close with one PR and still to be reviewed $(fix_running)." \
+    " A merge or handover note that ends \`finish: ${fin} has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours that \`herdr agent list\` still lists as idle, with \`swarm.sh close review-<slug>\` (leave a working one: it is still handing its PR on, and reconcile or tidy closes it), then write your report." \
+    " With no such note, write it only once you find none left by the same rule." \
+    " A story another rule here has you list in your report for the lead (a build that died, a \`not held:\` line, a PR closed unmerged, a kept story with several PRs) is not agent work either." \
+    " A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up."
+  if [[ "${CFG_merge}" == agent ]]; then echo " The one exception: stop and report at once when $(base_stop)."; else echo; fi
 }
 # fix_running — a fix-main story an epic conductor started has no epic, yet the conductor built it:
 # until its PR merges, the epic's stop and report rules count it as running.
@@ -103,7 +107,8 @@ The review agent waits for the PR's checks, triages them, reviews each head, sen
 the builder, logs them, and merges the PR or hands it to the user. Never wait on a PR or a review
 agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or
 merge a story's PR: each is the review agent's, and doing it as well would send findings twice and
-count a round twice.
+count a round twice. The one close that is yours is the stop rule's, of an idle review agent on a
+\`finish:\` line.
 A note in your inbox that says \`review-<slug> stopped on <sha>: <why>\` is a review agent that
 stopped before a pass, and the story is yours again. Act on <why> as on your own wait on that builder:
 a stalled or stuck builder by the give-up and stuck rules above. When the builder is idle and pushed
@@ -176,8 +181,8 @@ EOF
 # its inbox made startable, lists the PRs that wait on the user and, for an epic, puts the epic in review
 # or finishes it; with backlog the backlog conductor's, whose stories have no epic to review or finish.
 conduct_merge_rule() {
-  local scope="of this epic" epic_end="" backlog="" kept
-  [[ "$1" != backlog ]] || { backlog=1; scope="with no epic"; }
+  local epic_end="" backlog="" kept
+  [[ "$1" != backlog ]] || backlog=1
   kept="A story \`swarm.sh status\` lists as \`kept:\` is not in review for this: a close kept its PR
 unreviewed, so it waits for the review agent you start for it (above)."
   if [[ "${CFG_merge}" == human ]]; then
@@ -221,16 +226,17 @@ $(fix_main_rule)
 $(merge_note_rule "$1")
 $(stacked_start_rule)
 $(held_ready_rule) After a
-cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
-story ${scope} that is yours to start is ready and none is running $(fix_running), or $(base_stop).${epic_end}
+cleared-on-error close or a give-up, start nothing more in this wave. Write your report only as the
+stop rule below says: never while agent work is left, unless $(base_stop).${epic_end}
 EOF
   fi
 }
 
 # merge_note_rule <epic>|backlog — a merge note in the conductor's inbox (story_note) is its cue to start
-# what the merge made ready, through the startable pass after each inbox pass.
+# what the merge made ready, through the startable pass after each inbox pass. A note's finish: line
+# (conductor_note) is the stop rule's cue.
 merge_note_rule() {
-  printf '%s' "A note in your inbox that a story's PR just merged is the cue to start what that merge made ready. After each inbox pass, $(startable_rule "$1")"
+  printf '%s' "A note in your inbox that a story's PR just merged is the cue to start what that merge made ready. After each inbox pass, $(startable_rule "$1") A merge or handover note that ends with a \`finish:\` line is the stop rule's cue (below): act on the rest of the note first."
 }
 
 # fix_main_rule — a review agent's merge that turns the base red (merge = agent, or under merge = human
@@ -1500,10 +1506,12 @@ EOF
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
   cat <<EOF
 
-Your last act, after everything else: write your report (what merged, what is left, what waits on
-the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
-treats that file as the only sign you have finished: being idle while you wait on your own
-background work is not.
+Your last act, after everything else, and only once no agent work is left (the stop rule above): write
+your report (what merged, what is left, what waits on the user, each lead-blocked story among it) to
+${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead treats that file
+as the only sign you have finished, and collects you on it: a report written while a review agent of
+yours still owns a PR leaves that PR with nobody to act on its escalations. Being idle while you wait
+on your own background work is no sign either.
 EOF
 }
 

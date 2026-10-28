@@ -1242,9 +1242,14 @@ live_at() {
 # list that does not, or a read that fails after it, is a warning, never a conductor taken for gone.
 # Without [slugs] a warning says the conductor was not told "of the merge", or NOTE_WHAT when the call
 # sets it (as review_note does).
+# With NOTE_FINISH set (a story's merge or handover, story_note and review_note), the note ends with
+# `finish: epic <epic> has no agent work left` (`the backlog` for -) once agent_work_left is false:
+# the conductor's cue to close its review agents left and write its report. A copy carries the line,
+# so <file>, which a caller may send to several conductors, is left as it is.
 conductor_note() {
-  local name list what="that ${3:-} are ready" later="it finds them on its next pass"
+  local name list what="that ${3:-} are ready" later="it finds them on its next pass" note="$2" scope="epic $1"
   name="$(group_conductor "$1")"
+  [[ "$1" != - ]] || scope="the backlog"
   [[ -n "${3:-}" ]] || { what="${NOTE_WHAT:-of the merge}"; later="it reads the board on its next pass"; }
   (
     bound_herdr
@@ -1255,8 +1260,16 @@ conductor_note() {
       [[ -z "${3:-}" ]] || echo "ready now: $3 ($(group_of "$1")); no conductor runs for it yet"
       exit 0
     fi
-    ( set -e; tell_agent "${name}" note "$2" ) &
+    if [[ -n "${NOTE_FINISH:-}" ]] && ! agent_work_left "$1"; then
+      note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" || note=""
+      if [[ -z "${note}" ]] || ! { cat "$2" && echo "finish: ${scope} has no agent work left"; } > "${note}"; then
+        echo "warning: could not add the finish: line, so ${name} was not told ${scope} has no agent work left"
+        [[ -z "${note}" ]] || rm -f "${note}"; note="$2"
+      fi
+    fi
+    ( set -e; tell_agent "${name}" note "${note}" ) &
     wait $! || echo "warning: could not note ${name} ${what} (exit $?); ${later}"
+    [[ "${note}" == "$2" ]] || rm -f "${note}"
   )
 }
 
@@ -1300,8 +1313,10 @@ herdr_from() {
 # conductor running, the ready now: line marks it (held).
 # With [why], merge's reason the ready ones are not to be started or not known, or with <slug> still
 # in review (reconcile held its pull, or could not read its PR), the note says that in their place.
+# Without a why, the note ends with conductor_note's finish: line once <epic> has no agent work left.
+# For a fix-main story the conductor that started it (note_group) also gets a note that it merged.
 story_note() {
-  local f e s src slugs="" held="" list live=1 why="${4:-}" msg note
+  local f e s src slugs="" held="" list live=1 why="${4:-}" msg note fin to
   [[ -n "${why}" || "$(fm "${BOARD}/stories/$2.md" status 2>/dev/null)" != review ]] \
     || why="reconcile has not finished $2 yet (it is still in review), so which stories it made ready is not known until swarm.sh reconcile finishes it"
   msg="The PR $1 of story $2 just merged"
@@ -1327,7 +1342,16 @@ story_note() {
   list="${slugs}"; for s in ${held}; do list+="${list:+ }${s} (held)"; done
   note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
   printf '%s\n' "${msg}" > "${note}"
-  conductor_note "$3" "${note}" "${list}"
+  # A merge with a why (the board not settled, or main not green) ends no epic: a later note decides.
+  fin=1; [[ -z "${why}" ]] || fin=""
+  NOTE_FINISH="${fin}" conductor_note "$3" "${note}" "${list}"
+  # A fix-main story has no epic: the stories it made ready go to the backlog's conductor above, and the
+  # conductor that started it (note_group) hears that it merged, with no ready list, for its finish: line.
+  to="$(note_group "$2" "$3")"
+  if [[ "${to}" != "$3" ]]; then
+    printf 'The PR %s of story %s, the fix-main story you started, just merged%s.\n' "$1" "$2" "${why:+, but ${why%.}}" > "${note}"
+    NOTE_FINISH="${fin}" NOTE_WHAT="that $2 merged" conductor_note "${to}" "${note}"
+  fi
   rm -f "${note}"
 }
 
