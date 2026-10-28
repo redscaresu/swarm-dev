@@ -795,27 +795,32 @@ set up (the `init` that sets it up comes before there is a lead), labels that wo
 (`herdr workspace rename`, `herdr tab rename`) and adds the workspace's id to
 `.swarm/lead/workspace`, one line per workspace. A later command from any workspace listed there
 sends herdr nothing, so a lead that moves to another workspace and back has only the new one
-labelled. Each time it labels one, it drops from the record any workspace herdr no longer lists, or
-lists with another label. Each herdr call it makes is cut off after 5 seconds. When herdr gives no
-workspace list, nothing is recorded and the next command tries again. When herdr refuses a rename,
-swarm.sh says so once, on stderr, naming the workspace or the tab alone, and records it, so it does
-not try again there; the message names `.swarm/lead/workspace`, which you delete to try again. A
-lead opened in a workspace swarm.sh labelled for a conductor or its agents (`<project> · <label>`,
-or an older swarm.sh's bare `backlog` or `<epic>`) leaves it that label, says so once and records it
-as `kept`, so the next `conduct` still finds it. The lead's `<project>` also gets the hash when
-herdr lists another lead's `swarm-lead · <that name>` workspace: one the record does not hold with
-that label and whose directory is neither in the project nor in its board, so the second lead of one
-name gets a label of its own and the lead's own workspaces never count. Two first commands at the
-same moment both send the rename; a record line is lost only when their writes land at the same
-instant, and that workspace's next command labels it again. swarm.sh tells the lead the way the
-plugin's Stop hook does: a session with no agent's environment (no `SWARM_AGENT` or
-`SWARM_GH_CALLER`), in a swarm project, from a folder that is not a worktree. A lead whose folder is
-in no project, such as a board kept outside the repo, belongs to the project `SWARM_PROJECT` names.
-Nothing is renamed from an agent's pane, outside herdr, without herdr's socket
-(`HERDR_SOCKET_PATH`), by a `swarm.sh` another one runs (`dash --project` runs one for each project
-it draws), by a command run from one project's folder for another (`SWARM_PROJECT`), by a test hook
-(a command starting `_`), or by a command whose stderr goes to `/dev/null`, as the Stop hook's do,
-since a refusal said there would be lost.
+labelled. Each time it labels one, it drops from the record any workspace herdr no longer lists, and
+any lead workspace herdr lists with another label; a refused or kept workspace stays recorded while
+herdr lists it. Each herdr call it makes is cut off after `SWARM_LEAD_HERDR_WAIT` seconds (default
+5). This check runs before the command's own work, outside the deadline `status` and `next` give
+their reads: the lead's first `status` or `next` in a workspace can take up to 20 seconds more by
+default (four herdr calls), and while herdr hangs on its list, each command from that workspace
+waits up to 5 seconds for it. When herdr gives no workspace list, or one without the lead's
+workspace (herdr restarting), or a call is cut off, nothing is recorded and the next command tries
+again. When herdr refuses a rename, swarm.sh says so once, on stderr, naming the workspace or the
+tab alone, and records it, so it does not try again there; the message names
+`.swarm/lead/workspace`, which you delete to try again. A lead opened in a workspace swarm.sh
+labelled for a conductor or its agents (`<project> · <label>`, or an older swarm.sh's bare `backlog`
+or `<epic>`) leaves it that label, says so once and records it as `kept`, so the next `conduct`
+still finds it. The lead's `<project>` also gets the hash when herdr lists another lead's
+`swarm-lead · <that name>` workspace: one the record does not hold with that label and whose
+directory is neither in the project nor in its board, so the second lead of one name gets a label of
+its own and the lead's own workspaces never count. Two first commands at the same moment both send
+the rename; a record line is lost only when their writes land at the same instant, and that
+workspace's next command labels it again. swarm.sh tells the lead the way the plugin's Stop hook
+does: a session with no agent's environment (no `SWARM_AGENT` or `SWARM_GH_CALLER`), in a swarm
+project, from a folder that is not a worktree. A lead whose folder is in no project, such as a board
+kept outside the repo, belongs to the project `SWARM_PROJECT` names. Nothing is renamed from an
+agent's pane, outside herdr, without herdr's socket (`HERDR_SOCKET_PATH`), by a `swarm.sh` another
+one runs (`dash --project` runs one for each project it draws), by a command run from one project's
+folder for another (`SWARM_PROJECT`), by a test hook (a command starting `_`), or by a command whose
+stderr goes to `/dev/null`, as the Stop hook's do, since a refusal said there would be lost.
 
 **`next`'s idle dependency line.** After its step, `next` prints `idle: <story> waits on <dep> but
 shares no touches part with it and needs nothing from it` for each blocked story an agent builds,

@@ -2277,7 +2277,7 @@ LEAD_HEADS="${LEAD_DIR}/heads"        # each review item's verdict from the last
 LEAD_HEADS_EVERY="${SWARM_LEAD_HEADS_EVERY:-300}"   # seconds between heads passes, at least 1
 LEAD_HEADS_AT=""                      # SECONDS at this run's last heads pass, empty before the first
 LEAD_WORKSPACE="${LEAD_DIR}/workspace"   # "<herdr workspace id>\t<its label, refused or kept>[\t<note>]" per line (lead_rename)
-LEAD_HERDR_WAIT=5                        # seconds each herdr call of lead_label may take (within)
+LEAD_HERDR_WAIT="${SWARM_LEAD_HERDR_WAIT:-5}"   # seconds each herdr call of lead_label may take (within)
 
 # The plugin ships hooks/ beside bin/; a copy of bin/ alone (a test's stand-in plugin) has no lead.
 # shellcheck source=hooks/lead-session.sh
@@ -2315,23 +2315,26 @@ lead_rename() {
   ( herdr() { within "${LEAD_HERDR_WAIT}" herdr "$@"; }; lead_label "${ws}" "${kept}" )
 }
 
-# lead_label <workspace> <record lines> — lead_rename's herdr part. With no workspace or pane list
-# (herdr busy or restarting) it records nothing, so the next command tries again. A label swarm.sh
-# gave another workspace (`<project> · <label>`, or an older swarm.sh's bare `backlog` or `<epic>`) is
-# kept, so a lead opened in a conductor's workspace never takes it from the conductor. Otherwise the
-# label is `swarm-lead · <project_label>`, where another lead's `swarm-lead · <name>` workspace counts
-# as another dir's `<name> · ...` does, so the second lead of one dir name gets a label of its own.
-# A lead workspace is this project's, not another lead's, when its dir is in the project or its board,
-# or the record holds its id with the label it has now. A rename herdr refuses is said once on stderr,
-# naming the record to delete to try again, and recorded all the same. The record is read again just
-# before it is written, keeping only workspaces herdr still lists with the label recorded for them:
-# two first commands at once both label, and only writes that land at the same instant lose a line,
-# whose workspace its next command labels again.
+# lead_label <workspace> <record lines> — lead_rename's herdr part. With no workspace or pane list,
+# or a list without the workspace (herdr busy or restarting), it records nothing, so the next
+# command tries again. A label swarm.sh gave another workspace (`<project> · <label>`, or an older
+# swarm.sh's bare `backlog` or `<epic>`) is kept, so a lead opened in a conductor's workspace never
+# takes it from the conductor. Otherwise the label is `swarm-lead · <project_label>`, where another
+# lead's `swarm-lead · <name>` workspace counts as another dir's `<name> · ...` does, so the second
+# lead of one dir name gets a label of its own. A lead workspace is this project's, not another
+# lead's, when its dir is in the project or its board, or the record holds its id with the label it
+# has now. A rename herdr refuses is said once on stderr, naming the record to delete to try again,
+# and recorded all the same. The record is read again just before it is written, keeping only
+# workspaces herdr still lists, and a lead workspace only while it has the label recorded for it (a
+# refused or kept one stays whatever its label): two first commands at once both label, and only
+# writes that land at the same instant lose a line, whose workspace its next command labels again.
 lead_label() {
-  local ws="$1" kept="$2" list others cur theirs="" label why="" note="" out rec tmp
+  local ws="$1" kept="$2" list others cur theirs="" label why="" note="" out rec tmp rc
   local prefix="swarm-lead${WORKSPACE_SEP}"   # the lead's label, before its project's (build.sh sets the separator)
   list="$(herdr_workspaces)" || return 0
-  cur="$(W="${ws}" awk -F'\t' '$1 == ENVIRON["W"] { print $2; exit }' <<< "${list}")"
+  cur="$(W="${ws}" awk -F'\t' '$1 == ENVIRON["W"] { print "+" $2; exit }' <<< "${list}")"
+  [[ -n "${cur}" ]] || return 0
+  cur="${cur#+}"
   if [[ "${cur}" != "${prefix}"* && "${cur}" == *"${WORKSPACE_SEP}"* ]]; then theirs=1   # loose-match: ok a lead's label is the prefix; any other one with ` · ` is a conductor's or its agents'
   elif [[ "${cur}" == backlog || ( -n "${cur}" && "${cur}" == "${cur##*/}" && -f "${BOARD}/epics/${cur}.md" ) ]]; then theirs=1; fi
   if [[ -n "${theirs}" ]]; then
@@ -2345,10 +2348,16 @@ lead_label() {
         $2 = substr($2, length(ENVIRON["P"]) + 1) ENVIRON["S"] "lead"; $3 = "-" }
       { print }' <<< "${list}")"
     label="${prefix}$(project_label "${others}")"; rec="${label}"
-    if ! out="$(herdr workspace rename "${ws}" "${label}" 2>&1 > /dev/null < /dev/null)"; then
+    # A call cut off (within's 142) is no answer from herdr: nothing is recorded, so the next command
+    # sends both renames again.
+    rc=0; out="$(herdr workspace rename "${ws}" "${label}" 2>&1 > /dev/null < /dev/null)" || rc=$?
+    (( rc != 142 )) || return 0
+    if (( rc != 0 )); then
       rec=refused; why="herdr would not label the lead's workspace ${ws} ${label} (${out%%$'\n'*})"
-    elif [[ -n "${HERDR_TAB_ID:-}" ]] && ! out="$(herdr tab rename "${HERDR_TAB_ID}" "${label}" 2>&1 > /dev/null < /dev/null)"; then
-      note="tab refused"; why="herdr labelled the lead's workspace ${label} but would not label its tab ${HERDR_TAB_ID} (${out%%$'\n'*})"
+    elif [[ -n "${HERDR_TAB_ID:-}" ]]; then
+      rc=0; out="$(herdr tab rename "${HERDR_TAB_ID}" "${label}" 2>&1 > /dev/null < /dev/null)" || rc=$?
+      (( rc != 142 )) || return 0
+      (( rc == 0 )) || { note="tab refused"; why="herdr labelled the lead's workspace ${label} but would not label its tab ${HERDR_TAB_ID} (${out%%$'\n'*})"; }
     fi
     [[ -z "${why}" ]] || echo "swarm: ${why}; swarm.sh will not try again in this workspace until you delete ${LEAD_WORKSPACE}" >&2
     [[ -z "${note}" ]] || rec+=$'\t'"${note}"
