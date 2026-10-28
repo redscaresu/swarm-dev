@@ -3,9 +3,9 @@
 # gives one form, run in the background: the conductor brief's
 # `swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>`, and commands/swarm.md's the
 # same without --stall. wait --idle exits 0 only when the wait prints idle or done. The test renders the
-# conductor briefs (an epic's and the backlog's), counts the spans that tell a nudge there and in
-# swarm.md, and checks each is its file's form. Then it runs each distinct form, its placeholders filled
-# and its wait cut to a few seconds from the default hour, against stub builders. One busy past the
+# conductor briefs (an epic's and the backlog's), counts the sentences there and in swarm.md that say
+# to nudge (with a `tell <x> nudge` span, or in prose like "nudge it"), and checks each gives its
+# file's form. Then it runs each distinct form, its placeholders filled and its wait cut to a few seconds from the default hour, against stub builders. One busy past the
 # wait's timeout, one whose session is gone (wait exits 0 on gone) and, for the brief's form, one whose
 # wait --stall ends stalled and one whose stall finds another step-up running (stepping up:, exit 0)
 # get no tell attempt: no tell:nudge row in events.tsv, no herdr prompt. An idle one is told. A form that
@@ -87,26 +87,37 @@ run conduct --backlog >/dev/null || true
 BRIEF_E="${p}/.swarm/briefs/conduct-e.md"; BRIEF_B="${p}/.swarm/briefs/conduct-backlog.md"
 check "both conductor briefs are written" "yes|yes" "$([[ -s "${BRIEF_E}" ]] && echo yes)|$([[ -s "${BRIEF_B}" ]] && echo yes)"
 
-# forms <file> <wait> — "<spans in the form> of <spans that tell a nudge>", over <file> with its lines
-# joined, the form being `swarm.sh <wait> <x> && swarm.sh tell <x> nudge <file>` followed by " in the
-# background". A span is the text between two backticks; one tells a nudge when it holds `tell <x> nudge`.
+# forms <file> <wait> — "<good> of <instructions>" over <file>, its lines joined and split into
+# sentences (with each backtick span kept whole). A sentence is a nudge instruction when it holds a span
+# with `tell <x> nudge`, or tells the reader to nudge in prose ("nudge it", "nudge the builder"). It is
+# good when it holds the span `swarm.sh <wait> <x> && swarm.sh tell <x> nudge <file>` followed by " in
+# the background".
 forms() {
   python3 - "$1" "$2" <<'PY'
 import re, sys
 text = " ".join(open(sys.argv[1]).read().split())
-spans = re.findall(r"`([^`]*)`", text)
-nudges = [s for s in spans if re.search(r"\btell \S+ nudge\b", s)]
-form = re.compile(r"swarm\.sh %s (<[a-z]+>) && swarm\.sh tell \1 nudge <[^>]+>" % re.escape(sys.argv[2]))
-good = [s for s in nudges if form.fullmatch(s) and ("`%s` in the background" % s) in text]
-print("%d of %d" % (len(good), len(nudges)))
+spans = []
+def keep(m):
+    spans.append(m.group(0))
+    return "\x00%d\x00" % (len(spans) - 1)
+masked = re.sub(r"`[^`]*`", keep, text)
+restore = lambda s: re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], s)
+sentences = [restore(s) for s in re.split(r"(?<=[.!?])\s+(?=[A-Z(\x00])", masked)]
+prose = re.compile(r"\bnudge (it|them|the builder|its builder|the child|the child's builder)\b", re.I)
+form = re.compile(r"`swarm\.sh %s (<[a-z]+>) && swarm\.sh tell \1 nudge <[^>]+>` in the background" % re.escape(sys.argv[2]))
+told = [s for s in sentences if re.search(r"`[^`]*\btell \S+ nudge\b[^`]*`", s) or prose.search(re.sub(r"`[^`]*`", "", s))]
+good = [s for s in told if form.search(s)]
+print("%d of %d" % (len(good), len(told)))
 PY
 }
 SWARM_MD="${HERE}/../commands/swarm.md"
-# The epic brief's three (the clash, stacked and give-up rules), the backlog's the same, and the lead's
-# four in swarm.md (the unsent-brief and conflict arms, and the restart rule's two).
-check "every nudge instruction in the epic conductor brief is wait --stall --idle, then tell, in the background" "3 of 3" "$(forms "${BRIEF_E}" "wait --stall --idle")"
-check "every nudge instruction in the backlog conductor brief is wait --stall --idle, then tell, in the background" "3 of 3" "$(forms "${BRIEF_B}" "wait --stall --idle")"
-check "every nudge instruction in commands/swarm.md is wait --idle, then tell, in the background" "4 of 4" "$(forms "${SWARM_MD}" "wait --idle")"
+# The epic brief's four (the review rule's stop note, and the clash, stacked and give-up rules), the
+# backlog's the same, and the lead's three in swarm.md (the unsent-brief and conflict arms, and the
+# restart rule's tell once the agent is back; its builder stopped on an API error gets a resume, not
+# a nudge).
+check "every nudge instruction in the epic conductor brief is wait --stall --idle, then tell, in the background" "4 of 4" "$(forms "${BRIEF_E}" "wait --stall --idle")"
+check "every nudge instruction in the backlog conductor brief is wait --stall --idle, then tell, in the background" "4 of 4" "$(forms "${BRIEF_B}" "wait --stall --idle")"
+check "every nudge instruction in commands/swarm.md is wait --idle, then tell, in the background" "3 of 3" "$(forms "${SWARM_MD}" "wait --idle")"
 
 # --- Run the forms. Builders, each in a pane this project recorded: nb-busy busy throughout, nb-stall
 # busy with no sign of life in its worktree for two hours, nb-gone listed by herdr with no Claude

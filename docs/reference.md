@@ -1152,8 +1152,8 @@ review round, and starts a builder in the story's worktree when the one it had w
 `swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>`, run in the background,
 and the lead every nudge to a builder that `/swarm-dev:swarm` names as
 `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>`, without `--stall`, so its wait never
-logs a stall or steps up a build a conductor owns. `wait --idle` exits 0 only when it prints `idle` or
-`done`, once the builder's turn is over. Where a plain `wait` would exit 0 on anything else (`auth`,
+logs a stall or steps up a build a conductor owns. On a builder's wait (not a conductor's or a review
+agent's), `wait --idle` exits 0 only when it prints `idle` or `done`, once the builder's turn is over. Where a plain `wait` would exit 0 on anything else (`auth`,
 `waiting`, `gone`, `stepped up:` or `stepping up:`), it exits 5. So the tell never reaches a builder at
 work, and a wait that times out, stalls, steps the build up or prints `stuck:` sends nothing. The
 sender deals with what the wait printed and sends the nudge again the same way. The conductor's wait

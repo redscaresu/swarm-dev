@@ -667,9 +667,10 @@ Three more rules for the lead:
   `cleared-on-error`, which holds the story for you. The route depends on the agent:
   - A builder of a ready story: `herdr pane close <pane>` if herdr still lists it (`swarm.sh restart`
     refuses a listed builder), then `swarm.sh restart <slug>`.
-  - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so run
-    `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background, and send it again
-    as the next paragraph says when that wait sends nothing.
+  - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so send
+    it a file asking it to carry on, with `swarm.sh tell <slug> resume <file>`. Its turn ended on the
+    API error, which `tell` reads as idle, so the resume goes at once. A wait first would only return
+    `stuck: api error` again.
   - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
   - A planner or co-author: `swarm.sh close <agent>`, since its name stays taken while its pane
     shows it working, then run its command again.

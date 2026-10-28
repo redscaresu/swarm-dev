@@ -84,8 +84,10 @@ count a round twice.
 A note in your inbox that says \`review-<slug> stopped on <sha>: <why>\` is a review agent that
 stopped before a pass, and the story is yours again. Act on <why> as on your own wait on that builder:
 a stalled or stuck builder by the give-up and stuck rules above. When the builder is idle and pushed
-nothing (\`no fix pushed\`, or a red head left as it was), nudge it once, naming the stop line, and
-start the review agent again once \`swarm.sh wait <slug>\` returns. A second stop of the story for
+nothing (\`no fix pushed\`, or a red head left as it was), nudge it once, with a file naming the stop
+line, as \`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>\` in the background
+(the clash rule below says how that form sends). Once that tell has gone, start the review agent
+again when the next \`swarm.sh wait <slug>\` on the builder returns. A second stop of the story for
 the same reason, a story held for the lead, a refused tell or a failed step-up goes in your report
 for the lead.
 EOF
@@ -1455,7 +1457,7 @@ EOF
 auth_rule() {
   cat <<EOF
 A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, which only the user's
-/login clears: do not tell it, nudge it or wait on it again. Note it, and once you are told your
+/login clears: send it no tell of any kind, and do not wait on it again. Note it, and once you are told your
 login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> resume <file>\`) and wait on it
 again with \`swarm.sh wait <slug>\` in the background.
 
@@ -1613,6 +1615,9 @@ findings, which would count as a review round. Every nudge in this brief goes th
 so the tell never reaches a builder at work. A wait that times out, stalls, steps the build up or
 prints \`stuck:\`, \`auth\`, \`waiting\` or \`gone\` sends nothing: act on what it printed, as the
 give-up, goal and auth rules say. That wait is your wait on the builder: start no other beside it.
+When a wait of yours on that builder is already running (a stacked child still building, say), do
+not start the form beside it: once that wait returns \`idle\` or \`done\`, run the form, whose wait
+then returns at once.
 Watch reports each conflict once, so do not drop it: when its wait sent nothing, send it again the
 same way once you have dealt with what the wait printed (after \`auth\`, once you have told the
 builder to resume). If the story has no builder (closed after \`swarm.sh review\`), start one
