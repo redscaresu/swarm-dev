@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 hld: 2026-10-25-swarm-dev-0-28
 stage: v0.30.0
 depends_on: [review-loop, conductor-hands-off, less-noise, merge-holds, fixes-027]
