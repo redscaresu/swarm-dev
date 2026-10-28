@@ -393,7 +393,8 @@ Repeat until a step below says stop:
      stage is not held behind the worktree, and go back to 1: after a PR closed without merging,
      `next` names `stage v<S>` again and you open a new one. On any other failure, stop and tell
      the user what it printed. With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh
-     wait-pr --head "$(git -C <worktree> rev-parse HEAD)" <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>`
+     wait-pr --head "$(git -C ../<repo>-wt/_board-<name> rev-parse HEAD)" <url>` in the background, with
+     `../<repo>-wt/_board-<name>` the worktree `board-pr start` made, wait for it, and land it with `swarm.sh merge --board <url>`
      when it exits 0, then go back to 1; if it does not, or merge refuses, tell the user what it
      printed and stop. Under `merge = human` with no `merge` grant, it is the user's: stop.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,

@@ -490,7 +490,7 @@ got="$(armwords '   - `stage v<S>`:' '`swarm.sh board-pr start <name>`' '`status
   'On any other failure, stop and tell the user what it printed' 'whether its epics are still drafts or the merge has made them active' \
   'the user says not yet by leaving the PR unmerged: `next` names no new stage PR while it is open' \
   'An epic leaves the stage when its `stage:` or `hld:` is dropped' \
-  'With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh wait-pr --head "$(git -C <worktree> rev-parse HEAD)" <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>` when it exits 0')"
+  'With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh wait-pr --head "$(git -C ../<repo>-wt/_board-<name> rev-parse HEAD)" <url>` in the background, with `../<repo>-wt/_board-<name>` the worktree `board-pr start` made, wait for it, and land it with `swarm.sh merge --board <url>` when it exits 0')"
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's stage arm opens a board PR, merges it only under merge = agent or a merge grant, else hands it to the user, who says not yet by leaving it unmerged"
 else echo "FAIL commands/swarm.md's stage arm:${got}"; fails=$((fails + 1)); fi
 # The release arm waits on the head the lead pushed: right after a push GitHub can still report the

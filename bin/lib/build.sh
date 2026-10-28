@@ -1314,8 +1314,8 @@ conclusion, and open code-scanning alerts. Fix each real one; rebut the rest wit
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
 never dismiss an alert. A PR's head is the <sha> \`swarm.sh watch\` printed for it (\`checks finished on
 <sha>\`), never your checkout's HEAD: you work from the main checkout, on the base. For a head watch has not printed,
-pass the \`<new head>\` a \`base merged:\` line names, or, after a builder's push, the head the PR reports (\`gh pr view <PR URL> --json headRefOid -q .headRefOid\`);
-without \`--head\`, wait-pr takes the head of its first read, which right after a push can be the old one. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR never got the head you named: wait again on <X>, the head it has now." "report it to the lead" "<sha>")
+pass the \`<new head>\` a \`base merged:\` line names, or, after a builder's push, the sha the builder reported, else \`git -C ../<repo>-wt/<slug> rev-parse HEAD\` in its worktree;
+never a fresh \`gh pr view\` read, which right after a push can still name the old head, as an unpinned wait-pr can. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR never got the head you named: never wait on <X> instead; send the builder a nudge naming both shas, so it pushes again and reports its HEAD, or report it to the lead." "report it to the lead" "<sha>")
 EOF
 }
 
