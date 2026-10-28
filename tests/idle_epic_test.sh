@@ -4,7 +4,8 @@
 # step names it; an active epic next's plan-epic step could name but does not, with no plan running,
 # gets `idle: epic <epic> has no plan running, ...`; and commands/swarm.md quotes both lines as next
 # prints them. Every check reads swarm.sh next on a board of its own, outside herdr, where next starts
-# nothing; epics that do not interact share a board, so the file runs next about 17 times.
+# nothing, and one reads swarm.sh status, which passes next's step on; epics that do not interact share
+# a board, so the file runs next about 17 times.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -143,6 +144,11 @@ board; item epics/e.md "status: active"
 run
 check "a lone active epic with no stories is next's plan-epic step" "plan-epic e" "${STEP}"
 check "the active epic next's plan-epic step names gets no line" "" "${LINES}"
+# status prints what next would do and passes that step on, so the epic it names gets no idle: line
+# there either (dash does the same; its goldens hold it).
+out="$(cd "${CASE}" && env -u HERDR_ENV bash "${REPO}/bin/swarm.sh" status 2>&1)" || { echo "FAIL swarm.sh status failed: ${out}"; fails=$((fails + 1)); }
+check "status's Next names the plan-epic step" "plan-epic e" "$(grep -E '^  plan-epic ' <<< "${out}" | sed 's/^  //' || true)"
+check "status passes the step on, so the epic it names gets no idle: line there either" "" "$(grep -E '^ *idle: epic ' <<< "${out}" || true)"
 board
 item epics/a.md "status: active"
 item epics/e.md "status: active"
