@@ -31,12 +31,15 @@ bravo  swarm-dev 0.0.0  next conduct bravo-ui                                   
 │ ! answer b-fix (waiting on input): herdr agent read b-fix                                                           │ │ 11:10  · review b-fix                                                        │
 │ ! look at b-page: working 45 min with no commit, edit, session-log write or PR update                               │ │ 08:40  ▶ story b-page                                                        │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 08:05  · finish b-done-1                                                     │
-╭─ epics ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 08:00  ⇡ merged #20 story/b-done-1                                           │
-│ ! bravo-api  ███░░░░░░░░░  1/4   1 review · 2 ready                                                                 │ │ 10-09  · finish b-old-1                                                      │
-│   ! b-fix   code        sonnet·high    waiting on input                                                             │ │ 10-08  · finish b-old-2                                                      │
-│   ✗ bravo…  failing · behind  b-fix                                                                                 │ │ 10-08  · finish b-old-3                                                      │
-│ ! bravo-ui   ████░░░░░░░░  1/3   1 ready · 1 blocked                                                                │ │ 10-07  · finish b-old-4                                                      │
-│   ! b-page  code        opus·high      stalled 45m                                                                  │ ╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ idle capacity ─────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 08:00  ⇡ merged #20 story/b-done-1                                           │
+│ idle: epic bravo-docs has no plan running, exit: /swarm-dev:plan-epic bravo-docs                                    │ │ 10-09  · finish b-old-1                                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 10-08  · finish b-old-2                                                      │
+╭─ epics ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 10-08  · finish b-old-3                                                      │
+│ ! bravo-api  ███░░░░░░░░░  1/4   1 review · 2 ready                                                                 │ │ 10-07  · finish b-old-4                                                      │
+│   ! b-fix   code        sonnet·high    waiting on input                                                             │ ╰──────────────────────────────────────────────────────────────────────────────╯
+│   ✗ bravo…  failing · behind  b-fix                                                                                 │
+│ ! bravo-ui   ████░░░░░░░░  1/3   1 ready · 1 blocked                                                                │
+│   ! b-page  code        opus·high      stalled 45m                                                                  │
 │ ✓ 1 active epic with no open story: bravo-docs                                                                      │
 │ +1 idle  (--tree lists them)                                                                                        │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
