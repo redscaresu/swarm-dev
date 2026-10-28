@@ -9,7 +9,7 @@ except (ValueError, KeyError):
 ws_labels = herdr_labels(os.environ.get("SWARM_WORKSPACES", ""), "workspaces", "workspace_id")
 tab_labels = herdr_labels(os.environ.get("SWARM_TABS", ""), "tabs", "tab_id")
 rows = []
-for _, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & set(live)):
+for record, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & set(live)):
         a = agents.get(pane)
         if a is not None:
             name = a.get("name") or name
@@ -23,7 +23,7 @@ for _, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & 
                 "gone": "gone: session ended",
                 "idle": "idle: finished, or waiting for its next step",
                 "done": "idle: finished, or waiting for its next step"}.get(st, st)
-        ws, tab = pane_where(pane, (live[pane], a), ws_labels, tab_labels)
+        ws, tab = pane_where(pane, (live[pane], a), (ws_labels, tab_labels), record)
         rows.append((name, what, f"pane {pane}, workspace {ws}, tab {tab}"))
 quiet = [r for r in rows if r[1].startswith(("idle", "done"))]
 shown = rows if show_all == "--all" else [r for r in rows if r not in quiet]

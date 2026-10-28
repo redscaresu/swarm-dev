@@ -645,12 +645,9 @@ dash_render() {
   local testing="" p idle skipped="" more pass pending=0 out read_end lines="${DASH_H:-0}"
   # type -P: herdr on PATH, not dash_deadline's function of that name.
   if type -P herdr >/dev/null 2>&1; then
-    # The lists status reads; the workspace and tab lists only label the tree and each agent's row, so a
-    # failed one costs no agent. listed keeps the agent list whatever the pane list does: no_agent_lines
-    # needs only that one.
+    # The lists status reads (its workspace and tab lists, labels only, come last, below). listed keeps the
+    # agent list whatever the pane list does: no_agent_lines needs only that one.
     { agents="$(herdr agent list 2>/dev/null)" && listed="${agents}" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
-    [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
-    [[ -z "${agents}" ]] || tabs="$(herdr tab list 2>/dev/null)" || tabs=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
   # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you, its **You:** text, after (after_story).
@@ -758,6 +755,11 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # at once, so no pane is read twice in a frame), the states from herdr's list alone. A frame of one
   # line (DASH_H, a --project share) keeps its header, and names none: a two-line one gives its second
   # line to the names.
+  # Last of the shell's reads, as they only label the tree and each agent's row (dash_render.py's
+  # pane_where), so a slow one costs no read of a state before it. One herdr does not give leaves the
+  # workspace - and the tab its record's name.
+  [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
+  [[ -z "${agents}" ]] || tabs="$(herdr tab list 2>/dev/null)" || tabs=""
   [[ ! -s "${REPORT_SKIP_FILE:-/dev/null}" ]] || pending=1
   [[ ${pending} == 0 || ${lines} -le 1 ]] || lines=$((lines - 1))
   read_end="${SWARM_REPORT_END:-}"

@@ -170,7 +170,7 @@ fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bi
 check "at 160 columns the epics and the recent log sit side by side" grep -qE '^│ ! e1 +█.* │ │ +[0-9]{2}[:-][0-9]{2}  . ' <<< "${out}"
 check "at 160 columns needs you is the left column's first box, recent the right's" grep -qE '^╭─ needs you ─+╮ ╭─ recent ─+╮$' <<< "${out}"
 check "at 160 columns recent's time column is HH:MM today, the date before" grep -qE '^│ 10-05  ⇡ merged #9 story/s-zero ' <<< "$(sed -n '/╭─ recent/{n;s/^.* │ │/│/;p;}' <<< "${out}")"
-check "at 160 columns an agent's card has its role, model label and state" grep -qE '│   ● conduct-e1 +conduct +opus·high +working( +[^│]*)? *│ ' <<< "${out}"
+check "at 160 columns an agent's card has its role, model label and state" grep -qE '│   ● conduct-e1 +conduct +opus·high +working( +w[^│]*)? *│ ' <<< "${out}"
 check "at 160 columns the status bar is the last lines, with merge, the counts, cost, on call and the keys" grep -qE '^merge human · 1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · [$]24[.]00 today · on call: fable·xhigh · 0 escalations today +q quit · t tree · l ladder · r redraw' <<< "$(tail -2 <<< "${out}" | paste -sd' ' -)"
 check "at 160 columns the summary line moves into the status bar" test "$(grep -c 'epics active' <<< "${out}")" -eq 1
 check "at 160 columns, piped, there are no ANSI escapes" lacks $'\033[' "${out}"
@@ -189,7 +189,7 @@ check "at 50 columns a wrapped needs-you line is indented under its action" grep
 for cols in 79 60 45; do
   fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS="${cols}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder 2>&1 || true)"
   check "at ${cols} columns no line is wider than the terminal" test "$(widest <<< "${out}")" -le "${cols}"
-  check "at ${cols} columns the layout is stacked, without role and model columns" grep -qE '^│   ● conduct-e1 +working( +[^│]*)? *│$' <<< "${out}"
+  check "at ${cols} columns the layout is stacked, without role and model columns" grep -qE '^│   ● conduct-e1 +working( +w[^│]*)? *│$' <<< "${out}"
   check "at ${cols} columns a long line is cut with …" has "…" "${out}"
 done
 

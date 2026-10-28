@@ -172,8 +172,8 @@ is one column, top to bottom:
   its pane last changed (`pane 12m`), as `status` or `wait` last saw it. An agent neither of them
   has read within `stall_minutes` shows none. The row ends with the agent's pane id, its
   workspace's label and its tab's label (`w1:p2 in myapp · billing › billing`), from herdr's
-  workspace and tab lists, read once a frame. A label herdr gives none of is `-`. A narrow screen
-  cuts these first. From
+  workspace and tab lists, read once a frame, last of its reads. A workspace label herdr gives none
+  of is `-`; a tab with none shows the name swarm-dev gave it. A narrow screen cuts these first. From
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
   a working agent also shows how long ago it started (its `story`, `conduct` or `agent` line in
   `events.tsv`). An escalate agent also shows which attempt its Fable build is and when it

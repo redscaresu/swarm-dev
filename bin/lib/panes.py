@@ -22,10 +22,12 @@ def herdr_labels(raw, key, id_key):
 def pane_ids(pane, entries):
     ids = lambda k: next((e.get(k) for e in entries if isinstance(e, dict) and e.get(k)), None)
     return ids("workspace_id") or pane.split(":")[0], ids("tab_id")
-# pane_where: (workspace label, tab label) of a pane, by pane_ids; "-" for one herdr gives none of.
-def pane_where(pane, entries, ws_labels, tab_labels):
+# pane_where: (workspace label, tab label) of a pane, by pane_ids, from labels = (workspace labels, tab
+# labels). A workspace herdr gives no label for is "-"; a tab is record, the name swarm-dev gave the tab
+# (its tab record's), so where, status and dash name it alike whether or not herdr labelled it.
+def pane_where(pane, entries, labels, record="-"):
     ws, tab = pane_ids(pane, entries)
-    return ws_labels.get(ws) or "-", tab_labels.get(tab) or "-"
+    return labels[0].get(ws) or "-", labels[1].get(tab) or record
 def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True

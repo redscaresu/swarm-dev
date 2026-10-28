@@ -5,7 +5,8 @@
 # b's labels. a's s3 has no tab or workspace in herdr's agent list, only in its pane list, which comes
 # first. Each report reads herdr's workspace and tab lists once. dash --tree heads a's agents by herdr's
 # labels, one heading per tab (its three panes are in one record, t1, but in three herdr tabs, two of them
-# labelled e1), each row ending with its pane.
+# labelled e1), each row ending with its pane. where names an agent's tab and workspace as status does.
+# With no workspace or tab list, the workspace is - and the tab the name swarm-dev gave it (its record's).
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -32,6 +33,8 @@ H = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 s = json.load(open(os.path.join(H, "herdr.json")))
 cmd = " ".join(sys.argv[1:3])
 with open(os.path.join(H, "herdr.log"), "a") as log: log.write(cmd + "\n")
+# A file ${ROOT}/fail-<list> (fail-workspace, fail-tab) makes that list fail.
+if os.path.exists(os.path.join(H, "fail-" + sys.argv[1])): sys.exit(1)
 if cmd == "agent list": print(json.dumps({"result": {"agents": s["agents"]}}))
 elif cmd == "pane list": print(json.dumps({"result": {"panes": s["panes"]}}))
 elif cmd == "workspace list": print(json.dumps({"result": {"workspaces": s["workspaces"]}}))
@@ -92,5 +95,23 @@ out="$(report "${A}" dash --tree)"
 check "dash --tree heads a's agents by its workspace label" "a · e1" "$(sed -n 's/^│ \(a · e1\) *│.*/\1/p' <<< "${out}")"
 check "dash --tree heads a's agents by herdr's tab labels, not their record's name, one heading per tab" "e1,e1-2,e1" "$(sed -n 's/^│ *[├└]─ \([^ ]*\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
 check "dash --tree shows s3's pane on its row" "w1:p3" "$(sed -n 's/^│[ │]*└─ [^ ] s3  .* \(w1:p3\) *│.*/\1/p' <<< "${out}")"
+
+# where names s3's tab and workspace as status does: from herdr's pane list, when its agent entry has none.
+check "where: a's s3 takes its tab and workspace from herdr's pane list, as status does" "s3: pane w1:p3, workspace a · e1, tab e1-2" \
+  "$(cd "${A}" || exit 1; HERDR_ENV=1 bash "${SWARM}" where s3 2>&1)"
+
+# With no workspace or tab list from herdr, the workspace is - and the tab is the name swarm-dev gave it
+# (its record's, t1), in status, dash and the tree's headings (one per herdr tab still).
+touch "${ROOT}/fail-workspace" "${ROOT}/fail-tab"
+out="$(report "${A}" status --all)"
+check "status: with no workspace or tab list, the workspace is - and the tab its record's name" "pane w1:p1, workspace -, tab t1" "$(row s1 "${out}")"
+out="$(report "${A}" dash)"
+check "dash: with no workspace or tab list, the workspace is - and the tab its record's name" "w1:p1 in - › t1" "$(row s1 "${out}")"
+out="$(report "${A}" dash --tree)"
+check "dash --tree: with no workspace list, the workspace heading is its id" "w1" "$(sed -n 's/^│ \(w1\) *│.*/\1/p' <<< "${out}")"
+check "dash --tree: with no tab list, each tab is headed by its record's name" "t1,t1,t1" "$(sed -n 's/^│ *[├└]─ \([^ ]*\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
+check "where: with no workspace or tab list, the workspace is - and the tab its record's name" "s1: pane w1:p1, workspace -, tab t1" \
+  "$(cd "${A}" || exit 1; HERDR_ENV=1 bash "${SWARM}" where s1 2>&1)"
+rm "${ROOT}/fail-workspace" "${ROOT}/fail-tab"
 
 if [[ ${fails} -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi
