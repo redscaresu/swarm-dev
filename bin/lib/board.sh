@@ -1350,12 +1350,15 @@ plan_hld() {
   echo "${f}"
 }
 
-# protected_paths — the paths on stdin, one a line, that only the user changes, in the order given:
-# those under .claude/, .github/ or hooks/, and a root Makefile, GNUmakefile or makefile (in any repo:
-# what checks a merge or what the agents may do). pr_hld puts a PR touching one under no HLD, and
-# merge_hold holds a story PR touching one under merge = agent.
+# protected_paths [any-case] — the paths on stdin, one a line, that only the user changes, in the order
+# given: those under .claude/, .github/ or hooks/, and a root Makefile, GNUmakefile or makefile (in any
+# repo: what checks a merge or what the agents may do). pr_hld puts a PR touching one under no HLD,
+# the names as written; protected_hold holds a story PR touching one under merge = agent, with any-case
+# in any case of letters, since a case-insensitive checkout (macOS's default) reads Hooks/x.sh as
+# hooks/x.sh.
 protected_paths() {
-  grep -E '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true
+  local i=""; [[ "${1:-}" != any-case ]] || i=i
+  grep "-${i}E" '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true   # loose-match: ok the variable is the -i flag; the pattern is literal
 }
 
 # pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
@@ -2021,16 +2024,55 @@ builder_state() {
 
 # merged_build <slug> — clear a merged story's build (clear_build), after closing its builder if one
 # is open (still in review, so close counts nothing), and saying so when herdr cannot tell whether one
-# is. A builder whose pane could not be closed (close_pane) may still be working in the worktree, so
-# then the build is kept, with CLOSE_PANE_KEPT set; the caller says what happens to it.
+# is, and its review agent (merged_review). A builder whose pane could not be closed (close_pane) may
+# still be working in the worktree, so then the build is kept, with CLOSE_PANE_KEPT set; the caller
+# says what happens to it.
 merged_build() {
   local builder
   builder="$(builder_state "$1")"; CLOSE_PANE_KEPT=""
   [[ "${builder}" != open ]] || close_agent "$1"
+  merged_review "$1"
   [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
   clear_build "$1" "the PR of $1 merged" "[]"
   [[ "${builder}" != unknown ]] \
     || echo "build cleared: $1's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close $1"
+}
+
+# merged_review <slug> — close review-<slug>, a merged story's review agent, when this project has it
+# open in herdr and idle: its pane only (shut_agent), never a builder's close. Only when the newest
+# agents.tsv line for that name has role review, and every tab record for its pane names review-<slug>
+# in full, as review_pane checks: the builder of a story slugged review-<slug> holds the same name,
+# and so does another story's review agent whose name herdr cuts to the same AGENT_NAME_MAX
+# characters. A working or waiting one is left open, and said: it may be running its own swarm.sh
+# merge, whose reconcile retires it, or reviewing still. A session Claude Code no longer lists (gone)
+# reads herdr's status, as live_agents does. When its pane is the one running this command (a merge
+# from the review pane, whose reconcile runs there), it is retired instead (retire_agent), whatever
+# its state, so the pane stays open under a -done name until tidy closes it. Its session is archived
+# then, while it still runs, so the copy stops at this merge; tidy archives nothing. Its ZDOTDIR
+# stays: the agent is still running there. It never fails the caller: it runs in the background, so
+# set -e holds inside it, and a pane that could not be closed, or herdr with no agent list, is said.
+merged_review() {
+  local name pane state
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  name="$(agent_name "review-$1")"
+  [[ "$(awk -F'\t' -v n="${name}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" == review ]] || return 0
+  herdr agent list >/dev/null 2>&1 \
+    || { echo "review-$1 may still be open (herdr cannot list its agents); close its pane with swarm.sh close review-$1"; return 0; }
+  pane="$(agent_field "${name}" pane_id)"
+  [[ -n "${pane}" ]] || return 0
+  [[ "$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2 }' "${STATE_DIR}"/* 2>/dev/null | sort -u)" == "review-$1" ]] || return 0
+  if [[ "${pane}" != "${HERDR_PANE_ID:-}" ]]; then
+    state="$(read_state "${name}")"
+    [[ "${state}" != gone ]] || state="herdr:$(agent_status "${name}")"
+    case "${state}" in
+      idle|herdr:idle|herdr:done) ;;
+      *) echo "review-$1 is ${state#herdr:}, so it was left open; close it once it is done with swarm.sh close review-$1" >&2; return 0 ;;
+    esac
+  fi
+  ( set -e
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"
+    else shut_agent "review-$1"; [[ -z "${CLOSE_PANE_KEPT}" ]]; fi ) </dev/null &
+  wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh close review-$1"
 }
 
 # pr_state <url> — the PR's state as gh gives it (OPEN, CLOSED or MERGED); fails when gh cannot read it.
