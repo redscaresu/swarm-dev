@@ -3065,8 +3065,10 @@ a command that says `git` or `cd` but not merge passes when the check cannot run
 Every builder, review agent and conductor brief lists the forms the guard passes:
 `cd <dir> || exit 1 && <command>`, `swarm.sh merge <PR URL>` alone in its
 call, text that mentions a merge written through the Write tool or a quoted heredoc
-(`--body "$(cat <<'EOF' ... EOF)"`), and waits through `swarm.sh wait` and `swarm.sh wait-pr`. It
-also shows a delete auto mode runs with no permission prompt: `rm -rf` on a path spelled out in full.
+(`--body "$(cat <<'EOF' ... EOF)"`), and the brief's own waits: `swarm.sh wait-pr` for a builder,
+`swarm.sh wait --stall` and `swarm.sh wait-pr` for a review agent, and `swarm.sh watch` and
+`swarm.sh wait` for a conductor, which never waits on CI. It also shows a delete auto mode runs
+with no permission prompt: `rm -rf` on a path spelled out in full.
 A path built from variables, such as `rm -rf "$SP/$m"`, stopped a builder on a prompt.
 `tests/guard_forms_test.sh` feeds each of those Bash forms to the guard.
 
