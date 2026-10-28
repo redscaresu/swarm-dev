@@ -1099,17 +1099,19 @@ hld_grants() {
 # slug_list), with no board-state override.
 raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 
-# epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
-# line; README.md excepted) that goes active with no ticket, one per line: status: active at the head
-# (raw_status), absent at the base or at any status there but active (later, split, review and done
-# too, as a draft, none or a typo), and none of an agreed: date the base did not already have, from
-# today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
-# (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics at both ends
-# (hld_ticket). Nothing with lead_epics = on. <reader>
-# base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
-# A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
+# epic_unticketed <reader> <paths> [changed] — the slug of each <board>/epics/<slug>.md among <paths>
+# (one a line; README.md excepted) that goes active with no ticket, one per line: status: active at
+# the head (raw_status), absent at the base or at any status there but active (later, split, review
+# and done too, as a draft, none or a typo), and none of an agreed: date the base did not already
+# have, from today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that
+# is active or split at the base, and at the head too when the PR changes it (epic_ticket_parent), or
+# an hld: naming an HLD that is agreed and grants epics at both ends (hld_ticket). Nothing with
+# lead_epics = on. <reader> base|head <path> prints a file's bytes, failing 1 when it is absent and 2
+# when it cannot be read. [changed] is every path the PR changes, a renamed file's old path too, one
+# a line (<paths> by default). A read error at either end, or an HLD's bad grants:, prints why and
+# fails, so the caller refuses.
 epic_unticketed() (
-  local reader="$1" pre p s now was rc out=""
+  local reader="$1" pre p s now was rc out="" changed_paths="${3:-$2}"
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || exit 0
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
@@ -1128,7 +1130,7 @@ epic_unticketed() (
     [[ "$(raw_status <<< "${was}")" != active ]] || continue
     s="${s%.md}"
     epic_ticket_agreed "${now}" "${was}" && continue
-    rc=0; epic_ticket_parent "${reader}" "${now}" "${s}" "${pre}epics/" || rc=$?
+    rc=0; epic_ticket_parent "${reader}" "${now}" "${p}" "${changed_paths}" || rc=$?
     [[ ${rc} -ne 0 ]] || continue
     [[ ${rc} -eq 1 ]] || exit 1
     p="$(slug_list "$(get_fm - hld <<< "${now}")")"
@@ -1160,18 +1162,25 @@ epic_ticket_agreed() {
   return 1
 }
 
-# epic_ticket_parent <reader> <head bytes> <slug> <epics prefix> — epic_unticketed's parent: ticket:
-# true when the epic's parent: at the head names another epic (not <slug>), read through <reader> at
-# <epics prefix><parent>.md, that is active or split at the base, so a PR cannot name a parent it
-# adds, or a draft; fails 1 when not (absent at the base too); prints why and fails 2 on a read error.
+# epic_ticket_parent <reader> <head bytes> <epic path> <changed paths> — epic_unticketed's parent:
+# ticket: true when the epic's parent: at the head names another epic (not the one at <epic path>),
+# read through <reader> beside it, that is active or split at the base, so a PR cannot name a parent
+# it adds, or a draft. When <changed paths> (one a line) holds the parent's path, it must be active
+# or split at the head too, so the PR cannot take it out of either, by a status or by deleting or
+# renaming it. A parent the PR leaves alone is read at the base only: the merge keeps the base's
+# copy, while a branch cut before the parent went active still has the old one. Fails 1 when not
+# (absent too); prints why and fails 2 on a read error.
 epic_ticket_parent() {
-  local p was rc=0
+  local p f end bytes rc
   p="$(slug_list "$(get_fm - parent <<< "$2")")"
-  [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "$3" ]] || return 1
-  was="$("$1" base "$4${p}.md")" || rc=$?
-  [[ ${rc} -le 1 ]] || { echo "cannot read $4${p}.md at the base"; return 2; }
-  case "$(raw_status <<< "${was}")" in active|split) return 0 ;; esac   # absent: no status
-  return 1
+  f="${3%/*}/${p}.md"
+  [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${f}" != "$3" ]] || return 1
+  for end in base head; do
+    [[ "${end}" == base ]] || grep -qxF -- "${f}" <<< "$4" || return 0
+    rc=0; bytes="$("$1" "${end}" "${f}")" || rc=$?
+    [[ ${rc} -le 1 ]] || { echo "cannot read ${f} at the ${end}"; return 2; }
+    case "$(raw_status <<< "${bytes}")" in active|split) ;; *) return 1 ;; esac   # absent: no status
+  done
 }
 
 # hld_ticket <reader> <hld path> <tmp> — epic_unticketed's hld: ticket: true when the HLD is status:
@@ -1209,7 +1218,8 @@ draft_lead_why() (
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || { echo "lead_epics = on"; exit 0; }
   now="$(cat "${f}")" || exit 0
-  if epic_ticket_parent board_reader "${now}" "$(basename "${f}" .md)" "${BOARD}/epics/" > /dev/null; then
+  # No changed paths: both ends are the board as it is, so the base read decides.
+  if epic_ticket_parent board_reader "${now}" "${f}" "" > /dev/null; then
     p="$(slug_list "$(get_fm - parent <<< "${now}")")"
     echo "parent ${p} is $(raw_status < "${BOARD}/epics/${p}.md")"; exit 0
   fi
@@ -1420,12 +1430,22 @@ plan_hld() {
   echo "${f}"
 }
 
+# protected_paths [any-case] — the paths on stdin, one a line, that only the user changes, in the order
+# given: those under .claude/, .github/ or hooks/, and a root Makefile, GNUmakefile or makefile (in any
+# repo: what checks a merge or what the agents may do). pr_hld puts a PR touching one under no HLD,
+# the names as written; protected_hold holds a story PR touching one under merge = agent, with any-case
+# in any case of letters, since a case-insensitive checkout (macOS's default) reads Hooks/x.sh as
+# hooks/x.sh.
+protected_paths() {
+  local i=""; [[ "${1:-}" != any-case ]] || i=i
+  grep "-${i}E" '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true   # loose-match: ok the variable is the -i flag; the pattern is literal
+}
+
 # pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
 # lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
 # touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR that touches
-# .claude/, .github/, hooks/ or a root Makefile, GNUmakefile or makefile (in any repo: what checks a
-# merge or what the agents may do), or the board's hld/, is under none: only the user changes those. The one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story
+# a protected path (protected_paths), or the board's hld/, is under none: only the user changes those. The one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story
 # lists that touches any file but the board's epics and stories is under none too. With <sha> and
 # <base>, the head and base branch merge pinned: the files are <base>...<sha>'s (300 at most, else it
 # cannot list them all), and a PR whose head or base is not those prints "<head> <base>" and exits
@@ -1461,7 +1481,7 @@ pr_hld() (
   fi
   st="$(ci_gate files-status "${repo}" "${n}" "${count}" ${at[@]+"${at[@]}"})" || die "grants: cannot list every file ${url} changes: ${st}"
   info="$(cut -d' ' -f2- <<< "${st}")"
-  ! grep -qE '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' <<< "${info}" || return 0
+  [[ -z "$(protected_paths <<< "${info}")" ]] || return 0
   if [[ "${repo}" != "${own}" ]]; then head=""   # the board is not in its repo, so none of its files is a board file
   # A PR that touches the board's hld/ is under none, but for the board PR that plans an HLD, whose
   # head can be read.
@@ -2084,16 +2104,55 @@ builder_state() {
 
 # merged_build <slug> — clear a merged story's build (clear_build), after closing its builder if one
 # is open (still in review, so close counts nothing), and saying so when herdr cannot tell whether one
-# is. A builder whose pane could not be closed (close_pane) may still be working in the worktree, so
-# then the build is kept, with CLOSE_PANE_KEPT set; the caller says what happens to it.
+# is, and its review agent (merged_review). A builder whose pane could not be closed (close_pane) may
+# still be working in the worktree, so then the build is kept, with CLOSE_PANE_KEPT set; the caller
+# says what happens to it.
 merged_build() {
   local builder
   builder="$(builder_state "$1")"; CLOSE_PANE_KEPT=""
   [[ "${builder}" != open ]] || close_agent "$1"
+  merged_review "$1"
   [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
   clear_build "$1" "the PR of $1 merged" "[]"
   [[ "${builder}" != unknown ]] \
     || echo "build cleared: $1's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close $1"
+}
+
+# merged_review <slug> — close review-<slug>, a merged story's review agent, when this project has it
+# open in herdr and idle: its pane only (shut_agent), never a builder's close. Only when the newest
+# agents.tsv line for that name has role review, and every tab record for its pane names review-<slug>
+# in full, as review_pane checks: the builder of a story slugged review-<slug> holds the same name,
+# and so does another story's review agent whose name herdr cuts to the same AGENT_NAME_MAX
+# characters. A working or waiting one is left open, and said: it may be running its own swarm.sh
+# merge, whose reconcile retires it, or reviewing still. A session Claude Code no longer lists (gone)
+# reads herdr's status, as live_agents does. When its pane is the one running this command (a merge
+# from the review pane, whose reconcile runs there), it is retired instead (retire_agent), whatever
+# its state, so the pane stays open under a -done name until tidy closes it. Its session is archived
+# then, while it still runs, so the copy stops at this merge; tidy archives nothing. Its ZDOTDIR
+# stays: the agent is still running there. It never fails the caller: it runs in the background, so
+# set -e holds inside it, and a pane that could not be closed, or herdr with no agent list, is said.
+merged_review() {
+  local name pane state
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  name="$(agent_name "review-$1")"
+  [[ "$(awk -F'\t' -v n="${name}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" == review ]] || return 0
+  herdr agent list >/dev/null 2>&1 \
+    || { echo "review-$1 may still be open (herdr cannot list its agents); close its pane with swarm.sh close review-$1"; return 0; }
+  pane="$(agent_field "${name}" pane_id)"
+  [[ -n "${pane}" ]] || return 0
+  [[ "$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2 }' "${STATE_DIR}"/* 2>/dev/null | sort -u)" == "review-$1" ]] || return 0
+  if [[ "${pane}" != "${HERDR_PANE_ID:-}" ]]; then
+    state="$(read_state "${name}")"
+    [[ "${state}" != gone ]] || state="herdr:$(agent_status "${name}")"
+    case "${state}" in
+      idle|herdr:idle|herdr:done) ;;
+      *) echo "review-$1 is ${state#herdr:}, so it was left open; close it once it is done with swarm.sh close review-$1" >&2; return 0 ;;
+    esac
+  fi
+  ( set -e
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"
+    else shut_agent "review-$1"; [[ -z "${CLOSE_PANE_KEPT}" ]]; fi ) </dev/null &
+  wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh close review-$1"
 }
 
 # pr_state <url> — the PR's state as gh gives it (OPEN, CLOSED or MERGED); fails when gh cannot read it.

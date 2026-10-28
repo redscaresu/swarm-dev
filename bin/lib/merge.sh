@@ -31,7 +31,7 @@ PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first 
 REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
 [[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
-BASE_MOVED_WAIT=60      # how long each of base_moved's reads may take, the compare's retries included (SWARM_BASE_MOVED_WAIT, for tests)
+BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and protected_hold's may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
 BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -91,7 +91,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
 # "<status> <path>", the status as GitHub gives it (added, removed, modified, renamed, copied, changed
-# or unchanged), empty when it gives none.
+# or unchanged), empty when it gives none. Either with <base> <head> after them: the files of
+# <base>...<head> instead, the PR's at that head (300 at most, else it fails as above). With <wait>
+# after those, protected_hold's read: a transient gh error is read again up to READ_TRIES times, <wait>
+# seconds apart, and a list the compare cannot give fails saying why (over 300 files, no file, a cut list).
 # ci_gate behind <owner/repo> <sha> <base> <board paths> <wait> — the number of commits <base> has that
 # <sha> lacks (compare <sha>...<base>), then each path they change outside <board paths> (on_board_paths'
 # rule, but a README.md there counts as outside; a renamed file's old path too), one a line. A transient
@@ -248,23 +251,46 @@ unticketed_why() {
 
 # epic_guard — merge --board's refusal of a PR that sets an epic active with no ticket (merge_pr's
 # locals files and url): epic_unticketed on one changed path at a time, so a read error or a bad
-# grants: names the epic it was checking too. A failure that printed no reason refuses all the same.
+# grants: names the epic it was checking too, with every changed path for its parent: check. A
+# failure that printed no reason refuses all the same.
 epic_guard() {
   local p s why
   while IFS= read -r p; do
     s="$(basename "${p}" .md)"
     # Outside the $(...), where a merge_fail would not stop this.
-    why="$(epic_unticketed merge_read "${p}")" \
+    why="$(epic_unticketed merge_read "${p}" "${files}")" \
       || merge_fail "--board: $(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
     [[ -z "${why}" ]] || merge_fail "--board: ${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${files}"
 }
 
-# merge_hold <pr-url> — stop merge when pr_held holds the PR for the user.
+# merge_hold <pr-url> — stop merge when pr_held holds the PR for the user (a story's costs:). The
+# protected-path hold is protected_hold's, later in merge_pr.
 merge_hold() {
   local why
   why="$(pr_held "$1")"
   [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it"; }
+}
+
+# protected_hold — on the story route under merge = agent, once the story lookup has set MERGE_TARGET to
+# the slug and the head's CI check has passed: stop merge when the PR changes a protected path
+# (protected_paths), a renamed or removed file's old path too, read as <base>...<head> at the pinned
+# head (ci_gate files-status on merge_pr's locals repo, n, changed, base and head), so a push after the
+# pin cannot hide one. The read tries a transient gh error again (READ_TRIES, MERGE_READ_WAIT apart)
+# and stops after BASE_MOVED_WAIT, as base_moved's compare does; a list it still cannot read holds the
+# PR too, saying why, so the user can tell a passing error, which the next swarm.sh merge reads past,
+# from a hold that stands (a PR of over 300 files, the most the compare lists, or of no file). --board
+# and --release change only board paths or
+# plugin.json, never a protected path; with merge = human merge_grant has already refused such a PR
+# (pr_hld puts it under no HLD), so no file is read.
+protected_hold() {
+  local why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
+  why="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" files-status "${repo}" "${n}" "${changed}" "${base}" "${head}" \
+    "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
+  [[ ${rc} -ne 142 ]] || why="error the compare took over ${limit}s"
+  [[ ${rc} -eq 0 ]] || merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: ${why#error }, so whether it changes a path only the user merges is unknown); the user merges it"
+  why="$(cut -d' ' -f2- <<< "${why}" | protected_paths any-case)"
+  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why%%$'\n'*}, which only the user merges; the user merges it"
 }
 
 # merged_state <pr> <owner/repo> — "<state> <merge commit>" once the PR reads MERGED with one, read up
@@ -415,7 +441,9 @@ short_shas() {
 # merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
-# story or stacked parent costs money is the user's; with merge = human and no --release, merge_grant
+# story or stacked parent costs money is the user's; and on this route, once the head's CI check has
+# passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
+# hooks/ or a root Makefile, a renamed file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the
 # board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
 # with no ticket (epic_unticketed, under either merge mode); with --release: the PR is in the
@@ -512,7 +540,8 @@ merge_pr() {
   # refusal cannot hide this one.
   [[ "${only}" != --board ]] || epic_guard
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
-  # then under merge = agent's holds. --release is release_check's. Like epic_guard, it runs after the
+  # then under the costs: hold (merge_hold; the protected-path hold is merge = agent's alone: merge_grant
+  # has refused such a PR, the names as written). --release is release_check's. Like epic_guard, it runs after the
   # head's CI check, which costs fewer gh calls: the grant reads the PR, its files and each board file
   # it touches.
   if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
@@ -520,6 +549,10 @@ merge_pr() {
     [[ -z "${why}" ]] || merge_fail "${why}"
     merge_hold "${url}"
   fi
+  # With merge = agent a story PR that changes a protected path is the user's too: after the story
+  # lookup, so a PR no story in review lists is refused as such, and after the head's CI check, so a
+  # red head costs no compare read.
+  [[ "${CFG_merge}" != agent || -n "${only}" ]] || protected_hold
   if [[ "${only}" == --board ]]; then
     # A board PR could lift a hold (costs: money to none, or a story deleted) before it merges.
     info="$(gh pr diff "${n}" --repo "${repo}" --color never)" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"
@@ -1451,7 +1484,7 @@ rate_reset() {
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
-# wait-pr [--timeout <seconds>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
+# wait-pr [--timeout <seconds>] [--head <sha>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
 # MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
 # that changes. Exits 0 when all are green, printing each check; 1 on red; 2 on anything else, since a
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
@@ -1470,6 +1503,9 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # the reset. A later one, or one with the budget left (GitHub's secondary limit), is a transient error,
 # retried after WAIT_PR_RETRY and up to half again; the budget is not read for those. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
 # turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
+# Right after a push GitHub can still report the old head, so --head <sha> (a full SHA or a prefix of 7
+# or more) reads the PR again each poll until its head starts with <sha>, reading no checks before
+# then; still another head WAIT_PR_GRACE after the first read that found one ends it, naming both.
 # That read also takes the PR's mergeable state: CONFLICTING ends it at once (exit 2, naming the base),
 # and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks,
 # and its head branch: on red, before it exits 1, review_red_scan (run as _review-red-scan, a swarm.sh of
@@ -1480,14 +1516,19 @@ wait_pr() {
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
   local spent budget bounded="" ref branch="" changed expect=() unstarted="" item missing gone note noted=""
+  local want="" stale="" usage="usage: swarm.sh wait-pr [--timeout <seconds>] [--head <sha>] <pr-url>"
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
   done
-  if [[ "${1:-}" == --timeout ]]; then limit="${2:-}"; bounded=1; shift 2 || shift; fi
+  while [[ "${1:-}" == --timeout || "${1:-}" == --head ]]; do
+    if [[ "$1" == --timeout ]]; then limit="${2:-}"; bounded=1
+    else want="${2:-}"; [[ "${want}" =~ ^[0-9a-f]{7,40}$ ]] || wait_pr_fail "--head '${want}' is not a commit SHA (7 to 40 hex digits); ${usage}"; fi
+    shift 2 || shift
+  done
   url="${1:-}"
   [[ "${limit}" =~ ^[0-9]+$ && $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
-    || wait_pr_fail "usage: swarm.sh wait-pr [--timeout <seconds>] <pr-url>"
+    || wait_pr_fail "${usage}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
   limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry}))
@@ -1506,7 +1547,14 @@ wait_pr() {
       why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,changedFiles,headRefName \
         -q '[.headRefOid, .mergeable, .baseRefName, .state, (.changedFiles | tostring), .headRefName] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
       read -r oid mergeable base state changed ref <<< "${why}"
-      if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
+      if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ && -z "${head}" && -n "${want}" && "${oid:0:${#want}}" != "${want}" ]]; then
+        # Not --head's head yet: pending, its checks not read. Its mergeable state is that head's, so
+        # a conflict the push fixed does not end the wait.
+        stale="${stale:-${SECONDS}}"
+        (( SECONDS - stale < grace )) \
+          || wait_pr_fail "the PR's head is ${oid}, not ${want}, $((SECONDS - stale))s after the first read that found it"
+        rc=2; why="head ${oid:0:7}, not ${want}"
+      elif [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
         [[ "${mergeable}" != CONFLICTING ]] || wait_pr_fail "conflicts with ${base}: merge origin/${base} in, then push"
         unknown=""; [[ "${mergeable}/${state}" != UNKNOWN/OPEN ]] || unknown=1
         if [[ -z "${head}" ]]; then
@@ -1571,6 +1619,7 @@ wait_pr() {
            # The grace for a head with no check runs pauses with the wait: the budget ran out, not CI.
            [[ -z "${empty}" ]] || empty=$((empty + pause))
            [[ -z "${unstarted}" ]] || unstarted=$((unstarted + pause))
+           [[ -z "${stale}" ]] || stale=$((stale + pause))
            if [[ -z "${bounded}" ]]; then limit=$((limit + pause))
            elif (( pause >= limit - (SECONDS - start) )); then
              wait_pr_fail "rate limited: GitHub's API budget resets at ${at}, past --timeout ${limit}s"
