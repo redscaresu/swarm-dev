@@ -11,6 +11,17 @@ def pane_records(state, keep):
                 continue
             seen.add(f[0])
             yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
+# herdr_labels: {id: label} from herdr's workspace or tab list as read; {} for one herdr did not give.
+def herdr_labels(raw, key, id_key):
+    try:
+        return {x.get(id_key): x.get("label") for x in json.loads(raw)["result"][key]}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return {}
+# pane_where: (workspace label, tab label) of a pane, by the ids in the first of its herdr entries (its
+# pane list's, its agent list's) that has them, the workspace else by the pane id's prefix; "-" for none.
+def pane_where(pane, entries, ws_labels, tab_labels):
+    ids = lambda k: next((e.get(k) for e in entries if isinstance(e, dict) and e.get(k)), None)
+    return ws_labels.get(ids("workspace_id") or pane.split(":")[0]) or "-", tab_labels.get(ids("tab_id")) or "-"
 def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True

@@ -2668,8 +2668,9 @@ stacked_lines() {
 # --lead prints it; none when there are none), then the agents that need a look or are working, the stacked
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
 # waiting on them, and what `next` would do, with next's idle: lines for blocked stories, ready stories with no build, and epics that can start or have no plan running (idle_warned, given the step next would take, so the epic that step names gets no line; a failed check warns on stderr); idle agents and blocked stories are only counted unless
-# --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
-# left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
+# --all. Each agent's row ends with its pane, its workspace's label and its tab's (herdr's workspace and
+# tab lists, each read once). A pane with no agent in it is shown as empty: a start that failed. Panes
+# closed by hand are left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
 # Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS sets another, for a
 # test): status_reads routes every herdr, gh and claude call, and git's fetch and ls-remote, through
@@ -2678,7 +2679,7 @@ stacked_lines() {
 # to them the same way. A read cut there, or due after it, fails as it would on an error, and
 # report_skipped's line, printed last, names it.
 status_report() {
-  local all="${1:-}" agents="" panes waiting sessions noagent
+  local all="${1:-}" agents="" panes waiting sessions noagent workspaces tabs
   report_start || die "status: cannot start the report deadline"
   status_reads
   # No agent needs only herdr's agent list, so a failed pane list still shows it, as in dash.
@@ -2706,6 +2707,9 @@ status_report() {
     echo "Agents: herdr gave no pane list, so their states are not available"
   else
     sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
+    # Labels only (status_report.py's pane_where): a list herdr does not give leaves that label -.
+    workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
+    tabs="$(herdr tab list 2>/dev/null)" || tabs=""
     # Each agent in this project's panes, read once (pane_check): when its pane last changed, and an
     # API error or auto mode denial it stopped on.
     # shellcheck disable=SC2034 # pane_kind and pane_at are pane_check's, kept local here
@@ -2714,8 +2718,8 @@ status_report() {
       [[ "${own}" != *" ${pane} "* ]] || pane_check "${name}" "${pane}" > /dev/null
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
     # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.
-    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}" \
-      python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
+    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" SWARM_WORKSPACES="${workspaces}" SWARM_TABS="${tabs}" \
+      SWARM_REPORT_END="${REPORT_END}" SWARM_REPORT_SKIP_FILE="${REPORT_SKIP_FILE}" python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
     upgrade_status
   fi
   local stacked; stacked="$(stacked_lines)" || true

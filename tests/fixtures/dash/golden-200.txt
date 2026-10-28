@@ -10,8 +10,8 @@ alpha  swarm-dev 0.0.0  next conduct alpha-core                                 
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 10-09  ✎ parser accepted an empty file (#10)                                 │
 ╭─ epics ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 10-09  · finish a-x                                                          │
 │ ! alpha-core  ███░░░░░░░░░  2/7   1 review · 3 ready · 1 blocked                                                    │ │ 10-08  · finish a-done-1                                                     │
-│   ● conduct-alpha-core  conduct     opus·high      working 2m  3h00m                                                │ │ 10-08  ⇡ merged #9 story/a-done-1                                            │
-│   ● a-building          code        opus·high      working 6m  1h00m                                                │ │ 10-05  · finish a-old                                                        │
+│   ● conduct-alpha-core  conduct     opus·high      working 2m  3h00m  w1:p1 in alpha › alpha-core                   │ │ 10-08  ⇡ merged #9 story/a-done-1                                            │
+│   ● a-building          code        opus·high      working 6m  1h00m  w1:p2 in alpha › alpha-core                   │ │ 10-05  · finish a-old                                                        │
 │   ✓ alpha#11            green  a-review                                                                             │ ╰──────────────────────────────────────────────────────────────────────────────╯
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ running now ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -36,10 +36,10 @@ bravo  swarm-dev 0.0.0  next conduct bravo-ui                                   
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 10-08  · finish b-old-2                                                      │
 ╭─ epics ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 10-08  · finish b-old-3                                                      │
 │ ! bravo-api  ███░░░░░░░░░  1/4   1 review · 2 ready                                                                 │ │ 10-07  · finish b-old-4                                                      │
-│   ! b-fix   code        sonnet·high    waiting on input                                                             │ ╰──────────────────────────────────────────────────────────────────────────────╯
+│   ! b-fix   code        sonnet·high    waiting on input  w2:p2 in bravo › bravo-api                                 │ ╰──────────────────────────────────────────────────────────────────────────────╯
 │   ✗ bravo…  failing · behind  b-fix                                                                                 │
 │ ! bravo-ui   ████░░░░░░░░  1/3   1 ready · 1 blocked                                                                │
-│   ! b-page  code        opus·high      stalled 45m                                                                  │
+│   ! b-page  code        opus·high      stalled 45m  w2:p3 in bravo › bravo-ui                                       │
 │ ✓ 1 active epic with no open story: bravo-docs                                                                      │
 │ +1 idle  (--tree lists them)                                                                                        │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
