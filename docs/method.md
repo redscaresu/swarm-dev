@@ -25,9 +25,8 @@ each step is in [`reference.md`](reference.md).
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
    code. A review on the latest head whose findings are all declined is a pass: the review agent
-   rebuts each in the PR and logs it as declined (reference.md § The outer loop). It then marks the
-   story in review, pinned to the head it reviewed, and merges the PR under `merge = agent` or a
-   `merge` grant, or hands it to you. An epic is done when its last story's PR deletes the epic file.
+   rebuts each in the PR and logs it as declined (reference.md § The outer loop). It then marks the story in review on the head it reviewed
+   and merges the PR under `merge = agent` or a `merge` grant, or hands it to you. An epic is done when its last story's PR deletes the epic file.
 
 `/swarm-dev:swarm` runs the chain once an HLD or epic is agreed. `swarm.sh next` reads the board and names the next
 step (when it says to wait, it also starts a conductor for any ready work that has none), `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD or epic, a plan or finish PR

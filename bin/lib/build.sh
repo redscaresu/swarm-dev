@@ -1055,7 +1055,7 @@ review_handoff() {
   if [[ "${CFG_merge}" == agent ]]; then
     next="Then merge the PR: ${merge}"
   else
-    next="Then run \`$5 grants $2\`. When a line it prints is \`merge\`, the agreed HLD over the PR grants merge: ${merge} Otherwise the review is the handoff: the PR waits on the user's merge, so merge nothing."
+    next="Then run \`$5 grants $2\`. When a line it prints is \`merge\`, the agreed HLD over the PR grants merge: ${merge} When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed."
   fi
   cat <<EOF
 A round with nothing to fix is a pass, of $4, the head on ${3}'s \`head:\` line. Hand the PR on: run
@@ -1077,7 +1077,7 @@ EOF
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: it never
-# edits the code, the story's touches and Done when, the green step first (wait-pr, then triage of the PR's check-run notes
+# edits the code, the story's touches and Done when, the green step first (wait-pr --head on the worktree's HEAD, then triage of the PR's check-run notes
 # and code-scanning alerts as green_rule's, each real one, red check or conflict sent to the builder as a
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
@@ -1126,8 +1126,10 @@ never a loop of your own. It prints \`idle\` once the builder's turn has ended.$
 ends any other way (\`stalled:\`, \`stuck:\`, a timeout or an error), reply with what it printed, then
 stop: the builder is then the conductor's or the lead's to act on.
 
-Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr $2\` in the
-background and wait for it to exit, never a loop of your own; it prints the head it waits on first.
+Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr --head <HEAD> $2\` in
+the background, <HEAD> being what \`git rev-parse HEAD\` prints here, and wait for it to exit, never
+a loop of your own; it prints the head it waits on first. Right after a push GitHub can still name
+the old head, and --head waits until it names this one.
 - Exit 0: the head counts green only once you have triaged what \`${sw} findings ${repo} ${2##*/}\`
   prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning
   alerts. Nudge the builder with each real one. Rebut the rest with a reason in the PR
@@ -1136,6 +1138,8 @@ background and wait for it to exit, never a loop of your own; it prints the head
 - Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in.${ladder}
 - Its other exit 2s print why. On a timeout or no check runs, read the checks once (\`gh pr checks $2\`):
   nudge the builder when a workflow never started, else run wait-pr again. On a gh error, run it again.
+  When it says the PR's head is still another one, the builder's commit has not reached GitHub: nudge
+  the builder to push it.
 To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: the Write tool refuses
 to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
 to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
