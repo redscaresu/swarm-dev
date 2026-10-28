@@ -1137,7 +1137,8 @@ draft_lead_why() (
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || { echo "lead_epics = on"; exit 0; }
   now="$(cat "${f}")" || exit 0
-  if epic_ticket_parent board_reader "${now}" "$(basename "${f}" .md)" "${BOARD}/epics/" > /dev/null; then
+  # No changed paths: both ends are the board as it is, so the base read decides.
+  if epic_ticket_parent board_reader "${now}" "${f}" "" > /dev/null; then
     p="$(slug_list "$(get_fm - parent <<< "${now}")")"
     echo "parent ${p} is $(raw_status < "${BOARD}/epics/${p}.md")"; exit 0
   fi
