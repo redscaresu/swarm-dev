@@ -367,14 +367,29 @@ merge_hold() {
 # (protected_paths), a renamed or removed file's old path too, judged on <rc> and <out>, pinned_files'
 # exit and output; a list it could not read holds the PR too, saying why, so the user can tell a
 # passing error, which the next swarm.sh merge reads past, from a hold that stands (a PR of over 300
-# files, the most the compare lists, or of no file). --board and --release change only board paths or
+# files, the most the compare lists, or of no file). Either hold is recorded on the item in review
+# (protected_note), and a pass drops the record. --board and --release change only board paths or
 # plugin.json, never a protected path. With merge = human it does not run: merge_grant, later in
 # merge_pr, refuses such a PR (pr_hld puts it under no HLD).
 protected_hold() {
   local why
-  [[ $1 -eq 0 ]] || merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it"
+  if [[ $1 -ne 0 ]]; then
+    protected_note "unreadable: ${2%%$'\n'*}"
+    merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it"
+  fi
   why="$(cut -d' ' -f2- <<< "$2" | protected_paths any-case)"
-  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why%%$'\n'*}, which only the user merges; the user merges it"
+  why="${why%%$'\n'*}"
+  protected_note "${why}"
+  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges; the user merges it"
+}
+
+# protected_note [what] — protected_hold's record of its verdict for status and wait --lead
+# (protected_record): on the item in review (merge_pr's f), keyed to the PR (url) at the pinned head,
+# [what] the path it changes or `unreadable: <why>`; none drops the record. A write that fails warns:
+# it must not hide the hold or stop a merge.
+protected_note() {
+  ( protected_record "${f}" "${url}" "${head}" "${1:-}" ) \
+    || echo "warning: merge: cannot record on ${f} whether ${url} is held for a protected path; status and wait --lead may not show it" >&2
 }
 
 # story_files — the story route's read of the PR's files, setting merge_pr's local files to the paths
