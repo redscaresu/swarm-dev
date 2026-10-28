@@ -1534,8 +1534,8 @@ puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
 handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure
 hands the PR over too. `review --head` and `merge --head` both refuse a head pushed since the review:
-the agent then writes `head moved:` and stops, and whoever started it (the conductor, or the lead for
-a kept story) starts a new review agent on the new head. When it was `merge` that refused, the story
+the agent then writes `head moved:` and stops, and the conductor starts a new review agent on the new
+head once `watch` reports its checks finished (the lead does when no conductor runs). When it was `merge` that refused, the story
 is already in review on a head nobody reviewed, and the agent's reply says so first. `review --head`
 also refuses while the story has a PR the agent did not review, on its `prs:` line or open from its
 branch `story/<slug>`, so a story with two PRs never finishes with one of them still open. When merge prints `base merged:`, the agent waits for CI on the
