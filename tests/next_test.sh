@@ -812,6 +812,7 @@ expect_release "only board commits since the tag: not release" "done" 0 "echo x 
 ROOT_BOARD="mkdir -p .claude/swarm && echo 'board_dir = .' > .claude/swarm/config && echo .claude/ >> .git/info/exclude"
 expect_release "a board at the root, a commit outside its paths: release" release 0 "${ROOT_BOARD}" "echo x > bin/x" "${COMMIT}"
 expect_release "a board at the root, only its own commits: not release" "done" 0 "${ROOT_BOARD}" "echo x > Board.base" "${COMMIT}"
+expect_release "a board at the root, only a commit under its stories/: not release" "done" 0 "${ROOT_BOARD}" "mkdir -p stories && echo x > stories/README.md" "${COMMIT}"
 expect_release "no plugin.json: not release" "done" 0 "git rm -q .claude-plugin/plugin.json" "echo x > bin/x" "${COMMIT}"
 expect_release "the tag missing locally: not release" "done" 0 "echo x > bin/x" "${COMMIT}" "git tag -d v1.2.0 >/dev/null"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture

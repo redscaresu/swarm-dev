@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # board_rel_test.sh — board_rel (swarm.sh _board-rel), the board's path from the project root with a
-# trailing /: empty for a board at the root, docs/ and a/b/ for boards under it, and the real path for
-# a board_dir with .. in it. init resolves a board it has just made, so its listing names that path.
+# trailing /: empty for a board at the root, docs/ and a/b/ for boards under it, the real path for a
+# board_dir with .. in it, and the full path for a board outside the project. init resolves a board it
+# has just made, so its listing names that path. A builder's brief at a root board names its story by
+# that path, so its PR deletes the story.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -31,6 +33,8 @@ check "the default board is docs/" "[docs/]" "$(rel default - docs)"
 check "a board two folders down is a/b/" "[a/b/]" "$(rel nested a/b a/b)"
 check "a board_dir through .. is the real path" "[docs/]" "$(rel dotdot x/../docs x/../docs)"
 check "a board_dir of .. back to the root is empty" "[]" "$(rel dotroot docs/.. docs)"
+mkdir -p "${ROOT}/vault"
+check "a board outside the project is its full path" "[${ROOT}/vault/]" "$(rel outside "${ROOT}/vault")"
 
 # init makes a board_dir with .. that is not there yet, then lists the files by the path it resolved.
 p="${ROOT}/init"
@@ -39,6 +43,16 @@ mkdir -p "${p}/.claude/swarm" && echo "board_dir = sub/../board" > "${p}/.claude
 out="$(cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" init 2>&1 || true)"
 check "init names a new board_dir with .. by its resolved path" "yes" \
   "$(grep -qxF "copied board/stories/README.md" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+
+# A builder's brief at a root board, its story tracked: the PR deletes stories/<slug>.md.
+p="${ROOT}/rootbrief"
+git init -q "${p}"
+mkdir -p "${p}/.claude/swarm" "${p}/stories" && echo "board_dir = ." > "${p}/.claude/swarm/config"
+printf -- '---\nstatus: ready\nkind: code\n---\n\n# s\n' > "${p}/stories/s.md"
+git -C "${p}" add -A && git -C "${p}" -c user.name=t -c user.email=t@t commit -q -m init
+out="$(cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" _brief s 2>&1 || true)"
+check "a root board's brief deletes its story by its path in the repo" "yes" \
+  "$(grep -qF "Delete stories/s.md in your PR, and nothing else under stories/." <<< "${out}" && echo yes || echo "no, got: ${out}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

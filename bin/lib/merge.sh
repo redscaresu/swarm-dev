@@ -319,9 +319,9 @@ epic_guard() {
 }
 
 # board_epics — each line of stdin that is a board epic, <board>/epics/<slug>.md with no subfolder and
-# not README.md (merge_pr's local rel, board_rel's path with its /): the paths epic_unticketed reads.
+# not README.md: the paths epic_unticketed reads.
 board_epics() {
-  awk -v p="${rel}epics/" 'index($0, p) == 1 { s = substr($0, length(p) + 1); if (s ~ /^[^\/]+\.md$/ && s != "README.md") print }'
+  awk -v p="$(board_rel)epics/" 'index($0, p) == 1 { s = substr($0, length(p) + 1); if (s ~ /^[^\/]+\.md$/ && s != "README.md") print }'
 }
 
 # story_elsewhere — whether the story PR is in another repo than the board's, whose epics/ are that
@@ -1488,6 +1488,15 @@ on_board_paths() {
     else [[ "$1" != "${q}" ]] || return 0; fi
   done < <(board_paths)
   return 1
+}
+
+# in_board <path> — <path>, from the repo root, is the board's: under its folder (board_rel), or, for a
+# board at the root, on its own paths (on_board_paths).
+in_board() {
+  local rel
+  rel="$(board_rel)"
+  if [[ -n "${rel}" ]]; then [[ "$1" == "${rel}"* ]]   # loose-match: ok rel ends in /
+  else on_board_paths "$1"; fi
 }
 
 # clear_red_main <key> <sha> <why> — CI is green at <sha> for <key>: when red_mains holds that key
