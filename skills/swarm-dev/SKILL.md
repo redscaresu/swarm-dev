@@ -28,10 +28,12 @@ run inside herdr (`HERDR_ENV=1`), as does `swarm.sh conduct`. `swarm.sh init`, `
 
 It stops only when the user has to act: a draft epic, epics or stories to approve, a `lead`
 story, a PR to merge, an expired login (`/login`), a proposed rule, or a `blocked` or `later`
-item (the user sets it `ready` or `active` to start it). Only the user agrees a draft epic, through
+item (the user sets it `ready` or `active` to start it; on their go the lead writes `agreed: <today>`
+as it sets a `later` epic `active`). Only the user agrees a draft epic, through
 /epic, which writes `agreed:` as it sets `status: active`. The lead sets a new or draft epic
 `active` itself only when no agreement is needed: it has a `parent:` (a split's child), an agreed HLD
-grants `epics` through its `hld:`, or `lead_epics = on`. An `agreed:` already on a draft is stale
+grants `epics` through its `hld:`, or `lead_epics = on`; `next` lists such a draft as
+`draft epic: <slug>, the lead sets it active (<why>)`. An `agreed:` already on a draft is stale
 (an epic set back to draft by hand) and does not count, so the lead offers to resume it with
 `/epic <slug>`. After the user acts, run
 `/swarm-dev:swarm` again. A story that failed on Fable (`next` says `escalated <slug>`) is not a

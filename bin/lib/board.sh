@@ -1020,11 +1020,11 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 
 # epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
 # line; README.md excepted) that goes active with no ticket, one per line: status: active at the head
-# (raw_status), absent at the base or at any status there but active, later, review, split or done (a
-# draft, none, or a typo), and none of an agreed: date the base did not already have (one left on a
-# draft is stale), a parent: naming another epic that is active or split at the base (so a PR cannot
-# name a parent it adds, or a draft), or an hld: naming an HLD that is agreed and grants epics at
-# both ends (hld_ticket). Nothing with lead_epics = on. <reader>
+# (raw_status), absent at the base or at any status there but active (later, split, review and done
+# too, as a draft, none or a typo), and none of an agreed: date the base did not already have, from
+# today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
+# (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics at both ends
+# (hld_ticket). Nothing with lead_epics = on. <reader>
 # base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
 # A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
@@ -1044,15 +1044,12 @@ epic_unticketed() (
     [[ "$(raw_status <<< "${now}")" == active ]] || continue
     rc=0; was="$("${reader}" base "${p}")" || rc=$?
     [[ ${rc} -le 1 ]] || { echo "cannot read ${p} at the base"; exit 1; }
-    case "$(raw_status <<< "${was}")" in active|later|review|split|done) continue ;; esac
-    s="${s%.md}"; p="$(slug_list "$(get_fm - agreed <<< "${now}")")"
-    [[ ! "${p}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || "${p}" == "$(slug_list "$(get_fm - agreed <<< "${was}")")" ]] || continue
-    p="$(slug_list "$(get_fm - parent <<< "${now}")")"
-    if [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "${s}" ]]; then
-      rc=0; was="$("${reader}" base "${pre}epics/${p}.md")" || rc=$?
-      [[ ${rc} -le 1 ]] || { echo "cannot read ${pre}epics/${p}.md at the base"; exit 1; }
-      case "$(raw_status <<< "${was}")" in active|split) continue ;; esac   # absent: no status
-    fi
+    [[ "$(raw_status <<< "${was}")" != active ]] || continue
+    s="${s%.md}"
+    epic_ticket_agreed "${now}" "${was}" && continue
+    rc=0; epic_ticket_parent "${reader}" "${now}" "${s}" "${pre}epics/" || rc=$?
+    [[ ${rc} -ne 0 ]] || continue
+    [[ ${rc} -eq 1 ]] || exit 1
     p="$(slug_list "$(get_fm - hld <<< "${now}")")"
     if [[ "${p}" =~ ^[A-Za-z0-9._-]+$ ]]; then   # item_hld's pattern: no /
       rc=0; hld_ticket "${reader}" "${pre}hld/${p}.md" "${t}" || rc=$?
@@ -1063,6 +1060,38 @@ epic_unticketed() (
   done <<< "$2"
   printf '%s' "${out}"
 )
+
+# epic_ticket_agreed <head bytes> <base bytes> — epic_unticketed's agreed: ticket: true when the
+# epic's front matter at the head has an agreed: date that its base copy did not already have (an
+# absent one has none), and that date is a real YYYY-MM-DD from today back AGREED_MAX_AGE days: one
+# of those days as date prints them. One left on a draft, or on a later epic agreed before, is
+# stale; an older one, or one after today, was not agreed for this PR. Today is the clock's, not the
+# PR's merge base, which moves when the branch is updated from main. The shape check comes first,
+# so a blank value (a PR that drops the line) never matches a date that failed to print.
+AGREED_MAX_AGE=7
+epic_ticket_agreed() {
+  local d i
+  d="$(slug_list "$(get_fm - agreed <<< "$1")")"
+  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]] || return 1
+  for ((i = 0; i <= AGREED_MAX_AGE; i++)); do
+    [[ "${d}" != "$(date -v-"${i}"d +%F 2>/dev/null || date -d "${i} days ago" +%F)" ]] || return 0
+  done
+  return 1
+}
+
+# epic_ticket_parent <reader> <head bytes> <slug> <epics prefix> — epic_unticketed's parent: ticket:
+# true when the epic's parent: at the head names another epic (not <slug>), read through <reader> at
+# <epics prefix><parent>.md, that is active or split at the base, so a PR cannot name a parent it
+# adds, or a draft; fails 1 when not (absent at the base too); prints why and fails 2 on a read error.
+epic_ticket_parent() {
+  local p was rc=0
+  p="$(slug_list "$(get_fm - parent <<< "$2")")"
+  [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "$3" ]] || return 1
+  was="$("$1" base "$4${p}.md")" || rc=$?
+  [[ ${rc} -le 1 ]] || { echo "cannot read $4${p}.md at the base"; return 2; }
+  case "$(raw_status <<< "${was}")" in active|split) return 0 ;; esac   # absent: no status
+  return 1
+}
 
 # hld_ticket <reader> <hld path> <tmp> — epic_unticketed's hld: ticket: true when the HLD is status:
 # agreed with epics in its grants (hld_grants, which reads a file: <reader>'s bytes go through <tmp>)
@@ -1082,6 +1111,34 @@ hld_ticket() {
     grep -qxF epics <<< "${g}" || return 1
   done
 }
+
+# board_reader <end> <path> — epic_unticketed's reader over the board as it is now, the same bytes at
+# either end: prints <path>, failing 1 when it is absent and 2 when it cannot be read.
+board_reader() { [[ -e "$2" ]] || return 1; cat "$2" 2> /dev/null || return 2; }
+
+# draft_lead_why <epic file> — why the lead may set this draft epic active with no agreement, through
+# the epic guard's own tickets over the board as it is (board_reader): "lead_epics = on", "parent <p>
+# is <status>" (epic_ticket_parent) or "hld <h> grants epics" (hld_ticket). Nothing for a draft that
+# needs the user's agreement, a read error included, or one with a stage:, whatever its tickets: a
+# stage next can open gives it the staged line, and one it cannot open goes through /epic (reference.md,
+# Staged epics), never the lead unasked.
+draft_lead_why() (
+  local f="$1" now p rc
+  [[ -z "$(slug_list "$(get_fm "${f}" stage)")" ]] || exit 0
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ "${CFG_lead_epics}" != on ]] || { echo "lead_epics = on"; exit 0; }
+  now="$(cat "${f}")" || exit 0
+  if epic_ticket_parent board_reader "${now}" "$(basename "${f}" .md)" "${BOARD}/epics/" > /dev/null; then
+    p="$(slug_list "$(get_fm - parent <<< "${now}")")"
+    echo "parent ${p} is $(raw_status < "${BOARD}/epics/${p}.md")"; exit 0
+  fi
+  p="$(slug_list "$(get_fm - hld <<< "${now}")")"
+  [[ "${p}" =~ ^[A-Za-z0-9._-]+$ ]] || exit 0   # item_hld's pattern: no /
+  t="$(mktemp)" || exit 0
+  trap 'rm -f "${t}" "${t}.err"' EXIT
+  rc=0; hld_ticket board_reader "${BOARD}/hld/${p}.md" "${t}" > /dev/null || rc=$?
+  [[ ${rc} -ne 0 ]] || echo "hld ${p} grants epics"
+)
 
 # item_hld <story or epic file> [epics dir] [hld dir] — the agreed HLD file in [hld dir] (${BOARD}/hld)
 # over it: a story's epic:, then each epic's parent:, up to the first epic with hld:, read in [epics
@@ -1425,10 +1482,12 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 # next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too, and so
 # is an HLD due a plan that hld_blocked names (`hld cannot be planned: <hld>, <why>`). A
 # staged draft (staged_draft) is listed as `staged epic: <slug>, stage v<T>, after v<P>`, never with
-# /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
+# /epic: it waits on a tag at or above v<P>, then on next's stage step. An unstaged draft the epic guard
+# would let go active with no agreement (draft_lead_why) is `draft epic: <slug>, the lead sets it active
+# (<why>)`, never with /epic either: the lead sets it active in a board PR. Each stage board PR's worktree
 # (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
-  local f kind slug when stage prev why waiting=""
+  local f kind slug when start agreed stage prev why waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -1442,17 +1501,27 @@ waiting_on_user() {
   done < <(board stories)
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in
-      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md)
+      # A later epic going active needs a ticket (epic_unticketed): on the user's go the lead writes
+      # agreed: <today> in the edit that sets it active, as /epic does. On a board in the repo, one agreed
+      # and parked today has that date at the base already, which is no ticket, so its agreed: line goes
+      # in a board PR first. A board outside the repo has no board PR and no guard.
+      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md); start="set it active with agreed: <today> to start it"
+        agreed="$(get_fm "${f}" agreed)"
+        [[ ${BOARD_IN_REPO} != 1 || -z "${agreed}" || "$(slug_list "${agreed}")" != "$(date +%F)" ]] \
+          || start="it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next"
         case "${when}" in
+          "") when=" (${start})" ;;
           declined*) when=" (its unasked plan was ${when})" ;;
-          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}; set it active to start it)"
+          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}; ${start})"
               else when=" (planned unasked on ${when}, no stories yet; run /plan-epic ${slug} again if that plan stopped)"; fi ;;
         esac
         waiting+="  later epic: ${slug}${when}"$'\n' ;;
       # A staged draft is the lead's to set active once the stage before it is tagged (next's stage).
+      # A draft the epic guard would let go active unagreed (draft_lead_why) is the lead's too.
       draft) slug=$(basename "${f}" .md); stage=""; read -r stage prev <<< "$(staged_draft "${f}")"
-        if [[ -z "${stage}" ]]; then waiting+="  draft epic: ${slug}, run /epic ${slug}"$'\n'
-        else waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'; fi ;;
+        if [[ -n "${stage}" ]]; then waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'
+        elif why="$(draft_lead_why "${f}")" && [[ -n "${why}" ]]; then waiting+="  draft epic: ${slug}, the lead sets it active (${why})"$'\n'
+        else waiting+="  draft epic: ${slug}, run /epic ${slug}"$'\n'; fi ;;
       review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board epics)
@@ -1944,16 +2013,55 @@ builder_state() {
 
 # merged_build <slug> — clear a merged story's build (clear_build), after closing its builder if one
 # is open (still in review, so close counts nothing), and saying so when herdr cannot tell whether one
-# is. A builder whose pane could not be closed (close_pane) may still be working in the worktree, so
-# then the build is kept, with CLOSE_PANE_KEPT set; the caller says what happens to it.
+# is, and its review agent (merged_review). A builder whose pane could not be closed (close_pane) may
+# still be working in the worktree, so then the build is kept, with CLOSE_PANE_KEPT set; the caller
+# says what happens to it.
 merged_build() {
   local builder
   builder="$(builder_state "$1")"; CLOSE_PANE_KEPT=""
   [[ "${builder}" != open ]] || close_agent "$1"
+  merged_review "$1"
   [[ -z "${CLOSE_PANE_KEPT}" ]] || return 0
   clear_build "$1" "the PR of $1 merged" "[]"
   [[ "${builder}" != unknown ]] \
     || echo "build cleared: $1's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close $1"
+}
+
+# merged_review <slug> — close review-<slug>, a merged story's review agent, when this project has it
+# open in herdr and idle: its pane only (shut_agent), never a builder's close. Only when the newest
+# agents.tsv line for that name has role review, and every tab record for its pane names review-<slug>
+# in full, as review_pane checks: the builder of a story slugged review-<slug> holds the same name,
+# and so does another story's review agent whose name herdr cuts to the same AGENT_NAME_MAX
+# characters. A working or waiting one is left open, and said: it may be running its own swarm.sh
+# merge, whose reconcile retires it, or reviewing still. A session Claude Code no longer lists (gone)
+# reads herdr's status, as live_agents does. When its pane is the one running this command (a merge
+# from the review pane, whose reconcile runs there), it is retired instead (retire_agent), whatever
+# its state, so the pane stays open under a -done name until tidy closes it. Its session is archived
+# then, while it still runs, so the copy stops at this merge; tidy archives nothing. Its ZDOTDIR
+# stays: the agent is still running there. It never fails the caller: it runs in the background, so
+# set -e holds inside it, and a pane that could not be closed, or herdr with no agent list, is said.
+merged_review() {
+  local name pane state
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  name="$(agent_name "review-$1")"
+  [[ "$(awk -F'\t' -v n="${name}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" == review ]] || return 0
+  herdr agent list >/dev/null 2>&1 \
+    || { echo "review-$1 may still be open (herdr cannot list its agents); close its pane with swarm.sh close review-$1"; return 0; }
+  pane="$(agent_field "${name}" pane_id)"
+  [[ -n "${pane}" ]] || return 0
+  [[ "$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2 }' "${STATE_DIR}"/* 2>/dev/null | sort -u)" == "review-$1" ]] || return 0
+  if [[ "${pane}" != "${HERDR_PANE_ID:-}" ]]; then
+    state="$(read_state "${name}")"
+    [[ "${state}" != gone ]] || state="herdr:$(agent_status "${name}")"
+    case "${state}" in
+      idle|herdr:idle|herdr:done) ;;
+      *) echo "review-$1 is ${state#herdr:}, so it was left open; close it once it is done with swarm.sh close review-$1" >&2; return 0 ;;
+    esac
+  fi
+  ( set -e
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"
+    else shut_agent "review-$1"; [[ -z "${CLOSE_PANE_KEPT}" ]]; fi ) </dev/null &
+  wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh close review-$1"
 }
 
 # pr_state <url> — the PR's state as gh gives it (OPEN, CLOSED or MERGED); fails when gh cannot read it.

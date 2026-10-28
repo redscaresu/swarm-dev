@@ -105,11 +105,12 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | a draft HLD | finish it with the co-author, then agree it; its `grants:` are yours to set |
 | proposed epics | agree each with `/swarm-dev:epic`, or say what to change |
 | a draft epic | finish it with the co-author, then agree it |
+| a draft epic the lead sets active (`draft epic: <slug>, the lead sets it active (<why>)`) | nothing: its `parent:` is active or split, an agreed HLD over it grants `epics`, or `lead_epics = on`, so the lead sets it active in a board PR |
 | a staged epic (`staged epic: <slug>, stage v<T>, after v<P>`) | nothing: once the base has a tag at or above `v<P>`, the lead sets it active in a board PR, which you merge unless `merge = agent` or the HLD grants `merge`. Leave that PR unmerged to say not yet. To take an epic out of its stage, drop its `stage:` or `hld:` |
 | proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back; one under an HLD that grants `merge` the lead lands itself |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it. For a `later` epic, say go and the lead sets it `active` with `agreed: <today>` |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 | an agent waiting on a prompt or a dialog, or in manual mode | answer the prompt in the pane the lead names, or turn manual mode off there. The lead hears of most within a poll. Manual mode turned on, or a dialog opened, at an idle box can take up to 5 minutes, and a slow pane read ahead of it can add a poll. A ready story's builder in manual mode it handles itself: it closes the pane, then restarts or holds the story |
 | an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
@@ -185,8 +186,9 @@ claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swa
 ```
 
 Restart Claude Code afterwards. Agents already running stay on the old version until
-`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. upgrade runs
-detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
+`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. A builder
+waits while the Claude review agent reviewing its PR is busy and still on the old version. upgrade
+runs detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
 
 An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
 `next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
