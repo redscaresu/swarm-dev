@@ -754,7 +754,7 @@ review_next() {
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   echo "${REVIEW_HEAD}" > "${out%.md}.head"
   # The brief pins the head of the round it started: this round's head replaces it there.
-  echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}, and write ${out} afresh, its first line \`head: ${REVIEW_HEAD}\` (or, if the worktree moved, \`head moved: <what changed>\` under it)."
+  echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
   review_round_line "${round}" "${pr}"
 }
 
@@ -1074,7 +1074,11 @@ review_brief() {
   \`## Out of scope\` heading with \`none\`, then stop."
   [[ -z "${CFG_escalate_ladder:-}" ]] || stepped=" When it prints \`stepped up: $1\`, the stalled build went to
 the next model on the escalation ladder, and when it prints \`stepping up: $1\`, another step-up or a
-restart of it is running: in both cases, wait on it the same way."
+restart of it is running: in both cases, wait on it the same way. A build stepped up after this
+round's findings were told has none of them in its handover brief (that brief pastes ${4}, which
+holds no findings to fix): once the new builder is idle, send it ${round} as a nudge, which is no
+round (write ${nudge} as below holding what ${round} holds, then \`${sw} tell $1 nudge ${nudge}\`),
+and wait on it again."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. You are read-only: never edit,
 commit or push here, and never merge, by any route. The files you write are ${4}, ${round} and, to
@@ -1113,9 +1117,11 @@ To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: t
 to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
 to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
 When tell says the builder is still working, wait for it as above, then tell it. After each nudge,
-wait for the builder the same way, then wait for green again on the head it pushed. The green step
-runs once per round: on the first head, then on the head the builder pushes after each findings
-tell. Each run is bounded: at most two nudges, and at most two heads that wait-pr calls red. Write
+wait for the builder the same way, then wait for green again on the head it pushed. A wait on a
+head the builder has just pushed is \`${sw} wait-pr --head <that head, from git rev-parse HEAD> $2\`:
+right after a push GitHub can still report the old head, which the plain wait-pr would call green.
+The green step runs once per round: on the first head, then on the head the builder pushes after
+each findings tell. Each run is bounded: at most two nudges, and at most two heads that wait-pr calls red. Write
 the not-green file, which ends the green step, when the builder goes idle without pushing (wait-pr
 prints the same head), when wait-pr ends the same way twice, when the second red head would need a
 nudge, or when the head after your second nudge is not green. The not-green file is ${round}, written
@@ -1158,7 +1164,9 @@ Under a \`## Findings\` heading,
 one line per finding to fix: its reviewer (codex, fallback or code-review), file:line, and the finding; with
 none, say so. Under a \`## Declined\` heading, the same for each finding you declined, with its
 reason; with none, say so. Under a \`## Out of scope\` heading, the same for each point a reviewer
-raised that only a change to a file outside the touches can fix; with none, say so.
+raised that only a change to a file outside the touches can fix; with none, say so. End each of
+those two sections with the line \`logged and rebutted by the review agent\`, so the conductor,
+whose rules log and rebut what it reads there, logs and rebuts none of them again.
 
 A round with nothing to fix is a pass: write it to ${4} (the conductor's wait ends once it exists),
 reply with ${4}, and with \`codex skipped: <why>\` when codex was, then stop.
@@ -1186,7 +1194,8 @@ with nothing to fix does: rebut them in the PR as above, in one comment with eac
 builder's reason, write the review to ${4}, with them under \`## Declined\` and those reasons, reply
 with ${4}, and stop. When the head is still the same otherwise, stop with
 \`no fix pushed: <the builder's reply, in one line>\`, as above. When it moved, run the green step
-above on the head it pushed. Once that head is green and triaged with nothing to nudge,
+above on the head it pushed, with wait-pr --head as there. Once that head is green and triaged
+with nothing to nudge,
 run \`${sw} review-agent --next $1 $2\` and do the round it prints (codex alone from round 2):
 review, check the head, triage, and send its findings as above, until a round passes or you stop.
 

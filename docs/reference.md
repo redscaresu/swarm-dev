@@ -1316,14 +1316,16 @@ and the merge rules, so the agent writes it only on a pass or when it stops. It 
 refuses a builder that is still working. Every wait on the builder is `wait --stall`, and the agent
 carries on when it prints `idle`, or `done` for a builder with no Claude session. With
 `escalate_ladder` set, a stall it steps up (`stepped up:`), or a step-up or restart already running
-(`stepping up:`), is waited on again; a wait that ends any other way (stalled, stuck, timed out)
-stops the agent. When `tell` says the build was
+(`stepping up:`), is waited on again, and a build stepped up after the round's findings were told
+gets the round file as a nudge, since its handover brief pastes only the review file; a wait that
+ends any other way (stalled, stuck, timed out) stops the agent. When `tell` says the build was
 stepped up, the agent waits on the new builder, which has the findings in its handover brief. A
 `tell` that fails but says the findings count as delivered, or as a round, was sent: the agent
 reads the builder's pane when `tell` says to, resends the findings as a nudge only when they never
 arrived, and carries on. When `tell` says the story is held for the lead, or its step-up failed
 partway, the agent stops. Once the
-builder has pushed, the agent runs the green step on the new head, then `swarm.sh review-agent --next
+builder has pushed, the agent runs the green step on the new head with `wait-pr --head <that head>`,
+since right after a push GitHub can still report the old one, then `swarm.sh review-agent --next
 <slug> <PR URL>`, and reviews the round that prints in the same session. If the builder goes idle
 without pushing, the round passes when the builder declined each finding with a reason the agent
 accepts, rebutted in the PR as its own declines are; the agent stops otherwise, as it does when the
@@ -1349,7 +1351,9 @@ after `review-agent` has removed the one from an earlier head. The file starts w
 the PR's head, which `review-agent` reads from `gh` and puts in the brief, then `codex skipped:
 <why>` when codex was skipped. Under them go the findings to fix,
 each with its reviewer and file:line, then the declined findings with their reasons, then an
-out-of-scope section for points raised outside the story. With findings to fix, the same review
+out-of-scope section for points raised outside the story, those two sections each ending with the
+line `logged and rebutted by the review agent`, so the conductor logs and rebuts none of them again.
+With findings to fix, the same review
 goes to `.swarm/reviews/<slug>.round.md`, the round file the agent tells the builder, and the
 review file is written only on a pass or a stop (above).
 `review-agent` refuses, starting nothing and leaving the last review's file in place, when the board has a story named
@@ -3019,9 +3023,11 @@ carries build_story's `Merge after <PRs>` note. When a parent's PR has merged (s
 are on the base under other ids), the diff is of `origin/<base>` to the branch as if the base were
 merged in, and the handover says to merge it in before pushing. If that merge would conflict, the
 diff stays the one from the merge-base, with the parent's commits in it, and the handover says to
-merge the base in and resolve it first. Then come the review agent's findings from
-`.swarm/reviews/<slug>.md`, pasted only when their `head:` line is the branch's HEAD. Findings of an
-older head may be fixed already, so the handover only names the file. Last come the open PR's
+merge the base in and resolve it first. Then comes the review agent's review file,
+`.swarm/reviews/<slug>.md`, pasted only when its `head:` line is the branch's HEAD; it holds a pass
+or a stop, since the findings to fix go to the builder by `tell` from `.swarm/reviews/<slug>.round.md`,
+and a step-up in place of a findings `tell` pastes that tell's file. A review file of an older head
+may be stale, so the handover only names it. Last come the open PR's
 failing checks. With none listed, it says that none are failing, that the PR has no checks
 reported, or that gh could not read them. The handover also tells the builder to put a `Models:` line in the PR body naming
 every model that worked on the story, in order.
