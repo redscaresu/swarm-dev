@@ -7,6 +7,7 @@ First steps: install the plugin (`claude plugin marketplace add redscaresu/swarm
 - [README.md](README.md): requirements, getting started, and when `/swarm-dev:swarm` stops for you
 - [AGENTS.md](AGENTS.md): how an agent uses swarm-dev in a project and works on this repo
 - [docs/method.md](docs/method.md): the method and why it is shaped this way
+- [docs/lead-by-hand.md](docs/lead-by-hand.md): the steps a lead still takes by hand, each with its open issue
 - [docs/reference.md](docs/reference.md): every `swarm.sh` command and setting
 - [docs/dash.md](docs/dash.md): the read-only dashboard
 - [commands/](commands/): the slash commands the plugin loads (`/swarm-dev:epic`, `/swarm-dev:plan-epic`, `/swarm-dev:swarm`)
