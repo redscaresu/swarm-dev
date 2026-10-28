@@ -1048,7 +1048,8 @@ main() {
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
     step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     # A --next round or a --recheck is no review start, so flow's review-agent starts and review_wait never
-    # read it; a recheck counts no round either (review_rounds).
+    # read it; a recheck that passes counts no round, and one refused with a full round due counts the
+    # round its wording nudge did not (review_rounds).
     review-agent) EV_TARGET="${2:-}"
             case "${EV_TARGET}" in
               --next) EV_CMD="review-agent:next"; EV_TARGET="${3:-}"; EV_OK="ok (round $(review_round "${3:-}"))" ;;

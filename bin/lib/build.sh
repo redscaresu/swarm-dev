@@ -728,9 +728,9 @@ review_own_pane() {
 # (review_round) and that round's instruction (review_round_line). Refused, touching no file under
 # .swarm/reviews, from any other pane, when the board has a story named review-<slug>, when herdr lists no
 # review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
-# since the build started), when this build has no ok review-agent start (review-<slug> is an earlier
-# build's), or while that round has started already (review_rounds): no findings round since, so its
-# review would be lost.
+# round since the build started: a findings tell or step-up, or a --recheck refused with a full round due),
+# when this build has no ok review-agent start (review-<slug> is an earlier build's), or while that round
+# has started already (review_rounds): no findings round since, so its review would be lost.
 # review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
   local slug="$1" pr="$2" out pane round rounds
@@ -776,14 +776,15 @@ RECHECK_CI_SECONDS=60   # how long --recheck's read of the new head's CI may tak
 # name, every finding there naming one (recheck_named), its line as at <old head>. With the worktree at the PR's new head
 # (review_at_head), it passes when `git diff <old head>..<new head>` rewrites each named line and nothing
 # else (recheck_hunks) and the new head is green (ci_gate head, within RECHECK_CI_SECONDS). A pass writes
-# the new head's findings file, a pass, any file there before kept as <slug>.md.prev, and .head; main logs
+# the new head's findings file, a pass whose ## Handled by the review agent carries the round file's, any
+# file there before kept as <slug>.md.prev, and .head; main logs
 # it as review-agent:recheck <slug> ok, which counts no round (review_rounds). A refusal writes nothing
 # under .swarm/reviews. One on the old head, its findings, the diff or a red head names --next, a full
 # round, and counts as that round (review_rounds); one on CI still running or unread says to run --recheck
 # again, and the rest say what to fix first.
 review_recheck() {
   local slug="$1" pr="$2" old="$3" usage="swarm.sh review-agent --recheck <slug> <PR URL> <old head> <file:line>..."
-  local out round repo why rc point secs="${SWARM_RECHECK_CI_SECONDS:-${RECHECK_CI_SECONDS}}" full="a full round is due: swarm.sh review-agent --next $1 $2"
+  local out round handled repo why rc point secs="${SWARM_RECHECK_CI_SECONDS:-${RECHECK_CI_SECONDS}}" full="a full round is due: swarm.sh review-agent --next $1 $2"
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --recheck: bad slug '${slug}' (${usage})"
   [[ "${pr}" =~ ^https://[^/[:space:]]+/([^/[:space:]]+/[^/[:space:]]+)/pull/[0-9]+$ ]] \
     || die "review-agent --recheck: '${pr}' is not a PR URL (${usage})"
@@ -814,10 +815,15 @@ review_recheck() {
     2) die "review-agent --recheck: CI on ${REVIEW_HEAD:0:7} has not finished: ${why}; nothing was written: wait for it (swarm.sh wait-pr ${pr}), then ${REVIEW_AGAIN}" ;;
     *) die "review-agent --recheck: could not read CI on ${REVIEW_HEAD:0:7}: ${why:-no answer within ${secs}s}; nothing was written: ${REVIEW_AGAIN}" ;;
   esac
+  # The round's declined and out-of-scope points, which the agent logged and rebutted before its nudge.
+  handled="$(awk '/^## / { in_h = ($0 ~ /^## Handled by the review agent/); next }
+    in_h && /[^[:space:]]/ && tolower($0) !~ /^[-* ]*none\.?$/' "${round}")"
+  if [[ -n "${handled}" ]]; then handled="Carried from the round on ${old:0:7}, each logged and rebutted then:"$'\n'"${handled}"
+  else handled="None."; fi
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   printf '%s\n' "head: ${REVIEW_HEAD}" "" "## Findings" "" \
     "None: the wording recheck passed. ${old:0:7}..${REVIEW_HEAD:0:7} changes only the lines the last findings named, and the head is green." \
-    "" "## Out of scope" "" "None." > "${out}"
+    "" "## Handled by the review agent" "" "${handled}" > "${out}"
   echo "${REVIEW_HEAD}" > "${out%.md}.head"
   echo "wording recheck passed: ${out} holds the findings for ${REVIEW_HEAD}"
 }
@@ -1218,9 +1224,10 @@ conflict, or what wait-pr printed last>\`, then a \`## Handled by the review age
 \`none\`. Its one finding is to fix, from ci: send it to the builder as findings, as below, and log it as any finding
 to fix. Once a head is green and
 triaged with nothing to nudge, review it as below when it is $5. When the builder pushed past $5
-before any findings went to it, write ${4} with the Write tool holding two lines, \`head: $5\` and
-\`head moved: <the green head>\`, then stop; once findings went to it, run \`review-agent --next\`
-on the green head, as below.
+before any findings or wording nudge went to it, write ${4} with the Write tool holding two lines,
+\`head: $5\` and \`head moved: <the green head>\`, then stop; once findings went to it, run
+\`review-agent --next\` on the green head, and once a wording nudge did, \`review-agent --recheck\`
+first, as below.
 
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
@@ -1292,8 +1299,8 @@ reason that fits, when the builder declined it with a reason you accept; rebut t
 above, in one comment with each finding and the builder's reason. One it did neither to, or
 declined with a reason you do not accept, is not logged; the next round raises it again if it still
 holds. Once that head is green and triaged with nothing to nudge, after a wording nudge run
-\`${sw} review-agent --recheck $1 $2 <the head you reviewed> <each file:line ${round} cites>\`, which
-counts no round. When it prints \`wording recheck passed\`, it has written ${4}, a pass of the head it
+\`${sw} review-agent --recheck $1 $2 <the head you reviewed> <each file:line ${round} cites>\`, each
+path relative to the repo root (never under the worktree's path), which counts no round. When it prints \`wording recheck passed\`, it has written ${4}, a pass of the head it
 names: do the pass step above from \`Then hand the PR on\`, with that head in place of $5. When it
 says CI has not finished or to run it again, do that. When it refuses naming \`review-agent --next\`
 (the diff changes more than those lines, say), a full round is due, and the refusal counts the

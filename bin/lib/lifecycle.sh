@@ -3069,7 +3069,8 @@ no_agent_busy() {
 # with. A failed one started no round and changes nothing. url is the PR URL a failed line's message names,
 # when review_agent took it as one (never from its "is not a PR URL" refusal), else -. under is 1 when a round is under way by the
 # events: a findings round came after that line (the builder fixing what it was told: a findings tell
-# that is ok or that herdr sent, or a findings step-up, as review_rounds counts them), or that line is a
+# that is ok or that herdr sent, or a findings step-up, as review_rounds counts them, but not its refused
+# --recheck, which leaves the builder nothing to fix), or that line is a
 # start refused because the builder is still at work (its worktree not at the PR's head, or with
 # uncommitted changes) with a findings round on record. wrote is 1 when that start wrote
 # .swarm/briefs/review-<slug>.md: an ok one, or one that failed after the brief (review_start_failed's
@@ -3105,7 +3106,9 @@ no_review_events() {
       next
     }
     # A findings round, counted as review_rounds counts it: a tell that is ok or that herdr sent, or a
-    # findings step-up, whose brief carried the findings in place of a tell.
+    # findings step-up, whose brief carried the findings in place of a tell. A --recheck refused with a
+    # full round due, which review_rounds counts too, is left out: the builder has nothing to fix, and
+    # the review agent runs that round itself (--next), so with it gone no review is under way.
     ($3 in me) && ((($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/)) ||
       ($2 == "escalate" && $5 ~ /^ok \(findings-[0-9]+:/)) { told[$3] = 1; after[$3] = 1; next }
     ($3 in rv) && $2 ~ /^close(:|$)/ && $5 ~ /^ok/ { shut[rv[$3]] = 1 }
