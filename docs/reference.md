@@ -491,6 +491,9 @@ A `costs: money` PR waits for you whatever the HLD grants. A PR that touches `.c
 `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile` (in any repo: each changes what checks a
 merge or what the agents may do) is under no HLD, so no grant covers it, and so is one that touches
 the board's `hld/`, except the plan PR in the shape § Decomposing an HLD gives (§ Commands).
+A PR that touches `.claude/`, `.github/`, `hooks/` or a root makefile waits for you under either
+merge mode: under `merge = agent`, `swarm.sh merge` holds a story PR that touches one, in any case
+of letters, and you merge it by hand (§ Merging).
 `lead_epics = on` (§ Settings) lets the lead set any epic active with no HLD at all; with it `off`,
 the epic guard refuses an epic that goes active without an `agreed:` date, a `parent:`, or an `hld:`
 whose HLD grants `epics` (§ The lead, § Merging). A draft epic that one of these lets go active
@@ -2175,7 +2178,7 @@ When its builder's pane cannot be closed, its build and state stay, and the next
 again. One whose PRs did not all merge, such as a story a board PR dropped, only loses its state. On a board outside the repo it deletes the file of the item that merged.
 Reconciles in one project run one at a time (merges through a merge queue run side by side): one
 waits up to 300 seconds (`SWARM_RECONCILE_WAIT`) for `.swarm/reconcile.lock`, then stops naming it. `swarm.sh unblock` then readies a
-blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges, apart from a story's review agent, which may merge that story's own PR. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
+blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`). It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one; a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`). When it still cannot read them, it holds the PR and says why. A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands. `--board` and `--release` PRs cannot change those paths. Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story. The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges, apart from a story's review agent, which may merge that story's own PR. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
 not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
 <PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
@@ -2209,8 +2212,9 @@ could not confirm. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
 PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (the HLD
 `swarm.sh grants <PR URL>` prints). It reads that grant once the PR's head is green. With the grant,
-the holds of `merge = agent` apply too, so a `costs: money` story's PR, and a board PR that changes a
-`costs:` line, still wait for you. Without it, `merge` refuses with
+the `costs:` hold of `merge = agent` applies too, so a `costs: money` story's PR, and a board PR that changes a
+`costs:` line, still wait for you; the protected-path hold is `merge = agent`'s alone, since under
+`merge = human` the grant lookup already refuses a PR that touches one of those paths, the names as written. Without it, `merge` refuses with
 `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`. When a board
 story, the PR's files, or its head or base cannot be read, so the HLD over it is unknown, it refuses with
 `cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. `merge` reads the grant,

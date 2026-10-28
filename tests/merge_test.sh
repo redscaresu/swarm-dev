@@ -482,7 +482,11 @@ fresh; workflows ci multi; printf 'on: [pull_request,\n  push]\n' > "${FX}/wf.mu
 check "an on: [list] over several lines is not skipped: main-ci error naming it" logged '^main-ci s error .github/workflows/multi.yml'
 fresh; paths flat paths "'docs/*'"; merge "${URL}"
 is "* stops at /: docs/* does not cover docs/stories/s.md" 0 "${rc}"
-fresh; paths code paths 'bin/**'; echo 101 > "${FX}/nfiles"; merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
+# The compare at the pinned head lists all 101 (protected_hold reads the files there), while the PR's
+# files API lists one, so ci_gate main cannot tell which paths the PR changes.
+fresh; paths code paths 'bin/**'; echo 101 > "${FX}/nfiles"
+{ printf '{"files":[{"filename":"docs/stories/s.md","status":"modified"}'; for i in $(seq 2 101); do printf ',{"filename":"docs/f%s.md","status":"modified"}' "${i}"; done; echo ']}'; } > "${FX}/compare.main"
+merge SWARM_MERGE_CI_SECONDS=0.5 "${URL}"
 check "with not every file listed, a path-filtered workflow is waited for" logged '^main-ci s timeout (.github/workflows/code.yml (no run'
 fresh; touch "${FX}/no-merge-commit"; merge "${URL}"
 is "no merge commit: exits non-zero" 1 "${rc}"
