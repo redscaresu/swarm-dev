@@ -221,6 +221,7 @@ starts on one of those epics, `next` stops offering it.
 ## More
 
 - [The method](docs/method.md): how planning, building and merging work, in short.
+- [What the lead still does by hand](docs/lead-by-hand.md): the gaps a lead covers today, each with its open issue.
 - [Reference](docs/reference.md): every rule, setting, command and log.
 - [AGENTS.md](AGENTS.md) for working on swarm-dev itself, and [SECURITY.md](SECURITY.md) for
   reporting a vulnerability.
