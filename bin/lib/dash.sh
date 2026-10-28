@@ -783,3 +783,80 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   printf '%s' "${out}"
   [[ -z "${skipped}" ]] || echo "${skipped}"
 }
+
+# swarms — every swarm herdr runs on this machine, from its workspace, pane and agent lists, each
+# read once: each workspace labelled `swarm-lead · <label>` as a project, headed by <label> and its
+# dir, then its workspaces, the lead's first, each with its agents and their states. A workspace's
+# dirs are its panes' cwds, each taken up to the nearest folder with .claude/swarm/config, as
+# lead_project finds the lead's project, and one in a story worktree (<dir>-wt/<slug>, or a folder
+# in it) as <dir>; the lead's dir is its first pane's. Another workspace is a project's when one of its dirs is the lead's, or holds
+# the lead's dir in its board (board_dir in its .claude/swarm/config: a board kept outside the repo,
+# where the lead runs), and its label is `<part> · ...`, where <part> is the lead's <label>, the dir's name, or the dir's name and
+# a -<6 hex> path hash (project_label's forms): never by a prefix of another project's label, nor by
+# a dir name two projects share. A workspace no lead owns is left out. Dies when herdr gives no
+# workspace, pane or agent list, or one that is not JSON.
+swarms() {
+  local ws panes agents
+  ws="$(herdr workspace list 2>/dev/null)" || die "swarms: herdr gave no workspace list"
+  panes="$(herdr pane list 2>/dev/null)" || die "swarms: herdr gave no pane list"
+  agents="$(herdr agent list 2>/dev/null)" || die "swarms: herdr gave no agent list"
+  SWARM_WS="${ws}" SWARM_PANES="${panes}" SWARM_AGENTS="${agents}" SWARM_SEP="${WORKSPACE_SEP}" python3 -I -c '
+import json, os, re, sys
+e = os.environ
+sep = e["SWARM_SEP"]; lead = "swarm-lead" + sep
+def items(name, key):
+    try:
+        return json.loads(e[name])["result"][key]
+    except (ValueError, KeyError, TypeError):
+        sys.exit("swarm: swarms: herdr gave a %s list that is not JSON" % key[:-1])
+def ws_of(x):
+    return x.get("workspace_id") or (x.get("pane_id") or "").split(":")[0]
+def up(d, found):
+    while d not in ("", "/") and not found(d):
+        d = os.path.dirname(d)
+    return d if d not in ("", "/") else ""
+def project(d):
+    p = up(d, lambda p: os.path.isfile(os.path.join(p, ".claude", "swarm", "config"))) \
+        or up(d, lambda p: os.path.dirname(p).endswith("-wt")) or d
+    parent = os.path.dirname(p)
+    return parent[:-3] if parent.endswith("-wt") else p
+def home(ld, d):
+    try:
+        with open(os.path.join(d, ".claude", "swarm", "config")) as f:
+            board = next((v.strip() for k, _, v in (l.split("#", 1)[0].partition("=") for l in f) if k.strip() == "board_dir" and v.strip()), "")
+    except OSError:
+        board = ""
+    if board == "~" or board.startswith("~/"):
+        board = e.get("HOME", "") + board[1:]
+    board = board and os.path.realpath(os.path.join(d, board))
+    return ld == d or bool(board) and (ld == board or ld.startswith(board + "/"))
+def fits(part, own, d):
+    base = os.path.basename(d)
+    return part in (own, base) or re.fullmatch(re.escape(base) + "-[0-9a-f]{6}", part) is not None
+workspaces, panes, agents = items("SWARM_WS", "workspaces"), items("SWARM_PANES", "panes"), items("SWARM_AGENTS", "agents")
+dirs, held = {}, {}
+for p in panes:
+    c = (p.get("cwd") or "").rstrip("/")
+    if c:
+        dirs.setdefault(ws_of(p), []).append(project(c))
+for a in agents:
+    held.setdefault(ws_of(a), []).append("%s (%s)" % (a.get("name") or a.get("pane_id"), a.get("agent_status") or "unknown"))
+leads = [(w["workspace_id"], w["label"][len(lead):], (dirs.get(w["workspace_id"]) or [""])[0])
+         for w in workspaces if (w.get("label") or "").startswith(lead)]
+if not leads:
+    print("no swarm runs here: herdr has no %s<project> workspace" % lead); sys.exit(0)
+owned = {}
+for w in workspaces:
+    label = w.get("label") or ""
+    if label.startswith(lead) or sep not in label:
+        continue
+    part = label.split(sep, 1)[0]
+    owner = next((i for d in dirs.get(w["workspace_id"], []) for i, own, ld in leads if ld and home(ld, d) and fits(part, own, d)), None)
+    if owner is not None:
+        owned.setdefault(owner, []).append(w)
+labels = {w["workspace_id"]: w.get("label") or "" for w in workspaces}
+for i, own, d in leads:
+    print("%s  %s" % (own, d or "(no pane)"))
+    for w in [i] + [x["workspace_id"] for x in owned.get(i, [])]:
+        print("  %s: %s" % (labels[w], ", ".join(held.get(w, [])) or "no agents"))'
+}
