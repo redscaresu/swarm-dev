@@ -59,7 +59,7 @@ for f in re.findall(r"`([^`]*)`", sys.argv[1]):
 
 # Every form guard_rule shows, in order, and what this test does with it: allow (fed to the guard,
 # which must pass it), refuse (fed, must be refused) or none (not a guard matter: the variable delete
-# that stopped a builder on a permission prompt). The merge and waits are each brief's own; a conductor never
+# that stopped a builder on a permission prompt). The waits are each brief's own; a conductor never
 # waits on CI, so it is shown its own watch and no wait-pr. Today the rm -rf and swarm.sh wait and watch
 # rows never say merge, git, cd or a kill, so the guard's shell fast path passes them before its Python
 # rules run: their allow checks go red only if a later guard rule refuses them. Whether auto mode
@@ -69,18 +69,14 @@ cd <dir>; <command>	refuse
 --body \"\$(cat <<'EOF' ... EOF)\"	allow"
 FORMS_TAIL="rm -rf <absolute path>	allow
 rm -rf \"\$SP/\$m\"	none"
-# Each brief's own merge form (a story PR's pinned to the reviewed head, a conductor's board PR), then its waits.
-OWN_BUILDER="swarm.sh merge --head <sha> <PR URL>	allow
-swarm.sh wait-pr --head <sha> <PR URL>	allow"
-OWN_REVIEW="swarm.sh merge --head <sha> <PR URL>	allow
-swarm.sh wait --stall <slug>	allow
+# Each brief's own waits. The rule shows no merge command: each brief gives its own, or none.
+OWN_BUILDER="swarm.sh wait-pr --head <sha> <PR URL>	allow"
+OWN_REVIEW="swarm.sh wait --stall <slug>	allow
 swarm.sh wait-pr <PR URL>	allow
 swarm.sh wait-pr --head <sha> <PR URL>	allow"
-OWN_EPIC="swarm.sh merge --board <PR URL>	allow
-swarm.sh watch --epic f	allow
+OWN_EPIC="swarm.sh watch --epic f	allow
 swarm.sh wait <slug>	allow"
-OWN_BACKLOG="swarm.sh merge --board <PR URL>	allow
-swarm.sh watch --backlog	allow
+OWN_BACKLOG="swarm.sh watch --backlog	allow
 swarm.sh wait <slug>	allow"
 
 # call <command> — the guard's exit code on <command> as a swarm agent's Bash call from the project.
@@ -107,7 +103,8 @@ PY
 }
 
 # brief_forms <name> <brief> <own> — the brief holds guard_rule with exactly the listed forms and
-# <own>, its merge and wait forms, in their place; the guard passes or refuses each Bash form as the list says, and the text-only guidance is there.
+# <own>, its wait forms, in their place; the guard passes or refuses each Bash form as the list says,
+# and the text-only guidance is there.
 brief_forms() {
   local rule want raw mode
   rule="$(rule_of "$2")"
@@ -122,6 +119,8 @@ brief_forms() {
   done < <(paste <(spans "${rule}" | cut -f1) <(cut -f2 <<< "${want}"))
   check "the $1 brief states the Write tool and quoted-heredoc guidance" "yes|yes" \
     "$(has 'Text that mentions a merge (a PR body, a comment) goes in a file through the Write tool, passed with --body-file, or into a gh pr create, edit or comment as a quoted heredoc' "${rule}")|$(has 'A gh api call that carries it is refused as a raw merge, and so is Bash that writes it to a file, through a redirect or tee' "${rule}")"
+  check "the $1 brief says the merge command its brief gives runs alone" yes \
+    "$(has 'The agent that merges runs the merge command its brief gives alone in its Bash call, joined to nothing' "${rule}")"
   # shellcheck disable=SC2016 # backticks to match, not run
   check "the $1 brief's no-prompt delete is the path spelled out in full" yes \
     "$(has 'Delete a scratch path you made with the path spelled out in full, `rm -rf <absolute path>`: auto mode ran that for a builder with no permission prompt' "${rule}")"
@@ -131,6 +130,9 @@ for m in human agent; do brief_forms "builder (merge = ${m})" "$(builder "${m}")
 brief_forms review "$(lib "review_brief s1 https://github.com/o/r/pull/7 main ${P}/.swarm/reviews/s1.md abc 1")" "${OWN_REVIEW}"
 brief_forms conductor "$(lib 'conduct_brief f')" "${OWN_EPIC}"
 brief_forms "backlog conductor" "$(lib 'conduct_brief backlog')" "${OWN_BACKLOG}"
+# The merge sentence, which names no command: a lone swarm.sh merge passes, one joined by && is refused.
+check "the guard passes a lone swarm.sh merge and refuses one joined to another command" "0|2" \
+  "$(call "${SWARM} merge --head abc1234 https://github.com/o/r/pull/7")|$(call "cd ${P}/sub || exit 1 && ${SWARM} merge --head abc1234 https://github.com/o/r/pull/7")"
 # What the rule says is refused, beside the forms that pass: merge text in a gh api call (a comment
 # reply), and merge text a Bash redirect writes to a file.
 check "the guard refuses merge text in a gh api comment, and written to a file by Bash" "2|2" \

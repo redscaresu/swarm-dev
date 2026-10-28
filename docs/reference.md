@@ -3066,10 +3066,9 @@ rules fail open: an error in them never refuses a call, even one whose command a
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
 Every builder, review agent and conductor brief lists the forms the guard passes:
-`cd <dir> || exit 1 && <command>`, and the brief's own merge form, alone in its call for the agent
-that merges: `swarm.sh merge --head <sha> <PR URL>` for a story PR, so the head that passed review is
-the one that merges, and `swarm.sh merge --board <PR URL>` for a conductor's board PR. Then come the
-brief's own waits. A builder's is `swarm.sh wait-pr --head`. A review agent's are
+`cd <dir> || exit 1 && <command>`, a merge run alone in its call (the brief gives its own merge
+command, or none under `merge = human`, so the rule names none), and the brief's own waits. A
+builder's is `swarm.sh wait-pr --head`. A review agent's are
 `swarm.sh wait --stall` and `swarm.sh wait-pr`, with `--head` after the builder pushes. A
 conductor's are its own `swarm.sh watch --epic <epic>` (or `--backlog`) and `swarm.sh wait`, since
 it never waits on CI. Text that mentions a merge goes through the Write tool, or into a `gh pr`
