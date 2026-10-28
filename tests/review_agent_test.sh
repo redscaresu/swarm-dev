@@ -86,7 +86,8 @@ case "$1 $2" in
 esac
 EOF
 # sessions: Claude Code's list, one entry per agent started, busy until done/<name> exists, waiting
-# while waiting/<name> does, and left out (gone) while gone/<name> does.
+# while waiting/<name> does, and left out (gone) while gone/<name> does. Written aside, then moved, so a
+# wait reading it meanwhile never finds it empty.
 cat > "${ROOT}/sessions" <<EOF
 #!/bin/sh
 awk -v d="${ROOT}" 'BEGIN { printf "[" }
@@ -94,7 +95,7 @@ awk -v d="${ROOT}" 'BEGIN { printf "[" }
   { s = system("test -e " d "/done/" \$1) == 0 ? "idle" : "busy"
     if (system("test -e " d "/waiting/" \$1) == 0) s = "waiting"
     printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (k++ ? "," : ""), \$3, s }
-  END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json"
+  END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json.new" && mv "${ROOT}/claude.json.new" "${ROOT}/claude.json"
 EOF
 printf '#!/bin/sh\ncat "%s/head"\n' "${ROOT}" > "${STUB_BIN}/gh"
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh" "${ROOT}/sessions"; mkdir -p "${ROOT}/done" "${ROOT}/waiting" "${ROOT}/gone"; echo '[]' > "${ROOT}/claude.json"
@@ -484,11 +485,11 @@ in_review_pane() { (cd "${ROOT}/svc-wt/f1" && env -u SWARM_PROJECT HERDR_ENV=1 H
 printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "- codex: bin/f1.sh:3 F1-FIX-ME" "## Declined" "none" "## Out of scope" "none" > "${p}/.swarm/reviews/f1.md"
 check "with f1's builder busy, the brief's tell refuses, saying it is still working, and sends the builder nothing" "1|yes|no" \
   "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "f1 is still working" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)"
-# The brief's wait returns once the builder goes idle, not before.
-in_review_pane "${wait_cmd} 10000" > "${ROOT}/wait-f1.out" & wpid=$!
+# The brief's wait returns once the builder goes idle, not before (60 s at most, for a loaded machine).
+in_review_pane "${wait_cmd} 60000" > "${ROOT}/wait-f1.out" & wpid=$!
 sleep 1; check "the brief's wait on f1 holds while f1's builder works" "yes" "$(kill -0 "${wpid}" 2>/dev/null && echo yes || echo no)"
 done_agent f1
-rc=0; for _ in $(seq 100); do kill -0 "${wpid}" 2>/dev/null || break; sleep 0.1; done; wait "${wpid}" || rc=$?
+rc=0; for _ in $(seq 600); do kill -0 "${wpid}" 2>/dev/null || break; sleep 0.1; done; wait "${wpid}" || rc=$?
 check "and returns 0, idle, once it is idle" "0|idle" "${rc}|$(tail -1 "${ROOT}/wait-f1.out")"
 o="$(in_review_pane "${tell_cmd}")" || echo "FAIL the brief's tell to an idle f1 exited non-zero: ${o}"
 check "with f1's builder idle, the brief's tell is logged tell:findings f1 ok, from the review agent" "tell:findings	f1	ok|yes" \
