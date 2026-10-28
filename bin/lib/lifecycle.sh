@@ -2447,7 +2447,7 @@ for p in prs:
       awk -v n="${nwo}" 'NF { print "+ " n " " $0 }' <<< "${rows}"
     fi
     LEAD_PRS_FAILS="$(awk -v r="${name}" '$1 != r' <<< "${LEAD_PRS_FAILS}")"
-  done < <(stories_fm repo | awk -F '\x1f' '{ r = $2; gsub(/["\047]/, "", r); if (r == "") r = "."; if (r == "." || r ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) print r }' | sort -u)
+  done < <(stories_fm repo | awk -F $'\x1f' '{ r = $2; gsub(/["\047]/, "", r); if (r == "") r = "."; if (r == "." || r ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) print r }' | sort -u)
 }
 
 # open_prs_failed <name> — count a heads pass that could not read <name>'s open PRs; the LEAD_PRS_WARN_AFTER-th
