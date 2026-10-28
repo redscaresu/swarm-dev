@@ -32,14 +32,16 @@ check() { # <name> <want> <got>
 
 # herdr: workspaces, tabs, panes and agents in ${ROOT}/herdr.json. A workspace w<n> is made with a
 # placeholder tab w<n>:t0 whose pane has its --cwd; each tab or pane is <workspace>:t<n> or :p<n>.
-# A file ${ROOT}/refuse makes every rename fail, ${ROOT}/refuse-tab every tab create, and
-# ${ROOT}/hang makes workspace list sleep 60 s before answering.
+# A file ${ROOT}/refuse makes every rename fail, ${ROOT}/refuse-tab every tab create, ${ROOT}/refuse-anchor
+# the create of a tab labelled lead-agents, and ${ROOT}/hang makes workspace list sleep 60 s before
+# answering. A file lock (herdr.lock) serialises the stub's reads and writes, for starts run at once.
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nexec python3 "%s/bin/herdr.py" "$@"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat > "${ROOT}/bin/herdr.py" <<'EOF'
-import json, os, sys, time
+import fcntl, json, os, sys, time
 H = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 F = os.path.join(H, "herdr.json")
+_lock = open(os.path.join(H, "herdr.lock"), "w"); fcntl.flock(_lock, fcntl.LOCK_EX)
 s = json.load(open(F)) if os.path.exists(F) else {"n": 0, "workspaces": [], "tabs": [], "panes": [], "agents": []}
 a = sys.argv[1:]
 with open(os.path.join(H, "herdr.log"), "a") as log:
@@ -60,7 +62,7 @@ elif cmd == "workspace create":
     s["tabs"].append({"tab_id": tab, "label": "1", "workspace_id": ws}); pane(ws, tab, opt("--cwd"))
     out({"workspace": {"workspace_id": ws}, "tab": {"tab_id": tab}})
 elif cmd == "tab create":
-    if os.path.exists(os.path.join(H, "refuse-tab")):
+    if os.path.exists(os.path.join(H, "refuse-tab")) or (os.path.exists(os.path.join(H, "refuse-anchor")) and opt("--label") == "lead-agents"):
         sys.stderr.write("error: tab create refused\n"); sys.exit(1)
     ws = opt("--workspace"); tab = "%s:t%d" % (ws, new())
     s["tabs"].append({"tab_id": tab, "label": opt("--label"), "workspace_id": ws})
@@ -477,6 +479,29 @@ rm -f "${ROOT}/hang"
 check "a herdr that hangs on its lists is cut short, and the agent opens in the lead's own workspace, saying why" \
   "${la}|yes|yes" \
   "$(tab_ws slow-a | cut -d'|' -f2)|$(grep -q 'the agent opens in this workspace instead' "${ROOT}/lead.err" && echo yes || echo "no: $(tail -1 "${ROOT}/lead.err")")|$([[ ${dt} -lt 40 ]] && echo yes || echo "no, ${dt}s")"
+
+# --- Final round. A found lead-agents workspace with no pane at the project, where herdr refuses the
+# pane at the project dir: the agent opens in the lead's own workspace instead, saying why, and the
+# lead-agents workspace is left empty, so the outside dir is never its first pane's.
+lead "${C}" "${lc}" close hld-c2 > /dev/null || true
+touch "${ROOT}/refuse-anchor"; : > "${ROOT}/lead.err"
+lead "${C}" "${lc}" agent s12 s12 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+rm -f "${ROOT}/refuse-anchor"
+check "a refused pane at the project dir sends the agent to the lead's own workspace, saying why, and leaves the lead-agents workspace empty" \
+  "${lc}|yes|" \
+  "$(tab_ws s12 | cut -d'|' -f2)|$(grep -q 'would not open a pane at .* the agent opens in this workspace instead' "${ROOT}/lead.err" && echo yes || echo "no: $(tail -1 "${ROOT}/lead.err")")|$(ws_tabs "${hc#*|}")"
+
+# Two first agents the lead starts at once (plan-hld's surveys), with no record yet: the record's lock
+# makes the second wait for the first's workspace, so both open in one site-<hash> · lead-agents, one
+# workspace is made, and no lock is left.
+n="$(creates)"
+lead "${Q}" "${lq}" agent sv-1 sv-1 "${Q}" survey "${ROOT}/brief.md" > /dev/null & p1=$!
+lead "${Q}" "${lq}" agent sv-2 sv-2 "${Q}" survey "${ROOT}/brief.md" > /dev/null & p2=$!
+wait "${p1}" "${p2}" || true
+q1="$(tab_ws sv-1)"; q2="$(tab_ws sv-2)"
+check "two first agents started at once share one lead-agents workspace, one is made, and no lock is left" \
+  "site-$(hash_of "${Q}")${SEP}lead-agents|yes|$((n + 1))|no lock" \
+  "${q1%|*}|$([[ "${q1#*|}" == "${q2#*|}" ]] && echo yes || echo "no: ${q1#*|} vs ${q2#*|}")|$(creates)|$([[ -e "${Q}/.swarm/lead/agents-workspace.lock" ]] && echo 'lock left' || echo 'no lock')"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

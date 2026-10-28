@@ -829,10 +829,12 @@ gives one carries the project's label, joined to the rest by ` · `:
   that label, even once its panes are all in other repos' worktrees, whose paths say nothing about
   whose they are; one relabelled is left alone, and a new one made. An agent started outside the
   project, as from a board kept outside the repo, keeps a pane at the project directory ahead of its
-  own, so the workspace stays the project's. When herdr gives no list, or no workspace, within a
-  few seconds, the agent opens in the lead's own workspace, and swarm.sh says so. A conductor still
-  opens in its epic's workspace, and `conduct` refuses an epic named `lead-agents`, or with that
-  `parent:`, as it refuses one named `backlog`.
+  own, so the workspace stays the project's while that pane is open. When herdr gives no list, no
+  workspace or no such pane within a few seconds, the agent opens in the lead's own workspace, and
+  swarm.sh says so. Two first agents started at once share one workspace: the record is made under a
+  lock, and the second waits for the first's. A conductor still opens in its epic's workspace, and
+  `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it refuses one named
+  `backlog`.
 
 `<project>` is the project directory's name. When herdr already lists a workspace labelled
 `<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
