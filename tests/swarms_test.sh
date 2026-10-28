@@ -11,7 +11,8 @@
 # dir. Two more projects keep their board outside the repo, where their lead runs: d/svc with
 # board_dir = ../svc-board (after an older board_dir line, which the last one overrides), and e/web
 # with board_dir = ~/web-board. a/app-2's lead-agents workspace has only a pane in another repo's
-# worktree, and is its own by the project's lead-agents record. f/foo-wt/c is a main checkout in a
+# worktree, and is its own by the project's lead-agents record; so is d/svc's, whose lead runs in its
+# board outside the repo (d/svc is found through its conductor's pane). f/foo-wt/c is a main checkout in a
 # folder whose name ends in -wt. b/app's label is its real path hash; app-000000 · e11 in b/app is a
 # decoy. app · e15's first pane is in c/app, where no lead runs, so it is no project's (its dir is its
 # first pane's, as herdr_workspaces takes it), though its second is in a/app. The lead's own agent
@@ -60,6 +61,8 @@ mkdir -p "${C}" "${ROOT}/d/svc/.claude/swarm" "${ROOT}/d/svc-board/epics"
 printf 'board_dir = docs\nboard_dir = ../svc-board   # outside the repo\n' > "${ROOT}/d/svc/.claude/swarm/config"
 mkdir -p "${A2}/.swarm/lead" "${ROOT}/f/foo-wt/c/.claude/swarm"
 printf 'w12\tapp-2 · lead-agents\n' > "${A2}/.swarm/lead/agents-workspace"
+mkdir -p "${ROOT}/d/svc/.swarm/lead"
+printf 'w16\tsvc · lead-agents\n' > "${ROOT}/d/svc/.swarm/lead/agents-workspace"
 : > "${ROOT}/f/foo-wt/c/.claude/swarm/config"
 # b/app's path hash, as path_hash in bin/lib/build.sh makes it.
 crc="$(printf '%s' "${B}" | cksum)"; HB="$(printf '%06x' $((${crc%% *} % 16777216)))"
@@ -91,12 +94,13 @@ ws = [("w8", "app-2 · e8", [r + "/a/app"]),
       ("w12", "app-2 · lead-agents", [r + "/x/other-wt/s9"]),
       ("L6", "swarm-lead · c", [r + "/f/foo-wt/c"]),
       ("w13", "c · e13", [r + "/f/foo-wt/c"]),
-      ("w15", "app · e15", [r + "/c/app", r + "/a/app"])]
+      ("w15", "app · e15", [r + "/c/app", r + "/a/app"]),
+      ("w16", "svc · lead-agents", [r + "/x/other-wt/s9"])]
 agents = [("L1:p1", "", "working"), ("w1:p1", "conduct-e1", "working"), ("w1:p2", "s1", "idle"),
           ("w2:p1", "conduct-e2", "working"), ("w2:p2", "s2", "idle"),
           ("w3:p1", "conduct-e3", "working"), ("w3:p2", "s3", "blocked"),
           ("w4:p1", "conduct-e4", "idle"), ("w6:p1", "x6", "idle"), ("w8:p1", "x8", "idle"), ("w9:p1", "conduct-e9", "working"), ("w10:p1", "conduct-e10", "idle"),
-          ("w11:p1", "x11", "idle"), ("w12:p1", "planner", "idle"), ("w13:p1", "conduct-e13", "idle")]
+          ("w11:p1", "x11", "idle"), ("w12:p1", "planner", "idle"), ("w13:p1", "conduct-e13", "idle"), ("w16:p1", "svc-planner", "idle")]
 print(json.dumps({
     "panes": [{"pane_id": "%s:p%d" % (i, n + 1), "workspace_id": i, "cwd": c} for i, _, cs in ws for n, c in enumerate(cs)],
     "agents": [{"name": n, "pane_id": p, "workspace_id": p.split(":")[0], "agent_status": st} for p, n, st in agents]
@@ -122,6 +126,7 @@ app-${HB}  ${B}
 svc  ${ROOT}/d/svc-board
   swarm-lead · svc: no agents
   svc · e9: conduct-e9
+  svc · lead-agents: svc-planner
 web  ${ROOT}/home/web-board
   swarm-lead · web: no agents
   web · e10: conduct-e10

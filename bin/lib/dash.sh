@@ -789,17 +789,19 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
 # headed by <label> and the lead's dir, then its workspaces, the lead's first, each with its agents'
 # names (one herdr gives no name as `<pane> (no name)`). A pane's dir is its cwd taken up to the
 # nearest folder with .claude/swarm/config, as lead_project finds the lead's project; one in a story
-# worktree (<dir>-wt/<slug>, or a folder in it) is <dir>'s when <dir> has that config. The lead's dir
-# is its first pane's. A pane in a worktree of a repo with no swarm config (another repo's) is
+# worktree (<dir>-wt/<slug>, or a folder in it) is <dir>'s when <dir> has that config. The lead's
+# dir is its first pane's. A pane in a worktree of a repo with no swarm config (another repo's) is
 # skipped, as herdr_workspaces skips it. Another workspace is a project's when its dir (its first
-# pane's, as herdr_workspaces takes it) is the lead's, or holds the lead's dir in its board (the last board_dir in its config: a board kept outside the
-# repo, where the lead runs), or the project's lead-agents record (LEAD_AGENTS_RECORD) holds the
-# workspace's id and label (its panes may all be in other repos' worktrees); and its label is
-# `<part> · ...`, where <part> is the lead's <label>, the dir's name, or the dir's name and its own
-# path_hash (project_label's forms). So never by a prefix of another project's label, nor by a dir
-# name two projects share. A workspace no lead owns is left out, as is one an older swarm.sh labelled
-# with no ` · `. Dies when herdr gives no workspace, pane or agent list in time, naming it, or one
-# that is not JSON.
+# pane's, as herdr_workspaces takes it) is the lead's, or holds the lead's dir in its board (the
+# last board_dir in its config: a board kept outside the repo, where the lead runs), or the
+# project's lead-agents record (LEAD_AGENTS_RECORD) holds the workspace's id and label (its panes
+# may all be in other repos' worktrees: the record is read from each project some pane is in, so a
+# lead whose board is outside the repo, with no pane left in the project, names no project to read
+# it from, and that workspace is left out); and its label is `<part> · ...`, where <part> is the
+# lead's <label>, the dir's name, or the dir's name and its own path_hash (project_label's forms).
+# So never by a prefix of another project's label, nor by a dir name two projects share. A workspace
+# no lead owns is left out, as is one an older swarm.sh labelled with no ` · `. Dies when herdr
+# gives no workspace, pane or agent list in time, naming it, or one that is not JSON.
 swarms() {
   local ws panes agents
   ws="$(swarms_read workspace)" || die "swarms: ${ws}"
