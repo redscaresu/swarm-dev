@@ -48,7 +48,8 @@ case "$*" in
   "pr list -R ${O}/ucl-other "*"--json url,headRefName,headRefOid,"*) cat "${R}/prs-other.json" ;;
   "pr list"*"--json url,headRefName,headRefOid,"*)
     [ ! -e "${R}/gh-fail" ] || exit 1
-    if [ -e "${R}/gh-slow" ]; then sleep 20; touch "${R}/slow-done"; fi
+    # One process, so a kill of the call ends it: a shell would outlive its killed sleep on macOS.
+    [ ! -e "${R}/gh-slow" ] || exec perl -e 'sleep 20; open my $f, ">", shift' "${R}/slow-done"
     cat "${R}/prs.json" ;;
   "pr list"*) echo '[]' ;;
   *) exit 1 ;;
@@ -129,8 +130,9 @@ board() {
   prs
 }
 
-# lead [VAR=value...] — one wait --lead run with those settings, its timeout LEAD_MS (0: one read).
-lead() { (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 "$@" bash "${SWARM}" wait --lead "${LEAD_MS:-0}" 2>&1) || true; }
+# lead [VAR=value...] — one wait --lead run with those settings, its timeout LEAD_MS (0: one read). Each gh
+# read may take 600 s unless a setting says otherwise: a loaded machine can take 30 s to start the stub.
+lead() { (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 SWARM_LEAD_PRS_WAIT=600 "$@" bash "${SWARM}" wait --lead "${LEAD_MS:-0}" 2>&1) || true; }
 has() { grep -qxF "$1" <<< "$2"; }
 # silent <name> — read the queue once; the check passes when it prints nothing, and shows what it printed.
 silent() { local got; got="$(lead "${@:2}")"; check "$1" test -z "${got}"; [[ -z "${got}" ]] || printf '       got: %s\n' "${got//$'\n'/$'\n'       got: }"; }
