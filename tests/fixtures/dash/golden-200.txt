@@ -25,9 +25,9 @@ bravo  swarm-dev 0.0.0  next conduct bravo-ui                                   
 14 days ▁▁▁▁▁▁▁▁▁▁▃▇▃▇  today 2  7-day avg 0.9 · rate ████████████ 0.9 of best 0.9/day · running ████████████ 1 of peak 1 in 7 days
 ╭─ needs you ─────────────────────────────────────────────────────────────────────────────────────────────────────────╮ ╭─ recent ─────────────────────────────────────────────────────────────────────╮
 │ ! run lead story b-cert: renew the cert  waits for: you: approve the renewal email  +1 more                         │ │ today  ✎ retry never backed off (#21)                                        │
-╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 11:45  · tell:findings b-fix                                                 │
-╭─ lead's queue ──────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 11:35  · finish b-done-2                                                     │
-│ ! merge bravo#21 (✗ failing · behind)  b-fix                                                                        │ │ 11:30  ⇡ merged #22 story/b-done-2                                           │
+│ ! merge bravo#21 (✗ failing · behind)  b-fix                                                                        │ │ 11:45  · tell:findings b-fix                                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 11:35  · finish b-done-2                                                     │
+╭─ lead's queue ──────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 11:30  ⇡ merged #22 story/b-done-2                                           │
 │ ! answer b-fix (waiting on input): herdr agent read b-fix                                                           │ │ 11:10  · review b-fix                                                        │
 │ ! look at b-page: working 45 min with no commit, edit, session-log write or PR update                               │ │ 08:40  ▶ story b-page                                                        │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 08:05  · finish b-done-1                                                     │

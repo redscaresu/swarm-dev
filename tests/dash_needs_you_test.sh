@@ -181,8 +181,17 @@ litem stories/m-green.md '' 'status: review' 'prs: https://github.com/o/l/pull/1
 litem stories/m-fail.md '' 'status: review' 'prs: https://github.com/o/l/pull/2'
 litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
 litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
-# A costs: money merge: with merge = human the lead's, as any merge; with merge = agent the user's (below).
+# A costs: money merge: the user's under either merge setting.
 litem stories/m-paid.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/5'
+# With merge = human a merge is the user's unless its agreed HLD grants merge (hgm) and it does not cost
+# money: g-ok is the lead's, g-paid (costs: money) and g-none (its HLD hg grants epics only) the user's,
+# as are the m- stories above, under no HLD. With merge = agent only the costs: money ones are (below).
+litem hld/hgm.md '' 'status: agreed' 'grants: [merge]' 'planned: 2026-10-01'
+litem epics/ge.md '' 'status: active' 'hld: hgm'
+litem epics/gn.md '' 'status: active' 'hld: hg'
+litem stories/g-ok.md '' 'status: review' 'epic: ge' 'prs: https://github.com/o/l/pull/7'
+litem stories/g-paid.md '' 'status: review' 'epic: ge' 'costs: money' 'prs: https://github.com/o/l/pull/8'
+litem stories/g-none.md '' 'status: review' 'epic: gn' 'prs: https://github.com/o/l/pull/10'
 # A story a close kept (kept:, its PR not reviewed): the lead's to review or drop, never a merge row.
 litem stories/k-kept.md '' 'status: review' 'prs: https://github.com/o/l/pull/6' 'kept: 2026-10-14 close (not reviewed)'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
@@ -245,8 +254,10 @@ for l in sys.stdin.read().splitlines():
 print("\n".join(out))' "$1" <<< "$2"
 }
 joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s ' '; }
-YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft epic d: /epic d" "! agree draft HLD h: /hld h")
-LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
+YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft epic d: /epic d" "! agree draft HLD h: /hld h"
+  "! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
+  "! merge g-paid (costs money): https://github.com/o/l/pull/8" "! merge g-none: https://github.com/o/l/pull/10")
+LEADS=("! merge g-ok: https://github.com/o/l/pull/7"
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
   "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop"
   "! no agent on story l-na: swarm.sh hold l-na <reason>"
@@ -314,6 +325,14 @@ check "lead = session, merge = agent: a costs: money merge is under needs you" \
   has "! merge l#5 (✓ green) m-paid (costs money)" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead = session, merge = agent: a costs: money merge is not in the lead's queue" \
   lacks "! merge l#5 (✓ green) m-paid (costs money)" "$(joined "$(lbox "lead's queue" "${out}")")"
+# merge = agent keeps the rule from before grants: costs: money is the user's, every other merge the lead's.
+needs="$(joined "$(lbox "needs you" "${out}")")"; queue="$(joined "$(lbox "lead's queue" "${out}")")"
+for want in "! merge l#1 (✓ green) m-green" "! merge g-ok: https://github.com/o/l/pull/7" "! merge g-none: https://github.com/o/l/pull/10"; do
+  check "lead = session, merge = agent: '${want}' is in the lead's queue" has "${want}" "${queue}"
+  check "lead = session, merge = agent: '${want}' is not under needs you" lacks "${want}" "${needs}"
+done
+check "lead = session, merge = agent: a costs: money merge under a granting HLD is under needs you" \
+  has "! merge g-paid (costs money): https://github.com/o/l/pull/8" "${needs}"
 # An epic in review listing the same held PR: one row for it.
 litem epics/ep-paid.md '' 'status: review' 'prs: https://github.com/o/l/pull/5'; out="$(ldash 100)"
 check "lead = session, merge = agent: a held PR a story and its epic both list is one row" \
@@ -379,6 +398,29 @@ printf -- '---\nstatus: agreed\nplanned: 2026-10-24\n---\n\n# ha\n' > "${H}/docs
 mv "${ROOT}/hproj-wt/_board-plan-ha" "${ROOT}/hproj-wt/_board-finish-ha"
 check "an open finish PR is under status's Waiting on you" has "  finish PR awaiting merge: ha" "$(sed -n '/^Waiting on you$/,/^$/p' <<< "$(hrun status)")"
 check "an open finish PR is a dash needs-you row" has "! finish PR awaiting merge: ha" "$(joined "$(lbox "needs you" "$(hrun dash)")")"
+# lead = session and merge = human: a finish PR is the user's, grant or not; a plan PR the lead's only
+# when its HLD grants merge. merge = agent keeps both in the lead's queue.
+hrows() { # <config> <row> — "<needs you>|<lead's queue>": where dash in H draws the row, yes or no each
+  local out
+  printf '%s\n' "$1" > "${H}/.claude/swarm/config"; out="$(hrun dash)"
+  printf '%s|%s' "$(has "$2" "$(joined "$(lbox "needs you" "${out}")")" && echo yes || echo no)" \
+    "$(has "$2" "$(joined "$(lbox "lead's queue" "${out}")")" && echo yes || echo no)"
+}
+mkdir -p "${H}/.claude/swarm"
+printf -- '---\nstatus: agreed\nplanned: 2026-10-24\ngrants: [merge]\n---\n\n# ha\n' > "${H}/docs/hld/ha.md"
+check "lead = session, merge = human: a finish PR under a granting HLD is under needs you" \
+  test "$(hrows "lead = session" "! finish PR awaiting merge: ha")" = "yes|no"
+check "lead = session, merge = agent: a finish PR is in the lead's queue" \
+  test "$(hrows "$(printf 'lead = session\nmerge = agent')" "! finish PR awaiting merge: ha")" = "no|yes"
+mv "${ROOT}/hproj-wt/_board-finish-ha" "${ROOT}/hproj-wt/_board-plan-ha"
+printf -- '---\nstatus: agreed\ngrants: [merge]\n---\n\n# ha\n\n## Epics\n' > "${H}/docs/hld/ha.md"
+check "lead = session, merge = human: a plan PR under a granting HLD is in the lead's queue" \
+  test "$(hrows "lead = session" "! plan PR awaiting merge: ha")" = "no|yes"
+printf -- '---\nstatus: agreed\ngrants: [epics]\n---\n\n# ha\n\n## Epics\n' > "${H}/docs/hld/ha.md"
+check "lead = session, merge = human: a plan PR with no merge grant is under needs you" \
+  test "$(hrows "lead = session" "! plan PR awaiting merge: ha")" = "yes|no"
+check "lead = session, merge = agent: a plan PR with no merge grant is in the lead's queue" \
+  test "$(hrows "$(printf 'lead = session\nmerge = agent')" "! plan PR awaiting merge: ha")" = "no|yes"
 
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

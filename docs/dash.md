@@ -114,8 +114,11 @@ is one column, top to bottom:
   have reviewed it, or `swarm.sh close <slug> --drop`, which closes the PR and sends the story back
   to ready.
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
-  you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic) and
-  everything else from the list above moves to this box under it: every `merge`, `answer`, `close`,
+  you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic, and a
+  merge only you may make) and everything else from the list above moves to this box under it. A
+  `costs: money` merge stays in needs you. With `merge = human`, so does any other `merge` row unless
+  the story's or epic's agreed HLD grants `merge`, a plan PR row unless its HLD grants `merge`, and
+  every finish PR row. The box holds the other `merge` rows, every `answer`, `close`,
   `look at`, `staged epic`, `set draft epic <slug> active` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`), and `review kept story` for
   every story a close kept (`swarm.sh review` or `swarm.sh close <slug> --drop`). It is left out when

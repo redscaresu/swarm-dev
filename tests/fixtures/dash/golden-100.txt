@@ -41,9 +41,9 @@ rate ████████████ 0.9 of best 0.9/day · running ██�
 on call: fable·xhigh · 0 escalations today
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
 │ ! run lead story b-cert: renew the cert  waits for: you: approve the renewal email  +1 more      │
+│ ! merge bravo#21 (✗ failing · behind)  b-fix                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ lead's queue ───────────────────────────────────────────────────────────────────────────────────╮
-│ ! merge bravo#21 (✗ failing · behind)  b-fix                                                     │
 │ ! answer b-fix (waiting on input): herdr agent read b-fix                                        │
 │ ! look at b-page: working 45 min with no commit, edit, session-log write or PR update            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

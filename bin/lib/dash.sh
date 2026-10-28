@@ -641,7 +641,7 @@ dash_no_agent() {
 # pane reads) are named on a line under the frame, which is laid out a line shorter to make room; a
 # frame one line high has none to spare, and names none. The line is cut to DASH_W.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
+  local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" granted="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
   local testing="" p idle skipped="" more pass pending=0 out read_end lines="${DASH_H:-0}"
   # type -P: herdr on PATH, not dash_deadline's function of that name.
   if type -P herdr >/dev/null 2>&1; then
@@ -658,6 +658,21 @@ dash_render() {
       board+="${d}"$'\t'"${r}"$'\t'"${x%%$'\t'*}"$'\t'"$(cut -f2 <<< "${x}")"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\t'"$(cut -f3- <<< "${x}")"$'\n'
     done < <(board "${d}")
   done
+  # With lead = session and merge = human, "<dir>\t<slug>" for each review item and each agreed HLD with
+  # an open plan PR whose agreed HLD grants merge (item_hld, hld_grants): the lead merges those. From
+  # board files alone, no gh, as dash runs every frame; a grants: line hld_grants refuses grants nothing.
+  # shellcheck disable=SC2154 # assigned in another file
+  if [[ "${CFG_lead}" == session && "${CFG_merge}" == human ]]; then
+    while IFS=$'\t' read -r d r x; do
+      if [[ "${d}" == hld ]]; then
+        if [[ "${x}" == agreed ]] && hld_pr_open "${r}" plan; then f="${BOARD}/hld/${r}.md"; else continue; fi
+      elif [[ "${x}" == review ]]; then f="$(item_hld "${BOARD}/${d}/${r}.md")"
+      else continue; fi
+      [[ -n "${f}" ]] || continue
+      x="$(hld_grants "${f}" 2>/dev/null)" || x=""
+      if grep -qx merge <<< "${x}"; then granted+="${d}"$'\t'"${r}"$'\n'; fi
+    done < <(cut -f1-3 <<< "${board}")
+  fi
   # Each active epic with no stories whose depends_on still holds its planning up, as next reads it.
   while IFS= read -r f; do
     if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then waits+="$(basename "${f}" .md)"$'\t'"${x}"$'\n'; fi
@@ -742,7 +757,7 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # An x after the frame keeps its trailing newlines through $( ); python's failure returns.
   # shellcheck disable=SC2154 # assigned in another file
   out="$(SWARM_REPORT_END="${read_end}" DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
-  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_IDLE="${idle}" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
+  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_IDLE="${idle}" DASH_BOARD="${board}" DASH_GRANTED="${granted}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_NO_AGENT="${noagent}" DASH_NO_AGENT_AT="${noagent_at}" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${lines}" \
