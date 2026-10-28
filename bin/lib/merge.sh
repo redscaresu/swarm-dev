@@ -2885,9 +2885,9 @@ stacked_lines() {
 # builds whose parent moved or merged (stacked_lines; no section when there are none), what is
 # waiting on them, and what `next` would do, with next's idle: lines for blocked stories, ready stories with no build, and epics that can start or have no plan running (idle_warned, given the step next would take, so the epic that step names gets no line; a failed check warns on stderr); idle agents and blocked stories are only counted unless
 # --all. Each agent's row ends with its pane, its workspace's label and its tab's (herdr's workspace and
-# tab lists, each read once, after the shell's other reads and before status_report.py's pane reads; a tab
-# with no label shows the name swarm-dev gave it, as where does). A pane with no agent in it is shown as
-# empty: a start that failed. Panes
+# tab lists, each read once, after pane_check's pane reads and before status_report.py's, with the Stacked,
+# Waiting on you and Next reads after them, all under the one deadline; a tab with no label shows the name
+# swarm-dev gave it, as where does). A pane with no agent in it is shown as empty: a start that failed. Panes
 # closed by hand are left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
 # only for codex, an agent with no session recorded, and a retired one.
 # Its reads share one REPORT_SECONDS deadline (report_start; SWARM_REPORT_SECONDS sets another, for a
@@ -2932,9 +2932,9 @@ status_report() {
     while read -r pane name; do
       [[ "${own}" != *" ${pane} "* ]] || pane_check "${name}" "${pane}" > /dev/null
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)
-    # After the shell's other reads, as they only label (status_report.py's pane_where): a slow list costs no
-    # pane_check; status_report.py's own pane reads follow them under the same deadline. One herdr does not
-    # give leaves the workspace - and the tab its record's name.
+    # Read here, after pane_check and before status_report.py's pane reads, as they only label
+    # (status_report.py's pane_where); the Stacked, Waiting on you and Next reads below share the deadline
+    # and come after them. One herdr does not give leaves the workspace - and the tab its record's name.
     workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
     tabs="$(herdr tab list 2>/dev/null)" || tabs=""
     # Its pane reads (panes.pane_text, one per agent) keep to the same deadline and name themselves in the same skip file.

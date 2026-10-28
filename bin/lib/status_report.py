@@ -23,7 +23,10 @@ for record, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split(
                 "gone": "gone: session ended",
                 "idle": "idle: finished, or waiting for its next step",
                 "done": "idle: finished, or waiting for its next step"}.get(st, st)
-        ws, tab = pane_where(pane, (live[pane], a), (ws_labels, tab_labels), record)
+        try:   # an odd herdr entry (an id that is not hashable) costs this row its labels, not status its Agents
+            ws, tab = pane_where(pane, (live[pane], a), (ws_labels, tab_labels), record)
+        except Exception:
+            ws, tab = "-", record
         rows.append((name, what, f"pane {pane}, workspace {ws}, tab {tab}"))
 quiet = [r for r in rows if r[1].startswith(("idle", "done"))]
 shown = rows if show_all == "--all" else [r for r in rows if r not in quiet]

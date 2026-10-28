@@ -254,8 +254,8 @@ if agents is not None:
              "ids": (pane.split(":")[0], None), "where": (pane, "-", label)}
         try:
             a = agents.get(pane)
-            # Its workspace and tab, by id and label (pane_ids, pane_where), inside the try: one odd herdr entry
-            # costs this row its labels, not the panel its frame.
+            # Its workspace and tab, by id and label (pane_ids, pane_where), inside the row's try: an odd herdr
+            # entry marks this row unreadable, as any error in it does, and never costs the frame.
             entries = (live[pane], a)
             r["ids"], r["where"] = pane_ids(pane, entries), (pane,) + pane_where(pane, entries, (ws_labels, tab_labels), label)
             name = (a or {}).get("name") or recorded
