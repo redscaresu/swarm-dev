@@ -45,7 +45,7 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   included, and pairs a deleted epic with a new one that is half alike too, so the heading decides:
   an epic moved and given another heading, or more than half rewritten, reads as new.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
-  days when `merge --board` runs, and a date after today never counts.
+  days when `swarm.sh merge` runs (a board PR's or a story PR's), and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.
   `swarm.sh merge` refuses the same change in a board PR (`--board`) or a story PR (§ Merging).
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
@@ -2329,7 +2329,9 @@ lists the PR's files at that head. A renamed epic is read at its old path on the
 does not remove or rename away. The refusal starts `--board:` only on the `--board` route. A story
 PR is not checked when the board is not in the project's repo. Nor is one whose story names another
 repo (`repo:`) and whose PR is outside the board's repo, since its `epics/` files are that repo's own;
-when gh cannot name the board's repo, merge refuses, says why, and you run it again. Under
+when gh cannot name the board's repo, merge refuses, says why, and you run it again; when the project
+has no origin remote, it says to add one, or to merge the PR by hand, since running it again fails the
+same way. Under
 `merge = human`, a story PR whose files cannot be read at the head waits on your merge. With
 `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since

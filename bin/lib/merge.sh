@@ -6,7 +6,7 @@ MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get t
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 MERGE_UPDATE_READS=20   # reads of a PR's head after merge asks GitHub to merge its base in, MERGE_READ_WAIT apart
-GONE_READS=3            # merge_gone's reads of a story PR's pinned compare, MERGE_READ_WAIT apart, as pinned_files' read is retried
+GONE_READS=3            # merge_files' reads of the PR's files (a story PR's pinned compare, a --board PR's files API), MERGE_READ_WAIT apart, after a transient gh error
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
@@ -239,24 +239,35 @@ merge_read() {
 # from there after (merge_read runs in epic_unticketed's subshell, so a file, not a variable, carries
 # the one list): merge_gone and merge_from look their answers up in it. On the story route (merge_pr's
 # local only empty) they are read at the pinned head (compare <base>...<head>, its locals base and
-# head), as the guard's list is, so a push after the pin cannot change what a path's 404 there, or its
-# old name, reads as; with --board, the PR's files API, every page. Either read is within
-# BASE_MOVED_WAIT, and up to GONE_READS of them, MERGE_READ_WAIT apart, as pinned_files' read is; it
-# fails once none succeeds.
+# head, the base URL-quoted whole as pinned_files quotes it), as the guard's list is, so a push after
+# the pin cannot change what a path's 404 there, or its old name, reads as; with --board, the PR's
+# files API, every page. As pinned_files' read is, every read falls within one BASE_MOVED_WAIT, and
+# only a transient gh error (WAIT_PR_TRANSIENT, its URL words taken out) is read again, up to
+# GONE_READS reads in all, MERGE_READ_WAIT apart; any other failure, or the deadline, fails it.
 merge_files() {
-  local i out
+  local i out err rc deadline q
   [[ ! -s "${flist}" ]] || { cat "${flist}"; return; }
-  for ((i = 1; i <= GONE_READS; i++)); do
+  q="$(python3 -c 'import sys, urllib.parse as u; print(u.quote(sys.argv[1], safe=""))' "${base}")" || return 1
+  deadline="@$(($(date +%s) + ${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}))"
+  err="$(mktemp)" || return 1
+  for ((i = 1; ; i++)); do
+    rc=0
     if [[ -z "${only}" ]]; then
-      out="$(within "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" gh api "repos/${repo}/compare/${base//\//%2F}...${head}" </dev/null \
-        | json "json.dumps(d['files'])")" && { printf '%s\n' "${out}" > "${flist}"; cat "${flist}"; return 0; }
+      out="$(within "${deadline}" gh api "repos/${repo}/compare/${q}...${head}" </dev/null 2> "${err}")" || rc=$?
     else
-      out="$(within "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" </dev/null \
-        | json "json.dumps([f for page in d for f in page])")" && { printf '%s\n' "${out}" > "${flist}"; cat "${flist}"; return 0; }
+      out="$(within "${deadline}" gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" </dev/null 2> "${err}")" || rc=$?
     fi
-    [[ ${i} -eq ${GONE_READS} ]] || sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
+    [[ ${rc} -ne 0 ]] || break
+    if [[ ${rc} -eq 142 || ${i} -ge ${GONE_READS} ]] \
+      || ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' "${err}")"; then
+      rm -f "${err}"; return 1
+    fi
+    sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
   done
-  return 1
+  rm -f "${err}"
+  if [[ -z "${only}" ]]; then json "json.dumps(d['files'])" <<< "${out}" > "${flist}" || return 1
+  else json "json.dumps([f for page in d for f in page])" <<< "${out}" > "${flist}" || return 1; fi
+  cat "${flist}"
 }
 
 # merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_files);
@@ -300,20 +311,27 @@ epic_guard() {
   done <<< "${list}"
 }
 
-# board_epics — each line of stdin under the board's epics/ (merge_pr's local rel), the paths
-# epic_unticketed reads.
-board_epics() { awk -v p="${rel:+${rel}/}epics/" 'index($0, p) == 1'; }
+# board_epics — each line of stdin that is a board epic, <board>/epics/<slug>.md with no subfolder and
+# not README.md (merge_pr's local rel): the paths epic_unticketed reads.
+board_epics() {
+  awk -v p="${rel:+${rel}/}epics/" 'index($0, p) == 1 { s = substr($0, length(p) + 1); if (s ~ /^[^\/]+\.md$/ && s != "README.md") print }'
+}
 
 # story_elsewhere — whether the story PR is in another repo than the board's, whose epics/ are that
 # repo's own: 0 when the item in review (merge_pr's local f) names repo: another repo than the
 # project's and gh names the board's repo (the project's origin, read within BASE_MOVED_WAIT) as not
 # the PR's (merge_pr's local repo); 1 when it names none, so a project whose origin is a fork never
-# skips the guard; 2, printing why, when gh cannot name the board's repo.
+# skips the guard; 2, printing why and what clears it, when the board's repo cannot be named: a gh
+# failure, which a later run may read past, or a project with no origin remote, which needs one.
 story_elsewhere() {
   local r own
   r="$(fm "${f}" repo)"
   [[ -n "${r}" && "${r}" != "$(basename "${PROJECT_DIR}")" ]] || return 1
-  own="$(origin_repo)" || { [[ -n "${own}" ]] || own="${PROJECT_DIR}, the board's repo, has no origin"; echo "${own}"; return 2; }
+  if ! own="$(origin_repo)"; then
+    if [[ -n "${own}" ]]; then echo "${own}; run swarm.sh merge again"
+    else echo "${PROJECT_DIR}, the board's repo, has no origin remote: add one (git remote add origin <its URL>) and run swarm.sh merge again, or merge it by hand"; fi
+    return 2
+  fi
   [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" != "${own}" ]]
 }
 
@@ -376,7 +394,7 @@ story_files() {
   files="$(cut -d' ' -f2- <<< "${files}")"
   [[ -n "$(board_epics <<< "${files}")" ]] || return 0
   rc=0; why="$(story_elsewhere)" || rc=$?
-  [[ ${rc} -ne 2 ]] || merge_fail "cannot tell whether ${url}, whose story names repo $(fm "${f}" repo), is in the board's repo: ${why}; run swarm.sh merge again"
+  [[ ${rc} -ne 2 ]] || merge_fail "cannot tell whether ${url}, whose story names repo $(fm "${f}" repo), is in the board's repo: ${why}"
   [[ ${rc} -ne 0 ]] || files=""
 }
 
@@ -409,9 +427,8 @@ merged_state() {
   echo "${state:-unreadable} ${oid}"
 }
 
-# merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
-# merge_fail <reason> — log the refusal and die with it; merge_files' cache (merge_pr's local flist),
-# when the guard made one, goes with it.
+# merge_fail <why> — merge's one line for a refusal, then stop; merge_files' cache (merge_pr's local
+# flist), when the guard made one, goes with it. main logs nothing for merge.
 merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; [[ -z "${flist:-}" ]] || rm -f "${flist}"; die "merge: $1"; }
 
 # base_moved <owner/repo> <head> <base> <pr> — stop a story PR whose base has commits <head> lacks, since

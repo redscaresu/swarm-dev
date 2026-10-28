@@ -748,6 +748,20 @@ merge "${OTHER}"; refused "a story PR in another repo, gh cannot name the board'
   "cannot tell whether ${OTHER}, whose story names repo other, is in the board's repo: gh repo view failed (gh: HTTP 502); run swarm.sh merge again"
 spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}"; merge "${OTHER}"
 refused "a story naming no repo:, its PR in another repo than the origin's" "${OTHER} sets e1 ${NT} e1"
+# With no origin remote a second run fails the same way: the line names the fix.
+spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}" "repo: other"
+git -C "${P}" remote remove origin; merge "${OTHER}"; git -C "${P}" remote add origin "${ROOT}/origin.git"
+refused "a story PR in another repo, the board's repo with no origin remote" \
+  "is in the board's repo: ${P}, the board's repo, has no origin remote: add one (git remote add origin <its URL>) and run swarm.sh merge again, or merge it by hand"
+# An epics/ file the guard never reads (its README.md) asks gh nothing, so a gh failure cannot refuse it.
+spr; item s "status: review" "prs: ${OTHER}" "repo: other"; echo 'gh: HTTP 502' > "${FX}/origin.fail"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/README.md","status":"modified"}]' > "${FX}/files"
+merge "${OTHER}"; story_merged "a story PR in another repo changing only docs/epics/README.md merges"
+check "a story PR in another repo changing only docs/epics/README.md: no repo lookup" bash -c "! grep -q nameWithOwner '${ROOT}/gh.log'"
+spr; item s "status: review" "prs: ${OTHER}" "repo: other"; echo 'gh: HTTP 502' > "${FX}/origin.fail"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/notes/e1.md","status":"modified"}]' > "${FX}/files"
+merge "${OTHER}"; story_merged "a story PR in another repo changing only docs/epics/notes/e1.md, in a subfolder, merges"
+check "a story PR in another repo changing only docs/epics/notes/e1.md, in a subfolder: no repo lookup" bash -c "! grep -q nameWithOwner '${ROOT}/gh.log'"
 # The pinned head renames e1 to e2, a draft; a later push restores e1, so the PR's files API lists e1
 # as modified. Its 404 at the pin is the rename's, read from the pinned compare, not gh failing.
 spr; fx_at e2.md "${H1}" "status: draft"
@@ -767,6 +781,12 @@ spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"file
 echo "touch '${FX}/compare.hang'" > "${FX}/on-contents"; t0=${SECONDS}; merge SWARM_BASE_MOVED_WAIT=8 "${URL}"
 refused "a story PR removing an epic, its pinned compare read hanging" "gh cannot read docs/epics/e1.md at 1111111"
 check "a story PR removing an epic, its pinned compare read hanging: stops within 55 s" test $((SECONDS - t0)) -lt 55
+is "a story PR removing an epic, its pinned compare read hanging: one bound over the gone reads, so one of them" 2 "$(pinned_reads)"
+# A 404 there is not read again: only a transient gh error is.
+spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
+echo "mv '${FX}/compare.main' '${FX}/compare.main.was'; echo 'Not Found' > '${FX}/compare.main.404'" > "${FX}/on-contents"; merge "${URL}"
+refused "a story PR removing an epic, a 404 on its gone read" "gh cannot read docs/epics/e1.md at 1111111"
+is "a story PR removing an epic, a 404 on its gone read: read once" 2 "$(pinned_reads)"
 # And read again after a 502, as the pinned list's read is: read 1 is that list's, read 2 merge_gone's first.
 spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
 : > "${FX}/compare.main.2.fail"; merge "${URL}"; story_merged "a story PR removing an epic, a 502 on its gone read: read again, it merges"
