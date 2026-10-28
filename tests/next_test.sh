@@ -72,6 +72,30 @@ expect "a draft epic is in the gate beside a lead story" "gate" \
   "item stories/l.md 'status: ready' 'kind: lead'"
 if [[ "${out}" == *"lead: l"* && "${out}" == *"draft epic: e1, run /epic e1"* ]]; then echo "ok   the gate lists the lead story and the draft epic"
 else echo "FAIL the gate does not list both the lead story and the draft epic: ${out}"; fails=$((fails + 1)); fi
+# A draft the epic guard would let go active unagreed is the lead's: a parent: naming a split epic (kid,
+# itself the split's open child), an hld: naming an agreed HLD that grants epics (underh). A parent: of
+# a draft (dkid), an HLD without the grant (underg) and a plain draft keep the /epic path.
+expect "drafts the lead may set active are in the gate" "gate" \
+  "item epics/par.md 'status: split'" "item epics/kid.md 'status: draft' 'parent: par'" \
+  "item hld/h.md 'status: agreed' 'grants: [epics]'" "item epics/underh.md 'status: draft' 'hld: h'" \
+  "item hld/g.md 'status: agreed' 'grants: [merge]'" "item epics/underg.md 'status: draft' 'hld: g'" \
+  "item epics/plain.md 'status: draft'" "item epics/dkid.md 'status: draft' 'parent: plain'"
+has_line "a draft whose parent: is split is the lead's" "  draft epic: kid, the lead sets it active (parent par is split)"
+has_line "a draft under an HLD granting epics is the lead's" "  draft epic: underh, the lead sets it active (hld h grants epics)"
+has_line "a draft whose parent: is a draft keeps the /epic path" "  draft epic: dkid, run /epic dkid"
+has_line "a draft under an HLD without the epics grant keeps the /epic path" "  draft epic: underg, run /epic underg"
+has_line "a plain draft keeps the /epic path" "  draft epic: plain, run /epic plain"
+# An active parent with a story, so next reaches the gate instead of offering to plan it.
+expect "a draft whose parent: is active is in the gate" "gate" \
+  "item epics/par.md 'status: active'" "item stories/ps.md 'status: later' 'epic: par'" \
+  "item epics/kid.md 'status: draft' 'parent: par'"
+has_line "a draft whose parent: is active is the lead's" "  draft epic: kid, the lead sets it active (parent par is active)"
+# A draft with a stage: next cannot open (no hld:) is never the lead's this way: it goes through /epic.
+expect "with lead_epics = on any draft is the lead's" "gate" \
+  "item epics/plain.md 'status: draft'" "item epics/st.md 'status: draft' 'stage: v1.4.0'" \
+  "mkdir -p .claude/swarm && echo 'lead_epics = on' > .claude/swarm/config"
+has_line "with lead_epics = on a plain draft is the lead's" "  draft epic: plain, the lead sets it active (lead_epics = on)"
+has_line "with lead_epics = on a draft whose stage: next cannot open keeps the /epic path" "  draft epic: st, run /epic st"
 # A draft HLD waits on the user, listed under waiting on you; a superseded one, and the README, are not.
 expect "a draft HLD waits on the user" "gate" \
   "item hld/2026-01-01-a.md 'status: draft'"
@@ -249,7 +273,8 @@ expect "a split later epic's later child is not planned unasked" "gate" \
   "item epics/c.md 'status: later' 'parent: p' 'depends_on: [b]'"
 # Once planned unasked (plan-unasked), a later epic is never offered again: the gate says what to do
 # with it. With no stories yet, plan it again if that plan stopped; with stories (they reach the board
-# only once approved), set it active. Declined (--declined), the gate says that instead.
+# only once approved), set it active with agreed: <today>, its ticket past the epic guard. Declined
+# (--declined), the gate says that instead.
 expect "a later epic planned unasked with no stories is a gate" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "bash \"\${SWARM}\" plan-unasked a >/dev/null"
@@ -259,7 +284,7 @@ expect "a later epic planned unasked with stories is a gate" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "item stories/s.md 'status: ready' 'kind: code' 'epic: a'" \
   "bash \"\${SWARM}\" plan-unasked a >/dev/null"
-if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F); set it active to start it)"* ]]; then echo "ok   the gate says to set a later epic planned unasked with stories active"
+if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F); set it active with agreed: <today> to start it)"* ]]; then echo "ok   the gate says to set a later epic planned unasked with stories active, with agreed: <today>"
 else echo "FAIL the gate's line for a later epic planned unasked with stories: ${out}"; fails=$((fails + 1)); fi
 expect "a later epic whose unasked plan was declined is offered no more" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
@@ -479,9 +504,13 @@ expect "ready story in a later epic waits" "gate" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"
 expect "only later stories left is a gate, not done" "gate" \
   "item stories/a.md 'status: later' 'kind: code'"
-# A later epic with no depends_on waits on nothing but the user: it is never planned unasked.
+# A later epic with no depends_on waits on nothing but the user: it is never planned unasked. Its
+# gate line says to write agreed: <today> as it goes active, since the epic guard refuses it with no
+# ticket (epic_unticketed).
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
+has_line "the gate's line for a later epic says to set it active with agreed: <today>" \
+  "  later epic: e1 (set it active with agreed: <today> to start it)"
 expect "a later epic with an empty depends_on is a gate" "gate" \
   "item epics/e1.md 'status: later' 'depends_on: []'"
 # A blocked story whose dependency shares no touches part waits for nothing it uses: next names it.
@@ -1413,7 +1442,7 @@ if [[ "${got}" == "yes|" && "${out}" == *"epic e: could not write its state in "
 rm -rf "${dir}/.swarm/state"; (cd "${dir}" && item epics/e.md "status: later"); rm -rf "${es}"; mkdir -p "${es}/e.lock"
 out="$(SWARM_LOCK_WAIT=1 conduct; echo "exit $?")"
 waits=no; grep -q 'later epic: e' <<< "$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status)" && waits=yes
-if [[ "${waits}" == yes && "${out}" == *"epic e: could not write its state in "*", so it is still later; set status: active by hand (board state: "*"/e.lock is still there after 1s"*"exit 0" ]]; then
+if [[ "${waits}" == yes && "${out}" == *"epic e: could not write its state in "*", so it is still later; set status: active by hand, with agreed: <today> in the same edit (board state: "*"/e.lock is still there after 1s"*"exit 0" ]]; then
   echo "ok   conduct whose epic lock is held leaves the epic later, says why, and exits 0"; else
   echo "FAIL conduct whose epic lock is held: waits on you '${waits}': ${out}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"

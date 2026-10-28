@@ -554,6 +554,62 @@ ev review-agent nr-x "review-nr-x: an agent with this name is still working; wai
 poll
 check "so does one refused after the earlier review agent was closed" rev_fires nr-x "${URL}"
 
+# The review agent owns its PR across rounds: review-agent --next (its next round, in the same session)
+# logs review-agent:next <slug> ok (round <n>), moves the last findings aside and records the new head.
+fresh; story ro-a "kind: code" "status: ready"; ev story ro-a; built ro-a; listed ro-a review-ro-a
+rbrief ro-a "${URL}"; ev review-agent ro-a; rhead ro-a
+printf 'head: %s\n\n## Findings\n\n- [P2] a finding\n' "${H}" > "${P}/.swarm/reviews/ro-a.md"
+ev tell:findings ro-a
+ev review-agent:next ro-a "ok (round 2)"; mv "${P}/.swarm/reviews/ro-a.md" "${P}/.swarm/reviews/ro-a.md.prev"; rhead ro-a
+poll; poll
+check "review-ro-a listed in round 2 is silent" never_woke ro-a
+listed ro-a; poll
+check "review-ro-a gone in round 2 (started, told findings, ran --next), its PR open, fires" rev_fires ro-a "${URL}"
+fresh; story ro-b "kind: code" "status: ready"; ev story ro-b; built ro-b; listed ro-b review-ro-b
+rbrief ro-b "${URL}"; ev review-agent ro-b; rhead ro-b; ev tell:findings ro-b
+listed ro-b; poll; poll
+check "review-ro-b gone after an ok tell:findings with no --next since (the builder fixing) is silent" never_woke ro-b
+ev review-agent:next ro-b "ok (round 2)"; rhead ro-b; ev tell:findings ro-b
+poll; poll
+check "and so is one gone after round 2's own tell:findings" never_woke ro-b
+# A --next that failed started no round: the builder is still fixing round 2's findings.
+ev review-agent:next ro-b "review-agent --next: could not read ${URL}'s head (gh pr view --json headRefOid)"
+poll; poll
+check "a failed --next after that tell changes nothing: silent" never_woke ro-b
+# A findings round handed over another way after --next, as review_rounds counts it: a tell herdr sent
+# but did not see taken up, or a findings step-up, whose brief carried the findings.
+fresh; story ro-c "kind: code" "status: ready"; ev story ro-c; built ro-c; listed ro-c
+rbrief ro-c "${URL}"; ev review-agent ro-c; rhead ro-c; ev tell:findings ro-c
+ev review-agent:next ro-c "ok (round 2)"; rhead ro-c
+ev tell:findings ro-c "tell: ro-c did not take up the brief: herdr sent it the brief once"
+poll; poll
+check "review-ro-c gone after --next and a findings tell herdr sent is silent" never_woke ro-c
+ev review-agent:next ro-c "ok (round 3)"; rhead ro-c; ev escalate ro-c "ok (findings-3: sonnet -> opus)"
+poll; poll
+check "and so is one gone after --next and a findings step-up" never_woke ro-c
+
+# Under merge = human, a review story under a merge grant gets the no-review: line alone: its builder's
+# close after the handover (swarm.sh review, then close) is the normal path, never a no-agent: line.
+fresh "merge = human"; mkdir -p "${P}/docs/epics" "${P}/docs/hld"
+printf -- '---\nstatus: agreed\ngrants: [merge]\n---\n\n# g\n' > "${P}/docs/hld/g.md"
+printf -- '---\nstatus: active\nhld: g\n---\n\n# ge\n' > "${P}/docs/epics/ge.md"
+story ro-g "kind: code" "status: review" "prs: ${URL}" "epic: ge"; ev story ro-g; built ro-g; listed review-ro-g
+rbrief ro-g "${URL}"; ev review-agent ro-g; rhead ro-g; ev review ro-g "ok (${URL})"; ev close ro-g
+poll; poll
+check "a granted review story whose builder closed after the handover, review-ro-g listed, is silent" never_woke ro-g
+listed; poll
+check "with review-ro-g gone too, it gets the no-review: line alone" rev_fires ro-g "${URL}"
+# After the handover, a later review's findings bring the builder back; gone with no close, mid-round,
+# it still needs the lead: the findings round keeps no-review: quiet, so only no-agent: says so.
+fresh "merge = human"
+story ro-h "kind: code" "status: review" "prs: ${URL}" "epic: ge"; ev story ro-h; built ro-h
+rbrief ro-h "${URL}"; ev review-agent ro-h; rhead ro-h; ev review ro-h "ok (${URL})"; ev close ro-h
+ev review-agent ro-h; ev tell:findings ro-h; ev restart ro-h "ok (resumed session s-1)"
+poll; poll
+check "a granted review story whose builder came back for findings and went with no close fires no-agent:" \
+  fires ro-h "swarm.sh review-agent ro-h ${URL}"
+rm -rf "${P}/docs/epics" "${P}/docs/hld"
+
 # One line per story: a ready story with its builder gone gets the restart first, then no-review:.
 fresh; story nr-b "kind: code" "status: ready"; ev story nr-b; built nr-b; ev close nr-b
 rbrief nr-b "${URL}"; ev review-agent nr-b "review-agent: review-nr-b did not start"
