@@ -145,8 +145,7 @@ board_pr() {
       # base_for fetches origin/<base>, so the epic check reads it as it is now (an HLD superseded since
       # the start counts).
       base="$(base_for "${PROJECT_DIR}")" || die "board-pr: cannot fetch origin's base branch, so whether an epic goes active with no ticket is unknown"
-      # The board's path from the root with a trailing /, or empty when the board is the root.
-      rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+      rel="$(board_rel)"
       # Committed and uncommitted changes since the base, new files too: each changed path, a rename's
       # old path included (a copy's source is unchanged, so not that).
       changes="$(board_changes "$(git -C "${wt}" merge-base HEAD "origin/${base}")")" || die "board-pr: cannot list the changes in ${wt}"
@@ -246,7 +245,7 @@ board_pr() {
       # is read from the PR's worktree, as open read it: the main checkout may be behind origin.
       critic=""
       if [[ " ${prs} " == *" CLOSED "* && " ${prs} " != *" MERGED "* ]]; then
-        rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+        rel="$(board_rel)"
         dir="${BOARD}"; [[ ! -d "${wt}" ]] || dir="${wt}${rel:+/${rel%/}}"
         if [[ "$(board_pr_kind "${name}" "${dir}")" == plan ]]; then
           critic="${PROJECT_DIR}/.swarm/${name#*-}/critic.json"
@@ -406,8 +405,7 @@ pull_board_repo() {
       record_event incident - "${o}"
       { printf '%s\n' "${o}" > "${PULL_STOP}"; } 2>/dev/null || true
     fi
-    # The board's path from the root with a trailing /, or empty when the board is the root.
-    rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+    rel="$(board_rel)"
     board="$(awk -v b="${rel}" 'substr($0, 1, length(b)) == b' <<< "${stop}" | paste -sd' ' -)"
     other="$(awk -v b="${rel}" 'substr($0, 1, length(b)) != b' <<< "${stop}" | paste -sd' ' -)"
     PULL_WHY=""
@@ -2219,8 +2217,7 @@ init_board_base() {
 init_project() {
   local rel board f line n=0
   mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
-  # The board's path from the root with a trailing /, or empty when the board is the root.
-  rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}/"}/"
+  rel="$(board_rel)"
   while IFS= read -r f; do
     if [[ "${f}" == Board.base && ( -e "${BOARD}/${f}" || -L "${BOARD}/${f}" ) ]]; then
       if init_board_base "${rel}"; then n=$((n + 1)); fi

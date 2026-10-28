@@ -808,6 +808,10 @@ expect_release "a commit outside the board since the tag: release" release 0 "ec
 if [[ "${out}" != *release-held:* ]]; then echo "ok   a board with no stage: prints no release-held: line"
 else echo "FAIL a board with no stage: prints a release-held: line: ${out}"; fails=$((fails + 1)); fi
 expect_release "only board commits since the tag: not release" "done" 0 "echo x > docs/stories/README.md" "${COMMIT}"
+# A board at the root (its config untracked, so the only commit is the setup's): its own paths are the board.
+ROOT_BOARD="mkdir -p .claude/swarm && echo 'board_dir = .' > .claude/swarm/config && echo .claude/ >> .git/info/exclude"
+expect_release "a board at the root, a commit outside its paths: release" release 0 "${ROOT_BOARD}" "echo x > bin/x" "${COMMIT}"
+expect_release "a board at the root, only its own commits: not release" "done" 0 "${ROOT_BOARD}" "echo x > Board.base" "${COMMIT}"
 expect_release "no plugin.json: not release" "done" 0 "git rm -q .claude-plugin/plugin.json" "echo x > bin/x" "${COMMIT}"
 expect_release "the tag missing locally: not release" "done" 0 "echo x > bin/x" "${COMMIT}" "git tag -d v1.2.0 >/dev/null"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture

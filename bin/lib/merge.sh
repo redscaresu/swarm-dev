@@ -697,7 +697,7 @@ merge_pr() {
   # With merge = agent a PR whose story costs money is the user's, by any route (--board and --release too).
   [[ "${CFG_merge}" != agent ]] || merge_hold "${url}"
   # A board at the project root has no folder to be under: its own paths (board_paths) stand in.
-  rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}"
+  rel="$(board_rel)"
   if [[ -z "${only}" ]]; then
     # Any item listing the URL may be the one in review.
     while IFS= read -r p; do
@@ -725,7 +725,7 @@ merge_pr() {
       if [[ "${only}" == --board && -z "${rel}" ]]; then
         on_board_paths "${p}" || merge_fail "--board: ${url} changes ${p}, outside the board's paths ($(board_paths | paste -sd' ' - | sed 's/ /, /g'))"
       elif [[ "${only}" == --board ]]; then
-        [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"
+        [[ "${p}" == "${rel}"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}"   # loose-match: ok rel ends in /
       else
         [[ "${p}" == .claude-plugin/plugin.json ]] || merge_fail "--release: ${url} changes ${p}, not only .claude-plugin/plugin.json"
       fi
@@ -1152,8 +1152,8 @@ story_note() {
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e c slugs note list p was="" d=""
-  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || d="${BOARD#"${PROJECT_DIR}"/}/"
+  local url="$1" oid="$2" new rc why dief e c slugs note list p was="" d
+  d="$(board_rel)"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
@@ -1369,9 +1369,9 @@ fix_lock() { mkdir -p "${PROJECT_DIR}/.swarm" && echo "${PROJECT_DIR}/.swarm/fix
 # through the clone's info/exclude, as .gitignore does .swarm/: fix_main writes them where every
 # command reads a story, and none shows in git status or meets a pull there.
 ignore_fixes() {
-  local ex rel="" pat
+  local ex rel pat
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
-  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  rel="$(board_rel)"
   pat="/${rel}stories/fix-main-*.md"
   ex="$(git -C "${PROJECT_DIR}" rev-parse --git-path info/exclude)" || return 1
   [[ "${ex}" == /* ]] || ex="${PROJECT_DIR}/${ex}"
@@ -1473,9 +1473,9 @@ red_mains() {
 # board_paths — the board's own files in the project's repo, one prefix a line, as the board-only CI
 # gate that swarm.sh init writes has them; nothing for a board outside the repo.
 board_paths() {
-  local rel=""
+  local rel
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
-  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  rel="$(board_rel)"
   printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
 }
 
@@ -2086,7 +2086,7 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 release_grant() (
   local pre p c="" last="" view slug s why when rc n=0
   [[ ${BOARD_IN_REPO} == 1 ]] || { echo "the board is outside the project's repo, so the stories merged since v$3 cannot be read"; exit 0; }
-  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  pre="$(board_rel)"
   view="$(mktemp -d)" && [[ -d "${view}" ]] || { echo "mktemp -d failed, so the stories merged since v$3 cannot be read"; exit 0; }
   trap 'rm -rf "${view}"' EXIT
   mkdir -p "${view}/stories" "${view}/origin/epics" "${view}/origin/hld" "${view}/origin/stories"
