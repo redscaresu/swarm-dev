@@ -18,9 +18,11 @@ codex raises a point the builder already declined with evidence.
 introduces, or a line that is now false about the code?
 **Step.** Send one last round that fixes only those. Send it as a nudge
 (`swarm.sh tell <slug> nudge <file>`), not as findings. Then accept: `swarm.sh review <slug> <PR URL>`,
-then `swarm.sh merge --head <full sha> <PR URL>`. File the rest as a follow-up story.
-**Side effect.** A findings tell counts a round, and the third round steps the builder up to the next
-model; a nudge does not.
+then, with `merge = agent` or an HLD `merge` grant, `swarm.sh merge --head <full sha> <PR URL>`;
+otherwise the PR waits for the user's merge. File the rest as a follow-up story.
+**Side effect.** A findings tell counts a round; with `escalate_ladder` set, the `step_up_findings`-th
+round (default 3) steps the builder up to the next model, and on the top rung a round can hold the
+story for the lead. A nudge counts no round.
 **Issue.** [#685](https://github.com/redscaresu/swarm-dev/issues/685), and
 [#686](https://github.com/redscaresu/swarm-dev/issues/686) for a lighter review in later rounds.
 
@@ -48,10 +50,9 @@ background test run, or could not sign a commit.
 ## Finished panes left open
 
 **Symptom.** `herdr agent list` shows many agents with status `done`: review agents, planning agents,
-conductors of finished epics. A finished review pane also blocks the next review start of the same
-story.
-**Step.** `herdr pane close <pane>` for each. Close a conductor only after its Finish PR's
-`swarm.sh merge --board` has exited; closing it sooner kills that merge.
+conductors of finished epics.
+**Step.** `herdr pane close <pane>` for each. With `merge = agent`, close a conductor only after its
+Finish PR's `swarm.sh merge --board` has exited; closing it sooner kills that merge.
 **Issue.** [#690](https://github.com/redscaresu/swarm-dev/issues/690).
 
 ## A merge refused because a story file is gone
