@@ -192,8 +192,8 @@ is one column, top to bottom:
   planning (as `swarm.sh next` decides) keeps its own row instead, which reads `waits on <depends_on>`. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
   workspace and tab instead. Each heading is herdr's label. A workspace with no label shows its id,
-  and a tab with none shows the name swarm-dev gave it. Each agent's row there shows its pane id after
-  its state, before its PR.
+  and a tab with none shows the name swarm-dev gave it. Each agent's row there ends with its pane id,
+  after its PR, and a narrow screen cuts the pane first.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
   days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings
   fixed (✎, one row per PR and day, so a fix's `log-finding` line is not shown again), declined

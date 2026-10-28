@@ -5,7 +5,7 @@
 # b's labels. a's s3 has no tab or workspace in herdr's agent list, only in its pane list, which comes
 # first. Each report reads herdr's workspace and tab lists once. dash --tree heads a's agents by herdr's
 # labels, one heading per tab (its three panes are in one record, t1, but in three herdr tabs, two of them
-# labelled e1), each row with its pane after its state.
+# labelled e1), each row ending with its pane.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"

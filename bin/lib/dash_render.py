@@ -607,8 +607,8 @@ def tree_view():
     for r in recs:
         # By workspace and tab id (pane_ids), so two tabs with one label stay apart, headed by herdr's labels
         # (pane_where's): a workspace with none by its id, a tab with none by the name swarm-dev gave it (its
-        # record's). Each row has the pane after its state, before its PR, so a narrow screen cuts the PR first;
-        # its workspace and tab are its headings.
+        # record's). Each row ends with the pane, cut first on a narrow screen: its workspace and tab are its
+        # headings, and its PR matters more than its pane.
         (ws_id, tab_id), (_, ws, tab) = r["ids"], r["where"]
         tree.setdefault((ws_id, ws if ws != "-" else ws_id), collections.OrderedDict()) \
             .setdefault((tab_id or r["tab"], tab if tab != "-" else r["tab"]), []).append(r)
@@ -622,7 +622,7 @@ def tree_view():
             for j, r in enumerate(items):
                 stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
                 row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(one_off(r))
-                rows.append(row + [(f"  {r['where'][0]}", "dim"), (f"  {r['prs']}" if r["prs"] else "", "dim")])
+                rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim"), (f"  {r['where'][0]}", "dim")])
     return rows or [[("no agents open in this project's panes", "dim")]]
 
 # Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
