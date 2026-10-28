@@ -1460,7 +1460,9 @@ the agent waits for CI on the new head (`wait-pr --head`) and merges it as the l
 refusal leaves the PR for you. It replies with the file and what the last command printed. Every
 `swarm.sh` call in its brief names the project (`SWARM_PROJECT`), as the agent runs in the story's
 worktree. With findings to fix, it runs `swarm.sh wait --stall <slug>` and then `swarm.sh tell <slug>
-findings <file>`, since `tell` refuses a builder that is still working. Every wait on the builder is
+findings <file>`, so `tell` finds the builder idle and sends them at once. When `tell` still prints
+`queued:` (the builder began a turn in between), it sends them itself when that turn ends: the agent
+never tells them again, and replies with that line and stops. Nudges go the same way. Every wait on the builder is
 `wait --stall`. With `escalate_ladder` set, a stall it steps up is waited on again; a wait that ends
 any other way than idle (stalled, stuck, timed out) stops the agent. When `tell` says the build was
 stepped up, the agent waits on the new builder, which has the findings in its handover brief. A

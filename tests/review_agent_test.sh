@@ -510,20 +510,28 @@ brief_cmd() { { grep -o "\`[^\`]*$1[^\`]*\`" <<< "${fbrief}" || true; } | sort -
 wait_cmd="$(brief_cmd " wait --stall f1")"; tell_cmd="$(brief_cmd " tell f1 findings ")"; next_cmd="$(brief_cmd " review-agent --next f1 ")"
 check "review-f1's brief has one wait, one findings tell and one --next command, each naming the project" "yes|yes|yes" \
   "$(has "SWARM_PROJECT=${p} ${SWARM} wait --stall f1" "${wait_cmd}")|$(has "SWARM_PROJECT=${p} ${SWARM} tell f1 findings ${p}/.swarm/reviews/f1.md" "${tell_cmd}")|$(has "SWARM_PROJECT=${p} ${SWARM} review-agent --next f1 ${PR}" "${next_cmd}")"
-# in_review_pane <command> — <command> as review-f1 runs it: from its pane, in f1's worktree.
-in_review_pane() { (cd "${ROOT}/svc-wt/f1" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID="${FP}" PATH="${STUB_BIN}:${PATH}" bash -c "$1" 2>&1); }
+# in_review_pane <command> — <command> as review-f1 runs it: from its pane, in f1's worktree. A tell
+# queued there is looked at each second (SWARM_NOTE_WAKE_SECS), not each minute.
+in_review_pane() { (cd "${ROOT}/svc-wt/f1" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID="${FP}" PATH="${STUB_BIN}:${PATH}" SWARM_NOTE_WAKE_SECS=1 bash -c "$1" 2>&1); }
 # The findings the agent wrote, after its triage.
 printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "- codex: bin/f1.sh:3 F1-FIX-ME" "## Declined" "none" "## Out of scope" "none" > "${p}/.swarm/reviews/f1.md"
-check "with f1's builder busy, the brief's tell refuses, saying it is still working, and sends the builder nothing" "1|yes|no" \
-  "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "f1 is still working" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)"
+# A tell to a busy builder is queued and sent when its turn ends; the brief never tells it again.
+check "with f1's builder busy, the brief's tell queues the findings, sends the builder nothing yet and counts no round" "0|yes|no|" \
+  "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "queued: f1 (busy)" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" && $5 == "ok"' "${p}/.swarm/events.tsv")"
+check "and the brief says a queued tell is never sent again" "yes|yes" \
+  "$(has "When tell prints \`queued:\`, the builder began a turn after your wait, and tell sends the findings itself when that turn ends, counting the round then: never tell them again; reply with that line, then stop." "${fbrief}")|$(has "When tell still prints \`queued:\`, the builder began a turn meanwhile, and tell sends the nudge itself when that turn ends: never send it again" "${fbrief}")"
 # The brief's wait returns once the builder goes idle, not before (60 s at most, for a loaded machine).
 in_review_pane "${wait_cmd} 60000" > "${ROOT}/wait-f1.out" & wpid=$!
 sleep 1; check "the brief's wait on f1 holds while f1's builder works" "yes" "$(kill -0 "${wpid}" 2>/dev/null && echo yes || echo no)"
 done_agent f1
 rc=0; for _ in $(seq 600); do kill -0 "${wpid}" 2>/dev/null || break; sleep 0.1; done; wait "${wpid}" || rc=$?
 check "and returns 0, idle, once it is idle" "0|idle" "${rc}|$(tail -1 "${ROOT}/wait-f1.out")"
-o="$(in_review_pane "${tell_cmd}")" || echo "FAIL the brief's tell to an idle f1 exited non-zero: ${o}"
-check "with f1's builder idle, the brief's tell is logged tell:findings f1 ok, from the review agent" "tell:findings	f1	ok|yes" \
+# The queued tell goes out once f1 is idle, and logs its ok line once the prompt is sent (60 s at most,
+# for a loaded machine).
+for _ in $(seq 600); do
+  [[ -z "$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" && $5 == "ok"' "${p}/.swarm/events.tsv")" ]] || break; sleep 0.1
+done
+check "once f1's builder is idle, the queued tell is sent and logged tell:findings f1 ok, from the review agent" "tell:findings	f1	ok|yes" \
   "$(awk -F'\t' '$2 ~ /^tell/ && $3 == "f1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(has "From the review agent:" "$(cat "${ROOT}/prompted-w-900" 2>/dev/null)")"
 check "and f1's builder receives the findings file" "yes" \
   "$(diff <(tail -n +3 "${ROOT}/prompted-w-900") "${p}/.swarm/reviews/f1.md" >/dev/null 2>&1 && echo yes || echo no)"

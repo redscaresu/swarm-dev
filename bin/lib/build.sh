@@ -1147,7 +1147,9 @@ the old head, and --head waits until it names this one.
 To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: the Write tool refuses
 to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
 to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
-When tell says the builder is still working, wait for it as above, then tell it. After each nudge,
+Wait for the builder as above before each nudge, so tell sends it at once. When tell still prints
+\`queued:\`, the builder began a turn meanwhile, and tell sends the nudge itself when that turn ends:
+never send it again; reply with that line, then stop. After each nudge,
 wait for the builder the same way, then wait for green again on the head it pushed. The green step
 runs once per round: on the first head, then on the head the builder pushes after each findings
 tell. Each run is bounded: at most two nudges, and at most two heads that wait-pr calls red. Write
@@ -1198,8 +1200,10 @@ raised that only a change to a file outside the touches can fix; with none, say 
 $(review_handoff "$1" "$2" "$4" "$5" "${sw}")
 
 With findings to fix, wait before you tell: wait for the builder as above, then run
-\`${sw} tell $1 findings ${4}\`. When tell says the builder is still working, or that another
-step-up or a restart of it is running, wait the same way, then tell it again. When tell says the
+\`${sw} tell $1 findings ${4}\`. When tell prints \`queued:\`, the builder began a turn after your
+wait, and tell sends the findings itself when that turn ends, counting the round then: never tell
+them again; reply with that line, then stop. When tell says another step-up or a restart of it is
+running, wait the same way, then tell it again. When tell says the
 build went to the next model (a step-up), that model has the findings in its handover brief: never
 tell them again, and wait on it as below. When tell fails but says the findings count as delivered
 or as a round, herdr sent them: never tell them as findings again. When it also says to read the
