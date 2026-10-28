@@ -16,8 +16,11 @@
 # too) and `reconcile <slug> ok (finished)` logged; a builder whose pane cannot be closed keeps it, and
 # the story its state, until a later reconcile can close it. One whose PR is open, or whose file a later
 # commit took out of review, only loses its state; one whose PR gh cannot read keeps it, and one whose
-# state cannot be read stops reconcile.
-# gh and herdr are stubs on PATH; origin is a local bare repo.
+# state cannot be read stops reconcile. Inside herdr, a merged story's idle review agent,
+# review-<slug>, closes with its builder, through reconcile's merged arm and drop_gone_state's; run
+# from its own pane (swarm.sh merge there, or reconcile), it is retired instead, and a later tidy
+# --yes closes it, leaving no tab of the story.
+# gh, herdr and claude are stubs on PATH; origin is a local bare repo.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -431,6 +434,159 @@ mkdir "${ROOT}/ra/.swarm/reconcile.lock"
 rc=0; out="$(SWARM_RECONCILE_WAIT=1 at ra reconcile)" || rc=$?
 check "a reconcile while another holds the lock waits, then stops naming it" "1|yes|there" \
   "${rc}|$(has "${ROOT}/ra/.swarm/reconcile.lock is still there after 1s" "${out}")|$([[ -d "${ROOT}/ra/.swarm/reconcile.lock" ]] && echo there || echo gone)"
+
+# herdr_stub <dir> — a herdr and a claude in <dir>/bin, herdr's state in <dir>/h: tabs ("<tab>
+# <label>"), panes ("<pane> <tab>") and agents ("<name> <pane> <status>"). A pane close takes its
+# agent, and its tab once no pane is left there, as herdr does; a tab close takes its panes and their
+# agents. agent list fails while h/listfail is there, and a close of the pane h/closefail names, or
+# of its tab, fails. claude lists no session (claude_stub.sh), so herdr's status answers for each agent.
+herdr_stub() {
+  mkdir -p "$1/bin" "$1/h"
+  printf '#!/bin/sh\nH="%s"\n' "$1/h" > "$1/bin/herdr"
+  cat >> "$1/bin/herdr" <<'STUB'
+drop() { awk -v k="$2" -v c="$3" '$c != k' "$H/$1" > "$H/$1.tmp" && mv "$H/$1.tmp" "$H/$1"; }
+# list <file> <key>... — the file's lines as herdr's JSON list of that name, a key per field.
+list() { f="$1"; shift; awk -v w="${f}" -v k="$*" 'BEGIN { n = split(k, key, " "); printf "{\"result\":{\"%s\":[", w }
+  { printf "%s{", (NR > 1 ? "," : ""); for (i = 1; i <= n; i++) printf "%s\"%s\":\"%s\"", (i > 1 ? "," : ""), key[i], $i; printf "}" }
+  END { print "]}}" }' "$H/${f}"; }
+case "$1 $2" in
+  "tab list") list tabs tab_id label ;;
+  "pane list") list panes pane_id tab_id ;;
+  "agent list") [ ! -e "$H/listfail" ] || exit 1; list agents name pane_id agent_status ;;
+  "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
+  "pane close") [ "$(cat "$H/closefail" 2>/dev/null)" != "$3" ] || exit 1
+                t="$(awk -v p="$3" '$1 == p { print $2 }' "$H/panes")"; [ -n "$t" ] || exit 1
+                drop panes "$3" 1; drop agents "$3" 2
+                if ! awk -v t="$t" '$2 == t { f = 1 } END { exit !f }' "$H/panes"; then drop tabs "$t" 1; fi ;;
+  "tab close") ! grep -qx "$(cat "$H/closefail" 2>/dev/null) $3" "$H/panes" || exit 1
+               for p in $(awk -v t="$3" '$2 == t { print $1 }' "$H/panes"); do drop agents "$p" 2; done
+               drop panes "$3" 2; drop tabs "$3" 1 ;;
+esac
+STUB
+  cp "${SWARM%/bin/*}/tests/claude_stub.sh" "$1/bin/claude"
+  chmod +x "$1/bin/herdr" "$1/bin/claude"
+}
+# lay <stub dir> <project> <slug> [epic] — the lead idle in w:lead (tab t0, in no tab record), and
+# story <slug>'s builder (w:b) and idle review agent (w:r) in tab t1: its epic's, beside conduct-<epic>
+# (w:c), or with no epic a tab of its own. The project's tab record for t1's label names them, and
+# its agents.tsv starts review-<slug> with role review.
+lay() {
+  local h="$1/h" label="${4:-$3}"
+  printf 't0 lead\nt1 %s\n' "${label}" > "${h}/tabs"
+  printf 'lead w:lead idle\n%s w:b idle\nreview-%s w:r idle\n' "$3" "$3" > "${h}/agents"
+  printf 'w:lead t0\nw:b t1\nw:r t1\n' > "${h}/panes"
+  mkdir -p "$2/.swarm/state"; printf 'w:b %s\nw:r review-%s\n' "$3" "$3" > "$2/.swarm/state/${label}"
+  printf '2026-10-26\treview\treview-%s\tclaude\tsonnet\thigh\t-\n' "$3" > "$2/.swarm/agents.tsv"
+  if [[ -n "${4:-}" ]]; then
+    echo "conduct-$4 w:c idle" >> "${h}/agents"; echo "w:c t1" >> "${h}/panes"; echo "w:c conduct-$4" >> "$2/.swarm/state/${label}"
+  fi
+}
+# panes_in <stub dir> — herdr's panes now, as "<agent, else pane>@<tab label>", sorted, space-separated.
+panes_in() {
+  awk 'FILENAME ~ /tabs$/ { l[$1] = $2; next } FILENAME ~ /agents$/ { n[$2] = $1; next }
+       { print (($1 in n) ? n[$1] : $1) "@" l[$2] }' "$1/h/tabs" "$1/h/agents" "$1/h/panes" | sort | paste -sd' ' -
+}
+HV="${ROOT}/hv"; herdr_stub "${HV}"
+# hat <name> <pane> <args> — at, inside herdr, run from <pane>, with HV's herdr and claude.
+hat() { local d="${ROOT}/$1" pane="$2"; shift 2; (cd "${d}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_PANE_ID="${pane}" PATH="${HV}/bin:${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+
+# --- reconcile's merged arm, run from the lead's pane: a's PR merged, so its builder and its idle
+# review agent close at once, and a's own tab and its record with them.
+setup va; lay "${HV}" "${ROOT}/va" a
+rc=0; out="$(hat va w:lead reconcile)" || rc=$?
+check "the merged arm, from the lead's pane: a's builder and review agent close, and a's tab with them" "0|lead@lead|gone|yes" \
+  "${rc}|$(panes_in "${HV}")|$(gone "${ROOT}/va/.swarm/state/a")|$(has "merged: a" "${out}")"
+
+# --- A ready story slugged review-a, its builder open under that name (agents.tsv role code): a's
+# merge leaves it alone, with no attempt counted, though its name is a's review agent's.
+setup vb; lay "${HV}" "${ROOT}/vb" a; item "${ROOT}/vb/docs/stories/review-a.md" "status: ready" "kind: code"
+printf '2026-10-26\tcode\treview-a\tclaude\tsonnet\thigh\t-\n' > "${ROOT}/vb/.swarm/agents.tsv"
+rc=0; out="$(hat vb w:lead reconcile)" || rc=$?
+check "a story slugged review-a keeps its open builder through a's merge, with no attempt counted" "0|lead@lead review-a@a|w:r review-a|" \
+  "${rc}|$(panes_in "${HV}")|$(cat "${ROOT}/vb/.swarm/state/a" 2>/dev/null)|$(val "${ROOT}/vb/docs/stories/review-a.md" attempts)"
+
+# --- review-a working when a's PR merged (its own merge waiting on CI, or a round still running): the
+# lead's reconcile finishes a and closes its builder, but leaves review-a open, and says so.
+setup vw; lay "${HV}" "${ROOT}/vw" a; perl -pi -e 's/^review-a w:r idle$/review-a w:r working/' "${HV}/h/agents"
+rc=0; out="$(hat vw w:lead reconcile)" || rc=$?
+check "a working review-a is left open, and said, while a is finished and its builder closed" "0|yes|lead@lead review-a@a|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a is working, so it was left open; close it once it is done with swarm.sh close review-a" "${out}")"
+
+# --- review-a's recorded session is one Claude Code no longer lists (gone), and herdr has it working:
+# herdr's status answers, so it is left open, and said.
+setup vg; lay "${HV}" "${ROOT}/vg" a; perl -pi -e 's/^review-a w:r idle$/review-a w:r working/' "${HV}/h/agents"
+perl -pi -e 's/\t-$/\tsess-gone/' "${ROOT}/vg/.swarm/agents.tsv"
+rc=0; out="$(hat vg w:lead reconcile)" || rc=$?
+check "a review-a whose session is gone but herdr has working is left open, and said" "0|yes|lead@lead review-a@a|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a is working, so it was left open" "${out}")"
+
+# --- Two slugs that share their first 25 characters give their review agents one herdr name, cut at
+# 32. A reconcile in the second's review pane that finishes the first leaves the second as it is:
+# its tab record names it, not the first.
+L="abcdefghijklmnopqrstuvwxy"; CUT="review-${L}"
+setup vx; item "${ROOT}/vx/docs/stories/${L}-one.md" "status: ready" "kind: code"; at vx review "${L}-one" "${U}/3" >/dev/null
+printf 't0 lead\nt1 %s-two\n' "${L}" > "${HV}/h/tabs"; printf 'w:lead t0\nw:r t1\n' > "${HV}/h/panes"
+printf 'lead w:lead idle\n%s w:r idle\n' "${CUT}" > "${HV}/h/agents"
+mkdir -p "${ROOT}/vx/.swarm/state"; echo "w:r review-${L}-two" > "${ROOT}/vx/.swarm/state/${L}-two"
+printf '2026-10-26\treview\t%s\tclaude\tsonnet\thigh\t-\n' "${CUT}" > "${ROOT}/vx/.swarm/agents.tsv"
+rc=0; out="$(hat vx w:r reconcile)" || rc=$?
+check "a reconcile in review-<L>-two's pane, finishing <L>-one, leaves review-<L>-two as it is" "0|yes|lead@lead ${CUT}@${L}-two|w:r review-${L}-two" \
+  "${rc}|$(has "deleted: ${ROOT}/vx/docs/stories/${L}-one.md" "${out}")|$(panes_in "${HV}")|$(cat "${ROOT}/vx/.swarm/state/${L}-two")"
+
+# --- review-a's pane cannot be closed, or herdr cannot list its agents: reconcile still finishes a,
+# and says review-a may be open, naming the close.
+setup vc; lay "${HV}" "${ROOT}/vc" a; echo w:r > "${HV}/h/closefail"
+rc=0; out="$(hat vc w:lead reconcile)" || rc=$?; rm -f "${HV}/h/closefail"
+check "a review pane that cannot be closed is said, with the close to run" "0|yes|lead@lead review-a@a|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a was left open (exit 1); close it with swarm.sh close review-a" "${out}")"
+setup vl; lay "${HV}" "${ROOT}/vl" a; touch "${HV}/h/listfail"
+rc=0; out="$(hat vl w:lead reconcile)" || rc=$?; rm -f "${HV}/h/listfail"
+check "herdr with no agent list: reconcile says review-a may still be open" "0|yes|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(has "review-a may still be open (herdr cannot list its agents); close its pane with swarm.sh close review-a" "${out}")"
+
+# --- drop_gone_state's arm: a's file already pulled off the board by hand, its PR merged.
+setup vd; git -C "${ROOT}/vd" pull -q --ff-only; lay "${HV}" "${ROOT}/vd" a
+rc=0; out="$(hat vd w:lead reconcile)" || rc=$?
+check "drop_gone_state's arm, from the lead's pane: a is finished, and its builder, review agent and tab close" "0|yes|lead@lead|gone|gone" \
+  "${rc}|$(has "merged: a, its file already pulled off the board" "${out}")|$(panes_in "${HV}")|$(gone "${ROOT}/vd/.swarm/state/a")|$(state vd a)"
+
+# --- The same arm, run from review-a's own pane: it stays open, retired as review-a-done, and a later
+# tidy --yes from the lead's pane closes it, and a's tab with it.
+setup vr; git -C "${ROOT}/vr" pull -q --ff-only; lay "${HV}" "${ROOT}/vr" a
+rc=0; out="$(hat vr w:r reconcile)" || rc=$?
+check "drop_gone_state's arm, from review-a's pane: the builder closes, and review-a stays open, retired" "0|lead@lead review-a-done@a|w:r review-a-done|gone" \
+  "${rc}|$(panes_in "${HV}")|$(cat "${ROOT}/vr/.swarm/state/a" 2>/dev/null)|$(state vr a)"
+rc=0; out="$(hat vr w:lead tidy --yes)" || rc=$?
+check "and tidy --yes from the lead's pane closes it, leaving no tab of a" "0|lead@lead|gone" \
+  "${rc}|$(panes_in "${HV}")|$(gone "${ROOT}/vr/.swarm/state/a")"
+
+# --- swarm.sh merge run from review-s's pane, on merge_fixture.sh's project, in a subshell, since its
+# helpers share these names: the merge's reconcile closes s's builder and leaves review-s open,
+# retired, and tidy --yes from the lead's pane closes it. An epic story's tab keeps its conductor; a
+# backlog story's own tab goes. In the background, so set -e holds inside it and a failed setup step
+# fails the file; it exits with its count of failed checks.
+merged_review_fails=0
+( set -e
+  ROOT="${ROOT}/m"; mkdir -p "${ROOT}"
+  # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
+  . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
+  herdr_stub "${ROOT}"
+  tidy() { rc=0; (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_PANE_ID=w:lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tidy --yes > "${ROOT}/out" 2>&1) || rc=$?; }
+  for epic in e ""; do
+    what="${epic:+an epic story}"; what="${what:-a backlog story}"; label="${epic:-s}"
+    fresh; rm -f "${P}"/.swarm/state/*; item s "status: review" "prs: ${URL}" ${epic:+"epic: ${epic}"}; lay "${ROOT}" "${P}" s "${epic}"
+    merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+    is "${what}, merged from review-s's pane: s's builder closes, and review-s stays open, retired" \
+      "0|${epic:+conduct-e@e }lead@lead review-s-done@${label}|yes" \
+      "${rc}|$(panes_in "${ROOT}")|$(grep -qx 'w:r review-s-done' "${P}/.swarm/state/${label}" && echo yes)"
+    tidy
+    is "${what}: tidy --yes from the lead's pane closes review-s-done, leaving no tab of s" \
+      "0|${epic:+conduct-e@e }lead@lead|${epic:+w:c conduct-e}" "${rc}|$(panes_in "${ROOT}")|$(cat "${P}/.swarm/state/${label}" 2>/dev/null)"
+  done
+  exit "${fails}"
+) &
+wait $! || merged_review_fails=$?
+fails=$((fails + merged_review_fails))
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

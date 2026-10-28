@@ -507,11 +507,10 @@ check "merge = human, the same story PR under grants: [merge]: the grant read s.
 granted merge; checks "${FX}/${H1}.checks" "$(run test completed failure)"; merge "${URL}"
 refused "merge = human, a red head under grants: [merge]" "the head 1111111 is not green: test (failure)"
 check "merge = human, a red head under grants: [merge]: no HLD read" no_grant_read
-# The epic guard lists the files first (read 1); pr_hld's own list is reads 2 to 4, a 502 read again
-# up to 3 times.
+# The epic guard lists the files first (read 1, read again on a 502); pr_hld's own list is read 2.
 granted merge; echo '[]' > "${FX}/files.fail"; merge "${URL}"
 refused "merge = human, a PR whose files cannot be listed" "cannot list every file ${URL} changes, so whether it sets an epic active with no ticket is unknown"
-granted merge; for i in 2 3 4; do : > "${FX}/files.${i}.fail"; done; merge "${URL}"
+granted merge; : > "${FX}/files.2.fail"; merge "${URL}"
 refused "merge = human, a PR whose files cannot be listed by pr_hld" "cannot tell which HLD ${URL} is under, so it waits on the user's merge"
 check "merge = human, a PR whose files cannot be listed by pr_hld: pr_hld says why" said "grants: cannot list every file ${URL} changes"
 # The guard's read is bounded and read again on a transient error, as protected_hold's is.
