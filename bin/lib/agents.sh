@@ -1342,6 +1342,9 @@ WAIT_STALLED=3
 # WAIT_STUCK: the exit code of any `wait` that returns "stuck: ..." (an API error resumes did not
 # clear, or a pane quiet for stall_minutes): distinct from a stall, which a conductor closes on.
 WAIT_STUCK=4
+# WAIT_NOT_IDLE: the exit code of `wait --idle` when the wait ended 0 on anything but idle or done.
+# shellcheck disable=SC2034 # read in another file
+WAIT_NOT_IDLE=5
 
 # timed_out <stderr file> — true when herdr's failed agent wait only timed out.
 timed_out() { grep -q '"timeout"' "$1"; }
@@ -2478,34 +2481,34 @@ own_target() {
 }
 
 # agent_where <agent> — agent_where_in over herdr's lists, each read once: the agent list first, so
-# an unknown agent fails with no other read, then the workspace and tab lists (every workspace's tabs).
-# A workspace or tab list herdr does not give leaves that label -: the agent list already gave the pane.
-# Fails, printing why, when herdr gives no agent list or lists no such agent in this project's panes.
+# an unknown agent fails with no other read, then the pane, workspace and tab lists (every workspace's
+# tabs). A list herdr does not give past the first leaves the workspace label - and the tab its record's
+# name: the agent list already gave the pane. Fails, printing why, when herdr gives no agent list or
+# lists no such agent in this project's panes.
 agent_where() {
-  local agents out workspaces tabs
+  local agents out panes workspaces tabs
   agents="$(herdr agent list 2>/dev/null)" || { echo "herdr gave no agent list"; return 1; }
-  out="$(agent_where_in "$1" "${agents}" "" "")" || { echo "${out}"; return 1; }
+  out="$(agent_where_in "$1" "${agents}" "" "" "")" || { echo "${out}"; return 1; }
+  panes="$(herdr pane list 2>/dev/null)" || panes=""
   workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
   tabs="$(herdr tab list 2>/dev/null)" || tabs=""
-  agent_where_in "$1" "${agents}" "${workspaces}" "${tabs}"
+  agent_where_in "$1" "${agents}" "${panes}" "${workspaces}" "${tabs}"
 }
 
-# agent_where_in <agent> <agent list> <workspace list> <tab list> — "<pane>\t<workspace label>\t<tab
-# label>" of this project's agent called <agent> (a slug, review-<slug>, conduct-<epic> or a herdr agent
-# name, cut as agent_name cuts it), from herdr's lists as read already, so a caller that looks up many
-# agents reads each list once. Only an agent in a pane own_panes recorded counts: herdr lists every
-# project's agents, and another project's may hold the name. A label herdr gives none of, or whose list
-# is empty or not JSON (a failed read), is -. Fails, printing why, when the agent list is not JSON or
-# names no such agent in this project's panes.
+# agent_where_in <agent> <agent list> <pane list> <workspace list> <tab list> — "<pane>\t<workspace
+# label>\t<tab label>" of this project's agent called <agent> (a slug, review-<slug>, conduct-<epic> or a
+# herdr agent name, cut as agent_name cuts it), from herdr's lists as read already, so a caller that
+# looks up many agents reads each list once. Only an agent in a pane own_panes recorded counts: herdr
+# lists every project's agents, and another project's may hold the name. The labels are panes.py's
+# pane_where over the pane's entries in the pane list and the agent list, as status and dash print them
+# on each agent's row: a workspace herdr gives no label for, or whose list is empty or not JSON (a failed
+# read), is -; a tab is the name swarm-dev gave it, its tab record's. Fails, printing why, when the
+# agent list is not JSON or names no such agent in this project's panes.
 agent_where_in() {
-  SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_WS="$3" SWARM_TABS="$4" python3 -I -c '
+  SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_STATE="${STATE_DIR}" SWARM_PANE_LIST="$3" SWARM_WS="$4" SWARM_TABS="$5" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import herdr_labels, pane_records, pane_where
 e = os.environ
-def labels(raw, key, id_key):
-    try:
-        return {x.get(id_key): x.get("label") for x in json.loads(raw)["result"][key]}
-    except (ValueError, KeyError, TypeError, AttributeError):
-        return {}
 try:
     agents = json.loads(sys.argv[1])["result"]["agents"]
 except (ValueError, KeyError, TypeError):
@@ -2513,10 +2516,15 @@ except (ValueError, KeyError, TypeError):
 a = next((a for a in agents if a.get("name") == e["SWARM_NAME"] and a.get("pane_id") in e["SWARM_PANES"].split()), None)
 if a is None:
     print("herdr lists no agent called %s in this project'"'"'s panes" % e["SWARM_NAME"]); sys.exit(1)
-ws = a.get("workspace_id") or a["pane_id"].split(":")[0]
-wl = labels(e["SWARM_WS"], "workspaces", "workspace_id").get(ws)
-tl = labels(e["SWARM_TABS"], "tabs", "tab_id").get(a.get("tab_id"))
-print("%s\t%s\t%s" % (a["pane_id"], wl or "-", tl or "-"))' "$2"
+pane = a["pane_id"]
+try:
+    live = next((p for p in json.loads(e["SWARM_PANE_LIST"])["result"]["panes"] if p.get("pane_id") == pane), None)
+except (ValueError, KeyError, TypeError, AttributeError):
+    live = None
+record = next((t for t, _, _ in pane_records(e["SWARM_STATE"], {pane})), "-")
+labels = (herdr_labels(e["SWARM_WS"], "workspaces", "workspace_id"), herdr_labels(e["SWARM_TABS"], "tabs", "tab_id"))
+ws, tab = pane_where(pane, (live, a), labels, record)
+print("%s\t%s\t%s" % (pane, ws, tab))' "$2"
 }
 
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story

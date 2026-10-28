@@ -14,8 +14,8 @@ on call: fable·xhigh · 0 escalations today
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ! alpha-core  ███░░░░░░░░░  2/7   1 review · 3 ready · 1 blocked                                 │
-│   ● conduct-alpha-core  conduct    opus·high    working 2m                                       │
-│   ● a-building          code       opus·high    working 6m                                       │
+│   ● conduct-alpha-core  conduct    opus·high    working 2m  w1:p1 in alpha › alpha-core          │
+│   ● a-building          code       opus·high    working 6m  w1:p2 in alpha › alpha-core          │
 │   ✓ alpha#11            green  a-review                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ⏸ 1 blocked · 1 later  (swarm.sh status --all lists them)
@@ -52,10 +52,10 @@ on call: fable·xhigh · 0 escalations today
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ! bravo-api  ███░░░░░░░░░  1/4   1 review · 2 ready                                              │
-│   ! b-fix   code       sonnet·high  waiting on input                                             │
+│   ! b-fix   code       sonnet·high  waiting on input  w2:p2 in bravo › bravo-api                 │
 │   ✗ bravo…  failing · behind  b-fix                                                              │
 │ ! bravo-ui   ████░░░░░░░░  1/3   1 ready · 1 blocked                                             │
-│   ! b-page  code       opus·high    stalled 45m                                                  │
+│   ! b-page  code       opus·high    stalled 45m  w2:p3 in bravo › bravo-ui                       │
 │ ✓ 1 active epic with no open story: bravo-docs                                                   │
 │ +1 idle  (--tree lists them)                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

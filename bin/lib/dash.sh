@@ -641,14 +641,13 @@ dash_no_agent() {
 # pane reads) are named on a line under the frame, which is laid out a line shorter to make room; a
 # frame one line high has none to spare, and names none. The line is cut to DASH_W.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" granted="" hgrants=$'\n' policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
+  local agents="" panes="" workspaces="" tabs="" sessions="" listed="" noagent="" noagent_at="" board="" granted="" hgrants=$'\n' policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
   local testing="" p idle skipped="" more pass pending=0 out read_end lines="${DASH_H:-0}"
   # type -P: herdr on PATH, not dash_deadline's function of that name.
   if type -P herdr >/dev/null 2>&1; then
-    # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
-    # listed keeps the agent list whatever the pane list does: no_agent_lines needs only that one.
+    # The lists status reads (its workspace and tab lists, labels only, come after the other reads, below). listed keeps the
+    # agent list whatever the pane list does: no_agent_lines needs only that one.
     { agents="$(herdr agent list 2>/dev/null)" && listed="${agents}" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
-    [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
   # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you, its **You:** text, after (after_story).
@@ -749,6 +748,11 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # next's idle: lines (idle_now), read each frame: board and state only, given the step next would
   # take, so the epic that step names gets no row.
   idle="$(idle_now "${nx%%$'\n'*}" 2>/dev/null)" || idle=""
+  # After the shell's other reads, as they only label the tree and each agent's row (dash_render.py's
+  # pane_where), so a slow one costs no read of a state before it; the render's pane reads, below, follow
+  # them under the same deadline. One herdr does not give leaves the workspace - and the tab its record's name.
+  [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
+  [[ -z "${agents}" ]] || tabs="$(herdr tab list 2>/dev/null)" || tabs=""
   # The shell's reads are done; the render's own, each agent's pane for a usage-limit dialog (panes.py's
   # pane_text, under SWARM_REPORT_END), come inside the python below. The frame is laid out a line
   # shorter when a read was cut before the render (pending); when the render's own reads are the first
@@ -765,7 +769,7 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   out="$(SWARM_REPORT_END="${read_end}" DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="${nx%%$'\n'*}" DASH_HELD="$(grep '^release-held: ' <<< "${nx}" || true)" DASH_IDLE="${idle}" DASH_BOARD="${board}" DASH_GRANTED="${granted}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_NO_AGENT="${noagent}" DASH_NO_AGENT_AT="${noagent_at}" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
-  DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
+  DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_TABS="${tabs}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${lines}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" DASH_CI="${DASH_CI:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \

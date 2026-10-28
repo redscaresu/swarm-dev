@@ -170,9 +170,12 @@ is one column, top to bottom:
   still on the board here is open, and a re-scope counts as nothing. The row's symbol is ○
   when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. A working
   agent's status carries how long since its last sign of life (`working 12m`), and past
-  `stall_minutes` it reads `stalled 40m`, marked `!`. Every agent's row ends with how long since
+  `stall_minutes` it reads `stalled 40m`, marked `!`. Every agent's row then shows how long since
   its pane last changed (`pane 12m`), as `status` or `wait` last saw it. An agent neither of them
-  has read within `stall_minutes` shows none. From
+  has read within `stall_minutes` shows none. The row ends with the agent's pane id, its
+  workspace's label and its tab's label (`w1:p2 in myapp · billing › billing`), from herdr's
+  workspace and tab lists, read once a frame, after its other reads and before its pane reads. A workspace label herdr gives none
+  of is `-`; a tab with none shows the name swarm-dev gave it. A narrow screen cuts these first. From
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
   a working agent also shows how long ago it started (its `story`, `conduct` or `agent` line in
   `events.tsv`). An escalate agent also shows which attempt its Fable build is and when it
@@ -190,7 +193,10 @@ is one column, top to bottom:
   epics with no open story share one line. An epic with no stories whose `depends_on` still holds up its
   planning (as `swarm.sh next` decides) keeps its own row instead, which reads `waits on <depends_on>`. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
-  workspace and tab instead.
+  workspace and tab instead. Each heading is herdr's label. A workspace with no label shows its id,
+  and a tab with none shows the name swarm-dev gave it with the tab's id, `t1 (w1:t3)`, so two such
+  tabs read apart. Each agent's row there ends with its pane id,
+  after its PR, and a narrow screen cuts the pane first.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
   days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings
   fixed (✎, one row per PR and day, so a fix's `log-finding` line is not shown again), declined

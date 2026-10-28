@@ -3,8 +3,9 @@
 # its tab's label. Two projects under one herdr (a stub on PATH, its lists in ${ROOT}/herdr.json) each
 # have an agent called s1; herdr lists b's first, so a where that read any project's agent would give
 # a's s1 b's labels. An agent herdr lists only in the other project's panes, or not at all, exits 1,
-# having read no list but the agent list. A label herdr gives none of, or a workspace or tab list it
-# cannot give, prints - for that label, still with the pane.
+# having read no list but the agent list. A workspace label herdr gives none of, or a workspace list it
+# cannot give, prints -; a tab with no label, or no tab list, prints the name swarm-dev gave the tab (its
+# record's), as status and dash do; both still with the pane.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -71,11 +72,11 @@ check "an agent herdr does not list exits 1" \
   $'swarm: where: herdr lists no agent called s9 in this project\'s panes\n1' "$(where_in "${B}" s9)"
 : > "${ROOT}/herdr.log"; where_in "${B}" s9 > /dev/null
 check "an unknown agent reads only herdr's agent list" "agent list" "$(cat "${ROOT}/herdr.log")"
-check "a tab with no label prints -, with the pane" $'s3: pane w1:p3, workspace a · e1, tab -\n0' "$(where_in "${A}" s3)"
+check "a tab with no label prints the name swarm-dev gave it (its record's), with the pane" $'s3: pane w1:p3, workspace a · e1, tab t1\n0' "$(where_in "${A}" s3)"
 touch "${ROOT}/fail-workspace"
 check "a workspace list herdr cannot give prints -, with the pane" $'s1: pane w1:p1, workspace -, tab e1\n0' "$(where_in "${A}" s1)"
 rm "${ROOT}/fail-workspace"; touch "${ROOT}/fail-tab"
-check "a tab list herdr cannot give prints -, with the pane" $'s1: pane w1:p1, workspace a · e1, tab -\n0' "$(where_in "${A}" s1)"
+check "a tab list herdr cannot give prints the tab's record name, with the pane" $'s1: pane w1:p1, workspace a · e1, tab t1\n0' "$(where_in "${A}" s1)"
 rm "${ROOT}/fail-tab"
 check "where logs nothing (read-only)" "no log" "$([[ -s "${A}/.swarm/events.tsv" ]] && echo logged || echo "no log")"
 

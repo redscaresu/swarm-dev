@@ -405,7 +405,7 @@ ev story ubr-s1 "$(ago 3600)"; ev tell:findings ubr-s1; session ubr-s1 "$(ago 36
 printf -- '---\nkind: code\nstatus: review\nprs: https://github.com/o/r/pull/7\n---\n\n# ubr-s1\n' > "${B}/ubr-s1.md"
 poll; poll
 check "a story in review's builder, its findings unsent, is kept: the exit tells it a nudge" \
-  test "$(cat "${ROOT}/out")" == "unsent brief: ubr-s1, exit: swarm.sh tell ubr-s1 nudge <a file asking it to act on the brief in its input box>"
+  test "$(cat "${ROOT}/out")" == "unsent brief: ubr-s1, exit: swarm.sh wait --idle ubr-s1 && swarm.sh tell ubr-s1 nudge <a file asking it to act on the brief in its input box>"
 
 # A restart is a delivery: its brief is watched, and an older resend is not read against it.
 fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1 "$(ago 3600)"; session ubr-s1; poll

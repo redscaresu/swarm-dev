@@ -140,8 +140,9 @@ cat > "${FX_ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
   "agent list") echo '{"result":{"agents":[{"name":"conduct-alpha-core","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sa-1"}},{"name":"a-building","agent_status":"working","pane_id":"w1:p2","agent_session":{"value":"sa-2"}},{"name":"conduct-bravo-api","agent_status":"idle","pane_id":"w2:p1","agent_session":{"value":"sb-1"}},{"name":"b-fix","agent_status":"blocked","pane_id":"w2:p2","agent_session":{"value":"sb-2"}},{"name":"b-page","agent_status":"working","pane_id":"w2:p3","agent_session":{"value":"sb-3"}}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"},{"pane_id":"w1:p2","tab_id":"w1:t1"},{"pane_id":"w2:p1","tab_id":"w2:t1"},{"pane_id":"w2:p2","tab_id":"w2:t1"},{"pane_id":"w2:p3","tab_id":"w2:t2"}]}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"alpha"},{"workspace_id":"w2","label":"bravo"}]}}' ;;
+  "tab list") echo '{"result":{"tabs":[{"tab_id":"w1:t1","label":"alpha-core"},{"tab_id":"w2:t1","label":"bravo-api"},{"tab_id":"w2:t2","label":"bravo-ui"}]}}' ;;
   *) exit 1 ;;
 esac
 STUB
