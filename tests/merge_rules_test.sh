@@ -762,6 +762,11 @@ is "a story PR removing an epic, a 404 on its gone read: read once" 2 "$(pinned_
 # And read again after a 502, as the pinned list's read is: read 1 is that list's, read 2 merge_gone's first.
 spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
 : > "${FX}/compare.main.2.fail"; merge "${URL}"; story_merged "a story PR removing an epic, a 502 on its gone read: read again, it merges"
+# The epic's own contents reads are bounded the same way: here the first, e1 at the head, hangs. Read
+# through, e1 is a draft there and the PR merges, so the refusal is the bound's, not the fixture's.
+spr; fx_at e1.md "${H1}" "status: draft"; touch "${FX}/contents.hang"; t0=${SECONDS}; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
+refused "a story PR changing an epic, its contents read hanging" "merge: gh cannot read docs/epics/e1.md at 1111111, so whether ${URL} sets e1 ${UK} e1"
+check "a story PR changing an epic, its contents read hanging: stops within 55 s" test $((SECONDS - t0)) -lt 55
 # A file read that dies saying nothing (python3 crashed, or within could not start it) names the exit.
 granted merge; real_python="$(command -v python3)"
 cat > "${ROOT}/bin/python3" <<STUB

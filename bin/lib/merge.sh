@@ -32,7 +32,7 @@ PARENT_READ_WAIT=30     # how long a release's read of its merge commit's first 
 REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
 [[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
-BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and pinned_files' may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
+BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and pinned_files', and each contents read of merge_read's, may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
 BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
@@ -198,20 +198,23 @@ merge_grant() {
   [[ $'\n'"${g}"$'\n' == *$'\n'merge$'\n'* ]] || echo "$1 waits on the user's merge (merge = human, and no HLD grants merge for it)"
 }
 
-# pr_contents <owner/repo> <ref> <path> — <path> at <ref> (a branch or a SHA), its bytes on stdout,
+# pr_contents <owner/repo> <ref> <path> [wait] — <path> at <ref> (a branch or a SHA), its bytes on stdout,
 # through gh's contents API, both URL-quoted; fails 1 when it is absent there (HTTP 404) and 2 on any
 # other failure, with gh's error on stderr and nothing on stdout (gh prints the error's JSON body
-# there). The shell's reader of a file at a PR's ref: merge_read, pr_hld and release_check read
-# through it (ci_gate.py's expected has its own).
+# there). With <wait>, the read stops after that many seconds (within) and fails 2, saying so on
+# stderr: without it a hung gh hangs the caller. The shell's reader of a file at a PR's ref:
+# merge_read, pr_hld and release_check read through it (ci_gate.py's expected has its own).
 pr_contents() {
-  local q out err rc=0
+  local q out err rc=0 run=()
+  [[ -z "${4:-}" ]] || run=(within "$4")
   # Quoted, so a # or ? in a name, or a + or & in a ref, is read as itself.
   q="$(python3 -c 'import sys, urllib.parse as u; print(u.quote(sys.argv[1]) + "?ref=" + u.quote(sys.argv[2], safe=""))' "$3" "$2")" || return 2
   # The bytes go to a file, printed only on success; gh's stderr into err, to tell a 404 from the rest.
   out="$(mktemp)" || return 2
-  err="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/${q}" 2>&1 > "${out}")" || rc=$?
+  err="$(${run[@]+"${run[@]}"} gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/${q}" </dev/null 2>&1 > "${out}")" || rc=$?
   if [[ ${rc} -eq 0 ]]; then cat "${out}" || rc=2; rm -f "${out}"; return "${rc}"; fi
   rm -f "${out}"
+  [[ ${rc} -ne 142 || -z "${4:-}" ]] || err="gh api took over $4s"
   [[ "${err}" != *"HTTP 404"* ]] || return 1
   [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2
   return 2
@@ -219,14 +222,16 @@ pr_contents() {
 
 # merge_read base|head <path> — epic_unticketed's reader for merge (epic_guard): <path> at the PR's base
 # branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
-# is absent and 2 on any other failure. At the head a 404 is absent only for a path the PR removes or
+# is absent and 2 on any other failure. Each read stops after BASE_MOVED_WAIT, as pinned_files' and
+# merge_gone's do, and a cut-off one fails 2: epic_guard's line names the file and the ref, and the
+# next swarm.sh merge reads past it. At the head a 404 is absent only for a path the PR removes or
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
 # epic would read as deleted.
 merge_read() {
   local ref="${head}" gone rc=0
   [[ "$1" == head ]] || ref="${base}"
   # gh's error is left out: epic_guard's line names the file and the ref it could not read.
-  pr_contents "${repo}" "${ref}" "$2" 2>/dev/null || rc=$?
+  pr_contents "${repo}" "${ref}" "$2" "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" 2>/dev/null || rc=$?
   [[ ${rc} -eq 1 && "$1" == head ]] || return "${rc}"
   gone="$(merge_gone)" || return 2
   grep -qxF -- "$2" <<< "${gone}" || return 2
