@@ -115,7 +115,8 @@ esac
 EOF
 chmod +x "${ROOT}/bin/herdr"
 log() { cat "${ROOT}/herdr.log"; }
-# gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs; pr view <url> gives the state on
+# gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs; pr view <url> --json headRefOid
+# prints ${ROOT}/head (nothing when it is missing), and any other pr view <url> gives the state on
 # <url>'s line in ${ROOT}/pr-states.
 gh_stub() {
   printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
@@ -161,8 +162,8 @@ check "a builder re-reads, before it pushes, the comments and docs naming what i
 printf '%s\n' "" "**Done when:**" "- f1 works" >> "${b}/stories/f1.md"
 git -C "${ROOT}/svc-wt/f1" rev-parse HEAD > "${ROOT}/head"
 run review-agent f1 https://github.com/o/svc/pull/8 >/dev/null
-check "a review brief holds a PR that changes what a user runs, sees or must do, with no README.md, docs/ or command text update, as a finding, the env: line its example" "yes" \
-  "$(has "- A PR that changes what a user runs, sees or must do and does not update README.md, docs/ or the command text with it is a finding; e.g. swarm-dev's env: line (AGENTS.md, README.md) until #657." "$(cat "${p}/.swarm/briefs/review-f1.md" 2>/dev/null)")"
+check "a review brief holds, as an exception to the scope rule, a PR that changes what a user runs, sees or must do and leaves its docs stale, the env: line its example" "yes" \
+  "$(has "- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and leaves README.md, AGENTS.md, docs/ or command text stale is a finding, e.g. swarm-dev's env: line." "$(cat "${p}/.swarm/briefs/review-f1.md" 2>/dev/null)")"
 # The builder brief (_brief) of f1, whose worktree lacks scripts/select-tests.sh (only svc's own
 # checkout has it), then has it: after review fixes only the change's tests (select-tests.sh only where
 # the builder works), and no self-matching pgrep poll.

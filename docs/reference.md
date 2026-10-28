@@ -1555,10 +1555,10 @@ with two lines, `head: <the PR's head>` and `stopped: <why>`: with no `## Findin
 pass, and the conductor's rules treat it as a review to start again.
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
-touches do not name it. One exception: a comment, doc or error-text line that the changed code no
-longer matches is a finding at its `file:line`, even when its file is outside the touches. So is a PR
-that changes what a user runs, sees or must do and does not update README.md, docs/ or the command
-text with it; the brief names swarm-dev's own `env:` line as the example. Its brief
+touches do not name it. Two exceptions are findings even when their file is outside the touches. The
+first is a comment, doc or error-text line that the changed code no longer matches, reported at its
+`file:line`. The second is a PR that changes what a user runs, sees or must do and leaves README.md,
+AGENTS.md, docs/ or the command text stale; swarm-dev's own `env:` line is the example. Its brief
 carries the project's own rules, as a builder's does, and the checks the lead used to make by hand,
 which the fallback reviewer's brief carries too. After them come the
 lines of the story and its epic that hold a `(user, <date>)` mark. Each is printed as it stands, with
