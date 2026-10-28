@@ -109,6 +109,13 @@ Useful while it runs:
   the same first word of a part (past a leading `§`, `#`, "the", "a" or "an"), or both name the bare file; clashing stories in two epics get a `depends_on`. Only the lead
   edits the shared files the project's `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
+- Remove nothing a board sets (a config key, a story or epic field) until every board the user runs
+  has been checked for it. A removed config key still loads for a release: it is ignored, with a
+  warning on stderr naming it and its line (`tests/removed_test.sh` pins this).
+- A fix to the swarm's own loop (the conductor, review agent, guard or `wait` commands) ships as a
+  patch release soon after it merges, so running projects get it.
+- Docs move with behaviour: a PR that changes what a user runs, sees or must do updates every doc
+  that states it (README.md, `docs/`, `commands/`) in the same PR, never a later one.
 
 ## Working on this repository
 
@@ -153,6 +160,18 @@ claude plugin validate .
 Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate: `test` is the
 required check, and it passes when its 12 `test-shard` jobs do. The full `make test` is for when you
 want the whole suite locally.
+
+Development rules for anyone, agent or person, working in this repository:
+
+- Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- Unset `SWARM_PROJECT` before you run anything here, and run no report (`flow`, `outcomes`,
+  `dataset`) that scans days of history against the real repo. Use a stand-in project.
+- Load the machine with at most 4 CPUs in all, and tear every load process and container down when
+  the check ends.
+- Prove a mutation in a copy: `cp` the file aside, break it, restore it. With more than two proofs,
+  or one on a SLOW test file, break the fix in a copy of the worktree without `.git`, run
+  `make test TESTS=<file> JOBS=1 TEST_RUNS_LOG=` there, keep the FAIL lines and delete the copy.
+  Never use `git checkout` or `git restore` on uncommitted work.
 
 The machine-wide cap on `make test` is the file `~/.swarm/test-cap`, read only by `scripts/test.sh`.
 A whole number N lets at most N runs go at once on the machine, whatever their project. A run waits
