@@ -512,6 +512,27 @@ rc=0; out="$(hat vw w:lead reconcile)" || rc=$?
 check "a working review-a is left open, and said, while a is finished and its builder closed" "0|yes|lead@lead review-a@a|yes" \
   "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a is working, so it was left open; close it once it is done with swarm.sh close review-a" "${out}")"
 
+# --- review-a's recorded session is one Claude Code no longer lists (gone), and herdr has it working:
+# herdr's status answers, so it is left open, and said.
+setup vg; lay "${HV}" "${ROOT}/vg" a; perl -pi -e 's/^review-a w:r idle$/review-a w:r working/' "${HV}/h/agents"
+perl -pi -e 's/\t-$/\tsess-gone/' "${ROOT}/vg/.swarm/agents.tsv"
+rc=0; out="$(hat vg w:lead reconcile)" || rc=$?
+check "a review-a whose session is gone but herdr has working is left open, and said" "0|yes|lead@lead review-a@a|yes" \
+  "${rc}|$(has "merged: a" "${out}")|$(panes_in "${HV}")|$(has "review-a is working, so it was left open" "${out}")"
+
+# --- Two slugs that share their first 25 characters give their review agents one herdr name, cut at
+# 32. A reconcile in the second's review pane that finishes the first leaves the second as it is:
+# its tab record names it, not the first.
+L="abcdefghijklmnopqrstuvwxy"; CUT="review-${L}"
+setup vx; item "${ROOT}/vx/docs/stories/${L}-one.md" "status: ready" "kind: code"; at vx review "${L}-one" "${U}/3" >/dev/null
+printf 't0 lead\nt1 %s-two\n' "${L}" > "${HV}/h/tabs"; printf 'w:lead t0\nw:r t1\n' > "${HV}/h/panes"
+printf 'lead w:lead idle\n%s w:r idle\n' "${CUT}" > "${HV}/h/agents"
+mkdir -p "${ROOT}/vx/.swarm/state"; echo "w:r review-${L}-two" > "${ROOT}/vx/.swarm/state/${L}-two"
+printf '2026-10-26\treview\t%s\tclaude\tsonnet\thigh\t-\n' "${CUT}" > "${ROOT}/vx/.swarm/agents.tsv"
+rc=0; out="$(hat vx w:r reconcile)" || rc=$?
+check "a reconcile in review-<L>-two's pane, finishing <L>-one, leaves review-<L>-two as it is" "0|yes|lead@lead ${CUT}@${L}-two|w:r review-${L}-two" \
+  "${rc}|$(has "deleted: ${ROOT}/vx/docs/stories/${L}-one.md" "${out}")|$(panes_in "${HV}")|$(cat "${ROOT}/vx/.swarm/state/${L}-two")"
+
 # --- review-a's pane cannot be closed, or herdr cannot list its agents: reconcile still finishes a,
 # and says review-a may be open, naming the close.
 setup vc; lay "${HV}" "${ROOT}/vc" a; echo w:r > "${HV}/h/closefail"
