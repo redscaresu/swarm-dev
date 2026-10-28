@@ -1626,7 +1626,7 @@ merge_rows() {
   c="$(costs_tag "$1")"; prs="$(fm "$1" prs)"
   if [[ -n "$3" ]]; then
     for u in ${prs}; do
-      if [[ $'\n'"$3" == *$'\n'"${u} "* ]]; then held+=" ${u}"; else rest+=" ${u}"; fi
+      if [[ $'\n'"$3" == *$'\n'"${u} "* ]]; then held+=" ${u}"; else rest+=" ${u}"; fi   # loose-match: ok quoted, a whole "<url> " line start
     done
   fi
   [[ -n "${held}" ]] || { echo "  awaiting your merge${c}: $2 ${prs}"; return 0; }

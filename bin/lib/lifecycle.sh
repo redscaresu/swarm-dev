@@ -2364,7 +2364,7 @@ lead_merge_shown() {
   [[ "$1" == p ]] || { echo "$2"; return 0; }
   for u in ${2#merge: * }; do
     p="$(awk -v u="${u}" '$1 == u { sub(/^[^ ]+ /, ""); print; exit }' <<< "$3")"
-    [[ -z "${p}" || ", ${paths}, " == *", ${p}, "* ]] || paths+="${paths:+, }${p}"
+    [[ -z "${p}" || ", ${paths}, " == *", ${p}, "* ]] || paths+="${paths:+, }${p}"   # loose-match: ok quoted, a whole ", <path>, " entry
   done
   echo "$2 (held: changes ${paths}; exit: the user merges it)"
 }
