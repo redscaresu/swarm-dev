@@ -251,13 +251,14 @@ unticketed_why() {
 
 # epic_guard — merge --board's refusal of a PR that sets an epic active with no ticket (merge_pr's
 # locals files and url): epic_unticketed on one changed path at a time, so a read error or a bad
-# grants: names the epic it was checking too. A failure that printed no reason refuses all the same.
+# grants: names the epic it was checking too, with every changed path for its parent: check. A
+# failure that printed no reason refuses all the same.
 epic_guard() {
   local p s why
   while IFS= read -r p; do
     s="$(basename "${p}" .md)"
     # Outside the $(...), where a merge_fail would not stop this.
-    why="$(epic_unticketed merge_read "${p}")" \
+    why="$(epic_unticketed merge_read "${p}" "${files}")" \
       || merge_fail "--board: $(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
     [[ -z "${why}" ]] || merge_fail "--board: ${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${files}"
