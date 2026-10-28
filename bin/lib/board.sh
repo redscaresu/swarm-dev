@@ -1290,7 +1290,7 @@ plan_hld() {
 # hooks/x.sh.
 protected_paths() {
   local i=""; [[ "${1:-}" != any-case ]] || i=i
-  grep "-${i}E" '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true
+  grep "-${i}E" '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true   # loose-match: ok the variable is the -i flag; the pattern is literal
 }
 
 # pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
