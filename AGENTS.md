@@ -109,6 +109,16 @@ Useful while it runs:
   the same first word of a part (past a leading `§`, `#`, "the", "a" or "an"), or both name the bare file; clashing stories in two epics get a `depends_on`. Only the lead
   edits the shared files the project's `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
+- Remove nothing a board sets (a config key, a story or epic field, a brief form the guard accepts)
+  until every board the user runs has been checked for it. swarm-dev has no list of those boards:
+  the planner asks the user to name them, and the removal PR quotes the check on each. A removed
+  key in `REMOVED_KEYS` still loads for at least one release: it is ignored, with a warning on
+  stderr naming it and its line (`tests/removed_test.sh` pins this).
+- A fix to the swarm's own loop (the conductor, review agent, guard or `wait` commands) ships as a
+  patch release soon after it merges, so running projects get it. The lead cuts it, through the
+  release arm below; a builder's story PR never bumps the version.
+- Docs move with behaviour: a PR that changes what a user runs, sees or must do updates every doc
+  that states it (README.md, AGENTS.md, `docs/`, `commands/`, `skills/swarm-dev/`) in the same PR, never a later one.
 
 ## Working on this repository
 
@@ -154,6 +164,26 @@ Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate:
 required check, and it passes when its 12 `test-shard` jobs do. The full `make test` is for when you
 want the whole suite locally.
 
+Development rules for anyone, agent or person, working in this repository:
+
+- Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- Unset `SWARM_PROJECT` for any test-like command run outside `make test` (a `swarm.sh` call by
+  hand, a hook): a builder's shell exports it, and the call then reaches the real repo.
+  `make test` already unsets it.
+- Never run `flow`, `dash`, `outcomes` or `dataset` against the real repo in a loop, in parallel or
+  over days, even when a story's Done when names a multi-day window. Run it once, after
+  `gh api rate_limit`, and say so in the PR: `flow` and `outcomes` with `--since <today>`, `dash` and
+  `dataset` as they are (they take no `--since`). After a test run, check that no `dash_slow.py` or
+  `swarm.sh flow --since` from your worktree is left. Kill by PID only what names your worktree or
+  a test temp dir.
+- A stress or load run uses at most 4 CPUs in all, with `make test` at `JOBS=4` or fewer, and you
+  tear every load process and container down when the check ends.
+- Prove a mutation without git: copy the file aside, break the original, then copy it back. With
+  more than two proofs, or one on a SLOW test file, break the fix in a copy of the worktree without
+  `.git`, run `make test TESTS=<file> JOBS=1 TEST_RUNS_LOG=` there, keep the FAIL lines and delete
+  the copy. Say in the PR that you used the worktree copy. Never use `git checkout` or
+  `git restore` on uncommitted work.
+
 The machine-wide cap on `make test` is the file `~/.swarm/test-cap`, read only by `scripts/test.sh`.
 A whole number N lets at most N runs go at once on the machine, whatever their project. A run waits
 for a free slot under `~/.swarm/test-slots/`. The wait has no time limit: a holder that is stopped (Ctrl-Z) or hung keeps its slot until it ends or you `rm -r` the slot directory the waiting message names. A missing file, an empty file or 0 means no cap, and
@@ -174,8 +204,7 @@ before it writes. That covers `swarm.sh` calls; the hooks' own event lines (`hoo
 `events.tsv` and `.swarm/lead/pid` as they were under `make test`, and that a test naming the copy, or a
 worktree of it, is refused and writes nothing there.
 
-A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
-the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
+Before the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
 read: README.md, docs/, epics, the text in commands/ that the user sees, and the PR description. Say
 in the PR that you did. Story files and briefs are written for agents and need no pass.
 
