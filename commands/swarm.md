@@ -294,8 +294,30 @@ Repeat until a step below says stop:
      `idle: <story> is ready with no build, exit: <exit>` line, or an `idle: epic <epic> ...` line, is
      capacity no step uses, a line `next` prints after its step: handle it as step 1's `idle:` list
      says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
-     then it needs nothing. It comes once, and again only after it has gone from the queue. Then start
-     `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
+     then it needs nothing. It comes once, and again only after it has gone from the queue. An
+     `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` line means a story PR
+     finished review on its current head, is green and mergeable, and has sat unmerged for
+     `queue_minutes` since then. It comes in both merge modes for a ready or in-review story an agent
+     builds, never a `lead` story's or a kept story's, and never for a PR that has a `merge:` line or
+     that a running `swarm.sh merge` is merging. When the review's file lists findings, the exit is
+     `triage .swarm/reviews/<slug>.md, then swarm.sh merge --head <sha> <PR URL> once every finding is
+     declined`: triage them by § The outer loop, and leave the PR while any is still being fixed, since
+     its next head needs a review of its own. Before the merge, if the story is not in review yet,
+     close its builder if one is open (`swarm.sh close <slug> met`) and run
+     `swarm.sh review <slug> <PR URL>`, as the `kept:` arm does, so merge finds the PR on the story.
+     Under `merge = agent`, run the merge, or tell the story's conductor to merge it if one runs for
+     its epic. Under `merge = human`, run it only when `swarm.sh grants <PR URL>` lists `merge`;
+     otherwise tell the user it waits on their merge. A
+     `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` line means an open PR of
+     a ready or in-review story an agent builds conflicts with its base, so its checks will never run.
+     Send its builder a file asking it to merge the base in and push, with
+     `swarm.sh tell <slug> nudge <file>`. A builder at work refuses the tell: wait for it with
+     `swarm.sh wait <slug>` in the background, then send it. If no builder is open, start one in the
+     story's worktree with `swarm.sh agent`, as the `kept:` arm says. If the story has no worktree, add
+     one on the PR's branch first: `git -C <repo> fetch origin story/<slug>`, then
+     `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. Each line comes once, and again
+     only after it has gone from the queue. Unlike `held:` and `merge:` lines, both come on a run's
+     first read too. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
