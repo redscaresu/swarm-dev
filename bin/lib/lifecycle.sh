@@ -3684,7 +3684,7 @@ unsent_lines() {
       builder)
         if [[ ! -f "${BOARD}/stories/${stem}.md" ]]; then out="herdr pane close ${pane}"
         elif [[ "$(fm "${BOARD}/stories/${stem}.md" status)" == ready ]]; then out="herdr pane close ${pane} then $(no_agent_exit "${stem}")"
-        else out="swarm.sh wait --stall ${stem} && swarm.sh tell ${stem} nudge <a file asking it to act on the brief in its input box>"; fi ;;
+        else out="swarm.sh wait --idle ${stem} && swarm.sh tell ${stem} nudge <a file asking it to act on the brief in its input box>"; fi ;;
       review)
         slug="${stem#review-}"; out=""
         [[ ! -f "${BOARD}/stories/${slug}.md" ]] || for u in $(story_prs "${BOARD}/stories/${slug}.md"); do
@@ -4617,13 +4617,17 @@ upgrade_path() {
   echo "${out}"
 }
 
-# wait_command [--stall | --until-report] <name> [timeout-ms] | --lead [timeout-ms] — the wait command:
-# a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's (wait_lead).
+# wait_command [--stall] [--idle] | --until-report <name> [timeout-ms] | --lead [timeout-ms] — the wait
+# command: a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's
+# (wait_lead). --idle, on an agent that is not a conductor or review agent, exits WAIT_NOT_IDLE when the
+# wait ends 0 on anything but idle or done (auth, waiting, gone, stepped up: or stepping up:), so
+# `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over.
 wait_command() {
-  local stall until n
+  local stall until idle n out rc
   [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
-  require_herdr; stall=""; until=""
-  case "${1:-}" in --stall) stall=--stall; shift ;; --until-report) until=1; shift ;; esac
+  require_herdr; stall=""; until=""; idle=""
+  case "${1:-}" in --until-report) until=1; shift ;; esac
+  while :; do case "${1:-}" in --stall) stall=--stall; shift ;; --idle) idle=1; shift ;; *) break ;; esac; done
   n="$(agent_name "${1:?name}")"
   if [[ -n "${until}" ]]; then
     [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]] || die "wait --until-report waits only on a conductor (conduct-<epic>), not ${n}"
@@ -4638,5 +4642,11 @@ wait_command() {
     echo "${out}"
     [[ ${rc} -ne 0 || "${out}" != idle || -f "${f}" ]] || { echo "swarm: ${n}: idle with no findings file (${f}) at the timeout" >&2; return 1; }
     return "${rc}"
-  else wait_agent "${n}" "${2:-3600000}" "${stall}"; fi
+  elif [[ -z "${idle}" ]]; then wait_agent "${n}" "${2:-3600000}" "${stall}"
+  else
+    rc=0; out="$(wait_agent "${n}" "${2:-3600000}" "${stall}")" || rc=$?
+    [[ -z "${out}" ]] || printf '%s\n' "${out}"
+    [[ ${rc} -eq 0 ]] || return "${rc}"
+    [[ "${out##*$'\n'}" =~ ^(idle|done)$ ]] || return "${WAIT_NOT_IDLE}"
+  fi
 }

@@ -175,7 +175,7 @@ for mode in e backlog; do
   for want in "Yours is ${mine}; a ready story whose worktree exists has started: never run \`swarm.sh story\` for it." 'act only on a line whose <child> is yours' \
       'If the line ends `(no builder)`, or close prints `not held:`, the child stays ready on a dead parent: do not start it, and list it in your report for the lead.' \
       '`<child>: could not check <what>`' 'so send each merge once: until the child'"'"'s builder replies to that tell (or brief), skip a line for the same child and ref, unless its wait ended without the tell' 'and after a builder opens a PR, run `swarm.sh unblock --startable ' 'run `swarm.sh status` and read its Stacked lines' \
-      'saying to merge <ref> into its branch, re-run the tests and push, and send it with `swarm.sh wait --stall <child> && swarm.sh tell <child> nudge <file>` in the background' \
+      'saying to merge <ref> into its branch, re-run the tests and push, and send it with `swarm.sh wait --stall --idle <child> && swarm.sh tell <child> nudge <file>` in the background' \
       'On a line that ends `(no builder)`, first start a builder in the child'"'"'s worktree' '`swarm.sh agent <tab> <child> <worktree> <role> <brief>`' \
       "start the child's review agent on the new head" 'run `swarm.sh close <child> paused --drop`'; do
     grep -qF -- "${want}" <<< "${b}" || { echo "  conduct-${mode} lacks: ${want}"; n=$((n + 1)); }

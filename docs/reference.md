@@ -460,7 +460,7 @@ The `.unsent` marker works like this:
   herdr, not `swarm.sh close`: on a ready story with no PR that close counts a failed attempt and
   clears the worktree, and restart then refuses. A builder whose story is in any other state, such
   as one in review whose findings sit in its box, is kept, since restart refuses a story that is not
-  ready: the exit is `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <a file asking it to
+  ready: the exit is `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <a file asking it to
   act on the brief in its input box>`, which herdr types after the paste and sends with it. With no story file the exit is
   `herdr pane close <pane>` alone. For a review agent it is
   `swarm.sh close review-<slug> then swarm.sh review-agent <slug> <PR URL>`, once per PR on the
@@ -1147,11 +1147,16 @@ different parts of one file, and a story names the functions it changes. A build
 conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict
 never sends a story back to `ready`. The conductor sends that as a `nudge` tell, which is not a
 review round, and starts a builder in the story's worktree when the one it had was closed after
-`swarm.sh review`. The conductor sends every nudge its brief names, and the lead every nudge to a
-builder that `/swarm-dev:swarm` names, as
-`swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>`, run in the background. The tell
-runs only once the wait returns with the builder's turn over, so a wait that times out, stalls or
-prints `stuck:` sends nothing.
+`swarm.sh review`. The conductor sends every nudge its brief names as
+`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>`, run in the background,
+and the lead every nudge to a builder that `/swarm-dev:swarm` names as
+`swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>`, without `--stall`, so its wait never
+logs a stall or steps up a build a conductor owns. `wait --idle` exits 0 only when it prints `idle` or
+`done`, once the builder's turn is over. Where a plain `wait` would exit 0 on anything else (`auth`,
+`waiting`, `gone`, `stepped up:` or `stepping up:`), it exits 5. So the tell never reaches a builder at
+work, and a wait that times out, stalls, steps the build up or prints `stuck:` sends nothing. The
+sender deals with what the wait printed and sends the nudge again the same way. The conductor's wait
+is its one wait on that builder.
 Work that edits a shared file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the
 lead, alone.
 

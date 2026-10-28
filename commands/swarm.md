@@ -302,8 +302,9 @@ Repeat until a step below says stop:
      would name. Do not use `swarm.sh close` on a builder: it counts a failed attempt and clears the
      worktree that restart needs. A builder whose story is not ready, such as one in review with its
      findings in the box, is kept: the exit is
-     `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background, where the
-     file asks it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
+     `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background, where the file
+     asks it to act on the brief in its input box. A wait that times out or prints anything but
+     `idle` or `done` sends nothing: deal with what it printed, then run the exit again. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
      then `swarm.sh conduct <epic>`. A
      `prompt: <agent> (<kind>), exit: <exit>` line means an agent herdr shows blocked, idle or done
@@ -337,9 +338,8 @@ Repeat until a step below says stop:
      `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` line means an open PR of
      a ready or in-review story an agent builds conflicts with its base, so its checks will never run.
      Send its builder a file asking it to merge the base in and push, with
-     `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background. The tell
-     runs only once the wait returns with the builder's turn over; a wait that times out, stalls or
-     prints `stuck:` sends nothing, so read what it printed and send the file again once that is dealt with. If no builder is open, start one in the
+     `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background. With `--idle` the
+     wait exits 0 only when it prints `idle` or `done`, once the builder's turn is over. A wait that times out or prints anything but `idle` or `done` (`stuck:`, `auth`, `waiting`, `gone`) sends nothing: deal with what it printed, then send the file again the same way. If no builder is open, start one in the
      story's worktree with `swarm.sh agent`, as the `kept:` arm says. If the story has no worktree, add
      one on the PR's branch first: `git -C <repo> fetch origin story/<slug>`, then
      `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. Each line comes once, and again
@@ -668,7 +668,8 @@ Three more rules for the lead:
   - A builder of a ready story: `herdr pane close <pane>` if herdr still lists it (`swarm.sh restart`
     refuses a listed builder), then `swarm.sh restart <slug>`.
   - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so run
-    `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background.
+    `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background, and send it again
+    as the next paragraph says when that wait sends nothing.
   - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
   - A planner or co-author: `swarm.sh close <agent>`, since its name stays taken while its pane
     shows it working, then run its command again.
@@ -681,8 +682,8 @@ Three more rules for the lead:
 
   `swarm.sh restart` and `swarm.sh conduct` take no brief and write their own prompt. Once the agent
   is back, tell it to write its output as it goes. A builder comes back working, so run
-  `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background: the tell
-  goes once its turn ends, and not at all when the wait times out, stalls or sticks. A conductor's
+  `swarm.sh wait --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background: the tell goes once
+  its turn ends. A wait that times out or prints anything but `idle` or `done` (`stuck:`, `auth`, `waiting`, `gone`, or past the default hour) sends nothing: deal with what it printed, then send the file again the same way. A conductor's
   `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets the line
   in the brief you write for its rerun, before it starts.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
