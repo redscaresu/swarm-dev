@@ -49,6 +49,10 @@ on call: fable·xhigh · 0 escalations today
 │ ! look at b-page: working 45 min with no commit, edit,   │
 │   session-log write or PR update                         │
 ╰──────────────────────────────────────────────────────────╯
+╭─ idle capacity ──────────────────────────────────────────╮
+│ idle: epic bravo-docs has no plan running, exit:         │
+│   /swarm-dev:plan-epic bravo-docs                        │
+╰──────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────╮
 │ ! bravo-api  ██░░░░  1/4   1 review · 2 ready            │
 │   ! b-fix   waiting on input                             │
