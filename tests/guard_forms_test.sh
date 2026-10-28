@@ -59,24 +59,28 @@ for f in re.findall(r"`([^`]*)`", sys.argv[1]):
 
 # Every form guard_rule shows, in order, and what this test does with it: allow (fed to the guard,
 # which must pass it), refuse (fed, must be refused) or none (not a guard matter: the variable delete
-# that stopped a builder on a permission prompt). The waits are each brief's own; a conductor never
+# that stopped a builder on a permission prompt). The merge and waits are each brief's own; a conductor never
 # waits on CI, so it is shown its own watch and no wait-pr. Today the rm -rf and swarm.sh wait and watch
 # rows never say merge, git, cd or a kill, so the guard's shell fast path passes them before its Python
 # rules run: their allow checks go red only if a later guard rule refuses them. Whether auto mode
 # prompts on a delete is Claude Code's, not the guard's, so the no-prompt delete is pinned as text only.
 FORMS_HEAD="cd <dir> || exit 1 && <command>	allow
 cd <dir>; <command>	refuse
-swarm.sh merge <PR URL>	allow
 --body \"\$(cat <<'EOF' ... EOF)\"	allow"
 FORMS_TAIL="rm -rf <absolute path>	allow
 rm -rf \"\$SP/\$m\"	none"
-WAIT_BUILDER="swarm.sh wait-pr --head <sha> <PR URL>	allow"
-WAIT_REVIEW="swarm.sh wait --stall <slug>	allow
+# Each brief's own merge form (a story PR's pinned to the reviewed head, a conductor's board PR), then its waits.
+OWN_BUILDER="swarm.sh merge --head <sha> <PR URL>	allow
+swarm.sh wait-pr --head <sha> <PR URL>	allow"
+OWN_REVIEW="swarm.sh merge --head <sha> <PR URL>	allow
+swarm.sh wait --stall <slug>	allow
 swarm.sh wait-pr <PR URL>	allow
 swarm.sh wait-pr --head <sha> <PR URL>	allow"
-WAIT_EPIC="swarm.sh watch --epic f	allow
+OWN_EPIC="swarm.sh merge --board <PR URL>	allow
+swarm.sh watch --epic f	allow
 swarm.sh wait <slug>	allow"
-WAIT_BACKLOG="swarm.sh watch --backlog	allow
+OWN_BACKLOG="swarm.sh merge --board <PR URL>	allow
+swarm.sh watch --backlog	allow
 swarm.sh wait <slug>	allow"
 
 # call <command> — the guard's exit code on <command> as a swarm agent's Bash call from the project.
@@ -102,8 +106,8 @@ print(form)
 PY
 }
 
-# brief_forms <name> <brief> <waits> — the brief holds guard_rule with exactly the listed forms and
-# <waits>, the guard passes or refuses each Bash form as the list says, and the text-only guidance is there.
+# brief_forms <name> <brief> <own> — the brief holds guard_rule with exactly the listed forms and
+# <own>, its merge and wait forms, in their place; the guard passes or refuses each Bash form as the list says, and the text-only guidance is there.
 brief_forms() {
   local rule want raw mode
   rule="$(rule_of "$2")"
@@ -123,10 +127,10 @@ brief_forms() {
     "$(has 'Delete a scratch path you made with the path spelled out in full, `rm -rf <absolute path>`: auto mode ran that for a builder with no permission prompt' "${rule}")"
 }
 
-for m in human agent; do brief_forms "builder (merge = ${m})" "$(builder "${m}")" "${WAIT_BUILDER}"; done
-brief_forms review "$(lib "review_brief s1 https://github.com/o/r/pull/7 main ${P}/.swarm/reviews/s1.md abc 1")" "${WAIT_REVIEW}"
-brief_forms conductor "$(lib 'conduct_brief f')" "${WAIT_EPIC}"
-brief_forms "backlog conductor" "$(lib 'conduct_brief backlog')" "${WAIT_BACKLOG}"
+for m in human agent; do brief_forms "builder (merge = ${m})" "$(builder "${m}")" "${OWN_BUILDER}"; done
+brief_forms review "$(lib "review_brief s1 https://github.com/o/r/pull/7 main ${P}/.swarm/reviews/s1.md abc 1")" "${OWN_REVIEW}"
+brief_forms conductor "$(lib 'conduct_brief f')" "${OWN_EPIC}"
+brief_forms "backlog conductor" "$(lib 'conduct_brief backlog')" "${OWN_BACKLOG}"
 # What the rule says is refused, beside the forms that pass: merge text in a gh api call (a comment
 # reply), and merge text a Bash redirect writes to a file.
 check "the guard refuses merge text in a gh api comment, and written to a file by Bash" "2|2" \

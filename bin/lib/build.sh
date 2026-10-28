@@ -17,28 +17,29 @@ findings_goal() {
 }
 
 # The merge and review rules, shared by the briefs. merge_rule ends with guard_rule, so a builder's
-# brief has the guard's forms, with the swarm.sh and the wait-pr form its other rules use.
+# brief has the guard's forms, with the merge and wait-pr forms its other rules use.
 merge_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh" guard
-  guard="$(guard_rule "${sw}" "\`${sw} wait-pr --head <sha> <PR URL>\`")"
+  guard="$(guard_rule "${sw} merge --head <sha> <PR URL>" "\`${sw} wait-pr --head <sha> <PR URL>\`")"
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges). ${guard}"
   else echo "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge). ${guard}"; fi
 }
-# guard_rule <swarm.sh> <waits> — the command forms hooks/merge-guard.sh passes, and a delete auto mode
+# guard_rule <merge> <waits> — the command forms hooks/merge-guard.sh passes, and a delete auto mode
 # ran for a builder with no permission prompt, for the builder (through merge_rule), review and
-# conductor briefs. <swarm.sh> is swarm.sh as the brief writes it (the review brief's names the
-# project); <waits> is the brief's own wait commands, so a conductor, which never waits on CI, is shown
-# its own watch and no wait-pr. Bash that writes merge text to a file, or a gh api call that carries
+# conductor briefs. <merge> is the brief's own merge command, with swarm.sh as the brief writes it (the
+# review brief's names the project): merge --head <sha> for a story PR, so the head that passed review
+# is the one that merges, and merge --board for a conductor's board PR. <waits> is the brief's own wait
+# commands, so a conductor, which never waits on CI, is shown its own watch and no wait-pr. Bash that writes merge text to a file, or a gh api call that carries
 # it, is a raw merge to the guard, so that text goes through the Write tool or a quoted heredoc in a
 # gh pr command. tests/guard_forms_test.sh feeds each Bash form to the guard.
 guard_rule() {
   # shellcheck disable=SC2016 # the forms are shown, not run
   printf '%s ' "The plugin's guard hook checks each Bash call, and these forms pass it." \
     'Write `cd <dir> || exit 1 && <command>`, never `cd <dir>; <command>`.' \
-    "The agent that merges runs \`$1 merge <PR URL>\` alone in its Bash call, joined to nothing." \
     'Text that mentions a merge (a PR body, a comment) goes in a file through the Write tool, passed with --body-file, or into a gh pr create, edit or comment as a quoted heredoc, `--body "$(cat <<'"'EOF'"' ... EOF)"`.' \
     'A gh api call that carries it is refused as a raw merge, and so is Bash that writes it to a file, through a redirect or tee, since that file could be run.' \
+    "The agent that merges runs \`$1\` alone in its Bash call, joined to nothing." \
     "Wait with $2, in the background, never a loop of your own."
   # shellcheck disable=SC2016 # the forms are shown, not run
   printf '%s' 'Delete a scratch path you made with the path spelled out in full, `rm -rf <absolute path>`: auto mode ran that for a builder with no permission prompt, where `rm -rf "$SP/$m"`, a path built from variables, stopped one on a prompt.'
@@ -1147,7 +1148,7 @@ Review $2, the PR of story $1, at its head $5, in this worktree. Never edit, com
 the builder changes the code. Merge only as the pass step below says. The files you write are
 ${4}, ${round} and, to nudge the builder, ${nudge}.
 
-$(guard_rule "${sw}" "\`${sw} wait --stall <slug>\`, \`${sw} wait-pr <PR URL>\` and, after the builder pushes, \`${sw} wait-pr --head <sha> <PR URL>\`")
+$(guard_rule "${sw} merge --head <sha> <PR URL>" "\`${sw} wait --stall <slug>\`, \`${sw} wait-pr <PR URL>\` and, after the builder pushes, \`${sw} wait-pr --head <sha> <PR URL>\`")
 
 The story touches: $(fm "${story}" touches)
 
@@ -1451,7 +1452,7 @@ ${scope} A
 story whose \`kind\` is set and is not code, docs or chore (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
 
-$(guard_rule swarm.sh "\`${watch}\` and \`swarm.sh wait <slug>\`")
+$(guard_rule "swarm.sh merge --board <PR URL>" "\`${watch}\` and \`swarm.sh wait <slug>\`")
 
 When the board is in the project's repo, make a scope or body edit to a story in a board PR
 (\`swarm.sh board-pr\`), as the lead does, never in the main checkout. $(board_pr_merge_rule) A builder
