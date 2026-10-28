@@ -321,12 +321,20 @@ for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
 
 # Needs you: only what you act on, each as a short action. With lead = session a lead session acts
 # for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft epic only
-# you agree) and the rest goes to the lead's queue (lq); with lead off, lq is needs you. Of the stories with a
-# **You:** step only the first is listed, with +N more for the rest (more).
+# you agree, a merge only you may make) and the rest goes to the lead's queue (lq); with lead off, lq is
+# needs you. Of the stories with a **You:** step only the first is listed, with +N more for the rest (more).
 need, blocked, later, green, need_slugs, held_seen, no_agree = [], 0, 0, 0, set(), set(), set()
 LEAD = E.get("DASH_LEAD") == "session"
 queue = []
 lq = queue if LEAD else need
+# The review items and HLDs with an open plan PR whose agreed HLD grants merge (dash.sh's dash_render
+# builds it only with lead = session and merge = human), as (dir, slug).
+GRANTED = {tuple(l.split("\t", 1)) for l in lines("DASH_GRANTED")}
+AGENT_MERGES = E["DASH_MERGE"] == "agent"
+
+def merger(yours):
+    # The rows of whoever merges: needs you when only the user may, else the lead's queue.
+    return need if yours else lq
 bang = [sym("look")]
 waiting = []   # (dir, slug) of the board item each row waits on, where it names one: the first light's age
 merging = set()   # the (dir, slug) items with a merge row
@@ -365,11 +373,14 @@ for l in lines("DASH_WAITING"):
         continue
     m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
     if m:
-        # With merge = agent, swarm.sh merge holds a costs: money story for the user, so no lead
-        # session can merge it; with merge = human the lead may, when the user asks.
-        rows = need if m.group(1) and E["DASH_MERGE"] == "agent" else lq
-        what = ("epic " if m.group(2) else "") + m.group(3) + (" (costs money)" if m.group(1) else "")
+        # swarm.sh merge holds a costs: money PR for the user under either merge setting, so no lead
+        # session can merge it. With merge = human it merges the rest only under an agreed HLD that
+        # grants merge; with merge = agent it merges the rest, except a story PR that changes a
+        # protected path (protected_hold). dash reads no PR's files, so that row stays the lead's
+        # until swarm.sh merge holds it.
         item = ("epics" if m.group(2) else "stories", m.group(3))
+        rows = merger(m.group(1) or not (AGENT_MERGES or item in GRANTED))
+        what = ("epic " if m.group(2) else "") + m.group(3) + (" (costs money)" if m.group(1) else "")
         merging.add(item)
         urls = list(URL.finditer(m.group(4)))
         if m.group(1):
@@ -395,6 +406,12 @@ for l in lines("DASH_WAITING"):
         slug, prs = m.group(1), m.group(2).strip() or "<PR URL>"
         add(lq, bang + [(f"review kept story {slug}{story_title(slug)}: ", ""),
                         (f"swarm.sh review {slug} {prs} or swarm.sh close {slug} --drop", "dim")], ("stories", slug))
+        continue
+    # An HLD's plan PR is the user's to merge with merge = human unless the HLD grants merge; its
+    # finish PR is the user's with merge = human, grant or not (/swarm-dev:swarm's finish arm).
+    m = re.match(r"(plan|finish) PR awaiting merge: (\S+)$", l)
+    if m:
+        add(merger(not AGENT_MERGES and (m.group(1) == "finish" or ("hld", m.group(2)) not in GRANTED)), bang + [(l, "")])
         continue
     m = re.match(r"(\S+): (\S+)$", l)
     if m:
