@@ -11,6 +11,24 @@ def pane_records(state, keep):
                 continue
             seen.add(f[0])
             yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
+# herdr_labels: {id: label} from herdr's workspace or tab list as read, an entry with no id skipped (else
+# its label would answer for every pane with no id); {} for one herdr did not give.
+def herdr_labels(raw, key, id_key):
+    try:
+        return {x[id_key]: x.get("label") for x in json.loads(raw)["result"][key] if isinstance(x, dict) and x.get(id_key)}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return {}
+# pane_ids: (workspace id, tab id) of a pane, each from the first of its herdr entries (its pane list's,
+# its agent list's) that has it; the workspace else by the pane id's prefix, the tab else None.
+def pane_ids(pane, entries):
+    ids = lambda k: next((e.get(k) for e in entries if isinstance(e, dict) and e.get(k)), None)
+    return ids("workspace_id") or pane.split(":")[0], ids("tab_id")
+# pane_where: (workspace label, tab label) of a pane, by pane_ids, from labels = (workspace labels, tab
+# labels). A workspace herdr gives no label for is "-"; a tab is record, the name swarm-dev gave the tab
+# (its tab record's), so where, status and dash name it alike whether or not herdr labelled it.
+def pane_where(pane, entries, labels, record="-"):
+    ws, tab = pane_ids(pane, entries)
+    return labels[0].get(ws) or "-", labels[1].get(tab) or record
 def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True

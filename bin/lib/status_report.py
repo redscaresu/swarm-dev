@@ -3,11 +3,13 @@ from panes import *
 state, agents_json, panes_json, show_all, log, projects = sys.argv[1:7]
 try:
     agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
-    live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
+    live = {p["pane_id"]: p for p in json.loads(panes_json)["result"]["panes"]}
 except (ValueError, KeyError):
     print("Agents\n  (herdr gave no agent list)"); sys.exit(0)
+ws_labels = herdr_labels(os.environ.get("SWARM_WORKSPACES", ""), "workspaces", "workspace_id")
+tab_labels = herdr_labels(os.environ.get("SWARM_TABS", ""), "tabs", "tab_id")
 rows = []
-for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & live):
+for record, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & set(live)):
         a = agents.get(pane)
         if a is not None:
             name = a.get("name") or name
@@ -21,7 +23,11 @@ for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) 
                 "gone": "gone: session ended",
                 "idle": "idle: finished, or waiting for its next step",
                 "done": "idle: finished, or waiting for its next step"}.get(st, st)
-        rows.append((name, what, f"{tab} {pane}"))
+        try:   # an odd herdr entry (an id that is not hashable) costs this row its labels, not status its Agents
+            ws, tab = pane_where(pane, (live[pane], a), (ws_labels, tab_labels), record)
+        except Exception:
+            ws, tab = "-", record
+        rows.append((name, what, f"pane {pane}, workspace {ws}, tab {tab}"))
 quiet = [r for r in rows if r[1].startswith(("idle", "done"))]
 shown = rows if show_all == "--all" else [r for r in rows if r not in quiet]
 counts = [f"{len(rows) - len(quiet)} need a look or are working", f"{len(quiet)} idle or done"]

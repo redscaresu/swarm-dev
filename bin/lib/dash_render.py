@@ -161,13 +161,14 @@ recs, stalled = [], []
 TESTING = set(E.get("DASH_TESTING", "").split())
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
-    live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
+    live = {p["pane_id"]: p for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
 except (ValueError, KeyError, TypeError):
     agents = None
-try:   # labels only: without them the tree names each workspace by its id
-    ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
-except (ValueError, KeyError, TypeError):
-    ws_label = {}
+# Each agent's row ends with its pane, its workspace's label and its tab's (pane_where): the workspace -
+# and the tab its record's name for one herdr gives none of. The tree groups by their ids (pane_ids) and
+# heads them with the labels.
+ws_labels = herdr_labels(E.get("DASH_WORKSPACES", ""), "workspaces", "workspace_id")
+tab_labels = herdr_labels(E.get("DASH_TABS", ""), "tabs", "tab_id")
 
 # Each name herdr may list -> the one name the records hold under it: the board's stories, and the
 # conductors of the board's epics, of the conducted epics and of the briefs (.swarm/briefs/conduct-
@@ -248,11 +249,15 @@ if agents is not None:
     by_session, by_name = {}, {}
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
         by_name[f[2]] = by_session[f[6]] = f
-    for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & live):
-        r = {"ws": ws_label.get(pane.split(":")[0], pane.split(":")[0]), "tab": label, "name": recorded, "role": "?",
-             "model": "?", "look": True, "slug": None, "epic": epic_for("", None, label)}
+    for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & set(live)):
+        r = {"tab": label, "name": recorded, "role": "?", "model": "?", "look": True, "slug": None, "epic": epic_for("", None, label),
+             "ids": (pane.split(":")[0], None), "where": (pane, "-", label)}
         try:
             a = agents.get(pane)
+            # Its workspace and tab, by id and label (pane_ids, pane_where), inside the row's try: an odd herdr
+            # entry marks this row unreadable, as any error in it does, and never costs the frame.
+            entries = (live[pane], a)
+            r["ids"], r["where"] = pane_ids(pane, entries), (pane,) + pane_where(pane, entries, (ws_labels, tab_labels), label)
             name = (a or {}).get("name") or recorded
             base = re.sub(r"-done\d*$", "", name)
             rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
@@ -516,13 +521,17 @@ def agent_cols(r):
         row.append((f"  {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
     return row
 
-def agent_row(r):
-    return [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")] + agent_cols(r)
+def agent_row(r, where=True):
+    # Last, an agent's pane, workspace and tab (a codex review has none): `w1:p2 in <workspace> › <tab>`.
+    pane, ws, tab = r.get("where") or (None, None, None)
+    return ([("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")] + agent_cols(r)
+            + ([(f"  {pane} in {ws} › {tab}", "dim")] if where and pane else []))
 
 if WIDE:
     # The left column takes what its widest agent card needs from recent's, down to a third of the
-    # screen, so a card's state age never cuts the escalation time after it.
-    grow = min(max((sum(len(t) for t, _ in agent_row(r)) + 4 for r in shown), default=0) - LW, RW - W // 3)
+    # screen, so a card's state age never cuts the escalation time after it. Its pane and labels, last,
+    # take no room from recent: they are cut first.
+    grow = min(max((sum(len(t) for t, _ in agent_row(r, False)) + 4 for r in shown), default=0) - LW, RW - W // 3)
     if grow > 0:
         LW, RW = LW + grow, RW - grow
 
@@ -601,18 +610,24 @@ def tree_view():
         return [[("agents unavailable: herdr is not on PATH, or gave no list", "dim")]]
     tree = collections.OrderedDict()
     for r in recs:
-        tree.setdefault(r["ws"], collections.OrderedDict()).setdefault(r["tab"], []).append(r)
+        # By workspace and tab id (pane_ids), so two tabs with one label stay apart, headed by herdr's labels
+        # (pane_where's): a workspace with none by its id, a tab with none by its record's name and its id,
+        # `t1 (w1:t3)`, so two such tabs read apart. Each row ends with the pane, cut first on a narrow screen:
+        # its workspace and tab are its headings, and its PR matters more than its pane.
+        (ws_id, tab_id), (_, ws, tab) = r["ids"], r["where"]
+        head = tab if tab_labels.get(tab_id) else (f"{tab} ({tab_id})" if tab_id else tab)
+        tree.setdefault((ws_id, ws if ws != "-" else ws_id), collections.OrderedDict()).setdefault((tab_id or tab, head), []).append(r)
     width = min(max((len(r["name"]) for r in recs), default=0), 30)
     rows = []
-    for ws, tabs in tree.items():
+    for (_, ws), tabs in tree.items():
         rows.append([(ws, "b")])
-        for i, (tab, items) in enumerate(tabs.items()):
+        for i, ((_, tab), items) in enumerate(tabs.items()):
             last_tab = i == len(tabs) - 1
             rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
             for j, r in enumerate(items):
                 stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
                 row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(one_off(r))
-                rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim")])
+                rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim"), (f"  {r['where'][0]}", "dim")])
     return rows or [[("no agents open in this project's panes", "dim")]]
 
 # Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
