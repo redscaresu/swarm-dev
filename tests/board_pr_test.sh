@@ -385,6 +385,7 @@ BODY='The epic body, which the move keeps as it was, so that git sees one file u
 on_main board/epics/ren-act.md "---\nstatus: active\n---\n\n# ren-act\n\n${BODY}\n"
 on_main board/epics/ren-stale.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# ren-stale\n\n${BODY}\n"
 on_main board/stories/ren-story.md "---\nstatus: active\n---\n\n# ren-story\n\n${BODY}\n"
+on_main board/epics/ren-del.md "---\nstatus: active\n---\n\n# ren-del\n\n${BODY}\n"
 git -C "${P}" fetch -q origin
 
 bpr start new; ep new epics/e-new.md '---\nstatus: active\n---\n\n# e-new\n'
@@ -408,10 +409,7 @@ guard_refused pdr "parent: a draft epic on main" "e-pdr ${NT} e-pdr"
 # (to a draft, or deleted) and add an active child.
 bpr start pdem; ep pdem epics/pact.md '---\nstatus: draft\n---\n\n# pact\n'; ep pdem epics/e-pdem.md '---\nstatus: active\nparent: pact\n---\n'
 guard_refused pdem "parent: an active epic the same PR sets back to a draft" "e-pdem ${NT} e-pdem"
-# e-pdel's body keeps git from pairing it with pact's deletion as a rename: board_changes finds renames
-# by content, and a new epic more than half the same as a deleted one reads as that one renamed.
-bpr start pdel; rm "${ROOT}/proj-wt/_board-pdel/board/epics/pact.md"
-ep pdel epics/e-pdel.md '---\nstatus: active\nparent: pact\n---\n\n# e-pdel\n\nA child of pact, which this board PR deletes, so the parent: is no ticket.\n'
+bpr start pdel; rm "${ROOT}/proj-wt/_board-pdel/board/epics/pact.md"; ep pdel epics/e-pdel.md '---\nstatus: active\nparent: pact\n---\n'
 guard_refused pdel "parent: an active epic the same PR deletes" "e-pdel ${NT} e-pdel"
 bpr start nst; ep nst epics/nostat.md '---\nstatus: active\ndepends_on: []\n---\n\n# nostat\n'
 guard_refused nst "an epic with no status: at the base, flipped to active" "nostat ${NT} nostat"
@@ -497,6 +495,10 @@ git -C "${ROOT}/proj-wt/_board-rns" commit -qam "ren-stale renamed and active"
 guard_refused rns "a draft renamed and set active, the agreed: its base copy had kept" "ren-stale2 ${NT} ren-stale2"
 bpr start rnx; mv "${ROOT}/proj-wt/_board-rnx/board/stories/ren-story.md" "${ROOT}/proj-wt/_board-rnx/board/epics/ren-story.md"
 guard_refused rnx "an active file moved into epics/ from outside it" "ren-story ${NT} ren-story"
+# git pairs a deleted epic with a new one sharing its body as a rename too (by content, at half alike);
+# with another heading the new one reads as new, so it needs a ticket.
+bpr start rnu; rm "${ROOT}/proj-wt/_board-rnu/board/epics/ren-del.md"; ep rnu epics/ren-new.md "---\nstatus: active\n---\n\n# ren-new\n\n${BODY}\n"
+guard_refused rnu "an active epic deleted and an unrelated active one added, alike enough to pair" "ren-new ${NT} ren-new"
 # A file staged past .gitignore (git add -f) is one open's git add -A commits, so the change list
 # holds it: outside the board, it is refused as such.
 bpr start fadd; echo fadd > "${ROOT}/proj-wt/_board-fadd/board/stories/a.md"

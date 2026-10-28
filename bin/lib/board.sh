@@ -1028,8 +1028,9 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 # lead_epics = on. <reader> base|head <path> prints a file's bytes, failing 1 when it is absent and 2
 # when it cannot be read; <reader> from <path> prints the old path a rename moved <path> from, nothing
 # for none, failing when it cannot tell, asked only for an epic absent at the base: a renamed epic's
-# base copy is read at its old path when that was an epic too, so a rename keeps its status and
-# agreed: as they were; any other old path reads as new. [changed] is every path the PR changes, a
+# base copy is read at its old path when that was an epic too and the heading is the same at both
+# (epic_heading), so a rename keeps its status and agreed: as they were; any other old path, or
+# another heading, reads as new. [changed] is every path the PR changes, a
 # renamed file's old path too, one a line (<paths> by default). A read error at either end, or an
 # HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
@@ -1053,6 +1054,12 @@ epic_unticketed() (
       o="${b#"${pre}epics/"}"
       if [[ "${b}" == "${pre}epics/"* && "${o}" =~ ^[^/]+\.md$ && "${o}" != README.md ]]; then
         rc=0; was="$("${reader}" base "${b}")" || rc=$?
+        # git and GitHub pair a rename by content, at half alike, so a deleted epic and a new one sharing
+        # its front matter pair too: the pairing counts only while the epic keeps its heading.
+        if [[ ${rc} -eq 0 ]]; then
+          o="$(epic_heading <<< "${now}")"
+          [[ -n "${o}" && "${o}" == "$(epic_heading <<< "${was}")" ]] || { rc=1; was=""; }
+        fi
       fi
     fi
     [[ ${rc} -le 1 ]] || { echo "cannot read ${b} at the base"; exit 1; }
@@ -1072,6 +1079,10 @@ epic_unticketed() (
   done <<< "$2"
   printf '%s' "${out}"
 )
+
+# epic_heading — the first "# " heading in stdin's bytes past the front matter (a "# " line inside it
+# is a YAML comment), or nothing. An epic's title: a rename keeps it, an unrelated epic has its own.
+epic_heading() { awk 'NR == 1 && /^---$/ { fm = 1; next } fm && /^---$/ { fm = 0; next } !fm && /^# / { print; exit }'; }
 
 # epic_ticket_agreed <head bytes> <base bytes> — epic_unticketed's agreed: ticket: true when the
 # epic's front matter at the head has an agreed: date that its base copy did not already have (an
