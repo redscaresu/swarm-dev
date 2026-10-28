@@ -756,7 +756,7 @@ review_next() {
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   echo "${REVIEW_HEAD}" > "${out%.md}.head"
   # The brief pins the head of the round it started: this round's head replaces it there.
-  echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}, and write ${out} afresh, its first line \`head: ${REVIEW_HEAD}\` (or, if the worktree moved, \`head moved: <what changed>\` under it)."
+  echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
   review_round_line "${round}" "${pr}"
 }
 
@@ -1046,9 +1046,9 @@ EOF
 # --head, which refuses a moved head). Then, under merge = agent or when swarm.sh grants names merge for
 # the PR, it merges that head, pinned as pinned_merge_rule pins a conductor's (swarm.sh merge --head);
 # otherwise the review is the handoff to the user. The findings file is written only once those
-# commands exit: the conductor's wait ends on it, and a close then would cut a merge short. A pass sent
-# no findings, so review-agent --next refuses: a moved head is a head moved: line, and whoever started
-# the agent starts a new one. <swarm.sh> is the brief's swarm.sh with SWARM_PROJECT, as every call in it.
+# commands exit: the conductor's wait ends on it, and a close then would cut a merge short. A moved head
+# is a head moved: line, and whoever started the agent starts a new one on it. <swarm.sh> is the brief's
+# swarm.sh with SWARM_PROJECT, as every call in it.
 review_handoff() {
   local merge next
   merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit: after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
@@ -1062,8 +1062,8 @@ review_handoff() {
 A round with nothing to fix is a pass, of $4, the head on ${3}'s \`head:\` line. Hand the PR on
 before you write ${3}: run \`$5 review $1 --head $4 $2\`, which puts the story in review. ${next}
 When review or merge refuses because the PR's head is no longer $4 (a push since your review), that
-head has had no review, and this session cannot give it one: a pass sent the builder no findings, so
-\`review-agent --next\` refuses. Write ${3} with the Write tool holding two lines, \`head: $4\` and
+head has had no review, and you do not review it in this session. Write ${3} with the Write tool
+holding two lines, \`head: $4\` and
 \`head moved: <the head review or merge named>\`, then stop: whoever started you (the conductor, or the
 lead for a kept story) starts a new review agent on the new head. When it was merge that refused,
 review had already put the story in review: your reply's first line says \`$1 is in review on
@@ -1073,7 +1073,7 @@ the PR's branch, and that head needs no new review. With <new head> the full SHA
 \`merge --head\` names, run \`$5 wait-pr --head <new head> $2\` in the background and, once it exits 0,
 \`$5 merge --head <new head> $2\`, as above.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff.
-Once the last of these commands has exited, write ${3} as above, then reply with ${3}, what the last
+Once the last of these commands has exited, write the review to ${3}, then reply with ${3}, what the last
 command printed, and \`codex skipped: <why>\` when codex was, then stop. On any other refusal or failure
 (a story held until its parents merge, a story whose \`prs:\` line names another PR, a red base),
 reply the same way: the conductor or the lead acts on it.
@@ -1088,14 +1088,17 @@ EOF
 # sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
 # changes code, and the project's rules. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
-# the worktree) under its head: line, with the declined and out-of-scope points apart. A round with
-# nothing to fix is a pass: review_handoff's review --head and, where it may, merge --head on the head it
-# reviewed, then it stops. Otherwise it waits for the builder, tells it the findings
-# (tell counts the round, and may step the build up or hold it), waits for its push, runs the green step
-# on the new head, then review-agent --next (review_next) and the round that prints, in the same session.
+# the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, which
+# ends it once review_handoff has handed the PR on (review --head, then merge --head where it may),
+# since that file is read as a finished review of its head the moment it exists (review_pass,
+# wait review-<slug>); with findings to fix, to the .round.md beside it, which it tells the builder (tell
+# counts the round, and may step the build up or hold it) after waiting for it, then waits for its push,
+# runs the green step on the new head, then review-agent --next (review_next) and the round that prints,
+# in the same session. A stop before a pass (a wait that ends other than idle, a refused tell, no fix
+# pushed) writes <findings file> with head: and stopped: lines and no ## Findings: no pass.
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
-  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" repo ladder="" stepped="" agent
+  local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" repo ladder="" stepped="" agent
   cr="$(review_round_line "$6" "$2")"
   sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
   # findings takes the story's repo by name; a story with no repo: is in the project's own.
@@ -1112,11 +1115,16 @@ review_brief() {
   on>\`, a \`## Findings\` heading with that \`step-up failed:\` line as its one item, and a
   \`## Out of scope\` heading with \`none\`, then stop."
   [[ -z "${CFG_escalate_ladder:-}" ]] || stepped=" When it prints \`stepped up: $1\`, the stalled build went to
-the next model on the escalation ladder: wait on it the same way."
+the next model on the escalation ladder, and when it prints \`stepping up: $1\`, another step-up or a
+restart of it is running: in both cases, wait on it the same way. A build stepped up after this
+round's findings were told has none of them in its handover brief (that brief pastes ${4}, which
+holds no findings to fix): once the new builder is idle, send it ${round} as a nudge, which is no
+round (write ${nudge} as below holding what ${round} holds, then \`${sw} tell $1 nudge ${nudge}\`),
+and wait on it again."
   cat <<EOF
 Review $2, the PR of story $1, at its head $5, in this worktree. Never edit, commit or push here:
-the builder changes the code. Merge only as the pass step below says. The files you write are ${4}
-and, to nudge the builder, ${nudge}.
+the builder changes the code. Merge only as the pass step below says. The files you write are
+${4}, ${round} and, to nudge the builder, ${nudge}.
 
 The story touches: $(fm "${story}" touches)
 
@@ -1126,14 +1134,30 @@ $(story_items "${story}" 'Done when')
 Judge the PR against these touches and items. ${SCOPE_RULE}
 $(review_stack_note "$1" "$3")
 To wait for the builder, run \`${sw} wait --stall $1\` in the background and wait for it to exit,
-never a loop of your own. It prints \`idle\` once the builder's turn has ended.${stepped} When it
-ends any other way (\`stalled:\`, \`stuck:\`, a timeout or an error), reply with what it printed, then
-stop: the builder is then the conductor's or the lead's to act on.
+never a loop of your own. It prints \`idle\`, or \`done\` for a builder with no Claude session, once
+the builder's turn has ended.${stepped} When it ends any other way (\`stalled:\`, \`stuck:\`, a timeout
+or an error), stop with what it printed, as below: the builder is then the conductor's or the lead's
+to act on.
 
-Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr --head <HEAD> $2\` in
-the background, <HEAD> being what \`git rev-parse HEAD\` prints here, and wait for it to exit, never
-a loop of your own; it prints the head it waits on first. Right after a push GitHub can still name
-the old head, and --head waits until it names this one.
+A tell to a busy builder is queued, not refused: it prints \`queued: ${agent} (busy); delivered when
+its turn ends, so do not tell it again\` and exits 0, and its queue's check sends it once the
+builder's turn has ended (a findings tell counts its round then, not before). After a queued tell,
+wait for the builder as above, then until the check has delivered it: the tell is
+${PROJECT_DIR}/.swarm/tells/${agent}.<kind> while queued, then a \`.sending.<token>\` and a
+\`.claimed.<token>\` mark of that name while on its way, and only its \`.sent\` mark is left once the
+builder has it (look every few seconds, \`ls ${PROJECT_DIR}/.swarm/tells/\`; the check looks once a
+minute). Then wait for the builder once more, as above: that turn is the one that has it. When
+\`${agent}.<kind>.undelivered.md\` appears there instead, the check dropped the tell, which
+\`wait --lead\` tells the lead: stop with that, as below.
+
+${4} is read as a finished review of the head on its \`head:\` line the moment it exists, so write it
+only when a round passes, or when you stop. To stop before a round passes, write ${4} with the Write
+tool holding two lines, \`head: <the PR's head as you last saw it>\` and \`stopped: <why: what tell or
+wait printed, or that no fix was pushed>\`, reply with the same, and stop: with no \`## Findings\`
+heading it is no pass, and the conductor takes the story from there.
+
+Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr $2\` in the
+background and wait for it to exit, never a loop of your own; it prints the head it waits on first.
 - Exit 0: the head counts green only once you have triaged what \`${sw} findings ${repo} ${2##*/}\`
   prints: the notes on every check run, whatever its conclusion, and the PR's open code-scanning
   alerts. Nudge the builder with each real one. Rebut the rest with a reason in the PR
@@ -1142,24 +1166,27 @@ the old head, and --head waits until it names this one.
 - Exit 1 (a red check) or a conflict: nudge the builder, naming the red check or the base to merge in.${ladder}
 - Its other exit 2s print why. On a timeout or no check runs, read the checks once (\`gh pr checks $2\`):
   nudge the builder when a workflow never started, else run wait-pr again. On a gh error, run it again.
-  When it says the PR's head is still another one, the builder's commit has not reached GitHub: nudge
-  the builder to push it.
 To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: the Write tool refuses
 to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
 to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
-Wait for the builder as above before each nudge, so tell sends it at once. When tell still prints
-\`queued:\`, the builder began a turn meanwhile, and tell sends the nudge itself when that turn ends:
-never send it again; reply with that line, then stop. After each nudge,
-wait for the builder the same way, then wait for green again on the head it pushed. The green step
-runs once per round: on the first head, then on the head the builder pushes after each findings
-tell. Each run is bounded: at most two nudges, and at most two heads that wait-pr calls red. Write
-the not-green file, which ends the green step, when the builder goes idle without pushing (wait-pr
-prints the same head), when wait-pr ends the same way twice, when the second red head would need a
-nudge, or when the head after your second nudge is not green. The not-green file is ${4}, written
-with the Write tool: \`head: <the head wait-pr waited on last>\`, then a \`## Findings\` heading with
-one line for the builder, \`wait-pr: not green: <the red check, the conflict, or what wait-pr printed
-last>\`, then a \`## Out of scope\` heading with \`none\`. Its one finding is to fix, from ci: send it
-to the builder as findings, as below, and log it as any finding to fix. Once a head is green and
+When tell prints \`queued:\`, the nudge goes when the builder's turn ends: do as above. After each
+nudge, wait for the builder the same way, then wait for green again on the head it pushed. A wait on a
+head the builder has just pushed is \`${sw} wait-pr --head <that head, from git rev-parse HEAD> $2\`:
+right after a push GitHub can still report the old head, which the plain wait-pr would call green.
+That HEAD is this worktree's commit, pushed or not: when wait-pr exits 2 with \`the PR's head is
+<X>, not <sha>\`, the PR never got the head you named (a push that did not land): never wait on
+<X> instead; nudge the builder naming both shas, so it pushes again, then wait for it and run
+wait-pr --head again on its HEAD. The green step runs once per round: on the first head, then on
+the head the builder pushes after each findings tell. Each run is bounded: at most two nudges, and
+at most two heads that wait-pr calls red. Write the not-green file, which ends the green step, when
+the builder goes idle without a commit (\`git rev-parse HEAD\` is still the head you waited on),
+when wait-pr ends the same way twice, when the second red head would need a nudge, or when the
+head after your second nudge is not green. The not-green file is ${round}, written
+with the Write tool after \`rm -f ${round}\`: \`head: <the head wait-pr waited on last>\`, then a
+\`## Findings\` heading with one line for the builder, \`wait-pr: not green: <the red check, the
+conflict, or what wait-pr printed last>\`, then a \`## Handled by the review agent\` heading with
+\`none\`. Its one finding is to fix, from ci: send it to the builder as findings, as below, and log it as any finding
+to fix. Once a head is green and
 triaged with nothing to nudge, review it as below when it is $5. When the builder pushed past $5
 before any findings went to it, write ${4} with the Write tool holding two lines, \`head: $5\` and
 \`head moved: <the green head>\`, then stop; once findings went to it, run \`review-agent --next\`
@@ -1171,7 +1198,7 @@ Wait for it to exit, and act on what it prints last: a usage limit it prints ear
 a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
 again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. When it prints
 \`reviewed by fallback <model>: codex usage limit\`, a fallback agent reviewed in codex's place: report
-its findings as codex's, under that line. ${cr}
+its findings as codex's, under that line, and log each with \`--reviewer fallback\`, as below. ${cr}
 
 $(review_checklist "${story}")
 
@@ -1188,36 +1215,45 @@ then. Rebut the declined ones in the PR, in one comment:
 below; log each one to fix only once the builder has pushed, as below. A finding's round is $6 on
 this first review, then the round \`review-agent --next\` prints.
 
-Then write ${4} with the Write tool, in one go. The conductor's wait ends once it exists and the
-conductor may then close you, so on a pass write it only once the pass step below has finished.
+Then write the review with the Write tool, in one go.
 Its first line is \`head: $5\`; when codex was skipped, its second is \`codex skipped: <why>\`.
 Under a \`## Findings\` heading,
-one line per finding to fix: its reviewer (codex or code-review), file:line, and the finding; with
-none, say so. Under a \`## Declined\` heading, the same for each finding you declined, with its
-reason; with none, say so. Under a \`## Out of scope\` heading, the same for each point a reviewer
-raised that only a change to a file outside the touches can fix; with none, say so.
+one line per finding to fix: its reviewer (codex, fallback or code-review), file:line, and the finding; with
+none, say so. Under a \`## Handled by the review agent\` heading, the same for each finding you
+declined, with its reason, and for each point a reviewer raised that only a change to a file
+outside the touches can fix, marked out of scope; with none, say so. Use no \`## Declined\` or
+\`## Out of scope\` heading: the conductor's rules log and rebut what they find under those, and
+you have done both already.
 
 $(review_handoff "$1" "$2" "$4" "$5" "${sw}")
 
-With findings to fix, wait before you tell: wait for the builder as above, then run
-\`${sw} tell $1 findings ${4}\`. When tell prints \`queued:\`, the builder began a turn after your
-wait, and tell sends the findings itself when that turn ends, counting the round then: never tell
-them again; reply with that line, then stop. When tell says another step-up or a restart of it is
-running, wait the same way, then tell it again. When tell says the
+With findings to fix, write it to ${round} instead, after \`rm -f ${round}\` (the Write tool refuses
+to overwrite a file this session has not read), and never to ${4}, which would end the round as a
+finished review. Then wait before you tell, so the findings go at once and count their round now:
+wait for the builder as above, then run \`${sw} tell $1 findings ${round}\`. When tell prints
+\`queued:\` (the builder took a turn meanwhile), do as above, and tell it nothing more. When tell
+says another step-up or a restart of it is running, wait the same way, then tell it again. When tell says the
 build went to the next model (a step-up), that model has the findings in its handover brief: never
 tell them again, and wait on it as below. When tell fails but says the findings count as delivered
 or as a round, herdr sent them: never tell them as findings again. When it also says to read the
 builder's pane, read it (\`herdr agent read ${agent} --source recent-unwrapped\`), and if they never
-arrived, send them as a nudge, which is no round: write ${nudge} as above holding what ${4} holds,
-and run \`${sw} tell $1 nudge ${nudge}\`. Then wait on it as below. When tell says $1 is held for
-the lead, that its step-up failed partway, or refuses for any other reason, reply with what it
-printed, then stop. Once the findings are sent, wait for the builder as above. When the PR's head is
-still the one you reviewed (no fix was pushed), reply with what you found, then stop. Otherwise read
-the builder's reply (\`herdr agent read ${agent} --source recent-unwrapped\`) and the new diff
-(\`git diff <the head you reviewed> HEAD\`), and log each finding you sent: as fixed when the diff
-fixes it, and as declined, with the reason that fits, when the builder declined it with a reason.
-One it did neither to is not logged; the next round raises it again if it still holds. Then run the
-green step above on the head it pushed. Once that head is green and triaged with nothing to nudge,
+arrived, send them as a nudge, which is no round: write ${nudge} as above holding what ${round}
+holds, and run \`${sw} tell $1 nudge ${nudge}\`. Then wait on it as below. When tell says $1 is held
+for the lead, that its step-up failed partway, or refuses for any other reason, stop with what it
+printed, as above. Once the findings are sent, wait for the builder as above. Then read the
+builder's reply (\`herdr agent read ${agent} --source recent-unwrapped\`) and, when the PR's head
+moved, the new diff (\`git diff <the head you reviewed> HEAD\`), and log each finding you sent: as
+fixed when the diff fixes it, and as declined, with the reason that fits, when the builder declined
+it with a reason you accept; rebut those in the PR as above, in one comment with each finding and
+the builder's reason. One it did neither to, or declined with a reason you do not accept, is not
+logged; the next round raises it again if it still holds. When the PR's head is still the one you reviewed (no fix was pushed), and the builder
+declined each finding you sent with a reason you accept, the round passes on that head, as one
+with nothing to fix does: rebut them in the PR as above, in one comment with each finding and the
+builder's reason, and do the pass step above on that head, its review listing them under
+\`## Handled by the review agent\` with those reasons. When the head is still the same otherwise, stop with
+\`no fix pushed: <the builder's reply, in one line>\`, as above. When it moved, run the green step
+above on the head it pushed, with wait-pr --head as there. Once that head is green and triaged
+with nothing to nudge,
 run \`${sw} review-agent --next $1 $2\` and do the round it prints (codex alone from round 2):
 review, check the head, triage, and send its findings as above, until a round passes or you stop.
 

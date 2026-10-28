@@ -198,8 +198,9 @@ Repeat until a step below says stop:
      (which counts the round and applies the ladder) and runs the later rounds itself. While it is
      open, never triage its review file, tell the builder findings or merge the PR yourself: the
      findings would go out twice and the round would count twice. Its wait returns once the agent
-     is idle with `.swarm/reviews/<slug>.md` written, after each round that sent the builder
-     findings and when the agent stops. Then look at the story and that file. If the story is in
+     is idle with `.swarm/reviews/<slug>.md` written, which it writes only on a pass or when it
+     stops; a round's findings to fix go to `.swarm/reviews/<slug>.round.md`, which is not yours to
+     read. Then look at the story and that file. If the story is in
      review with no `kept:` line, or has left the board, the agent passed the PR: it ran
      `swarm.sh review <slug> --head <sha> <PR URL>`, then merged the PR under `merge = agent` or a
      `merge` grant, or handed it over. When the PR waits on the user's merge, `wait --lead` brings
@@ -208,16 +209,13 @@ Repeat until a step below says stop:
      the worktree is at the PR's head, start `swarm.sh review-agent <slug> <PR URL>` again (it
      retires the stopped agent) and wait on it the same way. When its reply says the story is
      already in review on that head, tell the user not to merge the PR until the new review passes.
-     If the file lists findings to fix, the agent sent them to the builder and carries on once the
-     builder pushes: wait for the builder with `swarm.sh wait --stall <slug>` in the background,
-     then on `review-<slug>` again. If that wait returns the same file (its `head:` line unchanged),
-     the next round has not begun: wait for the checks on the builder's new head
-     (`swarm.sh wait-pr --head <sha> <PR URL>`) first. When the builder's wait stalls or times out,
-     or the builder goes idle with no new head, act as a conductor does by § Building (**Giving up
-     on a builder.**). A `stuck:` line is not a stall: the `stuck:` rule below applies. Otherwise
-     the agent stopped on a line it could not act on (a refusal from `review`, `grants` or `merge`,
-     a red base, a story held until its parents merge): its reply quotes the line
-     (`herdr agent read review-<slug> --source recent-unwrapped`), so act on that line. A line
+     If the file has a `stopped:` line, the agent stopped before a pass, and that line says why.
+     When its wait on the builder stalled or timed out, or the builder pushed no fix, act as a
+     conductor does by § Building (**Giving up on a builder.**). A `stuck:` line is not a stall:
+     the `stuck:` rule below applies. For a refused tell, act on the line it quotes. Otherwise the
+     agent passed the PR but stopped on a line it could not act on (a refusal from `review`,
+     `grants` or `merge`, a red base, a story held until its parents merge): its reply quotes the
+     line (`herdr agent read review-<slug> --source recent-unwrapped`), so act on that line. A line
      with more than one PR goes one PR at a time, as `swarm.sh review --head` refuses while the
      story's `prs:` line lists a PR the agent did not review, and each agent stops there. Note the
      head each one passed (its file's `head:` line) before you start the review agent on the next
