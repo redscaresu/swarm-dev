@@ -1655,7 +1655,7 @@ note_lock() {
 # review agent from review-<slug>'s pane, else the conductor. Either counts the same: rounds, step-ups
 # and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n from who found qpane qfrom qtok born inflight=""
+  local kind="$2" f="$3" name msg state since inbox rc pane line n from who found qpane qfrom qtok born inflight="" inflight_q=""
   # Unset once read, so no agent this tell starts (a step-up) inherits it.
   read -r qpane qfrom qtok <<< "${SWARM_TELL_QUEUED:-}"; unset SWARM_TELL_QUEUED
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
@@ -1695,8 +1695,9 @@ tell_agent() {
     rc=0; tell_unqueue "${name}" "${kind}" "${born}" || rc=$?
     case "${rc}" in
       0) inflight="${TELL_QUEUE}/${name}.${kind}.direct.$$"   # tell_unqueue left it: on its way until this tell ends
+         inflight_q="$(printf '%q' "${inflight}")"   # %q, not quotes: the project's path may hold a quote
          # shellcheck disable=SC2064 # expand now: the path is this tell's own
-         trap "rm -f '${inflight}'" EXIT ;;
+         trap "rm -f ${inflight_q}" EXIT ;;
       1) die "tell: ${name} was not told: its queue's lock (${TELL_QUEUE}/${name}.lock) could not be taken, so a ${kind} tell queued earlier could not be replaced; tell it again" ;;
       2) tell_replaced "${name}" "${kind}"; return ;;
       *) tell_queue "$1" "${name}" "${kind}" "${f}" "${pane} $(tell_from "$1")" "${born}"; return ;;   # one of its kind is on its way: this goes behind it
@@ -1727,7 +1728,7 @@ tell_agent() {
   from="${qfrom:-$(tell_from "$1")}"; who="the conductor"; [[ "${from}" != review ]] || who="the review agent"
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
-  trap "rm -f '${msg}' '${msg}.goal' ${inflight:+'${inflight}'}" EXIT
+  trap "rm -f '${msg}' '${msg}.goal' ${inflight_q}" EXIT
   { echo "From ${who}:"; echo; cat "${f}"; } > "${msg}"
   # The file's own first line is what its session log is read for: every tell starts with the header.
   line="$(awk 'NF { print; exit }' "${f}")"
@@ -1737,7 +1738,7 @@ tell_agent() {
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
-  trap "rc=\$?; rm -f '${msg}' '${msg}.goal' ${inflight:+'${inflight}'}; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
+  trap "rc=\$?; rm -f '${msg}' '${msg}.goal' ${inflight_q}; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
   TELL_PANE="${qpane}" findings_goal "$1" "${since}" "${msg}.goal" "${from}"   # its /goal to the same pane
   echo "told ${name}"
 }
