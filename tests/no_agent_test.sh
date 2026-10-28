@@ -251,6 +251,10 @@ check "a review story with a swarm.sh merge <url> process running is silent" sil
 unbusy; busy wait-pr "${URL}"
 poll
 check "and with a swarm.sh wait-pr <url> process running" silent
+# Why: builders and conductors wait with --head <sha> before the URL, so it must answer for the story too.
+unbusy; busy wait-pr --head "${H}" "${URL}"
+poll
+check "and with a swarm.sh wait-pr --head <sha> <url> process running" silent
 unbusy
 poll
 check "once no process answers for it, it fires, naming review-agent when no reviewed head is known" \

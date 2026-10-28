@@ -6,6 +6,12 @@ FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 # closed PR's ci_time if the calls ever crowd gh's rate limit.
 CI_SECONDS, CI_RETRY, CI_TIMEOUT = 6 * 3600, 600, 1800
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # flow_ci_health.py's: the cache is text to print, not escapes
+# GH_WAIT: the most one gh call may take. DASH_READ_END is dash's report deadline (an epoch, set by
+# dash_slow); each call also stops a second short of it, so this ends, its gh calls stopped by
+# their own session kill, before report_read KILLs it. A call cut or not made for the deadline sets
+# CUT, and the run then exits 142 (report_read's cut) once the rest is printed.
+GH_WAIT, CUT = 5, False
+END = float(os.environ.get("DASH_READ_END") or "inf") - 1
 def private(path, flags):
     # os.open that never follows a symlink, as an opener for open(): a second guard, after own_dir.
     return os.open(path, flags | os.O_NOFOLLOW, 0o600)
@@ -23,11 +29,17 @@ def own_dir(path):
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
         raise PermissionError(d)
 def gh(args):
+    global CUT
+    left = min(GH_WAIT, END - time.time())
+    if left <= 0:
+        CUT = True
+        return None
     p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
-        out, _ = p.communicate(timeout=5)
+        out, _ = p.communicate(timeout=left)
     except subprocess.TimeoutExpired:
         os.killpg(p.pid, signal.SIGKILL); p.communicate()
+        CUT = CUT or left < GH_WAIT
         return None
     return out if p.returncode == 0 else None
 
@@ -149,3 +161,5 @@ try:
             print("ci\t" + line)
 except Exception:
     pass
+if CUT:
+    sys.exit(142)

@@ -480,7 +480,9 @@ else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fail
 # which tells the branch's own PR from an earlier use of the name; under merge = agent or a merge
 # grant it waits for the open PR's checks and lands it.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
-got="$(armwords '   - `stage v<S>`:' '`swarm.sh board-pr start <name>`' '`status: active`' 'Run `swarm.sh wait-pr <url>` in the background' \
+got="$(armwords '   - `stage v<S>`:' '`swarm.sh board-pr start <name>`' '`status: active`' \
+  'Run `swarm.sh wait-pr --head "$(git -C <worktree> rev-parse HEAD)" <url>` in the background, with `<worktree>` the path `board-pr start` printed' \
+  'Without `--head`, wait-pr waits on the head GitHub reports first, which right after your push can still be the old one' \
   '`swarm.sh merge --board <url>` when `swarm.sh config merge` prints `agent` or `swarm.sh grants <url>` lists `merge`' \
   'Otherwise hand the PR to the user: the `epics` grant lets you set the epics active, not merge the PR' \
   'If merge refuses, stop and tell the user' 'On that line, finish the edit first' 'Then run the `board-pr open` line once more' \
@@ -488,9 +490,19 @@ got="$(armwords '   - `stage v<S>`:' '`swarm.sh board-pr start <name>`' '`status
   'On any other failure, stop and tell the user what it printed' 'whether its epics are still drafts or the merge has made them active' \
   'the user says not yet by leaving the PR unmerged: `next` names no new stage PR while it is open' \
   'An epic leaves the stage when its `stage:` or `hld:` is dropped' \
-  'With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh wait-pr <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>` when it exits 0')"
+  'With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh wait-pr --head "$(git -C ../<repo>-wt/_board-<name> rev-parse HEAD)" <url>` in the background, with `../<repo>-wt/_board-<name>` the worktree `board-pr start` made, wait for it, and land it with `swarm.sh merge --board <url>` when it exits 0')"
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's stage arm opens a board PR, merges it only under merge = agent or a merge grant, else hands it to the user, who says not yet by leaving it unmerged"
 else echo "FAIL commands/swarm.md's stage arm:${got}"; fails=$((fails + 1)); fi
+# The release arm waits on the head the lead pushed: right after a push GitHub can still report the
+# old one, whose green would let merge --release go ahead on a head CI never judged.
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+arm="$(sed -n '/^   - `release`:/,$p' "$(dirname "${SWARM}")/../commands/swarm.md")"
+# shellcheck disable=SC2016 # the backticks and $( ) are literal Markdown
+got="$(armwords '   - `release`:' 'Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with `<head>` the `git rev-parse HEAD` of the release worktree you pushed from, or, for a `release/v<new>` PR that was already open, the head it reports (`gh pr view <PR URL> --json headRefOid -q .headRefOid`)' \
+  'Without `--head`, wait-pr waits on the head GitHub reports first, which right after your push can still be the old one' \
+  'they never finished, or the PR'"'"'s head is not the one you named: tell the user what it printed and stop')"
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's release arm waits on the head it pushed"
+else echo "FAIL commands/swarm.md's release arm:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `escalated <slug>`:/,/^   - `gate`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"

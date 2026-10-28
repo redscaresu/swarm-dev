@@ -117,11 +117,12 @@ def usage_limit(text):
 # READ_SECONDS: how long one pane read (pane_text) may take.
 READ_SECONDS = 10
 def pane_text(pane):
-    # Under a report's deadline (SWARM_REPORT_END, an epoch to the millisecond: status sets it on
-    # status_report.py, with SWARM_REPORT_SKIP_FILE), the read takes at most the time left, and one due at
-    # or past the deadline never starts. Either way it is recorded as skipped, as report_read (merge.sh)
-    # records a read it cuts, under the name the shell's herdr wrapper gives the same read. With no
-    # deadline (dash, tidy, the agents.sh snippets), READ_SECONDS, and nothing is recorded.
+    # Under a report's deadline (SWARM_REPORT_END, an epoch to the millisecond, with SWARM_REPORT_SKIP_FILE:
+    # status sets them on status_report.py, dash on its python runs, in dash_deadline), the read takes at
+    # most the time left, and one due at or past the deadline never starts. Either way it is recorded as
+    # skipped, as report_read (merge.sh) records a read it cuts, under the name the shell's herdr wrapper
+    # gives the same read. With no deadline (dash --check, tidy, the agents.sh snippets), READ_SECONDS, and
+    # nothing is recorded.
     timeout, end = READ_SECONDS, os.environ.get("SWARM_REPORT_END")
     if end:
         try:
