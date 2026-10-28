@@ -692,16 +692,23 @@ review_at_head() {
     || die "${REVIEW_CMD}: $1's worktree has uncommitted changes, so it is not the PR's head ${REVIEW_HEAD}; ${REVIEW_UNDONE}: wait for its builder to commit and push, then ${REVIEW_AGAIN}"
 }
 
-# review_own_pane <slug> next|recheck — dies, as review-agent --next or --recheck, unless herdr lists a
-# review-<slug> this project started and this is its pane.
+# review_own_pane <slug> — dies, as review-agent --recheck, unless this pane is review-<slug>'s, checked as
+# review_next checks it for --next: no story named review-<slug> on the board, herdr answers and lists a
+# review-<slug> this project started, and HERDR_PANE_ID is its pane.
 review_own_pane() {
-  local pane what="runs its next round"
-  review_words "$1" "$2"; [[ "$2" != recheck ]] || what="runs its wording recheck"
+  local pane
+  review_words "$1" recheck
+  [[ ! -f "${BOARD}/stories/review-$1.md" ]] \
+    || die "${REVIEW_CMD}: the board has a story named review-$1, whose builder's agent name would be the same; ${REVIEW_UNDONE}"
   pane="$(agent_field "$(agent_name "review-$1")" pane_id)"
-  [[ -n "${pane}" ]] \
-    || die "${REVIEW_CMD}: herdr lists no review-$1 this project started, so ${REVIEW_UNDONE}: start one with swarm.sh review-agent $1 <PR URL>"
+  if [[ -z "${pane}" ]]; then
+    # agent_field is empty too when herdr's list fails: that is no answer, not no review agent.
+    herdr agent list >/dev/null 2>&1 \
+      || die "${REVIEW_CMD}: herdr could not list its agents, so whether review-$1 runs is unknown; ${REVIEW_UNDONE}: ${REVIEW_AGAIN} once herdr answers"
+    die "${REVIEW_CMD}: herdr lists no review-$1 this project started, so ${REVIEW_UNDONE}: start one with swarm.sh review-agent $1 <PR URL>"
+  fi
   [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
-    || die "${REVIEW_CMD}: only review-$1, in its pane ${pane}, ${what}, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; ${REVIEW_UNDONE}"
+    || die "${REVIEW_CMD}: only review-$1, in its pane ${pane}, runs its wording recheck, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; ${REVIEW_UNDONE}"
 }
 
 # review_next <slug> <PR URL> — review-agent --next: the next review round of review-<slug>, run from its
@@ -709,16 +716,36 @@ review_own_pane() {
 # uncommitted (review_at_head), the last findings file goes aside to <slug>.md.prev (so the conductor's
 # wait ends only on this round's), the head goes in .swarm/reviews/<slug>.head, and it prints the round
 # (review_round) and that round's instruction (review_round_line). Refused, touching no file under
-# .swarm/reviews, from any other pane, when herdr lists no review-<slug> this project started, or while
-# that round has started already (review_rounds): no findings round since, so its review would be lost.
+# .swarm/reviews, from any other pane, when the board has a story named review-<slug>, when herdr lists no
+# review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
+# since the build started), when this build has no ok review-agent start (review-<slug> is an earlier
+# build's), or while that round has started already (review_rounds): no findings round since, so its
+# review would be lost.
 # review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
-  local slug="$1" pr="$2" out round rounds
+  local slug="$1" pr="$2" out pane round rounds
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --next: bad slug '${slug}' (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent --next: '${pr}' is not a PR URL (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
-  review_own_pane "${slug}" next
+  [[ ! -f "${BOARD}/stories/review-${slug}.md" ]] \
+    || die "review-agent --next: the board has a story named review-${slug}, whose builder's agent name would be the same; no round was started"
+  pane="$(agent_field "$(agent_name "review-${slug}")" pane_id)"
+  if [[ -z "${pane}" ]]; then
+    # agent_field is empty too when herdr's list fails: that is no answer, not no review agent.
+    herdr agent list >/dev/null 2>&1 \
+      || die "review-agent --next: herdr could not list its agents, so whether review-${slug} runs is unknown; no round was started: run swarm.sh review-agent --next ${slug} <PR URL> again once herdr answers, and start no new review agent"
+    die "review-agent --next: herdr lists no review-${slug} this project started, so no round was started: start one with swarm.sh review-agent ${slug} <PR URL>"
+  fi
+  [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
+    || die "review-agent --next: only review-${slug}, in its pane ${pane}, runs its next round, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; no round was started"
   rounds="$(review_rounds "${slug}")"; round="${rounds% *}"
+  # Round 1 is always a plain review-agent start: with no findings sent since the build started (a new
+  # build's story event resets the count), there is no next round.
+  [[ "${round}" -gt 1 ]] \
+    || die "review-agent --next: no findings went to ${slug}'s builder since its build started, so there is no next round (round 1 is a plain review-agent start); no round was started"
+  # A review-<slug> left from an earlier build has no start in this one: its next round is not this build's.
+  [[ "${rounds#* }" -gt 0 ]] \
+    || die "review-agent --next: no review-agent start of ${slug} is on record since its build started, so review-${slug} is from an earlier build; no round was started: close it, then start one with swarm.sh review-agent ${slug} <PR URL>"
   [[ "${rounds#* }" -lt "${round}" ]] \
     || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: wait for the conductor's findings tell, then run it again"
   review_at_head "${slug}" "${pr}" next
@@ -757,7 +784,7 @@ review_recheck() {
     [[ "${point}" =~ ^[^[:space:]]+:[0-9]+$ ]] || die "review-agent --recheck: '${point}' is not a file:line point (${usage})"
   done
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
-  review_own_pane "${slug}" recheck
+  review_own_pane "${slug}"
   review_at_head "${slug}" "${pr}" recheck
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
   [[ "$(cat "${out%.md}.head" 2>/dev/null)" == "${old}" ]] \
@@ -1688,6 +1715,6 @@ start_conductor() {
   if err="$(set_fm "${epic_file}" status active 2>&1)"; then
     echo "epic ${epic}: status later -> active (in .swarm/board-state)"
   else
-    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand (${err#swarm: })" >&2
+    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand, with agreed: <today> in the same edit (${err#swarm: })" >&2
   fi
 }
