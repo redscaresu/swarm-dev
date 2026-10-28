@@ -3241,7 +3241,7 @@ step_up_closed() {
 # LEAD_RESENT: "<agent>\t<time>\t<command>\t<n>" per events.tsv delivery line resend_pass is done with,
 # <n> telling apart lines alike to the second; the same with "\tpending" for an Enter about to go,
 # "\tresent" once it went, and "\trechecked" once the read after it is done. RESEND_SLACK: how long, in seconds, before a tell's line
-# a turn its prompt started can be stamped: tell refuses a working agent; each of deliver_prompt's two
+# a turn its prompt started can be stamped: tell sends nothing to a working agent (it queues the tell); each of deliver_prompt's two
 # tries waits up to PROMPT_TIMEOUT_MS in herdr's prompt and as long again in prompt_settle; with goal on,
 # findings_goal's send_goal waits two more; and one more covers the reads between them.
 LEAD_RESENT="${LEAD_DIR}/resend"
@@ -3516,12 +3516,14 @@ unsent_lines() {
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
 # and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
 # since its last (lead_heads), run resend_pass off that list, add the .unsent markers' lines
-# (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, and save the
+# (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, then, after
+# handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
+# `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and save the
 # queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
-# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `prompt:`, `unmerged:` and
-# `conflict:` lines) and saves the rest.
+# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `prompt:`, `unmerged:`,
+# `conflict:`, `tell undelivered:` and `tell goal failed:` lines) and saves the rest.
 lead_wake() {
   local now line new="" slug u
   lead_agents
@@ -3549,10 +3551,14 @@ lead_wake() {
   now="${now}${now:+${u:+$'\n'}}${u}"
   [[ -z "${LEAD_READS}" ]] || rm -rf "${LEAD_READS}"
   LEAD_READS=""
+  tell_queue_strays 2>/dev/null || true   # a queued tell whose check stopped goes to the lead, never sits unseen
+  u=""; ! compgen -G "${TELL_QUEUE}/*.undelivered" >/dev/null || u="$(cat "${TELL_QUEUE}"/*.undelivered 2>/dev/null)" || true
+  now="${now}${now:+${u:+$'\n'}}${u}"
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
       || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* \
-            && "${line}" != "prompt: "* && "${line}" != "unmerged: "* && "${line}" != "conflict: "* ]] || new+="${line}"$'\n'
+            && "${line}" != "prompt: "* && "${line}" != "unmerged: "* && "${line}" != "conflict: "* \
+            && "${line}" != "tell undelivered: "* && "${line}" != "tell goal failed: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1

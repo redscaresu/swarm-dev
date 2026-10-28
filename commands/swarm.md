@@ -89,6 +89,27 @@ Repeat until a step below says stop:
      `started:` lines) is already running when the line is worked out, so the line names its note.
      When the step is `conduct <epic>` for the story's epic, `next` has not started it, so the line
      still says `swarm.sh story --strict`: run the step instead, and leave the story to that conductor.
+   - `idle: epic <epic> can start, exit: <exit>`: a draft or later epic in the current stage (its
+     `stage:` is the lowest an epic on the board has, or it has none) has nothing left to wait on.
+     Everything in its `depends_on` has left the board or is done, or one of its stories that an
+     agent builds is already ready. The exit is the epic's case, as epic.md and the `gate` arm below
+     rule. `idle: epic <epic> can start, exit: tell the user it can start (/swarm-dev:epic <epic>)` is
+     a draft: nothing plans a draft, and it goes active only once the user agrees it, through
+     `/swarm-dev:epic <epic>` with them (or, staged under an HLD that grants `epics`, through `next`'s
+     `stage` step). `idle: epic <epic> can start, exit: swarm.sh plan-unasked <epic>, then /swarm-dev:plan-epic <epic>`
+     is a later epic with no stories and every `depends_on` item done: plan it unasked, read-only,
+     as the `plan-epic` arm below does for the one `next` names.
+     `idle: epic <epic> can start, exit: the user's go, then set it active with agreed: <today> in a board PR`
+     is a later epic whose stories are on the board: on the user's go, set it `status: active` and
+     write `agreed: <today>` in the same board PR edit, as `/epic` does. No line
+     comes for a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
+     cut), for an epic with `parent:` set (a split's children are the user's), for a later epic with
+     `unasked_plan:` set (the gate shows its plan or the user's decline), or for the later epic
+     `next`'s `plan-epic` step names.
+   - `idle: epic <epic> has no plan running, exit: /swarm-dev:plan-epic <epic>`: the epic is active
+     with no stories, nothing in its `depends_on` holds up its planning, no plan of it runs (no
+     `scope-<epic>` record in `.swarm/state` and no open plan board PR), and the step above is not
+     `plan-epic` for it. Plan it with the exit, beside the step.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
@@ -270,8 +291,8 @@ Repeat until a step below says stop:
      pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
      on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
      `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` or
-     `idle: <story> is ready with no build, exit: <exit>` line is capacity no step uses, a line `next`
-     prints after its step: handle it as step 1's `idle:` list
+     `idle: <story> is ready with no build, exit: <exit>` line, or an `idle: epic <epic> ...` line, is
+     capacity no step uses, a line `next` prints after its step: handle it as step 1's `idle:` list
      says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
      then it needs nothing. It comes once, and again only after it has gone from the queue. An
      `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` line means a story PR
@@ -632,9 +653,9 @@ Three more rules for the lead:
     prints it: `conduct-<epic>`, or `conduct-backlog-<dir>-<hash>` for the backlog's.
 
   `swarm.sh restart` and `swarm.sh conduct` take no brief and write their own prompt. Once the agent
-  is back, tell it to write its output as it goes. A builder comes back working, and `tell` refuses a
-  working builder, so run `swarm.sh wait <slug>` in the background first and send
-  `swarm.sh tell <slug> nudge <file>` once it returns idle. A conductor's
+  is back, tell it to write its output as it goes. A builder comes back working, and `tell` queues a
+  nudge to a working builder and delivers it when its turn ends, so send
+  `swarm.sh tell <slug> nudge <file>` at once. A conductor's
   `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets the line
   in the brief you write for its rerun, before it starts.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and

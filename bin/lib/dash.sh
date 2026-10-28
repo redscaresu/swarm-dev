@@ -726,8 +726,9 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # Taken whole, never through head: head exits after a line, and where SIGPIPE is ignored (CI) next's
   # second echo prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
   nx="$(next_lines)" || true
-  # next's idle: lines (idle_now), read each frame: board and state only.
-  idle="$(idle_now 2>/dev/null)" || idle=""
+  # next's idle: lines (idle_now), read each frame: board and state only, given the step next would
+  # take, so the epic that step names gets no row.
+  idle="$(idle_now "${nx%%$'\n'*}" 2>/dev/null)" || idle=""
   # The shell's reads are done; the render's own, each agent's pane for a usage-limit dialog (panes.py's
   # pane_text, under SWARM_REPORT_END), come inside the python below. The frame is laid out a line
   # shorter when a read was cut before the render (pending); when the render's own reads are the first

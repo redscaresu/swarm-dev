@@ -99,9 +99,10 @@ its own row, `awaiting your merge (protected path): <slug> <PR URL>`, and the it
 untagged row. A PR a story and its epic both list is printed once, under the first item.
 It also prints `next`'s `idle:` lines: for blocked stories (`idle: <story> waits on <dep> but shares
 no touches part with it and needs nothing from it`) and for ready stories with no build (`idle: <story>
-is ready with no build, exit: <exit>`). Each poll works them out again from the board, its state and
-events.tsv, with no gh or herdr call. A line wakes the lead once and goes once its dependency is in
-review or done, or once the story's build starts. It wakes the lead again only if it comes back. A
+is ready with no build, exit: <exit>`), and the epic lines (`idle: epic <epic> can start, ...` and
+`idle: epic <epic> has no plan running, ...`). Each poll works them out again from the board, its
+state and events.tsv, with no gh or herdr call. A line wakes the lead once and goes once its dependency is in
+review or done, once the story's build starts, or once the epic is active with stories or its plan runs. It wakes the lead again only if it comes back. A
 ready story's line names its exit, so when the story's conductor starts or stops, the line changes,
 and `wait --lead` takes the changed line as new and wakes the lead again. On a run that starts with no
 `.swarm/lead/seen`, the first read saves the lines it finds without waking the lead, as it does held
@@ -177,7 +178,7 @@ on record, or no log of it, is left alone: Claude Code writes the log before the
 missing one says nothing. Its pane is read again on the next read. A start opens its own session, so
 any turn start in it counts. The line is written only when its command returns, so for a tell any
 turn start later than seven times `PROMPT_TIMEOUT_MS` (7 minutes) before the line counts. A tell
-refuses a working agent. Each of deliver_prompt's two tries can wait two `PROMPT_TIMEOUT_MS`, and
+sends nothing to a working agent (it queues the tell). Each of deliver_prompt's two tries can wait two `PROMPT_TIMEOUT_MS`, and
 with `goal` on the findings' `/goal` can wait two more. So a tell sent within 7 minutes of a turn
 start is left alone: the log cannot tell that turn from one the tell started. An agent that took the
 brief has had a turn, so a later, unrelated paste is left alone. A paste in a prompt already
@@ -366,7 +367,8 @@ JSON and `ps` once, whenever a story with a build record or a ready story with a
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
 everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines,
-`unsent brief:` lines, `prompt:` lines, `unmerged:` lines and `conflict:` lines on its first read.
+`unsent brief:` lines, `prompt:` lines, `unmerged:` lines, `conflict:` lines, and `tell undelivered:`
+and `tell goal failed:` lines (§ A tell to a busy agent is queued) on its first read.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
@@ -946,6 +948,37 @@ naming its note, which nobody reads. When a note gets no answer, check the condu
 `swarm.sh status`: `swarm.sh next` starts a conductor for ready work that has none, or you can run
 `swarm.sh story --strict <slug>` yourself.
 
+**`next`'s idle epic lines.** `next` prints `idle: epic <epic> can start, exit: <exit>` for a draft
+or later epic in the current stage that has nothing left to wait on. The current stage is the lowest `stage:` an epic on the board carries, whatever its status. An
+epic with no `stage:` is in it, so when no epic carries one, every epic is. An epic whose `stage:` is
+not `v<x.y.z>` gets no line. Nothing is left to wait on when the epic's `depends_on` lists something
+and every item it lists has left the board or is `done`, or when one of the epic's stories that an
+agent builds is `ready`. An active epic whose only open stories are lead `after:` ones counts as done
+here, as it does wherever `next` reads a dependency. A later epic with no `depends_on` and no such
+ready story waits only on the user, so it gets no line. Nor does an epic with `parent:` set (a split's
+children are the user's), one with `unasked_plan:` set (the gate already shows its plan or the user's
+decline), or a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
+cut, and the gate lists it until then). The epic the step `next` takes names (`plan-epic <epic>`) gets none
+either: the lines are for capacity no step uses. `next`, `status` and `dash` drop that epic's line;
+`wait --lead` takes no step, so it prints every such epic's line. The exit is the epic's case: `tell
+the user it can start (/swarm-dev:epic <epic>)` for a draft, which nothing plans and only the user
+agrees (or, staged under an HLD that grants `epics`, the `stage` step sets active);
+`swarm.sh plan-unasked <epic>, then /swarm-dev:plan-epic <epic>` for a later epic with no stories
+and its `depends_on` done, planned unasked as the `plan-epic` step does; and `the user's go, then
+set it active with agreed: <today> in a board PR` for a later epic whose stories are on the board,
+as `/epic` does. `next` also prints `idle: epic <epic>
+has no plan running, exit: /swarm-dev:plan-epic <epic>` for an active epic with no stories and
+nothing in its `depends_on` holding up its planning, as the `plan-epic` step judges it, that the step
+`next` takes does not name, while no plan of it runs: no `scope-<epic>` tab record (or numbered
+`scope-<epic>-<n>` one) in `.swarm/state`, and no open plan board PR (its `_board-scope-<epic>`
+worktree). A plan's
+record goes when its panes close, so a plan that stopped with no stories and no PR brings the line
+back. A lead story whose `after:` names its epic does not count as one of the epic's stories. An epic
+that a rerun of an interrupted `/plan-hld` will overwrite gets no line, as `next` leaves it to that
+rerun. Both lines come from the predicates `next`'s steps use, so they read what those read: the
+board, `.swarm/state`, the board PR worktrees and, for an active epic with no open story, the board's
+history.
+
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
 `zsh -f` (no rc file runs) holding only:
@@ -1241,6 +1274,76 @@ An agent herdr answers for (codex, or a Claude agent with no session on record) 
 its blocked is herdr's own read of its screen. While herdr reads it blocked, the tell fails on
 herdr's refusal even when the pane looks clear, and the message says no report was sent.
 
+**A tell to a busy agent is queued.** On 2026-10-27 a builder never got its review findings: herdr
+listed it as working, `tell` refused, nothing tried again, and the builder waited over an hour. A
+findings, nudge or resume tell to an agent mid-turn (Claude Code lists its session busy, or herdr
+lists it working) is now queued. `tell` saves the file as `.swarm/tells/<agent>.<kind>`, prints
+`queued: <agent> (busy); delivered when its turn ends, so do not tell it again`, and exits 0.
+events.tsv logs that line as the tell's outcome instead of `ok`, so queued findings are not yet a
+review round. An agent whose turn is over counts as idle even while background shells keep its
+session busy: its session log ends on the reply that ended the turn, as for a note's wake. So a
+builder at its prompt with a test running in the background is told. A newer tell of the same kind
+replaces a queued one that has not been sent. So does a tell of that kind sent at once after the
+agent goes idle. The newer of two tells is the one that read the agent's state later. `tell` takes
+the time before it reads. A tell that goes, sent at once or claimed from the queue by its delivery,
+leaves it in `.swarm/tells/<agent>.<kind>.sent`, and a queued one carries it in its file. Under the
+queue's lock, a tell is the older when a tell of its kind that read the state after it has since gone,
+or is now queued or on its way, whether this one then found the agent busy or idle. It prints
+`replaced: <agent>'s <kind> tell, by a newer one
+sent or queued meanwhile; not sent`, queues and sends nothing, and is logged with that line. The
+lock covers that decision, not the send. So a tell on its way is marked until herdr has it:
+`<agent>.<kind>.claimed.<token>` for a queued one its delivery claimed, `<agent>.<kind>.direct.<pid>`
+for one sent at once. A newer tell of that kind that reads the agent idle meanwhile is queued behind
+it, not sent at once, and a queued one's delivery waits for the next look. A mark whose process has
+died counts for nothing. So a tell of a kind lands after every older tell of that kind that went and
+before every newer one, the older of two that overlap is dropped, and the older never counts a round
+after the newer.
+
+Each agent with a queue has one check running in the background. It is its own process (`swarm.sh
+_tell-queue-check <agent>`), so `wait --lead`'s resend pass and its `no-agent:` lines do not take it
+for a tell under way. `<agent>.later` holds its last look's time, token and pid. Once a minute
+(`SWARM_NOTE_WAKE_SECS`, the same minute a note's wake uses), the check reads the agent as `tell`
+does. When the agent is idle, it sends the oldest queued tell through its own `swarm.sh tell`, from
+the same sender, and only to the pane the tell was queued for. That tell is logged like any other,
+so findings count as one round when they are delivered. If the agent is no longer idle by then, the
+tell goes back in the queue. So does one whose own `swarm.sh tell` failed before it claimed the tell
+(herdr down, say), up to 3 tries; the third goes to the lead. Findings that find the story's step-up
+lock held (by a step-up, a restart or a hold) go back in the queue too. A step-up or a top-rung hold
+that takes queued findings has delivered them: the handover or the lead's block holds them, and
+`wait --lead` names a step-up that failed.
+
+While the check sends a tell, the tell is `<agent>.<kind>.sending.<token>`, the token that
+delivery's own. A newer tell of its kind can still replace it until the check's tell has read the
+agent idle and claimed it. A tell replaced that way prints `replaced: <agent>'s queued <kind> tell,
+by a newer one; not sent`, sends nothing, and is logged with that line. A delivery claims only its
+own token, so a check that stalled past its `.later` never sends a newer tell's file. The check ends
+when the queue is empty, and also when its plugin version's files are gone after an update. A check
+counts as stopped once its process has ended or it has not stamped `.later` for 10 minutes; it stamps
+it at each look, and once a minute while a delivery runs, so a long delivery is no stop. `wait --lead` then
+hands each tell that agent has queued to the lead, as below, so none sits unseen, and the next
+queued tell to that agent starts a new check. A tell a delivery had claimed when its check stopped
+(`<agent>.<kind>.claimed.<token>`) goes to the lead too, as one that may have arrived. It goes first:
+the lead has one line per kind, so a newer tell queued behind it is the one the lead sees.
+
+The check drops a queued tell when the agent's pane has closed, another pane holds its name or its
+Claude session has ended. It also drops one whose tell fails after claiming it, or fails before
+claiming it for the third time, and `wait --lead` drops those of a stopped check. A look that gets
+no agent list from herdr drops nothing, since the agent may still be there, but after 5 such looks
+in a row the check hands every tell it holds to the lead. Each check counts its own looks, starting
+from none: a count left by a check that ended does not shorten the next check's five. It keeps the
+text of each tell it drops in
+`.swarm/tells/<agent>.<kind>.undelivered.md`. A tell dropped before any `swarm.sh tell` ran for it
+is logged as `tell:<kind>` with `undelivered: <why>`. A delivery that failed already has its own
+tell's line, and a second line would count findings herdr sent as two rounds. `wait --lead` then
+prints `tell undelivered: <slug> <kind> at <time> (<why>), exit: if it still applies, swarm.sh tell
+<slug> <kind> <file>; then rm <marker> <file>` as an alert, like `no-agent:`. A later drop of the
+same kind replaces the file and the line, and its own time wakes the lead again. When the why says
+herdr may have sent it, the exit is `it may have arrived, so do as that says and never send it again
+as <kind>`, because findings herdr sent count as a round already. With goal on, findings that
+reached the builder before their `/goal` failed count as a round, and the line is `tell goal failed:
+<slug> findings at <time> (<why>), exit: the findings were delivered and count as a round, and only
+their goal failed, so never send them again; then rm <marker> <file>`.
+
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or
 when review has not converged in the rounds it allows. It runs `swarm.sh close <slug> --drop`, which, on a
@@ -1398,10 +1501,11 @@ a PR's latest head has passed, it merges it (or hands it over) at once, never ho
 while other reviews run. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
-or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
-refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. A builder listed as waiting whose pane shows an empty input box is told
-(§ Building, under **The goal.**). herdr can read a pane idle through a whole turn, so a message or brief
+or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. A tell
+to a builder that is still working is queued and sent when its turn ends (§ A tell to a busy
+agent is queued). `tell` refuses a builder waiting on a prompt (it names what the prompt is), or
+whose session is gone or unknown. A builder listed as waiting whose pane shows an empty input box
+is told (§ Building, under **The goal.**). herdr can read a pane idle through a whole turn, so a message or brief
 (a `tell`, or a start's brief) counts as taken when the agent's own Claude session shows it, too: the
 session reads busy or waiting (when it read idle before the send), or its log
 has the message as a new prompt (for a `tell`, the file's first line). herdr's own status, even
@@ -2929,7 +3033,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. Under `merge = agent` it refuses while Claude Code's settings have no allow rule for `swarm.sh merge` (§ Merging, the conduct preflight). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (`prompt: <agent> (<kind>), exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), as `next` prints them, a story PR reviewed, green and left unmerged past `queue_minutes` (`unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>`), or a story PR that conflicts with its base (`conflict: <slug> <PR URL>, exit: tell its builder to merge the base in`), and print each new one. A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (`prompt: <agent> (<kind>), exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), or an epic that can start or has no plan running (`idle: epic <epic> can start, ...`, `idle: epic <epic> has no plan running, ...`), as `next` prints them (`wait --lead` takes no step of its own, so its epic lines include the one `next`'s `plan-epic` step names), a story PR reviewed, green and left unmerged past `queue_minutes` (`unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>`), or a story PR that conflicts with its base (`conflict: <slug> <PR URL>, exit: tell its builder to merge the base in`), and print each new one. A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`. |
 | `swarm.sh wait-pr [--timeout <seconds>] --head <sha> <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. Right after a push, GitHub can still report the old head. With `--head <sha>` (a full SHA or a prefix of 7 or more), wait-pr reads the PR again each poll until its head starts with `<sha>`, printing `pending: head <old>, not <sha>`, and reads no checks before then. If the head is still another one 5 minutes after the first read that found it (`SWARM_WAIT_PR_GRACE`), it exits 2, naming both. Without `--head` it waits on whatever head GitHub reports at its first read, so a wait started right after a push can end green on the old head before the new one has run a check. An agent that waits right after its own push passes `--head`. Green also needs a `pull_request` run of each workflow that a pull request into the base runs with the PR's files (its `branches` and `paths` filters). It reads the workflows once per wait, on its first read: at the PR's merge commit (`refs/pull/<n>/merge`), which is what GitHub runs them from, or at the head when that merge commit is missing or does not include the head yet. GitHub rebuilds the merge commit when the base moves, so a base commit pushed after the head that adds a `pull_request` workflow, or widens one's `branches` or `paths`, makes wait-pr wait on a workflow that never ran on this head. It then exits 2 after the grace, on every run, until you merge the base in and push. A workflow Actions has disabled is not waited on, and neither is one whose `types` leave out `opened` or `synchronize`. An expected workflow that has not started counts as pending, as `<path> (no run on <sha>)`, and so does one whose newest run has not finished, even when every check already there is green. If that newest run finished as anything but success, skipped or neutral, the head is red. A `push` run of the same workflow does not count. A workflow whose triggers it cannot read is not waited on, and a line of its own names it: `not waited on: <path> (triggers not read: <why>)`. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`) or an expected workflow still has no run by then (naming it), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. From the story's review pane (`review-<slug>`'s, by the record `merge` and `tell` go by) with `escalate_ladder` set, a red head also counts toward the ladder's ci-red trigger, and the build's second red head steps it up, printing `stepped up: <slug>` ([§ The escalation ladder](#the-escalation-ladder)). |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh review-agent --next <slug> <PR URL>` | Run by `review-<slug>` from its own pane: its next review round, in the same session, with no new agent. Once the worktree is at the PR's head with nothing uncommitted, it moves the last findings to `.swarm/reviews/<slug>.md.prev`, records the head, and prints the round and what it runs (codex alone from round 2). It refuses, changing nothing, in these cases: from any other pane; when the board has a story named `review-<slug>`; when no findings went to the builder since its build started (round 1 is always a plain `review-agent` start); when this build has no ok `review-agent` start, so the pane is an earlier build's; and while that round has already started with no findings sent since, so it never puts a finished review aside unread. When herdr cannot list its agents, it says to run `--next` again, not to start a new review agent. events.tsv logs it as `review-agent:next <slug> ok (round <n>)`, which no count of review starts reads. |
