@@ -1025,10 +1025,14 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 # today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
 # (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics at both ends
 # (hld_ticket). Nothing with lead_epics = on. <reader>
-# base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
+# base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read;
+# <reader> from <path> prints the old path a rename moved <path> from, nothing for none, failing when
+# it cannot tell, asked only for an epic absent at the base: a renamed epic's base copy is read at
+# its old path when that was an epic too, so a rename keeps its status and agreed: as they were; any
+# other old path reads as new.
 # A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
-  local reader="$1" pre p s now was rc out=""
+  local reader="$1" pre p s b o now was rc out=""
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || exit 0
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
@@ -1042,8 +1046,15 @@ epic_unticketed() (
     [[ ${rc} -ne 1 ]] || continue
     [[ ${rc} -eq 0 ]] || { echo "cannot read ${p} at the head"; exit 1; }
     [[ "$(raw_status <<< "${now}")" == active ]] || continue
-    rc=0; was="$("${reader}" base "${p}")" || rc=$?
-    [[ ${rc} -le 1 ]] || { echo "cannot read ${p} at the base"; exit 1; }
+    b="${p}"; rc=0; was="$("${reader}" base "${b}")" || rc=$?
+    if [[ ${rc} -eq 1 ]]; then
+      b="$("${reader}" from "${p}")" || { echo "cannot tell what ${p} was renamed from"; exit 1; }
+      o="${b#"${pre}epics/"}"
+      if [[ "${b}" == "${pre}epics/"* && "${o}" =~ ^[^/]+\.md$ && "${o}" != README.md ]]; then
+        rc=0; was="$("${reader}" base "${b}")" || rc=$?
+      fi
+    fi
+    [[ ${rc} -le 1 ]] || { echo "cannot read ${b} at the base"; exit 1; }
     [[ "$(raw_status <<< "${was}")" != active ]] || continue
     s="${s%.md}"
     epic_ticket_agreed "${now}" "${was}" && continue

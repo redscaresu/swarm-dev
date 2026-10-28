@@ -378,6 +378,11 @@ on_main board/hld/h-merge.md '---\nstatus: agreed\ngrants: [merge]\n---\n'
 on_main board/hld/h-move.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/H.dot.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/h-bad.md '---\nstatus: agreed\ngrants: [bogus]\n---\n'
+# ren-*: files a case moves to epics/<name>2.md, with a body long enough that git pairs the move.
+BODY='The epic body, which the move keeps as it was, so that git sees one file under two names.'
+on_main board/epics/ren-act.md "---\nstatus: active\n---\n\n# ren-act\n\n${BODY}\n"
+on_main board/epics/ren-stale.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# ren-stale\n\n${BODY}\n"
+on_main board/stories/ren-story.md "---\nstatus: active\n---\n\n# ren-story\n\n${BODY}\n"
 git -C "${P}" fetch -q origin
 
 bpr start new; ep new epics/e-new.md '---\nstatus: active\n---\n\n# e-new\n'
@@ -464,6 +469,16 @@ bpr start act; ep act epics/act.md '---\nstatus: active\n---\n\n# act, edited\n'
 guard_opens act "a body-only edit to an active epic"
 bpr start gone; rm "${ROOT}/proj-wt/_board-gone/board/epics/gone.md"
 guard_opens gone "a deleted epic"
+# A renamed epic is judged by its base copy at the old path, moved with mv and left uncommitted or
+# committed; an old path outside epics/ reads as new.
+bpr start rna; mv "${ROOT}/proj-wt/_board-rna/board/epics/ren-act.md" "${ROOT}/proj-wt/_board-rna/board/epics/ren-act2.md"
+guard_opens rna "an active epic renamed with mv, nothing else changed"
+bpr start rns; git -C "${ROOT}/proj-wt/_board-rns" mv board/epics/ren-stale.md board/epics/ren-stale2.md
+ep rns epics/ren-stale2.md "---\nstatus: active\nagreed: ${TODAY}\n---\n\n# ren-stale\n\n${BODY}\n"
+git -C "${ROOT}/proj-wt/_board-rns" commit -qam "ren-stale renamed and active"
+guard_refused rns "a draft renamed and set active, the agreed: its base copy had kept" "ren-stale2 ${NT} ren-stale2"
+bpr start rnx; mv "${ROOT}/proj-wt/_board-rnx/board/stories/ren-story.md" "${ROOT}/proj-wt/_board-rnx/board/epics/ren-story.md"
+guard_refused rnx "an active file moved into epics/ from outside it" "ren-story ${NT} ren-story"
 printf 'board_dir = board\nlead_epics = on\n' > "${P}/.claude/swarm/config"
 bpr start lead; ep lead epics/e-lead.md '---\nstatus: active\n---\n'
 guard_opens lead "lead_epics = on, with no ticket"

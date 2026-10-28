@@ -218,9 +218,10 @@ pr_contents() {
 # branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
 # is absent and 2 on any other failure. At the head a 404 is absent only for a path the PR removes or
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
-# epic would read as deleted.
+# epic would read as deleted. merge_read from <path> is merge_from's answer.
 merge_read() {
   local ref="${head}" gone rc=0
+  [[ "$1" != from ]] || { merge_from "$2"; return; }
   [[ "$1" == head ]] || ref="${base}"
   # gh's error is left out: epic_guard's line names the file and the ref it could not read.
   pr_contents "${repo}" "${ref}" "$2" 2>/dev/null || rc=$?
@@ -230,11 +231,23 @@ merge_read() {
   return 1
 }
 
+# merge_files — PR <n>'s files from gh's pulls API, every page, as a list of pages (merge_pr's locals
+# repo and n).
+merge_files() { gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100"; }
+
 # merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_pr's
 # locals repo and n); fails when gh cannot list them.
 merge_gone() {
-  gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" \
+  merge_files \
     | json "'\n'.join(p for page in d for f in page for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
+}
+
+# merge_from <path> — the old path PR <n> renamed <path> from (its previous_filename, on a file whose
+# status is renamed: a copy leaves its source in place), or nothing (merge_pr's locals repo and n);
+# fails when gh cannot list the files. The PR's files as they are now, which a story PR's pinned head
+# may not be: a push since then fails the merge anyway (--match-head-commit).
+merge_from() {
+  merge_files | P="$1" json "next((f['previous_filename'] for page in d for f in page if f.get('status') == 'renamed' and f.get('filename') == e['P'] and f.get('previous_filename')), '')"
 }
 
 # unticketed_why <line> — epic_unticketed's failure line as merge says it: a read error at the

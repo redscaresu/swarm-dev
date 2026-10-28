@@ -37,6 +37,10 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   before it, a `parent:` naming another epic that is `active` or `split` on the base (not a draft,
   and not one the PR adds), or an `hld:` naming an HLD that is `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
   first, and a failed fetch or read refuses. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
+  A renamed epic is judged by the base's copy at its old path, when that path was an epic too. So
+  renaming an `active` epic needs no ticket, and an `agreed:` date the old copy already had is not
+  one. git finds a rename by content, uncommitted moves included: an epic moved and more than half
+  rewritten reads as new.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
   days when `merge --board` runs, and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.
@@ -2241,7 +2245,8 @@ board's own repo (its origin) and every path it changes, a renamed file's old pa
 under the board instead. Under either merge mode, it also refuses a story PR or a `--board` PR that
 sets an epic `active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green,
 it reads each epic and HLD through gh at the PR's base branch and head SHA; for a story PR it first
-lists the PR's files at that head. Any read error refuses, as does a 404 at the head on a file the PR
+lists the PR's files at that head. A renamed epic is read at its old path on the base (GitHub's
+`previous_filename`), as `board-pr open` reads it. Any read error refuses, as does a 404 at the head on a file the PR
 does not remove or rename away. The refusal starts `--board:` only on the `--board` route. A story
 PR in a repo other than the board's is not checked, since its `epics/` files are that repo's own; when
 gh cannot name the board's repo, the check runs anyway. With
