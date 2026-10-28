@@ -546,7 +546,7 @@ check "and returns 0, idle, once it is idle" "0|idle" "${rc}|$(tail -1 "${ROOT}/
 # The queued tell's check (looking every second here) delivers it now that f1 is idle: no second tell runs.
 until_ok test -e "${ROOT}/prompted-w-900" || echo "FAIL the queued findings never reached f1's builder"
 check "once f1's builder is idle, its queue's check delivers the tell: logged tell:findings f1 ok, from the review agent, the queue left with its sent mark" "tell:findings	f1	ok|yes|f1.findings.sent" \
-  "$(awk -F'\t' '$2 ~ /^tell/ && $3 == "f1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(has "From the review agent:" "$(cat "${ROOT}/prompted-w-900" 2>/dev/null)")|$(compgen -G "${p}/.swarm/tells/f1.*" | sed 's#.*/##' | tr '\n' ' ' | sed 's/ $//')"
+  "$(awk -F'\t' '$2 ~ /^tell/ && $3 == "f1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(has "From the review agent:" "$(cat "${ROOT}/prompted-w-900" 2>/dev/null)")|$(compgen -G "${p}/.swarm/tells/f1.findings*" | sed 's#.*/##' | tr '\n' ' ' | sed 's/ $//')"
 check "and f1's builder receives the round file" "yes" \
   "$(diff <(tail -n +3 "${ROOT}/prompted-w-900") "${p}/.swarm/reviews/f1.round.md" >/dev/null 2>&1 && echo yes || echo no)"
 o="$(in_review_pane "${next_cmd}")" || echo "FAIL the brief's --next for f1 exited non-zero: ${o}"
