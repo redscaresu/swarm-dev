@@ -756,7 +756,8 @@ lead_held() {
 }
 
 # review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:
-# one a close kept unreviewed (kept:), which waits for its review agent, or one its review agent merges
+# one a close kept unreviewed (kept:) with one PR, which waits for its review agent (one with several
+# is the lead's, as review_rule says), or one its review agent merges
 # next, under merge = agent or an agreed HLD over it that grants merge, unless it costs money
 # (costs_tag) or every PR of it is held for the user's merge on a protected path (protected_holds,
 # without the stale holds it leaves out: a new head the review agent works on is its own). A
@@ -764,7 +765,7 @@ lead_held() {
 # back only keeps the conductor waiting, where one sent early lets it report mid-merge.
 review_agent_owns() {
   local u h held
-  [[ -z "$(get_fm "$1" kept)" ]] || return 0
+  if [[ -n "$(get_fm "$1" kept)" ]]; then [[ "$(fm "$1" prs | wc -w)" -eq 1 ]]; return; fi
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
   if [[ "${CFG_merge}" != agent ]]; then
     h="$(item_hld "$1")"
