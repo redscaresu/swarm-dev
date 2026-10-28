@@ -1312,7 +1312,8 @@ WORKSPACE_SEP=" · "
 
 # herdr_workspaces — herdr's workspaces, one "<id>\t<label>\t<cwd>\t<others>" line each. A workspace has no cwd
 # of its own in herdr, so it is the cwd of its first pane in herdr's pane list: the conductor's, a
-# review agent's, or, while new, the placeholder's epic_workspace made it with. A pane in a story
+# review agent's, a lead agent's or the pane at PROJECT_DIR next_pane keeps ahead of a lead agent's
+# outside the project, or, while new, the placeholder's epic_workspace made it with. A pane in a story
 # worktree of this project's repo (<project>-wt/<slug>) counts as the project's, so a workspace whose
 # conductor pane has gone is still its own; one in any other story worktree (<repo>-wt/<slug>, whose
 # project it does not say) is skipped. With no pane left, empty. <others> is 1 when any pane not
@@ -1455,6 +1456,9 @@ start_conductor() {
     [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
     label="$(fm_list "${epic_file}" parent)"; label="${label:-${epic}}"
     [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
+    # Its workspace would be the lead's own agents' (next_pane's lead_agents_workspace).
+    [[ "${label}" != "${LEAD_AGENTS_LABEL}" ]] \
+      || die "conduct: ${epic} would take the lead's agents' workspace, <project>${WORKSPACE_SEP}${LEAD_AGENTS_LABEL}; rename the epic, or its parent:"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
   if why="$(merge_rule_stop)"; then die "${why}"; fi

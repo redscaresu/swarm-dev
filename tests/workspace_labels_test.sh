@@ -6,7 +6,8 @@
 # and tidy still find a conductor's tab in its relabelled workspace. herdr, gh and claude are stubs on
 # PATH; herdr's state (${ROOT}/herdr.json) is shared by every project. The lead's first command in
 # a workspace labels it and its tab `swarm-lead · <project>`, once; an agent's, a nested swarm.sh's
-# and a test hook's label nothing. Agents the lead starts open in `<project> · lead-agents`.
+# and a test hook's label nothing. Agents the lead starts open in `<project> · lead-agents`, kept
+# the project's by a pane at its directory and by a record of the workspace's id and label.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -31,7 +32,8 @@ check() { # <name> <want> <got>
 
 # herdr: workspaces, tabs, panes and agents in ${ROOT}/herdr.json. A workspace w<n> is made with a
 # placeholder tab w<n>:t0 whose pane has its --cwd; each tab or pane is <workspace>:t<n> or :p<n>.
-# A file ${ROOT}/refuse makes every rename fail, and ${ROOT}/refuse-tab every tab create.
+# A file ${ROOT}/refuse makes every rename fail, ${ROOT}/refuse-tab every tab create, and
+# ${ROOT}/hang makes workspace list sleep 60 s before answering.
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nexec python3 "%s/bin/herdr.py" "$@"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat > "${ROOT}/bin/herdr.py" <<'EOF'
@@ -425,6 +427,56 @@ lead "${E}" "${le}" agent hld-e hld-e "${E}" hld "${ROOT}/brief.md" > /dev/null
 check "a refused first tab in a new lead-agents workspace closes its placeholder and says so; the next agent opens there alone" \
   "yes|${se}|hld-e" \
   "$(grep -q 'could not open a pane in tab hld-e' "${ROOT}/lead.err" && echo yes || echo "no, got: ${out}; $(tail -1 "${ROOT}/lead.err")")|$(tab_ws hld-e | cut -d'|' -f2)|$(ws_tabs "${se}")"
+
+# --- Review round 1. An epic named lead-agents, or whose parent: is, would share the lead's agents'
+# workspace: conduct refuses it before any herdr call, as it refuses one named backlog.
+printf -- '---\nstatus: active\n---\n\n# lead-agents\n' > "${A}/docs/epics/lead-agents.md"
+printf -- '---\nstatus: active\nparent: lead-agents\n---\n\n# child\n' > "${A}/docs/epics/child.md"
+n="$(creates)"
+o1="$(run "${A}" conduct lead-agents || echo "exit $?")"; o2="$(run "${A}" conduct child || echo "exit $?")"
+refused() { grep -q "$1 would take the lead's agents' workspace" <<< "$2" && grep -qx 'exit 1' <<< "$2" && echo yes || echo "no, got: $2"; }
+check "conduct refuses an epic named lead-agents, or with that parent:, and makes no workspace" "yes|yes|${n}" \
+  "$(refused lead-agents "${o1}")|$(refused child "${o2}")|$(creates)"
+
+# The lead of a board kept outside the repo (K, with SWARM_PROJECT naming P) starts the HLD co-author in
+# its own folder, outside the project: the agent opens in site · lead-agents with the placeholder kept
+# ahead of it, relabelled lead-agents, at the project's directory, so the workspace's directory stays
+# the project's and P's conductor keeps the plain label site · x.
+# first_cwd <workspace> — the cwd of its first pane, which herdr_workspaces takes as the workspace's.
+first_cwd() { herdr_q "next((p['cwd'] for p in s['panes'] if p['workspace_id'] == '$1'), 'none')"; }
+pb="$(run "${P}" config board_dir)"; mkdir -p "${pb}/epics" "${pb}/stories"; : > "${pb}/stories/README.md"
+printf -- '---\nstatus: active\n---\n\n# x\n' > "${pb}/epics/x.md"
+lead "${K}" "${lk}" SWARM_PROJECT="${P}" agent hld-k hld-k "${K}" hld "${ROOT}/brief.md" > /dev/null
+hk="$(tab_ws hld-k)"; p_x="$(conduct "${P}" x)"
+check "an agent the lead starts outside the project keeps a pane at the project dir ahead of it, and the project's labels stay plain" \
+  "site${SEP}lead-agents|lead-agents hld-k|${P}|site${SEP}x" "${hk%|*}|$(ws_tabs "${hk#*|}")|$(first_cwd "${hk#*|}")|${p_x%|*}"
+
+# A found lead-agents workspace with no pane left at the project (plan-c closed) gets one made at the
+# project dir, labelled lead-agents, ahead of an agent started outside the project.
+mkdir -p "${ROOT}/elsewhere"
+lead "${C}" "${lc}" close plan-c > /dev/null || true
+cw="$(cut -f1 "${C}/.swarm/lead/agents-workspace")"
+lead "${C}" "${lc}" agent s11 s11 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+check "a lead-agents workspace with no pane at the project gets one made ahead of an agent outside it" \
+  "${cw}|lead-agents s11|${C}" "$(tab_ws s11 | cut -d'|' -f2)|$(ws_tabs "${cw}")|$(first_cwd "${cw}")"
+
+# A recorded workspace herdr now lists under another label (relabelled by hand, or an id given again)
+# is left alone: a new web · lead-agents is made and recorded.
+"${ROOT}/bin/herdr" workspace rename "${cw}" "my scratch" > /dev/null
+n="$(creates)"; lead "${C}" "${lc}" agent hld-c2 hld-c2 "${C}" hld "${ROOT}/brief.md" > /dev/null
+hc="$(tab_ws hld-c2)"
+check "a recorded workspace under another label is not used: a new web · lead-agents is made and recorded" \
+  "web${SEP}lead-agents|yes|$((n + 1))|${hc#*|}${TAB}web${SEP}lead-agents|my scratch" \
+  "${hc%|*}|$([[ "${hc#*|}" != "${cw}" ]] && echo yes || echo no)|$(creates)|$(cat "${C}/.swarm/lead/agents-workspace")|$(herdr_q "next(w['label'] for w in s['workspaces'] if w['workspace_id'] == '${cw}')")"
+
+# herdr hanging on its workspace list: the lookup is cut short (LEAD_AGENTS_HERDR_WAIT seconds), and
+# the agent opens in the lead's own workspace instead, with the reason on stderr, so the start goes on.
+touch "${ROOT}/hang"; : > "${ROOT}/lead.err"
+t0=${SECONDS}; lead "${A}" "${la}" agent slow-a slow-a "${A}" survey "${ROOT}/brief.md" > /dev/null; dt=$((SECONDS - t0))
+rm -f "${ROOT}/hang"
+check "a herdr that hangs on its lists is cut short, and the agent opens in the lead's own workspace, saying why" \
+  "${la}|yes|yes" \
+  "$(tab_ws slow-a | cut -d'|' -f2)|$(grep -q 'the agent opens in this workspace instead' "${ROOT}/lead.err" && echo yes || echo "no: $(tail -1 "${ROOT}/lead.err")")|$([[ ${dt} -lt 40 ]] && echo yes || echo "no, ${dt}s")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

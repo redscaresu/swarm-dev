@@ -196,6 +196,8 @@ prune_dead_panes() {
 LEAD_AGENTS_LABEL=lead-agents
 # LEAD_AGENTS_RECORD: the file under .swarm/lead (LEAD_DIR) that holds that workspace's "<id>\t<label>" (lead_agents_workspace).
 LEAD_AGENTS_RECORD="agents-workspace"
+# LEAD_AGENTS_HERDR_WAIT: seconds each herdr call that finds, makes or trims that workspace may take (within), as lead_label's.
+LEAD_AGENTS_HERDR_WAIT=5
 # PANE_WORKSPACE: the workspace next_pane opens in when its caller names one (start_conductor's), else empty.
 PANE_WORKSPACE=""
 
@@ -205,14 +207,16 @@ lead_starts_pane() { [[ "${HERDR_ENV:-}" == 1 && -S "${HERDR_SOCKET_PATH:-}" ]] 
 
 # lead_agents_workspace — "<id>\t<workspace label>\t<placeholder tab>", as epic_workspace prints it, for
 # the workspace the lead's own agents open in: the one LEAD_AGENTS_RECORD holds while herdr still lists
-# it, else epic_workspace's `<project> · lead-agents`, found or made, which it records. The record is
-# what keeps the workspace once its panes are all in other repos' worktrees, whose paths do not say
-# whose they are (herdr_workspaces), where a conductor's would be made again. Fails as epic_workspace
-# does, with its reason printed, less the conductor's prefix.
+# it under the label recorded with it (one relabelled, or an id herdr gave again, is dropped, as
+# lead_rename drops a workspace herdr no longer lists), else epic_workspace's `<project> · lead-agents`,
+# found or made, which it records. The record is what keeps the workspace once its panes are all in
+# other repos' worktrees, whose paths do not say whose they are (herdr_workspaces), where a conductor's
+# would be made again. Fails as epic_workspace does, with its reason printed, less the conductor's prefix.
 lead_agents_workspace() {
   local rec="${LEAD_DIR}/${LEAD_AGENTS_RECORD}" id="" label="" out list
   [[ ! -f "${rec}" ]] || IFS=$'\t' read -r id label < "${rec}" || true
-  if [[ -n "${id}" ]] && list="$(herdr_workspaces)" && grep -qxF "${id}" <<< "$(cut -f1 <<< "${list}")"; then
+  if [[ -n "${id}" && -n "${label}" ]] && list="$(herdr_workspaces)" \
+    && [[ "$(I="${id}" awk -F'\t' '$1 == ENVIRON["I"] { print $2; exit }' <<< "${list}")" == "${label}" ]]; then
     printf '%s\t%s\t\n' "${id}" "${label}"; return
   fi
   out="$(epic_workspace "${LEAD_AGENTS_LABEL}")" || { echo "${out#conduct: }"; return 1; }
@@ -221,17 +225,52 @@ lead_agents_workspace() {
   printf '%s\n' "${out}"
 }
 
+# project_pane <dir> — true when a pane in <dir> marks its workspace as this project's (herdr_workspaces):
+# the project dir, or a story worktree of it (<project>-wt/<slug>).
+project_pane() { local d="${1%/}"; [[ "${d}" == "${PROJECT_DIR}" || "$(dirname "${d}")" == "${PROJECT_DIR}-wt" ]]; }
+
+# has_project_pane <workspace> — true when herdr lists a pane in <workspace> that project_pane takes;
+# false when it gives no pane list.
+has_project_pane() {
+  herdr pane list 2>/dev/null | python3 -I -c '
+import json, os, sys
+w, proj = sys.argv[1], sys.argv[2]
+for p in json.load(sys.stdin)["result"]["panes"]:
+    d = (p.get("cwd") or "").rstrip("/")
+    if (p.get("workspace_id") or p["pane_id"].split(":")[0]) == w and (d == proj or os.path.dirname(d) == proj + "-wt"):
+        sys.exit(0)
+sys.exit(1)' "$1" "${PROJECT_DIR}" 2>/dev/null
+}
+
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed, in
 # PANE_WORKSPACE when set, else in this project's `<project> · lead-agents` (lead_agents_workspace) for
 # an agent the lead starts (lead_starts_pane), else in HERDR_WORKSPACE_ID, so a conductor's agents stay in
 # its workspace. A tab whose recorded panes are in another workspace (<workspace>:<pane>) has no room, so
 # a stale record in a workspace an older swarm.sh shared between projects is never split. A new
-# lead-agents workspace's placeholder tab is closed once the pane is open, or once herdr has refused it.
+# lead-agents workspace's placeholder tab is closed once the pane is open, or once herdr has refused it,
+# unless the pane's <cwd> is outside the project (project_pane): the workspace's directory is its first
+# pane's (herdr_workspaces), and a pane outside the project ahead of every other would make it another
+# project's and hash this project's labels, so then a pane at PROJECT_DIR stays ahead of it, the
+# placeholder (relabelled lead-agents) or one made. Each herdr call that finds, makes or trims the
+# lead-agents workspace is bounded (LEAD_AGENTS_HERDR_WAIT), and when one fails the pane opens in
+# HERDR_WORKSPACE_ID as before, with the reason on stderr: a hung or failing herdr stops no start.
 next_pane() {
-  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane ws="${PANE_WORKSPACE:-${HERDR_WORKSPACE_ID:-}}" placeholder="" out
+  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane ws="${PANE_WORKSPACE:-${HERDR_WORKSPACE_ID:-}}" placeholder="" keep="" out
   if [[ -z "${PANE_WORKSPACE}" ]] && lead_starts_pane; then
-    out="$(lead_agents_workspace)" || die "${out}"
-    IFS=$'\t' read -r ws _ placeholder <<< "${out}"
+    # shellcheck disable=SC2329 # herdr is called inside lead_agents_workspace and has_project_pane
+    if out="$(herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; lead_agents_workspace)"; then
+      IFS=$'\t' read -r ws _ placeholder <<< "${out}"
+      if ! project_pane "${cwd}"; then
+        keep=1
+        if [[ -n "${placeholder}" ]]; then
+          within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab rename "${placeholder}" "${LEAD_AGENTS_LABEL}" >/dev/null 2>&1 </dev/null || true
+        elif ! ( herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; has_project_pane "${ws}" ); then
+          within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab create --workspace "${ws}" --cwd "${PROJECT_DIR}" --label "${LEAD_AGENTS_LABEL}" --no-focus >/dev/null 2>&1 </dev/null || true
+        fi
+      fi
+    else
+      echo "swarm: ${out}; the agent opens in this workspace instead" >&2
+    fi
   fi
   mkdir -p "${STATE_DIR}"
   while :; do
@@ -258,7 +297,7 @@ next_pane() {
           3) pane=$(herdr pane split "${panes[1]}" --direction down  --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
         esac
       fi
-      [[ -z "${placeholder}" ]] || herdr tab close "${placeholder}" >/dev/null 2>&1 || true
+      [[ -z "${placeholder}" || -n "${keep}" ]] || within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab close "${placeholder}" >/dev/null 2>&1 </dev/null || true
       [[ -n "${pane}" ]] || die "herdr could not open a pane in tab ${tab_label}"
       [[ -z "${name}" ]] || herdr pane rename "${pane}" "${name}" >/dev/null 2>&1 || true
       echo "${pane}${name:+ ${name}}" >> "${state}"

@@ -753,9 +753,9 @@ background work. When it starts, an epic still `later` is set `active` (in
 stop listing it as waiting on you. It runs in a herdr workspace labelled for its project and the epic's `parent:` if it has one (epics with the same
 parent share it), or else for the epic (see **Workspace labels** below), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane
-opens in the workspace of the agent that starts it, or in `<project> · lead-agents` when the lead
-starts it: a tab whose panes are in another workspace counts as full, so that pane opens `<epic>-2`
-there instead. A one-off
+opens in the workspace of the agent that starts it. One the lead starts opens in
+`<project> · lead-agents`, except a conductor, which opens in its epic's. A tab whose panes are in
+another workspace counts as full, so that pane opens `<epic>-2` there instead. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
@@ -825,15 +825,22 @@ gives one carries the project's label, joined to the rest by ` · `:
 - `<project> · backlog`: the backlog conductor and the one-offs it builds.
 - `<project> · lead-agents`: every agent the lead starts itself, such as the HLD co-author, a
   planner or a builder it restarts. Its first agent makes the workspace, and swarm.sh keeps its id
-  in `.swarm/lead/agents-workspace`, so the workspace is reused while herdr lists it, even once its
-  panes are all in other repos' worktrees, whose paths say nothing about whose they are. A conductor
-  still opens in its epic's workspace.
+  and label in `.swarm/lead/agents-workspace`, so the workspace is reused while herdr lists it under
+  that label, even once its panes are all in other repos' worktrees, whose paths say nothing about
+  whose they are; one relabelled is left alone, and a new one made. An agent started outside the
+  project, as from a board kept outside the repo, keeps a pane at the project directory ahead of its
+  own, so the workspace stays the project's. When herdr gives no list, or no workspace, within a
+  few seconds, the agent opens in the lead's own workspace, and swarm.sh says so. A conductor still
+  opens in its epic's workspace, and `conduct` refuses an epic named `lead-agents`, or with that
+  `parent:`, as it refuses one named `backlog`.
 
 `<project>` is the project directory's name. When herdr already lists a workspace labelled
 `<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
 of the project's path (the hash the backlog conductor's name ends with), so `/a/app` gets `app`
 and `/b/app` gets `app-<hash>`. herdr gives a workspace no directory of its own, so a workspace's
-directory is that of its first pane in `herdr pane list`, the conductor's or a review agent's. A
+directory is that of its first pane in `herdr pane list`: the conductor's or a review agent's, and
+in `<project> · lead-agents` a lead agent's, or the pane at the project directory swarm.sh keeps
+ahead of a lead agent started outside the project. A
 builder's pane in the project's own story worktree (`<project>-wt/<slug>`) counts as the project's;
 one in any other repo's (`<repo>-wt/<slug>`) is skipped, since its path does not say whose it is. `conduct` takes a
 workspace only when its directory is the project's: one under either form of the project's label, or
