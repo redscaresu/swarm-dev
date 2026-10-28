@@ -301,8 +301,9 @@ Repeat until a step below says stop:
      builder of a ready story it is `herdr pane close <pane>`, then the restart a `no-agent:` line
      would name. Do not use `swarm.sh close` on a builder: it counts a failed attempt and clears the
      worktree that restart needs. A builder whose story is not ready, such as one in review with its
-     findings in the box, is kept: the exit is `swarm.sh tell <slug> nudge <file>`, the file asking
-     it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
+     findings in the box, is kept: the exit is
+     `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background, where the
+     file asks it to act on the brief in its input box. For a review agent the exit is `swarm.sh close review-<slug>`, then
      `swarm.sh review-agent <slug> <PR URL>`, and for a conductor `swarm.sh close conduct-<epic>`,
      then `swarm.sh conduct <epic>`. A
      `prompt: <agent> (<kind>), exit: <exit>` line means an agent herdr shows blocked, idle or done
@@ -336,8 +337,9 @@ Repeat until a step below says stop:
      `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` line means an open PR of
      a ready or in-review story an agent builds conflicts with its base, so its checks will never run.
      Send its builder a file asking it to merge the base in and push, with
-     `swarm.sh tell <slug> nudge <file>`. A builder at work refuses the tell: wait for it with
-     `swarm.sh wait <slug>` in the background, then send it. If no builder is open, start one in the
+     `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background. The tell
+     runs only once the wait returns with the builder's turn over; a wait that times out, stalls or
+     prints `stuck:` sends nothing, so read what it printed and send the file again once that is dealt with. If no builder is open, start one in the
      story's worktree with `swarm.sh agent`, as the `kept:` arm says. If the story has no worktree, add
      one on the PR's branch first: `git -C <repo> fetch origin story/<slug>`, then
      `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. Each line comes once, and again
@@ -665,8 +667,8 @@ Three more rules for the lead:
   `cleared-on-error`, which holds the story for you. The route depends on the agent:
   - A builder of a ready story: `herdr pane close <pane>` if herdr still lists it (`swarm.sh restart`
     refuses a listed builder), then `swarm.sh restart <slug>`.
-  - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so send
-    `swarm.sh tell <slug> nudge <file>`.
+  - A builder whose story is not ready, such as one in review: `swarm.sh restart` refuses it, so run
+    `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background.
   - A review agent: `swarm.sh close review-<slug>`, then `swarm.sh review-agent <slug> <PR URL>`.
   - A planner or co-author: `swarm.sh close <agent>`, since its name stays taken while its pane
     shows it working, then run its command again.
@@ -678,9 +680,9 @@ Three more rules for the lead:
     prints it: `conduct-<epic>`, or `conduct-backlog-<dir>-<hash>` for the backlog's.
 
   `swarm.sh restart` and `swarm.sh conduct` take no brief and write their own prompt. Once the agent
-  is back, tell it to write its output as it goes. A builder comes back working, and `tell` queues a
-  nudge to a working builder and delivers it when its turn ends, so send
-  `swarm.sh tell <slug> nudge <file>` at once. A conductor's
+  is back, tell it to write its output as it goes. A builder comes back working, so run
+  `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>` in the background: the tell
+  goes once its turn ends, and not at all when the wait times out, stalls or sticks. A conductor's
   `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets the line
   in the brief you write for its rerun, before it starts.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and

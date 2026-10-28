@@ -460,8 +460,8 @@ The `.unsent` marker works like this:
   herdr, not `swarm.sh close`: on a ready story with no PR that close counts a failed attempt and
   clears the worktree, and restart then refuses. A builder whose story is in any other state, such
   as one in review whose findings sit in its box, is kept, since restart refuses a story that is not
-  ready: the exit is `swarm.sh tell <slug> nudge <a file asking it to act on the brief in its input
-  box>`, which herdr types after the paste and sends with it. With no story file the exit is
+  ready: the exit is `swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <a file asking it to
+  act on the brief in its input box>`, which herdr types after the paste and sends with it. With no story file the exit is
   `herdr pane close <pane>` alone. For a review agent it is
   `swarm.sh close review-<slug> then swarm.sh review-agent <slug> <PR URL>`, once per PR on the
   story (`<PR URL>` itself when it has none). For a conductor it is
@@ -1146,8 +1146,12 @@ the bare file. A bare file does not clash with a part of it. A part's first word
 different parts of one file, and a story names the functions it changes. A builder whose PR
 conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict
 never sends a story back to `ready`. The conductor sends that as a `nudge` tell, which is not a
-review round. It waits first for a builder that is working, and starts a builder in the story's
-worktree when the one it had was closed after `swarm.sh review`.
+review round, and starts a builder in the story's worktree when the one it had was closed after
+`swarm.sh review`. The conductor sends every nudge its brief names, and the lead every nudge to a
+builder that `/swarm-dev:swarm` names, as
+`swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>`, run in the background. The tell
+runs only once the wait returns with the builder's turn over, so a wait that times out, stalls or
+prints `stuck:` sends nothing.
 Work that edits a shared file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the
 lead, alone.
 

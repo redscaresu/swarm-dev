@@ -3669,7 +3669,8 @@ unsent_marker() {
 # the agent again, or for a builder whose story is not ready, keeps it. A ready story's builder has its
 # pane closed with herdr, since swarm.sh close would count a failed build and clear the worktree restart
 # needs, then no_agent_exit's exit (restart); any other builder (a story in review, its findings left in
-# the box) is told a nudge, which herdr types after the paste and sends with it. A review agent gets
+# the box) is told a nudge once a wait on it returns (the form every nudge instruction gives), which
+# herdr types after the paste and sends with it. A review agent gets
 # swarm.sh close, then review-agent for each of its story's PRs; a conductor swarm.sh close, then conduct. Like no_agent_lines' marker lines, printed only with the poll's
 # herdr list (LEAD_AGENTS_OK). wait --lead reads them after resend_pass, which writes and removes markers.
 unsent_lines() {
@@ -3683,7 +3684,7 @@ unsent_lines() {
       builder)
         if [[ ! -f "${BOARD}/stories/${stem}.md" ]]; then out="herdr pane close ${pane}"
         elif [[ "$(fm "${BOARD}/stories/${stem}.md" status)" == ready ]]; then out="herdr pane close ${pane} then $(no_agent_exit "${stem}")"
-        else out="swarm.sh tell ${stem} nudge <a file asking it to act on the brief in its input box>"; fi ;;
+        else out="swarm.sh wait --stall ${stem} && swarm.sh tell ${stem} nudge <a file asking it to act on the brief in its input box>"; fi ;;
       review)
         slug="${stem#review-}"; out=""
         [[ ! -f "${BOARD}/stories/${slug}.md" ]] || for u in $(story_prs "${BOARD}/stories/${slug}.md"); do

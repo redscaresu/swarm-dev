@@ -1460,7 +1460,8 @@ call runs, the leaf of its chain of parents, by program name only. It may still 
 the builder started on purpose, or gone once a step-up closed the pane). Read the chain, and check
 the PID with \`ps -o pid,ppid,etime,command -p <PID>\` before you stop anything. Stop only a hung
 leaf, by its PID (\`kill <PID>\`, never pkill or killall), then tell the builder what you killed and
-why (\`swarm.sh tell <slug> nudge <file>\` once it is idle), and wait on it again instead of closing.
+why with \`swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>\` in the background, and
+wait on it again instead of closing.
 \`none named (<why>)\` leaves nothing to stop. A stepped-up build's next rung works in the same
 worktree, so a hung command there is still yours to stop.
 A story that comes back \`kind: lead\` with \`escalated_from:\` is the lead's to decide: report it
@@ -1492,14 +1493,16 @@ started: never run \`swarm.sh story\` for it. Then run \`swarm.sh status\` and r
 Unblock's \`ready:\` lines and the Stacked lines cover the whole board: act only on a line whose
 <child> is yours, and leave the rest to their own conductor.
 - \`<child>: merge <ref>\`: write a file saying to merge <ref> into its branch, re-run the tests and
-  push, and send it with \`swarm.sh tell <child> nudge <file>\` (not findings: those count review rounds). On a line that ends \`(no builder)\`,
+  push, and send it with \`swarm.sh wait --stall <child> && swarm.sh tell <child> nudge <file>\` in the
+  background (not findings: those count review rounds). On a line that ends \`(no builder)\`,
   first start a builder in the child's worktree (\`<repo>-wt/<child>\` beside its repo) with
   \`swarm.sh agent <tab> <child> <worktree> <role> <brief>\`, where <tab> is the child's \`epic:\` (its
   slug when it has none), <role> is what \`swarm.sh _role <child>\` prints, and the brief says the
   same and to reply with the PR URL. Any review of the child from before that merge is stale: once
   its builder replies that it pushed, start the child's review agent on the new head, as the review
   rule below says. The line stays until the child pushes the merge, so send each merge once: until the
-  child's builder replies to that tell (or brief), skip a line for the same child and ref.
+  child's builder replies to that tell (or brief), skip a line for the same child and ref, unless
+  its wait ended without the tell (the clash rule above).
 - \`<child>: lost story/<p>\`: on a ready child whose builder is open, run \`swarm.sh close <child>
   paused --drop\`, which holds it for the lead. If the line ends \`(no builder)\`, or close prints
   \`not held:\`, the child stays ready on a dead parent: do not start it, and list it in your report
@@ -1509,7 +1512,9 @@ Unblock's \`ready:\` lines and the Stacked lines cover the whole board: act only
 EOF
 }
 
-# clash_rule — when two stories may build at once, and what a conflict with the base costs. Git merges
+# clash_rule — when two stories may build at once, what a conflict with the base costs, and how the
+# conductor sends every nudge: wait first, and tell only when that wait returns 0, so a builder still
+# working, stalled or stuck is never told (tests/nudge_idle_test.sh runs that form). Git merges
 # edits to different parts of one file, so only the same part (by its first word) or two bare files hold a
 # story back; a bare file does not clash with a part of it.
 clash_rule() {
@@ -1521,10 +1526,15 @@ Otherwise both build at once, even in the same file. A builder whose PR conflict
 merges the base in, resolves it, re-runs the tests and pushes. A conflict never sends a story back
 to \`ready\`: never close a builder over one. When \`swarm.sh watch\` says a PR CONFLICTS, write a
 file saying to merge origin/<base> into its branch, resolve it, re-run the tests and push, and to
-stop waiting on CI until then (a conflicting PR runs none). Send it with \`swarm.sh tell <slug> nudge
-<file>\`, never as findings, which would count as a review round. Watch reports each conflict once,
-so do not drop it: if the builder is working, run \`swarm.sh wait <slug>\` in the background and send
-it once the wait returns. If the story has no builder (closed after \`swarm.sh review\`), start one
+stop waiting on CI until then (a conflicting PR runs none). Send it with
+\`swarm.sh wait --stall <slug> && swarm.sh tell <slug> nudge <file>\` in the background, never as
+findings, which would count as a review round. Every nudge in this brief goes that way: the tell
+runs only once the wait returns with the builder's turn over, so a wait that times out, stalls or
+prints \`stuck:\` sends nothing; act on what it printed, as the give-up and auth rules say. A wait
+that prints \`auth\` exits 0, so its tell lands in a session whose login expired and is lost: send it
+again once you have told that builder to resume. Watch
+reports each conflict once, so do not drop it: when its wait sent nothing, send it again the same
+way once you have dealt with what the wait printed. If the story has no builder (closed after \`swarm.sh review\`), start one
 in its worktree with \`swarm.sh agent <tab> <slug> <worktree> <role> <brief>\`, as the Stacked rule
 below does for \`(no builder)\`, with a brief that says the same and to reply with the PR URL. If its
 worktree is gone too, list the PR in your report for the lead.
