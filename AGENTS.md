@@ -94,8 +94,11 @@ Useful while it runs:
   (`swarm.sh grants <PR URL>`), and the version bump when every story merged since the last tag is
   under an HLD that grants `release`. Otherwise `swarm.sh review <slug> <PR URL>` hands it to the
   user.
-- Agents start with an allowlisted environment. A token you exported reaches a builder only when
-  its story names it under `env:`.
+- Agents start with an allowlisted environment (`AGENT_ENV` in bin/lib/agents.sh, plus `LC_*`,
+  `SWARM_*` and `XDG_*`). Any other variable you exported reaches an agent only when its story names
+  it under `env:` or the board's config lists it in `agent_env`. With Foundry on
+  (`CLAUDE_CODE_USE_FOUNDRY`), the session's `ANTHROPIC_FOUNDRY_*` and
+  `ANTHROPIC_DEFAULT_<MODEL>_MODEL` settings pass to every agent too.
 - The plugin's guard hook refuses a raw merge, a `cd <dir>` followed by `;` (write
   `cd <dir> || exit 1 &&`), a `git checkout` that drops uncommitted changes, and, for an agent,
   `git checkout`, `switch`, `restore`, `reset --hard`, `stash` or `clean` in the main checkout,
