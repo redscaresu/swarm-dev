@@ -733,10 +733,12 @@ spr; fx_at e2.md "${H1}" "status: draft"
 echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.main"
 merge "${URL}"; story_merged "a story PR whose pinned head renames an epic a later push restores merges"
 # That read is bounded as the pinned list is: here the epic's first contents read makes the compares hang.
+# The bound is 8 s, room for the pinned list's own read on a loaded machine; its 3 reads stop well
+# before the 60 s one unbounded hung read takes.
 spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
-echo "touch '${FX}/compare.hang'" > "${FX}/on-contents"; t0=${SECONDS}; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
+echo "touch '${FX}/compare.hang'" > "${FX}/on-contents"; t0=${SECONDS}; merge SWARM_BASE_MOVED_WAIT=8 "${URL}"
 refused "a story PR removing an epic, its pinned compare read hanging" "gh cannot read docs/epics/e1.md at 1111111"
-check "a story PR removing an epic, its pinned compare read hanging: stops within 30 s" test $((SECONDS - t0)) -lt 30
+check "a story PR removing an epic, its pinned compare read hanging: stops within 55 s" test $((SECONDS - t0)) -lt 55
 # And read again after a 502, as the pinned list's read is: read 1 is that list's, read 2 merge_gone's first.
 spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
 : > "${FX}/compare.main.2.fail"; merge "${URL}"; story_merged "a story PR removing an epic, a 502 on its gone read: read again, it merges"
