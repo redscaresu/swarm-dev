@@ -2439,10 +2439,11 @@ heads_green() {
   return "${rc}"
 }
 
-# pr_head <pr-url> — the PR's head SHA as gh reads it, or nothing when it cannot.
+# pr_head <pr-url> — the PR's head SHA as gh reads it, or nothing when it cannot, or when the read runs
+# over LEAD_PRS_WAIT seconds (within): a hung gh must not stall the poll.
 pr_head() {
   [[ "$1" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 0
-  gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid --jq .headRefOid </dev/null 2>/dev/null || true
+  within "${LEAD_PRS_WAIT}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid --jq .headRefOid </dev/null 2>/dev/null || true
 }
 
 # held_heads — the heads pass's first read: the head of each PR a protected hold names (protected_holds
@@ -2568,7 +2569,7 @@ lead_heads() {
 lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "$2" "${LEAD_SEEN}" 2>/dev/null; }; }
 
 LEAD_PRS="${LEAD_DIR}/prs"            # the open story PRs the last heads pass read (open_story_prs), for pr_lines
-LEAD_PRS_WAIT="${SWARM_LEAD_PRS_WAIT:-30}"   # seconds one gh read of open_story_prs may take before it counts as failed
+LEAD_PRS_WAIT="${SWARM_LEAD_PRS_WAIT:-30}"   # seconds one gh read of the heads pass (open_story_prs, pr_head) may take before it counts as failed
 LEAD_PRS_WARN_AFTER="${SWARM_LEAD_PRS_WARN_AFTER:-3}"   # heads passes in a row a repo's read fails before wait --lead warns
 LEAD_REPOS=""                         # "<name> <owner/repo>" per repo this run resolved, so each costs one gh repo view a run
 LEAD_PRS_FAILS=""                     # "<name> <n>": the heads passes in a row that could not read the repo's open PRs

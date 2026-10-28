@@ -130,7 +130,8 @@ reads the PR heads (on a run's first read, then at most once every `SWARM_LEAD_H
 the open PRs of every repo the board's stories name: the project's own, and each story's `repo:`. Each repo
 costs one `gh repo view` a run, to find its owner and name from its origin as `swarm.sh watch` does, and one
 `gh pr list` a pass. Each gh read is cut off after 30 seconds (`SWARM_LEAD_PRS_WAIT`) and then counts as
-failed. The pass writes what it read to `.swarm/lead/prs`, and each poll joins that file with the board as it
+failed; so is each PR head the pass reads, a held PR's included, and a head it could not read leaves the
+hold standing. The pass writes what it read to `.swarm/lead/prs`, and each poll joins that file with the board as it
 is then, with no gh call. A PR counts when it is an open `story/<slug>` PR in its story's own repo, and its
 story is ready or in review and is one an agent builds (never a `lead` story's), under either merge mode and
 whether a builder is at work or not. For each one it prints:

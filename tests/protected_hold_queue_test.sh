@@ -28,13 +28,15 @@ cp "${ROOT}/bin/gh" "${ROOT}/merge-gh"
 # changes <path> — the PR's one file.
 changes() { echo "[{\"filename\":\"$1\",\"status\":\"modified\"}]" > "${FX}/files"; echo 1 > "${FX}/nfiles"; }
 # reads_stub — gh as wait --lead reads it: PR <n>'s head is ${ROOT}/head.<n>, else ${H1}, its one check run
-# green, no status; the project's repo is o/r with no open PR. Anything else fails.
+# green, no status; the project's repo is o/r with no open PR. Anything else fails. With ${ROOT}/hang.<n>
+# the next read of PR <n>'s head first removes it and sleeps 200 s: one gh that hangs.
 reads_stub() {
   printf '#!/bin/sh\nLOG="%s"; H="%s"; D="%s"\n' "${ROOT}/gh.log" "${H1}" "${ROOT}" > "${ROOT}/bin/gh"
   cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
 case "$1 $2" in
-  "pr view") cat "${D}/head.$3" 2>/dev/null || echo "${H}" ;;
+  "pr view") [ ! -e "${D}/hang.$3" ] || { rm "${D}/hang.$3"; sleep 200; }
+             cat "${D}/head.$3" 2>/dev/null || echo "${H}" ;;
   "repo view") echo o/r ;;
   "pr list") echo '[]' ;;
   api*) case "$*" in
@@ -173,6 +175,14 @@ is "after the swap status lists the story's PRs untagged" \
   "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge: s ${U10} ${U8}" "$(merge_rows)"
 lead 3000
 is "after the swap wait --lead prints no merge: line" "" "$(merge_out)"
+
+# --- A head read that hangs is cut off after SWARM_LEAD_PRS_WAIT seconds, and the poll goes on: the hold
+# stands, its head unread, and the pass reads PR 7 again for its verdict, which answers this time.
+held_board; touch "${ROOT}/hang.7"; t0=${SECONDS}
+lead SWARM_LEAD_PRS_WAIT=1 20000
+is "a head read that hangs is cut off: wait --lead still wakes on the held PR" "0|${HELD}" "${rc}|$(merge_out)"
+is "it reads PR 7's head twice: the read that was cut off, then the one for its verdict" 2 "$(gh_count '^pr view 7 ')"
+check "the run ends well inside the stub's 200 s" [ $((SECONDS - t0)) -lt 100 ]
 
 # --- Both of a story's PRs held: the second hold keeps the first's record, and the line names each PR,
 # the path once.
