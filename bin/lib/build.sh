@@ -1042,13 +1042,14 @@ EOF
 }
 
 # review_handoff <slug> <PR URL> <findings file> <head> <swarm.sh> — the review brief's pass step. A round
-# with nothing to fix puts the story in review pinned to <head>, the head it reviewed (swarm.sh review
-# --head, which refuses a moved head). Then, under merge = agent or when swarm.sh grants names merge for
-# the PR, it merges that head, pinned as pinned_merge_rule pins a conductor's (swarm.sh merge --head);
-# otherwise the review is the handoff to the user. The findings file is written only once those
-# commands exit: the conductor's wait ends on it, and a close then would cut a merge short. A moved head
-# is a head moved: line, and whoever started the agent starts a new one on it. <swarm.sh> is the brief's
-# swarm.sh with SWARM_PROJECT, as every call in it.
+# with nothing to fix writes its review file first: the conductor's wait ends on it, and once the PR
+# merges, the merge's reconcile, run from this pane, retires the agent and removes its worktree, so a
+# file written after would never come. Then it puts the story in review pinned to <head>, the head it
+# reviewed (swarm.sh review --head, which refuses a moved head), and, under merge = agent or when
+# swarm.sh grants names merge for the PR, merges that head, pinned as pinned_merge_rule pins a
+# conductor's (swarm.sh merge --head); otherwise the review is the handoff to the user. A moved head
+# turns the file into a head moved: one, and whoever started the agent starts a new one on it.
+# <swarm.sh> is the brief's swarm.sh with SWARM_PROJECT, as every call in it.
 review_handoff() {
   local merge next
   merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit: after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
@@ -1059,10 +1060,12 @@ review_handoff() {
     next="Then run \`$5 grants $2\`. When a line it prints is \`merge\`, the agreed HLD over the PR grants merge: ${merge} When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed."
   fi
   cat <<EOF
-A round with nothing to fix is a pass, of $4, the head on ${3}'s \`head:\` line. Hand the PR on
-before you write ${3}: run \`$5 review $1 --head $4 $2\`, which puts the story in review. ${next}
+A round with nothing to fix is a pass, of $4, the head on ${3}'s \`head:\` line. Write the review to
+${3} first: the conductor's wait ends on it, and once the PR merges, the merge's reconcile retires you
+and removes this worktree, so a file written after would never come. Then hand the PR on: run
+\`$5 review $1 --head $4 $2\`, which puts the story in review. ${next}
 When review or merge refuses because the PR's head is no longer $4 (a push since your review), that
-head has had no review, and you do not review it in this session. Write ${3} with the Write tool
+head has had no review, and you do not review it in this session. Write ${3} again with the Write tool,
 holding two lines, \`head: $4\` and
 \`head moved: <the head review or merge named>\`, then stop: whoever started you (the conductor, or the
 lead for a kept story) starts a new review agent on the new head. When it was merge that refused,
@@ -1073,9 +1076,10 @@ the PR's branch, and that head needs no new review. With <new head> the full SHA
 \`merge --head\` names, run \`$5 wait-pr --head <new head> $2\` in the background and, once it exits 0,
 \`$5 merge --head <new head> $2\`, as above.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff.
-Once the last of these commands has exited, write the review to ${3}, then reply with ${3}, what the last
-command printed, and \`codex skipped: <why>\` when codex was, then stop. On any other refusal or failure
-(a story held until its parents merge, a story whose \`prs:\` line names another PR, a red base),
+Once the last of these commands has exited, run nothing more in this worktree (a merge removes it):
+reply with ${3}, what the last command printed, and \`codex skipped: <why>\` when codex was, then
+stop. On any other refusal or failure
+(a story held until its parents merge, a story with a PR you did not review, a red base),
 reply the same way: the conductor or the lead acts on it.
 EOF
 }
@@ -1088,8 +1092,8 @@ EOF
 # sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
 # changes code, and the project's rules. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
-# the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, which
-# ends it once review_handoff has handed the PR on (review --head, then merge --head where it may),
+# the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
+# before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,
 # since that file is read as a finished review of its head the moment it exists (review_pass,
 # wait review-<slug>); with findings to fix, to the .round.md beside it, which it tells the builder (tell
 # counts the round, and may step the build up or hold it) after waiting for it, then waits for its push,

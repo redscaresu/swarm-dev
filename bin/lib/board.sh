@@ -2074,20 +2074,33 @@ mark_review() {
 
 REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may take
 
-# review_heads <item file> <sha> <pr-url>... — dies, changing nothing, unless every PR the item's prs:
-# line lists is one named here (one review agent passes one PR; dropping the others from prs: would let
-# the item finish without them), and gh reads each named PR's head as <sha> within REVIEW_HEAD_SECONDS:
-# a head pushed since the review passed has had no review. A read that fails or runs out says to run it
-# again.
+# review_heads <item file> <sha> <pr-url>... — dies, changing nothing, unless every PR of the item is
+# one named here: each its prs: line lists, and, for a story, each open PR from its branch story/<slug>
+# in each named PR's repo (one review agent passes one PR, and prs: is often empty until review: a
+# review naming one of two would let the story finish without the other). Then gh must read each named
+# PR's head as <sha>: a head pushed since the review passed has had no review. Each gh read stops after
+# REVIEW_HEAD_SECONDS; one that fails or runs out says to run review again.
 review_heads() {
-  local f="$1" want="$2" slug url head others="" secs="${REVIEW_HEAD_SECONDS}"
+  local f="$1" want="$2" slug url head others="" repos="" repo open secs="${REVIEW_HEAD_SECONDS}"
   slug="$(basename "${f}" .md)"; shift 2
-  pr_words "$(fm "${f}" prs)"
-  for url in ${PR_WORDS}; do
-    [[ " $* " == *" ${url} "* ]] || others+="${others:+ }${url}"
+  pr_words "$(fm "${f}" prs)"; open="${PR_WORDS}"
+  if [[ "${f}" == "${BOARD}/stories/"* ]]; then
+    for url in "$@"; do
+      [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[0-9]+$ ]]
+      [[ " ${repos} " == *" ${BASH_REMATCH[1]} "* ]] || repos+="${repos:+ }${BASH_REMATCH[1]}"
+    done
+    for repo in ${repos}; do
+      url="$(within "${secs}" gh pr list --repo "${repo}" --head "story/${slug}" --state open --json url < /dev/null \
+        | json "' '.join(p['url'] for p in d)" 2>/dev/null)" \
+        || die "review: gh could not list the open PRs of story/${slug} in ${repo} within ${secs}s, so whether ${slug} has one this review did not cover is unknown; ${slug} is unchanged: run swarm.sh review again"
+      open+="${open:+ }${url}"
+    done
+  fi
+  for url in ${open}; do
+    [[ " $* " == *" ${url} "* || " ${others} " == *" ${url} "* ]] || others+="${others:+ }${url}"
   done
   [[ -z "${others}" ]] \
-    || die "review: ${slug}'s prs: line also lists ${others}, which this review did not cover; ${slug} is unchanged: once each has passed its own review, run swarm.sh review ${slug} with every PR URL"
+    || die "review: ${slug} also has ${others}, which this review did not cover; ${slug} is unchanged: once each has passed its own review, run swarm.sh review ${slug} with every PR URL"
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]]
     head="$(within "${secs}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid < /dev/null \
@@ -2101,11 +2114,13 @@ review_heads() {
 
 # review_note <slug> <epic> <pr-urls> — note the running conductor of <epic> (the backlog's when it is
 # empty) that story <slug> is in review and its PRs wait to be merged (conductor_note), unless that
-# conductor ran the review itself (SWARM_AGENT is its name): it knows, and a note would cost it a turn.
-# With none running it writes no inbox; a failed tell is a warning and never fails the review.
+# conductor ran the review itself, or the story's own review agent did, which merges the PR next under
+# a grant and whose review file the conductor waits on (SWARM_AGENT is either name): a note would cost
+# it a turn, or say the PR waits when it is about to merge. With none running it writes no inbox; a
+# failed tell is a warning and never fails the review.
 review_note() {
   local note prs="its PR $3 now waits"
-  [[ "${SWARM_AGENT:-}" != "$(group_conductor "${2:--}")" ]] || return 0
+  [[ "${SWARM_AGENT:-}" != "$(group_conductor "${2:--}")" && "${SWARM_AGENT:-}" != "$(agent_name "review-$1")" ]] || return 0
   [[ "$3" != *" "* ]] || prs="its PRs $3 now wait"
   note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")" \
     || { echo "warning: could not write a note, so no conductor was told that $1 is in review"; return 0; }

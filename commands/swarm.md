@@ -200,7 +200,12 @@ Repeat until a step below says stop:
      findings would go out twice and the round would count twice. Its wait returns once the agent
      is idle with `.swarm/reviews/<slug>.md` written, which it writes only on a pass or when it
      stops; a round's findings to fix go to `.swarm/reviews/<slug>.round.md`, which is not yours to
-     read. Then look at the story and that file. If the story is in
+     read. When the wait returns with no review file and printed `busy`, it ran its 60 minutes while
+     the agent works: wait again. When it returns with no review file any other way (the agent waits
+     on a prompt, is gone, or a merge's reconcile retired it), check the board first: a story in
+     review with no `kept:` line, or one that has left the board, was passed and handed over or
+     merged. Otherwise start the review again with `swarm.sh review-agent <slug> <PR URL>`. Once the
+     file is there, look at the story and that file. If the story is in
      review with no `kept:` line, or has left the board, the agent passed the PR: it ran
      `swarm.sh review <slug> --head <sha> <PR URL>`, then merged the PR under `merge = agent` or a
      `merge` grant, or handed it over. When the PR waits on the user's merge, `wait --lead` brings
