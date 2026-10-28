@@ -1088,7 +1088,7 @@ EOF
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> <round> — a review agent's brief: it never
-# edits the code, the story's touches and Done when, the green step first (wait-pr --head on the worktree's HEAD, then triage of the PR's check-run notes
+# edits the code, the story's touches and Done when, the green step first (wait-pr, then triage of the PR's check-run notes
 # and code-scanning alerts as green_rule's, each real one, red check or conflict sent to the builder as a
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
