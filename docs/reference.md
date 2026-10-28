@@ -39,6 +39,12 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   `active` or `split`), or an `hld:`
   naming an HLD that is `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
   first, and a failed fetch or read refuses. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
+  A renamed epic is judged by the base's copy at its old path, when that path was an epic too: an
+  `agreed:` date that copy already had is not a ticket, and its `active` carries over only while the
+  epic keeps its `# ` heading, so renaming an `active` epic needs no ticket. git pairs a rename by
+  content, uncommitted moves included, and pairs a deleted epic with a new one that is half alike
+  too, so the heading decides: an epic moved and given another heading needs a ticket, its old
+  `agreed:` still counted, and one more than half rewritten reads as new.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
   days when `swarm.sh merge` runs (a board PR's or a story PR's), and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.
@@ -2527,11 +2533,12 @@ board's own repo (its origin) and every path it changes, a renamed file's old pa
 under the board instead. Under either merge mode, it also refuses a story PR or a `--board` PR that
 sets an epic `active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green,
 it reads each epic and HLD through gh at the PR's base branch and head SHA; for a story PR it first
-lists the PR's files at that head. Any read error refuses, as does a 404 at the head on a file the PR
+lists the PR's files at that head. A renamed epic is read at its old path on the base (GitHub's
+`previous_filename`), as `board-pr open` reads it: its `agreed:` is compared under any heading, its `active` carries over only while the heading is the same; the epic guard's list of the PR's files (`merge_files`) is read once per merge, within `BASE_MOVED_WAIT`, and read again only after a transient gh error, as the pinned list is. Any read error refuses, as does a 404 at the head on a file the PR
 does not remove or rename away. For a story PR each of those reads, the file list included, stops after
-60 seconds (`BASE_MOVED_WAIT`) and refuses the same way. For a `--board` PR only the epic and HLD reads
-stop there; its file lists have no limit. A read cut off that way is a passing error, which the next
-`swarm.sh merge` reads past. The refusal starts `--board:` only on the `--board` route. A story
+60 seconds (`BASE_MOVED_WAIT`) and refuses the same way. For a `--board` PR the epic and HLD reads and the
+epic guard's file list stop there; the path list `--board` checks first has no limit. A read cut off that
+way is a passing error, which the next `swarm.sh merge` reads past. The refusal starts `--board:` only on the `--board` route. A story
 PR is not checked when the board is not in the project's repo. Nor is one whose story names another
 repo (`repo:`) and whose PR is outside the board's repo, since its `epics/` files are that repo's own;
 when gh cannot name the board's repo, merge refuses, says why, and you run it again; when the project

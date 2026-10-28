@@ -30,9 +30,13 @@ origin_has() {
 
 # board_read base|head <path> — epic_unticketed's reader for board_pr open: <path> at origin/<base>, or
 # in the worktree <wt> (board_pr's locals); fails 1 when it is absent and 2 when it cannot be read.
+# board_read from <path> — the old path of the rename to <path> in board_pr's local changes
+# (board_changes), or nothing.
 board_read() {
   local t
-  if [[ "$1" == base ]]; then
+  if [[ "$1" == from ]]; then
+    P="$2" awk -F'\t' '$1 ~ /^R/ && $3 == ENVIRON["P"] { print $2; exit }' <<< "${changes}"
+  elif [[ "$1" == base ]]; then
     t="$(git -C "${wt}" ls-tree --name-only "origin/${base}" -- "$2")" || return 2
     [[ -n "${t}" ]] || return 1
     git -C "${wt}" show "origin/${base}:$2" || return 2
@@ -41,6 +45,25 @@ board_read() {
     cat -- "${wt}/$2" 2>/dev/null || return 2
   fi
 }
+
+# board_changes <commit> — git diff -M --name-status from <commit> to the worktree <wt> (board_pr's
+# local): its commits, uncommitted edits and new files alike, so a file moved with mv and not added
+# pairs as a rename. Run over a throwaway index holding the real index's entries (a file staged with
+# git add -f past .gitignore too, which open's git add -A commits) with each new file added as
+# intent-to-add: it leaves the real index alone and puts no file in the object store. --index-info
+# records no stat data, so git compares every file by its bytes; a copy of the real index trusted a
+# stat match, and a file rewritten to the same size within the second it was checked out (review to
+# active) read as unchanged.
+board_changes() (
+  # Not local: the EXIT trap runs once the locals are gone.
+  tmp="$(mktemp -d)" || exit 1
+  trap 'rm -rf "${tmp}"' EXIT
+  git -C "${wt}" ls-files -s -z > "${tmp}/entries" || exit 1
+  export GIT_INDEX_FILE="${tmp}/index"
+  git -C "${wt}" update-index -z --index-info < "${tmp}/entries" || exit 1
+  git -C "${wt}" add -A -N . || exit 1
+  git -C "${wt}" -c core.quotepath=off diff --no-color -M --name-status "$1"
+)
 
 # board_pr_kind <name> <board> — the kind of the board PR <name>: plan (plan-<hld>, scope-<epic>),
 # agreement (agree-<hld or epic>), finish (finish-<slug>, drop-<slug>), hold (hold-<slug>), else
@@ -93,7 +116,7 @@ board_pr_kind_line() {
 # names it. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why critic ct split="" sign=()
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel changes files f msg prs tip rtip why critic ct split="" sign=()
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -124,9 +147,10 @@ board_pr() {
       base="$(base_for "${PROJECT_DIR}")" || die "board-pr: cannot fetch origin's base branch, so whether an epic goes active with no ticket is unknown"
       # The board's path from the root with a trailing /, or empty when the board is the root.
       rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
-      # Committed and uncommitted changes since the base, a rename's old path too, and new files.
-      files="$(git -C "${wt}" -c core.quotepath=off diff --name-only --no-renames "$(git -C "${wt}" merge-base HEAD "origin/${base}")" \
-        && git -C "${wt}" -c core.quotepath=off ls-files --others --exclude-standard)" || die "board-pr: cannot list the changes in ${wt}"
+      # Committed and uncommitted changes since the base, new files too: each changed path, a rename's
+      # old path included (a copy's source is unchanged, so not that).
+      changes="$(board_changes "$(git -C "${wt}" merge-base HEAD "origin/${base}")")" || die "board-pr: cannot list the changes in ${wt}"
+      files="$(awk -F'\t' '{ print ($1 ~ /^C/ ? $3 : $2) } $1 ~ /^R/ { print $3 }' <<< "${changes}")"
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
       # git C-quotes a path holding a ", \, tab or newline, and a quoted path would slip past the prefix
       # checks here and in epic_unticketed.
