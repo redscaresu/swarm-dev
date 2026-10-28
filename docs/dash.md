@@ -80,7 +80,10 @@ is one column, top to bottom:
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
   pane, nudges, resumes, incidents and failed tells excepted), `agree` a draft epic, `staged epic
   <slug>: stage v<T>, after v<P>` for a staged draft epic, which the lead sets active once the base
-  has a tag at or above `v<P>` and which gets no `agree draft epic` row, and `no agent on story` for
+  has a tag at or above `v<P>` and which gets no `agree draft epic` row, `set draft epic <slug>
+  active: <why>` for a draft epic the lead sets active with no agreement (its `parent:` is active or
+  split, an agreed HLD over it grants `epics`, or `lead_epics = on`), which gets no `agree draft epic`
+  row either, and `no agent on story` for
   a started story that no agent works on any more. That last row is the `no-agent:`
   line `swarm.sh wait --lead` wakes the lead with. It names the story and what to run:
   `swarm.sh hold <slug> <reason>` for a ready story, and for one in review `swarm.sh merge` once a
@@ -100,7 +103,7 @@ is one column, top to bottom:
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
   you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic) and
   everything else from the list above moves to this box under it: every `merge`, `answer`, `close`,
-  `look at`, `staged epic` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
+  `look at`, `staged epic`, `set draft epic <slug> active` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`), and `review kept story` for
   every story a close kept (`swarm.sh review` or `swarm.sh close <slug> --drop`). It is left out when
   empty.
