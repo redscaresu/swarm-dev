@@ -1469,13 +1469,16 @@ Before it reviews, it waits for the PR's checks with `swarm.sh wait-pr`, and a h
 once it has also triaged `swarm.sh findings`, as a conductor does: the notes on every check run and
 the PR's open code-scanning alerts. Each real finding, a red check or a conflict goes to the builder
 as `swarm.sh tell <slug> nudge`; the rest get a reason in a PR comment. After a nudge the agent waits
-for the builder, then for green on the head the builder pushed. The green step is bounded: at most
-two nudges, and at most two heads `wait-pr` calls red. When a green head is not the one the agent was
-started on, it writes `head moved: <the green head>` and stops, and the conductor starts the review
+for the builder, then for green on the head the builder pushed. The green step runs once per round,
+on the first head and then on the head the builder pushes after each findings `tell`, and each run is
+bounded: at most two nudges, and at most two heads `wait-pr` calls red. Before any findings went to the builder, when
+a green head is not the one the agent was started on, it writes `head moved: <the green head>` and stops, and the conductor starts the review
 again on the new head. When the builder goes idle without pushing, `wait-pr` ends the same way twice,
-or the bound is reached, it writes a not-green file and stops: a review file whose `## Findings` has
-one item, `wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>`. The
-conductor sends that to the builder as a findings round, as any finding, so a PR that stays red
+or the bound is reached, it writes a not-green file, which ends the green step: a round file
+(`.swarm/reviews/<slug>.round.md`, below) whose
+`head:` line is the head `wait-pr` waited on last and whose `## Findings` has one item,
+`wait-pr: not green: <the red check, the conflict, or what wait-pr printed last>`. The
+agent sends that to the builder as a findings round, as any finding, so a PR that stays red
 climbs the findings ladder instead of being reviewed again and again. With `escalate_ladder` set, a
 `wait-pr` that steps the build up ends the agent with `head moved: stepped up: ...`: the PR's head
 has not moved, so the conductor does not start the review again but waits on the new builder, as
@@ -1488,6 +1491,51 @@ code, `/code-review <PR URL>`. From round 2 on it runs codex alone. `review-agen
 from the findings rounds since the story's last build started: each findings `tell` that went out,
 or that herdr sent without seeing it taken up, and each findings step-up, whose brief carries the
 findings in place of a tell. A step-up or a restarted builder does not start the count again.
+After each review the agent triages its own findings. It never edits the code: a finding that is
+real and inside the story goes to the builder to fix. It declines the rest, each with a reason (nit,
+wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in one PR comment. It logs each declined finding at once, with
+`log-finding --declined <reason> --reviewer <who> --round <n>`; a finding a fallback reviewer raised
+in codex's place is logged with `--reviewer fallback`. It logs the ones to fix once the
+builder has pushed and `wait-pr --head` has found the PR at that head, never from the worktree's
+commit alone: from the builder's reply and the new diff, each one fixed as fixed, and each one
+the builder declined with a reason the agent accepts as declined, rebutted in the PR; one declined
+with a reason it rejects is not logged and comes up again next round. Then it writes the review. A round with nothing
+to fix is a pass: the agent writes it to its review file, `.swarm/reviews/<slug>.md`, replies with
+the file and stops, and the conductor takes the PR from there. With findings to fix, it writes the
+review to `.swarm/reviews/<slug>.round.md` instead: the review file is read as a finished review of
+the head on its `head:` line the moment it exists, by the conductor's `swarm.sh wait review-<slug>`
+and the merge rules, so the agent writes it only on a pass or when it stops. It then runs
+`swarm.sh wait --stall <slug>` and `swarm.sh tell <slug> findings <the round file>`, so the findings
+go at once and count their round now; a tell that finds the builder busy is queued and sent when its
+turn ends (above), and the agent then waits out that turn, then the delivery, with one bounded
+command in the background (its marks under `.swarm/tells/` gone but `.sent`, 15 minutes at most,
+since a check that has not looked for 10 minutes counts as stopped; an `.undelivered.md` there, or
+the limit, stops the agent). A delivery
+that held the story for the lead or stepped the build up leaves `.sent` too, so before it waits for
+the fix the agent reads the story's `held_for:` line, which stops it, and the events log's
+`escalate` line for a findings step-up, after which it tells the new builder nothing and waits on
+it. Every wait on the builder is `wait --stall`, and the agent
+carries on when it prints `idle`, or `done` for a builder with no Claude session. With
+`escalate_ladder` set, a stall it steps up (`stepped up:`), or a step-up or restart already running
+(`stepping up:`), is waited on again, and a build stepped up after the round's findings were told
+gets the round file as a nudge, since its handover brief pastes only the review file; a wait that
+ends any other way (stalled, stuck, timed out) stops the agent. When `tell` says the build was
+stepped up, the agent waits on the new builder, which has the findings in its handover brief. A
+`tell` that fails but says the findings count as delivered, or as a round, was sent: the agent
+reads the builder's pane when `tell` says to, resends the findings as a nudge only when they never
+arrived, and carries on. When `tell` says the story is held for the lead, or its step-up failed
+partway, the agent stops. Once the
+builder has pushed, the agent runs the green step on the new head with `wait-pr --head <that head>`,
+since right after a push GitHub can still report the old one; when that wait says the PR's head is
+another, the push never landed, and the agent nudges the builder naming both heads and runs
+`wait-pr --head` on the same HEAD again before it calls the builder idle without a commit, then
+`swarm.sh review-agent --next
+<slug> <PR URL>`, and reviews the round that prints in the same session. If the builder goes idle
+without pushing, the round passes when the builder declined each finding with a reason the agent
+accepts, rebutted in the PR as its own declines are; the agent stops otherwise, as it does when the
+wait fails. A stop before a pass writes the review file
+with two lines, `head: <the PR's head>` and `stopped: <why>`: with no `## Findings` heading it is no
+pass, and the conductor's rules treat it as a review to start again.
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. One exception: a comment, doc or error-text line that the changed code no
@@ -1505,9 +1553,14 @@ path `<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree
 project), and replies with that path. It writes the file in one go once both reviews are done,
 after `review-agent` has removed the one from an earlier head. The file starts with `head: <SHA>`,
 the PR's head, which `review-agent` reads from `gh` and puts in the brief, then `codex skipped:
-<why>` when codex was skipped. Under them go the findings,
-each with its reviewer and file:line, then an out-of-scope section for points raised outside the
-story.
+<why>` when codex was skipped. Under them go the findings to fix,
+each with its reviewer and file:line, then, under one `## Handled by the review agent` heading, the
+findings it declined with their reasons and the points raised outside the story, marked out of
+scope. It uses no `## Declined` or `## Out of scope` heading: the conductor's rules log and rebut
+what they find under those, and the agent has done both already.
+With findings to fix, the same review
+goes to `.swarm/reviews/<slug>.round.md`, the round file the agent tells the builder, and the
+review file is written only on a pass or a stop (above).
 `review-agent` refuses, starting nothing and leaving the last review's file in place, when the board has a story named
 `review-<slug>` (whose builder would hold the same agent name), when the worktree is not at the PR's
 head or has uncommitted changes, or when `review-<slug>` is still working or still open with no
@@ -1529,7 +1582,12 @@ parents, the brief names their branches: their code is in the diff against the b
 lists it neither as a finding nor as out of scope. The conductor waits on each review in the background
 with `swarm.sh wait review-<slug>`. A review agent goes idle while its codex runs in the
 background, so for an agent agents.tsv records as role `review`, that wait, like a conductor's,
-holds on until the findings file exists, and fails if it times out without one. The conductor
+holds on until the findings file exists, and fails if it times out without one. That wait's limit
+is an hour by default (`swarm.sh wait review-<slug> [ms]`); a review agent that spans rounds (a
+builder's fix, CI, a codex run each) can outlive it, and the conductor then closes it and starts the
+review again, which is no round. The review file now holds a pass or a stop (above), and the
+agent sends its own findings; the conductor's rules below still read it as the old flow's file,
+until conduct-brief-hands-off rewrites them. The conductor
 then triages that story's file, and closes the review agent whatever
 it found. A file with a `head moved:` line, or with no findings section, is not a pass: the
 conductor starts the review again. When the wait returns with no file (a timeout, a prompt, a gone
@@ -2304,7 +2362,7 @@ PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
 review round a finding came from: the n-th review of a story PR is round n, the passing one included,
-and a plan or board PR is round 0. The conductor passes it on each finding it logs, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
+and a plan or board PR is round 0. The review agent and the conductor pass it on each finding they log, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
 `/swarm-dev:swarm` files one story with `checks: <kind>` for each recurring kind that has no check
 yet, in a board PR named `check-<kind>` (written in place when the board is outside the repo, and
 noted in `.swarm/checks-filed.tsv` so the kind is filed once). The
@@ -3212,9 +3270,11 @@ carries build_story's `Merge after <PRs>` note. When a parent's PR has merged (s
 are on the base under other ids), the diff is of `origin/<base>` to the branch as if the base were
 merged in, and the handover says to merge it in before pushing. If that merge would conflict, the
 diff stays the one from the merge-base, with the parent's commits in it, and the handover says to
-merge the base in and resolve it first. Then come the review agent's findings from
-`.swarm/reviews/<slug>.md`, pasted only when their `head:` line is the branch's HEAD. Findings of an
-older head may be fixed already, so the handover only names the file. Last come the open PR's
+merge the base in and resolve it first. Then comes the review agent's review file,
+`.swarm/reviews/<slug>.md`, pasted only when its `head:` line is the branch's HEAD; it holds a pass
+or a stop, since the findings to fix go to the builder by `tell` from `.swarm/reviews/<slug>.round.md`,
+and a step-up in place of a findings `tell` pastes that tell's file. A review file of an older head
+may be stale, so the handover only names it. Last come the open PR's
 failing checks. With none listed, it says that none are failing, that the PR has no checks
 reported, or that gh could not read them. The handover also tells the builder to put a `Models:` line in the PR body naming
 every model that worked on the story, in order.

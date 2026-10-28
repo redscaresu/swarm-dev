@@ -1246,8 +1246,9 @@ stepped_up_since() {
 # stacked on parents with open PRs build_story's Merge after note, the story as the board holds it
 # (the last builder may have deleted it from the worktree already), the diff from handover_from
 # (committed, uncommitted and untracked; its first HANDOVER_DIFF_LINES lines, in a fence longer than
-# any run of backticks in it), the review agent's findings when they are of this HEAD (and
-# [findings], the tell the step-up took the place of), and the story PR's failing checks.
+# any run of backticks in it), the review agent's review file when it is of this HEAD (a pass or a
+# stop: its findings to fix go to the builder by tell, in a .round.md file), [findings], the file of
+# the tell the step-up took the place of, and the story PR's failing checks.
 handover_brief() {
   local wt models from parents open="" merged="" p prs="" stack="" tree="" out rc diff fence='```' pr checks head findings="${PROJECT_DIR}/.swarm/reviews/$1.md" reviewed found
   wt="$(worktree_for "$2" "$1")"
@@ -1327,7 +1328,7 @@ ${fence}
 ### Open findings
 
 ${found}
-$(if [[ -n "${7:-}" ]]; then printf '\nThe conductor was sending the last builder these when it was stepped up:\n\n'; cat "$7"; fi)
+$(if [[ -n "${7:-}" ]]; then printf '\nThese findings were being sent to the last builder when it was stepped up:\n\n'; cat "$7"; fi)
 
 ### Failing checks
 
