@@ -676,6 +676,8 @@ ren copied; hat e1.md main e "status: active"; hat e2.md "${H1}" e "status: acti
 guarded "--board, an active epic copied to a new active one" e2
 ren; hat e1.md main e1 "status: active"; hat e2.md "${H1}" e2 "status: active"; merge --board "${URL}"
 guarded "--board, a deleted active epic GitHub pairs with an unrelated new active one, by its heading" e2
+ren; hat e1.md main e1 "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e2 "status: active" "agreed: $(day 0)"; merge --board "${URL}"
+guarded "--board, a draft renamed with another heading and set active, the agreed: its base copy had kept" e2
 # Read 1 is merge --board's file list; reads 2 to 4 the one asking what e2 was renamed from, which is
 # read again after a 502, up to GONE_READS (3) times, then kept for the merge.
 ren; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"; : > "${FX}/files.2.fail"
@@ -774,6 +776,14 @@ merge "${URL}"; story_merged "a story PR whose pinned head renames an active epi
 spr; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"
 echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.main"
 merge "${URL}"; guarded "a story PR whose pinned head renames a draft and sets it active, the agreed: its base copy had kept" e2
+# The base branch is URL-quoted whole in that compare, as pinned_files quotes it: a / in its name.
+spr; echo release/x > "${FX}/base"; hat e1.md 'release%2Fx' e "status: active"; hat e2.md "${H1}" e "status: active"
+echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.release%2Fx"
+merge "${URL}"; story_merged "a story PR into release/x whose pinned head renames an active epic merges"
+check "a story PR into release/x: the compare names the base quoted whole" grep -q "compare/release%2Fx\.\.\.${H1}" "${ROOT}/gh.log"
+# A base holding # or % never reaches a compare: the name gh gave is refused first.
+spr; echo 'rel#1%2' > "${FX}/base"; merge "${URL}"
+refused "a story PR whose base branch holds # and %" "gh gave no head SHA, base branch or file count for ${URL}"
 # That read is bounded as the pinned list is: here the epic's first contents read makes the compares hang.
 # The bound is 8 s, room for the pinned list's own read on a loaded machine; its 3 reads stop well
 # before the 60 s one unbounded hung read takes.

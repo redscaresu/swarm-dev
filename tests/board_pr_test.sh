@@ -386,6 +386,7 @@ on_main board/epics/ren-act.md "---\nstatus: active\n---\n\n# ren-act\n\n${BODY}
 on_main board/epics/ren-stale.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# ren-stale\n\n${BODY}\n"
 on_main board/stories/ren-story.md "---\nstatus: active\n---\n\n# ren-story\n\n${BODY}\n"
 on_main board/epics/ren-del.md "---\nstatus: active\n---\n\n# ren-del\n\n${BODY}\n"
+on_main board/epics/ren-ttl.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# ren-ttl\n\n${BODY}\n"
 git -C "${P}" fetch -q origin
 
 bpr start new; ep new epics/e-new.md '---\nstatus: active\n---\n\n# e-new\n'
@@ -499,6 +500,12 @@ guard_refused rnx "an active file moved into epics/ from outside it" "ren-story 
 # with another heading the new one reads as new, so it needs a ticket.
 bpr start rnu; rm "${ROOT}/proj-wt/_board-rnu/board/epics/ren-del.md"; ep rnu epics/ren-new.md "---\nstatus: active\n---\n\n# ren-new\n\n${BODY}\n"
 guard_refused rnu "an active epic deleted and an unrelated active one added, alike enough to pair" "ren-new ${NT} ren-new"
+# A rename that changes the heading too still compares the old copy's agreed:: a stale date under a
+# new heading is no ticket (the second Done when, by another route).
+bpr start rnt; git -C "${ROOT}/proj-wt/_board-rnt" mv board/epics/ren-ttl.md board/epics/ren-ttl2.md
+ep rnt epics/ren-ttl2.md "---\nstatus: active\nagreed: ${TODAY}\n---\n\n# ren-ttl, retitled\n\n${BODY}\n"
+git -C "${ROOT}/proj-wt/_board-rnt" commit -qam "ren-ttl renamed, retitled and active"
+guard_refused rnt "a draft renamed with another heading and set active, the agreed: its base copy had kept" "ren-ttl2 ${NT} ren-ttl2"
 # A file staged past .gitignore (git add -f) is one open's git add -A commits, so the change list
 # holds it: outside the board, it is refused as such.
 bpr start fadd; echo fadd > "${ROOT}/proj-wt/_board-fadd/board/stories/a.md"
