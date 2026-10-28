@@ -172,7 +172,7 @@ is one column, top to bottom:
   its pane last changed (`pane 12m`), as `status` or `wait` last saw it. An agent neither of them
   has read within `stall_minutes` shows none. The row ends with the agent's pane id, its
   workspace's label and its tab's label (`w1:p2 in myapp · billing › billing`), from herdr's
-  workspace and tab lists, read once a frame, last of its reads. A workspace label herdr gives none
+  workspace and tab lists, read once a frame, after its other reads and before its pane reads. A workspace label herdr gives none
   of is `-`; a tab with none shows the name swarm-dev gave it. A narrow screen cuts these first. From
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
   a working agent also shows how long ago it started (its `story`, `conduct` or `agent` line in
@@ -192,7 +192,8 @@ is one column, top to bottom:
   planning (as `swarm.sh next` decides) keeps its own row instead, which reads `waits on <depends_on>`. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
   workspace and tab instead. Each heading is herdr's label. A workspace with no label shows its id,
-  and a tab with none shows the name swarm-dev gave it. Each agent's row there ends with its pane id,
+  and a tab with none shows the name swarm-dev gave it with the tab's id, `t1 (w1:t3)`, so two such
+  tabs read apart. Each agent's row there ends with its pane id,
   after its PR, and a narrow screen cuts the pane first.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
   days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings

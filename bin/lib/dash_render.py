@@ -250,11 +250,14 @@ if agents is not None:
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
         by_name[f[2]] = by_session[f[6]] = f
     for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & set(live)):
-        entries = (live[pane], agents.get(pane))
         r = {"tab": label, "name": recorded, "role": "?", "model": "?", "look": True, "slug": None, "epic": epic_for("", None, label),
-             "ids": pane_ids(pane, entries), "where": (pane,) + pane_where(pane, entries, (ws_labels, tab_labels), label)}
+             "ids": (pane.split(":")[0], None), "where": (pane, "-", label)}
         try:
             a = agents.get(pane)
+            # Its workspace and tab, by id and label (pane_ids, pane_where), inside the try: one odd herdr entry
+            # costs this row its labels, not the panel its frame.
+            entries = (live[pane], a)
+            r["ids"], r["where"] = pane_ids(pane, entries), (pane,) + pane_where(pane, entries, (ws_labels, tab_labels), label)
             name = (a or {}).get("name") or recorded
             base = re.sub(r"-done\d*$", "", name)
             rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
@@ -607,11 +610,12 @@ def tree_view():
     tree = collections.OrderedDict()
     for r in recs:
         # By workspace and tab id (pane_ids), so two tabs with one label stay apart, headed by herdr's labels
-        # (pane_where's: a workspace with none by its id, a tab with none by its record's name). Each row ends
-        # with the pane, cut first on a narrow screen: its workspace and tab are its headings, and its PR
-        # matters more than its pane.
+        # (pane_where's): a workspace with none by its id, a tab with none by its record's name and its id,
+        # `t1 (w1:t3)`, so two such tabs read apart. Each row ends with the pane, cut first on a narrow screen:
+        # its workspace and tab are its headings, and its PR matters more than its pane.
         (ws_id, tab_id), (_, ws, tab) = r["ids"], r["where"]
-        tree.setdefault((ws_id, ws if ws != "-" else ws_id), collections.OrderedDict()).setdefault((tab_id or tab, tab), []).append(r)
+        head = tab if tab_labels.get(tab_id) else (f"{tab} ({tab_id})" if tab_id else tab)
+        tree.setdefault((ws_id, ws if ws != "-" else ws_id), collections.OrderedDict()).setdefault((tab_id or tab, head), []).append(r)
     width = min(max((len(r["name"]) for r in recs), default=0), 30)
     rows = []
     for (_, ws), tabs in tree.items():

@@ -645,7 +645,7 @@ dash_render() {
   local testing="" p idle skipped="" more pass pending=0 out read_end lines="${DASH_H:-0}"
   # type -P: herdr on PATH, not dash_deadline's function of that name.
   if type -P herdr >/dev/null 2>&1; then
-    # The lists status reads (its workspace and tab lists, labels only, come last, below). listed keeps the
+    # The lists status reads (its workspace and tab lists, labels only, come after the other reads, below). listed keeps the
     # agent list whatever the pane list does: no_agent_lines needs only that one.
     { agents="$(herdr agent list 2>/dev/null)" && listed="${agents}" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
   fi
@@ -748,6 +748,11 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # next's idle: lines (idle_now), read each frame: board and state only, given the step next would
   # take, so the epic that step names gets no row.
   idle="$(idle_now "${nx%%$'\n'*}" 2>/dev/null)" || idle=""
+  # After the shell's other reads, as they only label the tree and each agent's row (dash_render.py's
+  # pane_where), so a slow one costs no read of a state before it; the render's pane reads, below, follow
+  # them under the same deadline. One herdr does not give leaves the workspace - and the tab its record's name.
+  [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
+  [[ -z "${agents}" ]] || tabs="$(herdr tab list 2>/dev/null)" || tabs=""
   # The shell's reads are done; the render's own, each agent's pane for a usage-limit dialog (panes.py's
   # pane_text, under SWARM_REPORT_END), come inside the python below. The frame is laid out a line
   # shorter when a read was cut before the render (pending); when the render's own reads are the first
@@ -755,11 +760,6 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # at once, so no pane is read twice in a frame), the states from herdr's list alone. A frame of one
   # line (DASH_H, a --project share) keeps its header, and names none: a two-line one gives its second
   # line to the names.
-  # Last of the shell's reads, as they only label the tree and each agent's row (dash_render.py's
-  # pane_where), so a slow one costs no read of a state before it. One herdr does not give leaves the
-  # workspace - and the tab its record's name.
-  [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
-  [[ -z "${agents}" ]] || tabs="$(herdr tab list 2>/dev/null)" || tabs=""
   [[ ! -s "${REPORT_SKIP_FILE:-/dev/null}" ]] || pending=1
   [[ ${pending} == 0 || ${lines} -le 1 ]] || lines=$((lines - 1))
   read_end="${SWARM_REPORT_END:-}"

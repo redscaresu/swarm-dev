@@ -11,10 +11,11 @@ def pane_records(state, keep):
                 continue
             seen.add(f[0])
             yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
-# herdr_labels: {id: label} from herdr's workspace or tab list as read; {} for one herdr did not give.
+# herdr_labels: {id: label} from herdr's workspace or tab list as read, an entry with no id skipped (else
+# its label would answer for every pane with no id); {} for one herdr did not give.
 def herdr_labels(raw, key, id_key):
     try:
-        return {x.get(id_key): x.get("label") for x in json.loads(raw)["result"][key]}
+        return {x[id_key]: x.get("label") for x in json.loads(raw)["result"][key] if isinstance(x, dict) and x.get(id_key)}
     except (ValueError, KeyError, TypeError, AttributeError):
         return {}
 # pane_ids: (workspace id, tab id) of a pane, each from the first of its herdr entries (its pane list's,
