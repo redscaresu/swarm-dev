@@ -919,8 +919,11 @@ children are the user's), one with `unasked_plan:` set (the gate already shows i
 decline), or a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
 cut, and the gate lists it until then). The epic the step `next` takes names (`plan-epic <epic>`) gets none
 either: the lines are for capacity no step uses. `next`, `status` and `dash` drop that epic's line;
-`wait --lead` takes no step, so it prints every such epic's line. Plan an epic that has no stories;
-set one whose stories are on the board active in a board PR. `next` also prints `idle: epic <epic>
+`wait --lead` takes no step, so it prints every such epic's line. A draft is the user's to agree, through
+`/swarm-dev:epic` or, staged under an HLD that grants `epics`, the `stage` step: nothing plans a
+draft. A later epic with no stories and its `depends_on` done is planned unasked, as the `plan-epic`
+step does; one whose stories are on the board starts on the user's go, set `active` with
+`agreed: <today>` in a board PR, as `/epic` does. `next` also prints `idle: epic <epic>
 has no plan running, exit: /swarm-dev:plan-epic <epic>` for an active epic with no stories and
 nothing in its `depends_on` holding up its planning, as the `plan-epic` step judges it, that the step
 `next` takes does not name, while no plan of it runs: no `scope-<epic>` tab record (or numbered
