@@ -523,6 +523,13 @@ check "--recheck that leaves a finding with no file:line refuses, naming it and 
 findings "codex, doc.md:3 and doc.md:8 misstate it"
 check "--recheck of one point of a finding that cites two refuses, naming the other and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
   "$(set +e; o="$(recheck)"; echo "$?|$(has "cite doc.md:8, which is no point given, so a pass would drop it: codex, doc.md:3 and doc.md:8 misstate it" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# The same two lines in shorthand: a list after the citation, and a bare :8 later in the finding.
+findings "codex, doc.md:3,8 misstate it"
+check "--recheck of doc.md:3 when a finding cites doc.md:3,8 refuses, naming the list and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "cite doc.md:3,8, which is no point given" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "codex, doc.md:3 (and :8) misstate it"
+check "--recheck of doc.md:3 when a finding cites doc.md:3 (and :8) refuses, naming :8 and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "cite :8, which is no point given" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 findings "${ROUND1}" "codex, doc.md:5, also misstates it"
 check "--recheck naming a point the diff does not change refuses, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${OLD}" doc.md:3 doc.md:5)"; echo "$?|$(has "does not change doc.md:5, a named point" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"

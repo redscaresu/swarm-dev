@@ -813,8 +813,9 @@ review_recheck() {
 # recheck_named <findings file> <worktree> <file:line>... — nothing when the file's ## Findings section names
 # each point, every finding there (each non-blank line) cites one, and every file:line a finding cites is
 # a given point; else why not, failing. A citation is a whole path (<worktree>/ dropped from it) and a
-# line, or a range of lines, which no single point matches; anything that reads as one (a time, say)
-# refuses too, which only costs a full round. A pass's own findings cite no point, so no recheck follows one.
+# line, with any lines listed or ranged after it (3-8, 3,8, 3/8, 3–8) or a bare :<line> later in the
+# finding, which no single point matches; anything that reads as one (a time, say) refuses too, which only
+# costs a full round. A pass's own findings cite no point, so no recheck follows one.
 recheck_named() {
   awk -v pts="${*:3}" -v wt="$2/" -v f="$1" '
     BEGIN { n = split(pts, w, " "); for (i = 1; i <= n; i++) given[w[i]] = i }
@@ -822,11 +823,19 @@ recheck_named() {
     !in_f || $0 !~ /[^[:space:]]/ { next }
     {
       s = $0; while ((k = index(s, wt))) s = substr(s, 1, k - 1) substr(s, k + length(wt))
-      hit = 0
+      hit = 0; rest = ""
       while (match(s, /[A-Za-z0-9_.\/-]+:[0-9]+(-[0-9]+)?/)) {
-        c = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
-        if (c in given) { seen[given[c]] = hit = 1 } else if (miss == "") { miss = c; missed = $0 }
+        c = substr(s, RSTART, RLENGTH); rest = rest substr(s, 1, RSTART - 1) " "; s = substr(s, RSTART + RLENGTH)
+        # Lines listed or ranged right after it (3,8  3/8  3–8) are cited too, and no single point names them.
+        t = s; more = ""
+        if (match(t, /^[,\/][0-9]+/)) more = substr(t, 1, RLENGTH)
+        else if (sub(/^(–|—)/, "", t) && match(t, /^[0-9]+/)) more = substr(s, 1, length(s) - length(t) + RLENGTH)
+        s = substr(s, length(more) + 1)
+        if (c in given) seen[given[c]] = hit = 1
+        if ((!(c in given) || more != "") && miss == "") { miss = c more; missed = $0 }
       }
+      # A bare :<line> left over (doc.md:3 (and :8)) cites a line of some file no point names.
+      if (match(rest s, /:[0-9]+/) && miss == "") { miss = substr(rest s, RSTART, RLENGTH); missed = $0 }
       if (!hit && left == "") left = $0
     }
     END {
