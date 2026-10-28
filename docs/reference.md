@@ -2418,8 +2418,10 @@ under the board instead. Under either merge mode, it also refuses a story PR or 
 sets an epic `active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green,
 it reads each epic and HLD through gh at the PR's base branch and head SHA; for a story PR it first
 lists the PR's files at that head. Any read error refuses, as does a 404 at the head on a file the PR
-does not remove or rename away. Each read stops after 60 seconds (`BASE_MOVED_WAIT`) and refuses the
-same way. That is a passing error, which the next `swarm.sh merge` reads past. The refusal starts `--board:` only on the `--board` route. A story
+does not remove or rename away. For a story PR each of those reads, the file list included, stops after
+60 seconds (`BASE_MOVED_WAIT`) and refuses the same way. For a `--board` PR only the epic and HLD reads
+stop there; its file lists have no limit. A read cut off that way is a passing error, which the next
+`swarm.sh merge` reads past. The refusal starts `--board:` only on the `--board` route. A story
 PR is not checked when the board is not in the project's repo. Nor is one whose story names another
 repo (`repo:`) and whose PR is outside the board's repo, since its `epics/` files are that repo's own;
 when gh cannot name the board's repo, merge refuses, says why, and you run it again; when the project

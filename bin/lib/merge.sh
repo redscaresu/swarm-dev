@@ -222,9 +222,10 @@ pr_contents() {
 
 # merge_read base|head <path> — epic_unticketed's reader for merge (epic_guard): <path> at the PR's base
 # branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
-# is absent and 2 on any other failure. Each read stops after BASE_MOVED_WAIT, as pinned_files' and
-# merge_gone's do, and a cut-off one fails 2: epic_guard's line names the file and the ref, and the
-# next swarm.sh merge reads past it. At the head a 404 is absent only for a path the PR removes or
+# is absent and 2 on any other failure. The contents read stops after BASE_MOVED_WAIT on either route,
+# and a cut-off one fails 2: epic_guard's line names the file and the ref, and the next swarm.sh merge
+# reads past it. The gone read below is bounded on the story route only (merge_gone), so on --board
+# merge_read can still wait on gh's files API. At the head a 404 is absent only for a path the PR removes or
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
 # epic would read as deleted.
 merge_read() {
