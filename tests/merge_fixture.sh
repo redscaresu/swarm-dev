@@ -161,9 +161,11 @@ case "$1 $2" in
                        if [ -e "${FX}/update.422" ]; then get m "${FX}/update.422"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
                        serve update ;;
       */contents/.github/workflows\?*) serve workflows ;;
-      # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
+      # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one. With
+      # ${FX}/contents.hang it first sleeps a minute.
       # ${FX}/on-contents runs once first: another process's fetch while release_check reads.
-      */contents/*) [ ! -e "${FX}/on-contents" ] || { sh "${FX}/on-contents"; rm -f "${FX}/on-contents"; }
+      */contents/*) [ ! -e "${FX}/contents.hang" ] || sleep 60
+                    [ ! -e "${FX}/on-contents" ] || { sh "${FX}/on-contents"; rm -f "${FX}/on-contents"; }
                     f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
                     [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
       # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>. A
