@@ -1120,15 +1120,19 @@ When tell says the builder is still working, wait for it as above, then tell it.
 wait for the builder the same way, then wait for green again on the head it pushed. A wait on a
 head the builder has just pushed is \`${sw} wait-pr --head <that head, from git rev-parse HEAD> $2\`:
 right after a push GitHub can still report the old head, which the plain wait-pr would call green.
-The green step runs once per round: on the first head, then on the head the builder pushes after
-each findings tell. Each run is bounded: at most two nudges, and at most two heads that wait-pr calls red. Write
-the not-green file, which ends the green step, when the builder goes idle without pushing (wait-pr
-prints the same head), when wait-pr ends the same way twice, when the second red head would need a
-nudge, or when the head after your second nudge is not green. The not-green file is ${round}, written
+That HEAD is this worktree's commit, pushed or not: when wait-pr exits 2 with \`the PR's head is
+<X>, not <sha>\`, the PR never got the head you named (a push that did not land): never wait on
+<X> instead; nudge the builder naming both shas, so it pushes again, then wait for it and run
+wait-pr --head again on its HEAD. The green step runs once per round: on the first head, then on
+the head the builder pushes after each findings tell. Each run is bounded: at most two nudges, and
+at most two heads that wait-pr calls red. Write the not-green file, which ends the green step, when
+the builder goes idle without a commit (\`git rev-parse HEAD\` is still the head you waited on),
+when wait-pr ends the same way twice, when the second red head would need a nudge, or when the
+head after your second nudge is not green. The not-green file is ${round}, written
 with the Write tool after \`rm -f ${round}\`: \`head: <the head wait-pr waited on last>\`, then a
 \`## Findings\` heading with one line for the builder, \`wait-pr: not green: <the red check, the
-conflict, or what wait-pr printed last>\`, then a \`## Out of scope\` heading with \`none\`. Its one
-finding is to fix, from ci: send it to the builder as findings, as below, and log it as any finding
+conflict, or what wait-pr printed last>\`, then a \`## Handled by the review agent\` heading with
+\`none\`. Its one finding is to fix, from ci: send it to the builder as findings, as below, and log it as any finding
 to fix. Once a head is green and
 triaged with nothing to nudge, review it as below when it is $5. When the builder pushed past $5
 before any findings went to it, write ${4} with the Write tool holding two lines, \`head: $5\` and
@@ -1162,11 +1166,11 @@ Then write the review with the Write tool, in one go.
 Its first line is \`head: $5\`; when codex was skipped, its second is \`codex skipped: <why>\`.
 Under a \`## Findings\` heading,
 one line per finding to fix: its reviewer (codex, fallback or code-review), file:line, and the finding; with
-none, say so. Under a \`## Declined\` heading, the same for each finding you declined, with its
-reason; with none, say so. Under a \`## Out of scope\` heading, the same for each point a reviewer
-raised that only a change to a file outside the touches can fix; with none, say so. End each of
-those two sections with the line \`logged and rebutted by the review agent\`, so the conductor,
-whose rules log and rebut what it reads there, logs and rebuts none of them again.
+none, say so. Under a \`## Handled by the review agent\` heading, the same for each finding you
+declined, with its reason, and for each point a reviewer raised that only a change to a file
+outside the touches can fix, marked out of scope; with none, say so. Use no \`## Declined\` or
+\`## Out of scope\` heading: the conductor's rules log and rebut what they find under those, and
+you have done both already.
 
 A round with nothing to fix is a pass: write it to ${4} (the conductor's wait ends once it exists),
 reply with ${4}, and with \`codex skipped: <why>\` when codex was, then stop.
@@ -1187,12 +1191,13 @@ printed, as above. Once the findings are sent, wait for the builder as above. Th
 builder's reply (\`herdr agent read ${agent} --source recent-unwrapped\`) and, when the PR's head
 moved, the new diff (\`git diff <the head you reviewed> HEAD\`), and log each finding you sent: as
 fixed when the diff fixes it, and as declined, with the reason that fits, when the builder declined
-it with a reason. One it did neither to is not logged; the next round raises it again if it still
-holds. When the PR's head is still the one you reviewed (no fix was pushed), and the builder
+it with a reason you accept; rebut those in the PR as above, in one comment with each finding and
+the builder's reason. One it did neither to, or declined with a reason you do not accept, is not
+logged; the next round raises it again if it still holds. When the PR's head is still the one you reviewed (no fix was pushed), and the builder
 declined each finding you sent with a reason you accept, the round passes on that head, as one
 with nothing to fix does: rebut them in the PR as above, in one comment with each finding and the
-builder's reason, write the review to ${4}, with them under \`## Declined\` and those reasons, reply
-with ${4}, and stop. When the head is still the same otherwise, stop with
+builder's reason, write the review to ${4}, with them under \`## Handled by the review agent\` and those
+reasons, reply with ${4}, and stop. When the head is still the same otherwise, stop with
 \`no fix pushed: <the builder's reply, in one line>\`, as above. When it moved, run the green step
 above on the head it pushed, with wait-pr --head as there. Once that head is green and triaged
 with nothing to nudge,

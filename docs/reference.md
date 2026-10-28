@@ -1306,7 +1306,8 @@ wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in on
 `log-finding --declined <reason> --reviewer <who> --round <n>`; a finding a fallback reviewer raised
 in codex's place is logged with `--reviewer fallback`. It logs the ones to fix once the
 builder has pushed: from the builder's reply and the new diff, each one fixed as fixed, and each one
-the builder declined with a reason as declined. Then it writes the review. A round with nothing
+the builder declined with a reason the agent accepts as declined, rebutted in the PR; one declined
+with a reason it rejects is not logged and comes up again next round. Then it writes the review. A round with nothing
 to fix is a pass: the agent writes it to its review file, `.swarm/reviews/<slug>.md`, replies with
 the file and stops, and the conductor takes the PR from there. With findings to fix, it writes the
 review to `.swarm/reviews/<slug>.round.md` instead: the review file is read as a finished review of
@@ -1325,7 +1326,9 @@ reads the builder's pane when `tell` says to, resends the findings as a nudge on
 arrived, and carries on. When `tell` says the story is held for the lead, or its step-up failed
 partway, the agent stops. Once the
 builder has pushed, the agent runs the green step on the new head with `wait-pr --head <that head>`,
-since right after a push GitHub can still report the old one, then `swarm.sh review-agent --next
+since right after a push GitHub can still report the old one; when that wait says the PR's head is
+another, the push never landed, and the agent nudges the builder naming both heads, then
+`swarm.sh review-agent --next
 <slug> <PR URL>`, and reviews the round that prints in the same session. If the builder goes idle
 without pushing, the round passes when the builder declined each finding with a reason the agent
 accepts, rebutted in the PR as its own declines are; the agent stops otherwise, as it does when the
@@ -1350,9 +1353,10 @@ project), and replies with that path. It writes the file in one go once both rev
 after `review-agent` has removed the one from an earlier head. The file starts with `head: <SHA>`,
 the PR's head, which `review-agent` reads from `gh` and puts in the brief, then `codex skipped:
 <why>` when codex was skipped. Under them go the findings to fix,
-each with its reviewer and file:line, then the declined findings with their reasons, then an
-out-of-scope section for points raised outside the story, those two sections each ending with the
-line `logged and rebutted by the review agent`, so the conductor logs and rebuts none of them again.
+each with its reviewer and file:line, then, under one `## Handled by the review agent` heading, the
+findings it declined with their reasons and the points raised outside the story, marked out of
+scope. It uses no `## Declined` or `## Out of scope` heading: the conductor's rules log and rebut
+what they find under those, and the agent has done both already.
 With findings to fix, the same review
 goes to `.swarm/reviews/<slug>.round.md`, the round file the agent tells the builder, and the
 review file is written only on a pass or a stop (above).
