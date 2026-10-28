@@ -316,7 +316,8 @@ close cleared has no PR left to review. It comes whether or not the builder is l
 `merge = human` it also comes for a story in review when the agreed HLD over it grants `merge`. The
 lead merges that PR once it is reviewed, so a review agent gone leaves it unreviewed. The grant is
 read from the board (the story's epic, its parents and the HLD), with no gh call. Once an ok close
-ends its builder's newest start, as the handover's does (`swarm.sh review`, then `close`), such a
+ends its builder's newest start, as the handover's does (the review agent's `swarm.sh review`, then
+the conductor's `close` on the note it sends), such a
 story gets no `no-agent:` line, and the lead's `merge:` item covers the PR. Until then, a builder
 gone with no close still gets its `no-agent:` line: one whose pane died before the handover, or one
 started again since to fix a later review's findings. For that one the findings round keeps
@@ -325,8 +326,8 @@ started again since to fix a later review's findings. For that one the findings 
 - Never started: the newest `review-agent <slug>` line is not ok.
 - Started and went: that line is ok and `.swarm/reviews/<slug>.head` was written, but no findings
   file passes on that head (as `review_pass` reads it) and no ok `close review-<slug>` line came
-  since the start. A close is the
-  conductor's own act, as between review rounds.
+  since the start. A close is an act of the lead's or reconcile's, never a
+  review agent's own end.
 
 A refusal that leaves an earlier ok start of this build running, with no close since, changes nothing: `review-<slug>`
 still reviewing, or its name still held. That review's own end decides. With no such start, the
@@ -768,8 +769,8 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   long-lived lead session was 80% of all tokens over three days (3.6B of 4.5B, at up to 1M
   context). The board carries the state, so a new conductor costs little.
 - **A review agent is Opus at `high`**, the model the conductor reviewed with before each PR got its
-  own (role `review`, started by `swarm.sh review-agent`). One per green PR, so reviews run side by
-  side and the conductor's own context holds only the findings files.
+  own (role `review`, started by `swarm.sh review-agent`). One per PR, started when it opens, so
+  reviews run side by side and the conductor's own context holds none of them.
 - **The fallback reviewer runs on the model `fallback_reviewer` names, at `high`** (role
   `review-fallback`). codex-review starts it only when codex hits its usage limit and the key is set.
 
@@ -1488,7 +1489,8 @@ starts. When `review-agent` refuses because the
 worktree is not at the PR's head or has uncommitted changes, the conductor
 starts it again once its `wait` on the builder returns, or on `watch`'s next line for that PR,
 whichever comes first; a refusal because the agent is still reviewing needs nothing, since that
-agent has the PR. From then on the PR is the review agent's: the
+agent has the PR. A second refusal on the same head with the builder idle needs nothing either: the
+head is one GitHub made by merging the base in, which the review agent merging the PR waits on. From then on the PR is the review agent's: the
 conductor never waits on the PR or the agent, reads its review file, triages, tells the builder
 findings, logs a finding, closes the agent or merges. The command returns straight away, and records the head it reviews
 in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, never edits the PR's code and runs in the story's worktree and tab.
@@ -1577,9 +1579,13 @@ without pushing, the round passes when the builder declined each finding with a 
 accepts, rebutted in the PR as its own declines are; the agent stops otherwise, as it does when the
 wait fails. A stop before a pass writes the review file
 with two lines, `head: <the PR's head>` and `stopped: <why>`: with no `## Findings` heading it is no
-pass. Nothing restarts the review on that head: `queued:` goes out once per head, and only for a green
-one. The next head the builder pushes gets a new review agent when `watch` reports its checks
-finished.
+pass. The agent then tells its conductor with a note, `review-<slug> stopped on <sha>: <why>`
+(`swarm.sh tell <conductor> note`), since the conductor reads no review file. The conductor acts on
+the why as on its own wait on the builder: a stall or a stuck builder by its give-up and stuck rules,
+and a builder that pushed nothing with one nudge, then a new review agent once the builder is idle.
+A second stop of the story for the same reason goes to the lead. With no conductor running, the
+tell fails, and the agent's reply says the lead takes the story. The next head the builder pushes
+gets a new review agent when `watch` reports its checks finished.
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. One exception: a comment, doc or error-text line that the changed code no
@@ -1704,9 +1710,10 @@ background (Bash `run_in_background`) and wait for it: Claude Code stops a foreg
 minutes by default and 10 at most, before the limit could apply. Whoever runs it waits for it to
 exit and acts on what it prints last, since a usage limit printed early may be followed by a
 fallback's review. When it ends on codex's usage limit or on `codex skipped: ...`, no one runs it again: a
-builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
+builder carries on, a story's review agent or the lead reviews the diff itself, and the PR says `codex
 skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
-its reply and on its review file's second line. codex-review sends codex's
+its reply and on its review file's second line, and in a round with no `/code-review` it reads the
+diff itself in codex's place. codex-review sends codex's
 output, stderr merged into stdout, to the screen and to a log in a temp directory of its own (mode
 700, so no other user can make or read it first), removed when it exits. Once codex exits,
 it waits a few seconds for the output to finish, and on any way out (the timeout and an interrupt
@@ -2742,8 +2749,8 @@ its own line to `.swarm/events.tsv`, and nothing outside `.swarm/`. It does not 
 Once that file exists, or once your settings have the list, init no longer prints the step.
 
 **The conduct preflight.** Under `merge = agent`, no conductor starts while the three settings files
-init reads lack the `swarm.sh merge` rules it checks for, since Claude Code would refuse the conductor
-every merge. `swarm.sh conduct` (an epic's or `--backlog`) exits 1 with this line before it writes a
+init reads lack the `swarm.sh merge` rules it checks for, since Claude Code would refuse every merge
+the conductor's review agents run. `swarm.sh conduct` (an epic's or `--backlog`) exits 1 with this line before it writes a
 brief or opens a workspace or tab: `no conductor started: merge = agent and no allow rule for
 swarm.sh merge in <files read>; add "Bash(swarm.sh merge *)" to permissions.allow in one of them
 (swarm.sh init checks it)`. While `swarm.sh next` waits on a working conductor, it starts none for

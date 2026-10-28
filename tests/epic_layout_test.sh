@@ -239,6 +239,12 @@ check "the review paragraph starts the review agent again on each checks finishe
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "the review paragraph starts a refused review agent again once its builder's wait returns or on watch's next line, and never waits on a PR or a review agent" "yes|yes" \
   "$(has 'whatever the refusal says to do next, start it again once `swarm.sh wait <slug>` on that builder returns, or on `swarm.sh watch`'"'"'s next line for that PR, whichever comes first.' "${rflat}")|$(has "Never wait on a PR or a review agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or merge a story's PR" "${rflat}")"
+# A review agent's stop reaches the conductor only as a note, and a base-merged head refuses review-agent
+# for as long as the merge runs: if the brief drops the note rule, the story sits; if it drops the
+# second-refusal rule, the conductor retries in a loop.
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the review paragraph acts on a review agent's stop note, and starts nothing on a second refusal of the same head" "yes|yes|yes" \
+  "$(has 'A note in your inbox that says `review-<slug> stopped on <sha>: <why>` is a review agent that stopped before a pass, and the story is yours again.' "${rflat}")|$(has 'nudge it once, naming the stop line, and start the review agent again once `swarm.sh wait <slug>` returns.' "${rflat}")|$(has 'If it refuses so again on the same head with the builder idle, start nothing more for that head' "${rflat}")"
 cflat="$(tr -s '[:space:]' ' ' <<< "${cbrief}")"
 check "the conductor's brief never waits on a review agent, tells findings, logs a finding or reviews the moment a head is green" "0|0|0|0|0" \
   "$(grep -c 'swarm.sh wait review-<slug>' <<< "${cflat}" || true)|$(grep -c 'tell <slug> findings' <<< "${cflat}" || true)|$(grep -c 'log-finding --declined' <<< "${cflat}" || true)|$(grep -c "The moment a story's PR head is green" <<< "${cflat}" || true)|$(grep -c 'log-finding' <<< "${cflat}" || true)"
