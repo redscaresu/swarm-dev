@@ -2563,7 +2563,7 @@ agent builds, that is ready (to start, building, or with its PR open and not yet
 on an agent's work, or in review with its review agent still to act on it (a story a close kept, or
 one its review agent merges next, under `merge = agent` or a `merge` grant, unless it costs money or
 every PR of it is held on a protected path), or a fix-main story it started. A story blocked only on a `kind: lead` story or a hand step,
-or blocked by hand with no `depends_on`, waits on you: it holds nothing up, and the report lists it under Waits on the
+blocked by hand with no `depends_on`, or blocked only on stories that wait on you that way, waits on you: it holds nothing up, and the report lists it under Waits on the
 user. The note after the last such story's merge or handover ends `finish: epic <epic> has no agent
 work left` (§ Merging); the conductor then closes each idle `review-<slug>` of its own still open,
 with `swarm.sh close review-<slug>`, and writes its report. A working one is still handing its PR on,

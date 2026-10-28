@@ -713,8 +713,7 @@ lead_blocked() {
 
 # agent_work_left <epic> — true while a story of <epic> (- for the stories with no epic, the backlog's),
 # of a kind an agent builds (agent_kind), is still an agent's: ready (to start, building, or with its PR
-# open and not yet in review), blocked but neither lead_blocked nor by_hand_blocked (both wait on the
-# lead), or in review with a review agent still to act on it (review_agent_owns); a story in review is
+# open and not yet in review), blocked but not lead_held (it waits on the lead), or in review with a review agent still to act on it (review_agent_owns); a story in review is
 # otherwise the user's. A fix-main story counts for every group, in any status, once its build has
 # started (one_off_started): it has no epic, and the conductor that started it owns it until its PR
 # merges. conductor_note's finish: line is its negation.
@@ -728,11 +727,32 @@ agent_work_left() {
     agent_kind "$(fm "${f}" kind)" || continue
     case "$(fm "${f}" status)" in
       ready) return 0 ;;
-      blocked) lead_blocked "${f}" || by_hand_blocked "${f}" || return 0 ;;
+      blocked) lead_held "${f}" || return 0 ;;
       review) ! review_agent_owns "${f}" || return 0 ;;
     esac
   done < <(board stories)
   return 1
+}
+
+# lead_held <story-file> [seen] — true for a blocked story no agent can move until the lead acts: one
+# blocked by hand (by_hand_blocked), or one whose every open depends_on is the lead's, as lead_blocked
+# reads it (a hand step, or a story of a kind no agent builds or blocked by hand), or an agent's story
+# that is itself lead_held, so a chain of agent stories under a lead story waits too. [seen]
+# (space-separated slugs) ends a depends_on cycle, as not held.
+lead_held() {
+  local p f open seen
+  seen="${2:-} $(basename "$1" .md)"
+  [[ "$(fm "$1" status)" == blocked ]] || return 1
+  ! by_hand_blocked "$1" || return 0
+  open="$(open_deps "$(story_deps "$1")")"
+  [[ -n "${open}" ]] || return 1
+  for p in ${open}; do
+    [[ "${p}" =~ ^[a-z0-9-]+$ ]] || continue
+    f="${BOARD}/stories/${p}.md"
+    [[ -f "${f}" && " ${seen} " != *" ${p} "* ]] || return 1
+    agent_kind "$(fm "${f}" kind)" || continue
+    lead_held "${f}" "${seen}" || return 1
+  done
 }
 
 # review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:

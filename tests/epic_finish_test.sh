@@ -122,6 +122,11 @@ is "merge = human, s2 handed over while a started fix-main story is in review: n
 # it holds nothing up.
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item s3 "status: blocked" "epic: e"; review s2 "${U2}"
 is "merge = human, s2 handed over while s3 is blocked by hand: the finish: line" finish "$(finished)"
+# s4 waits on s3, an agent's story that waits on l, a kind: lead story: neither can move until the lead
+# acts, so neither holds anything up.
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item l "status: ready" "kind: lead" "epic: e"
+item s3 "status: blocked" "depends_on: [l]" "epic: e"; item s4 "status: blocked" "depends_on: [s3]" "epic: e"; review s2 "${U2}"
+is "merge = human, s2 handed over while s4 waits on s3, which waits on kind: lead l: the finish: line" finish "$(finished)"
 
 # --- merge = agent: s2, which costs money, is handed to the user with swarm.sh review. s3 in review is
 # its review agent's to merge next, so still agent work; once s3 costs money too, only the user merges
