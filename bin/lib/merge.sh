@@ -7,7 +7,7 @@ MERGE_READS=5           # reads of the PR after gh pr merge before its state cou
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 MERGE_UPDATE_READS=20   # reads of a PR's head after merge asks GitHub to merge its base in, MERGE_READ_WAIT apart
 MERGE_BASE_ROUNDS=3     # rounds of merging a moved base in and waiting for the new head's CI before merge refuses (base_rounds; at most 3)
-GONE_READS=3            # merge_gone's reads of a story PR's pinned compare, MERGE_READ_WAIT apart, after a transient gh error
+GONE_READS=3            # merge_files' reads of the PR's files (a story PR's pinned compare, a --board PR's files API), MERGE_READ_WAIT apart, after a transient gh error
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
@@ -35,6 +35,7 @@ REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and pinned_files', and each contents read of merge_read's, may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
 BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
+MERGE_LOCK_WAIT=900     # how long a direct merge waits for another into the same repo and base to finish its merge (SWARM_MERGE_LOCK_WAIT, for tests)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
 # named geofabrik or timeout does not make Bad credentials transient.
@@ -225,12 +226,13 @@ pr_contents() {
 # branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
 # is absent and 2 on any other failure. The contents read stops after BASE_MOVED_WAIT on either route,
 # and a cut-off one fails 2: epic_guard's line names the file and the ref, and the next swarm.sh merge
-# reads past it. The gone read below is bounded on the story route only (merge_gone), so on --board
-# merge_read can still wait on gh's files API. At the head a 404 is absent only for a path the PR removes or
+# reads past it. The file list read below (merge_files) is bounded the same way on either route. At
+# the head a 404 is absent only for a path the PR removes or
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
-# epic would read as deleted.
+# epic would read as deleted. merge_read from <path> is merge_from's answer.
 merge_read() {
   local ref="${head}" gone rc=0
+  [[ "$1" != from ]] || { merge_from "$2"; return; }
   [[ "$1" == head ]] || ref="${base}"
   # gh's error is left out: epic_guard's line names the file and the ref it could not read.
   pr_contents "${repo}" "${ref}" "$2" "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" 2>/dev/null || rc=$?
@@ -240,33 +242,53 @@ merge_read() {
   return 1
 }
 
-# merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_pr's
-# locals repo and n); fails when gh cannot list them. On the story route (merge_pr's local only empty)
-# they are read at the pinned head (compare <base>...<head>, its locals base and head), as the guard's
-# list is, so a push after the pin that restores a path cannot make its 404 there read as gh's. As
-# pinned_files' read is, every read there falls within one BASE_MOVED_WAIT, and only a transient gh
-# error (WAIT_PR_TRANSIENT, its URL words taken out) is read again, up to GONE_READS reads in all,
-# MERGE_READ_WAIT apart.
+# merge_files — the files PR <n> changes as gh lists them, a JSON list of {filename, status,
+# previous_filename, ...}, read once per merge into the file merge_pr's local flist names and printed
+# from there after (merge_read runs in epic_unticketed's subshell, so a file, not a variable, carries
+# the one list): merge_gone and merge_from look their answers up in it. On the story route (merge_pr's
+# local only empty) they are read at the pinned head (compare <base>...<head>, its locals base and
+# head, the base URL-quoted whole as pinned_files quotes it), as the guard's list is, so a push after
+# the pin cannot change what a path's 404 there, or its old name, reads as; with --board, the PR's
+# files API, every page. As pinned_files' read is, every read falls within one BASE_MOVED_WAIT, and
+# only a transient gh error (WAIT_PR_TRANSIENT, its URL words taken out) is read again, up to
+# GONE_READS reads in all, MERGE_READ_WAIT apart; any other failure, or the deadline, fails it.
+merge_files() {
+  local i out err rc deadline q
+  [[ ! -s "${flist}" ]] || { cat "${flist}"; return; }
+  q="$(python3 -c 'import sys, urllib.parse as u; print(u.quote(sys.argv[1], safe=""))' "${base}")" || return 1
+  deadline="@$(($(date +%s) + ${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}))"
+  err="$(mktemp)" || return 1
+  for ((i = 1; ; i++)); do
+    rc=0
+    if [[ -z "${only}" ]]; then
+      out="$(within "${deadline}" gh api "repos/${repo}/compare/${q}...${head}" </dev/null 2> "${err}")" || rc=$?
+    else
+      out="$(within "${deadline}" gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" </dev/null 2> "${err}")" || rc=$?
+    fi
+    [[ ${rc} -ne 0 ]] || break
+    if [[ ${rc} -eq 142 || ${i} -ge ${GONE_READS} ]] \
+      || ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' "${err}")"; then
+      rm -f "${err}"; return 1
+    fi
+    sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
+  done
+  rm -f "${err}"
+  if [[ -z "${only}" ]]; then json "json.dumps(d['files'])" <<< "${out}" > "${flist}" || return 1
+  else json "json.dumps([f for page in d for f in page])" <<< "${out}" > "${flist}" || return 1; fi
+  cat "${flist}"
+}
+
+# merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_files);
+# fails when gh cannot list them.
 merge_gone() {
-  local i out err rc deadline
-  if [[ -z "${only}" ]]; then
-    deadline="@$(($(date +%s) + ${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}))"
-    err="$(mktemp)" || return 1
-    for ((i = 1; ; i++)); do
-      rc=0; out="$(within "${deadline}" gh api "repos/${repo}/compare/${base//\//%2F}...${head}" </dev/null 2> "${err}")" || rc=$?
-      [[ ${rc} -ne 0 ]] || break
-      if [[ ${rc} -eq 142 || ${i} -ge ${GONE_READS} ]] \
-        || ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' "${err}")"; then
-        rm -f "${err}"; return 1
-      fi
-      sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
-    done
-    rm -f "${err}"
-    json "'\n'.join(p for f in d['files'] for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)" <<< "${out}"
-    return
-  fi
-  gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" \
-    | json "'\n'.join(p for page in d for f in page for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
+  merge_files | json "'\n'.join(p for f in d for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
+}
+
+# merge_from <path> — the old path PR <n> renamed <path> from (its previous_filename, on a file whose
+# status is renamed: a copy leaves its source in place), or nothing (merge_files); fails when gh
+# cannot list the files.
+merge_from() {
+  merge_files | P="$1" json "next((f['previous_filename'] for f in d if f.get('status') == 'renamed' and f.get('filename') == e['P'] and f.get('previous_filename')), '')"
 }
 
 # unticketed_why <line> — epic_unticketed's failure line as merge says it: a read error at the
@@ -347,14 +369,29 @@ merge_hold() {
 # (protected_paths), a renamed or removed file's old path too, judged on <rc> and <out>, pinned_files'
 # exit and output; a list it could not read holds the PR too, saying why, so the user can tell a
 # passing error, which the next swarm.sh merge reads past, from a hold that stands (a PR of over 300
-# files, the most the compare lists, or of no file). --board and --release change only board paths or
+# files, the most the compare lists, or of no file). Either hold is recorded on the item in review
+# (protected_note), and a pass drops the record. --board and --release change only board paths or
 # plugin.json, never a protected path. With merge = human it does not run: merge_grant, later in
 # merge_pr, refuses such a PR (pr_hld puts it under no HLD).
 protected_hold() {
   local why
-  [[ $1 -eq 0 ]] || merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it"
+  if [[ $1 -ne 0 ]]; then
+    protected_note "unreadable: ${2%%$'\n'*}"
+    merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it"
+  fi
   why="$(cut -d' ' -f2- <<< "$2" | protected_paths any-case)"
-  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why%%$'\n'*}, which only the user merges; the user merges it"
+  why="${why%%$'\n'*}"
+  protected_note "${why}"
+  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges; the user merges it"
+}
+
+# protected_note [what] — protected_hold's record of its verdict for status and wait --lead
+# (protected_record): on the item in review (merge_pr's f), keyed to the PR (url) at the pinned head,
+# [what] the path it changes or `unreadable: <why>`; none drops the record. A write that fails warns:
+# it must not hide the hold or stop a merge.
+protected_note() {
+  ( protected_record "${f}" "${url}" "${head}" "${1:-}" ) \
+    || echo "warning: merge: cannot record on ${f} whether ${url} is held for a protected path; status and wait --lead may not show it" >&2
 }
 
 # story_files — the story route's read of the PR's files, setting merge_pr's local files to the paths
@@ -413,8 +450,9 @@ merged_state() {
   echo "${state:-unreadable} ${oid}"
 }
 
-# merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
-merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
+# merge_fail <why> — merge's one line for a refusal, then stop; merge_files' cache (merge_pr's local
+# flist), when the guard made one, goes with it. main logs nothing for merge.
+merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; [[ -z "${flist:-}" ]] || rm -f "${flist}"; die "merge: $1"; }
 
 # base_moved <owner/repo> <head> <base> <pr> — stop a story PR whose base has commits <head> lacks, since
 # CI on <head> never ran with them, unless every path they change is on the board (ci_gate behind,
@@ -426,8 +464,9 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # board-only gain when the board's repo cannot be read, naming the read. That refusal, and a compare that
 # cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, which clears them: the
 # head is then up to date, so no repo read is needed. Each read stops after
-# BASE_MOVED_WAIT. Nothing locks the compare against gh pr merge, so two merges into one base seconds
-# apart can both pass: only a merge queue closes that.
+# BASE_MOVED_WAIT. Within one project, merge_pr holds merge_lock from this compare through the merge and
+# its read back, so two direct merges into one base cannot both pass it; merges from two projects, or by
+# hand, still can: only a merge queue closes that.
 base_moved() {
   local out n p own why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$3 in, push, and merge the new head"
   why="cannot tell whether $3 moved past ${2:0:7}'s CI"
@@ -546,7 +585,10 @@ merge_base_update() {
 # green. Then base_moved runs again, right before gh pr merge. A base that has moved again after
 # MERGE_BASE_ROUNDS rounds refuses, naming them. It returns with head the one to merge. A PR that no
 # longer reads open after a wait (another merge run landed it meanwhile, whose merge the base now holds)
-# returns at once: gh pr merge's read-back then finds it merged, as for any second merge of a PR.
+# returns at once: gh pr merge's read-back then finds it merged, as for any second merge of a PR. It
+# frees merge_pr's merge_lock (lock) while it merges the base in and waits, which can take
+# MERGE_CI_SECONDS, so other merges into the base go on meanwhile, and takes it again before the
+# next base check.
 base_rounds() {
   local round old st
   for ((round = 0; ; round++)); do
@@ -556,10 +598,14 @@ base_rounds() {
     fi
     if base_moved "${repo}" "${head}" "${base}" "${n}"; then return 0; fi
     [[ ${round} -lt ${MERGE_BASE_ROUNDS} ]] || merge_fail "base merged, still moving: ${base} gained code ${head:0:7} lacks again after ${round} rounds of merging it into ${url} and waiting for CI (MERGE_BASE_ROUNDS); ${head:0:7} is green on ${base} as it was: merge --head ${head} ${url} once ${base} is quiet; $(pull_first)"
+    rm -rf "${lock}"; trap - EXIT
     old="${head}"
     merge_base_update "${repo}" "${n}" "${head}" "${base}" "${BASE_BEHIND}"
     head="${BASE_NEW}"
     base_ci "${repo}" "${n}" "${old}" "${head}" "${base}" "${changed}"
+    merge_lock "${repo}" "${base}"; lock="${MERGE_LOCK}"
+    # shellcheck disable=SC2064 # the path is fixed now
+    trap "rm -rf '${lock}'" EXIT
   done
 }
 
@@ -624,6 +670,59 @@ base_merged() {
   awk -F'\t' -v t="$1" -v o="base-merged $2" '$2 == "merge" && $3 == t && $5 == o { f = 1; exit } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
+# merge_lock <owner/repo> <base> — take this project's lock on direct merges into <base> of <repo>,
+# .swarm/merge-<owner>-<repo>-<base>.lock: a directory holding this swarm.sh's pid ($$, which outlives
+# the dispatch subshell), its path in MERGE_LOCK. A stale lock (merge_lock_stale) was left by a merge
+# that died holding it, and is taken over (merge_lock_clear). A live one is waited on, a second at a
+# time, for MERGE_LOCK_WAIT seconds; then merge refuses, naming its pid, and nothing was merged.
+MERGE_LOCK=""
+merge_lock() {
+  local lock="${PROJECT_DIR}/.swarm/merge-${1//\//-}-${2//\//-}.lock" pid i wait="${SWARM_MERGE_LOCK_WAIT:-${MERGE_LOCK_WAIT}}"
+  mkdir -p "${PROJECT_DIR}/.swarm" || merge_fail "cannot create ${PROJECT_DIR}/.swarm for the merge lock; nothing was merged"
+  for ((i = 0; ; i++)); do
+    if mkdir "${lock}" 2>/dev/null; then echo "$$" > "${lock}/pid"; MERGE_LOCK="${lock}"; return 0; fi
+    pid="$(cat "${lock}/pid" 2>/dev/null)" || pid=""
+    if merge_lock_stale "${lock}" "${pid}" && merge_lock_clear "${lock}" "${pid}"; then continue; fi
+    (( i < wait )) || merge_fail "another swarm.sh merge into $2 of $1 has held ${lock} (pid ${pid:-not yet written}) for ${wait}s; nothing was merged: run this again once that merge is done"
+    sleep 1
+  done
+}
+
+MERGE_LOCK_PIDLESS=10   # seconds after which a merge lock with no pid file, or its .clear, counts as left by a merge that died (SWARM_MERGE_LOCK_PIDLESS, for tests)
+
+# merge_lock_stale <lock> <pid> — true when <lock> is there and was left by a merge that died: <pid>,
+# read from it, is not running, or it has no pid (<pid> empty) MERGE_LOCK_PIDLESS seconds after it was
+# made (a merge killed between its mkdir and its pid write; a live one writes it at once).
+merge_lock_stale() {
+  local age
+  if [[ "$2" =~ ^[0-9]+$ ]]; then ! kill -0 "$2" 2>/dev/null && [[ -d "$1" ]]; return; fi
+  age="$(perl -e '@s = stat shift or exit 1; print time - $s[9]' "$1" 2>/dev/null)" || return 1
+  (( age >= ${SWARM_MERGE_LOCK_PIDLESS:-${MERGE_LOCK_PIDLESS}} ))
+}
+
+# merge_lock_clear <lock> <pid> — remove a stale <lock>, whose pid read as <pid> (empty for none), and
+# say so; true once it is gone. Two merges can find one stale lock at once, and the first may have taken
+# it afresh before the second removes it. So the removal runs under <lock>.clear, taken with mkdir, and
+# only after reading the pid again: the lock goes only while it still holds <pid> and is still stale.
+# Otherwise it fails, and merge_lock waits its second as for a live lock: another merge is clearing (a
+# <lock>.clear older than MERGE_LOCK_PIDLESS was left by one that died inside this, and is removed for
+# the next look), or the lock was taken afresh.
+merge_lock_clear() {
+  local now age rc=1
+  if ! mkdir "$1.clear" 2>/dev/null; then
+    age="$(perl -e '@s = stat shift or exit 1; print time - $s[9]' "$1.clear" 2>/dev/null)" || return 1
+    (( age < ${SWARM_MERGE_LOCK_PIDLESS:-${MERGE_LOCK_PIDLESS}} )) || rmdir "$1.clear" 2>/dev/null || true
+    return 1
+  fi
+  now="$(cat "$1/pid" 2>/dev/null)" || now=""
+  if [[ "${now}" == "$2" ]] && merge_lock_stale "$1" "$2"; then
+    rm -rf "$1" && rc=0
+    echo "merge: took over $1, left by a merge that died (pid ${2:-never written})"
+  fi
+  rmdir "$1.clear" 2>/dev/null || true
+  return "${rc}"
+}
+
 # short_shas <sha>... — each SHA cut to 7 characters, space-separated; none when there are none.
 short_shas() {
   local s out=""
@@ -658,6 +757,9 @@ short_shas() {
 # checks again with merge_admin = on. A red new head, one
 # with no check runs within MERGE_CI_GRACE, a timeout and a base still moving after those rounds
 # refuse, each as `base merged, <cause>:`, saying the builder pulls its branch before it pushes.
+# On the direct path, the base check through the merge read back runs under merge_lock, one merge
+# into a repo's base at a time; base_rounds frees it while it merges the base in and waits on the new
+# head, and takes it again before the next base check.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
@@ -670,7 +772,7 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" before=""
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -736,7 +838,11 @@ merge_pr() {
   # An epic set active with no ticket is the user's under either merge mode: after the head's CI check,
   # so a red PR costs no reads; before the grant, so the grant's refusal cannot hide this one.
   [[ -n "${only}" ]] || story_files
-  [[ "${only}" == --release ]] || epic_guard
+  if [[ "${only}" != --release ]]; then
+    flist="$(mktemp "${TMPDIR:-/tmp}/swarm-files.XXXXXX")" || merge_fail "cannot make a temp file for the files ${url} changes"
+    epic_guard
+    rm -f "${flist}"; flist=""
+  fi
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
   # then under the costs: hold (merge_hold; the protected-path hold is merge = agent's alone: merge_grant
   # has refused such a PR, the names as written). --release is release_check's. Like epic_guard, it runs after the
@@ -784,6 +890,12 @@ merge_pr() {
     # A batch is pushed at its last commit, and the push-only workflows run there alone.
     [[ -z "${oid}" ]] || oid="$(ci_gate pushed "${repo}" "${base}" "${oid}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")"
   else
+    # One direct merge at a time into this repo and base, from its base check to the merge read back:
+    # two review agents can merge the moment each passes, and the base check alone cannot see a merge
+    # that lands between it and gh pr merge. The EXIT trap frees the lock on a refusal.
+    merge_lock "${repo}" "${base}"; lock="${MERGE_LOCK}"
+    # shellcheck disable=SC2064 # the path is fixed now
+    trap "rm -rf '${lock}'" EXIT
     [[ "${only}" != --release ]] || release_moved "${repo}" "${base}" "${head}" "${n}"
     # A story PR whose head's CI ran before code landed on the base: no queue tests the two together.
     # base_rounds merges the base in and waits for the new head's CI, and head becomes that head.
@@ -804,6 +916,7 @@ merge_pr() {
       [[ "${state}" != MERGED ]] || state="MERGED, no merge commit"
       merge_fail "unconfirmed (${state}): gh pr merge ran, but ${url} does not read as merged; check it by hand"
     fi
+    rm -rf "${lock}"; trap - EXIT
     record_event merge "${MERGE_TARGET}" ok
     echo "merged: ${url} (${method}, head ${head:0:7}, merge commit ${oid:0:7}); waiting for CI on ${base}"
   fi

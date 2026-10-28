@@ -7,7 +7,7 @@ its own herdr pane and git worktree.
 Check these first. If any fails, stop and tell the user which one:
 
 ```bash
-[ "$HERDR_ENV" = 1 ]            # you are inside a herdr pane; every agent opens a pane beside you
+[ "$HERDR_ENV" = 1 ]            # you are inside a herdr pane; agents open in herdr workspaces (README: Workspace labels)
 command -v swarm.sh             # the plugin is installed and this session started after it
 gh auth status                  # PRs, checks and merges go through gh
 git remote get-url origin       # a GitHub origin; swarm.sh resolves the owner from it
@@ -72,7 +72,7 @@ Useful while it runs:
 - `swarm.sh conduct <epic>|--backlog`: a fresh conductor for one epic, or for the ready stories with no epic; `swarm.sh watch [--epic <slug>|--backlog] [repo...]` returns when a story PR needs the lead, and with `--epic` or `--backlog` also once when a story PR of theirs opens.
 - `swarm.sh wait --lead`: returns when the lead's queue gains a held or escalated story, a green PR that waits on the user, an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode, one of `next`'s `idle:` lines for blocked stories and for ready stories with no build, a reviewed story PR left unmerged past `queue_minutes` (`unmerged:`), or a story PR that conflicts with its base (`conflict:`).
 - `swarm.sh wait-pr --head <sha> <pr-url>`: wait for a PR's checks on <sha>; exit 0 green, 1 red, 2 on a gh error, a conflict with the base, no check runs or an expected workflow that never started within 5 minutes, a head that is still not <sha> by then, or the timeout. Without `--head` it waits on the head GitHub reports first, and right after a push that can still be the old one. Every CI wait goes through it; the guard refuses a hand-written `gh pr checks` loop.
-- `swarm.sh review-agent <slug> <pr-url>`: a read-only review agent for one PR, scoped to its story's `touches` and **Done when**. It runs codex every round and `/code-review` on round 1 only. A round in which the conductor fixes nothing, because it declines every finding as a nit, low value, out of scope or wrong, is a pass, and the PR merges. With `escalate_ladder` set, the `step_up_findings`-th findings round (default 3) hands the build to the next model. On the top rung, the `top_rung_rounds`-th round (default 2) goes to the lead.
+- `swarm.sh review-agent <slug> <pr-url>`: a review agent for one PR, scoped to its story's `touches` and **Done when**. It never edits the PR's code. It waits for green, runs codex every round and `/code-review` on round 1 only, and decides which findings to fix and which to decline. It sends the ones to fix to the builder, then reviews the builder's next head in the same session. A round with nothing to fix, because the agent declines every finding as a nit, low value, out of scope or wrong, is a pass, and the PR goes on to be merged. With `escalate_ladder` set, the `step_up_findings`-th findings round (default 3) hands the build to the next model. On the top rung, the `top_rung_rounds`-th round (default 2) goes to the lead.
 - `swarm.sh outcomes` and `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]`: one row per build with its timings, and the project's numbers a section each: `cost`, `features`, `reviewers`, `throughput`, `time_in_state` (with time held ready while a conductor ran, and how long a ready story waited for its build) and more.
 - `swarm.sh dataset`: write `.swarm/dataset.jsonl`, one JSON line per merged story, its plan beside what the build took.
 - `swarm.sh policy <role>`: model and effort for a role.
@@ -94,8 +94,11 @@ Useful while it runs:
   (`swarm.sh grants <PR URL>`), and the version bump when every story merged since the last tag is
   under an HLD that grants `release`. Otherwise `swarm.sh review <slug> <PR URL>` hands it to the
   user.
-- Agents start with an allowlisted environment. A token you exported reaches a builder only when
-  its story names it under `env:`.
+- Agents start with an allowlisted environment (`AGENT_ENV` in bin/lib/agents.sh, plus `LC_*`,
+  `SWARM_*` and `XDG_*`). Any other variable you exported reaches an agent only when its story names
+  it under `env:` or the board's config lists it in `agent_env`. With Foundry on
+  (`CLAUDE_CODE_USE_FOUNDRY`), the session's `ANTHROPIC_FOUNDRY_*` and
+  `ANTHROPIC_DEFAULT_<MODEL>_MODEL` settings pass to every agent too.
 - The plugin's guard hook refuses a raw merge, a `cd <dir>` followed by `;` (write
   `cd <dir> || exit 1 &&`), a `git checkout` that drops uncommitted changes, and, for an agent,
   `git checkout`, `switch`, `restore`, `reset --hard`, `stash` or `clean` in the main checkout,
@@ -106,6 +109,16 @@ Useful while it runs:
   the same first word of a part (past a leading `§`, `#`, "the", "a" or "an"), or both name the bare file; clashing stories in two epics get a `depends_on`. Only the lead
   edits the shared files the project's `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
+- Remove nothing a board sets (a config key, a story or epic field, a brief form the guard accepts)
+  until every board the user runs has been checked for it. swarm-dev has no list of those boards:
+  the planner asks the user to name them, and the removal PR quotes the check on each. A removed
+  key in `REMOVED_KEYS` still loads for at least one release: it is ignored, with a warning on
+  stderr naming it and its line (`tests/removed_test.sh` pins this).
+- A fix to the swarm's own loop (the conductor, review agent, guard or `wait` commands) ships as a
+  patch release soon after it merges, so running projects get it. The lead cuts it, through the
+  release arm below; a builder's story PR never bumps the version.
+- Docs move with behaviour: a PR that changes what a user runs, sees or must do updates every doc
+  that states it (README.md, AGENTS.md, `docs/`, `commands/`, `skills/swarm-dev/`) in the same PR, never a later one.
 
 ## Working on this repository
 
@@ -151,6 +164,26 @@ Run `scripts/select-tests.sh --run` before a push. CI's sharded run is the gate:
 required check, and it passes when its 12 `test-shard` jobs do. The full `make test` is for when you
 want the whole suite locally.
 
+Development rules for anyone, agent or person, working in this repository:
+
+- Run tests only through `make test` or `scripts/select-tests.sh --run`, never a test file by hand.
+- Unset `SWARM_PROJECT` for any test-like command run outside `make test` (a `swarm.sh` call by
+  hand, a hook): a builder's shell exports it, and the call then reaches the real repo.
+  `make test` already unsets it.
+- Never run `flow`, `dash`, `outcomes` or `dataset` against the real repo in a loop, in parallel or
+  over days, even when a story's Done when names a multi-day window. Run it once, after
+  `gh api rate_limit`, and say so in the PR: `flow` and `outcomes` with `--since <today>`, `dash` and
+  `dataset` as they are (they take no `--since`). After a test run, check that no `dash_slow.py` or
+  `swarm.sh flow --since` from your worktree is left. Kill by PID only what names your worktree or
+  a test temp dir.
+- A stress or load run uses at most 4 CPUs in all, with `make test` at `JOBS=4` or fewer, and you
+  tear every load process and container down when the check ends.
+- Prove a mutation without git: copy the file aside, break the original, then copy it back. With
+  more than two proofs, or one on a SLOW test file, break the fix in a copy of the worktree without
+  `.git`, run `make test TESTS=<file> JOBS=1 TEST_RUNS_LOG=` there, keep the FAIL lines and delete
+  the copy. Say in the PR that you used the worktree copy. Never use `git checkout` or
+  `git restore` on uncommitted work.
+
 The machine-wide cap on `make test` is the file `~/.swarm/test-cap`, read only by `scripts/test.sh`.
 A whole number N lets at most N runs go at once on the machine, whatever their project. A run waits
 for a free slot under `~/.swarm/test-slots/`. The wait has no time limit: a holder that is stopped (Ctrl-Z) or hung keeps its slot until it ends or you `rm -r` the slot directory the waiting message names. A missing file, an empty file or 0 means no cap, and
@@ -171,8 +204,7 @@ before it writes. That covers `swarm.sh` calls; the hooks' own event lines (`hoo
 `events.tsv` and `.swarm/lead/pid` as they were under `make test`, and that a test naming the copy, or a
 worktree of it, is refused and writes nothing there.
 
-A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
-the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
+Before the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
 read: README.md, docs/, epics, the text in commands/ that the user sees, and the PR description. Say
 in the PR that you did. Story files and briefs are written for agents and need no pass.
 

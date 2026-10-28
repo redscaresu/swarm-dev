@@ -184,31 +184,54 @@ Repeat until a step below says stop:
      reviews its kept stories under its merge rule. The backlog conductor's rule does not, so a
      kept story with no epic is yours at once. One you left to its conductor is yours at
      `collect`, when its report or `swarm.sh status` still lists the story as `kept:`. Either
-     way, do the following for each PR on the line. Run
-     `swarm.sh wait-pr <PR URL>` in the background, and on its exit 2 do as the `no-agent:` arm
-     below says. Once it exits 0, compare the `head:` line of `.swarm/reviews/<slug>.md` with the
-     head it printed: when they match, triage that file, and otherwise start a review with
-     `swarm.sh review-agent <slug> <PR URL>`. From there, review the PR as a conductor does, by
-     reference.md § Building (**Review before closing.**) and § The outer loop, logging every
-     finding, fixed or declined, with `--round <n>`. Findings to fix, red checks, and a worktree
-     review-agent refuses go to a builder. If none is open, start one in the story's worktree with
+     way, the story's review agent reviews the line's PRs one at a time, and you leave each PR to
+     it. The review agent sends its findings and nudges to the story's builder, so first make sure
+     one is open. If none is, start one in the story's worktree with
      `swarm.sh agent <tab> <slug> <worktree> <role> <brief>`, where <tab> is the story's `epic:`
      (its slug when it has none) and <role> is what `swarm.sh _role <slug>` prints. Its brief
-     names the story and its PRs. Wait for it to go idle with `swarm.sh wait <slug>`. Send review
-     findings with `swarm.sh tell <slug> findings <file>`, which counts the round and applies the
-     ladder, and the rest with `swarm.sh tell <slug> nudge <file>`, which is not a round. Wait for
-     the builder with `swarm.sh wait --stall <slug>` in the background, then run wait-pr and the
-     review again on its new head. When that wait times out or stalls, or the builder goes idle
-     with no new head, act as a conductor does by § Building (**Giving up on a builder.**). A
-     `stuck:` line is not a stall: the `stuck:` rule below applies. Once every PR's latest head
-     has passed, wait-pr exits 0 on it, and
-     `swarm.sh findings <repo> <pr>` is triaged (§ The outer loop, **Green means more than green
-     checks.**), close the builder if one is open (`swarm.sh close <slug>`). Then run
-     `swarm.sh review <slug>` with every PR URL on the line: it keeps only the PRs it is given.
-     That clears the line and hands the PRs on to merge. Under `merge = agent`, merge each yourself
-     with `swarm.sh merge --head <sha> <PR URL>`, <sha> being the head its review passed on. When
-     merge refuses one as held for the user (`costs: money`, or a parent they merge), tell the user
-     it waits on their merge. Run `swarm.sh close <slug> --drop`
+     names the story and its PRs. Then run `swarm.sh review-agent <slug> <PR URL>` for the line's
+     first PR, unless `review-<slug>` is already open on it, and wait on it with
+     `swarm.sh wait review-<slug>` in the background. When review-agent refuses because the
+     worktree is not at the PR's head or has uncommitted changes, the builder is still at work:
+     wait for it with `swarm.sh wait --stall <slug>` in the background, then start the review agent
+     again. The review agent waits for green, reviews each head, tells the builder its findings
+     (which counts the round and applies the ladder) and runs the later rounds itself. While it is
+     open, never triage its review file, tell the builder findings or merge the PR yourself: the
+     findings would go out twice and the round would count twice. Its wait returns once the agent
+     is idle with `.swarm/reviews/<slug>.md` written, which it writes only on a pass or when it
+     stops; a round's findings to fix go to `.swarm/reviews/<slug>.round.md`, which is not yours to
+     read. When the wait returns with no review file and printed `busy`, it ran its 60 minutes while
+     the agent works: wait again. When it returns with no review file any other way (the agent waits
+     on a prompt, is gone, or a merge's reconcile retired it), check the board first: a story in
+     review with no `kept:` line, or one that has left the board, was passed and handed over or
+     merged. Otherwise start the review again with `swarm.sh review-agent <slug> <PR URL>`. Once the
+     file is there, read it before the board. If it has a `head moved:` line, the PR has a head
+     nobody reviewed and the agent stopped: once the worktree is at the PR's head, start
+     `swarm.sh review-agent <slug> <PR URL>` again (it retires the stopped agent) and wait on it the
+     same way. The story may be in review already (its review passed, then merge refused the moved
+     head, and the agent's reply says so): tell the user not to merge the PR until the new review
+     passes, whatever `merge:` line `wait --lead` brings meanwhile. If the file has a `stopped:`
+     line, the agent stopped before a pass, and that line says why. When its wait on the builder
+     stalled or timed out, or the builder pushed no fix, act as a conductor does by § Building
+     (**Giving up on a builder.**). A `stuck:` line is not a stall: the `stuck:` rule below applies.
+     For a refused tell, act on the line it quotes. Otherwise the file is a pass. If the story is in
+     review with no `kept:` line, or has left the board, the agent ran
+     `swarm.sh review <slug> --head <sha> <PR URL>`, then merged the PR under `merge = agent` or a
+     `merge` grant, or handed it over. When the PR waits on the user's merge, `wait --lead` brings
+     back a `merge:` line. Close the builder if it is still open (`swarm.sh close <slug>`). If the
+     story is still kept, the agent passed the PR but stopped on a line it could not act on (a
+     refusal from `review`, `grants` or `merge`, a red base, a story held until its parents merge):
+     its reply quotes the line (`herdr agent read review-<slug> --source recent-unwrapped`), so act
+     on that line. A line with more than one PR goes one PR at a time, as `swarm.sh review --head`
+     refuses while the story has a PR the agent did not review, and each agent stops there. Note
+     the head each one passed (its file's `head:` line) before you start the review agent on the
+     next PR. Once every PR has passed, read each PR's head again
+     (`gh pr view <PR URL> --json headRefOid --jq .headRefOid`) and compare it with the head noted
+     for it: a PR whose head moved since has had no review, so start the review agent on it again.
+     Only when every PR's head is still the one that passed, run `swarm.sh review <slug>` with every
+     PR URL on the line, and under `merge = agent` merge each with
+     `swarm.sh merge --head <sha> <PR URL>`, <sha> the head it passed. When merge holds one for the
+     user (`costs: money`, or a parent they merge), tell the user it waits on their merge. Run `swarm.sh close <slug> --drop`
      only when the PRs are not worth saving. It counts the attempt, so the next build may move up a
      model or the story may become yours, then closes the PRs and sends the story back to ready. A
      `no-agent: <slug>, exit: <exit>` line means a story whose build started has no agent on it
