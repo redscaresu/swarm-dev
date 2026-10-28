@@ -230,6 +230,13 @@ review="$(para "A story is reviewed only by" "${cbrief}")"; rflat="$(tr -s '[:sp
 check "the review paragraph starts review-agent once on watch's opened line, on a queued: line and for a kept: PR" "yes|yes|yes|yes" \
   "$(has "When \`swarm.sh watch\` prints \`<repo> #<n> story/<slug> opened\`, a PR of yours has opened: start its review agent once, at once, with \`${SWARM} review-agent <slug> <PR URL>\`." "${rflat}")|$(has '`queued: <repo> #<n> <branch> green <m>m with no review on <sha>`, that head has had no review: start its review agent then, the same way.' "${rflat}")|$(has 'A story `swarm.sh status` lists as `kept:` (a close kept its PR unreviewed) gets one the same way' "${rflat}")|$(has "then start the review agent on the line's PR." "${rflat}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
+# A review agent started on the opened line can stop on a head the builder pushes before its first
+# round; queued: waits queue_minutes. If the paragraph drops the restart on watch's checks-finished
+# line, that head waits half an hour for a review, and this goes red.
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the review paragraph starts the review agent again on each checks finished line, and review-agent's refusal stops a second one" "yes|yes" \
+  "$(has 'When `swarm.sh watch` prints `<repo> #<n> story/<slug> checks finished on <sha>` for a PR of yours, start its review agent again the same way' "${rflat}")|$(has 'While it still reviews, review-agent refuses and nothing starts.' "${rflat}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
 check "the review paragraph starts a refused review agent again once its builder's wait returns or on watch's next line, and never waits on a PR or a review agent" "yes|yes" \
   "$(has 'whatever the refusal says to do next, start it again once `swarm.sh wait <slug>` on that builder returns, or on `swarm.sh watch`'"'"'s next line for that PR, whichever comes first.' "${rflat}")|$(has "Never wait on a PR or a review agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or merge a story's PR" "${rflat}")"
 cflat="$(tr -s '[:space:]' ' ' <<< "${cbrief}")"
@@ -240,6 +247,10 @@ check "the conductor's brief says what a builder's auth means and to resume it a
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${cbrief}")"
 check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
+# The review agent and the ladder limit a PR's rounds; a conductor that gives up on an unconverged
+# review clears the build (close --drop) under a live review agent. If either clause comes back, this goes red.
+check "the conductor gives up on no unconverged review, and leaves rounds to the review agent and the ladder" "no|yes" \
+  "$(grep -qF "review has not converged" <<< "$(tr -s '[:space:]' ' ' <<< "${cbrief}")" && echo yes || echo no)|$(has "A PR's review rounds are its review agent's and the ladder's to limit, never yours." "$(tr -s '[:space:]' ' ' <<< "${cbrief}")")"
 check "the story-mode conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule e "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 check "the story-mode conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \

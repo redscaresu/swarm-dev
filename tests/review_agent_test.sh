@@ -211,6 +211,11 @@ printf '2026-01-01\tfixed-kind\to/r#1\tx\tfixed\tcodex\n2026-01-01\tdeclined-kin
 check "finding_rule's kinds command lists only kinds with a fixed, escaped or pre-outcome row" "escaped-kind|fixed-kind|old-kind" \
   "$(bash -c "${kinds_cmd//${p}/${ROOT}/kinds}" | paste -sd'|' -)"
 check "finding_rule's kinds command prints nothing, not an error, with no findings log" "" "$(bash -c "${kinds_cmd//${p}/${ROOT}/none}" 2>&1)"
+# A failed merge after the pass (a base merged in whose CI goes red, a moved base merge refuses on) has
+# nobody else to act on it: the conductor reads no review reply. If the handoff drops the agent's own
+# nudge, or names the conductor as the one that acts, the PR sits unmerged, and this goes red.
+check "the handoff nudges the builder on a red base-merged head and a moved base, and names the conductor's restart on the new head" "yes|yes|yes|yes|no" \
+  "$(has "When that wait-pr exits 1 (a red check) or with a conflict, nudge the builder as the green step says" "${flat}")|$(has "telling it to pull its branch first (\`git pull --ff-only origin story/s1\`): GitHub's merge commit is not in its worktree. Then stop." "${flat}")|$(has "nudge the builder the same way, telling it to pull its branch (\`git pull --ff-only origin story/s1\`), merge origin/<base> in, re-run the tests and push. Then stop." "${flat}")|$(has "the conductor starts a new review agent on the new head once watch reports its checks finished" "${flat}")|$(grep -qF "the conductor or the lead acts on it" <<< "${flat}" && echo yes || echo no)"
 check "the brief waits for green with wait-pr on the PR, naming the project, before the review, and again after each push" "yes|yes|yes" \
   "$(has "Before you review, wait for the PR's checks to go green. Run \`${sw} wait-pr ${PR}\` in the background and wait for it to exit, never a loop of your own" "${flat}")|$(awk '/ wait-pr / && !w { w = NR } / codex-review / && !c { c = NR } END { print (w && c && w < c) ? "yes" : "no" }' <<< "${brief}")|$(has "After each nudge, wait for the builder the same way, then wait for green again on the head it pushed." "${flat}")"
 check "the brief triages check-run notes and code-scanning alerts before the head counts green" "yes|yes|yes|yes" \

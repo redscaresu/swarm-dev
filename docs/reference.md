@@ -1408,8 +1408,8 @@ reached the builder before their `/goal` failed count as a round, and the line i
 their goal failed, so never send them again; then rm <marker> <file>`.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
-when it is idle with no PR after wait's nudges, or
-when review has not converged in the rounds it allows. It runs `swarm.sh close <slug> --drop`, which, on a
+or when it is idle with no PR after wait's nudges. A PR's review rounds are its review agent's and the
+escalation ladder's to limit, never the conductor's. It runs `swarm.sh close <slug> --drop`, which, on a
 code, docs or chore story still `ready`, counts the attempt and clears its worktree, branch and PR,
 and starts the story again in a later wave with
 `swarm.sh story --strict <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
@@ -1481,7 +1481,10 @@ story's PR opened (`<repo> #<n> story/<slug> opened`), the conductor starts a re
 once, with `swarm.sh review-agent <slug> <PR URL>`. It starts one for every PR that opens, without
 waiting for other PRs or reviews, so PRs that land together are reviewed together. It starts one the
 same way on a `queued:` line, and for a story `status` lists as `kept:` once that story's builder is
-open (with a `kept:` line of several PRs left to the lead). When `review-agent` refuses because the
+open (with a `kept:` line of several PRs left to the lead). It starts one again on each
+`<repo> #<n> story/<slug> checks finished on <sha>` line, so a new head gets a review at once after
+the agent before it stopped; while that agent still reviews, `review-agent` refuses and nothing
+starts. When `review-agent` refuses because the
 worktree is not at the PR's head or has uncommitted changes, the conductor
 starts it again once its `wait` on the builder returns, or on `watch`'s next line for that PR,
 whichever comes first; a refusal because the agent is still reviewing needs nothing, since that
@@ -1497,7 +1500,7 @@ for the builder, then for green on the head the builder pushed. The green step r
 on the first head and then on the head the builder pushes after each findings `tell`, and each run is
 bounded: at most two nudges, and at most two heads `wait-pr` calls red. Before any findings went to the builder, when
 a green head is not the one the agent was started on, it writes `head moved: <the green head>` and stops, and the conductor starts the review
-again on the new head's `queued:` line. When the builder goes idle without pushing, `wait-pr` ends the same way twice,
+again once `watch` reports the new head's checks finished. When the builder goes idle without pushing, `wait-pr` ends the same way twice,
 or the bound is reached, it writes a not-green file, which ends the green step: a round file
 (`.swarm/reviews/<slug>.round.md`, below) whose
 `head:` line is the head `wait-pr` waited on last and whose `## Findings` has one item,
@@ -1506,7 +1509,7 @@ agent sends that to the builder as a findings round, as any finding, so a PR tha
 climbs the findings ladder instead of being reviewed again and again. With `escalate_ladder` set, a
 `wait-pr` that steps the build up ends the agent with `head moved: stepped up: ...`: the PR's head
 has not moved, so the conductor waits on the new builder, as for its own step-ups, and the head that
-builder pushes gets a new review agent on its `queued:` line. One whose step-up
+builder pushes gets a new review agent when `watch` reports its checks finished. One whose step-up
 failed after closing the builder ends the agent with that `step-up failed:` line as the one
 finding; the line itself says to leave the story alone, as `wait --lead` tells the lead, whose exit
 is `step-up --resume`. It
@@ -1574,7 +1577,9 @@ without pushing, the round passes when the builder declined each finding with a 
 accepts, rebutted in the PR as its own declines are; the agent stops otherwise, as it does when the
 wait fails. A stop before a pass writes the review file
 with two lines, `head: <the PR's head>` and `stopped: <why>`: with no `## Findings` heading it is no
-pass, so the head is queued again (§ Settings, `queue_minutes`).
+pass. Nothing restarts the review on that head: `queued:` goes out once per head, and only for a green
+one. The next head the builder pushes gets a new review agent when `watch` reports its checks
+finished.
 It judges the PR against the story's touches and **Done when**. A point that only a change to a file
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. One exception: a comment, doc or error-text line that the changed code no
@@ -2522,10 +2527,10 @@ and stops when CI on the base timed out, or is red with no `fix-main:` line, say
 It also stops when what is left needs the lead: a story only the lead can finish. If
 CI on the base goes red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below),
 which `next` names to the lead first; the lead's note asks the conductor to start its builder at
-once, ahead of every other story and whatever its scope. `watch` says no fix-main PR opened, so the
-conductor starts that PR's review agent once the builder replies with its URL. A merge that `swarm.sh merge` refused (other than `held:` or a
-`base merged:` line, which the review agent acts on) or could not confirm ends the review agent with
-the line in its reply, and is the lead's. The lead merges
+once, ahead of every other story and whatever its scope, under either merge setting. `watch` says no
+fix-main PR opened, so the conductor starts that PR's review agent once the builder replies with its
+URL. A merge that `swarm.sh merge` refused or could not confirm, other than `held:`, a `base merged:`
+line or a moved base (below), ends the review agent with the line in its reply, and is the lead's. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
 PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (the HLD
 `swarm.sh grants <PR URL>` prints). It reads that grant once the PR's head is green. With the grant,
@@ -2691,13 +2696,15 @@ Each of these lines goes to whoever ran `swarm.sh merge`, with the step to take 
 `merge = agent` or a `merge` grant that is the story's review agent, never a conductor. On `base merged:`,
 the new head needs no new review, since its only new content is the base's: the review agent waits
 for its CI with `wait-pr --head` on the head the line names and merges it with that `--head`. If that
-CI goes red, the builder pulls its branch first with `git pull --ff-only origin story/<slug>`:
-GitHub's merge commit is not in its worktree. The pull names the branch, since a story's worktree
-tracks origin/<base>, and a stacked story's tracks nothing. Any other refusal ends the review agent
-with the line in its reply, and the lead acts on it. On a refusal that ends `merge origin/<base> in,
-push, and merge the new head`, the builder pulls its branch the same way, merges origin/<base> in,
-re-runs the tests and pushes, and the new head gets a review of its own before it merges. On `base
-merge unchecked:`, the new head is reviewed as any new head. That head may be a builder's push, a
+CI goes red, the review agent nudges the builder, naming the red check and telling it to pull its
+branch first with `git pull --ff-only origin story/<slug>` (GitHub's merge commit is not in its
+worktree), and stops. The pull names the branch, since a story's worktree tracks origin/<base>, and a
+stacked story's tracks nothing. On a refusal that ends `merge origin/<base> in, push, and merge the
+new head`, the review agent nudges the builder to pull its branch the same way, merge origin/<base>
+in, re-run the tests and push, and stops. Either way the conductor starts a new review agent on the
+head the builder pushes once `watch` reports its checks finished, so that head is reviewed before it
+merges. Any other refusal ends the review agent with the line in its reply, and the lead acts on it.
+On `base merge unchecked:`, the new head is reviewed as any new head, the same way. That head may be a builder's push, a
 merge made by hand, or GitHub's own merge of the base that touches a file the PR changed too. When
 that review sends findings, the builder pulls its branch first, since a merge commit on the branch
 is not in its worktree and its push would be refused.
