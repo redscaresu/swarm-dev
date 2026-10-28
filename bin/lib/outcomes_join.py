@@ -8,8 +8,9 @@ RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
     # The (url, state, mergedAt, createdAt, main_merges, checks, commits, closedAt) of each PR in the
-    # meta column; a stub may leave out the last six. checks is its head's check runs as start/end pairs
-    # joined by ";", commits its commits' committedDate joined by ";".
+    # meta column; a stub may leave out the last six. checks is its head's status rollup entries as
+    # start/end/conclusion joined by ";", a time gh does not give empty (start/end in a cached record
+    # from before conclusions), commits its commits' committedDate joined by ";".
     return [tuple((p.split(" ") + [""] * 7)[:8]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
@@ -55,7 +56,7 @@ def time_in_state(start, merged, pr, times):
     s, c, m = secs(start), secs(pr[3]), secs(merged)
     if None in (s, c, m) or m < s:
         return [""] * len(PHASES)
-    runs = [tuple(map(secs, r.split("/"))) for r in pr[5].split(";") if r.count("/") == 1]
+    runs = [tuple(map(secs, r.split("/")[:2])) for r in pr[5].split(";") if r.count("/") in (1, 2)]
     # A run cancelled while queued starts at gh's zero time (year 1): no CI.
     runs = [r for r in runs if None not in r and 0 < r[0] <= r[1]]
     commits = [x for x in map(secs, pr[6].split(";")) if x is not None]
@@ -73,6 +74,43 @@ def time_in_state(start, merged, pr, times):
         phase = next((p for p in PRECEDENCE if any(x <= mid < y for x, y in spans[p])), "building")
         got[phase] += round((b - s) / 60) - round((a - s) / 60)
     return [str(got[p]) for p in PHASES]
+
+# A head is green once every check run on it concluded one of these.
+GREEN = ("SUCCESS", "NEUTRAL", "SKIPPED")
+
+def run_end(run):
+    # When a status rollup entry (start, end, conclusion) ended: its completedAt, else its startedAt,
+    # which for a commit status is the time it was set (gh exports its createdAt as startedAt, and it
+    # has no completedAt); None with neither, or gh's year-1 zero time.
+    t = secs(run[1])
+    if t is None:
+        t = secs(run[0])
+    return t if t is not None and t > 0 else None
+
+def green_at(checks):
+    # When the PR's head went green (secs): the end (run_end) of the last entry in its status rollup,
+    # once every entry concluded GREEN; None with no entry, or one that failed, is still running or has
+    # no conclusion (a cached record from before conclusions were read is unknown, never green), or a
+    # green one with no end: the data does not say when the head went green, so no other entry's end
+    # stands in. gh gives the latest head's entries alone, so an earlier head that failed is no green,
+    # and a later one counts from its own.
+    runs = [r.split("/") for r in checks.split(";") if r]
+    if not runs or any(len(r) != 3 or r[2] not in GREEN for r in runs):
+        return None
+    ends = [run_end(r) for r in runs]
+    return max(ends) if None not in ends else None
+
+def green_to_review(slug, pr):
+    # green_to_review_min: whole minutes from the later of the PR's green (green_at) and its creation
+    # (a head can go green before its PR opens, and no review of it starts before then; a round before
+    # then is an earlier PR's of the slug) to the first review round its slug started at or after
+    # that, and before the PR closed (round_starts); empty with no green or no such round.
+    green, created, closed = green_at(pr[5]), secs(pr[3]), secs(pr[7])
+    if green is None:
+        return ""
+    since = green if created is None else max(green, created)
+    start = min((t for t in round_starts[slug] if t >= since and (closed is None or t <= closed)), default=None)
+    return "" if start is None else str(round((start - since) / 60))
 
 # outcomes_rows' columns: up to pulls, then the ones printed as they are (started, the four tokens_*,
 # close_cause and the six escalation steps), then the subagent ones (cost, cost by model, tokens), then
@@ -152,6 +190,14 @@ def board_commits(*args):
 # ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
 ready_at, blocked_at = collections.defaultdict(list), collections.defaultdict(list)
 conducting, closed, reported = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
+# round_starts: each slug's review round starts: its review-agent lines, a review agent's start,
+# whose outcome main logs as a bare ok (today the conductor starts an agent so for every round, and
+# the agent waits for green itself, so a start can come before the head is green), and review-agent
+# --next's review-agent:next lines, a round run in the same session, the only ones main gives
+# `ok (round <n>)`. A review-agent line that carried `(round <n>)` would count the same, though none
+# does today. green_to_review reads only those at or after the head's green, so a start before it
+# never counts.
+round_starts = collections.defaultdict(list)
 # Explicit prefixes and no colour, whatever the user's diff.noprefix, diff.dstPrefix or color.ui.
 for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
     lines, path = commit.split("\n"), ""
@@ -173,6 +219,8 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
         reported["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
     elif e[1].split(":")[0] == "close":
         closed[agent_name(e[2])].append(t)
+    elif e[1] in ("review-agent", "review-agent:next") and (e[4] == "ok" or re.fullmatch(r"ok \(round \d+\)", e[4])):
+        round_starts[e[2]].append(t)
 
 def run_ends(epic):
     # The times a conductor run of the epic ("" for the backlog's) could have ended: its agent's ok
@@ -247,7 +295,7 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
       "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens"
-      "\t" + "\t".join(p + "_min" for p in PHASES) + "\trework\theld_min\tready_wait_min")
+      "\t" + "\t".join(p + "_min" for p in PHASES) + "\trework\theld_min\tready_wait_min\tgreen_to_review_min")
 for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(rows, found)):
     pr, state, merged, created, main_merges = the_pr[:5]
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
@@ -265,7 +313,8 @@ for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(ro
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:TIMES]
                      + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))
-                     + [rework] + ([held(slug, story_epic, f[AS_IS]), ready_wait(slug, f[AS_IS])] if attempts == "1" else ["", ""])))
+                     + [rework] + ([held(slug, story_epic, f[AS_IS]), ready_wait(slug, f[AS_IS])] if attempts == "1" else ["", ""])
+                     + [green_to_review(slug, the_pr)]))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
