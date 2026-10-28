@@ -124,12 +124,12 @@ is "merge = human, s2 handed over while s3 is blocked by hand: the finish: line"
 
 # --- merge = agent: s2, which costs money, is handed to the user with swarm.sh review. s3 in review is
 # its review agent's to merge next, so still agent work; once s3 costs money too, only the user merges
-# it, and it holds nothing up.
-epic_pr; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
+# it, and it holds nothing up. s, epic_pr's, is gone: in review at no cost it would count too.
+epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
 review s2 "${U2}"
 is "merge = agent, s2 handed over while s3 is in review for its review agent to merge: exits 0" 0 "${rc}"
 is "merge = agent, s2 handed over while s3 is in review for its review agent to merge: no finish: line" hold "$(finished)"
-epic_pr; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"
+epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"
 item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e" "costs: money"; review s2 "${U2}"
 is "merge = agent, s2 handed over while s3 in review costs money, so waits on the user: the finish: line" finish "$(finished)"
 

@@ -189,7 +189,7 @@ check "with merge = agent, the backlog conductor waits on its own one-off's merg
   "$(has 'If the refusal ends `(costs money)`, only the user merges the named story, maybe days later: do not wait for it, and report yours as `not started: <slug> (waits on <other>'"'"'s merge)`.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog conductor also stops when CI on the base timed out or is red with no fix-main line" "yes" \
-  "$(has 'that you may start is left and none is running, or when CI on the base timed out, or is red with no `fix-main:` line.' "${bl}")"
+  "$(has 'The one exception: stop and report at once when CI on the base timed out, or is red with no `fix-main:` line.' "$(tr -s '[:space:]' ' ' <<< "${bl}")")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog brief leaves the merge to the review agent, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
   "$(has "A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR yourself." "$(tr -s '[:space:]' ' ' <<< "${bl}")")|$(has 'start each story it prints as `startable:` (every ready backlog story whose build has not started' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"

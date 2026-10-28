@@ -736,20 +736,25 @@ agent_work_left() {
 }
 
 # review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:
-# one a close kept unreviewed (kept:), which waits for its review agent, or, under merge = agent, one
-# its review agent merges next, with no PR of it held for the user's merge (costs_tag: it costs money;
-# protected_holds: it changes a protected path). An HLD's merge grant under merge = human is left out:
-# swarm.sh grants decides it per PR, and the conductor closes only an idle review agent on finish:.
+# one a close kept unreviewed (kept:), which waits for its review agent, or one its review agent merges
+# next, under merge = agent or an agreed HLD over it that grants merge, unless it costs money
+# (costs_tag) or every PR of it is held for the user's merge on a protected path (protected_holds). A
+# protected PR under a grant has no such hold recorded, so it counts until it merges: a finish: held
+# back only keeps the conductor waiting, where one sent early lets it report mid-merge.
 review_agent_owns() {
-  local u held
+  local u h held
   [[ -z "$(get_fm "$1" kept)" ]] || return 0
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
-  [[ "${CFG_merge}" == agent ]] || return 1
+  if [[ "${CFG_merge}" != agent ]]; then
+    h="$(item_hld "$1")"
+    [[ -n "${h}" ]] && grep -qxF merge <<< "$(hld_grants "${h}" 2>/dev/null)" || return 1
+  fi
   [[ -z "$(costs_tag "$1")" ]] || return 1
   held="$(protected_holds urls)"
   for u in $(fm "$1" prs); do
-    ! grep -qxF -- "${u}" <<< "${held}" || return 1
+    grep -qxF -- "${u}" <<< "${held}" || return 0
   done
+  return 1
 }
 
 # epic_held <story-file> — true when the story's epic is later or draft: the user has not started it.

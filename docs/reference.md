@@ -2560,9 +2560,9 @@ a `not held:` line left `ready` for the lead. If the last inbox pass before its 
 it runs `--startable` once more, and if that starts a builder, it goes back to waiting instead of
 reporting. It never writes its report while agent work is left: a story of the epic, of a kind an
 agent builds, that is ready (to start, building, or with its PR open and not yet in review), blocked
-on an agent's work, or in review with its review agent still to act on it (a story a close kept, or,
-under `merge = agent`, one its review agent merges next, unless it costs money or changes a protected
-path), or a fix-main story it started. A story blocked only on a `kind: lead` story or a hand step,
+on an agent's work, or in review with its review agent still to act on it (a story a close kept, or
+one its review agent merges next, under `merge = agent` or a `merge` grant, unless it costs money or
+every PR of it is held on a protected path), or a fix-main story it started. A story blocked only on a `kind: lead` story or a hand step,
 or blocked by hand with no `depends_on`, waits on you: it holds nothing up, and the report lists it under Waits on the
 user. The note after the last such story's merge or handover ends `finish: epic <epic> has no agent
 work left` (§ Merging); the conductor then closes each idle `review-<slug>` of its own still open,
