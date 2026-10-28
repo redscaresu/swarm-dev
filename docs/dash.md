@@ -116,7 +116,7 @@ is one column, top to bottom:
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
   you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic, and a
   merge only you may make) and everything else from the list above moves to this box under it. A
-  `costs: money` merge stays in needs you. With `merge = human`, so does any other `merge <PR>` row,
+  `costs: money` merge stays in needs you, and so does a `(protected path)` one, a PR `swarm.sh merge` holds for a path only you change. With `merge = human`, so does any other `merge <PR>` row,
   unless the story's or epic's agreed HLD grants `merge`. So do a plan PR row, unless its HLD grants
   `merge`, and every finish PR row. The box holds the other `merge` rows, the `stage PR awaiting
   merge` row, every `answer`, `close`,
