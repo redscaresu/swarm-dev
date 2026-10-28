@@ -300,6 +300,10 @@ load_config
 
 # abs_path <path> — <path>, relative to the project dir unless it is absolute.
 abs_path() { if [[ "$1" == /* ]]; then echo "$1"; else echo "${PROJECT_DIR}/$1"; fi; }
+# board_rel — the board's path from the project root with a trailing /, empty for a board at the root
+# (a board outside the repo gives its full path, with the /). Read from BOARD when called, so it
+# follows init_project, which resolves BOARD once it has made the board.
+board_rel() { [[ "${BOARD}" == "${PROJECT_DIR}" ]] || echo "${BOARD#"${PROJECT_DIR}"/}/"; }
 BOARD="$(abs_path "${CFG_board_dir}")"
 [[ -d "${BOARD}" ]] && BOARD="$(cd "${BOARD}" && pwd -P)"   # so a board_dir with .. is compared as the real path
 REPOS_DIR="$(dirname "${PROJECT_DIR}")"; [[ -z "${CFG_repos_dir}" ]] || REPOS_DIR="$(abs_path "${CFG_repos_dir}")"
@@ -637,6 +641,7 @@ dispatch() {
             next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds; --dash: dash --check's, its no-agent lines read as dash reads them
     _conductor) conductor_name "${1:?epic or backlog}"; echo ;;   # test hook: a conductor's agent name
     _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
+    _board-rel) board_rel ;;                                      # test hook: the board's path from the project root
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _archive) archive_session "${1:?name}" ;;                     # test hook: close's copy of an agent's session log
     _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
@@ -655,7 +660,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status where next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
+READ_ONLY_COMMANDS="dash status where next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.

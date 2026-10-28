@@ -3135,7 +3135,8 @@ goes on with no pane, as it does for a pane closed by hand.
 No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the last
 release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
 `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
-outside the board. It reads local refs only, since reconcile has just pulled. The lead opens a PR
+outside the board (for a board at the project root, outside its `stories/`, `epics/`, `hld/`,
+`Board.base` and `.obsidian/`). It reads local refs only, since reconcile has just pulled. The lead opens a PR
 from `release/v<new>` that bumps only that file, to the version `next` named (the stage's v<S>, or the patch it named). Only
 when `next` printed a bare `release` does it bump to the next minor version (a patch when every
 change since the tag is a fix). It lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers

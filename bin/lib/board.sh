@@ -808,16 +808,19 @@ dep_holds() {
 
 # release_due — "<commits> v<version> <base>" when the local origin/HEAD names <base>, origin/<base>
 # has .claude-plugin/plugin.json, the tag v<its version> exists here and is on origin/<base>, and
-# commits since it change a file outside the board (when the board is in the repo); else nothing.
-# Local refs only: reconcile has just pulled.
+# commits since it change a file outside the board (when the board is in the repo; at the root, outside
+# its own paths, board_paths); else nothing. Local refs only: reconcile has just pulled.
 release_due() {
-  local base version ex="" n
+  local base version rel q ex=() n
   base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
   base="${base#origin/}"
   version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
   git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${version}" "origin/${base}" 2>/dev/null || return 0
-  [[ ${BOARD_IN_REPO} != 1 ]] || ex=":(exclude)${BOARD#"${PROJECT_DIR}"/}"
-  n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex:+"${ex}"})" || return 0
+  # An empty :(exclude) would exclude every path, so a board at the root excludes its own paths.
+  rel="$(board_rel)"
+  if [[ ${BOARD_IN_REPO} == 1 && -n "${rel}" ]]; then ex=(":(exclude)${rel}")
+  else while IFS= read -r q; do ex+=(":(exclude)${q}"); done < <(board_paths); fi
+  n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex[@]+"${ex[@]}"})" || return 0
   [[ ${n} -eq 0 ]] || echo "${n} v${version} ${base}"
 }
 
@@ -841,7 +844,7 @@ release_due() {
 release_stage() {
   local tag="${1#v}" pre f p c="" e v kind txt here="" map="" stories="" s="" open="" bad="" badl="" work="" held patch
   [[ ${BOARD_IN_REPO} == 1 && "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
-  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  pre="$(board_rel)"
   # map: "<epic> <stage> <parent>" a line, the epics here first, so a slug's first line wins; here:
   # the epics that hold a stage. Both read slug, stage: and parent:, |-separated: IFS whitespace (a
   # tab) would drop an empty stage: and read the parent as the stage.
@@ -1125,7 +1128,7 @@ epic_unticketed() (
   local reader="$1" pre p s b o now was rc kept out="" changed_paths="${3:-$2}"
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || exit 0
-  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  pre="$(board_rel)"
   # Not local: the EXIT trap runs once the locals are gone.
   t="$(mktemp)" || { echo "cannot make a temp file"; exit 1; }
   trap 'rm -f "${t}" "${t}.err"' EXIT
@@ -1483,8 +1486,7 @@ pr_hld() (
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
   trap 'rm -rf "${view}"' EXIT
   s="$(pr_stories "${url}")" || die "grants: a story on the board cannot be read"
-  # The board's path in the repo, with a trailing /; empty for a board at the repo's root.
-  pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
+  pre="$(board_rel)"
   # A URL pr_stories reads but this does not, or a board repo whose origin cannot be read, is under
   # none: the PR's files could not be checked.
   [[ "${url}" =~ ^https://github\.com/([a-z0-9._-]+/[a-z0-9._-]+)/pull/0*([0-9]+)$ ]] || return 0
@@ -2436,9 +2438,8 @@ reconcile() {
 # (merged_build) and `reconcile <slug> ok (finished)` logged. One whose PR gh cannot read, or whose
 # builder's pane could not be closed, keeps its state and escalated block, for the next reconcile.
 drop_gone_state() {
-  local s n d rel="" merged
-  # The board's path from the root with a trailing /, or empty when the board is the root.
-  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  local s n d rel merged
+  rel="$(board_rel)"
   for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
     n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
     [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
@@ -2506,10 +2507,9 @@ fm_gone() {
 # else the copy in the parent of the newest commit in HEAD's history that touched it (the one that
 # deleted it). Nothing when the board is not in the repo, or git never had it.
 gone_copy() {
-  local rel="" sha
+  local rel sha
   [[ ${BOARD_IN_REPO} == 1 ]] || return 0
-  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
-  rel+="${1#"${BOARD}"/}"
+  rel="$(board_rel)${1#"${BOARD}"/}"
   git -C "${PROJECT_DIR}" show "HEAD:${rel}" 2>/dev/null && return 0
   sha="$(git -C "${PROJECT_DIR}" log -1 --format=%H HEAD -- "${rel}" 2>/dev/null)" || return 0
   [[ -z "${sha}" ]] || git -C "${PROJECT_DIR}" show "${sha}^:${rel}" 2>/dev/null || true

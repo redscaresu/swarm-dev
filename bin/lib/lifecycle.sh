@@ -107,7 +107,7 @@ board_pr_kind_line() {
 
 # board_pr start|open|done <name> ... — the lead's board edits, each in its own worktree, never the
 # main checkout: start makes <repo>-wt/_board-<name> (a path no story slug makes) on a new
-# board/<name> from origin/<base> and prints its path; open <name> "<title>" <body-file> commits every change (all under the board) with
+# board/<name> from origin/<base> and prints its path; open <name> "<title>" <body-file> commits every change (all under the board, or on its own paths for a board at the root) with
 # the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL (its
 # kind's line, board_pr_kind_line, goes to stderr), and refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
 # the worktree and board/<name> here, once the PR on the branch's tip has merged or closed, or, with
@@ -116,7 +116,7 @@ board_pr_kind_line() {
 # names it. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel changes files f msg prs tip rtip why critic ct split="" sign=()
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel where changes files f msg prs tip rtip why critic ct split="" sign=()
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -145,18 +145,18 @@ board_pr() {
       # base_for fetches origin/<base>, so the epic check reads it as it is now (an HLD superseded since
       # the start counts).
       base="$(base_for "${PROJECT_DIR}")" || die "board-pr: cannot fetch origin's base branch, so whether an epic goes active with no ticket is unknown"
-      # The board's path from the root with a trailing /, or empty when the board is the root.
-      rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+      rel="$(board_rel)"
       # Committed and uncommitted changes since the base, new files too: each changed path, a rename's
       # old path included (a copy's source is unchanged, so not that).
       changes="$(board_changes "$(git -C "${wt}" merge-base HEAD "origin/${base}")")" || die "board-pr: cannot list the changes in ${wt}"
       files="$(awk -F'\t' '{ print ($1 ~ /^C/ ? $3 : $2) } $1 ~ /^R/ { print $3 }' <<< "${changes}")"
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
+      where="${rel}"; [[ -n "${rel}" ]] || where="the board's paths ($(board_paths | paste -sd' ' - | sed 's/ /, /g'))"
       # git C-quotes a path holding a ", \, tab or newline, and a quoted path would slip past the prefix
       # checks here and in epic_unticketed.
       while IFS= read -r f; do
         [[ "${f}" != \"* ]] || die "board-pr: ${f} has a quote, backslash, tab or newline in its name; rename it"
-        [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"   # loose-match: ok rel ends in /, so a path under the board
+        in_board "${f}" || die "board-pr: ${f} is outside ${where}"
       done <<< "${files}"
       # An epic that goes active with no ticket is refused before anything is pushed. Checked outside
       # the $(...), where a die would not stop this.
@@ -246,7 +246,7 @@ board_pr() {
       # is read from the PR's worktree, as open read it: the main checkout may be behind origin.
       critic=""
       if [[ " ${prs} " == *" CLOSED "* && " ${prs} " != *" MERGED "* ]]; then
-        rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+        rel="$(board_rel)"
         dir="${BOARD}"; [[ ! -d "${wt}" ]] || dir="${wt}${rel:+/${rel%/}}"
         if [[ "$(board_pr_kind "${name}" "${dir}")" == plan ]]; then
           critic="${PROJECT_DIR}/.swarm/${name#*-}/critic.json"
@@ -378,7 +378,7 @@ put_back() {
 # before reconcile runs again.
 PULL_WHY=""
 pull_board_repo() {
-  local incoming line p b o k v u rel stop="" meet="" given="" board other out keys=() undo=()
+  local incoming line p b o k v u stop="" meet="" given="" board other out keys=() undo=()
   git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
   ! git -C "${PROJECT_DIR}" merge-base --is-ancestor '@{upstream}' HEAD || return 0
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
@@ -406,10 +406,11 @@ pull_board_repo() {
       record_event incident - "${o}"
       { printf '%s\n' "${o}" > "${PULL_STOP}"; } 2>/dev/null || true
     fi
-    # The board's path from the root with a trailing /, or empty when the board is the root.
-    rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
-    board="$(awk -v b="${rel}" 'substr($0, 1, length(b)) == b' <<< "${stop}" | paste -sd' ' -)"
-    other="$(awk -v b="${rel}" 'substr($0, 1, length(b)) != b' <<< "${stop}" | paste -sd' ' -)"
+    board=""; other=""
+    while IFS= read -r p; do
+      [[ -n "${p}" ]] || continue
+      if in_board "${p}"; then board+="${board:+ }${p}"; else other+="${other:+ }${p}"; fi
+    done <<< "${stop}"
     PULL_WHY=""
     [[ -z "${board}" ]] || PULL_WHY="board files are changed here: ${board}; land each edit through swarm.sh board-pr, or check the file out to drop it"
     [[ -z "${other}" ]] || PULL_WHY+="${PULL_WHY:+; }files outside the board are changed here: ${other}; commit or move each change"
@@ -2219,8 +2220,7 @@ init_board_base() {
 init_project() {
   local rel board f line n=0
   mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
-  # The board's path from the root with a trailing /, or empty when the board is the root.
-  rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}/"}/"
+  rel="$(board_rel)"
   while IFS= read -r f; do
     if [[ "${f}" == Board.base && ( -e "${BOARD}/${f}" || -L "${BOARD}/${f}" ) ]]; then
       if init_board_base "${rel}"; then n=$((n + 1)); fi

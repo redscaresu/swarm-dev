@@ -349,7 +349,7 @@ reply_sentence() {
 story_path() {
   if [[ ${BOARD_IN_REPO} == 1 && "$2" == "${PROJECT_DIR}" ]] \
     && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${BOARD}/stories/$1.md" >/dev/null 2>&1; then
-    echo "${BOARD#"${PROJECT_DIR}/"}/stories/$1.md"
+    echo "$(board_rel)stories/$1.md"
   else echo "${BOARD}/stories/$1.md"; fi
 }
 
@@ -446,11 +446,11 @@ story_brief() {
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   if [[ "${story_ref}" != /* ]]; then
     # The board is in this repo: the PR takes the story off it, and the epic with its last story.
-    rel="${BOARD#"${PROJECT_DIR}/"}"
+    rel="$(board_rel)"
     if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && ! epic_has_stories "${epic}" "${slug}"; then
-      cleanup="Delete ${rel}/stories/${slug}.md and ${rel}/epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}/stories/ or ${rel}/epics/."
+      cleanup="Delete ${rel}stories/${slug}.md and ${rel}epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}stories/ or ${rel}epics/."
     else
-      cleanup="Delete ${rel}/stories/${slug}.md in your PR, and nothing else under ${rel}/stories/."
+      cleanup="Delete ${rel}stories/${slug}.md in your PR, and nothing else under ${rel}stories/."
     fi
   else
     # The board is elsewhere, or git does not track the story: read it there, and leave it for the
