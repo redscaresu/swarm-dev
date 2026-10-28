@@ -448,9 +448,13 @@ idle_now() {
 # idle_epic_lines [<step>] — idle_now's epic lines, one per epic in board order, from the predicates
 # next's steps plan by, so they cannot drift from them, but the epic <step> (the first line of the step
 # next takes) names as `plan-epic <epic>`: that one is a step's, not idle capacity. `idle: epic <epic>
-# can start, exit: plan it, or set it active in a board PR` for a draft or later epic with nothing left
-# to wait on: its depends_on lists something and open_deps leaves none of it, or a story that counts in
-# it is ready and an agent builds it (epic_ready_story). Not for one with parent: (a split's child: the
+# can start, exit: <exit>` for a draft or later epic with nothing left to wait on: its depends_on lists
+# something and open_deps leaves none of it, or a story that counts in it is ready and an agent builds
+# it (epic_ready_story). The exit is the epic's case, as /epic and next's gate rule: a draft is the
+# user's to agree (`tell the user it can start (/swarm-dev:epic <epic>)`); a later epic with no stories
+# (epic_has_stories) is planned unasked, as the plan-epic step does (`swarm.sh plan-unasked <epic>,
+# then /swarm-dev:plan-epic <epic>`); a later epic with stories starts on the user's go (`the user's
+# go, then set it active with agreed: <today> in a board PR`). Not for one with parent: (a split's child: the
 # user's, as unblocked_epic leaves it) or unasked_plan: (the gate shows its plan or the user's decline);
 # nor one outside the current stage (idle_stage; one with no stage: is in it, and one whose stage: is
 # not v<x.y.z> gets no line); nor a staged_draft (next's stage step sets it active once its tag is cut,
@@ -460,7 +464,7 @@ idle_now() {
 # an active epic with no open story, the board's history (epic_planned, through epic_holding_deps): no
 # gh or herdr call.
 idle_epic_lines() {
-  local f slug st v deps plannable named="" current
+  local f slug st v deps exit plannable named="" current
   if [[ "${1:-}" == "plan-epic "* ]]; then named="${1#plan-epic }"; named="${named%% *}"; fi
   plannable="$(plannable_epics)"; current="$(idle_stage)"
   while IFS= read -r f; do
@@ -475,7 +479,10 @@ idle_epic_lines() {
         [[ "${v}" == - || "${v}" == "${current}" ]] || continue
         deps="$(story_deps "${f}")"
         if [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || epic_ready_story "${slug}"; then
-          echo "idle: epic ${slug} can start, exit: plan it, or set it active in a board PR"
+          if [[ "${st}" == draft ]]; then exit="tell the user it can start (/swarm-dev:epic ${slug})"
+          elif epic_has_stories "${slug}"; then exit="the user's go, then set it active with agreed: <today> in a board PR"
+          else exit="swarm.sh plan-unasked ${slug}, then /swarm-dev:plan-epic ${slug}"; fi
+          echo "idle: epic ${slug} can start, exit: ${exit}"
         fi ;;
       active)
         grep -qxF "${slug}" <<< "${plannable}" || continue

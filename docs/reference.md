@@ -906,9 +906,8 @@ naming its note, which nobody reads. When a note gets no answer, check the condu
 `swarm.sh status`: `swarm.sh next` starts a conductor for ready work that has none, or you can run
 `swarm.sh story --strict <slug>` yourself.
 
-**`next`'s idle epic lines.** `next` prints `idle: epic <epic> can start, exit: plan it, or set it
-active in a board PR` for a draft or later epic in the current stage that has nothing left to wait
-on. The current stage is the lowest `stage:` an epic on the board carries, whatever its status. An
+**`next`'s idle epic lines.** `next` prints `idle: epic <epic> can start, exit: <exit>` for a draft
+or later epic in the current stage that has nothing left to wait on. The current stage is the lowest `stage:` an epic on the board carries, whatever its status. An
 epic with no `stage:` is in it, so when no epic carries one, every epic is. An epic whose `stage:` is
 not `v<x.y.z>` gets no line. Nothing is left to wait on when the epic's `depends_on` lists something
 and every item it lists has left the board or is `done`, or when one of the epic's stories that an
@@ -919,11 +918,13 @@ children are the user's), one with `unasked_plan:` set (the gate already shows i
 decline), or a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
 cut, and the gate lists it until then). The epic the step `next` takes names (`plan-epic <epic>`) gets none
 either: the lines are for capacity no step uses. `next`, `status` and `dash` drop that epic's line;
-`wait --lead` takes no step, so it prints every such epic's line. A draft is the user's to agree, through
-`/swarm-dev:epic` or, staged under an HLD that grants `epics`, the `stage` step: nothing plans a
-draft. A later epic with no stories and its `depends_on` done is planned unasked, as the `plan-epic`
-step does; one whose stories are on the board starts on the user's go, set `active` with
-`agreed: <today>` in a board PR, as `/epic` does. `next` also prints `idle: epic <epic>
+`wait --lead` takes no step, so it prints every such epic's line. The exit is the epic's case: `tell
+the user it can start (/swarm-dev:epic <epic>)` for a draft, which nothing plans and only the user
+agrees (or, staged under an HLD that grants `epics`, the `stage` step sets active);
+`swarm.sh plan-unasked <epic>, then /swarm-dev:plan-epic <epic>` for a later epic with no stories
+and its `depends_on` done, planned unasked as the `plan-epic` step does; and `the user's go, then
+set it active with agreed: <today> in a board PR` for a later epic whose stories are on the board,
+as `/epic` does. `next` also prints `idle: epic <epic>
 has no plan running, exit: /swarm-dev:plan-epic <epic>` for an active epic with no stories and
 nothing in its `depends_on` holding up its planning, as the `plan-epic` step judges it, that the step
 `next` takes does not name, while no plan of it runs: no `scope-<epic>` tab record (or numbered

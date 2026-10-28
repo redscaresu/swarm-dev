@@ -89,17 +89,19 @@ Repeat until a step below says stop:
      `started:` lines) is already running when the line is worked out, so the line names its note.
      When the step is `conduct <epic>` for the story's epic, `next` has not started it, so the line
      still says `swarm.sh story --strict`: run the step instead, and leave the story to that conductor.
-   - `idle: epic <epic> can start, exit: plan it, or set it active in a board PR`: a draft or later
-     epic in the current stage (its `stage:` is the lowest an epic on the board has, or it has none)
-     has nothing left to wait on. Everything in its `depends_on` has left the board or is done, or one
-     of its stories that an agent builds is already ready. The exit depends on the epic. A draft is
-     the user's: nothing plans a draft, and it goes active only once they agree it, through
+   - `idle: epic <epic> can start, exit: <exit>`: a draft or later epic in the current stage (its
+     `stage:` is the lowest an epic on the board has, or it has none) has nothing left to wait on.
+     Everything in its `depends_on` has left the board or is done, or one of its stories that an
+     agent builds is already ready. The exit is the epic's case, as epic.md and the `gate` arm below
+     rule. `idle: epic <epic> can start, exit: tell the user it can start (/swarm-dev:epic <epic>)` is
+     a draft: nothing plans a draft, and it goes active only once the user agrees it, through
      `/swarm-dev:epic <epic>` with them (or, staged under an HLD that grants `epics`, through `next`'s
-     `stage` step); tell the user it can start. A later epic with no stories and every `depends_on`
-     item done is planned unasked, read-only, as the `plan-epic` arm below does for the one `next`
-     names: `swarm.sh plan-unasked <epic>` first, then `/swarm-dev:plan-epic <epic>`. A later epic
-     whose stories are on the board starts on the user's go: on it, set it `status: active` and write
-     `agreed: <today>` in the same board PR edit, as `/epic` does and the `gate` arm below says. No line
+     `stage` step). `idle: epic <epic> can start, exit: swarm.sh plan-unasked <epic>, then /swarm-dev:plan-epic <epic>`
+     is a later epic with no stories and every `depends_on` item done: plan it unasked, read-only,
+     as the `plan-epic` arm below does for the one `next` names.
+     `idle: epic <epic> can start, exit: the user's go, then set it active with agreed: <today> in a board PR`
+     is a later epic whose stories are on the board: on the user's go, set it `status: active` and
+     write `agreed: <today>` in the same board PR edit, as `/epic` does. No line
      comes for a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
      cut), for an epic with `parent:` set (a split's children are the user's), for a later epic with
      `unasked_plan:` set (the gate shows its plan or the user's decline), or for the later epic

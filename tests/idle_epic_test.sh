@@ -24,9 +24,10 @@ fails=0
 check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
-# has <name> <line> / lacks <name> <line> — the line is (not) among LINES, the last run's idle: epic lines.
+# has <name> <line> — the line is among LINES, the last run's idle: epic lines; no_line <name> <slug> — no
+# idle: epic line names <slug>, whatever its exit.
 has() { if grep -qxF "$2" <<< "${LINES}"; then echo "ok   $1"; else echo "FAIL $1: want '$2' among '${LINES}'"; fails=$((fails + 1)); fi; }
-lacks() { if grep -qxF "$2" <<< "${LINES}"; then echo "FAIL $1: want no '$2', got '${LINES}'"; fails=$((fails + 1)); else echo "ok   $1"; fi; }
+no_line() { if grep -q "^idle: epic $2 " <<< "${LINES}"; then echo "FAIL $1: want no line for $2, got '${LINES}'"; fails=$((fails + 1)); else echo "ok   $1"; fi; }
 
 # board — a fresh project in CASE: an empty board under docs/ in a repo with no commit, so the board is
 # in the repo (staged_draft can apply) and an epic's history reads as planned (epic_planned).
@@ -53,7 +54,11 @@ run() {
   LINES="$(grep '^idle: epic ' <<< "${out}" || true)"
   if grep -q '^warning: ' <<< "${out}"; then echo "FAIL next warned: $(grep '^warning: ' <<< "${out}")"; fails=$((fails + 1)); fi
 }
-start() { echo "idle: epic $1 can start, exit: plan it, or set it active in a board PR"; }
+# The can-start line's exit is the epic's case: a draft (start_draft), a later epic with no stories
+# (start_plan) and a later epic with stories (start_go).
+start_draft() { echo "idle: epic $1 can start, exit: tell the user it can start (/swarm-dev:epic $1)"; }
+start_plan() { echo "idle: epic $1 can start, exit: swarm.sh plan-unasked $1, then /swarm-dev:plan-epic $1"; }
+start_go() { echo "idle: epic $1 can start, exit: the user's go, then set it active with agreed: <today> in a board PR"; }
 noplan() { echo "idle: epic $1 has no plan running, exit: /swarm-dev:plan-epic $1"; }
 
 # What a draft epic's depends_on may still wait on: e<n> depends on d<n>, each in its own state.
@@ -66,16 +71,16 @@ item epics/e5.md "status: draft" "depends_on: [d5]"; item epics/d5.md "status: a
 item epics/e6.md "status: draft" "depends_on: [d6]"; item stories/d6.md "kind: code"
 item epics/e7.md "status: draft" "depends_on: [d7]"; item stories/d7.md "status: done" "kind: code"
 run
-has "a draft epic whose dependency epic left the board can start" "$(start e1)"
-lacks "a dependency epic still on the board gives no line" "$(start e2)"
-has "a dependency epic marked done counts as gone" "$(start e3)"
-lacks "a split dependency epic with an open child epic gives no line" "$(start e4)"
-has "a dependency epic whose only open story is a lead after: one counts as done (epic_after_only)" "$(start e5)"
-lacks "a dependency story with no status: is open (open_item), not done" "$(start e6)"
-has "a dependency story marked done counts as gone" "$(start e7)"
-lacks "an active epic that counts as done is not one with no plan running" "$(noplan d5)"
+has "a draft epic whose dependency epic left the board can start" "$(start_draft e1)"
+no_line "a dependency epic still on the board gives no line" e2
+has "a dependency epic marked done counts as gone" "$(start_draft e3)"
+no_line "a split dependency epic with an open child epic gives no line" e4
+has "a dependency epic whose only open story is a lead after: one counts as done (epic_after_only)" "$(start_draft e5)"
+no_line "a dependency story with no status: is open (open_item), not done" e6
+has "a dependency story marked done counts as gone" "$(start_draft e7)"
+no_line "an active epic that counts as done is not one with no plan running" d5
 rm "${CASE}/docs/epics/k4.md"; run
-has "a split dependency epic whose children are gone counts as gone" "$(start e4)"
+has "a split dependency epic whose children are gone counts as gone" "$(start_draft e4)"
 
 # Later epics: the one next's plan-epic step names (unblocked_epic) gets no line; the others can start.
 board; item epics/e.md "status: later" "depends_on: [d]"
@@ -93,14 +98,14 @@ item epics/j.md "status: later" "depends_on: [d]" "unasked_plan: declined 2026-1
 item epics/m.md "status: later" "depends_on: [d]"; item stories/sm.md "status: later" "kind: code" "epic: m"
 run
 check "next's plan-epic step names the first unblocked later epic in board order" "plan-epic a" "${STEP}"
-lacks "the later epic the step names gets no line" "$(start a)"
-has "a second later epic with its dependencies done can start: capacity the step does not use" "$(start e)"
-lacks "a later epic with no depends_on and no ready story waits on the user: no line" "$(start f)"
-lacks "a later epic whose only ready story is a lead one gives no line" "$(start g)"
-has "a later epic with a ready story an agent builds can start" "$(start h)"
-lacks "a later child epic (parent: set) is the user's: no line, ready story or not" "$(start i)"
-lacks "a later epic whose unasked plan the user declined gives no line" "$(start j)"
-has "a later epic already planned, with its dependencies done, can start: set it active" "$(start m)"
+no_line "the later epic the step names gets no line" a
+has "a second later epic with its dependencies done and no stories can start: plan it unasked, as the step would" "$(start_plan e)"
+no_line "a later epic with no depends_on and no ready story waits on the user: no line" f
+no_line "a later epic whose only ready story is a lead one gives no line" g
+has "a later epic with a ready story an agent builds can start, on the user's go" "$(start_go h)"
+no_line "a later child epic (parent: set) is the user's: no line, ready story or not" i
+no_line "a later epic whose unasked plan the user declined gives no line" j
+has "a later epic already planned, with its dependencies done, can start on the user's go" "$(start_go m)"
 
 # The current stage: the lowest stage: an epic on the board carries; an epic with none is in it.
 board; item epics/c.md "status: active" "stage: v1.2.0"; item stories/sc.md "status: ready" "kind: code" "epic: c"
@@ -109,16 +114,16 @@ item epics/e2.md "status: draft" "depends_on: [d]"
 item epics/e3.md "status: draft" "stage: soon" "depends_on: [d]"
 item epics/e4.md "status: draft" "parent: p" "depends_on: [d]"; item epics/p.md "status: split"
 run
-lacks "a draft epic of a later stage than the board's lowest gives no line" "$(start e1)"
-has "a draft epic with no stage: is in the current stage" "$(start e2)"
-lacks "a draft epic whose stage: is not v<x.y.z> gives no line" "$(start e3)"
-lacks "a draft child epic (parent: set) gives no line" "$(start e4)"
+no_line "a draft epic of a later stage than the board's lowest gives no line" e1
+has "a draft epic with no stage: is in the current stage" "$(start_draft e2)"
+no_line "a draft epic whose stage: is not v<x.y.z> gives no line" e3
+no_line "a draft child epic (parent: set) gives no line" e4
 item epics/c.md "status: active" "stage: v1.3.0  # the release that ships it"
 run
-has "a draft epic of the lowest stage (a commented stage: read as its version) can start" "$(start e1)"
+has "a draft epic of the lowest stage (a commented stage: read as its version) can start" "$(start_draft e1)"
 item epics/z.md "status: done" "stage: v1.2.0"
 run
-lacks "a done epic still on the board with a lower stage: pins the current stage below the draft" "$(start e1)"
+no_line "a done epic still on the board with a lower stage: pins the current stage below the draft" e1
 
 # next's stage step covers a staged draft (an agreed HLD granting epics, the minor before its stage
 # tagged on origin/main): no line for it. A draft of the same stage with no hld: is no staged draft, so
@@ -136,7 +141,7 @@ board
 )
 run
 check "next's step is the stage step for the staged draft" "stage v1.3.0" "${STEP}"
-check "next prints the line for the draft with no hld: and none for the one its stage step covers" "$(start b)" "${LINES}"
+check "next prints the line for the draft with no hld: and none for the one its stage step covers" "$(start_draft b)" "${LINES}"
 
 # An active epic with no plan running: the epic next's plan-epic step names gets no line; under any
 # other step, every plannable epic with no plan running gets it, the first in board order (a) too.
@@ -162,22 +167,22 @@ run
 check "the step is a conduct, which next takes before plan-epic" "conduct d" "${STEP}"
 has "under a conduct step no step names the first plannable epic, so it gets the line too" "$(noplan a)"
 has "a second active epic with no stories and no plan running gets the line" "$(noplan e)"
-lacks "an active epic whose only story is a lead after: one counts as done (epic_after_only): no line" "$(noplan e3)"
-lacks "an active epic with a story gives no line" "$(noplan e4)"
-lacks "a draft epic with no stories is not an unplanned active one" "$(noplan e5)"
-lacks "an active epic whose dependency epic has a story not yet in review is held: no line" "$(noplan e6)"
+no_line "an active epic whose only story is a lead after: one counts as done (epic_after_only): no line" e3
+no_line "an active epic with a story gives no line" e4
+no_line "a draft epic with no stories is not an unplanned active one" e5
+no_line "an active epic whose dependency epic has a story not yet in review is held: no line" e6
 has "a split dependency epic with no open child does not hold the plan" "$(noplan e7)"
 has "an active child epic's own parent never holds its plan" "$(noplan e8)"
 item stories/sd.md "status: review" "kind: code" "epic: d"; run
 has "an active epic whose dependency epic's stories are in review gets the line" "$(noplan e6)"
 echo "w1:p1 lead-e" > "${CASE}/.swarm/state/scope-e"; run
-lacks "a scope-<epic> tab record (its plan running) gives no line" "$(noplan e)"
+no_line "a scope-<epic> tab record (its plan running) gives no line" e
 mv "${CASE}/.swarm/state/scope-e" "${CASE}/.swarm/state/scope-e-2"; run
-lacks "a numbered overflow scope-<epic>-2 record gives no line" "$(noplan e)"
+no_line "a numbered overflow scope-<epic>-2 record gives no line" e
 mv "${CASE}/.swarm/state/scope-e-2" "${CASE}/.swarm/state/scope-ex"; run
 has "another epic's scope- record leaves the line" "$(noplan e)"
 mkdir -p "${CASE}-wt/_board-scope-e"; run
-lacks "an open plan board PR (its _board-scope-<epic> worktree) is a plan running: no line" "$(noplan e)"
+no_line "an open plan board PR (its _board-scope-<epic> worktree) is a plan running: no line" e
 
 # On a board outside the repo, an interrupted /plan-hld's marker (.swarm/<hld>/writing-epics) means its
 # rerun will overwrite the epic: no no-plan line for it, as plannable_epics leaves the epic.
@@ -187,13 +192,15 @@ item hld/h.md "status: agreed"; item epics/a.md "status: active"; item epics/e1.
 run "${CASE}/proj"
 has "outside the repo with no /plan-hld marker, next prints the no-plan line" "$(noplan e1)"
 echo e1 > "${CASE}/proj/.swarm/h/writing-epics"; run "${CASE}/proj"
-lacks "an epic a resuming /plan-hld will overwrite gets no no-plan line" "$(noplan e1)"
+no_line "an epic a resuming /plan-hld will overwrite gets no no-plan line" e1
 
 # swarm.md's next idle list quotes the lines next prints (above), with <epic> for the slug.
 # quoted <prefix> — the first `idle: epic <epic> <prefix>...` quote in commands/swarm.md, backticks off.
 # `|| true`: with no such quote, grep's exit 1 under pipefail would end the script with no FAIL line.
 quoted() { grep -o "\`idle: epic <epic> $1[^\`]*\`" "${REPO}/commands/swarm.md" | head -1 | tr -d '`' || true; }
-q="$(quoted "can start")"; check "commands/swarm.md quotes the can-start line next prints" "$(start e)" "${q//<epic>/e}"
+q="$(quoted "can start, exit: tell")"; check "commands/swarm.md quotes the draft's can-start line next prints" "$(start_draft e)" "${q//<epic>/e}"
+q="$(quoted "can start, exit: swarm.sh plan-unasked")"; check "commands/swarm.md quotes the unplanned later epic's can-start line next prints" "$(start_plan e)" "${q//<epic>/e}"
+q="$(quoted "can start, exit: the user")"; check "commands/swarm.md quotes the planned later epic's can-start line next prints" "$(start_go e)" "${q//<epic>/e}"
 q="$(quoted "has no plan running")"; check "commands/swarm.md quotes the no-plan line next prints" "$(noplan e)" "${q//<epic>/e}"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
