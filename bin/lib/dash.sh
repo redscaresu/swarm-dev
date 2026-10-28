@@ -670,12 +670,12 @@ dash_render() {
       elif [[ "${x}" == review ]]; then f="$(item_hld "${BOARD}/${d}/${r}.md")"
       else continue; fi
       [[ -n "${f}" ]] || continue
-      if [[ "${hgrants}" != *$'\n'"${f}"$'\t'* ]]; then
+      if [[ "${hgrants}" != *$'\n'"${f}"$'\t'* ]]; then   # loose-match: ok a whole hgrants line, a newline before the path and a tab after
         x="$(hld_grants "${f}" 2>/dev/null)" || x=""
         if [[ $'\n'"${x}"$'\n' == *$'\n'merge$'\n'* ]]; then x=1; else x=0; fi
         hgrants+="${f}"$'\t'"${x}"$'\n'
       fi
-      if [[ "${hgrants}" == *$'\n'"${f}"$'\t'1$'\n'* ]]; then granted+="${d}"$'\t'"${r}"$'\n'; fi
+      if [[ "${hgrants}" == *$'\n'"${f}"$'\t'1$'\n'* ]]; then granted+="${d}"$'\t'"${r}"$'\n'; fi   # loose-match: ok a whole hgrants line, a newline before the path and a tab after
     done < <(cut -f1-3 <<< "${board}")
   fi
   # Each active epic with no stories whose depends_on still holds its planning up, as next reads it.
