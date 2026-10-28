@@ -110,13 +110,14 @@ settle; rm -rf "${P}/.swarm/inbox"; review s3 https://github.com/o/r/pull/9
 is "merge = human, s3 handed over, every story of e in review: exits 0" 0 "${rc}"
 is "merge = human, s3 handed over, every story of e in review: the finish: line" finish "$(finished)"
 # The same handover, s2's, with other work of e left: s3 blocked on x, a story of e an agent builds,
-# holds it; so does a fix-main story the conductor started (its worktree is there), until its PR merges.
+# holds it; so does a fix-main story the conductor started (its worktree is there), until its PR merges,
+# in review under merge = human too.
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item x "status: ready" "kind: code" "epic: e"
 item s3 "status: blocked" "depends_on: [x]" "epic: e"; review s2 "${U2}"
 is "merge = human, s2 handed over while s3 waits on x, an agent's story of e: no finish: line" hold "$(finished)"
-epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item fix-main-abc1234 "status: ready" "kind: code"
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item fix-main-abc1234 "status: review" "kind: code" "prs: https://github.com/o/r/pull/11"
 mkdir -p "${ROOT}/proj-wt/fix-main-abc1234"; review s2 "${U2}"
-is "merge = human, s2 handed over while a started fix-main story is open: no finish: line" hold "$(finished)"
+is "merge = human, s2 handed over while a started fix-main story is in review: no finish: line" hold "$(finished)"
 # s3 blocked by hand (no depends_on) is the lead's to ready, as is one blocked on a kind: lead story:
 # it holds nothing up.
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item s3 "status: blocked" "epic: e"; review s2 "${U2}"

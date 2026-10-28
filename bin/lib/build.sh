@@ -106,7 +106,8 @@ The review agent waits for the PR's checks, triages them, reviews each head, sen
 the builder, logs them, and merges the PR or hands it to the user. Never wait on a PR or a review
 agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or
 merge a story's PR: each is the review agent's, and doing it as well would send findings twice and
-count a round twice.
+count a round twice. The one close that is yours is the stop rule's, of an idle review agent on a
+\`finish:\` line.
 A note in your inbox that says \`review-<slug> stopped on <sha>: <why>\` is a review agent that
 stopped before a pass, and the story is yours again. Act on <why> as on your own wait on that builder:
 a stalled or stuck builder by the give-up and stuck rules above. When the builder is idle and pushed

@@ -714,17 +714,17 @@ lead_blocked() {
 # agent_work_left <epic> — true while a story of <epic> (- for the stories with no epic, the backlog's),
 # of a kind an agent builds (agent_kind), is still an agent's: ready (to start, building, or with its PR
 # open and not yet in review), blocked but neither lead_blocked nor by_hand_blocked (both wait on the
-# lead), or in review with a review agent still to act on it (review_agent_owns). A story in review is otherwise the user's. A fix-main story counts for
-# every group once its build has started (one_off_started): it has no epic, and the conductor that
-# started it owns it until its PR merges. conductor_note's finish: line is its negation.
+# lead), or in review with a review agent still to act on it (review_agent_owns); a story in review is
+# otherwise the user's. A fix-main story counts for every group, in any status, once its build has
+# started (one_off_started): it has no epic, and the conductor that started it owns it until its PR
+# merges. conductor_note's finish: line is its negation.
 agent_work_left() {
   local f slug e
   while IFS= read -r f; do
     slug="$(basename "${f}" .md)"; e="$(fm "${f}" epic)"
-    if [[ "${e:--}" != "$1" ]]; then
-      [[ "${slug}" == fix-main-* && -z "${e}" ]] || continue
-      one_off_started "${slug}" || continue
-    fi
+    # A started fix-main story counts in any status, in review too, until its PR merges.
+    if [[ "${slug}" == fix-main-* && -z "${e}" ]] && one_off_started "${slug}"; then return 0; fi
+    [[ "${e:--}" == "$1" ]] || continue
     agent_kind "$(fm "${f}" kind)" || continue
     case "$(fm "${f}" status)" in
       ready) return 0 ;;
@@ -738,7 +738,8 @@ agent_work_left() {
 # review_agent_owns <story-file> — true for a story in review that a review agent has still to act on:
 # one a close kept unreviewed (kept:), which waits for its review agent, or one its review agent merges
 # next, under merge = agent or an agreed HLD over it that grants merge, unless it costs money
-# (costs_tag) or every PR of it is held for the user's merge on a protected path (protected_holds). A
+# (costs_tag) or every PR of it is held for the user's merge on a protected path (protected_holds,
+# without the stale holds it leaves out: a new head the review agent works on is its own). A
 # protected PR under a grant has no such hold recorded, so it counts until it merges: a finish: held
 # back only keeps the conductor waiting, where one sent early lets it report mid-merge.
 review_agent_owns() {
@@ -750,7 +751,7 @@ review_agent_owns() {
     [[ -n "${h}" ]] && grep -qxF merge <<< "$(hld_grants "${h}" 2>/dev/null)" || return 1
   fi
   [[ -z "$(costs_tag "$1")" ]] || return 1
-  held="$(protected_holds urls)"
+  held="$(protected_holds | awk '{ print $1 }')"
   for u in $(fm "$1" prs); do
     grep -qxF -- "${u}" <<< "${held}" || return 0
   done
