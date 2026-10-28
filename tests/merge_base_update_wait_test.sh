@@ -130,6 +130,13 @@ check "a base moving on every round: refuses after 3 rounds, naming them and the
 check "a base moving on every round: no pr merge" not_merged
 is "a base moving on every round: three requests to merge main in, three base-merged lines, then the refusal" "3|3|merge s base merged, still moving:" \
   "$(grep -c '/update-branch$' "${ROOT}/gh.log")|$(merge_events | tr '|' '\n' | grep -c 'base-merged')|$(merge_events | tr '|' '\n' | tail -1 | cut -d: -f1):"
+# Every round's wait ends on no workflow run, with main moved each time: the rounds run out, and the
+# refusal says the last head's workflow had no run, never that it is green.
+fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; moves "${H3}" "${H4}" "${B2}" .github/workflows/ci.yml; moves "${H4}" "${H5}" "${B3}" .github/workflows/ci.yml
+for h in "${H3}" "${H4}" "${H5}"; do wfruns "${FX}/${h}.runs"; printf 'name: ci\non:\n  pull_request:\n    types: [opened, synchronize]\n' > "${FX}/wf.ci.yml.${h}"; done
+echo '{"ahead_by":1,"files":[{"filename":".github/workflows/ci.yml","status":"modified"}]}' > "${FX}/behind.${H5}"; merge "${URL}"
+check "every round's wait ending on no workflow run: the still-moving refusal says the last head's workflow had no run, not that it is green" said \
+  "after 3 rounds of merging it into ${URL} and waiting for CI (MERGE_BASE_ROUNDS); 5555555 had a pull_request workflow with no run when its wait ended: once main is quiet"
 
 # --- The PR merged elsewhere (another merge run, or by hand) while this one waited on the new head's
 # CI: the PR reads MERGED from then on, and main holds that merge. This run says so, merges nothing,
@@ -155,6 +162,9 @@ fresh; item s "status: review" "prs: ${URL}" "epic: e"; mkdir -p "${P}/docs/epic
 landed; merge "${URL}"
 check "a PR merged elsewhere during the wait: its story's running conductor is told it merged" \
   grep -qF "The PR ${URL} of story s just merged" "${P}/.swarm/inbox/conduct-e.md"
+# This run waited for no CI on main, and after a merge by hand nothing does: the note says so.
+check "a PR merged elsewhere during the wait: the note says this run did not wait for CI on main, and to start nothing waiting on it" \
+  grep -qF "this run did not make the merge, so it did not wait for CI on main; start none of the stories waiting on it until CI on main is green" "${P}/.swarm/inbox/conduct-e.md"
 settle; rm -rf "${P}/.swarm/inbox" "${P}/docs/epics"
 
 # --- A push while merge waits: the PR's head is no longer the one GitHub's merge made.
@@ -171,6 +181,18 @@ printf 'mkdir -p "%s"; echo %s > "%s/pid"\n' "${P}/.swarm/merge-o-r-main.lock" "
 merge SWARM_MERGE_LOCK_WAIT=1 "${URL}"; rm -rf "${P}/.swarm/merge-o-r-main.lock"
 refused_after "the lock held by another merge after the wait" "another swarm.sh merge into main of o/r has held ${P}/.swarm/merge-o-r-main.lock (pid $$) for 1s; nothing was merged" \
   "nothing was merged: GitHub's merge of main made 3333333, which is green: once that merge is done, ${NEXT}"
+# no_run_on <sha>... — each <sha> has no run of the ci workflow, which a pull_request runs.
+no_run_on() {
+  local h
+  for h in "$@"; do wfruns "${FX}/${h}.runs"; printf 'name: ci\non:\n  pull_request:\n    types: [opened, synchronize]\n' > "${FX}/wf.ci.yml.${h}"; done
+}
+# After a wait that ended on no workflow run, with main moved, the head is not green: the lock refusal
+# does not say it is.
+fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; moves "${H3}" "${H4}" "${B2}" .github/workflows/ci.yml; no_run_on "${H3}"
+printf 'mkdir -p "%s"; echo %s > "%s/pid"\n' "${P}/.swarm/merge-o-r-main.lock" "$$" "${P}/.swarm/merge-o-r-main.lock" > "${FX}/on-checks.${H3}"
+merge SWARM_MERGE_LOCK_WAIT=1 "${URL}"; rm -rf "${P}/.swarm/merge-o-r-main.lock"
+check "the lock held after a wait that ended on no workflow run: the refusal says so, not that the head is green" said \
+  "nothing was merged: GitHub's merge of main made 3333333, whose wait ended on no workflow run: once that merge is done, ${NEXT}"
 
 # --- merge_admin = on: --admin skips every rule on main, so ci_gate admin checks the new head too, not only
 # the head merge read: main requires lint, which ran on the old head.

@@ -593,8 +593,8 @@ merge_base_update() {
 # naming them. It returns with head the one to merge, or with BASE_LANDED set when the PR merged
 # elsewhere meanwhile.
 base_rounds() {
-  local round old merged waited=""
-  BASE_LANDED=""
+  local round old merged waited="" state
+  BASE_LANDED=""; BASE_UNGREEN=""
   if base_merged "${MERGE_TARGET}" "${head}"; then
     old="$(base_merged_from "${MERGE_TARGET}" "${head}")"
     base_wait "${old:-${head}}" || return 0
@@ -606,7 +606,8 @@ base_rounds() {
     # merge, which the builder's worktree lacks: every refusal from here says to pull first.
     merged=""; if [[ ${round} -gt 0 ]] || base_merged "${MERGE_TARGET}" "${head}"; then merged=1; fi
     if base_moved "${repo}" "${head}" "${base}" "${n}" "${merged}"; then return 0; fi
-    [[ ${round} -lt ${MERGE_BASE_ROUNDS} ]] || merge_fail "base merged, still moving: ${base} gained code ${head:0:7} lacks again after ${round} rounds of merging it into ${url} and waiting for CI (MERGE_BASE_ROUNDS); ${head:0:7} is green on ${base} as it was: once ${base} is quiet, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"
+    state="is green on ${base} as it was"; [[ -z "${BASE_UNGREEN}" ]] || state="had a pull_request workflow with no run when its wait ended"
+    [[ ${round} -lt ${MERGE_BASE_ROUNDS} ]] || merge_fail "base merged, still moving: ${base} gained code ${head:0:7} lacks again after ${round} rounds of merging it into ${url} and waiting for CI (MERGE_BASE_ROUNDS); ${head:0:7} ${state}: once ${base} is quiet, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"
     rm -rf "${lock}"; lock=""; trap - EXIT
     old="${head}"
     merge_base_update "${repo}" "${n}" "${head}" "${base}" "${BASE_BEHIND}" "${merged}"
@@ -623,17 +624,20 @@ base_rounds() {
 # elsewhere meanwhile, which outranks what the wait saw; fails (BASE_LANDED set) for the latter. A
 # `no workflow run` whose base has moved since (base_moved) is no refusal: the PR's merge ref follows the
 # base, so a pull_request workflow the base gained after GitHub made this head is waited on though it
-# never runs here, and base_rounds' next round merges the base in again, which starts it.
+# never runs here, and base_rounds' next round merges the base in again, which starts it. Such a wait
+# sets BASE_UNGREEN, so no refusal after it calls the head green.
 base_wait() {
+  local state="which is green"
   [[ -z "${lock}" ]] || rm -rf "${lock}"
-  lock=""; trap - EXIT
+  lock=""; trap - EXIT; BASE_UNGREEN=""
   if ! base_ci "${repo}" "${n}" "$1" "${head}" "${base}"; then
     base_pr_now || return 1
     if [[ "${BASE_CI_CAUSE}" != "no workflow run" ]] || base_moved "${repo}" "${head}" "${base}" "${n}" 1; then
       merge_fail "${BASE_CI_WHY}"
     fi
+    BASE_UNGREEN=1; state="whose wait ended on no workflow run"
   fi
-  merge_lock "${repo}" "${base}" "GitHub's merge of ${base} made ${head:0:7}, which is green: once that merge is done, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"
+  merge_lock "${repo}" "${base}" "GitHub's merge of ${base} made ${head:0:7}, ${state}: once that merge is done, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"
   lock="${MERGE_LOCK}"
   # shellcheck disable=SC2064 # the path is fixed now
   trap "rm -rf '${lock}'" EXIT
@@ -969,7 +973,11 @@ merge_pr() {
           record_event reconcile - "${rwhy:-failed (exit ${rrc})}"; rwhy="${rwhy:-exit ${rrc}}"
         }
         if [[ -n "${grp}" ]]; then
-          [[ -z "${rwhy}" ]] || caveat="reconcile failed after it (${rwhy}), so which stories it made ready is not known until swarm.sh reconcile succeeds"
+          # This run made no merge, so it waited for no CI on the base, and after a merge by hand nothing
+          # does: as after a red base, the note says to start nothing that waits on the story.
+          caveat="this run did not make the merge, so it did not wait for CI on ${base}; start none of the stories waiting on it until CI on ${base} is green"
+          [[ -z "${rwhy}" ]] || caveat+=", and reconcile failed after it (${rwhy}), so which stories it made ready is not known until swarm.sh reconcile succeeds"
+          caveat+=". This overrides the startable pass after this note: do not start any story whose depends_on names ${MERGE_TARGET}"
           ( set -e; story_note "${url}" "${MERGE_TARGET}" "${grp}" "${caveat}" ) &
           wait $! || echo "warning: telling the conductor of ${MERGE_TARGET} that ${url} merged failed (exit $?)"
         fi

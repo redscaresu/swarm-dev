@@ -2715,7 +2715,9 @@ hand, it prints `already merged: <PR URL> merged while this run waited on <head>
 merge or by hand; reconciling`, logs `merge merged elsewhere` and merges nothing. It skips its own
 `merge ok` and its wait for CI on the base, and runs `swarm.sh reconcile`, since a merge by hand has
 no other run to do it; after another run's reconcile it finds nothing left. Then it notes the story's
-running conductor that the PR merged, as after any merge, naming a reconcile that failed. A PR closed meanwhile
+running conductor that the PR merged, as after any merge, naming a reconcile that failed. The note
+also says this run did not wait for CI on the base, which after a merge by hand nothing does, so the
+conductor starts no story that waits on this one until CI on the base is green. A PR closed meanwhile
 refuses. A head an earlier `merge` run made by merging the base in (its `base-merged` line) gets the
 same wait before its base check, so a run of `merge --head` on it waits on the workflows too, which
 the plain check on the head does not read. A head that moved (a push during the wait) refuses as `base
