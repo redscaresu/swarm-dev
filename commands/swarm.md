@@ -489,13 +489,15 @@ Repeat until a step below says stop:
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
      release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md
      and docs/ did not, unless that line is there (a change only to commands/*.md counts as its own
-     docs). Run `swarm.sh wait-pr --head "$(git -C <worktree> rev-parse HEAD)" <PR URL>`, with
-     `<worktree>` the release worktree you pushed from, in the background and wait for it. Without
-     `--head`, wait-pr waits on the head GitHub reports first, which right after your push can still
-     be the old one. If it exits 1, a check is red. A release PR may change only the
+     docs). Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with
+     `<head>` the `git rev-parse HEAD` of the release worktree you pushed from, or, for a
+     `release/v<new>` PR that was already open, the head it reports (`gh pr view <PR URL> --json
+     headRefOid -q .headRefOid`). Without `--head`, wait-pr waits on the head GitHub reports first,
+     which right after your push can still be the old one. If it exits 1, a check is red. A release PR may change only the
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
-     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
+     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
+     one you named: tell the user
      what it printed and stop. Run
      `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it,
      under `merge = human` too: there it merges only when HLDs granting `release` cover the release.

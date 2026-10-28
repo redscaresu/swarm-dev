@@ -227,6 +227,12 @@ check "the builder's wait-pr is pinned to its worktree's head" "yes|yes" \
   "$(has "wait-pr --head \"\$(git rev-parse HEAD)\" <PR URL>\` (in the background)" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "wait-pr --head \"\$(git rev-parse HEAD)\" <PR URL>\` (in the background)" "$(cat "${p}/.swarm/briefs/g1.md")")"
 check "the conductor's wait-pr is pinned to the head watch printed, never git rev-parse" "yes|yes|" \
   "$(has "wait-pr --head <sha> <PR URL>\` (in the background)" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "A PR's head is the <sha> \`swarm.sh watch\` printed for it (\`checks finished on" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(grep -F 'wait-pr --head' "${p}/.swarm/briefs/conduct-f.md" | grep -F 'git rev-parse' || true)"
+# Why: watch has printed no head for one a base merged: line made, or a builder pushed after a nudge; a wait
+# pinned to watch's last head ends "the PR's head is X, not <sha>" after the grace, and each brief needs its way out.
+check "the conductor's brief names the head for a wait watch has not printed, and waits again on a head the PR never got" "yes|yes" \
+  "$(has "pass the \`<new head>\` a \`base merged:\` line names, or, after a builder's push, the head the PR reports (\`gh pr view <PR URL> --json headRefOid -q .headRefOid\`)" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR never got the head you named: wait again on <X>, the head it has now." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "the builder's brief reads a head the PR never got as its branch having moved: pull it by name, then wait on the new HEAD" "yes|yes" \
+  "$(has "the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/f1\`)" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "push, and wait again on the new HEAD." "$(cat "${p}/.swarm/briefs/f1.md")")"
 # clash_brief <brief> — the clash rule (per repo), the merge-base-in rule (a nudge; a busy builder waited
 # on, a closed one started again), the pass rule (a round defined, decline reasons kept), then the
 # old file-level wording.

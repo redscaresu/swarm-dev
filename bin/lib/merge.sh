@@ -1451,7 +1451,7 @@ rate_reset() {
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
-# wait-pr [--timeout <seconds>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
+# wait-pr [--timeout <seconds>] [--head <sha>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
 # MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
 # that changes. Exits 0 when all are green, printing each check; 1 on red; 2 on anything else, since a
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,

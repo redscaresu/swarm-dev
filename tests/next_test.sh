@@ -458,8 +458,9 @@ else echo "FAIL commands/swarm.md's stage arm:${got}"; fails=$((fails + 1)); fi
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `release`:/,$p' "$(dirname "${SWARM}")/../commands/swarm.md")"
 # shellcheck disable=SC2016 # the backticks and $( ) are literal Markdown
-got="$(armwords '   - `release`:' 'Run `swarm.sh wait-pr --head "$(git -C <worktree> rev-parse HEAD)" <PR URL>`, with `<worktree>` the release worktree you pushed from, in the background' \
-  'Without `--head`, wait-pr waits on the head GitHub reports first, which right after your push can still be the old one')"
+got="$(armwords '   - `release`:' 'Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with `<head>` the `git rev-parse HEAD` of the release worktree you pushed from, or, for a `release/v<new>` PR that was already open, the head it reports (`gh pr view <PR URL> --json headRefOid -q .headRefOid`)' \
+  'Without `--head`, wait-pr waits on the head GitHub reports first, which right after your push can still be the old one' \
+  'they never finished, or the PR'"'"'s head is not the one you named: tell the user what it printed and stop')"
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's release arm waits on the head it pushed"
 else echo "FAIL commands/swarm.md's release arm:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.

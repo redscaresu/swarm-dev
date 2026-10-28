@@ -23,7 +23,7 @@ merge_rule() {
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
 # wait_pr_rule <then> <report> <head> — how every agent waits on a PR's CI: on <head> (wait-pr's --head:
-# right after a push GitHub can still report the old head), <then>, what it does on red or a conflict,
+# right after a push GitHub can still report the old head), <then>, what it does on red, a conflict or a head the PR never got,
 # and what it does on wait-pr's other exit 2s, the last of which is <report>. wait-pr exits on red, on
 # a conflict and on a deadline, where a loop of its own can sit for hours.
 wait_pr_rule() {
@@ -465,7 +465,7 @@ or skill line that names it, and fix each one that no longer matches. Run \`$(co
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
-the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
+the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
 in the PR body. $(load_rule "${slug}") $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
@@ -1076,7 +1076,9 @@ A PR is green only when every check on its head has passed and you have triaged 
 conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
 never dismiss an alert. A PR's head is the <sha> \`swarm.sh watch\` printed for it (\`checks finished on
-<sha>\`), never your checkout's HEAD: you work from the main checkout, on the base. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in." "report it to the lead" "<sha>")
+<sha>\`), never your checkout's HEAD: you work from the main checkout, on the base. For a head watch has not printed,
+pass the \`<new head>\` a \`base merged:\` line names, or, after a builder's push, the head the PR reports (\`gh pr view <PR URL> --json headRefOid -q .headRefOid\`);
+without \`--head\`, wait-pr takes the head of its first read, which right after a push can be the old one. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR never got the head you named: wait again on <X>, the head it has now." "report it to the lead" "<sha>")
 EOF
 }
 
