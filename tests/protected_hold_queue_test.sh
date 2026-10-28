@@ -27,16 +27,16 @@ HELD="merge: s ${URL} (held: changes hooks/x.sh; exit: the user merges it)"
 cp "${ROOT}/bin/gh" "${ROOT}/merge-gh"
 # changes <path> — the PR's one file.
 changes() { echo "[{\"filename\":\"$1\",\"status\":\"modified\"}]" > "${FX}/files"; echo 1 > "${FX}/nfiles"; }
-# reads_stub — gh as wait --lead reads it: every PR's head is ${H1}, its one check run green, no status;
-# the project's repo is o/r, whose open PRs are ${ROOT}/prlist, else none. Anything else fails.
+# reads_stub — gh as wait --lead reads it: PR <n>'s head is ${ROOT}/head.<n>, else ${H1}, its one check run
+# green, no status; the project's repo is o/r with no open PR. Anything else fails.
 reads_stub() {
-  printf '#!/bin/sh\nLOG="%s"; H="%s"; L="%s"\n' "${ROOT}/gh.log" "${H1}" "${ROOT}/prlist" > "${ROOT}/bin/gh"
+  printf '#!/bin/sh\nLOG="%s"; H="%s"; D="%s"\n' "${ROOT}/gh.log" "${H1}" "${ROOT}" > "${ROOT}/bin/gh"
   cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
 case "$1 $2" in
-  "pr view") echo "${H}" ;;
+  "pr view") cat "${D}/head.$3" 2>/dev/null || echo "${H}" ;;
   "repo view") echo o/r ;;
-  "pr list") cat "${L}" 2>/dev/null || echo '[]' ;;
+  "pr list") echo '[]' ;;
   api*) case "$*" in
           *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
           */status*) echo '{"total_count":0,"statuses":[]}' ;;
@@ -52,7 +52,7 @@ STUB
 held_board() {
   cp "${ROOT}/merge-gh" "${ROOT}/bin/gh"
   fresh; item s "status: review" "prs: ${URL} ${U8}"; item r "status: review" "prs: ${U9}"
-  rm -rf "${P}/docs/epics" "${P}/.swarm/lead" "${ROOT}/prlist"
+  rm -rf "${P}/docs/epics" "${P}/.swarm/lead" "${ROOT}"/head.*
   changes hooks/x.sh; merge "${URL}"
   refused "PR 7, changing hooks/x.sh" "held: s changes hooks/x.sh, which only the user merges"
   # The stub reads every PR merged once one is: PRs 7 and 9 stay open, so reconcile keeps s and r in review.
@@ -74,11 +74,6 @@ lead() {
     ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$1" > "${ROOT}/out" 2>&1) || rc=$?
 }
 merge_out() { grep '^merge: ' "${ROOT}/out" || true; }
-# open_pr7 <head> — the open PRs gh lists: PR 7, story s's branch, at <head>.
-open_pr7() {
-  printf '[{"url":"%s","headRefName":"story/s","headRefOid":"%s","mergeable":"MERGEABLE","statusCheckRollup":[],"createdAt":"2026-10-28T00:00:00Z","isCrossRepository":false}]\n' \
-    "${URL}" "$1" > "${ROOT}/prlist"
-}
 gh_count() { grep -c -- "$1" "${ROOT}/gh.log" || true; }
 # gh_calls — gh.log's calls by kind, joined with |.
 gh_calls() {
@@ -127,14 +122,33 @@ is "the story's line names PR 7, the epic's PR 11 alone" \
   "${HELD}"$'\n'"merge: e ${U11} (held: changes hooks/x.sh; exit: the user merges it)" "$(merge_out)"
 is "PR 7's head is read once, PR 11's once" "1|1" "$(gh_count '^pr view 7 ')|$(gh_count '^pr view 11 ')"
 
-# --- A hold names the head it was read at: a heads pass that lists PR 7 at that head keeps it, one that
-# lists it at another head (the builder pushed) makes it stale, so it is no longer the user's merge.
-held_board; open_pr7 "${H1}"; lead 20000
-is "PR 7 listed at the held head: wait --lead still prints its line" "${HELD}" "$(merge_out)"
-open_pr7 "${H2}"; rm -rf "${P}/.swarm/lead"; lead 3000
-is "PR 7 listed at a new head: wait --lead prints no merge: line" "1|" "${rc}|$(merge_out)"
-is "PR 7 listed at a new head: status lists it untagged" \
+# --- A hold names the head it was read at: a heads pass that reads PR 7 at that head keeps it, one that
+# reads it at another head (the builder pushed) makes it stale, so it is no longer the user's merge. The
+# second second keeps the pass after the hold, as a real push is.
+held_board; sleep 1; lead 20000
+is "PR 7 read at the held head: wait --lead still prints its line" "${HELD}" "$(merge_out)"
+echo "${H2}" > "${ROOT}/head.7"; rm -rf "${P}/.swarm/lead"; lead 3000
+is "PR 7 read at a new head: wait --lead prints no merge: line" "1|" "${rc}|$(merge_out)"
+is "PR 7 read at a new head: status lists it untagged" \
   "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge: s ${URL} ${U8}" "$(merge_rows)"
+# The epic's held PR 11 is no story PR (gh lists only story/* branches as open story PRs): its new head
+# makes its hold stale too.
+held_board; mkdir -p "${P}/docs/epics"; cp "${ROOT}/merge-gh" "${ROOT}/bin/gh"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${U11}" > "${P}/docs/epics/e.md"
+echo OPEN > "${FX}/state.11"; changes hooks/x.sh; merge "${U11}"
+reads_stub; echo "${H2}" > "${ROOT}/head.11"; sleep 1; lead 20000
+is "the epic's PR 11, read at a new head: no merge: line for it, only PR 7's" "${HELD}" "$(merge_out)"
+check "the epic's PR 11, read at a new head: status lists it untagged" grep -qxF "  awaiting your merge: epic e ${U11}" <(merge_rows)
+# A hold made after the last pass read the old head stands, though the pass saw another head than its own:
+# swarm.sh merge read PR 7 again at ${H2} and held it.
+held_board; sleep 1; lead 20000
+cp "${ROOT}/merge-gh" "${ROOT}/bin/gh"; echo "${H2}" > "${FX}/head"; sleep 1
+checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"
+rm "${P}/.swarm/events.tsv"; changes hooks/x.sh; merge "${URL}"
+refused "PR 7 at ${H2:0:7}, changing hooks/x.sh" "held: s changes hooks/x.sh"
+reads_stub
+is "a hold newer than the last pass, at another head than it read: status still tags it" \
+  "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge (protected path): s ${URL}"$'\n'"  awaiting your merge: s ${U8}" "$(merge_rows)"
 
 # --- A PR whose files cannot be read is held too, and recorded: status tags it, and wait --lead says why.
 held_board; cp "${ROOT}/merge-gh" "${ROOT}/bin/gh"; rm "${P}/.swarm/events.tsv"; changes hooks/x.sh; echo 301 > "${FX}/nfiles"

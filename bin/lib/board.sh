@@ -1572,34 +1572,36 @@ costs_tag() {
   done
 }
 
-# protected_holds — `<PR URL> <what>` per PR that swarm.sh merge holds for the user under protected_hold:
-# <what> is the protected path it changes, or `unreadable: <why>` when its files could not be read. It
-# reads the protected: line in the board-state file of each story and epic on the board, entries
-# `<PR URL> <head> <what>` joined by " | ", and never the item files, which carry no protected: line.
-# An entry whose PR the last heads pass of wait --lead (LEAD_PRS) lists at another head is stale: the
-# builder pushed since, so the hold says nothing about the new head, and it is left out. With no such
-# list, or a PR not on it, the entry stands. No gh call.
+# protected_holds [urls] — `<PR URL> <what>` per PR that swarm.sh merge holds for the user under
+# protected_hold: <what> is the protected path it changes, or `unreadable: <why>` when its files could not
+# be read. It reads the protected: line in the board-state file of each story and epic on the board,
+# entries `<PR URL> <head> <epoch seconds> <what>` joined by " | ", and never the item files, which carry
+# no protected: line. An entry is stale, and left out, when the last heads pass of wait --lead
+# (held_heads, LEAD_HELD) read the PR at another head and began after the hold: the builder pushed since,
+# so the hold says nothing about the new head. With no such pass, or a PR it could not read, the entry
+# stands. With urls, each entry's PR URL alone, stale or not. No gh call.
 protected_holds() {
-  local f prs="/dev/null" files=()
+  local f held="/dev/null" files=()
   while IFS= read -r f; do
     state_path "${f}" protected
     [[ ! -f "${STATE_PATH}" ]] || files+=("${STATE_PATH}")
   done < <(board stories; board epics)
   [[ ${#files[@]} -gt 0 ]] || return 0
-  # shellcheck disable=SC2154 # LEAD_PRS is lifecycle.sh's
-  [[ ! -f "${LEAD_PRS}" ]] || prs="${LEAD_PRS}"
-  awk -v lp="${prs}" 'FILENAME == lp { if ($1 == "+") at[$4] = $5; next }
+  # shellcheck disable=SC2154 # LEAD_HELD is lifecycle.sh's
+  [[ "${1:-}" == urls || ! -f "${LEAD_HELD}" ]] || held="${LEAD_HELD}"
+  awk -v lp="${held}" -v urls="${1:-}" 'FILENAME == lp { seen[$1] = $2; read[$1] = $3; next }
     index($0, "protected:") == 1 { v = substr($0, 11); sub(/^ +/, "", v); n = split(v, e, / \| /)
       for (i = 1; i <= n; i++) {
-        if (split(e[i], w, " ") < 3 || w[1] !~ /^https:\/\//) continue
-        if ((w[1] in at) && at[w[1]] != w[2]) continue
-        print w[1] " " substr(e[i], length(w[1]) + length(w[2]) + 3)
-      } }' "${prs}" "${files[@]}"
+        if (split(e[i], w, " ") < 4 || w[1] !~ /^https:\/\//) continue
+        if (urls != "") { print w[1]; continue }
+        if ((w[1] in seen) && seen[w[1]] != w[2] && read[w[1]] + 0 > w[3] + 0) continue
+        print w[1] " " substr(e[i], length(w[1]) + length(w[2]) + length(w[3]) + 4)
+      } }' "${held}" "${files[@]}"
 }
 
 # protected_record <item-file> <pr-url> [<head> <what>] — set <pr-url>'s entry in the item's protected:
-# state (protected_holds) to `<pr-url> <head> <what>`, or drop it with no <what>; no write when that
-# changes nothing. The read and the write are under one hold of the item's lock (state_lock, as
+# state (protected_holds) to `<pr-url> <head> <now, epoch seconds> <what>`, or drop it with no <what>; no
+# write for a drop when it has none. The read and the write are under one hold of the item's lock (state_lock, as
 # state_set takes it), so two merges holding two of its PRs at once keep both entries. Dies naming the
 # state file when a step fails.
 protected_record() {
@@ -1609,7 +1611,7 @@ protected_record() {
   { mkdir -p "${s%/*}" && [[ -w "${s%/*}" ]]; } || die "board state: cannot write ${s}: ${s%/*} cannot be made or written"
   state_lock "${s}.lock"
   # A subshell, so a read that dies still lets the lock go.
-  ( protected_update "$1" "${s}" "$2" "${4:+$3 $4}" ) || rc=1
+  ( protected_update "$1" "${s}" "$2" "${4:+$3 $(date +%s) $4}" ) || rc=1
   rmdir "${s}.lock" || die "board state: cannot remove ${s}.lock; remove it by hand"
   [[ ${rc} -eq 0 ]] || die "board state: cannot write ${s}"
 }
@@ -1625,7 +1627,8 @@ protected_update() {
     out+="${out:+ | }${e}"
   done <<< "${v// | /$'\n'}"
   [[ -z "$4" ]] || out+="${out:+ | }$3 $4"
-  [[ "${had}" != "$3${4:+ $4}" && ( -n "${had}" || -n "$4" ) ]] || return 0
+  # A hold is written each time, with its new time; a pass writes only to drop one.
+  [[ -n "${had}" || -n "$4" ]] || return 0
   state_write "$1" "$2" "protected"$'\t'"${out}"$'\n'
 }
 

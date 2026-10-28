@@ -2304,12 +2304,16 @@ LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one
 LEAD_HEADS="${LEAD_DIR}/heads"        # each review item's verdict from the last heads pass (lead_heads)
 LEAD_HEADS_EVERY="${SWARM_LEAD_HEADS_EVERY:-300}"   # seconds between heads passes, at least 1
 LEAD_HEADS_AT=""                      # SECONDS at this run's last heads pass, empty before the first
+# shellcheck disable=SC2034 # board.sh reads it
+LEAD_HELD="${LEAD_DIR}/held"          # "<PR URL> <sha> <epoch>" per PR a protected hold names, read by the last heads pass (held_heads)
+LEAD_KNOWN=""                         # "<PR URL> <sha>" lines this heads pass has read already, which heads_green takes
 
 # heads_green <pr-url>... — 0 when there is at least one PR and every one's head is green, 1 when one is
 # not or a URL is not a PR, 2 when none is red but gh or ci_gate could not read one. ci_gate head is
 # skipped for a head LEAD_GREEN holds, setting LEAD_CACHED, unless LEAD_FRESH is set; each green head
 # goes to LEAD_GREEN.new. A red or pending head is read again each time: a re-run can turn it green
-# with no new SHA. LEAD_RED is "<url> <head>" for the red or pending head it stopped at, else empty.
+# with no new SHA. LEAD_RED is "<url> <head>" for the red or pending head it stopped at, else empty. A
+# head LEAD_KNOWN holds is taken from it, not read again.
 heads_green() {
   local url repo head rc=0 g
   LEAD_CACHED=""; LEAD_RED=""
@@ -2317,7 +2321,8 @@ heads_green() {
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 1
     repo="${BASH_REMATCH[1]}"
-    head="$(gh pr view "${BASH_REMATCH[2]}" --repo "${repo}" --json headRefOid --jq .headRefOid </dev/null 2>/dev/null)" || head=""
+    head="${LEAD_KNOWN#*$'\n'"${url} "}"   # loose-match: ok quoted, a whole "<url> " line start
+    if [[ "${head}" != "${LEAD_KNOWN}" ]]; then head="${head%%$'\n'*}"; else head="$(pr_head "${url}")"; fi
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || { rc=2; continue; }
     if [[ -z "${LEAD_FRESH:-}" ]] && grep -qxF "${url} ${head}" "${LEAD_GREEN}" 2>/dev/null; then
       LEAD_CACHED=1
@@ -2328,6 +2333,29 @@ heads_green() {
     echo "${url} ${head}" >> "${LEAD_GREEN}.new"
   done
   return "${rc}"
+}
+
+# pr_head <pr-url> — the PR's head SHA as gh reads it, or nothing when it cannot.
+pr_head() {
+  [[ "$1" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 0
+  gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid --jq .headRefOid </dev/null 2>/dev/null || true
+}
+
+# held_heads — the heads pass's first read: the head of each PR a protected hold names (protected_holds
+# urls), story PR or not, to LEAD_HELD as `<PR URL> <head> <epoch>`, which protected_holds weighs a hold
+# against, and to LEAD_KNOWN, so heads_green reads none of them twice. <epoch> is the second the pass
+# began, before any read, so a read it stamps later than a hold came after that hold. A PR whose head
+# cannot be read is left out: its hold stands.
+held_heads() {
+  local u h t held=""
+  LEAD_KNOWN=""; t="$(date +%s)"
+  while IFS= read -r u; do
+    h="$(pr_head "${u}")"
+    [[ "${h}" =~ ^[0-9a-f]{40}$ ]] || continue
+    LEAD_KNOWN+=$'\n'"${u} ${h}"; held+="${u} ${h} ${t}"$'\n'
+  done < <(protected_holds urls)
+  printf '%s' "${held}" > "${LEAD_HELD}.tmp" && mv "${LEAD_HELD}.tmp" "${LEAD_HELD}"
+  LEAD_KNOWN+=$'\n'
 }
 
 # lead_review_items — waiting_on_user's review items as the lead's queue weighs them: a `kept: <slug>
@@ -2389,11 +2417,13 @@ lead_unreported() {
 # run's first read and then at most once every LEAD_HEADS_EVERY seconds, as does open_story_prs beside it,
 # so the polls between make no gh call. A held PR (costs: money or a protected path) an earlier item already
 # reports is not read again: a later held row loses it (lead_unreported), and a row left with none gets no
-# verdict. The verdict is keyed by the item's whole line, as lead_queue looks it up. Whether the lead has seen
+# verdict. It reads the heads of the held PRs first (held_heads), so a hold the builder pushed past is
+# stale before the holds are read. The verdict is keyed by the item's whole line, as lead_queue looks it up. Whether the lead has seen
 # an item is read from LEAD_SEEN in its printed form (lead_merge_shown).
 lead_heads() {
   local tag line slug prs rc v urls="" seen=" " red="|" holds shown
   : > "${LEAD_GREEN}.new"; : > "${LEAD_HEADS}.new"
+  held_heads
   holds="$(protected_holds)"
   while read -r tag line; do
     [[ "${tag}" != kept: ]] || continue
@@ -2426,7 +2456,7 @@ lead_heads() {
   awk -v keep="${urls} " -v red="${red}" 'index(red, "|" $0 "|") { next }
     FILENAME == ARGV[1] { if (!($1 in got)) print; got[$1] = 1; next }
     !($1 in got) && index(keep, " " $1 " ") { print }' "${LEAD_GREEN}.new" "${LEAD_GREEN}" > "${LEAD_GREEN}.tmp"
-  mv "${LEAD_GREEN}.tmp" "${LEAD_GREEN}"; rm -f "${LEAD_GREEN}.new"
+  mv "${LEAD_GREEN}.tmp" "${LEAD_GREEN}"; rm -f "${LEAD_GREEN}.new"; LEAD_KNOWN=""
 }
 
 # lead_head_wakes <verdict> <merge: line> — true when a review item with that verdict is in the lead's
