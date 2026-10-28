@@ -151,7 +151,9 @@ LOCK="${p}/.swarm/locks/step-up-nb-stall"
 nudge() {
   local cmd="$1" b="$2" rc=0 out; shift 2
   echo "merge origin/main in and push (${b})" > "${ROOT}/nudge-${b}.md"
-  cmd="${cmd/ <slug> && / <slug> ${WAIT_MS} && }"   # the wait's timeout, after its slug
+  # The wait's timeout, after its slug. Split, not ${cmd/.../...}: bash 5.2 reads & in a replacement as
+  # the matched text, which would mangle the &&.
+  [[ "${cmd}" != *" && "* ]] || cmd="${cmd%% && *} ${WAIT_MS} && ${cmd#* && }"
   cmd="${cmd//<slug>/${b}}"; cmd="${cmd//<file>/${ROOT}/nudge-${b}.md}"
   out="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 SWARM_NOTE_WAKE_SECS=1 SWARM_STALL_POLL_MS=1000 \
     PATH="${ROOT}/bin:${PATH}" "$@" bash -c "${cmd}" 2>/dev/null)" || rc=$?
