@@ -2251,8 +2251,10 @@ sets an epic `active` with no ticket, as `board-pr open` does (§ The lead). Onc
 it reads each epic and HLD through gh at the PR's base branch and head SHA; for a story PR it first
 lists the PR's files at that head. Any read error refuses, as does a 404 at the head on a file the PR
 does not remove or rename away. The refusal starts `--board:` only on the `--board` route. A story
-PR in a repo other than the board's is not checked, since its `epics/` files are that repo's own; when
-gh cannot name the board's repo, the check runs anyway. With
+PR is not checked when the board is not in the project's repo. Nor is one whose story names another
+repo (`repo:`) and whose PR is outside the board's repo, since its `epics/` files are that repo's own;
+when gh cannot name the board's repo, merge refuses, says why, and you run it again. Under
+`merge = human`, a story PR whose files cannot be read at the head waits on your merge. With
 `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
