@@ -116,13 +116,13 @@ EOF
 chmod +x "${ROOT}/bin/herdr"
 log() { cat "${ROOT}/herdr.log"; }
 # gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs; pr view <url> --json headRefOid
-# prints ${ROOT}/head (nothing when it is missing), and any other pr view <url> gives the state on
-# <url>'s line in ${ROOT}/pr-states.
+# prints ${ROOT}/head while that file exists, and any other pr view <url> gives the state on <url>'s
+# line in ${ROOT}/pr-states.
 gh_stub() {
   printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
   # shellcheck disable=SC2016 # the stub's own shell expands these
   printf '%s\n' 'echo "$*" >> "$H/gh.log"' 'case "$1 $2" in "pr list") cat "$H/prs.json" 2>/dev/null || echo "[]" ;;' \
-    '  "pr view") case " $* " in *" headRefOid "*) cat "$H/head"; exit 0 ;; esac' \
+    '  "pr view") [ -f "$H/head" ] && case " $* " in *" headRefOid "*) cat "$H/head"; exit 0 ;; esac' \
     '    echo "{\"state\":\"$(awk -v u="$3" '\''$1 == u { print $2 }'\'' "$H/pr-states")\"}" ;; esac' >> "${ROOT}/bin/gh"
   chmod +x "${ROOT}/bin/gh"
 }
@@ -158,12 +158,16 @@ check "the load rule names the leftover cleanup, the labelled container cleanup,
 check "a builder re-reads, before it pushes, the comments and docs naming what its diff changes, and fixes the stale ones" "yes" \
   "$(has "Before you push, for each function, command-line flag or error message the diff changes, re-read its header comment, error text and every README, doc, command or skill line that names it, and fix each one that no longer matches." "$(tr -s '[:space:]' ' ' <<< "${brief}")")"
 # f1's review brief: its checklist names the docs-move-with-behaviour line, with swarm-dev's env:
-# line as the example. The gh stub answers the PR's head with the worktree's.
+# line as the example. The gh stub answers the PR's head with the worktree's while ${ROOT}/head
+# exists; it is removed after the check. The review-f1 agent in the herdr stub, its events and f1's
+# Done when stay for the checks below.
 printf '%s\n' "" "**Done when:**" "- f1 works" >> "${b}/stories/f1.md"
 git -C "${ROOT}/svc-wt/f1" rev-parse HEAD > "${ROOT}/head"
 run review-agent f1 https://github.com/o/svc/pull/8 >/dev/null
-check "a review brief holds, as an exception to the scope rule, a PR that changes what a user runs, sees or must do and leaves its docs stale, the env: line its example" "yes" \
-  "$(has "- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and leaves README.md, AGENTS.md, docs/ or command text stale is a finding, e.g. swarm-dev's env: line." "$(cat "${p}/.swarm/briefs/review-f1.md" 2>/dev/null)")"
+rbrief="$(cat "${p}/.swarm/briefs/review-f1.md" 2>/dev/null)"
+check "a review brief holds, as an exception to the scope rule, a PR that changes what a user runs, sees or must do and does not update its docs, where to report it, and the env: line as its example" "yes|yes" \
+  "$(has "- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding." "${rbrief}")|$(has "- Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed." "${rbrief}")"
+rm -f "${ROOT}/head"
 # The builder brief (_brief) of f1, whose worktree lacks scripts/select-tests.sh (only svc's own
 # checkout has it), then has it: after review fixes only the change's tests (select-tests.sh only where
 # the builder works), and no self-matching pgrep poll.

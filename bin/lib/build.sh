@@ -1030,7 +1030,8 @@ Hold the PR to these as well:
 - A zero or empty value shown to a person must say what it means.
 - A repair path that changes something must say what it did.
 - An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches.
-- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and leaves README.md, AGENTS.md, docs/ or command text stale is a finding, e.g. swarm-dev's env: line.
+- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding.
+- Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed.
 - For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding.
 EOF
   [[ -f "${1:-}" ]] || return 0
