@@ -356,6 +356,35 @@ check "a held PR whose first item is not green still wakes it through a later gr
 check "it prints the later item" test "$(out)|$(rc)" == "merge: e ${URL}|0"
 stop; rm -rf "${P}/docs/epics"
 
+# --- under merge = human, the lead merges a reviewed PR whose HLD grants merge:
+# with review-wl-granted gone (herdr lists conduct-e only) after an ok start and its PR open, it needs the
+# lead. A slug and URL no other test's processes name: a swarm.sh merge or tell on them anywhere on the
+# machine would make the story look busy (no_agent_busy reads the real ps).
+GURL=https://github.com/wl-owner/wl-granted/pull/7
+# granted <grants> — story wl-granted in review, under epic ge, under the agreed HLD g with grants:
+# <grants>; its build, its review agent's ok start and the handover (review, then the builder's close)
+# on record, its worktree kept, the review's head pending, no findings yet.
+granted() {
+  mkdir -p "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs"
+  printf -- '---\nstatus: agreed\ngrants: %s\n---\n\n# g\n' "$1" > "${P}/docs/hld/g.md"
+  printf -- '---\nstatus: active\nhld: g\n---\n\n# ge\n' > "${P}/docs/epics/ge.md"
+  item wl-granted "kind: code" "status: review" "prs: ${GURL}" "epic: ge"
+  printf 'Review %s, the PR of story wl-granted, at its head %s, in this worktree.\n' "${GURL}" "${H}" > "${P}/.swarm/briefs/review-wl-granted.md"
+  echo "${H}" > "${P}/.swarm/reviews/wl-granted.head"
+  printf '2026-10-27T00:00:00Z\tstory\twl-granted\t-\tok\n2026-10-27T00:01:00Z\treview-agent\twl-granted\t-\tok\n' >> "${P}/.swarm/events.tsv"
+  printf '2026-10-27T00:02:00Z\treview\twl-granted\t-\tok (%s)\n2026-10-27T00:03:00Z\tclose\twl-granted\t-\tok\n' "${GURL}" >> "${P}/.swarm/events.tsv"
+  mkdir -p "${ROOT}/proj-wt/wl-granted"
+  checks pending
+}
+fresh "merge = human"; granted "[merge]"
+lead 0
+check "a granted review story whose review agent went reaches wait --lead" test "$(out)|$(rc)" == \
+  "no-review: wl-granted ${GURL}, exit: swarm.sh review-agent wl-granted ${GURL}, or the fallback reviewer|0"
+fresh "merge = human"; granted "[epics, stories]"
+lead 0
+check "the same story with no merge grant (an ordinary handoff to the user) gives none" test "$(out)|$(rc)" == "|1"
+rm -rf "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt"
+
 # --- no change: a short timeout.
 fresh
 start 3000

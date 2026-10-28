@@ -1021,8 +1021,8 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 # epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
 # line; README.md excepted) that goes active with no ticket, one per line: status: active at the head
 # (raw_status), absent at the base or at any status there but active (later, split, review and done
-# too, as a draft, none or a typo), and none of an agreed: date the base did not already have
-# (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
+# too, as a draft, none or a typo), and none of an agreed: date the base did not already have, from
+# today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that is active or split at the base
 # (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics at both ends
 # (hld_ticket). Nothing with lead_epics = on. <reader>
 # base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
@@ -1062,12 +1062,21 @@ epic_unticketed() (
 )
 
 # epic_ticket_agreed <head bytes> <base bytes> — epic_unticketed's agreed: ticket: true when the
-# epic's front matter at the head has an agreed: YYYY-MM-DD date that its base copy did not already
-# have (an absent one has none). One left on a draft, or on a later epic agreed before, is stale.
+# epic's front matter at the head has an agreed: date that its base copy did not already have (an
+# absent one has none), and that date is a real YYYY-MM-DD from today back AGREED_MAX_AGE days: one
+# of those days as date prints them. One left on a draft, or on a later epic agreed before, is
+# stale; an older one, or one after today, was not agreed for this PR. Today is the clock's, not the
+# PR's merge base, which moves when the branch is updated from main. The shape check comes first,
+# so a blank value (a PR that drops the line) never matches a date that failed to print.
+AGREED_MAX_AGE=7
 epic_ticket_agreed() {
-  local d
+  local d i
   d="$(slug_list "$(get_fm - agreed <<< "$1")")"
-  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]]
+  [[ "${d}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "${d}" != "$(slug_list "$(get_fm - agreed <<< "$2")")" ]] || return 1
+  for ((i = 0; i <= AGREED_MAX_AGE; i++)); do
+    [[ "${d}" != "$(date -v-"${i}"d +%F 2>/dev/null || date -d "${i} days ago" +%F)" ]] || return 0
+  done
+  return 1
 }
 
 # epic_ticket_parent <reader> <head bytes> <slug> <epics prefix> — epic_unticketed's parent: ticket:
@@ -1102,6 +1111,34 @@ hld_ticket() {
     grep -qxF epics <<< "${g}" || return 1
   done
 }
+
+# board_reader <end> <path> — epic_unticketed's reader over the board as it is now, the same bytes at
+# either end: prints <path>, failing 1 when it is absent and 2 when it cannot be read.
+board_reader() { [[ -e "$2" ]] || return 1; cat "$2" 2> /dev/null || return 2; }
+
+# draft_lead_why <epic file> — why the lead may set this draft epic active with no agreement, through
+# the epic guard's own tickets over the board as it is (board_reader): "lead_epics = on", "parent <p>
+# is <status>" (epic_ticket_parent) or "hld <h> grants epics" (hld_ticket). Nothing for a draft that
+# needs the user's agreement, a read error included, or one with a stage:, whatever its tickets: a
+# stage next can open gives it the staged line, and one it cannot open goes through /epic (reference.md,
+# Staged epics), never the lead unasked.
+draft_lead_why() (
+  local f="$1" now p rc
+  [[ -z "$(slug_list "$(get_fm "${f}" stage)")" ]] || exit 0
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ "${CFG_lead_epics}" != on ]] || { echo "lead_epics = on"; exit 0; }
+  now="$(cat "${f}")" || exit 0
+  if epic_ticket_parent board_reader "${now}" "$(basename "${f}" .md)" "${BOARD}/epics/" > /dev/null; then
+    p="$(slug_list "$(get_fm - parent <<< "${now}")")"
+    echo "parent ${p} is $(raw_status < "${BOARD}/epics/${p}.md")"; exit 0
+  fi
+  p="$(slug_list "$(get_fm - hld <<< "${now}")")"
+  [[ "${p}" =~ ^[A-Za-z0-9._-]+$ ]] || exit 0   # item_hld's pattern: no /
+  t="$(mktemp)" || exit 0
+  trap 'rm -f "${t}" "${t}.err"' EXIT
+  rc=0; hld_ticket board_reader "${BOARD}/hld/${p}.md" "${t}" > /dev/null || rc=$?
+  [[ ${rc} -ne 0 ]] || echo "hld ${p} grants epics"
+)
 
 # item_hld <story or epic file> [epics dir] [hld dir] — the agreed HLD file in [hld dir] (${BOARD}/hld)
 # over it: a story's epic:, then each epic's parent:, up to the first epic with hld:, read in [epics
@@ -1435,7 +1472,9 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 # next_step's gate, status and dash. An HLD's open plan or finish PR (hld_pr_open) is one too, and so
 # is an HLD due a plan that hld_blocked names (`hld cannot be planned: <hld>, <why>`). A
 # staged draft (staged_draft) is listed as `staged epic: <slug>, stage v<T>, after v<P>`, never with
-# /epic: it waits on a tag at or above v<P>, then on next's stage step. Each stage board PR's worktree
+# /epic: it waits on a tag at or above v<P>, then on next's stage step. An unstaged draft the epic guard
+# would let go active with no agreement (draft_lead_why) is `draft epic: <slug>, the lead sets it active
+# (<why>)`, never with /epic either: the lead sets it active in a board PR. Each stage board PR's worktree
 # (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
 waiting_on_user() {
   local f kind slug when start agreed stage prev why waiting=""
@@ -1468,9 +1507,11 @@ waiting_on_user() {
         esac
         waiting+="  later epic: ${slug}${when}"$'\n' ;;
       # A staged draft is the lead's to set active once the stage before it is tagged (next's stage).
+      # A draft the epic guard would let go active unagreed (draft_lead_why) is the lead's too.
       draft) slug=$(basename "${f}" .md); stage=""; read -r stage prev <<< "$(staged_draft "${f}")"
-        if [[ -z "${stage}" ]]; then waiting+="  draft epic: ${slug}, run /epic ${slug}"$'\n'
-        else waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'; fi ;;
+        if [[ -n "${stage}" ]]; then waiting+="  staged epic: ${slug}, stage v${stage}, after v${prev}"$'\n'
+        elif why="$(draft_lead_why "${f}")" && [[ -n "${why}" ]]; then waiting+="  draft epic: ${slug}, the lead sets it active (${why})"$'\n'
+        else waiting+="  draft epic: ${slug}, run /epic ${slug}"$'\n'; fi ;;
       review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board epics)
