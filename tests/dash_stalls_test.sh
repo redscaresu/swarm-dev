@@ -184,8 +184,8 @@ fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 COLUMNS=1
 read_panes() { cut -d' ' -f1 "${PI_LOG}" | sort -u | tr '\n' ' '; }
 check "only the stalled builder's pane is asked for its process info, not the conductor working under stall_minutes" \
   test "$(read_panes)" = "w1:p9 "
-check "at 160 columns a working agent's card shows its state age, then the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working 4m  4m( +[^ │]+ in [^│]*)? +│' <<< "${out}"
-check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 120m( +[^ │]+ in [^│]*)? +│' <<< "${out}"
+check "at 160 columns a working agent's card shows its state age, then the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working 4m  4m( +[^│]*)? *│' <<< "${out}"
+check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 120m( +[^│]*)? *│' <<< "${out}"
 check "with no test run under its pane the builder still needs you" grep -qE '! look at s-three: working 120 min' <<< "${out}"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 120m' <<< "${out}"
@@ -233,24 +233,24 @@ GIT_COMMITTER_DATE="$(ago 12)" git -C "${ROOT}/proj-wt/${A}-2" -c user.name=t -c
 printf '%s\tstory\t%s-2\tw1:p1\tok\n' "$(ago 25)" "${A}" >> "${P}/.swarm/events.tsv"
 agedash() { (cd "${P}" || exit 1; fresh; HERDR_ENV=1 LINES=80 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
 out="$(COLUMNS=160 agedash)"
-check "at 160 columns a working builder shows its state age, then the time since it started" grep -qE '● aaaaaaaaaa-bbbbbbbbbb-ccccccc… .* working 12m  25m( +[^ │]+ in [^│]*)? +│' <<< "${out}"
-check "at 160 columns a conductor keeps its time since start after its state age" grep -qE '● conduct-e1 +conduct +opus·high +working 4m  4m( +[^ │]+ in [^│]*)? +│' <<< "${out}"
-check "at 160 columns a stalled builder still shows stalled" grep -qE '! s-three +code +opus·high +stalled 120m( +[^ │]+ in [^│]*)? +│' <<< "${out}"
+check "at 160 columns a working builder shows its state age, then the time since it started" grep -qE '● aaaaaaaaaa-bbbbbbbbbb-ccccccc… .* working 12m  25m( +[^│]*)? *│' <<< "${out}"
+check "at 160 columns a conductor keeps its time since start after its state age" grep -qE '● conduct-e1 +conduct +opus·high +working 4m  4m( +[^│]*)? *│' <<< "${out}"
+check "at 160 columns a stalled builder still shows stalled" grep -qE '! s-three +code +opus·high +stalled 120m( +[^│]*)? *│' <<< "${out}"
 out="$(COLUMNS=100 agedash)"
-check "at 100 columns a working builder shows its state age" grep -qE '● aaaaaaaaaa-bbbbbbbbbb-ccccccc… .* working 12m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
-check "at 100 columns a stalled builder still shows stalled" grep -qE '! s-three .*stalled 120m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
+check "at 100 columns a working builder shows its state age" grep -qE '● aaaaaaaaaa-bbbbbbbbbb-ccccccc… .* working 12m( +[^│]*)? *│$' <<< "${out}"
+check "at 100 columns a stalled builder still shows stalled" grep -qE '! s-three .*stalled 120m( +[^│]*)? *│$' <<< "${out}"
 check "a stalled builder still needs you, in the same words" grep -qE '! look at s-three: working 120 min with no commit, edit, session-log write or PR update' <<< "${out}"
-check "a conductor below stall_minutes is working, not stalled" grep -qE '● conduct-e1 +conduct +opus·high +working 4m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
+check "a conductor below stall_minutes is working, not stalled" grep -qE '● conduct-e1 +conduct +opus·high +working 4m( +[^│]*)? *│$' <<< "${out}"
 # The conductor's newest sign (its start, from its own pane) is 4 minutes old: past stall_minutes = 3.
 echo "stall_minutes = 3" > "${P}/.claude/swarm/config"
 out="$(COLUMNS=100 agedash)"
-check "a conductor past stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
+check "a conductor past stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m( +[^│]*)? *│$' <<< "${out}"
 check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working 4 min with no swarm action' <<< "${out}"
 # The same conductor with make check running under its pane shell (500) is working, and not under needs you.
 echo 'w1:p1 500' > "${ROOT}/pi.map"
 { cat "${ROOT}/ps.base"; printf '%s\n' '  500     1     08:00 -zsh' '  510   500     07:00 claude' '  520   510     02:00 make check'; } > "${PS_LIST}"
 out="$(PI_MAP="${ROOT}/pi.map" COLUMNS=100 agedash)"
-check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working 4m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
+check "a stalled conductor running make check under its pane is working" grep -qE '● conduct-e1 +conduct +opus·high +working 4m( +[^│]*)? *│$' <<< "${out}"
 check "a conductor running make check is not under needs you" lacks "look at conduct-e1" "${out}"
 cp "${ROOT}/ps.base" "${PS_LIST}"
 # A session log written a minute ago is a sign of life for any agent with a Claude session: the
@@ -261,17 +261,17 @@ printf '%s\tplan\tplan-e9\tclaude\topus\thigh\tsess-plan\n' "${TODAY}" >> "${P}/
 printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-today","status":"busy"},{"sessionId":"sess-plan","status":"busy"}]' > "${ROOT}/claude-plan.json"
 for s in sess-1 sess-plan; do echo '{}' > "${ROOT}/projects/p/${s}.jsonl"; touch -t "$(mins_ago 1)" "${ROOT}/projects/p/${s}.jsonl"; done
 out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude-plan.json" COLUMNS=100 agedash)"
-check "a conductor whose session log was written a minute ago is working" grep -qE '● conduct-e1 +conduct +opus·high +working 1m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
-check "a planner whose session log was written a minute ago is working" grep -qE '● plan-e9 +plan +opus·high +working 1m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
+check "a conductor whose session log was written a minute ago is working" grep -qE '● conduct-e1 +conduct +opus·high +working 1m( +[^│]*)? *│$' <<< "${out}"
+check "a planner whose session log was written a minute ago is working" grep -qE '● plan-e9 +plan +opus·high +working 1m( +[^│]*)? *│$' <<< "${out}"
 touch -t "$(mins_ago 10)" "${ROOT}/projects/p/sess-1.jsonl" "${ROOT}/projects/p/sess-plan.jsonl"
 out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude-plan.json" COLUMNS=100 agedash)"
-check "a conductor whose session log is older than stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
-check "a planner whose session log is older than stall_minutes is stalled" grep -qE '! plan-e9 +plan +opus·high +stalled 10m( +[^ │]+ in [^│]*)? +│$' <<< "${out}"
+check "a conductor whose session log is older than stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m( +[^│]*)? *│$' <<< "${out}"
+check "a planner whose session log is older than stall_minutes is stalled" grep -qE '! plan-e9 +plan +opus·high +stalled 10m( +[^│]*)? *│$' <<< "${out}"
 rm "${P}/.swarm/state/plan-e9" "${ROOT}/projects/p/sess-1.jsonl" "${ROOT}/projects/p/sess-plan.jsonl"
 # A nudge its pane sent a minute ago (wait's, or the lead's tell:nudge) and a tell that never reached
 # anyone are not signs of life (STALL_PY's rule): the conductor stays stalled.
 printf '%s\tnudge\ts-one\tw1:p1\tok\n%s\ttell:nudge\ts-one\tw1:p1\tok\n%s\ttell:findings\ts-one\tw1:p1\tfailed (exit 1)\n' "$(ago 1)" "$(ago 1)" "$(ago 1)" >> "${P}/.swarm/events.tsv"
-check "a conductor whose only recent pane lines are nudges is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m +│$' <<< "$(COLUMNS=100 agedash)"
+check "a conductor whose only recent pane lines are nudges is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m( +[^│]*)? *│$' <<< "$(COLUMNS=100 agedash)"
 # The lead's board-pr step a minute ago, named after s-three (a re-scope of it), is no sign of life
 # for s-three's builder: it stays stalled.
 cp "${P}/.swarm/events.tsv" "${ROOT}/events.bak"
@@ -286,13 +286,13 @@ for k in note resume; do
   cp "${ROOT}/events.bak" "${P}/.swarm/events.tsv"
   printf '%s\ttell:%s\tconduct-e1\tw0:p1\tok\n' "$(ago 1)" "${k}" >> "${P}/.swarm/events.tsv"
   out="$(COLUMNS=100 agedash)"
-  if [[ ${k} == note ]]; then check "a conductor whose only recent line is a note to it is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m +│$' <<< "${out}"
-  else check "a conductor whose only recent line is a resume tell to it is working" grep -qE '● conduct-e1 +conduct +opus·high +working 1m +│$' <<< "${out}"; fi
+  if [[ ${k} == note ]]; then check "a conductor whose only recent line is a note to it is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled 4m( +[^│]*)? *│$' <<< "${out}"
+  else check "a conductor whose only recent line is a resume tell to it is working" grep -qE '● conduct-e1 +conduct +opus·high +working 1m( +[^│]*)? *│$' <<< "${out}"; fi
 done
 cp "${ROOT}/events.bak" "${P}/.swarm/events.tsv"; rm "${ROOT}/projects/p/sess-1.jsonl"
 # A command its own pane ran a minute ago (a review of s-one, not naming it) is a sign of life.
 printf '%s\treview\ts-one\tw1:p1\tok\n' "$(ago 1)" >> "${P}/.swarm/events.tsv"
-check "a line from a conductor's own pane is a sign of life" grep -qE '● conduct-e1 +conduct +opus·high +working 1m +│$' <<< "$(COLUMNS=100 agedash)"
+check "a line from a conductor's own pane is a sign of life" grep -qE '● conduct-e1 +conduct +opus·high +working 1m( +[^│]*)? *│$' <<< "$(COLUMNS=100 agedash)"
 rm "${P}/.claude/swarm/config"
 
 # Every process-info read came from dash.sh: its bash, or the perl of report_read's within, which runs
