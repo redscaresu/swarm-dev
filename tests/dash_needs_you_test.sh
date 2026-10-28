@@ -237,6 +237,7 @@ case "$1 $2 $3" in
   "pr view https://github.com/o/l/pull/2") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
   "pr view https://github.com/o/l/pull/4") echo '{"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
   "pr view https://github.com/o/l/pull/5") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+  "pr view https://github.com/o/l/pull/21") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
   *) exit 1 ;;
 esac
 STUB
@@ -335,6 +336,35 @@ for want in "! merge l#1 (✓ green) m-green" "! merge g-ok: https://github.com/
 done
 check "lead = session, merge = agent: a costs: money merge under a granting HLD is under needs you" \
   has "! merge g-paid (costs money): https://github.com/o/l/pull/8" "${needs}"
+# A PR swarm.sh merge holds for a protected path is the user's too (protected-hold-queue's
+# ` (protected path)` row): p-prot lists PR 21, held, and PR 22, not. Rows of a costs: money story, an
+# untagged story and a granted PR are drawn as before (above).
+litem stories/p-prot.md '' 'status: review' 'prs: https://github.com/o/l/pull/21 https://github.com/o/l/pull/22'
+mkdir -p "${L}/.swarm/board-state/stories"
+printf 'protected: https://github.com/o/l/pull/21 0123456789abcdef0123456789abcdef01234567 1793000000 hooks/x.sh\n' > "${L}/.swarm/board-state/stories/p-prot"
+out="$(ldash 100)"; needs="$(joined "$(lbox "needs you" "${out}")")"; queue="$(joined "$(lbox "lead's queue" "${out}")")"
+check "lead = session, merge = agent: a protected-path merge is under needs you, with its PR" \
+  has "! merge l#21 (✓ green) p-prot (protected path)" "${needs}"
+check "lead = session, merge = agent: a protected-path merge is not in the lead's queue" lacks "(protected path)" "${queue}"
+check "lead = session, merge = agent: the story's other PR is the lead's, on an untagged row" \
+  has "! merge p-prot: https://github.com/o/l/pull/22" "${queue}"
+check "lead = session, merge = agent: a costs: money merge, an untagged one and a granted one are drawn as before" \
+  test "$(has "! merge l#5 (✓ green) m-paid (costs money)" "${needs}" && has "! merge l#1 (✓ green) m-green" "${queue}" && has "! merge g-ok: https://github.com/o/l/pull/7" "${queue}" && echo yes)" = yes
+# An epic in review listing the held PR too: one row for it, as for a held costs: money PR.
+litem epics/ep-prot.md '' 'status: review' 'prs: https://github.com/o/l/pull/21'; out="$(ldash 100)"
+check "lead = session, merge = agent: a held protected-path PR a story and its epic both list is one row" \
+  test "$(grep -c 'l#21' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
+# A held PR of a costs: money story carries both tags.
+litem stories/p-both.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/23'
+printf 'protected: https://github.com/o/l/pull/23 0123456789abcdef0123456789abcdef01234567 1793000000 hooks/x.sh\n' > "${L}/.swarm/board-state/stories/p-both"
+out="$(ldash 100)"
+check "lead = session, merge = agent: a costs: money story's held protected-path PR is under needs you with both tags" \
+  has "! merge p-both (costs money) (protected path): https://github.com/o/l/pull/23" "$(joined "$(lbox "needs you" "${out}")")"
+rm -f "${L}/docs/epics/ep-prot.md" "${L}/docs/stories/p-both.md" "${L}/.swarm/board-state/stories/p-both"
+chk="$(cd "${L}" && env -u HERDR_ENV -u SWARM_PROJECT COLUMNS=100 CLAUDE_STUB_AGENTS="${ROOT}/l.json" PATH="${ROOT}/lbin:${PATH}" bash "${SWARM}" dash --check 2>&1)" && chk_rc=0 || chk_rc=$?
+check "lead = session, merge = agent: dash --check agrees on a protected-path merge row" \
+  test "${chk_rc}" -eq 0 -a "$(grep -c 'every dash figure agrees' <<< "${chk}")" -eq 1
+rm -f "${L}/docs/stories/p-prot.md" "${L}/.swarm/board-state/stories/p-prot"
 # An epic in review listing the same held PR: one row for it.
 litem epics/ep-paid.md '' 'status: review' 'prs: https://github.com/o/l/pull/5'; out="$(ldash 100)"
 check "lead = session, merge = agent: a held PR a story and its epic both list is one row" \

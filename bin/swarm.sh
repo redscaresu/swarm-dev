@@ -24,6 +24,7 @@
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh where <agent>                                  this project's agent (a slug, review-<slug>, conduct-<epic> or a herdr agent name): its pane id, its workspace's label and its tab's label, either label - when herdr gives none (no label, a gone tab, or a list it could not give); exit 1 when herdr lists no such agent in this project's panes
+#   swarm.sh swarms                                         every swarm herdr runs on this machine: each `swarm-lead · <project>` workspace as a project, with its dir, then its workspaces (the lead's first) with their agents; a workspace is a project's by its label and its dir, never by a prefix of another project's label or a dir name two projects share
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog] [--foreground]        after claude plugin update: runs detached (log .swarm/upgrade-<version>.log; one per project, a second names it), in rounds: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's), a builder not while its Claude review agent is busy on the old version; one still busy after SWARM_UPGRADE_WAIT_MS (2 hours) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version, exits 1 if any is left
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
@@ -614,6 +615,7 @@ dispatch() {
             local out p w t; out="$(agent_where "$1" 2>/dev/null)" || die "where: ${out:-herdr gave a list swarm.sh could not read}"
             IFS=$'\t' read -r p w t <<< "${out}"
             echo "$(agent_name "$1"): pane ${p}, workspace ${w}, tab ${t}" ;;
+    swarms) [[ $# -eq 0 ]] || die "swarms: takes no arguments (swarm.sh swarms)"; swarms ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     merge)  merge_pr "$@" ;;
@@ -660,7 +662,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status where next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
+READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
