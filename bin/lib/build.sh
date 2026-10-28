@@ -278,7 +278,7 @@ reply_sentence() {
 story_path() {
   if [[ ${BOARD_IN_REPO} == 1 && "$2" == "${PROJECT_DIR}" ]] \
     && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${BOARD}/stories/$1.md" >/dev/null 2>&1; then
-    echo "${BOARD#"${PROJECT_DIR}/"}/stories/$1.md"
+    echo "$(board_rel)stories/$1.md"
   else echo "${BOARD}/stories/$1.md"; fi
 }
 
@@ -375,11 +375,11 @@ story_brief() {
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   if [[ "${story_ref}" != /* ]]; then
     # The board is in this repo: the PR takes the story off it, and the epic with its last story.
-    rel="${BOARD#"${PROJECT_DIR}/"}"
+    rel="$(board_rel)"
     if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && ! epic_has_stories "${epic}" "${slug}"; then
-      cleanup="Delete ${rel}/stories/${slug}.md and ${rel}/epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}/stories/ or ${rel}/epics/."
+      cleanup="Delete ${rel}stories/${slug}.md and ${rel}epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}stories/ or ${rel}epics/."
     else
-      cleanup="Delete ${rel}/stories/${slug}.md in your PR, and nothing else under ${rel}/stories/."
+      cleanup="Delete ${rel}stories/${slug}.md in your PR, and nothing else under ${rel}stories/."
     fi
   else
     # The board is elsewhere, or git does not track the story: read it there, and leave it for the
@@ -580,7 +580,8 @@ review_agent() {
 # review_round <slug> — the review round a story's PR is on: one more than the findings rounds of its
 # build since the story's last build start (its `story` event), counted as the ladder counts them: a
 # findings tell that is ok or that herdr sent (findings_told), and a findings step-up (escalate's
-# `ok (findings-N: ...)`), whose brief carried the findings in place of a tell. A step-up or a
+# `ok (findings-N: ...)`), whose brief carried the findings in place of a tell, and, which the ladder does
+# not count, a wording recheck refused with a full round due (review_rounds). A step-up or a
 # restarted builder (escalate, agent) keeps the same PR, so neither starts the count again.
 review_round() {
   review_rounds "$1" | cut -d' ' -f1
@@ -588,11 +589,14 @@ review_round() {
 
 # review_rounds <slug> — "<round> <started>": review_round's round, and the round the newest review start
 # since the story's last build start began (an ok review-agent or review-agent:next line, each on the round
-# review_round gave then), or 0 with none.
+# review_round gave then), or 0 with none. A review-agent:recheck refused with a full round due counts as
+# the findings round its wording nudge was not, once per round started (none counted since that start), so
+# the brief's --next after it runs.
 review_rounds() {
   awk -F'\t' -v s="$1" '$3 != s { next } $2 == "story" && $5 ~ /^ok/ { n = 0; at = 0 }
     ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
     $2 == "escalate" && $5 ~ /^ok \(findings-[0-9]+:/ { n++ }
+    $2 == "review-agent:recheck" && $5 ~ /a full round is due/ && at == n + 1 { n++ }
     ($2 == "review-agent" || $2 == "review-agent:next") && $5 ~ /^ok/ { at = n + 1 }
     END { print n + 1, at + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo "1 0"
 }
@@ -654,9 +658,9 @@ review_own_pane() {
 # (review_round) and that round's instruction (review_round_line). Refused, touching no file under
 # .swarm/reviews, from any other pane, when the board has a story named review-<slug>, when herdr lists no
 # review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
-# since the build started), when this build has no ok review-agent start (review-<slug> is an earlier
-# build's), or while that round has started already (review_rounds): no findings round since, so its
-# review would be lost.
+# round since the build started: a findings tell or step-up, or a --recheck refused with a full round due),
+# when this build has no ok review-agent start (review-<slug> is an earlier build's), or while that round
+# has started already (review_rounds): no findings round since, so its review would be lost.
 # review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
   local slug="$1" pr="$2" out pane round rounds
@@ -698,17 +702,19 @@ RECHECK_CI_SECONDS=60   # how long --recheck's read of the new head's CI may tak
 # review_recheck <slug> <PR URL> <old head> <file:line>... — review-agent --recheck: the wording recheck,
 # run by review-<slug> from its own pane (review_own_pane) once its builder has pushed a wording fix. <old head>
 # is the head review-<slug> last reviewed, as .swarm/reviews/<slug>.head records it, with that round's
-# findings file written (review_pass), and each file:line a point its ## Findings name, every finding there
-# naming one (recheck_named), its line as at <old head>. With the worktree at the PR's new head
+# findings to fix written to <slug>.round.md (review_pass on it), and each file:line a point its ## Findings
+# name, every finding there naming one (recheck_named), its line as at <old head>. With the worktree at the PR's new head
 # (review_at_head), it passes when `git diff <old head>..<new head>` rewrites each named line and nothing
 # else (recheck_hunks) and the new head is green (ci_gate head, within RECHECK_CI_SECONDS). A pass writes
-# the new head's findings file, the last one kept as <slug>.md.prev, and .head; main logs it as
-# review-agent:recheck <slug> ok, which counts no round (review_rounds). A refusal writes nothing under
-# .swarm/reviews. One on the old head, its findings, the diff or a red head names --next, a full round;
-# one on CI still running or unread says to run --recheck again, and the rest say what to fix first.
+# the new head's findings file, a pass whose ## Handled by the review agent carries the round file's, any
+# file there before kept as <slug>.md.prev, and .head; main logs
+# it as review-agent:recheck <slug> ok, which counts no round (review_rounds). A refusal writes nothing
+# under .swarm/reviews. One on the old head, its findings, the diff or a red head names --next, a full
+# round, and counts as that round (review_rounds); one on CI still running or unread says to run --recheck
+# again, and the rest say what to fix first.
 review_recheck() {
   local slug="$1" pr="$2" old="$3" usage="swarm.sh review-agent --recheck <slug> <PR URL> <old head> <file:line>..."
-  local out repo why rc point secs="${SWARM_RECHECK_CI_SECONDS:-${RECHECK_CI_SECONDS}}" full="a full round is due: swarm.sh review-agent --next $1 $2"
+  local out round handled repo why rc point secs="${SWARM_RECHECK_CI_SECONDS:-${RECHECK_CI_SECONDS}}" full="a full round is due: swarm.sh review-agent --next $1 $2"
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --recheck: bad slug '${slug}' (${usage})"
   [[ "${pr}" =~ ^https://[^/[:space:]]+/([^/[:space:]]+/[^/[:space:]]+)/pull/[0-9]+$ ]] \
     || die "review-agent --recheck: '${pr}' is not a PR URL (${usage})"
@@ -722,13 +728,14 @@ review_recheck() {
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
   review_own_pane "${slug}"
   review_at_head "${slug}" "${pr}" recheck
-  out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
+  out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"; round="${out%.md}.round.md"
   [[ "$(cat "${out%.md}.head" 2>/dev/null)" == "${old}" ]] \
     || die "review-agent --recheck: ${old} is not the head review-${slug} last reviewed (${out%.md}.head); nothing was written: ${full}"
-  # .head is written as a round starts: the round on the old head must have finished, or there is no review to recheck.
-  review_pass "${slug}" "${old}" \
-    || die "review-agent --recheck: ${out} holds no finished review of ${old} (its head: line and a ## Findings section); nothing was written: ${full}"
-  why="$(recheck_named "${out}" "${REVIEW_WT}" "$@")" || die "review-agent --recheck: ${why}; nothing was written: ${full}"
+  # .head is written as a round starts: the round on the old head must have written its findings to fix, or
+  # there is no review to recheck.
+  review_pass "${slug}" "${old}" "${round}" \
+    || die "review-agent --recheck: ${round} holds no finished review of ${old} (its head: line and a ## Findings section); nothing was written: ${full}"
+  why="$(recheck_named "${round}" "${REVIEW_WT}" "$@")" || die "review-agent --recheck: ${why}; nothing was written: ${full}"
   why="$(recheck_hunks "${REVIEW_WT}" "${old}" "${REVIEW_HEAD}" "$@")" \
     || die "review-agent --recheck: ${old:0:7}..${REVIEW_HEAD:0:7} ${why}; nothing was written: ${full}"
   rc=0; why="$(within "${secs}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${REVIEW_HEAD}" </dev/null 2>&1)" || rc=$?
@@ -738,10 +745,15 @@ review_recheck() {
     2) die "review-agent --recheck: CI on ${REVIEW_HEAD:0:7} has not finished: ${why}; nothing was written: wait for it (swarm.sh wait-pr ${pr}), then ${REVIEW_AGAIN}" ;;
     *) die "review-agent --recheck: could not read CI on ${REVIEW_HEAD:0:7}: ${why:-no answer within ${secs}s}; nothing was written: ${REVIEW_AGAIN}" ;;
   esac
+  # The round's declined and out-of-scope points, which the agent logged and rebutted before its nudge.
+  handled="$(awk '/^## / { in_h = ($0 ~ /^## Handled by the review agent/); next }
+    in_h && /[^[:space:]]/ && tolower($0) !~ /^[-* ]*none\.?$/' "${round}")"
+  if [[ -n "${handled}" ]]; then handled="Carried from the round on ${old:0:7}, each logged and rebutted then:"$'\n'"${handled}"
+  else handled="None."; fi
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   printf '%s\n' "head: ${REVIEW_HEAD}" "" "## Findings" "" \
     "None: the wording recheck passed. ${old:0:7}..${REVIEW_HEAD:0:7} changes only the lines the last findings named, and the head is green." \
-    "" "## Out of scope" "" "None." > "${out}"
+    "" "## Handled by the review agent" "" "${handled}" > "${out}"
   echo "${REVIEW_HEAD}" > "${out%.md}.head"
   echo "wording recheck passed: ${out} holds the findings for ${REVIEW_HEAD}"
 }
@@ -883,20 +895,32 @@ review_start_failed() {
   die "review-agent: review-$1 did not start${note}${back}"
 }
 
-# review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is
-# <sha>, and it has a ## Findings section and no head moved: line (review_rule's test).
+# BASE_MERGED_LINKS: how many base-merged heads review_pass follows back from a head to a reviewed one.
+BASE_MERGED_LINKS=10
+
+# review_pass <slug> <sha> [file] [links] — true when <slug>'s findings file (or <file>, as review_recheck's
+# round file) is a pass on <sha>: its head: line is <sha>, and it has a ## Findings section and no head
+# moved: line (review_rule's test). A head that merge made by merging the base into the PR (events.tsv's
+# `base-merged <sha> from <head>`, base_merged_from) passes when the head it was made from does, since
+# its only new content is the base's; <links> counts the heads followed so far, BASE_MERGED_LINKS at most.
 review_pass() {
-  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
-  grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"
+  local f="${3:-${PROJECT_DIR}/.swarm/reviews/$1.md}" from
+  if grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"; then return 0; fi
+  (( ${4:-0} < BASE_MERGED_LINKS )) || return 1
+  from="$(base_merged_from "$1" "$2")"
+  [[ -n "${from}" && "${from}" != "$2" ]] && review_pass "$1" "${from}" "${3:-}" $(( ${4:-0} + 1 ))
 }
 
 # review_on_head <slug> <sha> — true while <sha> has a review agent's review, for watch and next
-# (queued_line): its findings file for <sha> is a pass, or, with no file for <sha> yet, a review agent
+# (queued_line): its findings file for <sha> is a pass, <sha> is a head merge made from a head that
+# passed (review_pass), or, with no file for <sha> yet, a review agent
 # started on it (.swarm/reviews/<slug>.head) and review-<slug> is still open in a pane this project
 # opened. One that crashed, was closed or tidied, or that herdr cannot list, is no review.
 review_on_head() {
   local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
   if grep -qx "head: $2" "${f}" 2>/dev/null; then review_pass "$1" "$2"; return; fi
+  # A head merge made from a reviewed head by merging the base in (review_pass) is reviewed too.
+  if review_pass "$1" "$2"; then return 0; fi
   [[ "$(cat "${f%.md}.head" 2>/dev/null)" == "$2" && -n "$(agent_field "$(agent_name "review-$1")" pane_id)" ]]
 }
 
@@ -962,6 +986,8 @@ Hold the PR to these as well:
 - A zero or empty value shown to a person must say what it means.
 - A repair path that changes something must say what it did.
 - An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches.
+- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding.
+- Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed.
 - For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding.
 EOF
   [[ -f "${1:-}" ]] || return 0
@@ -982,13 +1008,13 @@ EOF
 # swarm.sh grants names merge for the PR, merges that head, pinned with swarm.sh merge --head, which
 # checks the PR is still at it; otherwise the review is the handoff to the user. A moved head
 # turns the file into a head moved: one, and the conductor starts a new agent on the new head once
-# watch reports its checks finished. A base merged in whose CI goes red, or a moved base merge refuses
-# on, has the agent nudge the builder (pull the branch first) and stop; its push is a new head, which
-# the conductor gives a new agent the same way.
+# watch reports its checks finished. A base merged in whose CI goes red or conflicts (base merged,
+# red: or conflict:), or a moved base merge refuses on, has the agent nudge the builder (pull the branch
+# first) and stop; its push is a new head, which the conductor gives a new agent the same way.
 # <swarm.sh> is the brief's swarm.sh with SWARM_PROJECT, as every call in it.
 review_handoff() {
   local merge next nudge="${3%.md}.nudge.md"
-  merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit: after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
+  merge="run \`$5 merge --head $4 $2\` in the background (Bash run_in_background) and wait for it to exit. When the base gained code since $4's CI ran, it first has GitHub merge the base into the PR's branch and waits up to $((MERGE_CI_SECONDS / 60)) minutes for that new head's CI, ${MERGE_BASE_ROUNDS} rounds at most; after the merge it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the base, then reconciles. It merges only that head, or the head it made by merging the base in, by the literal PR number with \`--match-head-commit\`, once every check on it has passed."
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == agent ]]; then
     next="Then merge the PR: ${merge}"
@@ -1007,18 +1033,17 @@ holding two lines, \`head: $4\` and
 on the new head once watch reports its checks finished (the lead does when no conductor runs). When it was merge that refused,
 review had already put the story in review: your reply's first line says \`$1 is in review on
 <the new head>, which nobody reviewed\`.
-When merge prints \`base merged: <PR URL> is now ...\`, it merged nothing: GitHub merged the base into
-the PR's branch, and that head needs no new review. With <new head> the full SHA the line's
-\`merge --head\` names, run \`$5 wait-pr --head <new head> $2\` in the background and, once it exits 0,
-\`$5 merge --head <new head> $2\`, as above. When that wait-pr exits 1 (a red check) or with a
-conflict, nudge the builder as the green step says (${nudge}, then \`$5 tell $1 nudge ${nudge}\`),
-naming the red check or the base, and telling it to pull its branch first (\`git pull --ff-only
-origin story/$1\`): GitHub's merge commit is not in its worktree. Then stop.
-When merge refuses with a line that ends \`merge origin/<base> in, push, and merge the new head\`, it
-merged nothing: nudge the builder the same way, telling it to pull its branch (\`git pull --ff-only
-origin story/$1\`), merge origin/<base> in, re-run the tests and push. Then stop. After either nudge,
-the head the builder pushes gets a new review agent from the conductor once watch reports its checks
-finished.
+When merge prints \`base merged: <PR URL> is now ...\`, GitHub merged the base into the PR's branch:
+that head needs no new review, and merge goes on to wait for its CI and merge it, so leave it running
+until it exits. When it prints \`already merged:\`, the PR merged elsewhere while it waited,
+and merge reconciled the board. When it refuses with \`base merged, red:\` or \`base merged, conflict:\`,
+or with a line that ends \`merge origin/<base> in, push, and merge the new head\`, it merged nothing:
+nudge the builder as the green step says (${nudge}, then \`$5 tell $1 nudge ${nudge}\`), naming the red
+check or the base to merge in, re-run the tests and push, and telling it to pull its branch first
+(\`git pull --ff-only origin story/$1\`): the PR's head may be GitHub's merge commit, which its
+worktree does not have. Then stop: the head the builder pushes gets a new review agent from the
+conductor once watch reports its checks finished. A \`base merged, head moved:\` refusal is a moved
+head, as above. Any other \`base merged, <cause>:\` refusal is one of the other refusals below.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff.
 Once the last of these commands has exited, run nothing more in this worktree (a merge removes it):
 reply with ${3}, what the last command printed, and \`codex skipped: <why>\` when codex was, then
@@ -1042,8 +1067,11 @@ EOF
 # wait review-<slug>); with findings to fix, to the .round.md beside it, which it tells the builder (tell
 # counts the round, and may step the build up or hold it) after waiting for it, then waits for its push,
 # runs the green step on the new head, then review-agent --next (review_next) and the round that prints,
-# in the same session. A stop before a pass (a wait that ends other than idle, a refused tell, no fix
-# pushed) writes <findings file> with head: and stopped: lines and no ## Findings: no pass.
+# in the same session. Findings that are all wording go as a nudge instead, no round, and the head it pushes
+# is checked with review-agent --recheck (review_recheck), whose pass writes <findings file>, then review_handoff; its
+# refusal naming --next counts the round (review_rounds), and --next runs the full round. A stop before a
+# pass (a wait that ends other than idle, a refused tell, no fix pushed) writes <findings file> with head:
+# and stopped: lines and no ## Findings: no pass.
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
   local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" agent cond
@@ -1154,9 +1182,10 @@ conflict, or what wait-pr printed last>\`, then a \`## Handled by the review age
 \`none\`. Its one finding is to fix, from ci: send it to the builder as findings, as below, and log it as any finding
 to fix. Once a head is green and
 triaged with nothing to nudge, review it as below when it is $5. When the builder pushed past $5
-before any findings went to it, write ${4} with the Write tool holding two lines, \`head: $5\` and
-\`head moved: <the green head>\`, then stop; once findings went to it, run \`review-agent --next\`
-on the green head, as below.
+before any findings or wording nudge went to it, write ${4} with the Write tool holding two lines,
+\`head: $5\` and \`head moved: <the green head>\`, then stop; once findings went to it, run
+\`review-agent --next\` on the green head, and once a wording nudge did, \`review-agent --recheck\`
+first, as below.
 
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
@@ -1196,7 +1225,12 @@ $(review_handoff "$1" "$2" "$4" "$5" "${sw}")
 
 With findings to fix, write it to ${round} instead, after \`rm -f ${round}\` (the Write tool refuses
 to overwrite a file this session has not read), and never to ${4}, which would end the round as a
-finished review. Then wait before you tell, so the findings go at once and count their round now:
+finished review. When every finding to fix is wording (a comment, doc or error-text line that
+misstates the code) and each cites the one file:line it rewrites, send them as a wording nudge in
+place of the findings tell below: a nudge is no round, so the ladder does not move. Write ${nudge} as
+above holding what ${round} holds, wait for the builder as above, run \`${sw} tell $1 nudge ${nudge}\`,
+and from there go on as below for a findings tell, a \`queued:\` one included. Otherwise wait
+before you tell, so the findings go at once and count their round now:
 wait for the builder as above, then run \`${sw} tell $1 findings ${round}\`. When tell prints
 \`queued:\` (the builder took a turn meanwhile), do as above, and tell it nothing more. When tell
 says another step-up or a restart of it is running, wait the same way, then tell it again. When tell says the
@@ -1223,8 +1257,14 @@ HEAD\`) and log each finding you sent: as fixed when the diff fixes it, and as d
 reason that fits, when the builder declined it with a reason you accept; rebut those in the PR as
 above, in one comment with each finding and the builder's reason. One it did neither to, or
 declined with a reason you do not accept, is not logged; the next round raises it again if it still
-holds. Once that head is green and triaged with nothing to nudge,
-run \`${sw} review-agent --next $1 $2\` and do the round it prints (codex alone from round 2):
+holds. Once that head is green and triaged with nothing to nudge, after a wording nudge run
+\`${sw} review-agent --recheck $1 $2 <the head you reviewed> <each file:line ${round} cites>\`, each
+path relative to the repo root (never under the worktree's path), which counts no round. When it prints \`wording recheck passed\`, it has written ${4}, a pass of the head it
+names: do the pass step above from \`Then hand the PR on\`, with that head in place of $5. When it
+says CI has not finished or to run it again, do that. When it refuses naming \`review-agent --next\`
+(the diff changes more than those lines, say), a full round is due, and the refusal counts the
+round the nudge did not. Then, or after a findings tell, run
+\`${sw} review-agent --next $1 $2\` and do the round it prints (codex alone from round 2):
 review, check the head, triage, and send its findings as above, until a round passes or you stop.
 
 $(finding_rule)

@@ -591,6 +591,13 @@ check "review-ro-c gone after --next and a findings tell herdr sent is silent" n
 ev review-agent:next ro-c "ok (round 3)"; rhead ro-c; ev escalate ro-c "ok (findings-3: sonnet -> opus)"
 poll; poll
 check "and so is one gone after --next and a findings step-up" never_woke ro-c
+# A --recheck refused with a full round due counts a review round (review_rounds), but leaves the builder
+# nothing to fix: the review agent runs that round itself (--next), so one gone after it fires.
+fresh; story ro-w "kind: code" "status: ready"; ev story ro-w; built ro-w; listed ro-w review-ro-w
+rbrief ro-w "${URL}"; ev review-agent ro-w; rhead ro-w; ev tell:nudge ro-w
+ev review-agent:recheck ro-w "review-agent --recheck: a1b2c3d..e4f5a6b changes code.sh, which no file:line point names; nothing was written: a full round is due: swarm.sh review-agent --next ro-w ${URL}"
+listed ro-w; poll
+check "review-ro-w gone after a wording nudge and a --recheck refused with a full round due fires" rev_fires ro-w "${URL}"
 
 # Under merge = human, a review story under a merge grant gets the no-review: line alone: its builder's
 # close after the handover (swarm.sh review, then close) is the normal path, never a no-agent: line.
