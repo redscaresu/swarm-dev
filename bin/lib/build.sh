@@ -628,7 +628,8 @@ review_agent() {
   # copy tells an unclear start from a no-send. A failing tee drains the rest, so the start's own
   # status decides.
   errf="$(mktemp)" || die "review-agent: mktemp failed; nothing was started"
-  rm -f "${out%.md}.head"; moved=""
+  # An earlier agent's stop note goes too: a stop file left is the newest agent's (stop_lines).
+  rm -f "${out%.md}.head" "${out%.md}.stop.md"; moved=""
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
   if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
       | { tee "${errf}" >&2 || cat >/dev/null; }; } 3>&1; then

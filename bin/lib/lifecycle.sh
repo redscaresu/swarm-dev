@@ -2727,8 +2727,8 @@ pr_lines() {
 
 # stop_lines — `stopped: <slug> (<the stop note>), exit: <exit>` for each review agent's stop note
 # (.swarm/reviews/<slug>.stop.md, which review_brief has it write and tell its conductor) that no
-# conductor has: its story is on the board and not done, no review agent started on it since (its .head
-# is older than the note, or gone), and the conductor the note went to (story_conductor) runs in no pane
+# conductor has: its story is on the board and not done (review_agent removes the note when it starts
+# a new agent, so one left is the newest agent's), and the conductor the note went to (story_conductor) runs in no pane
 # of the poll's herdr list (LEAD_AGENTS) or has written its report, so the note's tell failed or reached
 # a conductor that has stopped. A poll with no herdr list keeps the stopped: lines LEAD_SEEN has, so a
 # missed read neither drops a line nor wakes the lead with it again.
@@ -2739,7 +2739,7 @@ stop_lines() {
   for f in "${PROJECT_DIR}"/.swarm/reviews/*.stop.md; do
     [[ -f "${f}" ]] || continue
     slug="${f##*/}"; slug="${slug%.stop.md}"; story="${BOARD}/stories/${slug}.md"
-    [[ -f "${story}" && "$(fm "${story}" status)" != "done" && "${f}" -nt "${f%.stop.md}.head" ]] || continue
+    [[ -f "${story}" && "$(fm "${story}" status)" != "done" ]] || continue
     cond="$(story_conductor "${slug}")"
     [[ -z "$(list_field "${cond}" pane_id <<< "${LEAD_AGENTS}")" || -f "$(conductor_report "${cond}")" ]] || continue
     note="$(head -1 "${f}" | tr -d '\r')"

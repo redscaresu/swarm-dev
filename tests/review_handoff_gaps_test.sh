@@ -161,8 +161,7 @@ NOTE="review-s1 stopped on ${HB}: no fix pushed: the builder declined nothing"
 STOP="${P}/.swarm/reviews/s1.stop.md"
 LINE="stopped: s1 (${NOTE}), exit: act on its why as conduct-e's review rule says, or start a conductor for the story and send it the note with swarm.sh tell <conductor> note ${STOP}"
 fresh_lead() { rm -rf "${P}/.swarm/lead"; mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"; }
-echo "${HB}" > "${P}/.swarm/reviews/s1.head"; touch -t 202610280900 "${P}/.swarm/reviews/s1.head"
-echo "${NOTE}" > "${STOP}"; touch -t 202610281000 "${STOP}"
+echo "${NOTE}" > "${STOP}"
 fresh_lead
 check "6 a stop note with no conductor running wakes the lead" "${LINE}" "$(poll)"
 check "6 it wakes the lead once" "" "$(poll)"
@@ -175,10 +174,19 @@ mkdir -p "${P}/.swarm"; echo report > "${P}/.swarm/conduct-e.report.md"
 fresh_lead
 check "6 a conductor that wrote its report has stopped: the line comes" "${LINE}" "$(poll)"
 rm -f "${P}/.swarm/conduct-e.report.md"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
-touch -t 202610281100 "${P}/.swarm/reviews/s1.head"
+# review-agent's start removes the earlier agent's note, so the line goes; a refused start keeps it.
+began='review_at_head() { REVIEW_SRC="${SRC}"; REVIEW_WT="${WT}"; REVIEW_HEAD="${HB}"; }
+  agent_field() { :; }; require_trusted() { :; }; require_claude() { :; }; free_agent_name() { :; }
+  base_for() { echo main; }; start_agent() { :; }
+  review_agent s1 '"${URL}"
+# review-<slug> still open with no findings file: review-agent refuses before it touches a file.
+lib "${began/agent_field() { :; }/agent_field() { echo w:p7; }}" > /dev/null || true
+check "6 a refused review-agent start keeps the note" yes "$( [[ -f "${STOP}" ]] && echo yes || echo no)"
+lib "${began}" > /dev/null
+check "6 a review-agent start removes the earlier agent's note" no "$( [[ -f "${STOP}" ]] && echo yes || echo no)"
 fresh_lead
 check "6 a review agent started since the note: no line" "" "$(poll)"
-touch -t 202610280900 "${P}/.swarm/reviews/s1.head"
+echo "${NOTE}" > "${STOP}"
 sed -i.bak 's/^status: ready/status: done/' "${B}/stories/s1.md"
 fresh_lead
 check "6 a story that is done: no line" "" "$(poll)"

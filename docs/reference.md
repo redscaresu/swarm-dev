@@ -387,9 +387,9 @@ and `tell goal failed:` lines (§ A tell to a busy agent is queued) on its first
 writes its note to `.swarm/reviews/<slug>.stop.md` and tells it to the story's conductor (§ Building).
 `wait --lead` prints
 `stopped: <slug> (<the note>), exit: act on its why as <conductor>'s review rule says, or start a conductor for the story and send it the note with swarm.sh tell <conductor> note <file>`
-for each such file whose story is on the board and not done, with no review agent started on it
-since (`.swarm/reviews/<slug>.head` is older than the note, or gone), whose conductor runs in no pane
-of the poll's herdr list or has written its report. A note whose tell failed, or that reached a
+for each such file whose story is on the board and not done, whose conductor runs in no pane
+of the poll's herdr list or has written its report. `review-agent` removes the note when it starts
+a new agent, so the line goes then. A note whose tell failed, or that reached a
 conductor that has since stopped, comes to the lead this way. It reads the same herdr list as `no-agent:`;
 a poll whose list failed keeps the `stopped:` lines it saw last.
 
