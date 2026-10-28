@@ -137,7 +137,7 @@ board_pr() {
       # An epic that goes active with no ticket is refused before anything is pushed. Checked outside
       # the $(...), where a die would not stop this.
       f="$(epic_unticketed board_read "${files}")" || die "board-pr: ${f}"
-      [[ -z "${f}" ]] || { f="${f%%$'\n'*}"; die "board-pr: ${f} goes active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${f}"; }
+      [[ -z "${f}" ]] || { f="${f%%$'\n'*}"; die "board-pr: ${f} goes active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${f}"; }
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
       # answer (commands/plan-epic.md step 0), written since this worktree started: an older one is an
       # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. A
@@ -2354,8 +2354,8 @@ lead_review_items() {
 # lead_heads — the heads pass: read the PR heads of each review item lead_review_items lists
 # (heads_green) and write its verdict to LEAD_HEADS, `<verdict> merge: <slug> <PR URL>...`: green when
 # every head is, unread when none is red but one could not be read, red otherwise. wait_lead runs it on a
-# run's first read and then at most once every LEAD_HEADS_EVERY seconds, so the polls between make no gh
-# call. A costs: money PR an earlier item already reports is not read again, and that item gets no verdict.
+# run's first read and then at most once every LEAD_HEADS_EVERY seconds, as does open_story_prs beside it,
+# so the polls between make no gh call. A costs: money PR an earlier item already reports is not read again, and that item gets no verdict.
 lead_heads() {
   local tag line slug prs rc v urls="" u new seen=" " red="|"
   : > "${LEAD_GREEN}.new"; : > "${LEAD_HEADS}.new"
@@ -2395,16 +2395,149 @@ lead_heads() {
 # queue: green, or unread while LEAD_SEEN has it, so a gh error wakes no one.
 lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "$2" "${LEAD_SEEN}" 2>/dev/null; }; }
 
+LEAD_PRS="${LEAD_DIR}/prs"            # the open story PRs the last heads pass read (open_story_prs), for pr_lines
+LEAD_PRS_WAIT="${SWARM_LEAD_PRS_WAIT:-30}"   # seconds one gh read of open_story_prs may take before it counts as failed
+LEAD_PRS_WARN_AFTER="${SWARM_LEAD_PRS_WARN_AFTER:-3}"   # heads passes in a row a repo's read fails before wait --lead warns
+LEAD_REPOS=""                         # "<name> <owner/repo>" per repo this run resolved, so each costs one gh repo view a run
+LEAD_PRS_FAILS=""                     # "<name> <n>": the heads passes in a row that could not read the repo's open PRs
+
+# open_story_prs — the heads pass's read of the open story PRs, for pr_lines to read each poll with no gh call (LEAD_PRS).
+# For each repo a story names (its repo:, `.` for the project's own), resolved once a run to its owner/name as
+# repo_slug does (gh repo view on its origin), it prints `= <name> <owner/repo>`, then one `gh pr list` per
+# owner/repo, each gh read bounded by LEAD_PRS_WAIT seconds (within): `+ <owner/repo> <slug> <PR URL> <head>
+# <mergeable> <checks> <opened, epoch seconds>` per open story/* PR from the repo itself, never a fork's. <checks> is green when the rollup GitHub returns
+# has at least one check run and every check run and status in it passed (success, skipped or neutral); a required
+# check that never reported is not seen, and `swarm.sh merge` runs ci_gate's full rule. A repo whose read failed or
+# timed out is `- <name>`; at LEAD_PRS_WARN_AFTER such passes in a row it warns once on stderr (open_prs_failed).
+# A repo with no clone or no origin has no PR to list and prints nothing. It runs in the caller's shell, which
+# keeps LEAD_REPOS and LEAD_PRS_FAILS across passes.
+open_story_prs() {
+  local name src origin nwo listed="" failed="" rows
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    nwo="$(awk -v n="${name}" '$1 == n { print $2; exit }' <<< "${LEAD_REPOS}")"
+    if [[ -z "${nwo}" ]]; then
+      if [[ "${name}" == . ]]; then src="$(repo_dir "")" || continue; else src="$(repo_dir "${name}")" || continue; fi
+      origin="$(git -C "${src}" remote get-url origin 2>/dev/null)" || continue
+      nwo="$(within "${LEAD_PRS_WAIT}" gh repo view "${origin}" --json nameWithOwner -q .nameWithOwner </dev/null 2>/dev/null)" || nwo=""
+      if [[ ! "${nwo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
+      LEAD_REPOS+="${name} ${nwo}"$'\n'
+    fi
+    echo "= ${name} ${nwo}"
+    if grep -qxF "${nwo}" <<< "${failed}"; then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
+    if ! grep -qxF "${nwo}" <<< "${listed}"; then
+      rows="$(within "${LEAD_PRS_WAIT}" gh pr list -R "${nwo}" --state open --limit 1000 --json url,headRefName,headRefOid,mergeable,statusCheckRollup,createdAt,isCrossRepository </dev/null 2>/dev/null \
+        | python3 -I -c '
+import datetime, json, sys
+OK = ("SUCCESS", "SKIPPED", "NEUTRAL")
+prs = json.load(sys.stdin)
+if not isinstance(prs, list):
+    sys.exit(1)
+for p in prs:
+    ref = (p.get("headRefName") or "") if isinstance(p, dict) else ""
+    # A fork PR whose branch is named story/<slug> does not belong to the story.
+    if not ref.startswith("story/") or p.get("isCrossRepository"):
+        continue
+    roll = p.get("statusCheckRollup") or []
+    green = any(c.get("__typename") == "CheckRun" for c in roll) and all(((c.get("state") or "") if c.get("__typename") == "StatusContext" else (c.get("conclusion") or "") if (c.get("status") or "") == "COMPLETED" else "").upper() in OK for c in roll)
+    opened = datetime.datetime.fromisoformat(p["createdAt"].replace("Z", "+00:00"))
+    print(ref[6:], p["url"], p["headRefOid"], p.get("mergeable") or "UNKNOWN", "green" if green else "not", int(opened.timestamp()))
+' 2>/dev/null)" || { failed+="${nwo}"$'\n'; echo "- ${name}"; open_prs_failed "${name}"; continue; }
+      listed+="${nwo}"$'\n'
+      awk -v n="${nwo}" 'NF { print "+ " n " " $0 }' <<< "${rows}"
+    fi
+    LEAD_PRS_FAILS="$(awk -v r="${name}" '$1 != r' <<< "${LEAD_PRS_FAILS}")"
+  done < <(stories_fm repo | awk -F $'\x1f' '{ r = $2; gsub(/["\047]/, "", r); if (r == "") r = "."; if (r == "." || r ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) print r }' | sort -u)
+}
+
+# open_prs_failed <name> — count a heads pass that could not read <name>'s open PRs; the LEAD_PRS_WARN_AFTER-th
+# in a row warns on stderr, once until a read succeeds, saying who clears it.
+open_prs_failed() {
+  local n
+  n="$(awk -v r="$1" '$1 == r { print $2 }' <<< "${LEAD_PRS_FAILS}")"; n=$(( ${n:-0} + 1 ))
+  LEAD_PRS_FAILS="$(awk -v r="$1" '$1 != r' <<< "${LEAD_PRS_FAILS}")"$'\n'"$1 ${n}"
+  [[ ${n} -eq ${LEAD_PRS_WARN_AFTER} ]] || return 0
+  echo "warning: wait --lead could not read the open PRs of $([[ "$1" == . ]] && echo "the project's repo" || echo "repo $1") on ${n} heads passes in a row (gh failed or timed out), so its unmerged: and conflict: lines stand as last seen and no new one comes: check gh auth status and that gh can see the repo" >&2
+}
+
+# findings_open <file> — true when the ## Findings section of a review's findings file lists a finding: a
+# non-empty line that does not say none.
+findings_open() {
+  awk '/^## / { f = ($0 ~ /^## Findings/); next }
+    f && NF { l = tolower($0); sub(/^[-*] +/, "", l); if (l !~ /^(none|no findings)([^a-z]|$)/) o = 1 }
+    END { exit !o }' "$1" 2>/dev/null
+}
+
+# pr_lines — the lead's queue's lines for open story PRs, from the last heads pass's LEAD_PRS joined with the board
+# as it is now, so a poll makes no gh call. A PR counts when its story is ready or in review, is one an agent builds
+# (agent_kind: a lead story's PR is the lead's), and names the PR's repo as its own (repo:, else the project's).
+# `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` for one CONFLICTING with its base.
+# `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` for one MERGEABLE and green whose findings
+# file is a pass on its head (review_pass), opened and reviewed queue_minutes or more ago (the findings file's
+# mtime); when that file lists findings the exit is `triage .swarm/reviews/<slug>.md, then swarm.sh merge --head
+# <sha> <PR URL> once every finding is declined`. No unmerged: for a kept story's PR (the kept: line's), a PR that
+# already has a merge: line (lead_review_items), or one a `swarm.sh merge` is merging now (one ps read, only
+# when such a line is due). A PR whose mergeable state GitHub is still working out (UNKNOWN), and each story of a
+# repo the pass could not read, keeps its lines from LEAD_SEEN, so a lapse in the read neither drops a line nor
+# wakes the lead with it again. So does, for its unmerged: line, a PR on a poll whose ps read failed: as in
+# no_agent_lines, a process list that could not be read says nothing about a running merge.
+pr_lines() {
+  local slug url head mg ck opened kept m out items="" ps="" got=0 psok=1
+  [[ -s "${LEAD_PRS}" ]] || return 0
+  while read -r slug url head mg ck opened kept; do
+    if [[ "${url}" == - ]]; then
+      awk -v s="${slug}" '($1 == "unmerged:" || $1 == "conflict:") && $2 == s' "${LEAD_SEEN}" 2>/dev/null || true; continue
+    fi
+    if [[ "${mg}" == UNKNOWN ]]; then
+      grep -F -e "unmerged: ${slug} ${url}," -e "conflict: ${slug} ${url}," "${LEAD_SEEN}" 2>/dev/null || true; continue
+    fi
+    [[ "${mg}" != CONFLICTING ]] || echo "conflict: ${slug} ${url}, exit: tell its builder to merge the base in"
+    [[ "${mg}" == MERGEABLE && "${ck}" == green && "${kept}" == 0 ]] || continue
+    review_pass "${slug}" "${head}" || continue
+    m="$(perl -e 'my ($f, $o) = @ARGV; my @s = stat $f or exit 1; my $g = time - $s[9]; $g = time - $o if time - $o < $g; print int($g / 60)' \
+      "${PROJECT_DIR}/.swarm/reviews/${slug}.md" "${opened}")" || continue
+    # shellcheck disable=SC2154 # assigned in another file
+    (( m >= CFG_queue_minutes )) || continue
+    # The reads below are the poll's, made once and only for a line that is due.
+    if (( got == 0 )); then got=1; items="$(lead_review_items)"; ps="$(ps -A -ww -o command= 2>/dev/null)" || psok=0; fi
+    awk -v u="${url}" '$2 == "merge:" { for (i = 4; i <= NF; i++) if ($i == u) f = 1 } END { exit !f }' <<< "${items}" && continue
+    # A process list that could not be read may hide a merge of this PR: keep the line it had, and add none.
+    if (( psok == 0 )); then grep -F "unmerged: ${slug} ${url}," "${LEAD_SEEN}" 2>/dev/null || true; continue; fi
+    awk -v u="${url}" 'index($0, "swarm.sh merge") { for (i = 1; i <= NF; i++) if ($i == u) f = 1 } END { exit !f }' <<< "${ps}" && continue
+    out="swarm.sh merge --head ${head} ${url}"
+    ! findings_open "${PROJECT_DIR}/.swarm/reviews/${slug}.md" \
+      || out="triage .swarm/reviews/${slug}.md, then swarm.sh merge --head ${head} ${url} once every finding is declined"
+    echo "unmerged: ${slug} ${url}, exit: ${out}"
+  done < <(awk -v kinds=" ${AGENT_KINDS} " -v sep=$'\x1f' '
+    FILENAME == ARGV[1] {
+      split($0, v, sep); r = v[5]; gsub(/["\047]/, "", r); if (r == "") r = "."
+      if ((v[2] == "ready" || v[2] == "review") && (v[3] == "" || index(kinds, " " v[3] " "))) { home[v[1]] = r; kept[v[1]] = (v[4] != "") }
+      next
+    }
+    $1 == "=" { nwo[$2] = $3; next }
+    $1 == "-" { lost[$2] = 1; next }
+    $1 == "+" { row[++n] = $0; next }
+    END {
+      for (s in home) if (home[s] in lost) print s " -"
+      for (i = 1; i <= n; i++) {
+        split(row[i], f, " ")
+        if ((f[3] in home) && nwo[home[f[3]]] == f[2] && !(home[f[3]] in lost))
+          print f[3], f[4], f[5], f[6], f[7], f[8], kept[f[3]]
+      }
+    }' <(stories_fm status kind kept repo) "${LEAD_PRS}")
+}
+
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
-# heads pass's (lead_heads), wakes the lead (lead_head_wakes). Last, from no_agent_lines record: `step-up
+# heads pass's (lead_heads), wakes the lead (lead_head_wakes). Then, from no_agent_lines record: `step-up
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
 # after closing its builder, `no-agent: <slug>, exit: <exit>` for a started story no agent works
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
 # events.tsv line for a story whose missing agent no event explains yet. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
-# then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines).
+# then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
+# come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs).
 # It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
@@ -2430,6 +2563,7 @@ lead_queue() {
   idle_warned "the idle: lines the last poll saw stand" || grep '^idle: ' "${LEAD_SEEN}" 2>/dev/null || true
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
+  pr_lines
 }
 
 # prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
@@ -2717,11 +2851,15 @@ no_agent_busy() {
 
 # no_review_events <slug review-name>... — per slug with a review start on record since its newest ok
 # `story` start or reopen, from one read of events.tsv: "<slug> <ok> <url> <under> <wrote>". ok is 1 when
-# the newest `review-agent <slug>` line is ok, else 0. url is the PR URL a failed line's message names,
+# the newest `review-agent <slug>` line is ok, else 0. An ok `review-agent:next` line (review-<slug>'s next
+# round, run in its own session) counts as an ok start: the review agent owns the PR again, so a findings
+# tell before it says nothing about this round, and the brief on record is the one that agent started
+# with. A failed one started no round and changes nothing. url is the PR URL a failed line's message names,
 # when review_agent took it as one (never from its "is not a PR URL" refusal), else -. under is 1 when a round is under way by the
-# events: an ok tell:findings line came after that line (the builder fixing what it was told), or that
-# line is a start refused because the builder is still at work (its worktree not at the PR's head, or
-# with uncommitted changes) with an ok tell:findings line on record. wrote is 1 when that start wrote
+# events: a findings round came after that line (the builder fixing what it was told: a findings tell
+# that is ok or that herdr sent, or a findings step-up, as review_rounds counts them), or that line is a
+# start refused because the builder is still at work (its worktree not at the PR's head, or with
+# uncommitted changes) with a findings round on record. wrote is 1 when that start wrote
 # .swarm/briefs/review-<slug>.md: an ok one, or one that failed after the brief (review_start_failed's
 # messages, or its mktemp), else 0: a preflight that fails leaves an earlier attempt's brief. A refusal that leaves an earlier ok start of this build, not closed since, in place
 # (review-<slug> still reviewing, or its name still held: free_agent_name's refusals name it) changes
@@ -2740,7 +2878,7 @@ no_review_events() {
     ($3 in me) && (($2 == "story" && $5 ~ /^ok/) || ($2 == "reconcile" && $5 == "ok (reopened)")) {
       s = $3; on[s] = 0; told[s] = 0; next
     }
-    ($3 in me) && $2 == "review-agent" {
+    ($3 in me) && ($2 == "review-agent" || ($2 == "review-agent:next" && $5 ~ /^ok/)) {
       s = $3; ok1 = $5 ~ /^ok/
       if (!ok1 && on[s] && ok[s] && !shut[s] && (index($5, " is still reviewing ") || index($5, rn[s] ": ") == 1 || index($5, "review-" s ": ") == 1)) next
       on[s] = 1; ok[s] = ok1; shut[s] = 0; url[s] = "-"; after[s] = 0
@@ -2754,7 +2892,10 @@ no_review_events() {
         url[s] = substr($5, RSTART, RLENGTH)
       next
     }
-    ($3 in me) && $2 == "tell:findings" && $5 == "ok" { told[$3] = 1; after[$3] = 1; next }
+    # A findings round, counted as review_rounds counts it: a tell that is ok or that herdr sent, or a
+    # findings step-up, whose brief carried the findings in place of a tell.
+    ($3 in me) && ((($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/)) ||
+      ($2 == "escalate" && $5 ~ /^ok \(findings-[0-9]+:/)) { told[$3] = 1; after[$3] = 1; next }
     ($3 in rv) && $2 ~ /^close(:|$)/ && $5 ~ /^ok/ { shut[rv[$3]] = 1 }
     END {
       for (i = 1; i <= k; i++) {
@@ -2905,6 +3046,16 @@ no_agent_exit() {
   echo "${out}"
 }
 
+# no_agent_granted <slug> — true when the agreed HLD over the story (item_hld) grants merge (hld_grants):
+# under merge = human the lead, not the user, merges its PR once it is reviewed, so a review agent gone
+# leaves it unreviewed with no one to act. Board files only, no gh; a grants: that cannot be read grants
+# nothing.
+no_agent_granted() {
+  local h g
+  h="$(item_hld "${BOARD}/stories/$1.md")"
+  [[ -n "${h}" ]] && g="$(hld_grants "${h}" 2>/dev/null)" && grep -qxF merge <<< "${g}"
+}
+
 # no_agent_lines [record] — `no-agent: <slug>, exit: <exit>` (no_agent_exit) for each started story that
 # no agent works on and that is not the user's to move: status ready, or review under merge = agent;
 # of a kind an agent builds, so never kind: lead, held or escalated; not kept: or costs: money
@@ -2921,8 +3072,14 @@ no_agent_exit() {
 # does not say the old builder was closed (step_up_closed). Each story with a build record, whether
 # its builder is listed or not, also gets no_review_line's `no-review:` line when its review agent
 # never started or started and went (no_review_events): a build a close cleared has no PR to review.
+# Under merge = human, a story in review whose HLD grants merge (no_agent_granted, read once per such
+# story, after the cheaper checks) gets that no-review: line only once its builder's build ended (an ok
+# close after its newest start): its builder's close after the handover (swarm.sh review, then close)
+# is the normal path, and the lead's merge: item covers the PR. A builder started again since, to fix
+# a later review's findings, and gone with no close still gets its no-agent: line.
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
-# matter in one pass (stories_fm) and events.tsv once (no_agent_events), then once more
+# matter in one pass (stories_fm), a review story's epic chain and HLD under merge = human
+# (no_agent_granted), events.tsv once (no_agent_events), then once more
 # (no_review_events) for the stories with a build record; per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder, or no-review: with no PR
 # known), then herdr's JSON and one ps once a started story or a marker is left. No gh. dash (dash_render) hands it its own herdr list
@@ -2931,7 +3088,7 @@ no_agent_exit() {
 # unless dash handed it one), or herdr's list, its JSON or ps failed. Returns 0 once it has checked,
 # with or without lines.
 no_agent_lines() {
-  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said=""
+  local live slug st kind held kept e repo prs rows="" data="" built="" build ev src name rname up="" d marked="" revs="" rv fields said="" revonly="" handed=""
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 2
   if [[ -f "${UPGRADE_PID}" ]] && up="$(upgrade_holder)"; then up="${up%% *}"; else up=""; fi
@@ -2939,11 +3096,18 @@ no_agent_lines() {
     # shellcheck disable=SC2154 # CFG_merge is assigned in another file
     case "${st}" in
       ready) ;;
-      review) [[ "${CFG_merge}" == agent && -z "${kept}" ]] || continue ;;
+      review) [[ -z "${kept}" ]] || continue ;;
       *) continue ;;
     esac
     # Not kind: lead, which every escalated story is (lead_block), and a held one too.
     agent_kind "${kind}" && [[ -z "${held}" ]] || continue
+    # Under merge = human, a review story counts only under a merge grant. Its builder's line is dropped
+    # once the handover closed it (handed, below), so it gets no-review: alone; a builder started again,
+    # to fix a later review's findings, and gone with no close still gets its no-agent: line.
+    if [[ "${st}" == review && "${CFG_merge}" != agent ]]; then
+      no_agent_granted "${slug}" || continue
+      revonly+=" ${slug}"
+    fi
     # A step-up runs only on a ready story, so only a ready one's marker is a failed step-up. It is
     # reported while an upgrade runs too: the upgrade restarts agents, and this story has none.
     if [[ "${st}" == ready && -e "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]]; then marked+=" ${slug}"; continue; fi
@@ -2966,6 +3130,8 @@ no_agent_lines() {
       build_exists "${src}" "${slug}" || continue
     fi
     built+="${slug} ${ev} ${name} ${rname} ${prs}"$'\n'; revs+=" ${slug} ${rname}"
+    # Its build ended: an ok close of the builder after its newest start, as the handover leaves it.
+    [[ "${build}" == 1 || " ${revonly} " != *" ${slug} "* ]] || handed+=" ${slug}"
   done < <(no_agent_events ${rows})
   [[ -n "${built}${marked}" ]] || return 0
   # The review case reads events.tsv once more, for the stories with a build record only: a build a
@@ -2985,7 +3151,7 @@ no_agent_lines() {
     step_up_running "${slug}" || echo "step-up failed: ${slug}, exit: swarm.sh step-up --resume ${slug}"
   done
   [[ -z "${built}" ]] || while read -r slug ev name rname prs; do
-    [[ -n "${slug}" ]] || continue
+    [[ -n "${slug}" && " ${handed} " != *" ${slug} "* ]] || continue
     ! grep -qxF -e "${name}" -e "${rname}" <<< "${live}" || continue
     ! no_agent_busy "${slug}" "${name}" "${prs}" || continue
     if [[ "${ev}" == - ]]; then
@@ -3331,13 +3497,15 @@ unsent_lines() {
 # queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
 # for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
-# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `prompt:`, `tell undelivered:`
-# and `tell goal failed:` lines) and saves the rest.
+# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `prompt:`, `unmerged:`,
+# `conflict:`, `tell undelivered:` and `tell goal failed:` lines) and saves the rest.
 lead_wake() {
   local now line new="" slug u
   lead_agents
   if [[ -z "${LEAD_HEADS_AT}" ]] || (( SECONDS - LEAD_HEADS_AT >= LEAD_HEADS_EVERY )); then
     LEAD_HEADS_AT=${SECONDS}; lead_heads
+    # The open story PRs pr_lines reads each poll, on the heads pass's cadence: its gh reads come with the pass's.
+    open_story_prs > "${LEAD_PRS}.new" && mv "${LEAD_PRS}.new" "${LEAD_PRS}"
   fi
   now="$(lead_queue)"
   # One read budget and one read per pane for resend_pass and prompt_lines. The reads sit in
@@ -3364,7 +3532,8 @@ lead_wake() {
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
       || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* \
-            && "${line}" != "prompt: "* && "${line}" != "tell undelivered: "* && "${line}" != "tell goal failed: "* ]] || new+="${line}"$'\n'
+            && "${line}" != "prompt: "* && "${line}" != "unmerged: "* && "${line}" != "conflict: "* \
+            && "${line}" != "tell undelivered: "* && "${line}" != "tell goal failed: "* ]] || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
@@ -3423,10 +3592,11 @@ lead_lock() {
 
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
-# (lead_wake). The PR heads behind its merge: lines are read only in a heads pass (lead_heads), on its
-# first read and then at most once every LEAD_HEADS_EVERY seconds. The first read of a run reports what
+# (lead_wake). The PR heads behind its merge: lines, and the open story PRs behind its unmerged: and conflict:
+# lines, are read only in a heads pass (lead_heads, open_story_prs), on its first read and then at most once
+# every LEAD_HEADS_EVERY seconds. The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts
-# (no-agent:, step-up failed:, unsent brief:, prompt:). At the timeout (default an hour) it fails with nothing printed. It edits
+# (no-agent:, step-up failed:, unsent brief:, prompt:, unmerged:, conflict:). At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file, and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
@@ -3454,7 +3624,8 @@ UPGRADE_GRACE_MS="${SWARM_UPGRADE_GRACE_MS:-300000}"
 # per project. UPGRADE_DIR: that run's own records, a file per agent name: epic- (upgrade_epic), hand-
 # (its handover file), asked- (prompt or note), ready- (idle with its handover in, this round), done-
 # (moved, or a conductor already on the version told to carry on), left- (left on its old version),
-# kept- (already on the version, with a problem), busy- (busy when its restart came), hint- (how to
+# kept- (already on the version, with a problem), busy- (busy when its restart came), rheld- (the
+# review-agent hold that kept a builder back in its last round, upgrade_hold's), hint- (how to
 # resume it, while a restart is under way); summary, the lines it prints at the end; and why, a failed
 # restart's. UPGRADE_SAID: how upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's
 # agent list, read once per round (upgrade_herdr). UPGRADE_WANT and UPGRADE_NEW: the run's agents
@@ -3663,14 +3834,16 @@ upgrade_status() {
 # (upgrade_want) read afresh, herdr's list once (UPGRADE_HERDR): each conductor whose agents will move
 # is asked for its handover (upgrade_ask); while one is idle with it written, the agents are read
 # again, so a builder it started before it paused, or after a watch woke it, counts. Then each idle
-# builder whose conductor is idle with its handover in (upgrade_hold) is restarted (upgrade_restart,
-# waiting one round at most, upgrade_round_end), one whose session is gone or unknown is left, a busy
-# one waits; last, each conductor whose builders are all moved or left is moved (upgrade_conductor).
+# builder whose conductor is idle with its handover in, and whose Claude review agent is not busy
+# (upgrade_hold, read after the builder's own state, so a gone one is left at once), is restarted
+# (upgrade_restart, waiting one round at most, upgrade_round_end), one whose session is gone or
+# unknown is left, a busy one waits; last, each conductor whose builders are all moved or left is
+# moved (upgrade_conductor).
 # Fails while any agent waits, and when herdr's list cannot be read, so that round counts as waiting
 # rather than as one with nothing left to move. A conductor paused here that a good list no longer
 # holds is left.
 upgrade_round() {
-  local list name pane role cur e st rc f olds=" " held=" " waits="" fresh=""
+  local list name pane role cur e h st rc f olds=" " held=" " waits="" fresh=""
   upgrade_reread "$1" "$2" || return 1
   list="$(upgrade_open < "${UPGRADE_DIR}/list")"
   while IFS=$'\t' read -r name pane role cur; do
@@ -3693,11 +3866,17 @@ upgrade_round() {
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
+    rm -f "${UPGRADE_DIR}/rheld-${name}"
     case "$(upgrade_hold "${e}" "${list}")" in
-      left) upgrade_left "${name}" "$(upgrade_held_why "${e}")"; continue ;;
+      left) upgrade_left "${name}" "$(upgrade_held_why "${e}" left)"; continue ;;
       wait) held+="${e} "; continue ;;
     esac
     st="$(upgrade_state "${name}" "${pane}")"
+    # Its review agent holds it only once its own session is known to be there: a gone one is left now.
+    if [[ "${st}" != gone ]]; then
+      h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
+      if [[ "${h}" == "review "* ]]; then echo "${h}" > "${UPGRADE_DIR}/rheld-${name}"; held+="${e} "; continue; fi
+    fi
     case "${st}" in
       idle) rc=0; upgrade_restart "${name}" "${pane}" "${role}" "$2" "$(upgrade_round_end "$3")" || rc=$?
             [[ ${rc} -ne 2 ]] || held+="${e} " ;;
@@ -3753,10 +3932,12 @@ upgrade_read_herdr() {
 # upgrade_herdr — herdr's agent list: the round's copy (UPGRADE_HERDR) while a round runs, else read now.
 upgrade_herdr() { if [[ -n "${UPGRADE_HERDR}" ]]; then printf '%s\n' "${UPGRADE_HERDR}"; else herdr agent list 2>/dev/null; fi; }
 
-# upgrade_held_why <epic> — why <epic>'s builders were held: its conductor wrote its handover but
-# stayed busy, or it wrote none.
+# upgrade_held_why <epic> <hold> — why a builder of <epic> was held, from its upgrade_hold: `review
+# <name>`, its review agent stayed busy; else its conductor wrote its handover but stayed busy, or it
+# wrote none.
 upgrade_held_why() {
   local f
+  [[ "$2" != "review "* ]] || { echo "its review agent ${2#review } stayed busy"; return; }
   f="$(cat "${UPGRADE_DIR}/hand-$(conductor_name "$1")" 2>/dev/null)" || f=""
   if [[ -n "${f}" && -s "${f}" ]]; then echo "its conductor wrote its handover but stayed busy"; else echo "its conductor wrote no handover"; fi
 }
@@ -3768,7 +3949,7 @@ upgrade_held_why() {
 # more), since one that ended its turn reads no inbox, else by a note, and left. When herdr's list
 # cannot be read then, the last round's (list) stands in, so no agent still waiting is missed.
 upgrade_end() {
-  local list name pane role cur e
+  local list name pane role cur e h
   if upgrade_reread "$1" "$2"; then list="$(upgrade_open < "${UPGRADE_DIR}/list")"
   elif [[ -e "${UPGRADE_DIR}/list" ]]; then
     echo "herdr's agent list could not be read at the end; the last round's names the agents" >> "${UPGRADE_DIR}/summary"
@@ -3782,8 +3963,10 @@ upgrade_end() {
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" != conduct && "${cur}" == old ]] || continue
     e="$(upgrade_epic "${name}" "${role}")"
-    if [[ -z "$(upgrade_hold "${e}" "${list}")" ]]; then upgrade_left "${name}" "still busy at the end of the wait"
-    else upgrade_left "${name}" "$(upgrade_held_why "${e}")"; fi
+    h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
+    [[ -n "${h}" ]] || h="$(cat "${UPGRADE_DIR}/rheld-${name}" 2>/dev/null)" || h=""   # held by it in the last round
+    if [[ -z "${h}" ]]; then upgrade_left "${name}" "still busy at the end of the wait"
+    else upgrade_left "${name}" "$(upgrade_held_why "${e}" "${h}")"; fi
   done <<< "${list}"
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${role}" == conduct ]] || continue
@@ -3838,17 +4021,52 @@ upgrade_epic() {
   echo "${e}"
 }
 
-# upgrade_hold <epic> <list> — whether <epic>'s builders wait on its conductor: left when it was left
-# (or kept) with no handover, wait while it is in <list> (upgrade_list, not yet moved) and not idle with its
-# handover in this round (ready-); else nothing, as when it left herdr's list (gone-), so none is
-# left to act on them.
+# upgrade_hold <epic> <list> [reviewer] — whether a builder of <epic> waits: left when its conductor
+# was left (or kept) with no handover, wait while the conductor is in <list> (upgrade_list, not yet
+# moved) and not idle with its handover in this round (ready-); else, as when the conductor left
+# herdr's list (gone-), so none is left to act on them, `review <reviewer>` while the builder's
+# review agent (upgrade_reviewer), which reviews its PR, is busy (upgrade_review_busy), left or not;
+# else nothing.
 upgrade_hold() {
   local c
-  [[ "$1" != - ]] || return 0
-  c="$(conductor_name "$1")"
-  [[ ! -e "${UPGRADE_DIR}/ready-${c}" && ! -e "${UPGRADE_DIR}/gone-${c}" ]] || return 0
-  if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left
-  elif grep -q "^${c}"$'\t' <<< "$2"; then echo wait; fi   # loose-match: ok conductor names are [a-z0-9_-], anchored by ^ and a tab
+  if [[ "$1" != - ]]; then
+    c="$(conductor_name "$1")"
+    if [[ ! -e "${UPGRADE_DIR}/ready-${c}" && ! -e "${UPGRADE_DIR}/gone-${c}" ]]; then
+      if [[ -e "${UPGRADE_DIR}/left-${c}" || -e "${UPGRADE_DIR}/kept-${c}" ]]; then echo left; return 0; fi
+      if grep -q "^${c}"$'\t' <<< "$2"; then echo wait; return 0; fi   # loose-match: ok conductor names are [a-z0-9_-], anchored by ^ and a tab
+    fi
+  fi
+  ! upgrade_review_busy "${3:-}" || echo "review $3"
+}
+
+# upgrade_reviewer <name> <role> — the agent name of the review agent of the story whose builder is
+# <name> (agent_name of review-<slug>, exact), kept for the run; nothing for an agent in no builder
+# role, or with no story.
+upgrade_reviewer() {
+  local f="${UPGRADE_DIR}/reviewer-$1" s r=""
+  [[ " ${BUILDER_ROLES} " == *" $2 "* ]] || return 0
+  [[ ! -e "${f}" ]] || { cat "${f}"; return; }
+  while IFS= read -r s; do
+    s="$(basename "${s}" .md)"
+    [[ "$(agent_name "${s}")" == "$1" ]] || continue
+    r="$(agent_name "review-${s}")"; break
+  done < <(board stories)
+  echo "${r}" > "${f}"
+  echo "${r}"
+}
+
+# upgrade_review_busy <reviewer> — succeed while <reviewer> is in the run's last read of its agents
+# (list, a Claude agent) on its old version, not moved since, and neither idle nor gone (upgrade_state).
+# One left on its old version still holds: it is still reviewing its builder's PR. A codex review agent
+# is in no list, so it holds nothing.
+upgrade_review_busy() {
+  local name pane role cur
+  [[ -n "$1" && -f "${UPGRADE_DIR}/list" && ! -e "${UPGRADE_DIR}/done-$1" && ! -e "${UPGRADE_DIR}/kept-$1" ]] || return 1
+  while IFS=$'\t' read -r name pane role cur; do
+    [[ "${name}" == "$1" && "${cur}" == old ]] || continue
+    case "$(upgrade_state "${name}" "${pane}" </dev/null)" in idle|gone) return 1 ;; *) return 0 ;; esac
+  done < "${UPGRADE_DIR}/list"
+  return 1
 }
 
 # upgrade_ask <conductor> <pane> <epic> <version> — where the conductor is with its handover. The
