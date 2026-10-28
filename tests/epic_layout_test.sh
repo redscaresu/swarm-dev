@@ -265,8 +265,8 @@ check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0
 check "the story-mode conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
   "$(has "${STRICT_RULE}" "${cbrief}")|$(has "start yours in a later wave, after the named story merges" "${cbrief}")|$(has "nothing is known to be open: retry the story in a later wave" "${cbrief}")"
 check "the story-mode conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${cbrief}" || true)"
-check "with merge = human, the story-mode conductor stops when the Done when holds or nothing ready is left, and pins no merge" "yes|no" \
-  "$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${cbrief}")|$(grep -qF -- --match-head-commit <<< "${cbrief}" && echo yes || echo no)"
+check "with merge = human, the story-mode conductor stops only once no agent work is left, and pins no merge" "yes|no" \
+  "$(has "Never write your report while agent work is left:" "$(tr -s '[:space:]' ' ' <<< "${cbrief}")")|$(grep -qF -- --match-head-commit <<< "${cbrief}" && echo yes || echo no)"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "the story-mode builder runs codex-review against its story in the background, and knows what a timeout means" "yes|yes|yes|yes" \
   "$(codex_form main "$(cat "${p}/.swarm/briefs/s1.md")")|$(has "SWARM_STORY=s1 SWARM_PROJECT=${p} ${SWARM} codex-review main\`" "$(cat "${p}/.swarm/briefs/s1.md")")"

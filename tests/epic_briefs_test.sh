@@ -260,9 +260,12 @@ check "with merge = human, the conductor starts every ready story of the epic wi
 # green, merges or hands over: no swarm.sh wait-pr step, no green rule, no merge --head, and no close
 # after a review (of the review agent, of the builder after swarm.sh review, or after reconcile's).
 # Each count is 0 on a brief that leaves it out; one that carries the conductor's old review and merge
-# steps again drives a PR beside its review agent, and this goes red.
+# steps again drives a PR beside its review agent, and this goes red. The one close of a review agent
+# left is the stop rule's, on a finish: line, once no agent work is left (FINISH_CLOSE): it is cut out first.
+# shellcheck disable=SC2016 # the backticks are the brief's
+FINISH_CLOSE='that `herdr agent list` still lists as idle, with `swarm.sh close review-<slug>` (leave a working one: it is still handing its PR on, and reconcile or tidy closes it), then write your report.'
 hands_off() {
-  local b; b="$(tr -s '[:space:]' ' ' <<< "$1")"
+  local b; b="$(tr -s '[:space:]' ' ' <<< "$1")"; b="${b//"${FINISH_CLOSE}"/}"
   printf '%s|' "$(grep -c 'swarm.sh wait-pr' <<< "${b}" || true)" "$(grep -c 'A PR is green only when' <<< "${b}" || true)" \
     "$(grep -c 'swarm.sh merge --head' <<< "${b}" || true)" "$(grep -c 'swarm.sh close review-' <<< "${b}" || true)" \
     "$(grep -c 'Reconcile has closed the builder' <<< "${b}" || true)"
@@ -270,6 +273,21 @@ hands_off() {
   grep -c 'swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`' <<< "${b}" || true
 }
 HANDS_OFF="0|0|0|0|0|0"
+# report_rules <brief> <finish scope> — the conductor's report rules: never while agent work is left,
+# on a finish: line close each review-<slug> left and then report, and a lead-blocked story listed for
+# the user, holding nothing up; and the old rule, which let it report while a review agent still owned
+# a PR (gone). A conductor that reports early leaves that PR with nobody to act on its escalations: if
+# a brief drops any of these, or brings the old sentence back, this goes red.
+report_rules() {
+  local b; b="$(tr -s '[:space:]' ' ' <<< "$1")"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  printf '%s|%s|%s|%s|%s\n' "$(has "Never write your report while agent work is left:" "${b}")" \
+    "$(has "A merge or handover note that ends \`finish: $2 has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours ${FINISH_CLOSE}" "${b}")" \
+    "$(has "A story blocked only on a \`kind: lead\` story or a hand step waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
+    "$(has "only once no agent work is left (the stop rule above): write your report" "${b}")" \
+    "$(grep -qF "Write your report only when no story of this epic that is yours to start is ready and none is running" <<< "${b}" && echo there || echo gone)"
+}
+REPORT_RULES="yes|yes|yes|yes|gone"
 # merge_note <brief> <unblock arg> — the startable pass after each inbox pass, cued by a merge note.
 merge_note() {
   # shellcheck disable=SC2016 # the backticks are the brief's
@@ -289,6 +307,9 @@ check "with merge = human, both briefs start a fix-main story at once whatever t
   "$(has "start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "once its builder replies with the PR URL." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")|$(has "once its builder replies with the PR URL." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")"
 check "with merge = human, both conductor briefs start every startable story after each inbox pass, and the epic's still puts the epic in review" "yes|yes|yes" \
   "$(merge_note "$(cat "${p}/.swarm/briefs/conduct-f.md")" f)|$(merge_note "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" --backlog)|$(has "swarm.sh review <epic> <every PR URL still waiting>" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "with merge = human, the epic's and the backlog's conductor briefs report only once no agent work is left, on a finish: line after closing their review agents left" \
+  "${REPORT_RULES}|${REPORT_RULES}" \
+  "$(report_rules "$(cat "${p}/.swarm/briefs/conduct-f.md")" "epic f")|$(report_rules "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" "the backlog")"
 docs="$(cd "$(dirname "${SWARM}")/../docs" && cat method.md reference.md | tr -s '[:space:]' ' ')"
 check "method.md and reference.md § Building give the clash rule, the merge-base-in rule and the pass rule" "2|2|2|0|1" \
   "$(grep -oF "Two stories clash only when their \`touches\` name the same file in the same repo and the same first word of a part (\`file:part\`), or when both name the bare file. A bare file does not clash with a part of it. A part's first word skips a leading \`§\`, \`#\`, \"the\", \"a\" or \"an\". Otherwise both build at once" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "A builder whose PR conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict never sends a story back to \`ready\`" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "whose findings are all declined is a pass" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "round 4" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "logged with \`log-finding --declined <reason> --reviewer <who>\`: \`nit\` for a nit, an edge case or a low-value point, \`out-of-scope\` or \`wrong\` where they apply" <<< "${docs}" | wc -l | tr -d ' ')"
@@ -310,10 +331,12 @@ check "with merge = agent, both briefs start a fix-main story at once whatever t
   "$(has "start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope" "${brief}")|$(has "once its builder replies with the PR URL." "${brief}")|$(has "start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")|$(has "once its builder replies with the PR URL." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")"
 check "with merge = agent, the conductor starts every ready story of the epic with no build after a merge and after a note, not only what unblock printed" \
   "3|yes|yes|yes|yes|no" "$(startable_brief "${brief}")"
-check "it reports, and stops, only once no story of the epic is ready or running, never just because nothing is ready" "yes|yes|no" \
-  "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running (a fix-main story you started counts as running until its PR merges), or when CI on the base timed out, or is red with no \`fix-main:\` line." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
-check "with merge = agent, the epic conductor's stop and report rules count a fix-main story it started as running until its PR merges" "2" \
-  "$(grep -oF "ready and none is running (a fix-main story you started counts as running until its PR merges)" <<< "${brief}" | wc -l | tr -d ' ')"
+check "with merge = agent, the epic's and the backlog's conductor briefs report only once no agent work is left, on a finish: line after closing their review agents left" \
+  "${REPORT_RULES}|${REPORT_RULES}" \
+  "$(report_rules "${brief}" "epic f")|$(report_rules "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" "the backlog")"
+# A broken base is the one stop while agent work is left, and the merge rule's report sentence names it.
+check "with merge = agent, the epic conductor's report rules stop it on a broken base, and count a fix-main story it started until its PR merges" "yes|yes|yes|no" \
+  "$(has "The one exception: stop and report at once when CI on the base timed out, or is red with no \`fix-main:\` line." "${brief}")|$(has "Write your report only as the stop rule below says: never while agent work is left, unless CI on the base timed out" "${brief}")|$(has "kept by a close and still to be reviewed (a fix-main story you started counts as running until its PR merges)." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
 check "the brief makes no claim about the block-red-pr-merge hook, which never sees swarm.sh's own gh calls" "no" \
   "$(grep -qF "block-red-pr-merge" <<< "${brief}" && echo yes || echo no)"
 printf '%s\n' "escalate_after = 0" > "${p}/.claude/swarm/config"

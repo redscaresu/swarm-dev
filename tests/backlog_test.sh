@@ -134,8 +134,8 @@ check "the backlog brief never runs story for a started story, and reports one i
 run `swarm.sh story` for it again.' "${bl}")|$(has 'report it as not started, with the reason `build died`.' "${bl}")|$(has 'one line each:
 `not started: <slug> (<the refusal'"'"'s first line>)`.' "${bl}")|$(grep -c 'swarm.sh story <slug>' <<< "${bl}" || true)"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "with merge = human, the backlog brief leaves the handover to the review agent, never runs swarm.sh merge, and stops when nothing is left" "yes|no|yes|no" \
-  "$(has 'A story'"'"'s review agent hands its PR to the user itself, with `swarm.sh review`, unless an HLD' "${bl}")|$(hasnt "swarm.sh merge --" "${bl}")|$(has 'Stop when no ready story with no `epic:` that you may start is left and none is running.' "${bl}")|$(hasnt "swarm.sh review <epic>" "${bl}")"
+check "with merge = human, the backlog brief leaves the handover to the review agent, never runs swarm.sh merge, and stops only once no agent work is left" "yes|no|yes|no" \
+  "$(has 'A story'"'"'s review agent hands its PR to the user itself, with `swarm.sh review`, unless an HLD' "${bl}")|$(hasnt "swarm.sh merge --" "${bl}")|$(has 'ends `finish: the backlog has no agent work left` says none is' "$(tr -s '[:space:]' ' ' <<< "${bl}")")|$(hasnt "swarm.sh review <epic>" "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = human, a refusal naming another one-off in review is reported as not started, not waited on" "yes" \
   "$(has "Report the

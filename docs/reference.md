@@ -2463,7 +2463,9 @@ With `merge = human` (the default) no agent merges unless an HLD grants `merge`:
 review agent runs `swarm.sh review <slug> --head <SHA> <PR URL>` on the head it reviewed; for an item no
 review agent hands over (an epic, or a story with several PRs), the lead or a conductor runs
 `swarm.sh review <slug> <PR URL>...`. Either sets the item `status: review` with its PRs on a
-`prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
+`prs:` line, and `next` lists it as awaiting your merge. For a story under `merge = human`, or one
+that costs money, `review` also notes the story's running conductor that it is in review, a note
+that ends with the `finish:` line once the epic has no agent work left (§ Building). When the stories left in an epic are all
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
 too, with every PR still waiting. A `kind: lead` story whose `after:` names its own epic does not count in it
 (alone or in a list; an `after:` that does not name its own epic is ignored), so an epic with only
@@ -2556,8 +2558,19 @@ but lists nothing. The
 conductor skips a story it closed in this wave (it may start it again in a later one), one its give-up rule says not to start again, and one
 a `not held:` line left `ready` for the lead. If the last inbox pass before its report reads a note,
 it runs `--startable` once more, and if that starts a builder, it goes back to waiting instead of
-reporting. It reports once no story of the epic that it may start is ready and none is running,
-and stops when CI on the base timed out, or is red with no `fix-main:` line, saying so in its report.
+reporting. It never writes its report while agent work is left: a story of the epic, of a kind an
+agent builds, that is ready (to start, building, or with its PR open and not yet in review), blocked
+on an agent's work, or in review with its review agent still to act on it (a story a close kept, or,
+under `merge = agent`, one its review agent merges next, unless it costs money or changes a protected
+path), or a fix-main story it started. A story blocked only on a `kind: lead` story or a hand step,
+or blocked by hand with no `depends_on`, waits on you: it holds nothing up, and the report lists it under Waits on the
+user. The note after the last such story's merge or handover ends `finish: epic <epic> has no agent
+work left` (§ Merging); the conductor then closes each idle `review-<slug>` of its own still open,
+with `swarm.sh close review-<slug>`, and writes its report. A working one is still handing its PR on,
+so it is left for reconcile or `tidy` to close. With no such note it judges by the same rule.
+A report written while a review agent still owned a PR would leave that PR's escalations with nobody,
+since `next` collects a conductor on its report alone. Under `merge = agent` it also stops when CI
+on the base timed out, or is red with no `fix-main:` line, saying so in its report.
 It also stops when what is left needs the lead: a story only the lead can finish. If
 CI on the base goes red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below),
 which `next` names to the lead first; the lead's note asks the conductor to start its builder at
@@ -2951,6 +2964,11 @@ head nobody checked, the note says so in place of those stories. After a base th
 that queue merge, it also asks the conductor to start none of them, as a `--board` merge tells no
 conductor on a red main. That note says it overrides the startable pass its wake prompt asks for:
 reconcile has finished the story, so `unblock` would ready them. Merge still exits non-zero after each of these but a story left in review.
+When the note names no such reason and the epic has no agent work left after the merge
+(§ Building lists what counts), the note ends with a line `finish: epic <epic> has no agent work left`
+(`finish: the backlog has no agent work left` for a story with no epic): the conductor's cue to close
+the review agents it left and write its report. The handover note `swarm.sh review` sends ends the
+same way. A `--board` merge's note never carries it.
 A conductor that has written its report counts as not running; with none running, merge prints a
 `ready now:` line for those stories instead, a held one marked `(held)`. Since the PR has merged
 by then, each herdr call the note makes stops after `SWARM_NOTE_HERDR_WAIT` seconds (30 by
