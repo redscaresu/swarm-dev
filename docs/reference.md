@@ -1522,9 +1522,10 @@ the head on its `head:` line the moment it exists, by the conductor's `swarm.sh 
 and the merge rules, so the agent writes it only on a pass or when it stops. It then runs
 `swarm.sh wait --stall <slug>` and `swarm.sh tell <slug> findings <the round file>`, so the findings
 go at once and count their round now; a tell that finds the builder busy is queued and sent when its
-turn ends (above), and the agent then waits out that turn, then the delivery (its marks under
-`.swarm/tells/` gone but `.sent`, 15 minutes at most, since a check that has not looked for 10
-minutes counts as stopped; an `.undelivered.md` there, or the limit, stops the agent). A delivery
+turn ends (above), and the agent then waits out that turn, then the delivery, with one bounded
+command in the background (its marks under `.swarm/tells/` gone but `.sent`, 15 minutes at most,
+since a check that has not looked for 10 minutes counts as stopped; an `.undelivered.md` there, or
+the limit, stops the agent). A delivery
 that held the story for the lead or stepped the build up leaves `.sent` too, so before it waits for
 the fix the agent reads the story's `held_for:` line, which stops it, and the events log's
 `escalate` line for a findings step-up, after which it tells the new builder nothing and waits on
@@ -1541,7 +1542,8 @@ arrived, and carries on. When `tell` says the story is held for the lead, or its
 partway, the agent stops. Once the
 builder has pushed, the agent runs the green step on the new head with `wait-pr --head <that head>`,
 since right after a push GitHub can still report the old one; when that wait says the PR's head is
-another, the push never landed, and the agent nudges the builder naming both heads, then
+another, the push never landed, and the agent nudges the builder naming both heads and runs
+`wait-pr --head` on the same HEAD again before it calls the builder idle without a commit, then
 `swarm.sh review-agent --next
 <slug> <PR URL>`, and reviews the round that prints in the same session. If the builder goes idle
 without pushing, the round passes when the builder declined each finding with a reason the agent

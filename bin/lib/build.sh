@@ -1149,15 +1149,18 @@ to act on.
 A tell to a busy builder is queued, not refused: it prints \`queued: ${agent} (busy); delivered when
 its turn ends, so do not tell it again\` and exits 0, and its queue's check sends it once the
 builder's turn has ended (a findings tell counts its round then, not before). After a queued tell,
-wait for the builder as above, then until the check has delivered it: the tell is
+wait for the builder as above, then for the delivery, with this one command in the background
+(Bash run_in_background), waiting for it to exit, never a loop of your own:
+\`for i in \$(seq 90); do ls ${PROJECT_DIR}/.swarm/tells/${agent}.findings* 2>/dev/null | grep -qv -e '\.sent\$' -e undelivered || break; [ -e ${PROJECT_DIR}/.swarm/tells/${agent}.findings.undelivered.md ] && break; sleep 10; done; ls ${PROJECT_DIR}/.swarm/tells/\`
+(for a queued nudge, \`nudge\` in place of \`findings\`, in both places). The tell is
 ${PROJECT_DIR}/.swarm/tells/${agent}.<kind> while queued, then a \`.sending.<token>\` and a
-\`.claimed.<token>\` mark of that name while on its way, and only its \`.sent\` mark is left once the
-builder has it (look every few seconds, \`ls ${PROJECT_DIR}/.swarm/tells/\`; the check looks once a
-minute). Give that 15 minutes: a check that has not looked for 10 minutes counts as stopped, and
-\`wait --lead\` then hands its tells to the lead, so when the marks are still there past 15 minutes,
-stop with \`stopped: the queued <kind> tell was not delivered in 15 minutes\`, as below. When
-\`${agent}.<kind>.undelivered.md\` appears there instead, the check dropped the tell, which
-\`wait --lead\` tells the lead: stop with that, as below. Once only \`.sent\` is left, see what the
+\`.claimed.<token>\` mark of that name while on its way (the check looks once a minute). The
+command ends once only its \`.sent\` mark is left, which means the builder has it; when
+\`${agent}.<kind>.undelivered.md\` appears, which means the check dropped the tell, which
+\`wait --lead\` tells the lead: stop with that, as below; or after 15 minutes with the marks still
+there: a check that has not looked for 10 minutes counts as stopped, and \`wait --lead\` then hands
+its tells to the lead: stop with \`stopped: the queued <kind> tell was not delivered in 15 minutes\`,
+as below. Once only \`.sent\` is left, see what the
 delivery did before you wait on the builder, since a delivery of findings that holds the story for
 the lead or steps the build up leaves \`.sent\` too: when ${story} now has a \`held_for:\` line, stop
 with \`held for the lead: <that line>\`, as below; when ${PROJECT_DIR}/.swarm/events.tsv gained an
@@ -1191,12 +1194,14 @@ right after a push GitHub can still report the old head, which the plain wait-pr
 That HEAD is this worktree's commit, pushed or not: when wait-pr exits 2 with \`the PR's head is
 <X>, not <sha>\`, the PR never got the head you named (a push that did not land): never wait on
 <X> instead; nudge the builder naming both shas, so it pushes again, then wait for it and run
-wait-pr --head again on its HEAD. The green step runs once per round: on the first head, then on
-the head the builder pushes after each findings tell. Each run is bounded: at most two nudges, and
-at most two heads that wait-pr calls red. Write the not-green file, which ends the green step, when
-the builder goes idle without a commit (\`git rev-parse HEAD\` is still the head you waited on),
-when wait-pr ends the same way twice, when the second red head would need a nudge, or when the
-head after your second nudge is not green. The not-green file is ${round}, written
+wait-pr --head again on its HEAD, which a push alone does not change. The green step runs once per
+round: on the first head, then on the head the builder pushes after each findings tell. Each run is
+bounded: at most two nudges, and at most two heads that wait-pr calls red. Write the not-green
+file, which ends the green step, when the builder goes idle without a commit (\`git rev-parse HEAD\`
+is still the head you waited on) after a nudge that asked for a fix (after one that asked for a
+push, run wait-pr --head on that HEAD first, as above, and only a second miss ends the step), when
+wait-pr ends the same way twice, when the second red head would need a nudge, or when the head
+after your second nudge is not green. The not-green file is ${round}, written
 with the Write tool after \`rm -f ${round}\`: \`head: <the head wait-pr waited on last>\`, then a
 \`## Findings\` heading with one line for the builder, \`wait-pr: not green: <the red check, the
 conflict, or what wait-pr printed last>\`, then a \`## Handled by the review agent\` heading with
