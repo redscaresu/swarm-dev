@@ -154,8 +154,9 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
 
 - No agent touches real cloud or credentials. That work is a `lead` story, done in your session
   while you watch.
-- Agents start with a short list of environment variables. A token you exported reaches a builder
-  only when its story names it under `env:`.
+- Agents start with a short list of environment variables. Any other variable you exported reaches
+  an agent only when its story names it under `env:` or the board's config lists it in `agent_env`.
+  With Foundry on, its `ANTHROPIC_FOUNDRY_*` and model settings pass to every agent too.
 - In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
   go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work

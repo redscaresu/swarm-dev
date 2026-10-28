@@ -662,6 +662,29 @@ epr e1; echo '[{"filename":"docs/epics/e1.md","status":"removed"}]' > "${FX}/fil
 board_merged "--board, an epic the PR removes"
 epr e2; echo '[{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]' > "${FX}/files"
 fx_at e2.md "${H1}" "status: draft"; fx_at e1.md main "status: draft"; merge --board "${URL}"; board_merged "--board, an epic the PR renames away"
+# A renamed epic's base copy is at its old path: GitHub's previous_filename, on a renamed file only,
+# and only while the heading is the same.
+# ren [status] — a board PR moving docs/epics/e1.md to e2.md, GitHub's status for it [status] (renamed).
+ren() { epr e2; printf '[{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"%s"}]\n' "${1:-renamed}" > "${FX}/files"; }
+# hat <file> <ref> <heading> <fm lines...> — fx_at, then a "# <heading>" line after the front matter.
+hat() { fx_at "$1" "$2" "${@:4}"; printf '\n# %s\n' "$3" >> "${FX}/wf.$1.$2"; }
+ren; hat e1.md main e "status: active"; hat e2.md "${H1}" e "status: active"; merge --board "${URL}"
+board_merged "--board, an active epic renamed with nothing else changed"
+ren; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"; merge --board "${URL}"
+guarded "--board, a draft renamed and set active, the agreed: its base copy had kept" e2
+ren copied; hat e1.md main e "status: active"; hat e2.md "${H1}" e "status: active"; merge --board "${URL}"
+guarded "--board, an active epic copied to a new active one" e2
+ren; hat e1.md main e1 "status: active"; hat e2.md "${H1}" e2 "status: active"; merge --board "${URL}"
+guarded "--board, a deleted active epic GitHub pairs with an unrelated new active one, by its heading" e2
+ren; hat e1.md main e1 "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e2 "status: active" "agreed: $(day 0)"; merge --board "${URL}"
+guarded "--board, a draft renamed with another heading and set active, the agreed: its base copy had kept" e2
+# Read 1 is merge --board's file list; reads 2 to 4 the one asking what e2 was renamed from, which is
+# read again after a 502, up to GONE_READS (3) times, then kept for the merge.
+ren; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"; : > "${FX}/files.2.fail"
+merge --board "${URL}"; guarded "--board, a renamed epic, a 502 on the first read of its old path: read again" e2
+is "--board, a renamed epic, a 502 on the first read of its old path: one list for the merge, two reads of it" 3 "$(grep -c 'pulls/7/files' "${ROOT}/gh.log")"
+ren; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"; for i in 2 3 4; do : > "${FX}/files.${i}.fail"; done
+merge --board "${URL}"; refused "--board, a renamed epic whose old path gh cannot list" "--board: cannot tell what docs/epics/e2.md was renamed from, so whether ${URL} sets e2 ${UK} e2"
 # The guard runs after the head's CI check: a red head costs no contents read.
 epr e1; fx_at e1.md "${H1}" "status: active"; checks "${FX}/${H1}.checks" "$(run test completed failure)"; merge --board "${URL}"
 refused "--board, a red head that sets an epic active" "the head 1111111 is not green: test (failure)"
@@ -746,6 +769,21 @@ check "a story PR in another repo changing only docs/epics/notes/e1.md, in a sub
 spr; fx_at e2.md "${H1}" "status: draft"
 echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.main"
 merge "${URL}"; story_merged "a story PR whose pinned head renames an epic a later push restores merges"
+# A story PR's rename is read from the pinned compare too: e1, active, becomes e2 with its heading.
+spr; hat e1.md main e "status: active"; hat e2.md "${H1}" e "status: active"
+echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.main"
+merge "${URL}"; story_merged "a story PR whose pinned head renames an active epic, heading kept, merges"
+spr; hat e1.md main e "status: draft" "agreed: $(day 0)"; hat e2.md "${H1}" e "status: active" "agreed: $(day 0)"
+echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.main"
+merge "${URL}"; guarded "a story PR whose pinned head renames a draft and sets it active, the agreed: its base copy had kept" e2
+# The base branch is URL-quoted whole in that compare, as pinned_files quotes it: a / in its name.
+spr; echo release/x > "${FX}/base"; hat e1.md 'release%2Fx' e "status: active"; hat e2.md "${H1}" e "status: active"
+echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.release%2Fx"
+merge "${URL}"; story_merged "a story PR into release/x whose pinned head renames an active epic merges"
+check "a story PR into release/x: the compare names the base quoted whole" grep -q "compare/release%2Fx\.\.\.${H1}" "${ROOT}/gh.log"
+# A base holding # or % never reaches a compare: the name gh gave is refused first.
+spr; echo 'rel#1%2' > "${FX}/base"; merge "${URL}"
+refused "a story PR whose base branch holds # and %" "gh gave no head SHA, base branch or file count for ${URL}"
 # That read is bounded as the pinned list is: here the epic's first contents read makes the compares hang.
 # The bound is 8 s, room for the pinned list's own read on a loaded machine; its 3 reads stop well
 # before the 60 s one unbounded hung read takes.

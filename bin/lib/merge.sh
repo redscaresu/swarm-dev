@@ -6,7 +6,7 @@ MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get t
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 MERGE_UPDATE_READS=20   # reads of a PR's head after merge asks GitHub to merge its base in, MERGE_READ_WAIT apart
-GONE_READS=3            # merge_gone's reads of a story PR's pinned compare, MERGE_READ_WAIT apart, after a transient gh error
+GONE_READS=3            # merge_files' reads of the PR's files (a story PR's pinned compare, a --board PR's files API), MERGE_READ_WAIT apart, after a transient gh error
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
@@ -225,12 +225,13 @@ pr_contents() {
 # branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
 # is absent and 2 on any other failure. The contents read stops after BASE_MOVED_WAIT on either route,
 # and a cut-off one fails 2: epic_guard's line names the file and the ref, and the next swarm.sh merge
-# reads past it. The gone read below is bounded on the story route only (merge_gone), so on --board
-# merge_read can still wait on gh's files API. At the head a 404 is absent only for a path the PR removes or
+# reads past it. The file list read below (merge_files) is bounded the same way on either route. At
+# the head a 404 is absent only for a path the PR removes or
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
-# epic would read as deleted.
+# epic would read as deleted. merge_read from <path> is merge_from's answer.
 merge_read() {
   local ref="${head}" gone rc=0
+  [[ "$1" != from ]] || { merge_from "$2"; return; }
   [[ "$1" == head ]] || ref="${base}"
   # gh's error is left out: epic_guard's line names the file and the ref it could not read.
   pr_contents "${repo}" "${ref}" "$2" "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" 2>/dev/null || rc=$?
@@ -240,33 +241,53 @@ merge_read() {
   return 1
 }
 
-# merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_pr's
-# locals repo and n); fails when gh cannot list them. On the story route (merge_pr's local only empty)
-# they are read at the pinned head (compare <base>...<head>, its locals base and head), as the guard's
-# list is, so a push after the pin that restores a path cannot make its 404 there read as gh's. As
-# pinned_files' read is, every read there falls within one BASE_MOVED_WAIT, and only a transient gh
-# error (WAIT_PR_TRANSIENT, its URL words taken out) is read again, up to GONE_READS reads in all,
-# MERGE_READ_WAIT apart.
+# merge_files — the files PR <n> changes as gh lists them, a JSON list of {filename, status,
+# previous_filename, ...}, read once per merge into the file merge_pr's local flist names and printed
+# from there after (merge_read runs in epic_unticketed's subshell, so a file, not a variable, carries
+# the one list): merge_gone and merge_from look their answers up in it. On the story route (merge_pr's
+# local only empty) they are read at the pinned head (compare <base>...<head>, its locals base and
+# head, the base URL-quoted whole as pinned_files quotes it), as the guard's list is, so a push after
+# the pin cannot change what a path's 404 there, or its old name, reads as; with --board, the PR's
+# files API, every page. As pinned_files' read is, every read falls within one BASE_MOVED_WAIT, and
+# only a transient gh error (WAIT_PR_TRANSIENT, its URL words taken out) is read again, up to
+# GONE_READS reads in all, MERGE_READ_WAIT apart; any other failure, or the deadline, fails it.
+merge_files() {
+  local i out err rc deadline q
+  [[ ! -s "${flist}" ]] || { cat "${flist}"; return; }
+  q="$(python3 -c 'import sys, urllib.parse as u; print(u.quote(sys.argv[1], safe=""))' "${base}")" || return 1
+  deadline="@$(($(date +%s) + ${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}))"
+  err="$(mktemp)" || return 1
+  for ((i = 1; ; i++)); do
+    rc=0
+    if [[ -z "${only}" ]]; then
+      out="$(within "${deadline}" gh api "repos/${repo}/compare/${q}...${head}" </dev/null 2> "${err}")" || rc=$?
+    else
+      out="$(within "${deadline}" gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" </dev/null 2> "${err}")" || rc=$?
+    fi
+    [[ ${rc} -ne 0 ]] || break
+    if [[ ${rc} -eq 142 || ${i} -ge ${GONE_READS} ]] \
+      || ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' "${err}")"; then
+      rm -f "${err}"; return 1
+    fi
+    sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
+  done
+  rm -f "${err}"
+  if [[ -z "${only}" ]]; then json "json.dumps(d['files'])" <<< "${out}" > "${flist}" || return 1
+  else json "json.dumps([f for page in d for f in page])" <<< "${out}" > "${flist}" || return 1; fi
+  cat "${flist}"
+}
+
+# merge_gone — each path PR <n> removes, and each renamed file's old path, one a line (merge_files);
+# fails when gh cannot list them.
 merge_gone() {
-  local i out err rc deadline
-  if [[ -z "${only}" ]]; then
-    deadline="@$(($(date +%s) + ${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}))"
-    err="$(mktemp)" || return 1
-    for ((i = 1; ; i++)); do
-      rc=0; out="$(within "${deadline}" gh api "repos/${repo}/compare/${base//\//%2F}...${head}" </dev/null 2> "${err}")" || rc=$?
-      [[ ${rc} -ne 0 ]] || break
-      if [[ ${rc} -eq 142 || ${i} -ge ${GONE_READS} ]] \
-        || ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' "${err}")"; then
-        rm -f "${err}"; return 1
-      fi
-      sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
-    done
-    rm -f "${err}"
-    json "'\n'.join(p for f in d['files'] for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)" <<< "${out}"
-    return
-  fi
-  gh api --paginate --slurp "repos/${repo}/pulls/${n}/files?per_page=100" \
-    | json "'\n'.join(p for page in d for f in page for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
+  merge_files | json "'\n'.join(p for f in d for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
+}
+
+# merge_from <path> — the old path PR <n> renamed <path> from (its previous_filename, on a file whose
+# status is renamed: a copy leaves its source in place), or nothing (merge_files); fails when gh
+# cannot list the files.
+merge_from() {
+  merge_files | P="$1" json "next((f['previous_filename'] for f in d if f.get('status') == 'renamed' and f.get('filename') == e['P'] and f.get('previous_filename')), '')"
 }
 
 # unticketed_why <line> — epic_unticketed's failure line as merge says it: a read error at the
@@ -347,14 +368,29 @@ merge_hold() {
 # (protected_paths), a renamed or removed file's old path too, judged on <rc> and <out>, pinned_files'
 # exit and output; a list it could not read holds the PR too, saying why, so the user can tell a
 # passing error, which the next swarm.sh merge reads past, from a hold that stands (a PR of over 300
-# files, the most the compare lists, or of no file). --board and --release change only board paths or
+# files, the most the compare lists, or of no file). Either hold is recorded on the item in review
+# (protected_note), and a pass drops the record. --board and --release change only board paths or
 # plugin.json, never a protected path. With merge = human it does not run: merge_grant, later in
 # merge_pr, refuses such a PR (pr_hld puts it under no HLD).
 protected_hold() {
   local why
-  [[ $1 -eq 0 ]] || merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it"
+  if [[ $1 -ne 0 ]]; then
+    protected_note "unreadable: ${2%%$'\n'*}"
+    merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it"
+  fi
   why="$(cut -d' ' -f2- <<< "$2" | protected_paths any-case)"
-  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why%%$'\n'*}, which only the user merges; the user merges it"
+  why="${why%%$'\n'*}"
+  protected_note "${why}"
+  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges; the user merges it"
+}
+
+# protected_note [what] — protected_hold's record of its verdict for status and wait --lead
+# (protected_record): on the item in review (merge_pr's f), keyed to the PR (url) at the pinned head,
+# [what] the path it changes or `unreadable: <why>`; none drops the record. A write that fails warns:
+# it must not hide the hold or stop a merge.
+protected_note() {
+  ( protected_record "${f}" "${url}" "${head}" "${1:-}" ) \
+    || echo "warning: merge: cannot record on ${f} whether ${url} is held for a protected path; status and wait --lead may not show it" >&2
 }
 
 # story_files — the story route's read of the PR's files, setting merge_pr's local files to the paths
@@ -413,8 +449,9 @@ merged_state() {
   echo "${state:-unreadable} ${oid}"
 }
 
-# merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
-merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
+# merge_fail <why> — merge's one line for a refusal, then stop; merge_files' cache (merge_pr's local
+# flist), when the guard made one, goes with it. main logs nothing for merge.
+merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; [[ -z "${flist:-}" ]] || rm -f "${flist}"; die "merge: $1"; }
 
 # base_moved <owner/repo> <head> <base> <pr> — stop a story PR whose base has commits <head> lacks, since
 # CI on <head> never ran with them, unless every path they change is on the board (ci_gate behind,
@@ -633,7 +670,7 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" lock=""
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -699,7 +736,11 @@ merge_pr() {
   # An epic set active with no ticket is the user's under either merge mode: after the head's CI check,
   # so a red PR costs no reads; before the grant, so the grant's refusal cannot hide this one.
   [[ -n "${only}" ]] || story_files
-  [[ "${only}" == --release ]] || epic_guard
+  if [[ "${only}" != --release ]]; then
+    flist="$(mktemp "${TMPDIR:-/tmp}/swarm-files.XXXXXX")" || merge_fail "cannot make a temp file for the files ${url} changes"
+    epic_guard
+    rm -f "${flist}"; flist=""
+  fi
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
   # then under the costs: hold (merge_hold; the protected-path hold is merge = agent's alone: merge_grant
   # has refused such a PR, the names as written). --release is release_check's. Like epic_guard, it runs after the
