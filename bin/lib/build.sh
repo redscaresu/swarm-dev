@@ -1097,6 +1097,17 @@ the builder's turn has ended.${stepped} When it ends any other way (\`stalled:\`
 or an error), stop with what it printed, as below: the builder is then the conductor's or the lead's
 to act on.
 
+A tell to a busy builder is queued, not refused: it prints \`queued: ${agent} (busy); delivered when
+its turn ends, so do not tell it again\` and exits 0, and its queue's check sends it once the
+builder's turn has ended (a findings tell counts its round then, not before). After a queued tell,
+wait for the builder as above, then until the check has delivered it: the tell is
+${PROJECT_DIR}/.swarm/tells/${agent}.<kind> while queued, then a \`.sending.<token>\` and a
+\`.claimed.<token>\` mark of that name while on its way, and only its \`.sent\` mark is left once the
+builder has it (look every few seconds, \`ls ${PROJECT_DIR}/.swarm/tells/\`; the check looks once a
+minute). Then wait for the builder once more, as above: that turn is the one that has it. When
+\`${agent}.<kind>.undelivered.md\` appears there instead, the check dropped the tell, which
+\`wait --lead\` tells the lead: stop with that, as below.
+
 ${4} is read as a finished review of the head on its \`head:\` line the moment it exists, so write it
 only when a round passes, or when you stop. To stop before a round passes, write ${4} with the Write
 tool holding two lines, \`head: <the PR's head as you last saw it>\` and \`stopped: <why: what tell or
@@ -1116,8 +1127,8 @@ background and wait for it to exit, never a loop of your own; it prints the head
 To nudge the builder, first remove any earlier nudge file (\`rm -f ${nudge}\`: the Write tool refuses
 to overwrite a file this session has not read), then write ${nudge} with the Write tool, naming what
 to fix, and run \`${sw} tell $1 nudge ${nudge}\` (never findings, which count as a review round).
-When tell says the builder is still working, wait for it as above, then tell it. After each nudge,
-wait for the builder the same way, then wait for green again on the head it pushed. A wait on a
+When tell prints \`queued:\`, the nudge goes when the builder's turn ends: do as above. After each
+nudge, wait for the builder the same way, then wait for green again on the head it pushed. A wait on a
 head the builder has just pushed is \`${sw} wait-pr --head <that head, from git rev-parse HEAD> $2\`:
 right after a push GitHub can still report the old head, which the plain wait-pr would call green.
 That HEAD is this worktree's commit, pushed or not: when wait-pr exits 2 with \`the PR's head is
@@ -1177,9 +1188,10 @@ reply with ${4}, and with \`codex skipped: <why>\` when codex was, then stop.
 
 With findings to fix, write it to ${round} instead, after \`rm -f ${round}\` (the Write tool refuses
 to overwrite a file this session has not read), and never to ${4}, which would end the round as a
-finished review. Then wait before you tell: wait for the builder as above, then run
-\`${sw} tell $1 findings ${round}\`. When tell says the builder is still working, or that another
-step-up or a restart of it is running, wait the same way, then tell it again. When tell says the
+finished review. Then wait before you tell, so the findings go at once and count their round now:
+wait for the builder as above, then run \`${sw} tell $1 findings ${round}\`. When tell prints
+\`queued:\` (the builder took a turn meanwhile), do as above, and tell it nothing more. When tell
+says another step-up or a restart of it is running, wait the same way, then tell it again. When tell says the
 build went to the next model (a step-up), that model has the findings in its handover brief: never
 tell them again, and wait on it as below. When tell fails but says the findings count as delivered
 or as a round, herdr sent them: never tell them as findings again. When it also says to read the

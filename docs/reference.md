@@ -1452,8 +1452,11 @@ the file and stops, and the conductor takes the PR from there. With findings to 
 review to `.swarm/reviews/<slug>.round.md` instead: the review file is read as a finished review of
 the head on its `head:` line the moment it exists, by the conductor's `swarm.sh wait review-<slug>`
 and the merge rules, so the agent writes it only on a pass or when it stops. It then runs
-`swarm.sh wait --stall <slug>` and `swarm.sh tell <slug> findings <the round file>`, since `tell`
-refuses a builder that is still working. Every wait on the builder is `wait --stall`, and the agent
+`swarm.sh wait --stall <slug>` and `swarm.sh tell <slug> findings <the round file>`, so the findings
+go at once and count their round now; a tell that finds the builder busy is queued and sent when its
+turn ends (above), and the agent then waits out that turn, then the delivery (its marks under
+`.swarm/tells/` gone but `.sent`; an `.undelivered.md` there stops the agent), before it waits for
+the fix. Every wait on the builder is `wait --stall`, and the agent
 carries on when it prints `idle`, or `done` for a builder with no Claude session. With
 `escalate_ladder` set, a stall it steps up (`stepped up:`), or a step-up or restart already running
 (`stepping up:`), is waited on again, and a build stepped up after the round's findings were told
