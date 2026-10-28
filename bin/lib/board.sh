@@ -785,7 +785,7 @@ lead_held() {
 # one a close kept unreviewed (kept:) with one PR (story_prs), which waits for its review agent (one
 # with several is the lead's, as review_rule says), or one its review agent merges next, under merge =
 # agent or an HLD merge grant (no_agent_granted), unless it costs money (costs_tag) or swarm.sh merge
-# has already refused or held it since its last review (merge_refused): that PR waits on the user.
+# has handed it to the user or the lead since its last review (merge_refused).
 review_agent_owns() {
   local slug
   slug="$(basename "$1" .md)"
@@ -796,13 +796,15 @@ review_agent_owns() {
   ! merge_refused "${slug}"
 }
 
-# merge_refused <slug> — true when events.tsv has a merge line for <slug> after its last ok review
-# line, and the last such merge did not succeed: a hold (costs money, a protected path), a refusal (a
-# head not green, the epic guard) or a merge left unconfirmed. A new review clears it.
+# merge_refused <slug> — true when the last merge line for <slug> in events.tsv after its last ok
+# review line hands the PR to the user or the lead: a hold (held:, costs money or a protected path), a
+# merge left unconfirmed, the epic guard (with no ticket) or a PR that waits on the user's merge. Every
+# other outcome is still the review agent's: base-merged (merge waits on the new head's CI), one that
+# says to review the new head, the merge lock's run-again, a head not green yet. A new review clears it.
 merge_refused() {
   awk -F'\t' -v s="$1" '$3 == s && $2 == "review" && index($5, "ok") == 1 { m = "" }
     $3 == s && $2 == "merge" { m = $5 }
-    END { exit !(m != "" && index(m, "ok") != 1) }' "${EVENTS_LOG}" 2>/dev/null
+    END { exit !(m ~ /^(held:|unconfirmed)/ || m ~ /the user merges it|waits on the user.s merge|check it by hand|with no ticket/) }' "${EVENTS_LOG}" 2>/dev/null
 }
 
 # epic_held <story-file> — true when the story's epic is later or draft: the user has not started it.

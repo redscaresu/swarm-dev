@@ -100,6 +100,15 @@ echo report > "${P}/.swarm/conduct-e.report.md"
 out="$(cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_PANE_ID=w:lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1 | sed -n 1p)" || true
 is "the last merge of e, with the report written: next collects conduct-e" "collect conduct-e" "${out}"
 
+# --- fix-main-abc1234, which conduct-e started, merges: conduct-e hears that it merged, with no ready
+# list (the stories it made ready are the backlog's), and the finish: line, e having no work left.
+epic_pr; rm "${S}"; item fix-main-abc1234 "status: review" "kind: code" "prs: ${URL}"; ev story fix-main-abc1234 w:c ok
+merge "${URL}"
+is "a fix-main story conduct-e started merges: exits 0" 0 "${rc}"
+check "a fix-main story conduct-e started merges: conduct-e hears it merged" noted "The PR ${URL} of story fix-main-abc1234, the fix-main story you started, just merged."
+check "a fix-main story conduct-e started merges: conduct-e's note has no ready list" bash -c "! grep -q 'ready now' '${INBOX}'"
+is "a fix-main story conduct-e started merges: the finish: line" finish "$(finished)"
+
 # --- merge = human: the review agent hands s2 over with swarm.sh review. While s3 is still ready the
 # handover note has no finish: line; once s3 is handed over too, every agent-owned story of e is in
 # review, and its note ends with it.
@@ -181,9 +190,13 @@ is "merge = agent, s2 handed over while s3 is in review for its review agent to 
 epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"
 item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e" "costs: money"; review s2 "${U2}"
 is "merge = agent, s2 handed over while s3 in review costs money, so waits on the user: the finish: line" finish "$(finished)"
-# s3's merge was refused (its head not green) after its last review: it waits on the user.
+# s3's merge was left unconfirmed after its last review: it waits on the user. One that merged the base
+# in (base-merged) is still merging: its review agent waits on the new head's CI.
 epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
-ev review s3 w:r "ok (https://github.com/o/r/pull/9)"; ev merge s3 w:r "the head 1111111 is not green"; review s2 "${U2}"
-is "merge = agent, s2 handed over after swarm.sh merge refused s3: the finish: line" finish "$(finished)"
+ev review s3 w:r "ok (https://github.com/o/r/pull/9)"; ev merge s3 w:r "unconfirmed (OPEN): it does not read as merged; check it by hand"; review s2 "${U2}"
+is "merge = agent, s2 handed over after swarm.sh merge left s3 unconfirmed: the finish: line" finish "$(finished)"
+epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
+ev review s3 w:r "ok (https://github.com/o/r/pull/9)"; ev merge s3 w:r "base-merged 2222222222222222222222222222222222222222 from 1111111111111111111111111111111111111111"; review s2 "${U2}"
+is "merge = agent, s2 handed over while s3's merge waits on CI after base-merged: no finish: line" hold "$(finished)"
 
 finish epic-finish

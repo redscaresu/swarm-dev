@@ -1314,8 +1314,9 @@ herdr_from() {
 # With [why], merge's reason the ready ones are not to be started or not known, or with <slug> still
 # in review (reconcile held its pull, or could not read its PR), the note says that in their place.
 # Without a why, the note ends with conductor_note's finish: line once <epic> has no agent work left.
+# For a fix-main story the conductor that started it (note_group) also gets a note that it merged.
 story_note() {
-  local f e s src slugs="" held="" list live=1 why="${4:-}" msg note fin
+  local f e s src slugs="" held="" list live=1 why="${4:-}" msg note fin to
   [[ -n "${why}" || "$(fm "${BOARD}/stories/$2.md" status 2>/dev/null)" != review ]] \
     || why="reconcile has not finished $2 yet (it is still in review), so which stories it made ready is not known until swarm.sh reconcile finishes it"
   msg="The PR $1 of story $2 just merged"
@@ -1343,8 +1344,14 @@ story_note() {
   printf '%s\n' "${msg}" > "${note}"
   # A merge with a why (the board not settled, or main not green) ends no epic: a later note decides.
   fin=1; [[ -z "${why}" ]] || fin=""
-  # A fix-main story's note goes to the conductor that started it (note_group).
-  NOTE_FINISH="${fin}" conductor_note "$(note_group "$2" "$3")" "${note}" "${list}"
+  NOTE_FINISH="${fin}" conductor_note "$3" "${note}" "${list}"
+  # A fix-main story has no epic: the stories it made ready go to the backlog's conductor above, and the
+  # conductor that started it (note_group) hears that it merged, with no ready list, for its finish: line.
+  to="$(note_group "$2" "$3")"
+  if [[ "${to}" != "$3" ]]; then
+    printf 'The PR %s of story %s, the fix-main story you started, just merged%s.\n' "$1" "$2" "${why:+, but ${why%.}}" > "${note}"
+    NOTE_FINISH="${fin}" NOTE_WHAT="that $2 merged" conductor_note "${to}" "${note}"
+  fi
   rm -f "${note}"
 }
 
