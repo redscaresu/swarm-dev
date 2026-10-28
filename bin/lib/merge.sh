@@ -620,13 +620,18 @@ base_rounds() {
 # merge_lock (lock) for it, as base_ci can take MERGE_CI_SECONDS and other merges into the base go on
 # meanwhile, then take it again before the next base check (a refusal to take it names the new head).
 # A wait that fails refuses with base_ci's line, unless base_pr_now finds a push or a PR merged
-# elsewhere meanwhile, which outranks what the wait saw; fails (BASE_LANDED set) for the latter.
+# elsewhere meanwhile, which outranks what the wait saw; fails (BASE_LANDED set) for the latter. A
+# `no workflow run` whose base has moved since (base_moved) is no refusal: the PR's merge ref follows the
+# base, so a pull_request workflow the base gained after GitHub made this head is waited on though it
+# never runs here, and base_rounds' next round merges the base in again, which starts it.
 base_wait() {
   [[ -z "${lock}" ]] || rm -rf "${lock}"
   lock=""; trap - EXIT
   if ! base_ci "${repo}" "${n}" "$1" "${head}" "${base}"; then
     base_pr_now || return 1
-    merge_fail "${BASE_CI_WHY}"
+    if [[ "${BASE_CI_CAUSE}" != "no workflow run" ]] || base_moved "${repo}" "${head}" "${base}" "${n}" 1; then
+      merge_fail "${BASE_CI_WHY}"
+    fi
   fi
   merge_lock "${repo}" "${base}" "GitHub's merge of ${base} made ${head:0:7}, which is green: once that merge is done, wait-pr --head ${head} ${url}, then merge --head ${head} ${url}; $(pull_first)"
   lock="${MERGE_LOCK}"
@@ -659,9 +664,9 @@ pull_first() { echo "the builder pulls its branch (git pull --ff-only) before it
 # printed as they come): ci_gate head and the workflows a pull_request runs, every MERGE_POLL seconds for
 # up to MERGE_CI_SECONDS, a spent rate limit waited out, a conflict with the base ending it. Its grace for
 # no check runs, or an expected workflow with no run, is MERGE_CI_GRACE here, not WAIT_PR_GRACE. Succeed
-# on green. Else set BASE_CI_WHY to the refusal, `base merged, <cause>:` with the cause read from how
-# wait-pr ended (red, no check runs, no workflow run, conflict, timed out, head moved, unread), then
-# what to run next, and fail.
+# on green. Else set BASE_CI_CAUSE to the cause read from how wait-pr ended (red, no check runs, no
+# workflow run, conflict, timed out, head moved, unread) and BASE_CI_WHY to the refusal, `base merged,
+# <cause>:` then what to run next, and fail.
 base_ci() {
   local repo="$1" n="$2" old="$3" new="$4" base="$5" url="https://github.com/$1/pull/$2" out rc cause why who next
   who="${url}'s head ${new:0:7} (${old:0:7} with ${base} merged in)"
@@ -688,7 +693,7 @@ base_ci() {
       *) cause=unread ;;
     esac
   fi
-  rm -f "${out}"
+  rm -f "${out}"; BASE_CI_CAUSE="${cause}"
   case "${cause}" in
     red) BASE_CI_WHY="base merged, red: ${who} is red: ${why}; $(pull_first), then fixes it and pushes" ;;
     # Ends as base_moved's refusals do, so the conductor sends the builder to merge the base in.
@@ -950,8 +955,9 @@ merge_pr() {
       before="${head}"; base_rounds
       if [[ -n "${BASE_LANDED}" ]]; then
         # It merged while this run waited, by another swarm.sh merge or by hand: no merge ok and no wait
-        # for CI on the base, which are the merge's own. Reconcile still runs, as nothing else may: it
-        # takes its turn and finds nothing left after another run's.
+        # for CI on the base, which are the merge's own. Reconcile and the story's note still run, as
+        # nothing else may after a merge by hand: reconcile takes its turn and finds nothing left after
+        # another run's, and the note goes even after a failed reconcile, naming it, as below.
         [[ -z "${lock}" ]] || rm -rf "${lock}"
         trap - EXIT
         record_event merge "${MERGE_TARGET}" "merged elsewhere"
@@ -960,9 +966,14 @@ merge_pr() {
         ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
         wait $! || {
           rrc=$?; rwhy="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
-          record_event reconcile - "${rwhy:-failed (exit ${rrc})}"
-          die "merge: reconcile failed after the merge; run swarm.sh reconcile"
+          record_event reconcile - "${rwhy:-failed (exit ${rrc})}"; rwhy="${rwhy:-exit ${rrc}}"
         }
+        if [[ -n "${grp}" ]]; then
+          [[ -z "${rwhy}" ]] || caveat="reconcile failed after it (${rwhy}), so which stories it made ready is not known until swarm.sh reconcile succeeds"
+          ( set -e; story_note "${url}" "${MERGE_TARGET}" "${grp}" "${caveat}" ) &
+          wait $! || echo "warning: telling the conductor of ${MERGE_TARGET} that ${url} merged failed (exit $?)"
+        fi
+        [[ -z "${rwhy}" ]] || die "merge: reconcile failed after the merge; run swarm.sh reconcile"
         return 0
       fi
       # --admin skips every rule on the base, and ci_gate admin read the head before the base merged in.

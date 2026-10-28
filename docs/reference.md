@@ -2714,7 +2714,8 @@ Then it reads the PR again. If the PR merged during the wait, by another `swarm.
 hand, it prints `already merged: <PR URL> merged while this run waited on <head>, by another swarm.sh
 merge or by hand; reconciling`, logs `merge merged elsewhere` and merges nothing. It skips its own
 `merge ok` and its wait for CI on the base, and runs `swarm.sh reconcile`, since a merge by hand has
-no other run to do it; after another run's reconcile it finds nothing left. A PR closed meanwhile
+no other run to do it; after another run's reconcile it finds nothing left. Then it notes the story's
+running conductor that the PR merged, as after any merge, naming a reconcile that failed. A PR closed meanwhile
 refuses. A head an earlier `merge` run made by merging the base in (its `base-merged` line) gets the
 same wait before its base check, so a run of `merge --head` on it waits on the workflows too, which
 the plain check on the head does not read. A head that moved (a push during the wait) refuses as `base
@@ -2732,7 +2733,9 @@ The wait refuses, merging nothing, as `base merged, <cause>:`, naming wait-pr's 
 - `red`: a check on the new head failed. The refusal names the red checks.
 - `no check runs`: the new head still has no check run 60 seconds after the first read that found none.
 - `no workflow run`: a workflow a pull request into the base runs has no run on the new head 60
-  seconds after the first read that found it missing.
+  seconds after the first read that found it missing. The PR's merge ref follows the base, so a
+  workflow the base gained after GitHub made the head is expected there though it never runs on it.
+  So when the base has moved since, `merge` merges it in again, a new round, instead of refusing.
 - `timed out`: the new head is still pending after 30 minutes, or a rate limit resets past the
   deadline. The refusal names what is pending.
 - `unread`: gh failed to read its CI, past wait-pr's retries.

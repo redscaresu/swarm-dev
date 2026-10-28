@@ -147,6 +147,15 @@ check "a PR merged elsewhere during the wait: reconciles the story it finished" 
 fresh "merge_admin = on"; landed; merge "${URL}"
 is "merge_admin = on, a PR merged elsewhere during the wait: exits 0 with no --admin refusal" "0|no" \
   "${rc}|$(said "--admin may not merge" && echo yes || echo no)"
+# The story's running conductor hears that the PR merged, as after any merge: s is of epic e here, whose
+# conductor (conduct-e, in the fixture's herdr) runs, so the note lands in its inbox. settle waits out
+# the deferred wake check a note leaves.
+settle() { local i; for ((i = 0; i < 50; i++)); do compgen -G "${P}/.swarm/inbox/*.later" >/dev/null || return 0; sleep 0.2; done; }
+fresh; item s "status: review" "prs: ${URL}" "epic: e"; mkdir -p "${P}/docs/epics"; printf -- '---\nstatus: active\n---\n' > "${P}/docs/epics/e.md"
+landed; merge "${URL}"
+check "a PR merged elsewhere during the wait: its story's running conductor is told it merged" \
+  grep -qF "The PR ${URL} of story s just merged" "${P}/.swarm/inbox/conduct-e.md"
+settle; rm -rf "${P}/.swarm/inbox" "${P}/docs/epics"
 
 # --- A push while merge waits: the PR's head is no longer the one GitHub's merge made.
 fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; echo "${H5}" > "${FX}/move-head.${H3}"; merge "${URL}"
@@ -195,6 +204,14 @@ fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; wfruns "${FX}/${H3}.runs"
 printf 'name: ci\non:\n  pull_request:\n    types: [opened, synchronize]\n' > "${FX}/wf.ci.yml.${H3}"; merge "${URL}"
 refused_after "a pull_request workflow with no run on the new head" "base merged, no workflow run" \
   "base merged, no workflow run: ${WHO}: .github/workflows/ci.yml: a pull_request into main runs it, but it has no run on 3333333 after " "${PULL}"
+# A workflow the base gained after GitHub made the new head is expected on the PR's merge ref, which
+# follows the base, but never runs on that head: with the base moved since, merge merges it in again and
+# waits on that head instead of refusing.
+fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; wfruns "${FX}/${H3}.runs"
+printf 'name: ci\non:\n  pull_request:\n    types: [opened, synchronize]\n' > "${FX}/wf.ci.yml.${H3}"
+moves "${H3}" "${H4}" "${B2}" .github/workflows/ci.yml; merge "${URL}"
+is "a workflow the base gained with no run on the new head, the base moved since: merges the base in again and merges that head" \
+  "0|yes|${MERGED3}|merge s base-merged ${H4} from ${H3}|merge s ok" "${rc}|$(merged_at "${H4}" && echo yes)|$(merge_events)"
 fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; echo CONFLICTING > "${FX}/mergeable"; merge "${URL}"
 refused_after "a new head that conflicts with main" "base merged, conflict" \
   "base merged, conflict: ${WHO} conflicts with main: pull the branch first (it holds GitHub's merge 3333333), then merge origin/main in, push, and merge the new head"
