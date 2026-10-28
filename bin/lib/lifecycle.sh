@@ -48,14 +48,19 @@ board_read() {
 
 # board_changes <commit> — git diff -M --name-status from <commit> to the worktree <wt> (board_pr's
 # local): its commits, uncommitted edits and new files alike, so a file moved with mv and not added
-# pairs as a rename. Run over a copy of its index with each new file added as intent-to-add, which
-# reads no file and leaves the real index alone.
+# pairs as a rename. Run over a throwaway index holding the real index's entries (a file staged with
+# git add -f past .gitignore too, which open's git add -A commits) with each new file added as
+# intent-to-add: it leaves the real index alone and puts no file in the object store. --index-info
+# records no stat data, so git compares every file by its bytes; a copy of the real index trusted a
+# stat match, and a file rewritten to the same size within the second it was checked out (review to
+# active) read as unchanged.
 board_changes() (
   # Not local: the EXIT trap runs once the locals are gone.
-  idx="$(mktemp)" || exit 1
-  trap 'rm -f "${idx}"' EXIT
-  cp "$(git -C "${wt}" rev-parse --path-format=absolute --git-path index)" "${idx}" || exit 1
-  export GIT_INDEX_FILE="${idx}"
+  tmp="$(mktemp -d)" || exit 1
+  trap 'rm -rf "${tmp}"' EXIT
+  git -C "${wt}" ls-files -s -z > "${tmp}/entries" || exit 1
+  export GIT_INDEX_FILE="${tmp}/index"
+  git -C "${wt}" update-index -z --index-info < "${tmp}/entries" || exit 1
   git -C "${wt}" add -A -N . || exit 1
   git -C "${wt}" -c core.quotepath=off diff --no-color -M --name-status "$1"
 )

@@ -643,16 +643,16 @@ board_merged "--board, an epic the PR removes"
 epr e2; echo '[{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]' > "${FX}/files"
 fx_at e2.md "${H1}" "status: draft"; fx_at e1.md main "status: draft"; merge --board "${URL}"; board_merged "--board, an epic the PR renames away"
 # A renamed epic's base copy is at its old path: GitHub's previous_filename, on a renamed file only.
-# moved [status] — a board PR moving docs/epics/e1.md to e2.md, GitHub's status for it [status] (renamed).
-moved() { epr e2; printf '[{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"%s"}]\n' "${1:-renamed}" > "${FX}/files"; }
-moved; fx_at e1.md main "status: active"; fx_at e2.md "${H1}" "status: active"; merge --board "${URL}"
+# ren [status] — a board PR moving docs/epics/e1.md to e2.md, GitHub's status for it [status] (renamed).
+ren() { epr e2; printf '[{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"%s"}]\n' "${1:-renamed}" > "${FX}/files"; }
+ren; fx_at e1.md main "status: active"; fx_at e2.md "${H1}" "status: active"; merge --board "${URL}"
 board_merged "--board, an active epic renamed with nothing else changed"
-moved; fx_at e1.md main "status: draft" "agreed: $(day 0)"; fx_at e2.md "${H1}" "status: active" "agreed: $(day 0)"; merge --board "${URL}"
+ren; fx_at e1.md main "status: draft" "agreed: $(day 0)"; fx_at e2.md "${H1}" "status: active" "agreed: $(day 0)"; merge --board "${URL}"
 guarded "--board, a draft renamed and set active, the agreed: its base copy had kept" e2
-moved copied; fx_at e1.md main "status: active"; fx_at e2.md "${H1}" "status: active"; merge --board "${URL}"
+ren copied; fx_at e1.md main "status: active"; fx_at e2.md "${H1}" "status: active"; merge --board "${URL}"
 guarded "--board, an active epic copied to a new active one" e2
 # Read 1 is merge --board's file list, read 2 the one asking what e2 was renamed from.
-moved; fx_at e1.md main "status: draft" "agreed: $(day 0)"; fx_at e2.md "${H1}" "status: active" "agreed: $(day 0)"; : > "${FX}/files.2.fail"
+ren; fx_at e1.md main "status: draft" "agreed: $(day 0)"; fx_at e2.md "${H1}" "status: active" "agreed: $(day 0)"; : > "${FX}/files.2.fail"
 merge --board "${URL}"; refused "--board, a renamed epic whose old path gh cannot list" "--board: cannot tell what docs/epics/e2.md was renamed from, so whether ${URL} sets e2 ${UK} e2"
 # The guard runs after the head's CI check: a red head costs no contents read.
 epr e1; fx_at e1.md "${H1}" "status: active"; checks "${FX}/${H1}.checks" "$(run test completed failure)"; merge --board "${URL}"

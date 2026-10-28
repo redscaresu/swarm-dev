@@ -479,6 +479,11 @@ git -C "${ROOT}/proj-wt/_board-rns" commit -qam "ren-stale renamed and active"
 guard_refused rns "a draft renamed and set active, the agreed: its base copy had kept" "ren-stale2 ${NT} ren-stale2"
 bpr start rnx; mv "${ROOT}/proj-wt/_board-rnx/board/stories/ren-story.md" "${ROOT}/proj-wt/_board-rnx/board/epics/ren-story.md"
 guard_refused rnx "an active file moved into epics/ from outside it" "ren-story ${NT} ren-story"
+# A file staged past .gitignore (git add -f) is one open's git add -A commits, so the change list
+# holds it: outside the board, it is refused as such.
+bpr start fadd; echo fadd > "${ROOT}/proj-wt/_board-fadd/board/stories/a.md"
+mkdir -p "${ROOT}/proj-wt/_board-fadd/.swarm"; echo x > "${ROOT}/proj-wt/_board-fadd/.swarm/x"; git -C "${ROOT}/proj-wt/_board-fadd" add -f .swarm/x
+guard_refused fadd "a file staged past .gitignore outside the board, beside a board edit" "board-pr: .swarm/x is outside board/"
 printf 'board_dir = board\nlead_epics = on\n' > "${P}/.claude/swarm/config"
 bpr start lead; ep lead epics/e-lead.md '---\nstatus: active\n---\n'
 guard_opens lead "lead_epics = on, with no ticket"
