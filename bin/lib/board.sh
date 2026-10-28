@@ -1572,38 +1572,50 @@ costs_tag() {
   done
 }
 
-# protected_holds — `<PR URL> <path>` per PR that swarm.sh merge held for changing a protected path
-# (protected_hold), read from the protected: line in the board-state file of each story and epic on the
-# board: entries joined by " | ". It reads the state files straight, never the item files, which carry
-# no protected: line. No gh call.
+# protected_holds — `<PR URL> <what>` per PR that swarm.sh merge holds for the user under protected_hold:
+# <what> is the protected path it changes, or `unreadable: <why>` when its files could not be read. It
+# reads the protected: line in the board-state file of each story and epic on the board, entries
+# `<PR URL> <head> <what>` joined by " | ", and never the item files, which carry no protected: line.
+# An entry whose PR the last heads pass of wait --lead (LEAD_PRS) lists at another head is stale: the
+# builder pushed since, so the hold says nothing about the new head, and it is left out. With no such
+# list, or a PR not on it, the entry stands. No gh call.
 protected_holds() {
-  local f files=()
+  local f prs="/dev/null" files=()
   while IFS= read -r f; do
     state_path "${f}" protected
     [[ ! -f "${STATE_PATH}" ]] || files+=("${STATE_PATH}")
   done < <(board stories; board epics)
   [[ ${#files[@]} -gt 0 ]] || return 0
-  awk 'index($0, "protected:") == 1 { v = substr($0, 11); sub(/^ +/, "", v); n = split(v, e, / \| /)
-    for (i = 1; i <= n; i++) if (e[i] ~ /^https:\/\/[^ ]+ ./) print e[i] }' "${files[@]}"
+  # shellcheck disable=SC2154 # LEAD_PRS is lifecycle.sh's
+  [[ ! -f "${LEAD_PRS}" ]] || prs="${LEAD_PRS}"
+  awk -v lp="${prs}" 'FILENAME == lp { if ($1 == "+") at[$4] = $5; next }
+    index($0, "protected:") == 1 { v = substr($0, 11); sub(/^ +/, "", v); n = split(v, e, / \| /)
+      for (i = 1; i <= n; i++) {
+        if (split(e[i], w, " ") < 3 || w[1] !~ /^https:\/\//) continue
+        if ((w[1] in at) && at[w[1]] != w[2]) continue
+        print w[1] " " substr(e[i], length(w[1]) + length(w[2]) + 3)
+      } }' "${prs}" "${files[@]}"
 }
 
-# protected_record <item-file> <pr-url> [path] — set <pr-url>'s entry in the item's protected: state
-# (protected_holds) to <path>, or drop it with no <path>; no write when that changes nothing. The read and
-# the write are under one hold of the item's lock (state_lock, as state_set takes it), so two merges
-# holding two of its PRs at once keep both entries. Dies naming the state file when a step fails.
+# protected_record <item-file> <pr-url> [<head> <what>] — set <pr-url>'s entry in the item's protected:
+# state (protected_holds) to `<pr-url> <head> <what>`, or drop it with no <what>; no write when that
+# changes nothing. The read and the write are under one hold of the item's lock (state_lock, as
+# state_set takes it), so two merges holding two of its PRs at once keep both entries. Dies naming the
+# state file when a step fails.
 protected_record() {
   local s rc=0
   state_path "$1"; s="${STATE_PATH}"
-  [[ -n "${s}" ]] || die "set_fm: $1 is not a story or epic in ${BOARD}"
+  [[ -n "${s}" ]] || die "protected_record: $1 is not a story or epic in ${BOARD}"
   { mkdir -p "${s%/*}" && [[ -w "${s%/*}" ]]; } || die "board state: cannot write ${s}: ${s%/*} cannot be made or written"
   state_lock "${s}.lock"
   # A subshell, so a read that dies still lets the lock go.
-  ( protected_update "$1" "${s}" "$2" "${3:-}" ) || rc=1
+  ( protected_update "$1" "${s}" "$2" "${4:+$3 $4}" ) || rc=1
   rmdir "${s}.lock" || die "board state: cannot remove ${s}.lock; remove it by hand"
   [[ ${rc} -eq 0 ]] || die "board state: cannot write ${s}"
 }
 
-# protected_update <item-file> <state-file> <pr-url> <path> — protected_record's read and write, under its lock.
+# protected_update <item-file> <state-file> <pr-url> <head and what> — protected_record's read and
+# write, under its lock.
 protected_update() {
   local v e out="" had=""
   v="$(get_fm "$1" protected)"
@@ -1645,9 +1657,10 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 # /epic: it waits on a tag at or above v<P>, then on next's stage step. An unstaged draft the epic guard
 # would let go active with no agreement (draft_lead_why) is `draft epic: <slug>, the lead sets it active
 # (<why>)`, never with /epic either: the lead sets it active in a board PR. Each stage board PR's worktree
-# (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it.
+# (stage_worktrees) is a `stage PR awaiting merge: v<T>` line, until board-pr done removes it. [holds]
+# is protected_holds' output when the caller has read it already, so its rows and its own lines agree.
 waiting_on_user() {
-  local f kind slug when start agreed stage prev why waiting="" holds="" hread=""
+  local f kind slug when start agreed stage prev why waiting="" holds="${1-}" hread="${1+1}"
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in

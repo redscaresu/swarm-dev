@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # protected_hold_queue_test.sh — with merge = agent, a PR swarm.sh merge holds for changing a protected
-# path is recorded on its item (board-state protected:, keyed to the PR's URL), and status and wait --lead
-# show it as the user's merge: status on a row of its own, tagged (protected path), the item's other PRs
-# on the untagged row; wait --lead as `merge: <slug> <URL> (held: changes <path>; exit: the user merges
-# it)`, once when a story and its epic both list it. A review item with no hold gets no merge: line, a
-# hold stops tagging a PR the item no longer lists, and a later merge that passes the hold drops it.
+# path, or whose files it cannot read, is recorded on its item (board-state protected:, keyed to the PR's
+# URL and head), and status and wait --lead show it as the user's merge: status on a row of its own,
+# tagged (protected path), the item's other PRs on the untagged row; wait --lead as `merge: <slug> <URL>
+# (held: changes <path>; exit: the user merges it)`, once when a story and its epic both list it, the
+# epic's line left with its other held PRs. A review item with no hold gets no merge: line, a hold stops
+# tagging a PR the item no longer lists or that a heads pass saw at another head, and a later merge that
+# passes the hold drops it.
 # status and lead_queue read files only: the gh calls are the heads pass's. On merge_fixture.sh for the
 # merges; then gh is a stub of the reads wait --lead makes, logging each to gh.log.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
@@ -26,15 +28,15 @@ cp "${ROOT}/bin/gh" "${ROOT}/merge-gh"
 # changes <path> — the PR's one file.
 changes() { echo "[{\"filename\":\"$1\",\"status\":\"modified\"}]" > "${FX}/files"; echo 1 > "${FX}/nfiles"; }
 # reads_stub — gh as wait --lead reads it: every PR's head is ${H1}, its one check run green, no status;
-# the project's repo is o/r with no open PR. Anything else fails.
+# the project's repo is o/r, whose open PRs are ${ROOT}/prlist, else none. Anything else fails.
 reads_stub() {
-  printf '#!/bin/sh\nLOG="%s"; H="%s"\n' "${ROOT}/gh.log" "${H1}" > "${ROOT}/bin/gh"
+  printf '#!/bin/sh\nLOG="%s"; H="%s"; L="%s"\n' "${ROOT}/gh.log" "${H1}" "${ROOT}/prlist" > "${ROOT}/bin/gh"
   cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
 case "$1 $2" in
   "pr view") echo "${H}" ;;
   "repo view") echo o/r ;;
-  "pr list") echo '[]' ;;
+  "pr list") cat "${L}" 2>/dev/null || echo '[]' ;;
   api*) case "$*" in
           *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
           */status*) echo '{"total_count":0,"statuses":[]}' ;;
@@ -50,7 +52,7 @@ STUB
 held_board() {
   cp "${ROOT}/merge-gh" "${ROOT}/bin/gh"
   fresh; item s "status: review" "prs: ${URL} ${U8}"; item r "status: review" "prs: ${U9}"
-  rm -rf "${P}/docs/epics" "${P}/.swarm/lead"
+  rm -rf "${P}/docs/epics" "${P}/.swarm/lead" "${ROOT}/prlist"
   changes hooks/x.sh; merge "${URL}"
   refused "PR 7, changing hooks/x.sh" "held: s changes hooks/x.sh, which only the user merges"
   # The stub reads every PR merged once one is: PRs 7 and 9 stay open, so reconcile keeps s and r in review.
@@ -72,6 +74,11 @@ lead() {
     ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait --lead "$1" > "${ROOT}/out" 2>&1) || rc=$?
 }
 merge_out() { grep '^merge: ' "${ROOT}/out" || true; }
+# open_pr7 <head> — the open PRs gh lists: PR 7, story s's branch, at <head>.
+open_pr7() {
+  printf '[{"url":"%s","headRefName":"story/s","headRefOid":"%s","mergeable":"MERGEABLE","statusCheckRollup":[],"createdAt":"2026-10-28T00:00:00Z","isCrossRepository":false}]\n' \
+    "${URL}" "$1" > "${ROOT}/prlist"
+}
 gh_count() { grep -c -- "$1" "${ROOT}/gh.log" || true; }
 # gh_calls — gh.log's calls by kind, joined with |.
 gh_calls() {
@@ -107,6 +114,38 @@ is "a run that has seen the line times out with nothing" "1|" "${rc}|$(cat "${RO
 is "over its three polls it reads PR 7's head once, on its heads pass, and no check run" "1|0" \
   "$(gh_count '^pr view 7 ')|$(gh_count 'check-runs')"
 is "over its three polls its only gh calls are that heads pass's" "pr view 7|repo view|pr list" "$(gh_calls)"
+
+# --- The epic lists the story's held PR 7 and a held PR 11 of its own: its line names PR 11 alone, and
+# PR 7's head is read once.
+U11="${URL%/*}/11"
+held_board; mkdir -p "${P}/docs/epics"; cp "${ROOT}/merge-gh" "${ROOT}/bin/gh"
+printf -- '---\nstatus: review\nprs: %s %s\n---\n\n# e\n' "${URL}" "${U11}" > "${P}/docs/epics/e.md"
+echo OPEN > "${FX}/state.11"; rm "${P}/.swarm/events.tsv"; changes hooks/x.sh; merge "${U11}"
+refused "PR 11, the epic's, changing hooks/x.sh" "held: e changes hooks/x.sh"
+reads_stub; lead 20000
+is "the story's line names PR 7, the epic's PR 11 alone" \
+  "${HELD}"$'\n'"merge: e ${U11} (held: changes hooks/x.sh; exit: the user merges it)" "$(merge_out)"
+is "PR 7's head is read once, PR 11's once" "1|1" "$(gh_count '^pr view 7 ')|$(gh_count '^pr view 11 ')"
+
+# --- A hold names the head it was read at: a heads pass that lists PR 7 at that head keeps it, one that
+# lists it at another head (the builder pushed) makes it stale, so it is no longer the user's merge.
+held_board; open_pr7 "${H1}"; lead 20000
+is "PR 7 listed at the held head: wait --lead still prints its line" "${HELD}" "$(merge_out)"
+open_pr7 "${H2}"; rm -rf "${P}/.swarm/lead"; lead 3000
+is "PR 7 listed at a new head: wait --lead prints no merge: line" "1|" "${rc}|$(merge_out)"
+is "PR 7 listed at a new head: status lists it untagged" \
+  "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge: s ${URL} ${U8}" "$(merge_rows)"
+
+# --- A PR whose files cannot be read is held too, and recorded: status tags it, and wait --lead says why.
+held_board; cp "${ROOT}/merge-gh" "${ROOT}/bin/gh"; rm "${P}/.swarm/events.tsv"; changes hooks/x.sh; echo 301 > "${FX}/nfiles"
+merge "${URL}"
+refused "PR 7 of 301 files" "held: s (its files at ${H1:0:7} could not be read"
+reads_stub
+is "status lists the unreadable PR on the (protected path) row" \
+  "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge (protected path): s ${URL}"$'\n'"  awaiting your merge: s ${U8}" "$(merge_rows)"
+lead 20000
+is "wait --lead says its files could not be read, and why" \
+  "merge: s ${URL} (held: its files could not be read: the compare of main with ${H1:0:7} lists at most 300 files, and the PR changes 301, so it cannot list them all; exit: the user merges it)" "$(merge_out)"
 
 # --- A review item with no hold gets no merge: line under merge = agent, as before.
 held_board; rm -f "${P}/docs/stories/s.md" "${P}/.swarm/board-state/stories/s"

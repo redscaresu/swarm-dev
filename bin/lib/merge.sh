@@ -279,8 +279,8 @@ merge_hold() {
 # pin cannot hide one. The read tries a transient gh error again (READ_TRIES, MERGE_READ_WAIT apart)
 # and stops after BASE_MOVED_WAIT, as base_moved's compare does; a list it still cannot read holds the
 # PR too, saying why, so the user can tell a passing error, which the next swarm.sh merge reads past,
-# from a hold that stands (a PR of over 300 files, the most the compare lists, or of no file). A hold for
-# a path is recorded on the item in review (protected_record), and a pass drops the record. --board
+# from a hold that stands (a PR of over 300 files, the most the compare lists, or of no file). Either
+# hold is recorded on the item in review (protected_note), and a pass drops the record. --board
 # and --release change only board paths or
 # plugin.json, never a protected path; with merge = human merge_grant has already refused such a PR
 # (pr_hld puts it under no HLD), so no file is read.
@@ -289,13 +289,24 @@ protected_hold() {
   why="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" files-status "${repo}" "${n}" "${changed}" "${base}" "${head}" \
     "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
   [[ ${rc} -ne 142 ]] || why="error the compare took over ${limit}s"
-  [[ ${rc} -eq 0 ]] || merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: ${why#error }, so whether it changes a path only the user merges is unknown); the user merges it"
+  if [[ ${rc} -ne 0 ]]; then
+    why="${why#error }"; why="${why%%$'\n'*}"
+    protected_note "unreadable: ${why}"
+    merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: ${why}, so whether it changes a path only the user merges is unknown); the user merges it"
+  fi
   why="$(cut -d' ' -f2- <<< "${why}" | protected_paths any-case)"
   why="${why%%$'\n'*}"
-  # The hold, or its end, goes on record for status and wait --lead (protected_record), on the item in
-  # review (merge_pr's f), keyed to the PR. A write that fails warns: it must not hide the hold or stop a merge.
-  ( protected_record "${f}" "${url}" "${why}" ) || echo "warning: merge: cannot record on ${f} whether ${url} is held for a protected path; status and wait --lead may not show it" >&2
+  protected_note "${why}"
   [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges; the user merges it"
+}
+
+# protected_note [what] — protected_hold's record of its verdict for status and wait --lead
+# (protected_record): on the item in review (merge_pr's f), keyed to the PR (url) at the pinned head,
+# [what] the path it changes or `unreadable: <why>`; none drops the record. A write that fails warns:
+# it must not hide the hold or stop a merge.
+protected_note() {
+  ( protected_record "${f}" "${url}" "${head}" "${1:-}" ) \
+    || echo "warning: merge: cannot record on ${f} whether ${url} is held for a protected path; status and wait --lead may not show it" >&2
 }
 
 # merged_state <pr> <owner/repo> — "<state> <merge commit>" once the PR reads MERGED with one, read up
