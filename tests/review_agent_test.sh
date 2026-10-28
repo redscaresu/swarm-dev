@@ -516,9 +516,13 @@ at "${GROW}"
 check "--recheck on a diff that rewords a named line and adds one after it refuses, naming --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
   "$(set +e; o="$(recheck)"; echo "$?|$(has "adds 1 line(s) to doc.md at line 3, more than it removes" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 at "${NARROW}"
-findings "${ROUND1}" "codex, doc.md:8, also misstates it"
-check "--recheck that leaves a finding unnamed refuses, naming it and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
-  "$(set +e; o="$(recheck)"; echo "$?|$(has "names no point given, which a pass would drop: codex, doc.md:8, also misstates it" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+findings "${ROUND1}" "codex: the summary misstates the flow"
+check "--recheck that leaves a finding with no file:line refuses, naming it and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "names no point given, which a pass would drop: codex: the summary misstates the flow" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# One finding citing two points, rechecked with one: the other half would go unfixed.
+findings "codex, doc.md:3 and doc.md:8 misstate it"
+check "--recheck of one point of a finding that cites two refuses, naming the other and --next, and changes no file under .swarm/reviews" "1|yes|yes|yes" \
+  "$(set +e; o="$(recheck)"; echo "$?|$(has "cite doc.md:8, which is no point given, so a pass would drop it: codex, doc.md:3 and doc.md:8 misstate it" "${o}")|$(has "swarm.sh review-agent --next r1" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 findings "${ROUND1}" "codex, doc.md:5, also misstates it"
 check "--recheck naming a point the diff does not change refuses, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${OLD}" doc.md:3 doc.md:5)"; echo "$?|$(has "does not change doc.md:5, a named point" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"

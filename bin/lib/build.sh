@@ -811,23 +811,27 @@ review_recheck() {
 }
 
 # recheck_named <findings file> <worktree> <file:line>... — nothing when the file's ## Findings section names
-# each point and every finding there (each non-blank line) names one; else why not, failing. A point is
-# named as a whole path, at the start of the line or after a character no path holds, or after
-# <worktree>/, with no digit after it. A pass's own findings name no point, so no recheck follows one.
+# each point, every finding there (each non-blank line) cites one, and every file:line a finding cites is
+# a given point; else why not, failing. A citation is a whole path (<worktree>/ dropped from it) and a
+# line, or a range of lines, which no single point matches; anything that reads as one (a time, say)
+# refuses too, which only costs a full round. A pass's own findings cite no point, so no recheck follows one.
 recheck_named() {
   awk -v pts="${*:3}" -v wt="$2/" -v f="$1" '
-    BEGIN { n = split(pts, w, " ") }
+    BEGIN { n = split(pts, w, " "); for (i = 1; i <= n; i++) given[w[i]] = i }
     /^## / { in_f = ($0 ~ /^## Findings/); next }
     !in_f || $0 !~ /[^[:space:]]/ { next }
     {
       s = $0; while ((k = index(s, wt))) s = substr(s, 1, k - 1) substr(s, k + length(wt))
       hit = 0
-      for (i = 1; i <= n; i++) for (t = s; (k = index(t, w[i])); t = substr(t, k + 1))
-        if ((k == 1 || substr(t, k - 1, 1) !~ /[A-Za-z0-9_.\/-]/) && substr(t, k + length(w[i]), 1) !~ /[0-9]/) { seen[i] = hit = 1; break }
+      while (match(s, /[A-Za-z0-9_.\/-]+:[0-9]+(-[0-9]+)?/)) {
+        c = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+        if (c in given) { seen[given[c]] = hit = 1 } else if (miss == "") { miss = c; missed = $0 }
+      }
       if (!hit && left == "") left = $0
     }
     END {
       for (i = 1; i <= n; i++) if (!seen[i]) { print w[i] " is no point the ## Findings of " f " name"; exit 1 }
+      if (miss != "") { print "the ## Findings of " f " cite " miss ", which is no point given, so a pass would drop it: " missed; exit 1 }
       if (left != "") { print "the ## Findings of " f " hold a finding that names no point given, which a pass would drop: " left; exit 1 }
     }' "$1"
 }
