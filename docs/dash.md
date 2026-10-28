@@ -191,7 +191,9 @@ is one column, top to bottom:
   epics with no open story share one line. An epic with no stories whose `depends_on` still holds up its
   planning (as `swarm.sh next` decides) keeps its own row instead, which reads `waits on <depends_on>`. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
-  workspace and tab instead.
+  workspace and tab instead. Each heading is herdr's label. A workspace with no label shows its id,
+  and a tab with none shows the name swarm-dev gave it. Each agent's row there shows its pane id after
+  its state, before its PR.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
   days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings
   fixed (✎, one row per PR and day, so a fix's `log-finding` line is not shown again), declined

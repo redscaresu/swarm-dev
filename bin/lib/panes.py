@@ -17,11 +17,15 @@ def herdr_labels(raw, key, id_key):
         return {x.get(id_key): x.get("label") for x in json.loads(raw)["result"][key]}
     except (ValueError, KeyError, TypeError, AttributeError):
         return {}
-# pane_where: (workspace label, tab label) of a pane, by the ids in the first of its herdr entries (its
-# pane list's, its agent list's) that has them, the workspace else by the pane id's prefix; "-" for none.
-def pane_where(pane, entries, ws_labels, tab_labels):
+# pane_ids: (workspace id, tab id) of a pane, each from the first of its herdr entries (its pane list's,
+# its agent list's) that has it; the workspace else by the pane id's prefix, the tab else None.
+def pane_ids(pane, entries):
     ids = lambda k: next((e.get(k) for e in entries if isinstance(e, dict) and e.get(k)), None)
-    return ws_labels.get(ids("workspace_id") or pane.split(":")[0]) or "-", tab_labels.get(ids("tab_id")) or "-"
+    return ids("workspace_id") or pane.split(":")[0], ids("tab_id")
+# pane_where: (workspace label, tab label) of a pane, by pane_ids; "-" for one herdr gives none of.
+def pane_where(pane, entries, ws_labels, tab_labels):
+    ws, tab = pane_ids(pane, entries)
+    return ws_labels.get(ws) or "-", tab_labels.get(tab) or "-"
 def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True

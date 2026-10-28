@@ -2494,18 +2494,16 @@ agent_where() {
 # label>" of this project's agent called <agent> (a slug, review-<slug>, conduct-<epic> or a herdr agent
 # name, cut as agent_name cuts it), from herdr's lists as read already, so a caller that looks up many
 # agents reads each list once. Only an agent in a pane own_panes recorded counts: herdr lists every
-# project's agents, and another project's may hold the name. A label herdr gives none of, or whose list
-# is empty or not JSON (a failed read), is -. Fails, printing why, when the agent list is not JSON or
-# names no such agent in this project's panes.
+# project's agents, and another project's may hold the name. The labels are panes.py's pane_where, which
+# status and dash print on each agent's row: a label herdr gives none of, or whose list is empty or not
+# JSON (a failed read), is -. Fails, printing why, when the agent list is not JSON or names no such agent
+# in this project's panes.
 agent_where_in() {
   SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" SWARM_WS="$3" SWARM_TABS="$4" python3 -I -c '
 import json, os, sys
+sys.path.insert(0, sys.argv[2])
+from panes import herdr_labels, pane_where
 e = os.environ
-def labels(raw, key, id_key):
-    try:
-        return {x.get(id_key): x.get("label") for x in json.loads(raw)["result"][key]}
-    except (ValueError, KeyError, TypeError, AttributeError):
-        return {}
 try:
     agents = json.loads(sys.argv[1])["result"]["agents"]
 except (ValueError, KeyError, TypeError):
@@ -2513,10 +2511,8 @@ except (ValueError, KeyError, TypeError):
 a = next((a for a in agents if a.get("name") == e["SWARM_NAME"] and a.get("pane_id") in e["SWARM_PANES"].split()), None)
 if a is None:
     print("herdr lists no agent called %s in this project'"'"'s panes" % e["SWARM_NAME"]); sys.exit(1)
-ws = a.get("workspace_id") or a["pane_id"].split(":")[0]
-wl = labels(e["SWARM_WS"], "workspaces", "workspace_id").get(ws)
-tl = labels(e["SWARM_TABS"], "tabs", "tab_id").get(a.get("tab_id"))
-print("%s\t%s\t%s" % (a["pane_id"], wl or "-", tl or "-"))' "$2"
+ws, tab = pane_where(a["pane_id"], (a,), herdr_labels(e["SWARM_WS"], "workspaces", "workspace_id"), herdr_labels(e["SWARM_TABS"], "tabs", "tab_id"))
+print("%s\t%s\t%s" % (a["pane_id"], ws, tab))' "$2" "${SWARM_HOME}/bin/lib"
 }
 
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story

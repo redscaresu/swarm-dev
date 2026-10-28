@@ -3,7 +3,9 @@
 # its tab's. Two projects under one herdr (a stub on PATH, its lists in ${ROOT}/herdr.json) each have
 # an agent called s1; herdr lists b's first, so a report that took any project's s1 would give a's s1
 # b's labels. a's s3 has no tab or workspace in herdr's agent list, only in its pane list, which comes
-# first. Each report reads herdr's workspace and tab lists once.
+# first. Each report reads herdr's workspace and tab lists once. dash --tree heads a's agents by herdr's
+# labels, one heading per tab (its three panes are in one record, t1, but in three herdr tabs, two of them
+# labelled e1), each row with its pane after its state.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -43,12 +45,13 @@ export PATH="${ROOT}/bin:${PATH}"
 cat > "${ROOT}/herdr.json" <<'EOF'
 {"workspaces": [{"workspace_id": "w1", "label": "a · e1"}, {"workspace_id": "w2", "label": "b · e2"}],
  "tabs": [{"tab_id": "w1:t1", "workspace_id": "w1", "label": "e1"}, {"tab_id": "w1:t2", "workspace_id": "w1", "label": "e1-2"},
-          {"tab_id": "w2:t1", "workspace_id": "w2", "label": "e2-2"}],
+          {"tab_id": "w1:t3", "workspace_id": "w1", "label": "e1"}, {"tab_id": "w2:t1", "workspace_id": "w2", "label": "e2-2"}],
  "agents": [{"name": "s1", "agent_status": "working", "pane_id": "w2:p1", "tab_id": "w2:t1", "workspace_id": "w2"},
             {"name": "s1", "agent_status": "working", "pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1"},
-            {"name": "s3", "agent_status": "working", "pane_id": "w1:p3"}],
+            {"name": "s3", "agent_status": "working", "pane_id": "w1:p3"},
+            {"name": "s4", "agent_status": "working", "pane_id": "w1:p4", "tab_id": "w1:t3", "workspace_id": "w1"}],
  "panes": [{"pane_id": "w2:p1", "tab_id": "w2:t1", "workspace_id": "w2"}, {"pane_id": "w1:p1"},
-           {"pane_id": "w1:p3", "tab_id": "w1:t2", "workspace_id": "w1"}]}
+           {"pane_id": "w1:p3", "tab_id": "w1:t2", "workspace_id": "w1"}, {"pane_id": "w1:p4", "tab_id": "w1:t3", "workspace_id": "w1"}]}
 EOF
 
 # project <dir> <tab-record lines> — a swarm project whose tab record names the panes it opened.
@@ -58,7 +61,7 @@ project() {
   printf '%s\n' "$2" > "$1/.swarm/state/t1"
 }
 A="${ROOT}/a"; B="${ROOT}/b"
-project "${A}" $'w1:p1 s1\nw1:p3 s3'
+project "${A}" $'w1:p1 s1\nw1:p3 s3\nw1:p4 s4'
 project "${B}" $'w2:p1 s1'
 
 # report <project> <command>... — its output from <project>, herdr's log emptied first.
@@ -82,5 +85,12 @@ check "dash reads herdr's workspace list once" 1 "$(lists workspace)"
 check "dash reads herdr's tab list once" 1 "$(lists tab)"
 out="$(report "${B}" dash)"
 check "dash: b's s1 names b's pane, workspace and tab" "w2:p1 in b · e2 › e2-2" "$(row s1 "${out}")"
+
+# The tree (--tree) heads a's agents by herdr's labels: all three are in one tab record, t1, but in three
+# herdr tabs, and t3's label is t1's, so a tree keyed by label would merge them.
+out="$(report "${A}" dash --tree)"
+check "dash --tree heads a's agents by its workspace label" "a · e1" "$(sed -n 's/^│ \(a · e1\) *│.*/\1/p' <<< "${out}")"
+check "dash --tree heads a's agents by herdr's tab labels, not their record's name, one heading per tab" "e1,e1-2,e1" "$(sed -n 's/^│ *[├└]─ \([^ ]*\) *│.*/\1/p' <<< "${out}" | paste -sd, -)"
+check "dash --tree shows s3's pane on its row" "w1:p3" "$(sed -n 's/^│[ │]*└─ [^ ] s3  .* \(w1:p3\) *│.*/\1/p' <<< "${out}")"
 
 if [[ ${fails} -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi
