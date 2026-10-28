@@ -2291,7 +2291,9 @@ lists the PR's files at that head. Any read error refuses, as does a 404 at the 
 does not remove or rename away. The refusal starts `--board:` only on the `--board` route. A story
 PR is not checked when the board is not in the project's repo. Nor is one whose story names another
 repo (`repo:`) and whose PR is outside the board's repo, since its `epics/` files are that repo's own;
-when gh cannot name the board's repo, merge refuses, says why, and you run it again. Under
+when gh cannot name the board's repo, merge refuses, says why, and you run it again; when the project
+has no origin remote, it says to add one, or to merge the PR by hand, since running it again fails the
+same way. Under
 `merge = human`, a story PR whose files cannot be read at the head waits on your merge. With
 `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since

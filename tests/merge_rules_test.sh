@@ -737,6 +737,10 @@ spr; item s "status: review" "prs: ${OTHER}" "repo: other"; echo 'gh: HTTP 502' 
 echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/README.md","status":"modified"}]' > "${FX}/files"
 merge "${OTHER}"; story_merged "a story PR in another repo changing only docs/epics/README.md merges"
 check "a story PR in another repo changing only docs/epics/README.md: no repo lookup" bash -c "! grep -q nameWithOwner '${ROOT}/gh.log'"
+spr; item s "status: review" "prs: ${OTHER}" "repo: other"; echo 'gh: HTTP 502' > "${FX}/origin.fail"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/notes/e1.md","status":"modified"}]' > "${FX}/files"
+merge "${OTHER}"; story_merged "a story PR in another repo changing only docs/epics/notes/e1.md, in a subfolder, merges"
+check "a story PR in another repo changing only docs/epics/notes/e1.md, in a subfolder: no repo lookup" bash -c "! grep -q nameWithOwner '${ROOT}/gh.log'"
 # The pinned head renames e1 to e2, a draft; a later push restores e1, so the PR's files API lists e1
 # as modified. Its 404 at the pin is the rename's, read from the pinned compare, not gh failing.
 spr; fx_at e2.md "${H1}" "status: draft"
