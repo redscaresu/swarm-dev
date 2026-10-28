@@ -40,7 +40,7 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   naming an HLD that is `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
   first, and a failed fetch or read refuses. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
-  days when `merge --board` runs, and a date after today never counts.
+  days when `swarm.sh merge` runs (a board PR's or a story PR's), and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.
   `swarm.sh merge` refuses the same change in a board PR (`--board`) or a story PR (§ Merging).
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
