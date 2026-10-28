@@ -1114,11 +1114,15 @@ raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 # is active or split at the base, and at the head too when the PR changes it (epic_ticket_parent), or
 # an hld: naming an HLD that is agreed and grants epics at both ends (hld_ticket). Nothing with
 # lead_epics = on. <reader> base|head <path> prints a file's bytes, failing 1 when it is absent and 2
-# when it cannot be read. [changed] is every path the PR changes, a renamed file's old path too, one
-# a line (<paths> by default). A read error at either end, or an HLD's bad grants:, prints why and
-# fails, so the caller refuses.
+# when it cannot be read; <reader> from <path> prints the old path a rename moved <path> from, nothing
+# for none, failing when it cannot tell, asked only for an epic absent at the base: a renamed epic's
+# base copy is read at its old path when that was an epic too, so its agreed: counts as already
+# there, and its active carries over while the heading is the same at both ends (epic_heading); any
+# other old path reads as new. [changed] is every path the PR changes, a
+# renamed file's old path too, one a line (<paths> by default). A read error at either end, or an
+# HLD's bad grants:, prints why and fails, so the caller refuses.
 epic_unticketed() (
-  local reader="$1" pre p s now was rc out="" changed_paths="${3:-$2}"
+  local reader="$1" pre p s b o now was rc kept out="" changed_paths="${3:-$2}"
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || exit 0
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
@@ -1132,9 +1136,21 @@ epic_unticketed() (
     [[ ${rc} -ne 1 ]] || continue
     [[ ${rc} -eq 0 ]] || { echo "cannot read ${p} at the head"; exit 1; }
     [[ "$(raw_status <<< "${now}")" == active ]] || continue
-    rc=0; was="$("${reader}" base "${p}")" || rc=$?
-    [[ ${rc} -le 1 ]] || { echo "cannot read ${p} at the base"; exit 1; }
-    [[ "$(raw_status <<< "${was}")" != active ]] || continue
+    kept=1; b="${p}"; rc=0; was="$("${reader}" base "${b}")" || rc=$?
+    if [[ ${rc} -eq 1 ]]; then
+      b="$("${reader}" from "${p}")" || { echo "cannot tell what ${p} was renamed from"; exit 1; }
+      o="${b#"${pre}epics/"}"
+      if [[ "${b}" == "${pre}epics/"* && "${o}" =~ ^[^/]+\.md$ && "${o}" != README.md ]]; then
+        rc=0; was="$("${reader}" base "${b}")" || rc=$?
+        # git and GitHub pair a rename by content, at half alike, so a deleted epic and a new one sharing
+        # its front matter pair too: the old copy's active carries over only while the epic keeps its
+        # heading (kept); its agreed: is compared under any heading, so a rename cannot launder it.
+        o="$(epic_heading <<< "${now}")"
+        [[ ${rc} -eq 0 && -n "${o}" && "${o}" == "$(epic_heading <<< "${was}")" ]] || kept=""
+      fi
+    fi
+    [[ ${rc} -le 1 ]] || { echo "cannot read ${b} at the base"; exit 1; }
+    [[ -z "${kept}" || "$(raw_status <<< "${was}")" != active ]] || continue
     s="${s%.md}"
     epic_ticket_agreed "${now}" "${was}" && continue
     rc=0; epic_ticket_parent "${reader}" "${now}" "${p}" "${changed_paths}" || rc=$?
@@ -1150,6 +1166,10 @@ epic_unticketed() (
   done <<< "$2"
   printf '%s' "${out}"
 )
+
+# epic_heading — the first "# " heading in stdin's bytes past the front matter (a "# " line inside it
+# is a YAML comment), or nothing. An epic's title: a rename keeps it, an unrelated epic has its own.
+epic_heading() { awk 'NR == 1 && /^---$/ { fm = 1; next } fm && /^---$/ { fm = 0; next } !fm && /^# / { print; exit }'; }
 
 # epic_ticket_agreed <head bytes> <base bytes> — epic_unticketed's agreed: ticket: true when the
 # epic's front matter at the head has an agreed: date that its base copy did not already have (an

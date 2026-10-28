@@ -380,6 +380,13 @@ on_main board/hld/h-merge.md '---\nstatus: agreed\ngrants: [merge]\n---\n'
 on_main board/hld/h-move.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/H.dot.md '---\nstatus: agreed\ngrants: [epics]\n---\n'
 on_main board/hld/h-bad.md '---\nstatus: agreed\ngrants: [bogus]\n---\n'
+# ren-*: files a case moves to epics/<name>2.md, with a body long enough that git pairs the move.
+BODY='The epic body, which the move keeps as it was, so that git sees one file under two names.'
+on_main board/epics/ren-act.md "---\nstatus: active\n---\n\n# ren-act\n\n${BODY}\n"
+on_main board/epics/ren-stale.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# ren-stale\n\n${BODY}\n"
+on_main board/stories/ren-story.md "---\nstatus: active\n---\n\n# ren-story\n\n${BODY}\n"
+on_main board/epics/ren-del.md "---\nstatus: active\n---\n\n# ren-del\n\n${BODY}\n"
+on_main board/epics/ren-ttl.md "---\nstatus: draft\nagreed: ${TODAY}\n---\n\n# ren-ttl\n\n${BODY}\n"
 git -C "${P}" fetch -q origin
 
 bpr start new; ep new epics/e-new.md '---\nstatus: active\n---\n\n# e-new\n'
@@ -479,6 +486,31 @@ bpr start act; ep act epics/act.md '---\nstatus: active\n---\n\n# act, edited\n'
 guard_opens act "a body-only edit to an active epic"
 bpr start gone; rm "${ROOT}/proj-wt/_board-gone/board/epics/gone.md"
 guard_opens gone "a deleted epic"
+# A renamed epic is judged by its base copy at the old path, moved with mv and left uncommitted or
+# committed; an old path outside epics/ reads as new.
+bpr start rna; mv "${ROOT}/proj-wt/_board-rna/board/epics/ren-act.md" "${ROOT}/proj-wt/_board-rna/board/epics/ren-act2.md"
+guard_opens rna "an active epic renamed with mv, nothing else changed"
+bpr start rns; git -C "${ROOT}/proj-wt/_board-rns" mv board/epics/ren-stale.md board/epics/ren-stale2.md
+ep rns epics/ren-stale2.md "---\nstatus: active\nagreed: ${TODAY}\n---\n\n# ren-stale\n\n${BODY}\n"
+git -C "${ROOT}/proj-wt/_board-rns" commit -qam "ren-stale renamed and active"
+guard_refused rns "a draft renamed and set active, the agreed: its base copy had kept" "ren-stale2 ${NT} ren-stale2"
+bpr start rnx; mv "${ROOT}/proj-wt/_board-rnx/board/stories/ren-story.md" "${ROOT}/proj-wt/_board-rnx/board/epics/ren-story.md"
+guard_refused rnx "an active file moved into epics/ from outside it" "ren-story ${NT} ren-story"
+# git pairs a deleted epic with a new one sharing its body as a rename too (by content, at half alike);
+# with another heading the new one reads as new, so it needs a ticket.
+bpr start rnu; rm "${ROOT}/proj-wt/_board-rnu/board/epics/ren-del.md"; ep rnu epics/ren-new.md "---\nstatus: active\n---\n\n# ren-new\n\n${BODY}\n"
+guard_refused rnu "an active epic deleted and an unrelated active one added, alike enough to pair" "ren-new ${NT} ren-new"
+# A rename that changes the heading too still compares the old copy's agreed:: a stale date under a
+# new heading is no ticket (the second Done when, by another route).
+bpr start rnt; git -C "${ROOT}/proj-wt/_board-rnt" mv board/epics/ren-ttl.md board/epics/ren-ttl2.md
+ep rnt epics/ren-ttl2.md "---\nstatus: active\nagreed: ${TODAY}\n---\n\n# ren-ttl, retitled\n\n${BODY}\n"
+git -C "${ROOT}/proj-wt/_board-rnt" commit -qam "ren-ttl renamed, retitled and active"
+guard_refused rnt "a draft renamed with another heading and set active, the agreed: its base copy had kept" "ren-ttl2 ${NT} ren-ttl2"
+# A file staged past .gitignore (git add -f) is one open's git add -A commits, so the change list
+# holds it: outside the board, it is refused as such.
+bpr start fadd; echo fadd > "${ROOT}/proj-wt/_board-fadd/board/stories/a.md"
+mkdir -p "${ROOT}/proj-wt/_board-fadd/.swarm"; echo x > "${ROOT}/proj-wt/_board-fadd/.swarm/x"; git -C "${ROOT}/proj-wt/_board-fadd" add -f .swarm/x
+guard_refused fadd "a file staged past .gitignore outside the board, beside a board edit" "board-pr: .swarm/x is outside board/"
 printf 'board_dir = board\nlead_epics = on\n' > "${P}/.claude/swarm/config"
 bpr start lead; ep lead epics/e-lead.md '---\nstatus: active\n---\n'
 guard_opens lead "lead_epics = on, with no ticket"
