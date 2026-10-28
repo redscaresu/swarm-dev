@@ -377,7 +377,8 @@ for l in lines("DASH_WAITING"):
         # swarm.sh merge holds a costs: money PR for the user under either merge setting, and under
         # merge = agent a story PR that changes a protected path (protected_hold), so no lead session
         # can merge those. With merge = human it merges the rest only under an agreed HLD that grants
-        # merge; with merge = agent it merges the rest.
+        # merge; with merge = agent it merges the rest. dash reads no PR's files, so a PR that changes a
+        # protected path is tagged only once swarm.sh merge has held it; until then its row stays the lead's.
         item = ("epics" if m.group(3) else "stories", m.group(4))
         rows = merger(costs or protected or not (AGENT_MERGES or item in GRANTED))
         what = ("epic " if m.group(3) else "") + m.group(4) + (costs or "") + (protected or "")
