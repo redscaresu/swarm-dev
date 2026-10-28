@@ -110,5 +110,43 @@ planarm="$(tr '\n' ' ' < "${HOME_DIR}/commands/swarm.md" | tr -s ' ' | sed -n 's
 # shellcheck disable=SC2016 # the backticks are the Markdown's own
 check "the plan-hld arm reads grants from origin's copy, after /plan-hld makes its worktree" grep -qE 'Read the grants from origin.s copy of the HLD, never the main checkout.s.* once `/plan-hld` has made its plan worktree `<wt>` .* run `SWARM_PROJECT=<wt> swarm\.sh grants <hld>`' <<< "${planarm}"
 
+# The gate handler: the `gate` arm of commands/swarm.md, its lines joined. next's gate line for a later
+# epic says to write agreed: <today> as it goes active, and the arm tells the lead the same, since the
+# epic guard refuses a later epic set active with no ticket (epic_unticketed).
+gate="$(awk '/^   - `gate`: / { s = 1 } s && /^   - `done`: / { exit } s' "${HOME_DIR}/commands/swarm.md" | tr '\n' ' ' | tr -s ' ')"
+check "the gate handler is found in commands/swarm.md" test -n "${gate}"
+rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv"; mkdir -p "${P}/docs/epics"
+printf -- '---\nstatus: later\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+# Agreed and parked today: its agreed: date is at the base already, so it is no ticket.
+printf -- '---\nstatus: later\nagreed: %s\n---\n\n# p\n' "$(date +%F)" > "${P}/docs/epics/p.md"
+out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
+check "next's gate line for a later epic says to set it active with agreed: <today>" \
+  grep -qxF '  later epic: e (set it active with agreed: <today> to start it)' <<< "${out}"
+check "next's gate line for a later epic agreed today says to drop its agreed: line in a board PR first" \
+  grep -qxF '  later epic: p (it was agreed today, so drop its agreed: line in one board PR, then set it active with agreed: <today> in the next)' <<< "${out}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler tells the lead to write agreed: <today> as it sets a later epic active" \
+  grep -qF 'a later epic: on the user'"'"'s go, set it `active` and write `agreed: <today>` (today'"'"'s date) in the same edit' <<< "${gate}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler says what to do for a later epic agreed and parked today" \
+  grep -qF 'If it already has `agreed: <today>` (agreed and parked today) on a board in the repo, that date is no ticket: drop the line in one board PR, then set it `active` with `agreed: <today>` in the next' <<< "${gate}"
+# A board outside a repo has no board PR and no epic guard: the same epic gets the plain line.
+X="${ROOT}/nogit"; mkdir -p "${X}/.claude/swarm" "${X}/docs/stories" "${X}/docs/epics"; : > "${X}/.claude/swarm/config"
+cp "${P}/docs/epics/p.md" "${X}/docs/epics/p.md"
+out="$(cd "${X}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
+check "next's gate line for a later epic agreed today, on a board outside a repo, names no board PR" \
+  grep -qxF '  later epic: p (set it active with agreed: <today> to start it)' <<< "${out}"
+# A draft under lead_epics = on is the lead's: next's gate line says so, and the arm reads the setting
+# through swarm.sh config, which takes the default and a bad value as swarm.sh does, not from the file.
+printf -- '---\nstatus: draft\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+printf 'merge = human\nlead_epics = on\n' > "${P}/.claude/swarm/config"
+out="$(cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1)" || true
+check "next's gate line for a draft under lead_epics = on says the lead sets it active" \
+  grep -qxF '  draft epic: e, the lead sets it active (lead_epics = on)' <<< "${out}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler reads lead_epics with swarm.sh config" grep -qF '`lead_epics` is `on` (`swarm.sh config lead_epics` prints it)' <<< "${gate}"
+# shellcheck disable=SC2016 # the backticks are the Markdown's own
+check "the gate handler names next's lead line for a draft" grep -qF '`draft epic: <slug>, the lead sets it active (<why>)`' <<< "${gate}"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -145,7 +145,8 @@ backlog_stopped() {
 # answer (verify's, the last a planner writes) in .swarm/<subject>/ parses as JSON and is newer than
 # the board's <file>, the epic or HLD (an older one belongs to a previous plan, as /plan-epic reads
 # it), or the small path's stories are committed on <branch>, past origin's default branch
-# (board-pr start makes the branch empty).
+# (board-pr start makes the branch empty). board-pr done removes the critic's answer of a plan PR
+# that closed unmerged, so that plan no longer counts.
 plan_drafted() {
   local b base past
   if git -C "${project}" show-ref -q --verify "refs/heads/$2" 2>/dev/null; then
