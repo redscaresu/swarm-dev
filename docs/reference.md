@@ -2184,8 +2184,9 @@ could not confirm. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
 PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (the HLD
 `swarm.sh grants <PR URL>` prints). It reads that grant once the PR's head is green. With the grant,
-the holds of `merge = agent` apply too, so a `costs: money` story's PR, and a board PR that changes a
-`costs:` line, still wait for you. Without it, `merge` refuses with
+the `costs:` hold of `merge = agent` applies too, so a `costs: money` story's PR, and a board PR that changes a
+`costs:` line, still wait for you; the protected-path hold is `merge = agent`'s alone, since under
+`merge = human` the grant lookup already refuses a PR that touches one of those paths, the names as written. Without it, `merge` refuses with
 `<PR URL> waits on the user's merge (merge = human, and no HLD grants merge for it)`. When a board
 story, the PR's files, or its head or base cannot be read, so the HLD over it is unknown, it refuses with
 `cannot tell which HLD <PR URL> is under, so it waits on the user's merge`. `merge` reads the grant,

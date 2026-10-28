@@ -91,9 +91,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
 # "<status> <path>", the status as GitHub gives it (added, removed, modified, renamed, copied, changed
-# or unchanged), empty when it gives none. Either with <base> <head> [<wait>] after them: the files of
-# <base>...<head> instead, the PR's at that head (300 at most, else it fails saying so), a transient gh
-# error read again up to READ_TRIES times, <wait> seconds apart.
+# or unchanged), empty when it gives none. Either with <base> <head> after them: the files of
+# <base>...<head> instead, the PR's at that head (300 at most, else it fails as above). With <wait>
+# after those, protected_hold's read: a transient gh error is read again up to READ_TRIES times, <wait>
+# seconds apart, and a list the compare cannot give fails saying why (over 300 files, no file, a cut list).
 # ci_gate behind <owner/repo> <sha> <base> <board paths> <wait> — the number of commits <base> has that
 # <sha> lacks (compare <sha>...<base>), then each path they change outside <board paths> (on_board_paths'
 # rule, but a README.md there counts as outside; a renamed file's old path too), one a line. A transient
@@ -538,7 +539,8 @@ merge_pr() {
   # refusal cannot hide this one.
   [[ "${only}" != --board ]] || epic_guard
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
-  # then under merge = agent's holds. --release is release_check's. Like epic_guard, it runs after the
+  # then under the costs: hold (merge_hold; the protected-path hold is merge = agent's alone: merge_grant
+  # has refused such a PR, the names as written). --release is release_check's. Like epic_guard, it runs after the
   # head's CI check, which costs fewer gh calls: the grant reads the PR, its files and each board file
   # it touches.
   if [[ "${CFG_merge}" == human && "${only}" != --release ]]; then
