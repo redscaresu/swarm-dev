@@ -184,9 +184,6 @@ else:
   esac
 }
 
-# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed, in
-# HERDR_WORKSPACE_ID: a tab whose recorded panes are in another workspace (<workspace>:<pane>) has no
-# room, so a stale record in a workspace an older swarm.sh shared between projects is never split.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
 prune_dead_panes() {
@@ -195,22 +192,135 @@ prune_dead_panes() {
   awk -v live=" ${live} " 'index(live, " " $1 " ")' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
+# LEAD_AGENTS_LABEL: the label after `<project> · ` of the workspace the lead's own agents open in (next_pane).
+LEAD_AGENTS_LABEL=lead-agents
+# LEAD_AGENTS_RECORD: the file under .swarm/lead (LEAD_DIR) that holds that workspace's "<id>\t<label>" (lead_agents_workspace).
+LEAD_AGENTS_RECORD="agents-workspace"
+# LEAD_AGENTS_HERDR_WAIT: seconds each herdr call that finds, makes or trims that workspace may take (within), as lead_label's.
+LEAD_AGENTS_HERDR_WAIT=5
+# LEAD_AGENTS_LOCK_WAIT: seconds a start waits for the record's lock (lead_agents_lock): the three bounded herdr calls of the start holding it, and some.
+LEAD_AGENTS_LOCK_WAIT=20
+# PANE_WORKSPACE: the workspace next_pane opens in when its caller names one (start_conductor's), else empty.
+PANE_WORKSPACE=""
+
+# lead_starts_pane — true when next_pane opens a pane for the lead's own session (lead_caller), inside herdr
+# (HERDR_ENV and its socket, which the tests drop, as lead_rename).
+lead_starts_pane() { [[ "${HERDR_ENV:-}" == 1 && -S "${HERDR_SOCKET_PATH:-}" ]] && lead_caller; }
+
+# lead_agents_lock <record> — take <record>.lock (mkdir through perl, as note_lock), so two first agent
+# starts at once share one workspace: the second waits for the first's record. One a killed start left
+# over a minute ago is cleared; fails after LEAD_AGENTS_LOCK_WAIT seconds.
+lead_agents_lock() {
+  local i
+  mkdir -p "$(dirname "$1")" 2>/dev/null || return 1
+  for ((i = 0; i < LEAD_AGENTS_LOCK_WAIT * 10; i++)); do
+    perl -e 'mkdir shift or exit 1' "$1.lock" 2>/dev/null && return 0
+    find "$1.lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
+    sleep 0.1
+  done
+  return 1
+}
+
+# lead_agents_workspace — "<id>\t<workspace label>\t<placeholder tab>", as epic_workspace prints it, for
+# the workspace the lead's own agents open in: lead_agents_lookup, under the record's lock
+# (lead_agents_lock), so of two first starts at once the second finds the first's record rather than
+# making a workspace of its own. Fails as lead_agents_lookup does, or when the lock is not had in time,
+# with the reason printed.
+lead_agents_workspace() {
+  local rec="${LEAD_DIR}/${LEAD_AGENTS_RECORD}" rc=0
+  lead_agents_lock "${rec}" || { echo "another agent start has held the lead-agents workspace record (${rec}.lock) for ${LEAD_AGENTS_LOCK_WAIT} s"; return 1; }
+  lead_agents_lookup "${rec}" || rc=$?
+  rmdir "${rec}.lock" 2>/dev/null || true
+  return "${rc}"
+}
+
+# lead_agents_lookup <record> — the one <record> holds while herdr still lists it under the label
+# recorded with it (one relabelled, or an id herdr gave again, is dropped, as lead_rename drops a
+# workspace herdr no longer lists), else epic_workspace's `<project> · lead-agents`, found or made,
+# which it records. The record is what keeps the workspace once its panes are all in other repos'
+# worktrees, whose paths do not say whose they are (herdr_workspaces), where a conductor's would be
+# made again. Fails as epic_workspace does, with its reason printed, less the conductor's prefix.
+lead_agents_lookup() {
+  local rec="$1" id="" label="" out list
+  [[ ! -f "${rec}" ]] || IFS=$'\t' read -r id label < "${rec}" || true
+  if [[ -n "${id}" && -n "${label}" ]] && list="$(herdr_workspaces)" \
+    && [[ "$(I="${id}" awk -F'\t' '$1 == ENVIRON["I"] { print $2; exit }' <<< "${list}")" == "${label}" ]]; then
+    printf '%s\t%s\t\n' "${id}" "${label}"; return
+  fi
+  out="$(epic_workspace "${LEAD_AGENTS_LABEL}")" || { echo "${out#conduct: }"; return 1; }
+  IFS=$'\t' read -r id label _ <<< "${out}"
+  { mkdir -p "${LEAD_DIR}" && printf '%s\t%s\n' "${id}" "${label}" > "${rec}"; } 2>/dev/null || true
+  printf '%s\n' "${out}"
+}
+
+# project_pane <dir> — true when a pane in <dir> marks its workspace as this project's (herdr_workspaces):
+# the project dir, or a story worktree of it (<project>-wt/<slug>).
+project_pane() { local d="${1%/}"; [[ "${d}" == "${PROJECT_DIR}" || "$(dirname "${d}")" == "${PROJECT_DIR}-wt" ]]; }
+
+# has_project_pane <workspace> — true when herdr lists a pane in <workspace> that project_pane takes;
+# false when it gives no pane list.
+has_project_pane() {
+  herdr pane list 2>/dev/null | python3 -I -c '
+import json, os, sys
+w, proj = sys.argv[1], sys.argv[2]
+for p in json.load(sys.stdin)["result"]["panes"]:
+    d = (p.get("cwd") or "").rstrip("/")
+    if (p.get("workspace_id") or p["pane_id"].split(":")[0]) == w and (d == proj or os.path.dirname(d) == proj + "-wt"):
+        sys.exit(0)
+sys.exit(1)' "$1" "${PROJECT_DIR}" 2>/dev/null
+}
+
+# next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed, in
+# PANE_WORKSPACE when set, else in this project's `<project> · lead-agents` (lead_agents_workspace) for
+# an agent the lead starts (lead_starts_pane), else in HERDR_WORKSPACE_ID, so a conductor's agents stay in
+# its workspace. A tab whose recorded panes are in another workspace (<workspace>:<pane>) has no room, so
+# a stale record in a workspace an older swarm.sh shared between projects is never split. A new
+# lead-agents workspace's placeholder tab is closed once the pane is open, or once herdr has refused it,
+# unless the pane's <cwd> is outside the project (project_pane): the workspace's directory is its first
+# pane's (herdr_workspaces), and a pane outside the project ahead of every other would make it another
+# project's and hash this project's labels, so then a pane at PROJECT_DIR stays ahead of it, the
+# placeholder (relabelled lead-agents) or one made. Each herdr call that finds, makes or trims the
+# lead-agents workspace is bounded (LEAD_AGENTS_HERDR_WAIT), and when the lookup, or the pane that
+# must be made at PROJECT_DIR, fails, the pane opens in HERDR_WORKSPACE_ID as before, with the reason
+# on stderr: a hung or failing herdr stops no start, and never leaves the workspace's first pane outside
+# the project.
 next_pane() {
-  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane
+  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane ws="${PANE_WORKSPACE:-${HERDR_WORKSPACE_ID:-}}" placeholder="" keep="" out
+  if [[ -z "${PANE_WORKSPACE}" ]] && lead_starts_pane; then
+    # shellcheck disable=SC2329 # herdr is called inside lead_agents_workspace and has_project_pane
+    if out="$(herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; lead_agents_workspace)"; then
+      IFS=$'\t' read -r ws _ placeholder <<< "${out}"
+      if ! project_pane "${cwd}"; then
+        keep=1
+        if [[ -n "${placeholder}" ]]; then
+          within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab rename "${placeholder}" "${LEAD_AGENTS_LABEL}" >/dev/null 2>&1 </dev/null || true
+        elif ! ( herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; has_project_pane "${ws}" ); then
+          if ! within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab create --workspace "${ws}" --cwd "${PROJECT_DIR}" --label "${LEAD_AGENTS_LABEL}" --no-focus >/dev/null 2>&1 </dev/null; then
+            echo "swarm: herdr would not open a pane at ${PROJECT_DIR} in the lead-agents workspace ahead of this one, outside the project; the agent opens in this workspace instead" >&2
+            ws="${HERDR_WORKSPACE_ID:-}"; keep=""
+          fi
+        fi
+      fi
+    else
+      echo "swarm: ${out}; the agent opens in this workspace instead" >&2
+    fi
+  fi
   mkdir -p "${STATE_DIR}"
   while :; do
     local tab_label="${label}"; [[ ${n} -gt 1 ]] && tab_label="${label}-${n}"
     state="${STATE_DIR}/${tab_label}"
     [[ -f "${state}" ]] && prune_dead_panes "${state}"
     count=0; [[ -f "${state}" ]] && count=$(wc -l < "${state}" | tr -d ' ')
-    if [[ -n "${HERDR_WORKSPACE_ID:-}" && ${count} -gt 0 ]]; then
+    if [[ -n "${ws}" && ${count} -gt 0 ]]; then
       pane="$(awk 'NR == 1 { print $1 }' "${state}")"
-      [[ "${pane}" != *:* || "${pane%%:*}" == "${HERDR_WORKSPACE_ID}" ]] || count=${PANES_PER_TAB}
+      [[ "${pane}" != *:* || "${pane%%:*}" == "${ws}" ]] || count=${PANES_PER_TAB}
     fi
     if [[ ${count} -lt ${PANES_PER_TAB} ]]; then
       if [[ ${count} -eq 0 ]]; then
-        pane=$(herdr tab create --workspace "${HERDR_WORKSPACE_ID}" --cwd "${cwd}" --label "${tab_label}" --no-focus \
-          | json "d['result']['root_pane']['pane_id']")
+        # A create herdr refuses leaves pane empty rather than ending next_pane under errexit (a direct
+        # call's; a command substitution drops it), so a new workspace's placeholder is closed before the die.
+        pane=$(herdr tab create --workspace "${ws}" --cwd "${cwd}" --label "${tab_label}" --no-focus \
+          | json "d['result']['root_pane']['pane_id']") || pane=""
       else
         # 2x2: 2nd splits the first to the right, 3rd splits the first down, 4th splits the second down.
         read -r -a panes <<< "$(awk '{ print $1 }' "${state}" | tr '\n' ' ')"
@@ -220,6 +330,7 @@ next_pane() {
           3) pane=$(herdr pane split "${panes[1]}" --direction down  --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
         esac
       fi
+      [[ -z "${placeholder}" || -n "${keep}" ]] || within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab close "${placeholder}" >/dev/null 2>&1 </dev/null || true
       [[ -n "${pane}" ]] || die "herdr could not open a pane in tab ${tab_label}"
       [[ -z "${name}" ]] || herdr pane rename "${pane}" "${name}" >/dev/null 2>&1 || true
       echo "${pane}${name:+ ${name}}" >> "${state}"

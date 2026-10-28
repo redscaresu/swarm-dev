@@ -7,7 +7,8 @@
 # PATH; herdr's state (${ROOT}/herdr.json) is shared by every project. The lead's first command in
 # a workspace labels it and its tab `swarm-lead · <project>`, once; an agent's, a nested swarm.sh's
 # and a test hook's label nothing, and one in a conductor's or another project's lead's workspace
-# keeps its label.
+# keeps its label. Agents the lead starts open in `<project> · lead-agents`, kept the project's by a
+# pane at its directory and by a record of the workspace's id and label.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -32,12 +33,16 @@ check() { # <name> <want> <got>
 
 # herdr: workspaces, tabs, panes and agents in ${ROOT}/herdr.json. A workspace w<n> is made with a
 # placeholder tab w<n>:t0 whose pane has its --cwd; each tab or pane is <workspace>:t<n> or :p<n>.
+# A file ${ROOT}/refuse makes every rename fail, ${ROOT}/refuse-tab every tab create, ${ROOT}/refuse-anchor
+# the create of a tab labelled lead-agents, and ${ROOT}/hang makes workspace list sleep 60 s before
+# answering. A file lock (herdr.lock) serialises the stub's reads and writes, for starts run at once.
 mkdir -p "${ROOT}/bin"
 printf '#!/bin/sh\nexec python3 "%s/bin/herdr.py" "$@"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat > "${ROOT}/bin/herdr.py" <<'EOF'
-import json, os, sys, time
+import fcntl, json, os, sys, time
 H = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 F = os.path.join(H, "herdr.json")
+_lock = open(os.path.join(H, "herdr.lock"), "w"); fcntl.flock(_lock, fcntl.LOCK_EX)
 s = json.load(open(F)) if os.path.exists(F) else {"n": 0, "workspaces": [], "tabs": [], "panes": [], "agents": []}
 a = sys.argv[1:]
 with open(os.path.join(H, "herdr.log"), "a") as log:
@@ -58,6 +63,8 @@ elif cmd == "workspace create":
     s["tabs"].append({"tab_id": tab, "label": "1", "workspace_id": ws}); pane(ws, tab, opt("--cwd"))
     out({"workspace": {"workspace_id": ws}, "tab": {"tab_id": tab}})
 elif cmd == "tab create":
+    if os.path.exists(os.path.join(H, "refuse-tab")) or (os.path.exists(os.path.join(H, "refuse-anchor")) and opt("--label") == "lead-agents"):
+        sys.stderr.write("error: tab create refused\n"); sys.exit(1)
     ws = opt("--workspace"); tab = "%s:t%d" % (ws, new())
     s["tabs"].append({"tab_id": tab, "label": opt("--label"), "workspace_id": ws})
     out({"root_pane": {"pane_id": pane(ws, tab, opt("--cwd"))}})
@@ -392,6 +399,143 @@ lead "${C}" "${lc2}" config > /dev/null; rm -f "${ROOT}/refuse-tab"
 check "a refused tab rename: the workspace has its label, the message and record name the tab alone" \
   "swarm-lead${SEP}web|old|1|0|${lc2}${TAB}swarm-lead${SEP}web${TAB}tab refused" \
   "$(labels "${lc2}")|$(grep -c 'labelled the lead.s workspace .* but would not label its tab' "${ROOT}/lead.err" || true)|$(grep -c 'would not label the lead.s workspace' "${ROOT}/lead.err" || true)|$(grep "^${lc2}${TAB}" "${C}/.swarm/lead/workspace")"
+
+# --- Agents the lead starts. `swarm.sh agent` from each lead opens its tab in its project's
+# `<project> · lead-agents` workspace, never the lead's own, and the new workspace's placeholder tab
+# is closed; a second agent reuses it. From a conductor's environment (SWARM_AGENT) it opens in the
+# caller's workspace, and conduct from the lead still opens in the epic's. close finds the tab.
+printf 'co-write\n' > "${ROOT}/brief.md"
+# tab_ws <tab label> — "<its workspace's label>|<its workspace id>" for the newest tab of that label;
+# "none|none" with no such tab, or one in a workspace herdr no longer lists.
+tab_ws() { herdr_q "next(('%s|%s' % (w['label'], w['workspace_id']) for t in reversed(s['tabs']) if t['label'] == '$1' for w in s['workspaces'] if w['workspace_id'] == t['workspace_id']), 'none|none')"; }
+# ws_tabs <workspace> — its tabs' labels, space-separated.
+ws_tabs() { herdr_q "' '.join(t['label'] for t in s['tabs'] if t['workspace_id'] == '$1')"; }
+lead "${A}" "${la}" agent hld-a hld-a "${A}" hld "${ROOT}/brief.md" > /dev/null
+lead "${B}" "${lb}" agent hld-b hld-b "${B}" hld "${ROOT}/brief.md" > /dev/null
+ha="$(tab_ws hld-a)"; hb="$(tab_ws hld-b)"
+check "swarm.sh agent from each lead opens in its project's lead-agents workspace, placeholder closed, never the lead's" \
+  "app${SEP}lead-agents|app-$(hash_of "${B}")${SEP}lead-agents|hld-a|hld-b|yes" \
+  "${ha%|*}|${hb%|*}|$(ws_tabs "${ha#*|}")|$(ws_tabs "${hb#*|}")|$([[ "${ha#*|}" != "${la}" && "${hb#*|}" != "${lb}" && "${ha#*|}" != "${hb#*|}" ]] && echo yes || echo no)"
+n="$(creates)"; lead "${A}" "${la}" agent plan-a plan-a "${A}" survey "${ROOT}/brief.md" > /dev/null
+check "a second agent from the lead reuses its lead-agents workspace, and none is made" "app${SEP}lead-agents|${ha#*|}|${n}" "$(tab_ws plan-a)|$(creates)"
+
+lead "${A}" "${a_x#*|}" SWARM_AGENT=conduct-x agent s-x s-x "${A}" code "${ROOT}/brief.md" > /dev/null
+out="$(lead "${A}" "${la}" conduct r 2>&1 || echo "exit $?")"
+got="$(herdr_q "next((g['pane_id'].split(':')[0] for g in s['agents'] if g['name'] == 'conduct-r'), 'none')")"
+[[ "${got}" != none ]] || got="no conductor conduct-r, got: ${out}"
+check "from a conductor's environment the agent opens in the caller's workspace, and conduct from the lead in the epic's" \
+  "${a_x#*|}|${a_r#*|}" "$(tab_ws s-x | cut -d'|' -f2)|${got}"
+
+ta="$(herdr_q "next(t['tab_id'] for t in s['tabs'] if t['label'] == 'hld-a')")"
+out="$(lead "${A}" "${la}" close hld-a || echo "exit $?")"
+check "close closes the agent's tab in the lead-agents workspace" "$(ws_of "app${SEP}lead-agents" 2>/dev/null)|yes|no" \
+  "${ta%%:*}|$(grep -qxF "tab|close|${ta}" "${ROOT}/herdr.log" && echo yes || echo "no, got: ${out}")|$(herdr_q "any(t['tab_id'] == '${ta}' for t in s['tabs'])" | sed 's/True/yes/;s/False/no/')"
+
+# The lead-agents workspace is kept by its record, .swarm/lead/agents-workspace, not by its panes'
+# directories: web's lead starts an agent in another repo's worktree (zzz-wt/s9, whose path does not
+# say whose it is), which makes web · lead-agents with that pane alone, and its next agent, in the
+# project, opens there too. Once herdr no longer lists the recorded workspace, a new one is made.
+mkdir -p "${ROOT}/zzz-wt/s9"
+lead "${C}" "${lc}" agent s9 s9 "${ROOT}/zzz-wt/s9" code "${ROOT}/brief.md" > /dev/null
+s9="$(tab_ws s9)"
+n="$(creates)"; lead "${C}" "${lc}" agent hld-c hld-c "${C}" hld "${ROOT}/brief.md" > /dev/null
+check "a lead-agents workspace whose only pane is in another repo's worktree is reused from its record, and none is made" \
+  "web${SEP}lead-agents|${s9#*|}|${n}|${s9#*|}${TAB}web${SEP}lead-agents" \
+  "$(tab_ws hld-c)|$(creates)|$(cat "${C}/.swarm/lead/agents-workspace")"
+python3 -c 'import json, sys; f = sys.argv[1]; s = json.load(open(f)); s["workspaces"] = [w for w in s["workspaces"] if w["workspace_id"] != sys.argv[2]]; json.dump(s, open(f, "w"))' \
+  "${ROOT}/herdr.json" "${s9#*|}"
+n="$(creates)"; lead "${C}" "${lc}" agent plan-c plan-c "${C}" survey "${ROOT}/brief.md" > /dev/null
+pc="$(tab_ws plan-c)"
+check "a recorded workspace herdr no longer lists is not used: a new web · lead-agents is made and recorded" \
+  "web${SEP}lead-agents|yes|$((n + 1))|${pc#*|}${TAB}web${SEP}lead-agents" \
+  "${pc%|*}|$([[ "${pc#*|}" != "${s9#*|}" ]] && echo yes || echo no)|$(creates)|$(cat "${C}/.swarm/lead/agents-workspace")"
+
+# A tab create herdr refuses, in a lead-agents workspace just made, still closes the placeholder tab
+# and says why, through _pane, a direct call of next_pane under errexit (start_agent's command
+# substitution drops errexit, so there the close ran either way); the next agent then opens in that
+# workspace (recorded, and still listed by the stub) with its own tab alone.
+seed "lead e" "${E}"; le="$(ws_of "lead e")"
+touch "${ROOT}/refuse-tab"; : > "${ROOT}/lead.err"
+out="$(lead "${E}" "${le}" _pane hld-e "${E}" || echo "exit $?")"
+rm -f "${ROOT}/refuse-tab"
+se="$(ws_of "cart${SEP}lead-agents")"
+lead "${E}" "${le}" agent hld-e hld-e "${E}" hld "${ROOT}/brief.md" > /dev/null
+check "a refused first tab in a new lead-agents workspace closes its placeholder and says so; the next agent opens there alone" \
+  "yes|${se}|hld-e" \
+  "$(grep -q 'could not open a pane in tab hld-e' "${ROOT}/lead.err" && echo yes || echo "no, got: ${out}; $(tail -1 "${ROOT}/lead.err")")|$(tab_ws hld-e | cut -d'|' -f2)|$(ws_tabs "${se}")"
+
+# --- Review round 1. An epic named lead-agents, or whose parent: is, would share the lead's agents'
+# workspace: conduct refuses it before any herdr call, as it refuses one named backlog.
+printf -- '---\nstatus: active\n---\n\n# lead-agents\n' > "${A}/docs/epics/lead-agents.md"
+printf -- '---\nstatus: active\nparent: lead-agents\n---\n\n# child\n' > "${A}/docs/epics/child.md"
+n="$(creates)"
+o1="$(run "${A}" conduct lead-agents || echo "exit $?")"; o2="$(run "${A}" conduct child || echo "exit $?")"
+refused() { grep -q "$1 would take the lead's agents' workspace" <<< "$2" && grep -qx 'exit 1' <<< "$2" && echo yes || echo "no, got: $2"; }
+check "conduct refuses an epic named lead-agents, or with that parent:, and makes no workspace" "yes|yes|${n}" \
+  "$(refused lead-agents "${o1}")|$(refused child "${o2}")|$(creates)"
+
+# The lead of a board kept outside the repo (K, with SWARM_PROJECT naming P) starts the HLD co-author in
+# its own folder, outside the project: the agent opens in site · lead-agents with the placeholder kept
+# ahead of it, relabelled lead-agents, at the project's directory, so the workspace's directory stays
+# the project's and P's conductor keeps the plain label site · x.
+# first_cwd <workspace> — the cwd of its first pane, which herdr_workspaces takes as the workspace's.
+first_cwd() { herdr_q "next((p['cwd'] for p in s['panes'] if p['workspace_id'] == '$1'), 'none')"; }
+pb="$(run "${P}" config board_dir)"; mkdir -p "${pb}/epics" "${pb}/stories"; : > "${pb}/stories/README.md"
+printf -- '---\nstatus: active\n---\n\n# x\n' > "${pb}/epics/x.md"
+lead "${K}" "${lk}" SWARM_PROJECT="${P}" agent hld-k hld-k "${K}" hld "${ROOT}/brief.md" > /dev/null
+hk="$(tab_ws hld-k)"; p_x="$(conduct "${P}" x)"
+check "an agent the lead starts outside the project keeps a pane at the project dir ahead of it, and the project's labels stay plain" \
+  "site${SEP}lead-agents|lead-agents hld-k|${P}|site${SEP}x" "${hk%|*}|$(ws_tabs "${hk#*|}")|$(first_cwd "${hk#*|}")|${p_x%|*}"
+
+# A found lead-agents workspace with no pane left at the project (plan-c closed) gets one made at the
+# project dir, labelled lead-agents, ahead of an agent started outside the project.
+mkdir -p "${ROOT}/elsewhere"
+lead "${C}" "${lc}" close plan-c > /dev/null || true
+cw="$(cut -f1 "${C}/.swarm/lead/agents-workspace")"
+lead "${C}" "${lc}" agent s11 s11 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+check "a lead-agents workspace with no pane at the project gets one made ahead of an agent outside it" \
+  "${cw}|lead-agents s11|${C}" "$(tab_ws s11 | cut -d'|' -f2)|$(ws_tabs "${cw}")|$(first_cwd "${cw}")"
+
+# A recorded workspace herdr now lists under another label (relabelled by hand, or an id given again)
+# is left alone: a new web · lead-agents is made and recorded.
+"${ROOT}/bin/herdr" workspace rename "${cw}" "my scratch" > /dev/null
+n="$(creates)"; lead "${C}" "${lc}" agent hld-c2 hld-c2 "${C}" hld "${ROOT}/brief.md" > /dev/null
+hc="$(tab_ws hld-c2)"
+check "a recorded workspace under another label is not used: a new web · lead-agents is made and recorded" \
+  "web${SEP}lead-agents|yes|$((n + 1))|${hc#*|}${TAB}web${SEP}lead-agents|my scratch" \
+  "${hc%|*}|$([[ "${hc#*|}" != "${cw}" ]] && echo yes || echo no)|$(creates)|$(cat "${C}/.swarm/lead/agents-workspace")|$(herdr_q "next(w['label'] for w in s['workspaces'] if w['workspace_id'] == '${cw}')")"
+
+# herdr hanging on its workspace list: the lookup is cut short (LEAD_AGENTS_HERDR_WAIT seconds), and
+# the agent opens in the lead's own workspace instead, with the reason on stderr, so the start goes on.
+touch "${ROOT}/hang"; : > "${ROOT}/lead.err"
+t0=${SECONDS}; lead "${A}" "${la}" agent slow-a slow-a "${A}" survey "${ROOT}/brief.md" > /dev/null; dt=$((SECONDS - t0))
+rm -f "${ROOT}/hang"
+check "a herdr that hangs on its lists is cut short, and the agent opens in the lead's own workspace, saying why" \
+  "${la}|yes|yes" \
+  "$(tab_ws slow-a | cut -d'|' -f2)|$(grep -q 'the agent opens in this workspace instead' "${ROOT}/lead.err" && echo yes || echo "no: $(tail -1 "${ROOT}/lead.err")")|$([[ ${dt} -lt 40 ]] && echo yes || echo "no, ${dt}s")"
+
+# --- Final round. A found lead-agents workspace with no pane at the project, where herdr refuses the
+# pane at the project dir: the agent opens in the lead's own workspace instead, saying why, and the
+# lead-agents workspace is left empty, so the outside dir is never its first pane's.
+lead "${C}" "${lc}" close hld-c2 > /dev/null || true
+touch "${ROOT}/refuse-anchor"; : > "${ROOT}/lead.err"
+lead "${C}" "${lc}" agent s12 s12 "${ROOT}/elsewhere" code "${ROOT}/brief.md" > /dev/null
+rm -f "${ROOT}/refuse-anchor"
+check "a refused pane at the project dir sends the agent to the lead's own workspace, saying why, and leaves the lead-agents workspace empty" \
+  "${lc}|yes|" \
+  "$(tab_ws s12 | cut -d'|' -f2)|$(grep -q 'would not open a pane at .* the agent opens in this workspace instead' "${ROOT}/lead.err" && echo yes || echo "no: $(tail -1 "${ROOT}/lead.err")")|$(ws_tabs "${hc#*|}")"
+
+# Two first agents the lead starts at once (plan-hld's surveys), with no record yet: the record's lock
+# makes the second wait for the first's workspace, so both open in one site-<hash> · lead-agents, one
+# workspace is made, and no lock is left.
+n="$(creates)"
+lead "${Q}" "${lq}" agent sv-1 sv-1 "${Q}" survey "${ROOT}/brief.md" > /dev/null & p1=$!
+lead "${Q}" "${lq}" agent sv-2 sv-2 "${Q}" survey "${ROOT}/brief.md" > /dev/null & p2=$!
+wait "${p1}" "${p2}" || true
+q1="$(tab_ws sv-1)"; q2="$(tab_ws sv-2)"
+check "two first agents started at once share one lead-agents workspace, one is made, and no lock is left" \
+  "site-$(hash_of "${Q}")${SEP}lead-agents|yes|$((n + 1))|no lock" \
+  "${q1%|*}|$([[ "${q1#*|}" == "${q2#*|}" ]] && echo yes || echo "no: ${q1#*|} vs ${q2#*|}")|$(creates)|$([[ -e "${Q}/.swarm/lead/agents-workspace.lock" ]] && echo 'lock left' || echo 'no lock')"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

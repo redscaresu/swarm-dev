@@ -40,9 +40,9 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   naming an HLD that is `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
   first, and a failed fetch or read refuses. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
-  days when `merge --board` runs, and a date after today never counts.
+  days when `swarm.sh merge` runs (a board PR's or a story PR's), and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.
-  `swarm.sh merge --board` refuses the same PRs (§ Merging).
+  `swarm.sh merge` refuses the same change in a board PR (`--board`) or a story PR (§ Merging).
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
   on the branch's tip (the local one, or origin's when there is none here) has merged or closed. A
   PR left by an earlier use of the name does not count. With no PR it removes an abandoned start:
@@ -826,9 +826,10 @@ background work. When it starts, an epic still `later` is set `active` (in
 `.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
 stop listing it as waiting on you. It runs in a herdr workspace labelled for its project and the epic's `parent:` if it has one (epics with the same
 parent share it), or else for the epic (see **Workspace labels** below), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
-that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane always
-opens in the workspace of the agent that starts it: a tab whose panes are in another workspace
-counts as full, so that pane opens `<epic>-2` there instead. A one-off
+that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A pane
+opens in the workspace of the agent that starts it. One the lead starts opens in
+`<project> · lead-agents`, except a conductor, which opens in its epic's. A tab whose panes are in
+another workspace counts as full, so that pane opens `<epic>-2` there instead. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
@@ -896,12 +897,26 @@ gives one carries the project's label, joined to the rest by ` · `:
 - `<project> · <epic>`: an epic's conductor, its stories' builders and their review agents. For a
   child epic of a split one, `<epic>` is its `parent:`, so the children share the workspace.
 - `<project> · backlog`: the backlog conductor and the one-offs it builds.
+- `<project> · lead-agents`: every agent the lead starts itself, such as the HLD co-author, a
+  planner or a builder it restarts. Its first agent makes the workspace, and swarm.sh keeps its id
+  and label in `.swarm/lead/agents-workspace`, so the workspace is reused while herdr lists it under
+  that label, even once its panes are all in other repos' worktrees, whose paths say nothing about
+  whose they are; one relabelled is left alone, and a new one made. An agent started outside the
+  project, as from a board kept outside the repo, keeps a pane at the project directory ahead of its
+  own, so the workspace stays the project's while that pane is open. When herdr gives no list, no
+  workspace or no such pane within a few seconds, the agent opens in the lead's own workspace, and
+  swarm.sh says so. Two first agents started at once share one workspace: the record is made under a
+  lock, and the second waits for the first's. A conductor still opens in its epic's workspace, and
+  `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it refuses one named
+  `backlog`.
 
 `<project>` is the project directory's name. When herdr already lists a workspace labelled
 `<that name> · ...` for another directory, it is the name, a dash and 6 hex characters of a checksum
 of the project's path (the hash the backlog conductor's name ends with), so `/a/app` gets `app`
 and `/b/app` gets `app-<hash>`. herdr gives a workspace no directory of its own, so a workspace's
-directory is that of its first pane in `herdr pane list`, the conductor's or a review agent's. A
+directory is that of its first pane in `herdr pane list`: the conductor's or a review agent's, and
+in `<project> · lead-agents` a lead agent's, or the pane at the project directory swarm.sh keeps
+ahead of a lead agent started outside the project. A
 builder's pane in the project's own story worktree (`<project>-wt/<slug>`) counts as the project's;
 one in any other repo's (`<repo>-wt/<slug>`) is skipped, since its path does not say whose it is. `conduct` takes a
 workspace only when its directory is the project's: one under either form of the project's label, or
@@ -2461,10 +2476,20 @@ covered release still goes through the docs check below.
 unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
-under the board instead. Under either merge mode, `--board` also refuses a PR that sets an epic
-`active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green, it reads each
-epic and HLD through gh at the PR's base branch and head SHA. Any read error refuses, as does a 404 at
-the head on a file the PR does not remove or rename away. With
+under the board instead. Under either merge mode, it also refuses a story PR or a `--board` PR that
+sets an epic `active` with no ticket, as `board-pr open` does (§ The lead). Once the head is green,
+it reads each epic and HLD through gh at the PR's base branch and head SHA; for a story PR it first
+lists the PR's files at that head. Any read error refuses, as does a 404 at the head on a file the PR
+does not remove or rename away. For a story PR each of those reads, the file list included, stops after
+60 seconds (`BASE_MOVED_WAIT`) and refuses the same way. For a `--board` PR only the epic and HLD reads
+stop there; its file lists have no limit. A read cut off that way is a passing error, which the next
+`swarm.sh merge` reads past. The refusal starts `--board:` only on the `--board` route. A story
+PR is not checked when the board is not in the project's repo. Nor is one whose story names another
+repo (`repo:`) and whose PR is outside the board's repo, since its `epics/` files are that repo's own;
+when gh cannot name the board's repo, merge refuses, says why, and you run it again; when the project
+has no origin remote, it says to add one, or to merge the PR by hand, since running it again fails the
+same way. Under
+`merge = human`, a story PR whose files cannot be read at the head waits on your merge. With
 `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
@@ -3107,7 +3132,7 @@ changes merge's exit code.
 | `swarm.sh review-agent --next <slug> <PR URL>` | Run by `review-<slug>` from its own pane: its next review round, in the same session, with no new agent. Once the worktree is at the PR's head with nothing uncommitted, it moves the last findings to `.swarm/reviews/<slug>.md.prev`, records the head, and prints the round and what it runs (codex alone from round 2). It refuses, changing nothing, in these cases: from any other pane; when the board has a story named `review-<slug>`; when no findings went to the builder since its build started (round 1 is always a plain `review-agent` start); when this build has no ok `review-agent` start, so the pane is an earlier build's; and while that round has already started with no findings sent since, so it never puts a finished review aside unread. When herdr cannot list its agents, it says to run `--next` again, not to start a new review agent. events.tsv logs it as `review-agent:next <slug> ok (round <n>)`, which flow's review-agent start counts and review_wait do not read; `outcomes`' `green_to_review_min` reads it as a round start. |
 | `swarm.sh review-agent --recheck <slug> <PR URL> <old head> <file:line>...` | Run by `review-<slug>` from its own pane after the builder pushes a wording fix, in place of a full review round. `<old head>` is the head it last reviewed, as `.swarm/reviews/<slug>.head` records it, and that round's findings file must already be written. Each `file:line` must appear in that file's `## Findings` section as a whole path (or under the worktree's own path), with the line number as at `<old head>`, every finding there must cite one of them, and every `file:line` a finding cites must be one of them (a range or list such as `doc.md:3-5` or `doc.md:3,8`, or a bare `:8` later in the finding, never is). It passes only when the worktree is at the PR's new head with nothing uncommitted, `git diff <old head>..<new head>` rewrites each named line and nothing else, and the new head is green. Every line the diff removes or rewrites must be named, and no hunk may add more lines than it removes. A file added, deleted, renamed, binary or with a new mode fails it, and so does an empty diff. On a pass it writes the new head's findings file (its `head:` line, and a `## Findings` section saying the wording recheck passed), keeps the last one as `<slug>.md.prev`, and records the new head. events.tsv logs it as `review-agent:recheck <slug> ok`, which counts no round, so the next `--next` prints the same round. Otherwise it exits non-zero, writes nothing under `.swarm/reviews` and says why. When the old head, its findings or the diff rule the recheck out, or the new head is red, it names `swarm.sh review-agent --next <slug> <PR URL>`, the full round that is now due. When CI on the new head is still running it says to wait (`swarm.sh wait-pr`) and run `--recheck` again, and when it cannot read CI within 60 seconds (`SWARM_RECHECK_CI_SECONDS`) it says to run `--recheck` again. A bad argument, another pane, a board story named `review-<slug>`, herdr not answering, or a worktree not yet at the PR's head says what to fix first. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same part (by its first word) or both name the bare file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
-| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. With `merge = human` the lead runs it only for a PR whose agreed HLD grants `merge`, and you merge the rest. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`, and refuses it while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line. With `merge = human` it merges only when at least one story merged since the last tag and every one of them is under an agreed HLD that grants `release`. `--board` refuses a board PR that sets an epic `active` with no ticket (the epic guard, [§ Merging](#merging)). Where the base has a merge queue, `merge` enqueues the PR. If CI on the base goes red on a commit it merged, it writes a `fix-main` story ([§ Merging](#merging)). |
+| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. With `merge = human` the lead runs it only for a PR whose agreed HLD grants `merge`, and you merge the rest. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`, and refuses it while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line. With `merge = human` it merges only when at least one story merged since the last tag and every one of them is under an agreed HLD that grants `release`. It refuses a story PR, or a board PR under `--board`, that sets an epic `active` with no ticket (the epic guard, [§ Merging](#merging)). Where the base has a merge queue, `merge` enqueues the PR. If CI on the base goes red on a commit it merged, it writes a `fix-main` story ([§ Merging](#merging)). |
 | `swarm.sh step-up <slug> <trigger>` | Close a struggling build and start the next model in `escalate_ladder` on the same branch, without counting an attempt. `<trigger>` is `findings-<step_up_findings>` (`findings-3` by default), `ci-red-2`, `stalled` or `no-pr`. `swarm.sh step-up --resume <slug>` starts a rung whose start failed. `close`, `tell`, `wait --stall`, `watch` and a review pane's `wait-pr` run it themselves. Refused while the ladder is empty ([§ The escalation ladder](#the-escalation-ladder)). |
 | `swarm.sh restart <slug>` | Start a builder again when its pane is gone. It runs on a ready story that has a worktree and whose builder herdr no longer lists, and it uses the same worktree, branch and tab. If the builder's last Claude session left a resume command, and that session took its brief, restart reopens it and tells the builder to carry on. A resume command moved to a new session by `/clear` reopens the new one. If not, it starts a fresh builder on the last model, with a handover brief like a step-up's. It refuses, and starts nothing, while herdr still lists the builder, when the story has no worktree, a worktree with a git step left unfinished (a merge, rebase, cherry-pick or revert, or an `index.lock`) or one off `story/<slug>`, is not ready, is `kind: lead`, held or escalated, has a PR that merged or is set to auto-merge, or has a step-up waiting (run `swarm.sh step-up --resume <slug>` for that). It holds the story's step-up lock while it runs: a second restart of the story is refused, and an automatic step-up of it is skipped. A restart is refused, too, while an automatic step-up holds that lock. Its reads of herdr's agent list and of the story's PRs each stop after `SWARM_RESTART_READ_WAIT` seconds (30 by default), and a read that fails or stops refuses the restart and lets the lock go. When herdr sends the brief or the prompt to carry on but does not show the builder taking it up, restart reads the builder once more. If that read does not show it either, restart fails without an ok line, keeps the pane, and says what to send the builder. It logs `restart <slug> ok (...)`. The story's `attempts:`, its review round and the build the step-up triggers count from stay as they were. In `outcomes`, a resumed session is the same build row, and a fresh builder is a new row with the next attempt number, as for any new builder. |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |

@@ -128,13 +128,15 @@ lists them all.
 
 ### Workspace labels
 
-Every herdr workspace swarm.sh opens for a conductor, and the lead's own, is labelled with its
-project:
+Every herdr workspace swarm.sh opens for a conductor or the lead's agents, and the lead's own, is
+labelled with its project:
 
 - `swarm-lead · <project>`: the lead's own workspace and tab, relabelled by the first swarm.sh
   command the lead runs there after `swarm.sh init` (any but `version` and `update`).
 - `<project> · <epic>`: an epic's conductor and its builders.
 - `<project> · backlog`: the backlog conductor and the one-off stories it builds.
+- `<project> · lead-agents`: the agents the lead starts itself, such as the HLD co-author or a
+  planner, so they stay out of the lead's own workspace.
 
 `<project>` is the project folder's name, with a short hash of its path after it when another folder
 of the same name already has a workspace. A conductor reuses a workspace only when its panes say it
@@ -162,7 +164,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   the last tag is under an agreed HLD that lists `release`. Under either mode, a PR that changes
   `.claude/`, `.github/`, `hooks/` or a root `Makefile` waits for you to merge it by hand.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
-  `swarm.sh board-pr open` ([reference.md § Merging](docs/reference.md#merging)).
+  `swarm.sh board-pr open`, and a plain `swarm.sh merge` refuses a story PR that sets an epic
+  `active` with no ticket in the same way ([reference.md § Merging](docs/reference.md#merging)).
 - Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
   does not merge it while the base has commits the PR's head lacks that change more than board files.
   It has GitHub merge the base into the PR's branch, checks that the new head adds only the base's
