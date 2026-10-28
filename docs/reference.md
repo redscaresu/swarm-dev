@@ -1595,7 +1595,7 @@ earlier build that shares the PR (so a reworked PR counts once), on a PR merged 
 no fix yet, and where rework is unknown: a PR merged before that window, every PR when `gh` failed, and
 a PR merged before the oldest PR of a `gh` list that came back 1000 long, whose fix the list may have
 missed. A line on stderr names each of the last two cases. `outcomes` alone
-computes rework; `flow`'s `model_fit` and `reviewers` sections read this column. The last column,
+computes rework; `flow`'s `model_fit` and `reviewers` sections read this column. The next column,
 `held_min`, is on a story's first build alone: the minutes it sat ready and unstarted under the
 conductor run the build started in, counted from the later of the run's start and the story's ready
 time. The conductor is its epic's, or the backlog conductor (`conduct --backlog`) for a story with
