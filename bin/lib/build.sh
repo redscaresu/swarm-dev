@@ -64,9 +64,11 @@ A story \`swarm.sh status\` lists as \`kept:\` (a close kept its PR unreviewed) 
 way: first make sure its builder is open, since the review agent sends it the findings (with none,
 start one in its worktree as the Stacked rule says for \`(no builder)\`, with a brief that names the
 story and its PR), then start the review agent on the line's PR. A \`kept:\` line with more than one
-PR is the lead's: list it in your report. When review-agent refuses (the story's worktree is not at
-the PR's head or has uncommitted changes, or review-<slug> is still reviewing), whatever the
-refusal says to do next, start it again on \`swarm.sh watch\`'s next line for that PR.
+PR is the lead's: list it in your report. When review-agent refuses because review-<slug> is
+still reviewing, that agent has the PR: start nothing. When it refuses because the story's worktree
+is not at the PR's head or has uncommitted changes, the builder is still at work: whatever the
+refusal says to do next, start it again once \`swarm.sh wait <slug>\` on that builder returns, or
+on \`swarm.sh watch\`'s next line for that PR, whichever comes first.
 The review agent waits for the PR's checks, triages them, reviews each head, sends its findings to
 the builder, logs them, and merges the PR or hands it to the user. Never wait on a PR or a review
 agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or
@@ -160,6 +162,8 @@ money\`), and its review agent leaves the PR there, as it does every PR merge ho
 PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\` or \`(protected path)\`) in
 your report under Waits on the user.
 
+$(fix_main_rule)
+
 $(merge_note_rule "$1")
 $(stacked_start_rule)
 $(held_ready_rule) After a
@@ -173,6 +177,14 @@ EOF
 # what the merge made ready, through the startable pass after each inbox pass.
 merge_note_rule() {
   printf '%s' "A note in your inbox that a story's PR just merged is the cue to start what that merge made ready. After each inbox pass, $(startable_rule "$1")"
+}
+
+# fix_main_rule — with merge = agent, a review agent's merge that turns the base red writes a fix-main
+# story, which next names to the lead, whose note asks a running conductor to build it. It is outside
+# every epic, and watch says no fix-main PR opened (opened_due), so the conductor starts its review agent
+# from the builder's reply.
+fix_main_rule() {
+  printf '%s' "When a note names a \`fix-main-<short sha>\` story (CI on the base went red after a merge, and \`swarm.sh merge\` wrote that story), start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope: its PR is the one merge allowed while the base is red. \`swarm.sh watch\` prints no \`opened\` line for a fix-main PR, so start its review agent, as the review rule says, once its builder replies with the PR URL."
 }
 
 # startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story

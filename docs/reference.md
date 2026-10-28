@@ -1481,9 +1481,11 @@ story's PR opened (`<repo> #<n> story/<slug> opened`), the conductor starts a re
 once, with `swarm.sh review-agent <slug> <PR URL>`. It starts one for every PR that opens, without
 waiting for other PRs or reviews, so PRs that land together are reviewed together. It starts one the
 same way on a `queued:` line, and for a story `status` lists as `kept:` once that story's builder is
-open (with a `kept:` line of several PRs left to the lead). When `review-agent` refuses (the worktree
-is not at the PR's head or has uncommitted changes, or the agent is still reviewing), the conductor
-starts it again on `watch`'s next line for that PR. From then on the PR is the review agent's: the
+open (with a `kept:` line of several PRs left to the lead). When `review-agent` refuses because the
+worktree is not at the PR's head or has uncommitted changes, the conductor
+starts it again once its `wait` on the builder returns, or on `watch`'s next line for that PR,
+whichever comes first; a refusal because the agent is still reviewing needs nothing, since that
+agent has the PR. From then on the PR is the review agent's: the
 conductor never waits on the PR or the agent, reads its review file, triages, tells the builder
 findings, logs a finding, closes the agent or merges. The command returns straight away, and records the head it reviews
 in `.swarm/reviews/<slug>.head`. The agent, `review-<slug>`, never edits the PR's code and runs in the story's worktree and tab.
@@ -2520,7 +2522,8 @@ and stops when CI on the base timed out, or is red with no `fix-main:` line, say
 It also stops when what is left needs the lead: a story only the lead can finish. If
 CI on the base goes red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below),
 which `next` names to the lead first; the lead's note asks the conductor to start its builder at
-once, ahead of every other story. A merge that `swarm.sh merge` refused (other than `held:` or a
+once, ahead of every other story and whatever its scope. `watch` says no fix-main PR opened, so the
+conductor starts that PR's review agent once the builder replies with its URL. A merge that `swarm.sh merge` refused (other than `held:` or a
 `base merged:` line, which the review agent acts on) or could not confirm ends the review agent with
 the line in its reply, and is the lead's. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
