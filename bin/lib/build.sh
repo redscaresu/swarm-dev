@@ -567,8 +567,6 @@ build_story() {
   else git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"; fi
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
-  rm -f "$(build_conductor "${slug}")"
-  [[ "${SWARM_AGENT:-}" != conduct-* ]] || printf '%s\n' "${SWARM_AGENT}" > "$(build_conductor "${slug}")"
   story_brief "${slug}" "${src}" "${base}" > "${prompt}"
   [[ -z "${parents}" ]] || printf '%s\n' "This story is stacked: your branch starts on the branches of ${parents}, whose PRs are still open. Open your PR against \`${base}\` all the same, with \`Merge after ${STACK_PRS}\` in its body." >> "${prompt}"
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
@@ -1075,21 +1073,13 @@ EOF
     "Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
 }
 
-# story_conductor <slug> — the conductor a review agent of <slug> tells when it stops: its epic's, or for
-# a story with no epic the conductor that started its build (build_conductor; an epic's conductor builds
-# a fix-main story), else the backlog conductor's (group_conductor).
+# story_conductor <slug> — the conductor a review agent of <slug> tells when it stops: its epic's, or the
+# backlog conductor's for a story with no epic, but for a fix-main story the conductor that started its
+# build (note_group, fix_main_owner: an epic's conductor builds one).
 story_conductor() {
-  local e c; e="$(fm "${BOARD}/stories/$1.md" epic 2>/dev/null || true)"
-  if [[ -z "${e}" ]] && c="$(cat "$(build_conductor "$1")" 2>/dev/null)" && [[ "${c}" == conduct-* ]]; then
-    echo "${c}"; return
-  fi
-  group_conductor "${e:--}"
+  local e; e="$(fm "${BOARD}/stories/$1.md" epic 2>/dev/null || true)"
+  group_conductor "$(note_group "$1" "${e:--}")"
 }
-
-# build_conductor <slug> — the file that names the conductor that started <slug>'s build (SWARM_AGENT
-# at swarm.sh story), which build_story writes and story_conductor reads; absent for a build the lead
-# started.
-build_conductor() { echo "${PROJECT_DIR}/.swarm/briefs/$1.conductor"; }
 
 # review_handoff <slug> <PR URL> <findings file> <head> <swarm.sh> — the review brief's pass step. A round
 # with nothing to fix writes its review file first: a wait on the agent ends on it, and once the PR

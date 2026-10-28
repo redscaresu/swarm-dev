@@ -1646,9 +1646,9 @@ How each kind of stop reaches an owner:
   got its hand-off (`review --head` failed), so a new review is how it goes on. The lead moves the
   file aside first to review a handed-off head again.
 - A held stacked story. Its stop note waits for the parent's merge, as above.
-- A fix-main story. It has no epic, but an epic's conductor builds it. `swarm.sh story` records
-  the conductor that ran it (`.swarm/briefs/<slug>.conductor`, from `SWARM_AGENT`), and the review
-  agent's stop note goes to that conductor, not the backlog's.
+- A fix-main story. It has no epic, but an epic's conductor builds it. The review agent's stop note
+  goes to the conductor that started its build (the pane on its `story` line in events.tsv, named in
+  a tab record as a conductor), as a merge note does, not to the backlog's.
 - No conductor. When the conductor the note went to is not running (no pane, or its report
   written), `wait --lead` prints `stopped: <slug> (<the note>), exit: ...` until a review agent
   starts on the story again or it leaves the board.

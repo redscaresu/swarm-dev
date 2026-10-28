@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # review_handoff_gaps_test.sh — every way a review agent stops reaches an owner, and a new head is never
 # left unreviewed (bin/lib/build.sh's review_rule, review_handoff, review_brief, review_agent,
-# review_at_head, story_conductor and build_story; bin/lib/lifecycle.sh's stop_lines):
+# review_at_head and story_conductor; bin/lib/lifecycle.sh's stop_lines):
 # 1. a stop on a moved head sends the conductor a stop note, and the conductor starts a new review on it;
 # 2. review-agent's worktree refusal names a base-merged head, and the conductor has the builder pull
 #    the PR's head on a second refusal with no such line;
@@ -42,7 +42,6 @@ SRC="${ROOT}/svc"; WT="${ROOT}/wt"
 "${GIT[@]}" init -q "${SRC}"
 "${GIT[@]}" -C "${SRC}" commit -q --allow-empty -m a; A="$(git -C "${SRC}" rev-parse HEAD)"
 "${GIT[@]}" -C "${SRC}" commit -q --allow-empty -m b; HB="$(git -C "${SRC}" rev-parse HEAD)"
-git -C "${SRC}" update-ref refs/remotes/origin/main "${A}"
 git clone -q "${SRC}" "${WT}"; git -C "${WT}" checkout -q "${A}"
 URL=https://github.com/o/svc/pull/7
 mkdir -p "${P}/.swarm/reviews"
@@ -127,26 +126,18 @@ check "4 the new head after the parent's merge gets its review" yes \
   "$(has 'once <p> merges, the Stacked rule above has its builder merge it in, and that new head gets its review agent then' "${rule}")"
 
 # --- 5. A fix-main story's stop note goes to the conductor that started its build.
-check "5 with no build record, a story with no epic goes to the backlog conductor" yes \
+: > "${P}/.swarm/events.tsv"
+check "5 with no start on record, a story with no epic goes to the backlog conductor" yes \
   "$(lib 'c="$(story_conductor fix-main-abc1234)"; [[ "${c}" == "$(conductor_name backlog)" ]] && echo yes || echo "no: ${c}"')"
-# build_story, run by the epic's conductor (SWARM_AGENT), with what it calls past the worktree stubbed.
-build='touches_overlap() { :; }; story_role() { echo build; }; story_env() { :; }; policy() { :; }; require_trusted() { :; }
-  goal_preflight() { PREFLIGHT_GOAL=""; }; base_for() { echo main; }; build_exists() { return 1; }; open_parents() { :; }
-  story_brief() { echo brief; }; start_agent() { :; }; worktree_for() { echo "'"${ROOT}"'/fix-wt"; }
-  build_story fix-main-abc1234'
-# unbuild — remove the build build_story made, so it can start again.
-unbuild() { git -C "${SRC}" worktree remove --force "${ROOT}/fix-wt"; git -C "${SRC}" branch -q -D story/fix-main-abc1234; }
-mkdir -p "${P}/.swarm/briefs"; echo conduct-old > "${P}/.swarm/briefs/fix-main-abc1234.conductor"
-lib "${build}"
-check "5 a lead-started build records no conductor, an earlier build's record gone" no "$( [[ -e "${P}/.swarm/briefs/fix-main-abc1234.conductor" ]] && echo yes || echo no)"
-unbuild
-SWARM_AGENT=conduct-e lib "${build}"
-check "5 swarm.sh story records the conductor that started the build" conduct-e "$(cat "${P}/.swarm/briefs/fix-main-abc1234.conductor" 2>/dev/null)"
-check "5 story_conductor names that conductor" conduct-e "$(lib 'story_conductor fix-main-abc1234')"
+# The epic's conductor, in pane w:p3 by its tab record, ran swarm.sh story for it.
+echo "w:p3 conduct-e" > "${P}/.swarm/state/conduct-tab"
+printf '2026-10-28T10:00:00Z\tstory\tfix-main-abc1234\tw:p3\tok\n' > "${P}/.swarm/events.tsv"
+check "5 story_conductor names the conductor that started the build" conduct-e "$(lib 'story_conductor fix-main-abc1234')"
 fbrief="$(flat "$(lib 'review_brief fix-main-abc1234 '"${URL}"' main '"${P}"'/.swarm/reviews/fix-main-abc1234.md '"${HB}"' 1')")"
 check "5 the review brief tells that conductor its stop note" yes \
   "$(has 'tell conduct-e note '"${P}"'/.swarm/reviews/fix-main-abc1234.stop.md`' "${fbrief}")"
 check "5 an epic story's stop note still goes to its epic's conductor" conduct-e "$(lib 'story_conductor s1')"
+rm -f "${P}/.swarm/state/conduct-tab"; : > "${P}/.swarm/events.tsv"
 
 # --- 6. wait --lead: a stopped: line for a stop note no running conductor has.
 # herdr lists the agents in ${ROOT}/agents; each poll is one `swarm.sh wait --lead 0`, which reads the queue once.
