@@ -184,8 +184,8 @@ printf '%s\tnudge\ts-three\tw1:p1\tok\n' "$(ago 0)" >> "${P}/.swarm/events.tsv"
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "a nudge line does not lower a builder's stall age" test "${rc}" -eq 3
 # A tell is a swarm action on its story when it reached the builder: its line (tell:<kind>, the slug
-# as its target) lowers the stall age. A tell:nudge is a nudge, as wait's are, and a tell refused
-# (the session busy) never reached the builder: neither lowers it.
+# as its target) lowers the stall age. A tell:nudge is a nudge, as wait's are, and a tell queued
+# (the session busy, its line queued:, not ok) has not reached the builder: neither lowers it.
 printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.told"
 echo "- a finding" > "${ROOT}/findings.md"; cp "${P}/.swarm/events.tsv" "${ROOT}/events.keep"
 tellstall() { # <session file> <kind> — tell s-three with its session read from <session file>, then
@@ -198,7 +198,8 @@ tellstall() { # <session file> <kind> — tell s-three with its session read fro
 }
 check "a delivered tell lowers its builder's stall age" test "$(tellstall "${ROOT}/claude.json.told" findings)" == "yes:1"
 check "a tell:nudge does not lower its builder's stall age" test "$(tellstall "${ROOT}/claude.json.told" nudge)" == "yes:3"
-check "a refused tell does not lower its builder's stall age" test "$(tellstall "${ROOT}/claude.json" findings)" == "no:3"
+check "a tell queued for a busy builder does not lower its builder's stall age" test "$(tellstall "${ROOT}/claude.json" findings)" == "yes:3"
+rm -f "${P}/.swarm/tells/s-three."{findings,nudge,resume}   # so its check ends at its next look, sending nothing
 # Past stall_minutes, the session is busy before the first wake and idle on the read after it: the
 # stall check takes only the read after the wake, so wait returns idle, not stalled.
 cp "${ROOT}/claude.json" "${ROOT}/claude.json.flip"

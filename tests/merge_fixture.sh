@@ -131,14 +131,25 @@ case "$1 $2" in
       # 0); with ${FX}/behind.hang it first sleeps a minute. compare/<base>...<head>: compare.<base>...<head>,
       # else compare.<base>, else compare, else for a branch
       # base the PR's files (the grant's read at the pinned head, failing as files does), else for a
-      # commit base the head holds it (fix-main's compare of a red commit with a green one).
+      # commit base the head holds it (fix-main's compare of a red commit with a green one). A branch
+      # base's compare lists the PR's files too, as GitHub's does: a fixture with no files key gets
+      # ${FX}/files as it is, so protected_hold's read of the pinned head, at the same URL as merge_admin's
+      # behind_by read, sees the files whatever a case wrote the fixture for. With ${FX}/compare.hang a
+      # branch base's compare first sleeps a minute; compare.<base>.404 is a 404 with its message.
       */compare/*) c="${path##*/compare/}"; to="${c#*...}"; c="${c%%...*}"
+                   [ "${#c}" = 40 ] || [ ! -e "${FX}/compare.hang" ] || sleep 60
                    if [ "${#c}" = 40 ] && [ "${#to}" != 40 ]; then
                      [ ! -e "${FX}/behind.hang" ] || sleep 60
                      if [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ] || [ -e "${FX}/behind.404" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
-                   elif [ -e "${FX}/compare.${c}...${to}" ]; then serve "compare.${c}...${to}"   # one pair of commits
-                   elif [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
-                   elif [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then serve compare
+                   elif [ -e "${FX}/compare.${c}...${to}" ] || [ -e "${FX}/compare.${c}" ] || [ -e "${FX}/compare.${c}.404" ] || [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then
+                     if [ -e "${FX}/compare.${c}...${to}" ]; then out="$(serve "compare.${c}...${to}")" || exit 1   # one pair of commits
+                     elif [ -e "${FX}/compare.${c}" ] || [ -e "${FX}/compare.${c}.404" ]; then out="$(serve "compare.${c}")" || exit 1
+                     else out="$(serve compare)" || exit 1; fi
+                     case "${out}" in
+                       *'"files"'*) ;;
+                       *) [ "${#c}" = 40 ] || { f="$(put "${FX}/files")"; if [ "${out}" = '{}' ]; then out="{\"files\":${f}}"; else out="${out%\}},\"files\":${f}}"; fi; } ;;
+                     esac
+                     echo "${out}"
                    elif [ "${#c}" != 40 ]; then out="$(serve files)" || exit 1; echo "{\"files\":${out}}"
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       # PUT pulls/<n>/update-branch, merge's request to merge the base in: ${FX}/update as serve reads it,

@@ -245,7 +245,7 @@ rm -rf "${wt}" "${b}/stories/a.md"; : > "${p}/.claude/swarm/config"
 # API errors: the session reads busy (background shells left open), herdr says done, and the pane's
 # last event is Claude Code's own `⏺ API Error:` line. wait resumes it up to 3 times in a row, then
 # returns stuck: api error (exit 4); tell delivers. A pane with a reply or a prompt after the error,
-# or only an indented `API Error:` line (a reply quoting one), is still working.
+# or only an indented `API Error:` line (a reply quoting one), is still working: tell queues it.
 api_screen() { printf '%s\n' '⏺ Waiting on the builders.' '⏺ API Error: Connection dropped (ECONNRESET)' '' '> ' > "$1"; }
 prompts() { grep -c "^agent prompt w:950 ${1:-}" "${ROOT}/herdr.log" || true; }
 session "${ROOT}/claude.json" sess-a2=busy; echo "done" > "${ROOT}/hstatus"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
@@ -308,16 +308,17 @@ rm -f "${tr}"
 echo "findings" > "${ROOT}/tell.txt"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(run tell a resume "${ROOT}/tell.txt")" || true
 check "tell delivers to a busy session whose turn stopped on an API error" "told a|1" "${got}|$(prompts)"
-refused() { # <pane line>... — tell on a pane of these lines: "yes|<prompts sent>" when it refuses as working
+queued() { # <pane line>... — tell on a pane of these lines: "yes|<prompts sent>" when it queues the tell as busy
   local got; printf '%s\n' "$@" > "${ROOT}/screen"; : > "${ROOT}/herdr.log"
   got="$(run tell a resume "${ROOT}/tell.txt")" || true
-  echo "$([[ "${got}" == *"still working"* ]] && echo yes || echo "no, ${got}")|$(prompts)"
+  rm -f "${p}/.swarm/tells/a."{findings,nudge,resume}   # so its check ends at its next look, sending nothing
+  echo "$([[ "${got}" == "queued: a (busy)"* ]] && echo yes || echo "no, ${got}")|$(prompts)"
 }
-check "the same pane without the API Error: line: tell refuses" "yes|0" "$(refused '⏺ Waiting on the builders.' '' '> ')"
-check "an indented API Error: line (a reply quoting one) is no stop: tell refuses" "yes|0" \
-  "$(refused '⏺ The log said:' '  API Error: Connection dropped (ECONNRESET)' '' '> ')"
-check "a prompt typed after the API error ends the stop: tell refuses" "yes|0" \
-  "$(refused '⏺ API Error: Connection dropped (ECONNRESET)' '' '> carry on' '' '────────' '> ' '────────')"
+check "the same pane without the API Error: line: tell queues it as busy" "yes|0" "$(queued '⏺ Waiting on the builders.' '' '> ')"
+check "an indented API Error: line (a reply quoting one) is no stop: tell queues it as busy" "yes|0" \
+  "$(queued '⏺ The log said:' '  API Error: Connection dropped (ECONNRESET)' '' '> ')"
+check "a prompt typed after the API error ends the stop: tell queues it as busy" "yes|0" \
+  "$(queued '⏺ API Error: Connection dropped (ECONNRESET)' '' '> carry on' '' '────────' '> ' '────────')"
 printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '' '────────' '> Try "carry on where you stopped"' '────────' '  ? for shortcuts' > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"; got="$(run tell a resume "${ROOT}/tell.txt")" || true
 check "a suggestion in the input box under the API error is no prompt: tell delivers" "told a|1" "${got}|$(prompts)"

@@ -105,6 +105,14 @@ check "ready_wait: a stepped-up story counts once, by its first build, not again
   "$(run flow 2>/dev/null | tis | grep -E '^(e1|all)')" $'e1\t4\t8\nall\t4\t8'
 printf '%s\n' "${agents_before}" > "${P}/.swarm/agents.tsv"; rm "${dir}/projects/p/sa2.jsonl"
 printf '%s\n' "${before}" > "${P}/.swarm/events.tsv"
+# review-agent --next rounds are no review starts: two review-agent:next lines for a, between its PR's
+# createdAt (10:00) and its one review-agent start (10:20), leave flow as it was. A reader that took them
+# for starts would give a a review_wait of 5, not 20, and review_loops one more round start.
+starts() { SWARM_FLOW_SECTIONS="throughput review_loops" run flow 2>/dev/null; }
+plain="$(starts)"
+printf '%s\n' $'2026-10-01T10:05:00Z\treview-agent:next\ta\tw:1\tok (round 2)' $'2026-10-01T10:10:00Z\treview-agent:next\ta\tw:1\tok (round 3)' >> "${P}/.swarm/events.tsv"
+check "two review-agent:next lines leave flow's review_wait and review-agent starts as they were" "$(starts)" "${plain}"
+printf '%s\n' "${before}" > "${P}/.swarm/events.tsv"
 check "a bad flag prints the usage" "$(run flow --until yesterday 2>&1 || true)" \
   "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 # A second project, in UTC-7: epic `all` (j) is an epic beside the project row; j's agents.tsv day is

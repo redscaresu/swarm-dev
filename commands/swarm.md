@@ -89,6 +89,27 @@ Repeat until a step below says stop:
      `started:` lines) is already running when the line is worked out, so the line names its note.
      When the step is `conduct <epic>` for the story's epic, `next` has not started it, so the line
      still says `swarm.sh story --strict`: run the step instead, and leave the story to that conductor.
+   - `idle: epic <epic> can start, exit: <exit>`: a draft or later epic in the current stage (its
+     `stage:` is the lowest an epic on the board has, or it has none) has nothing left to wait on.
+     Everything in its `depends_on` has left the board or is done, or one of its stories that an
+     agent builds is already ready. The exit is the epic's case, as epic.md and the `gate` arm below
+     rule. `idle: epic <epic> can start, exit: tell the user it can start (/swarm-dev:epic <epic>)` is
+     a draft: nothing plans a draft, and it goes active only once the user agrees it, through
+     `/swarm-dev:epic <epic>` with them (or, staged under an HLD that grants `epics`, through `next`'s
+     `stage` step). `idle: epic <epic> can start, exit: swarm.sh plan-unasked <epic>, then /swarm-dev:plan-epic <epic>`
+     is a later epic with no stories and every `depends_on` item done: plan it unasked, read-only,
+     as the `plan-epic` arm below does for the one `next` names.
+     `idle: epic <epic> can start, exit: the user's go, then set it active with agreed: <today> in a board PR`
+     is a later epic whose stories are on the board: on the user's go, set it `status: active` and
+     write `agreed: <today>` in the same board PR edit, as `/epic` does. No line
+     comes for a staged draft (`next`'s `stage` step sets it active once the tag before its stage is
+     cut), for an epic with `parent:` set (a split's children are the user's), for a later epic with
+     `unasked_plan:` set (the gate shows its plan or the user's decline), or for the later epic
+     `next`'s `plan-epic` step names.
+   - `idle: epic <epic> has no plan running, exit: /swarm-dev:plan-epic <epic>`: the epic is active
+     with no stories, nothing in its `depends_on` holds up its planning, no plan of it runs (no
+     `scope-<epic>` record in `.swarm/state` and no open plan board PR), and the step above is not
+     `plan-epic` for it. Plan it with the exit, beside the step.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
      `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
@@ -194,8 +215,8 @@ Repeat until a step below says stop:
      and no tell on the way. Run the exit it names. For a ready story it is
      `swarm.sh restart <slug>`, which starts its builder again in its worktree (named only while that worktree is there), or
      `swarm.sh hold <slug> <reason>` when it should wait, saying why. A hold only answers the line: if no
-     agent is back by the next poll, it comes back. For a story in review under `merge = agent`
-     it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
+     agent is back by the next poll, it comes back. For a story in review under `merge = agent`,
+     or under a `merge` grant, it is `swarm.sh merge --head <sha> <PR URL>`, or `swarm.sh review-agent <slug> <PR URL>` when
      no single reviewed head is known. Before that merge, run `swarm.sh wait-pr <PR URL>` in the
      background and act on its exit, not on the line, once per head. On 0, compare the head it
      printed with the `<sha>` in the exit: the same, run the merge; different (pushed since the
@@ -213,7 +234,8 @@ Repeat until a step below says stop:
      wait-pr runs and may come back once after it ends; that needs nothing new. A
      `no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`
      line means the PR's review agent never started, or started and went without findings for its
-     head, and no review round is under way. It comes even while the builder works. Run
+     head, and no review round is under way. It comes even while the builder works, and under
+     `merge = human` for a story in review whose HLD grants `merge`, which you land once it is reviewed. Run
      `swarm.sh review-agent <slug> <PR URL>`. Once `review-<slug>` is open, the next poll is quiet.
      If it fails again, its `review-agent <slug>` line in `.swarm/events.tsv` says why. A worktree
      not at the PR's head, or with uncommitted changes, means the builder is still at work: leave it,
@@ -269,11 +291,33 @@ Repeat until a step below says stop:
      pane. The line comes once per stop: again once the agent has moved on, after a turn that ends
      on the same stop, or in a new pane; manual mode comes once however many prompts follow. An
      `idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it` or
-     `idle: <story> is ready with no build, exit: <exit>` line is capacity no step uses, a line `next`
-     prints after its step: handle it as step 1's `idle:` list
+     `idle: <story> is ready with no build, exit: <exit>` line, or an `idle: epic <epic> ...` line, is
+     capacity no step uses, a line `next` prints after its step: handle it as step 1's `idle:` list
      says, unless step 1 already handled that line (its board edit is made, or its board-pr is open):
-     then it needs nothing. It comes once, and again only after it has gone from the queue. Then start
-     `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
+     then it needs nothing. It comes once, and again only after it has gone from the queue. An
+     `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` line means a story PR
+     finished review on its current head, is green and mergeable, and has sat unmerged for
+     `queue_minutes` since then. It comes in both merge modes for a ready or in-review story an agent
+     builds, never a `lead` story's or a kept story's, and never for a PR that has a `merge:` line or
+     that a running `swarm.sh merge` is merging. When the review's file lists findings, the exit is
+     `triage .swarm/reviews/<slug>.md, then swarm.sh merge --head <sha> <PR URL> once every finding is
+     declined`: triage them by § The outer loop, and leave the PR while any is still being fixed, since
+     its next head needs a review of its own. Before the merge, if the story is not in review yet,
+     close its builder if one is open (`swarm.sh close <slug> met`) and run
+     `swarm.sh review <slug> <PR URL>`, as the `kept:` arm does, so merge finds the PR on the story.
+     Under `merge = agent`, run the merge, or tell the story's conductor to merge it if one runs for
+     its epic. Under `merge = human`, run it only when `swarm.sh grants <PR URL>` lists `merge`;
+     otherwise tell the user it waits on their merge. A
+     `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` line means an open PR of
+     a ready or in-review story an agent builds conflicts with its base, so its checks will never run.
+     Send its builder a file asking it to merge the base in and push, with
+     `swarm.sh tell <slug> nudge <file>`. A builder at work refuses the tell: wait for it with
+     `swarm.sh wait <slug>` in the background, then send it. If no builder is open, start one in the
+     story's worktree with `swarm.sh agent`, as the `kept:` arm says. If the story has no worktree, add
+     one on the PR's branch first: `git -C <repo> fetch origin story/<slug>`, then
+     `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. Each line comes once, and again
+     only after it has gone from the queue. Unlike `held:` and `merge:` lines, both come on a run's
+     first read too. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
@@ -371,8 +415,10 @@ Repeat until a step below says stop:
      dashes (v0.30.0 gives `stage-v0-30-0`). Open it: `swarm.sh board-pr start <name>`, set each
      named epic's `status: active` there and change nothing else, then `swarm.sh board-pr open <name>
      "Start stage v<S>" <body-file>`, its body naming the epics and the tag. Run `swarm.sh wait-pr
-     <url>` in the background and wait for it; if it does not exit 0, tell the user what it printed
-     and stop. Land it with `swarm.sh merge --board <url>` when `swarm.sh config merge` prints
+     --head "$(git -C <worktree> rev-parse HEAD)" <url>` in the background, with `<worktree>` the path
+     `board-pr start` printed, and wait for it; if it does not exit 0, tell the user what it printed
+     and stop. Without `--head`, wait-pr waits on the head GitHub reports first, which right after
+     your push can still be the old one. Land it with `swarm.sh merge --board <url>` when `swarm.sh config merge` prints
      `agent` or `swarm.sh grants <url>` lists `merge`, then go back to 1. Otherwise hand the PR to
      the user: the `epics` grant lets you set the epics active, not merge the PR. If merge refuses,
      stop and tell the user what it printed. Under `merge = human` with no `merge` grant, the user
@@ -390,7 +436,8 @@ Repeat until a step below says stop:
      stage is not held behind the worktree, and go back to 1: after a PR closed without merging,
      `next` names `stage v<S>` again and you open a new one. On any other failure, stop and tell
      the user what it printed. With a URL, under `merge = agent` or a `merge` grant, run `swarm.sh
-     wait-pr <url>` in the background, wait for it, and land it with `swarm.sh merge --board <url>`
+     wait-pr --head "$(git -C ../<repo>-wt/_board-<name> rev-parse HEAD)" <url>` in the background, with
+     `../<repo>-wt/_board-<name>` the worktree `board-pr start` made, wait for it, and land it with `swarm.sh merge --board <url>`
      when it exits 0, then go back to 1; if it does not, or merge refuses, tell the user what it
      printed and stop. Under `merge = human` with no `merge` grant, it is the user's: stop.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
@@ -487,11 +534,15 @@ Repeat until a step below says stop:
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
      release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md
      and docs/ did not, unless that line is there (a change only to commands/*.md counts as its own
-     docs). Run `swarm.sh wait-pr <PR URL>` in the
-     background and wait for it. If it exits 1, a check is red. A release PR may change only the
+     docs). Run `swarm.sh wait-pr --head <head> <PR URL>` in the background and wait for it, with
+     `<head>` the `git rev-parse HEAD` of the release worktree you pushed from, or, for a
+     `release/v<new>` PR that was already open, the head it reports (`gh pr view <PR URL> --json
+     headRefOid -q .headRefOid`). Without `--head`, wait-pr waits on the head GitHub reports first,
+     which right after your push can still be the old one. If it exits 1, a check is red. A release PR may change only the
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
-     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
+     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
+     one you named: tell the user
      what it printed and stop. Run
      `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it,
      under `merge = human` too: there it merges only when HLDs granting `release` cover the release.
@@ -530,12 +581,19 @@ Repeat until a step below says stop:
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
-     story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
+     story: what blocks it; a later story: set it `ready` to start it; a later epic: on the user's go,
+     set it `active` and write `agreed: <today>` (today's date) in the same edit, as /epic does,
+     since board-pr refuses a later epic set active with no ticket, as it does a draft. If it already
+     has `agreed: <today>` (agreed and parked today) on a board in the repo, that date is no ticket: drop
+     the line in one board PR, then set it `active` with `agreed: <today>` in the next; a draft epic:
      only the user agrees it, through /epic, which writes `agreed:` as it sets `status: active`.
      The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
-     `parent:` (a split's child), an agreed HLD grants `epics` through its `hld:`, or
-     `lead_epics = on` in `.claude/swarm/config`. An `agreed:` already on a draft is stale (an epic
-     set back to draft by hand) and does not count. Offer to follow `/epic <slug>` to resume it,
+     `parent:` naming an epic that is active or split, an agreed HLD grants `epics` through its
+     `hld:`, or `lead_epics` is `on` (`swarm.sh config lead_epics` prints it). `next` lists such a draft as
+     `draft epic: <slug>, the lead sets it active (<why>)`: set it active through a board PR without
+     asking. An `agreed:` already on a draft is stale (an epic set back to draft by hand) and does
+     not count.
+     For a `draft epic: <slug>, run /epic <slug>` line, offer to follow `/epic <slug>` to resume it,
      which opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. A staged epic
@@ -595,9 +653,9 @@ Three more rules for the lead:
     prints it: `conduct-<epic>`, or `conduct-backlog-<dir>-<hash>` for the backlog's.
 
   `swarm.sh restart` and `swarm.sh conduct` take no brief and write their own prompt. Once the agent
-  is back, tell it to write its output as it goes. A builder comes back working, and `tell` refuses a
-  working builder, so run `swarm.sh wait <slug>` in the background first and send
-  `swarm.sh tell <slug> nudge <file>` once it returns idle. A conductor's
+  is back, tell it to write its output as it goes. A builder comes back working, and `tell` queues a
+  nudge to a working builder and delivers it when its turn ends, so send
+  `swarm.sh tell <slug> nudge <file>` at once. A conductor's
   `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets the line
   in the brief you write for its rerun, before it starts.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
