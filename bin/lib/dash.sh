@@ -641,7 +641,7 @@ dash_no_agent() {
 # pane reads) are named on a line under the frame, which is laid out a line shorter to make room; a
 # frame one line high has none to spare, and names none. The line is cut to DASH_W.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" granted="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
+  local agents="" panes="" workspaces="" sessions="" listed="" noagent="" noagent_at="" board="" granted="" hgrants=$'\n' policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" nx f d r x
   local testing="" p idle skipped="" more pass pending=0 out read_end lines="${DASH_H:-0}"
   # type -P: herdr on PATH, not dash_deadline's function of that name.
   if type -P herdr >/dev/null 2>&1; then
@@ -661,6 +661,7 @@ dash_render() {
   # With lead = session and merge = human, "<dir>\t<slug>" for each review item and each agreed HLD with
   # an open plan PR whose agreed HLD grants merge (item_hld, hld_grants): the lead merges those. From
   # board files alone, no gh, as dash runs every frame; a grants: line hld_grants refuses grants nothing.
+  # hgrants: "<hld file>\t<1 or 0>" per HLD read, so items under one HLD read its grants once a frame.
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_lead}" == session && "${CFG_merge}" == human ]]; then
     while IFS=$'\t' read -r d r x; do
@@ -669,8 +670,12 @@ dash_render() {
       elif [[ "${x}" == review ]]; then f="$(item_hld "${BOARD}/${d}/${r}.md")"
       else continue; fi
       [[ -n "${f}" ]] || continue
-      x="$(hld_grants "${f}" 2>/dev/null)" || x=""
-      if grep -qx merge <<< "${x}"; then granted+="${d}"$'\t'"${r}"$'\n'; fi
+      if [[ "${hgrants}" != *$'\n'"${f}"$'\t'* ]]; then
+        x="$(hld_grants "${f}" 2>/dev/null)" || x=""
+        if [[ $'\n'"${x}"$'\n' == *$'\n'merge$'\n'* ]]; then x=1; else x=0; fi
+        hgrants+="${f}"$'\t'"${x}"$'\n'
+      fi
+      if [[ "${hgrants}" == *$'\n'"${f}"$'\t'1$'\n'* ]]; then granted+="${d}"$'\t'"${r}"$'\n'; fi
     done < <(cut -f1-3 <<< "${board}")
   fi
   # Each active epic with no stories whose depends_on still holds its planning up, as next reads it.

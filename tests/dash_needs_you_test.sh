@@ -192,6 +192,8 @@ litem epics/gn.md '' 'status: active' 'hld: hg'
 litem stories/g-ok.md '' 'status: review' 'epic: ge' 'prs: https://github.com/o/l/pull/7'
 litem stories/g-paid.md '' 'status: review' 'epic: ge' 'costs: money' 'prs: https://github.com/o/l/pull/8'
 litem stories/g-none.md '' 'status: review' 'epic: gn' 'prs: https://github.com/o/l/pull/10'
+# An epic in review under the granting HLD: its merge row is the lead's too.
+litem epics/ge-rev.md '' 'status: review' 'hld: hgm' 'prs: https://github.com/o/l/pull/11'
 # A story a close kept (kept:, its PR not reviewed): the lead's to review or drop, never a merge row.
 litem stories/k-kept.md '' 'status: review' 'prs: https://github.com/o/l/pull/6' 'kept: 2026-10-14 close (not reviewed)'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
@@ -257,7 +259,7 @@ joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s 
 YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft epic d: /epic d" "! agree draft HLD h: /hld h"
   "! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
   "! merge g-paid (costs money): https://github.com/o/l/pull/8" "! merge g-none: https://github.com/o/l/pull/10")
-LEADS=("! merge g-ok: https://github.com/o/l/pull/7"
+LEADS=("! merge g-ok: https://github.com/o/l/pull/7" "! merge epic ge-rev: https://github.com/o/l/pull/11"
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
   "! review kept story k-kept: swarm.sh review k-kept https://github.com/o/l/pull/6 or swarm.sh close k-kept --drop"
   "! no agent on story l-na: swarm.sh hold l-na <reason>"
