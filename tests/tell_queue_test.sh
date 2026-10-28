@@ -5,7 +5,7 @@
 # stays busy nothing is sent, and once it is idle the findings go through a tell of their own, logged
 # ok, so they are delivered once and count as one findings round. Two findings tells queued for one
 # busy builder deliver only the newer. A look while herdr's list fails (${ROOT}/listfail) drops
-# nothing, and five such looks in a row hand the tell to the lead. A tell sent at once to an idle
+# nothing, and five such looks in a row hand the tell to the lead, counted afresh by each check. A tell sent at once to an idle
 # builder replaces a queued one of its kind, which is never sent after it (a pending check's .later
 # keeps the queue from starting one until the direct tell is done; a nudge queued next starts the
 # check that would send what is left), nor is one already on its way (b1.findings.sending.<token>, as
@@ -13,11 +13,18 @@
 # nothing. A delivery that finds the builder busy again leaves it on its way, for the check to put
 # back, and one that claims it sends it. One a dead check left on its way is sent by the next check,
 # and a delivery never claims another check's tell (its token). A direct tell that cannot take the
-# queue's lock to replace a queued one sends nothing. A queued tell to a builder whose pane closed, or
+# queue's lock to replace a queued one sends nothing. The newer of two tells is the one that read the
+# builder's state later: an older one that stalls in its read of the pane (${ROOT}/readslow, for a
+# tell run with TQ_CALLER=slow) while a newer one is sent at once or queued is dropped as replaced
+# when it takes the lock, and one sent at once that read the state before the time in
+# b1.findings.sent (the last sent at once) or in a queued one's line is dropped the same way, the
+# queued one kept. A queued tell to a builder whose pane closed, or
 # whose name a new pane holds, is sent to no pane: it is dropped, and wait --lead prints a tell
 # undelivered: line for the lead, again for a later drop of its kind. One herdr sent but never showed
 # taken up (${ROOT}/nosend: no status in its reply, idle on every read) is not to be sent again as
-# findings: its line says it may have arrived, and it counts as one round. Queued findings due a
+# findings: its line says it may have arrived, and it counts as one round. One herdr refused as
+# blocked before sending anything (${ROOT}/blocked), whose pane then could not be read, was never
+# sent: its line says to send it again. Queued findings due a
 # step-up or a top-rung hold while the story's lock is held go back in the queue. A builder at its
 # prompt with a background shell (busy, its turn over) gets its queued tell; mid-turn it waits. A
 # queued tell whose check died goes to the lead through wait --lead, and so does one whose delivery
@@ -68,9 +75,13 @@ case "$1 $2" in
     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
     END { print "]}}" }' "$F/agents" ;;
   "agent get") printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$(awk -v p="$3" '$2 == p { print $3 }' "$F/agents")" ;;
-  "agent prompt") echo "$*" >> "$F/keys.log"; [ -f "$F/nosend" ] || echo '{"result":{"agent":{"agent_status":"working"}}}'
+  "agent prompt") echo "$*" >> "$F/keys.log"
+    if [ -f "$F/blocked" ]; then echo '{"error":{"code":"agent_blocked"}}' >&2; exit 1; fi   # refused before anything was sent
+    [ -f "$F/nosend" ] || echo '{"result":{"agent":{"agent_status":"working"}}}'
     [ ! -f "$F/goalwait" ] || echo '[{"sessionId": "sb", "status": "waiting", "waitingFor": "permission prompt"}]' > "$F/claude.json" ;;
-  "agent read") echo "${TQ_CALLER:--} | $*" >> "$F/reads.log" ;;   # TQ_CALLER: lead for wait --lead's own reads
+  "agent read") echo "${TQ_CALLER:--} | $*" >> "$F/reads.log"   # TQ_CALLER: lead for wait --lead's own reads
+    # A tell run with TQ_CALLER=slow stalls here, after it read the builder busy, while readslow exists.
+    [ "${TQ_CALLER:-}" != slow ] || while [ -f "$F/readslow" ]; do sleep 0.1; done ;;
 esac
 EOF
 # ps: the real one, except that a process list (-A) keeps only this run's processes (their command
@@ -97,12 +108,13 @@ state() {
 # fresh — a new case: no prompts, events, queue or lead line, the last check ended.
 fresh() { settle; rm -rf "${Q}" "${p}/.swarm/lead" "${p}/.swarm/events.tsv" "${LOG}"; : > "${ROOT}/keys.log"; : > "${ROOT}/reads.log"; }
 # tell <text> — tell b1 findings (or ${KIND}) holding <text>; its output, then `rc=<exit>`. With
-# VIA="<pane> <from> <token>", as the check runs it to deliver a queued tell.
+# VIA="<pane> <from> <token>", as the check runs it to deliver a queued tell. With TQ_CALLER=slow, one
+# the stub stalls in its pane read while ${ROOT}/readslow exists.
 tell() {
-  local rc=0 out
-  echo "$1" > "${ROOT}/msg"
+  local rc=0 out m
+  m="$(mktemp "${ROOT}/msg.XXXXXX")"; echo "$1" > "${m}"
   out="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 SWARM_NOTE_WAKE_SECS=1 SWARM_TELL_QUEUED="${VIA:-}" \
-    PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tell b1 "${KIND:-findings}" "${ROOT}/msg" 2>&1)" || rc=$?
+    TQ_CALLER="${TQ_CALLER:-}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tell b1 "${KIND:-findings}" "${m}" 2>&1)" || rc=$?
   printf '%s rc=%s' "${out}" "${rc}"
 }
 prompts() { grep -c '^agent prompt ' "${ROOT}/keys.log" || true; }
@@ -115,6 +127,7 @@ rounds() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && ($5 == "ok" || $5 
 LOG="${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # b1's session log
 lead() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 TQ_CALLER=lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait --lead 0 2>&1) || true; }
 QUEUED="queued: b1 (busy); delivered when its turn ends, so do not tell it again"
+REPLACED="replaced: b1's findings tell, by a newer one sent or queued meanwhile; not sent"
 
 fresh; state busy
 check "a findings tell to a busy builder: queued, exit 0" "${QUEUED} rc=0" "$(tell "fix round one")"
@@ -126,7 +139,7 @@ state idle; settle
 check "once the builder is idle: delivered once" 1 "$(prompts)"
 check "once the builder is idle: the findings, from the conductor" "yes yes" "$(sent "From the conductor:") $(sent "fix round one")"
 check "once the builder is idle: its own tell logged ok, so the round count rises once" "${QUEUED}|ok|1" "$(outcomes)|$(rounds)"
-check "once the builder is idle: nothing left queued" "" "$(ls "${Q}" 2>/dev/null)"
+check "once the builder is idle: nothing left queued, its time recorded" "b1.findings.sent" "$(ls "${Q}" 2>/dev/null)"
 
 fresh; state busy
 tell "fix round one" >/dev/null
@@ -157,7 +170,46 @@ fresh; state idle
 mkdir -p "${Q}/b1.lock"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings"   # another tell holds the queue's lock
 out="$(tell "fix round B")"; rmdir "${Q}/b1.lock"
 check "findings told at once while the queue's lock is held: refused, nothing sent, the queued ones kept" "yes 0 yes" \
-  "$([[ "${out}" == *"b1 was not told: its findings tell queued earlier could not be replaced"*"rc=1" ]] && echo yes || echo no) $(prompts) $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)"
+  "$([[ "${out}" == *"b1 was not told: its queue's lock ("*") could not be taken, so a findings tell queued earlier could not be replaced"*"rc=1" ]] && echo yes || echo no) $(prompts) $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)"
+
+# Two tells overlap. The older reads the builder busy, then stalls in its read of the pane (the stub
+# waits for ${ROOT}/readslow to go) while the builder goes idle and a newer tell is sent at once. The
+# older then takes the queue's lock, finds a tell of its kind sent since it read the state, and is
+# dropped: never queued behind the newer one, never sent after it.
+fresh; state busy; touch "${ROOT}/readslow"
+TQ_CALLER=slow tell "fix round older" > "${ROOT}/older.out" &
+older=$!
+until_ok grep -q '^slow | agent read' "${ROOT}/reads.log" || true   # the older tell has read busy, and waits in its pane read
+state idle
+check "two tells overlap, the newer sent at once while the older stalls: the newer is sent" "told b1 rc=0" "$(tell "fix round newer")"
+rm -f "${ROOT}/readslow"; wait "${older}" || true
+check "the older, finding one sent since it read the state: replaced, not queued, no check started, exit 0" "${REPLACED} rc=0 no no" \
+  "$(cat "${ROOT}/older.out") $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no) $([[ -e "${Q}/b1.later" ]] && echo yes || echo no)"
+check "the older, dropped: one prompt, the newer, one round" "1 yes no 1" "$(prompts) $(sent "fix round newer") $(sent "fix round older") $(rounds)"
+check "the older, dropped: logged replaced, not ok" "ok|${REPLACED}" "$(outcomes)"
+
+# The same with the builder busy throughout: the newer tell is queued while the older stalls. The older
+# finds a newer one queued since it read the state and is dropped; the newer is delivered once idle.
+fresh; state busy; touch "${ROOT}/readslow"
+TQ_CALLER=slow tell "fix round older" > "${ROOT}/older.out" &
+older=$!
+until_ok grep -q '^slow | agent read' "${ROOT}/reads.log" || true
+check "two tells overlap, the newer queued while the older stalls: the newer is queued" "${QUEUED} rc=0" "$(tell "fix round newer")"
+rm -f "${ROOT}/readslow"; wait "${older}" || true
+check "the older, finding a newer one queued since it read the state: replaced, and the newer kept" "${REPLACED} rc=0|fix round newer" \
+  "$(cat "${ROOT}/older.out")|$(tail -n +2 "${Q}/b1.findings" 2>/dev/null)"
+state idle; settle
+check "the older, dropped: the newer delivered once, one round" "1 yes no 1" "$(prompts) $(sent "fix round newer") $(sent "fix round older") $(rounds)"
+
+# A tell sent at once that read the state before the time in b1.findings.sent (the last of its kind sent
+# at once), or in a queued one's line, is the older: it is dropped, and a queued newer one is kept.
+fresh; state idle; mkdir -p "${Q}"
+after="$(python3 -c 'import time; print(time.time_ns() + 60 * 10**9)')"   # a tell that read the state after this case's does
+echo "${after}" > "${Q}/b1.findings.sent"
+check "findings told at once, older than the last sent at once: replaced, nothing sent" "${REPLACED} rc=0 0" "$(tell "fix round older") $(prompts)"
+rm -f "${Q}/b1.findings.sent"; printf 'b1 w:9 conductor %s\nfix round newer\n' "${after}" > "${Q}/b1.findings"
+check "findings told at once, older than one queued: replaced, nothing sent, the queued one kept" "${REPLACED} rc=0 0 yes" \
+  "$(tell "fix round older") $(prompts) $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)"
 
 fresh; state idle
 mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings.sending.t1"   # on its way, as the check takes it
@@ -175,13 +227,14 @@ check "a tell a dead check left on its way: the next check sends it, then the re
   "$(prompts) $(sent "fix round left") $(sent "carry on")"
 
 fresh; state busy
-mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round A\n' > "${Q}/b1.findings.sending.t1"
+mkdir -p "${Q}"; printf 'b1 w:9 conductor 1700000000000000000\nfix round A\n' > "${Q}/b1.findings.sending.t1"   # its line's fourth word: when it read the state
 check "a queued tell's delivery that finds the builder busy again: sends nothing" "${QUEUED} rc=0 0" "$(VIA="w:9 conductor t1" tell "fix round A") $(prompts)"
 check "a queued tell's delivery that finds the builder busy again: leaves it on its way, for its check to put back" yes \
   "$([[ -e "${Q}/b1.findings.sending.t1" && ! -e "${Q}/b1.findings" ]] && echo yes || echo no)"
 state idle
 check "a queued tell's delivery that claims it: sent, from the sender that queued it" "told b1 rc=0 1 yes" \
   "$(VIA="w:9 review t1" tell "fix round A") $(prompts) $(sent "From the review agent:")"
+check "a queued tell's delivery that claims it: records its time as the last of its kind that went" 1700000000000000000 "$(cat "${Q}/b1.findings.sent" 2>/dev/null)"
 
 fresh; state idle   # two checks overlap: a stalled one's delivery (t1) after a newer tell went on its way (t2)
 mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round newer\n' > "${Q}/b1.findings.sending.t2"
@@ -238,6 +291,15 @@ check "a queued findings tell herdr sent and never showed taken up: sent twice, 
 check "a queued findings tell herdr sent and never showed taken up: wait --lead says it may have arrived, never to send it as findings again" yes \
   "$(grep -qF "herdr sent it the brief twice" <<< "$(lead)" && grep -qF "exit: it may have arrived, so do as that says and never send it again as findings; then rm ${U} ${U}.md" "${U}" && echo yes || echo no)"
 
+# A queued delivery herdr refuses as blocked before sending anything, whose pane then cannot be read
+# (the stub's read prints nothing): herdr sent nothing, so the lead is told to send it again if it
+# still applies, not that it may have arrived.
+fresh; state busy
+tell "fix round blocked" >/dev/null
+touch "${ROOT}/blocked"; state idle; settle; rm -f "${ROOT}/blocked"
+check "a queued tell herdr refused as blocked before sending it, its pane unreadable: to the lead as never sent, to send again" "yes|fix round blocked|0" \
+  "$([[ "$(lead)" == "tell undelivered: b1 findings at "*"(b1: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read b1; its pane could not be read), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(cat "${U}.md" 2>/dev/null)|$(rounds)"
+
 # A builder at its prompt with a test running in the background: Claude Code lists it busy, its session
 # log ends on the reply that ended its turn. Mid-turn (its log ends on a prompt) the tell waits.
 fresh; state busy
@@ -266,6 +328,13 @@ mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round claimed\n' > "${Q}/b1.findi
 check "a tell claimed when its check stopped: wait --lead says it may have arrived, never to send it again" "yes|fix round claimed" \
   "$([[ "$(lead)" == "tell undelivered: b1 findings at "*" (its check stopped while a delivery of it ran, so b1 may or may not have the brief), exit: it may have arrived, so do as that says and never send it again as findings; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(cat "${U}.md" 2>/dev/null)"
 
+# The same with a newer tell queued behind the claimed one: the lead has one line per kind, and it is the
+# newer's, never sent, not the older's over it.
+fresh; state busy
+mkdir -p "${Q}"; printf 'b1 w:9 conductor\nfix round claimed older\n' > "${Q}/b1.findings.claimed.t3"; printf 'b1 w:9 conductor\nfix round newer queued\n' > "${Q}/b1.findings"
+check "a stopped check's claimed tell with a newer one queued behind it: the lead sees the newer, never sent" "yes|fix round newer queued" \
+  "$([[ "$(lead)" == "tell undelivered: b1 findings at "*" (its queue's check has stopped (its process ended: a closed pane, a restart or a plugin update), so it was never sent), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(cat "${U}.md" 2>/dev/null)"
+
 # herdr giving the check no agent list look after look: after TELL_LIST_TRIES (5) looks in a row it hands
 # the tell to the lead, never sent.
 fresh; state busy
@@ -273,6 +342,16 @@ tell "fix round no list" >/dev/null
 touch "${ROOT}/listfail"; settle; rm -f "${ROOT}/listfail"
 check "a queued tell whose check never gets an agent list: to the lead after five looks, never sent" "yes|fix round no list|no|0" \
   "$([[ "$(lead)" == "tell undelivered: b1 findings at "*" (herdr gave its check no agent list for 5 looks in a row, so it was never sent), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(cat "${U}.md" 2>/dev/null)|$([[ -e "${Q}/b1.findings" ]] && echo yes || echo no)|$(prompts)"
+
+# Each check counts those looks afresh: a count a check that ended left behind (its queue emptied
+# before a look got a list) does not hand the next check's tell to the lead short of five.
+fresh; state busy
+mkdir -p "${Q}"; echo 4 > "${Q}/b1.listfail"   # left by a check that ended one look short of five
+tell "fix round fresh count" >/dev/null
+touch "${ROOT}/listfail"; sleep 2.5; rm -f "${ROOT}/listfail"   # a look or two with no list: five with the count left, else one or two
+state idle; settle
+check "a new check counts looks with no agent list afresh: a count a check that ended left does not hand its tell to the lead" "1 yes no" \
+  "$(prompts) $(sent "fix round fresh count") $(compgen -G "${Q}/*.undelivered" >/dev/null && echo yes || echo no)"
 
 # A delivery whose own tell fails before it claims the tell (here herdr lists no agents to it) puts it
 # back, TELL_QUEUE_TRIES (3) times, then hands it to the lead.

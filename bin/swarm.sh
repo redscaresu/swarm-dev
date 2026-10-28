@@ -997,8 +997,9 @@ main_signal() {
 # stays the slug (a board-pr's name). A reset or drop
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
 # epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
-# nothing, queued for a busy agent or replaced on its way, logs the queued: or replaced: line
-# tell_outcome leaves in the die file, so it counts as no round.
+# nothing, queued for a busy agent or replaced by a newer one (on its way, or sent or queued since it
+# read the agent's state), logs the queued: or replaced: line tell_outcome leaves in the die file, so
+# it counts as no round.
 main() {
   local rc why a
   [[ "${1:-}" != init ]] || init_check

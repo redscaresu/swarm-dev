@@ -1186,7 +1186,15 @@ review round. An agent whose turn is over counts as idle even while background s
 session busy: its session log ends on the reply that ended the turn, as for a note's wake. So a
 builder at its prompt with a test running in the background is told. A newer tell of the same kind
 replaces a queued one that has not been sent. So does a tell of that kind sent at once after the
-agent goes idle.
+agent goes idle. The newer of two tells is the one that read the agent's state later. `tell` takes
+the time before it reads. A tell that goes, sent at once or claimed from the queue by its delivery,
+leaves it in `.swarm/tells/<agent>.<kind>.sent`, and a queued one carries it in its file. Under the
+queue's lock, a tell is the older when a tell of its kind that read the state after it has since gone,
+or is now queued or on its way, whether this one then found the agent busy or idle. It prints
+`replaced: <agent>'s <kind> tell, by a newer one
+sent or queued meanwhile; not sent`, queues and sends nothing, and is logged with that line. Two
+tells to one agent at once then never land in the wrong order, and the older never counts a round
+after the newer.
 
 Each agent with a queue has one check running in the background. It is its own process (`swarm.sh
 _tell-queue-check <agent>`), so `wait --lead`'s resend pass and its `no-agent:` lines do not take it
@@ -1210,13 +1218,16 @@ when the queue is empty, and also when its plugin version's files are gone after
 counts as stopped once its process has ended or it has not looked for 10 minutes. `wait --lead` then
 hands each tell that agent has queued to the lead, as below, so none sits unseen, and the next
 queued tell to that agent starts a new check. A tell a delivery had claimed when its check stopped
-(`<agent>.<kind>.claimed.<token>`) goes to the lead too, as one that may have arrived.
+(`<agent>.<kind>.claimed.<token>`) goes to the lead too, as one that may have arrived. It goes first:
+the lead has one line per kind, so a newer tell queued behind it is the one the lead sees.
 
 The check drops a queued tell when the agent's pane has closed, another pane holds its name or its
 Claude session has ended. It also drops one whose tell fails after claiming it, or fails before
 claiming it for the third time, and `wait --lead` drops those of a stopped check. A look that gets
 no agent list from herdr drops nothing, since the agent may still be there, but after 5 such looks
-in a row the check hands every tell it holds to the lead. It keeps the text of each tell it drops in
+in a row the check hands every tell it holds to the lead. Each check counts its own looks, starting
+from none: a count left by a check that ended does not shorten the next check's five. It keeps the
+text of each tell it drops in
 `.swarm/tells/<agent>.<kind>.undelivered.md`. A tell dropped before any `swarm.sh tell` ran for it
 is logged as `tell:<kind>` with `undelivered: <why>`. A delivery that failed already has its own
 tell's line, and a second line would count findings herdr sent as two rounds. `wait --lead` then
