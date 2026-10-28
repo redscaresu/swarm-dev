@@ -1339,12 +1339,15 @@ plan_hld() {
   echo "${f}"
 }
 
-# protected_paths — the paths on stdin, one a line, that only the user changes, in the order given:
-# those under .claude/, .github/ or hooks/, and a root Makefile, GNUmakefile or makefile (in any repo:
-# what checks a merge or what the agents may do). pr_hld puts a PR touching one under no HLD, and
-# merge_hold holds a story PR touching one under merge = agent.
+# protected_paths [any-case] — the paths on stdin, one a line, that only the user changes, in the order
+# given: those under .claude/, .github/ or hooks/, and a root Makefile, GNUmakefile or makefile (in any
+# repo: what checks a merge or what the agents may do). pr_hld puts a PR touching one under no HLD,
+# the names as written; protected_hold holds a story PR touching one under merge = agent, with any-case
+# in any case of letters, since a case-insensitive checkout (macOS's default) reads Hooks/x.sh as
+# hooks/x.sh.
 protected_paths() {
-  grep -E '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true
+  local i=""; [[ "${1:-}" != any-case ]] || i=i
+  grep "-${i}E" '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true
 }
 
 # pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
