@@ -2523,7 +2523,7 @@ pid that holds it. A lock whose pid is gone, or that has no pid file 10 seconds 
 left by a merge that died: merge takes it over and says so, one merge at a time. A merge that has
 GitHub merge a moved base into its PR frees the lock while it waits for the new head's CI, and takes
 it again before it checks the base once more (§ Merging, Waiting for the new head). `swarm.sh unblock` then readies a
-blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` each story's review agent merges that story's PR instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`). It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one; a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`). When it still cannot read them, it holds the PR and says why. A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands. `--board` and `--release` PRs cannot change those paths. Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story. `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path. `status` and `wait --lead` read the record with no gh call. They leave it out once a `wait --lead` heads pass made after the hold read the PR at another head (`.swarm/lead/held`); with no such pass, as when no `wait --lead` runs, the hold stands. A held PR's review agent leaves it for your merge. The conductor merges no story PR: the story's review agent does, and the lead may. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
+blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` each story's review agent merges that story's PR instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`). It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one (the review agent sends its conductor a stop note on either hold, and the conductor closes the builder); a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`). When it still cannot read them, it holds the PR and says why. A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands. `--board` and `--release` PRs cannot change those paths. Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story. `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path. `status` and `wait --lead` read the record with no gh call. They leave it out once a `wait --lead` heads pass made after the hold read the PR at another head (`.swarm/lead/held`); with no such pass, as when no `wait --lead` runs, the hold stands. A held PR's review agent leaves it for your merge. The conductor merges no story PR: the story's review agent does, and the lead may. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file. The review agent runs `swarm.sh review <slug> --head <that SHA> <PR URL>`, then
 `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
 with `--match-head-commit` (with `--auto` only to enqueue it on a base with a merge queue), waits for CI on the base, and runs `swarm.sh reconcile`.
@@ -2555,7 +2555,8 @@ which `next` names to the lead first; the lead's note asks the conductor to star
 once, ahead of every other story and whatever its scope, under either merge setting. `watch` says no
 fix-main PR opened, so the conductor starts that PR's review agent once the builder replies with its
 URL. A merge that `swarm.sh merge` refused or could not confirm, other than `held:`, a `base merged:`
-line or a moved base (below), ends the review agent with the line in its reply, and is the lead's. The lead merges
+line or a moved base (below), ends the review agent with the line in its reply and in a stop note to
+its conductor, which nudges the builder on a dequeue and reports the rest for the lead. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`. Under `merge = human` it merges a story
 PR or board PR only when the agreed HLD over it lists `merge` in its `grants:` (the HLD
 `swarm.sh grants <PR URL>` prints). It reads that grant once the PR's head is green. With the grant,
@@ -2795,12 +2796,13 @@ refusal that ends `merge origin/<base> in, push, and merge the new head`, the re
 builder, naming the red check or the base to merge in, and telling it to pull its branch first with
 `git pull --ff-only origin story/<slug>` (GitHub's merge commit is not in its worktree), then stops.
 The pull names the branch, since a story's worktree tracks origin/<base>, and a stacked story's
-tracks nothing. The conductor starts a new review agent on the head the builder pushes once `watch`
-reports its checks finished, so that head is reviewed before it merges. A `base merged, head moved:`
+tracks nothing. It sends its conductor the same stop note as for any other refusal, and the
+conductor starts a new review agent on the head the builder pushes once `watch` reports its checks
+finished, so that head is reviewed before it merges. A `base merged, head moved:`
 refusal is a moved head: the review agent stops with `head moved:`, and the new head is reviewed the
 same way. Any other refusal, another `base merged, <cause>:` or a merge lock it could not take again
-included, ends the review agent with the line in its reply, which names the next step, and the lead
-acts on it. On `base merge unchecked:`, the new head is reviewed as any new head, the same way. That
+included, ends the review agent with the line in its reply and in a stop note to its conductor, which
+acts on a dequeue and reports the rest for the lead; with no conductor running, the lead acts on it. On `base merge unchecked:`, the new head is reviewed as any new head, the same way. That
 head may be a builder's push, a merge made by hand, or GitHub's own merge of the base that touches a
 file the PR changed too. When that review sends findings, the builder pulls its branch first, since
 a merge commit on the branch is not in its worktree and its push would be refused.
@@ -2878,9 +2880,10 @@ queued or waiting for auto-merge, find it out of the queue and not merged. `merg
 `merge dequeued (<GitHub's reason>): <checks>` line naming the checks that were red or unfinished on
 the merge group's commit. That commit is the one seen while the PR was queued, or, for a PR that
 joined and left between two reads, the one its `merge_group` run names; the reason is GitHub's only
-for a removal after this enqueue. The conductor handles a dequeue like a red check: it sends the
-failing checks to the builder, which merges the base in and pushes, then reviews and merges the new
-head. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
+for a removal after this enqueue. The review agent that ran `merge` sends its conductor a stop note
+naming the dequeue (`review-<slug> stopped on <sha>: ...`), and the conductor handles it like a red
+check: it nudges the builder with the failing checks, the builder merges the base in and pushes, and
+the new head gets a review agent of its own, which merges it once it passes. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
 while `merge` enqueues or waits each turn auto-merge off and take the PR out of the queue. Each is logged as
 unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not undo for you to do by
 hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
