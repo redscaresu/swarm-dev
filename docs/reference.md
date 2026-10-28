@@ -1220,7 +1220,8 @@ agent idle and claimed it. A tell replaced that way prints `replaced: <agent>'s 
 by a newer one; not sent`, sends nothing, and is logged with that line. A delivery claims only its
 own token, so a check that stalled past its `.later` never sends a newer tell's file. The check ends
 when the queue is empty, and also when its plugin version's files are gone after an update. A check
-counts as stopped once its process has ended or it has not looked for 10 minutes. `wait --lead` then
+counts as stopped once its process has ended or it has not stamped `.later` for 10 minutes; it stamps
+it at each look, and once a minute while a delivery runs, so a long delivery is no stop. `wait --lead` then
 hands each tell that agent has queued to the lead, as below, so none sits unseen, and the next
 queued tell to that agent starts a new check. A tell a delivery had claimed when its check stopped
 (`<agent>.<kind>.claimed.<token>`) goes to the lead too, as one that may have arrived. It goes first:

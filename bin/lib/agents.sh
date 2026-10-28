@@ -1704,7 +1704,7 @@ tell_agent() {
     esac
   else
     rc=0; tell_claim "${name}" "${kind}" "${qtok}" || rc=$?
-    if [[ ${rc} -eq 3 ]]; then tell_outcome "queued: ${name} (a ${kind} tell sent at once is on its way to it); sent at the next look"; return
+    if [[ ${rc} -eq 3 ]]; then tell_outcome "queued: ${name} (a ${kind} tell is already on its way to it); sent at the next look"; return
     elif [[ ${rc} -ne 0 ]]; then
       if [[ -e "${TELL_QUEUE}/${name}.${kind}.sending.${qtok}" ]]; then tell_outcome "queued: ${name} (its queue's lock is held); sent at the next look"
       else tell_outcome "replaced: ${name}'s queued ${kind} tell, by a newer one; not sent"; fi
@@ -1758,8 +1758,8 @@ tell_agent() {
 TELL_QUEUE="${PROJECT_DIR}/.swarm/tells"
 # TELL_QUEUE_TRIES: how many deliveries of one queued tell may fail before they claim it (a missing
 # plugin version, herdr down) before it goes to the lead. TELL_CHECK_DEAD_SECS: how long a check may go
-# without a look (one is due each NOTE_WAKE_SECS; a delivery takes a few minutes at most) before it
-# counts as stopped.
+# without stamping <name>.later (a look does, each NOTE_WAKE_SECS, and so does a delivery while it
+# runs: tell_queue_stamp) before it counts as stopped.
 TELL_QUEUE_TRIES=3
 TELL_CHECK_DEAD_SECS=600
 # TELL_LIST_TRIES: how many looks in a row may find no agent list from herdr (its count in
@@ -1946,6 +1946,17 @@ tell_queue_look() {
   return "${rc}"
 }
 
+# tell_queue_stamp <name> — for a check (TQ_TOK) while its delivery runs: under the queue's lock, stamp
+# the time and this check's pid in <name>.later while it still holds the check's token, so the check
+# reads as live (tell_check_live) through a delivery longer than TELL_CHECK_DEAD_SECS. A lock held past
+# note_lock's wait skips the stamp; the next one comes a NOTE_WAKE_SECS later.
+tell_queue_stamp() {
+  [[ -n "${TQ_TOK}" ]] || return 0
+  note_lock "${TELL_QUEUE}/$1" || return 0
+  [[ "$(cut -d' ' -f2 "${TELL_QUEUE}/$1.later" 2>/dev/null)" != "${TQ_TOK}" ]] || echo "$(date +%s) ${TQ_TOK} $$" > "${TELL_QUEUE}/$1.later" || true
+  rmdir "${TELL_QUEUE}/$1.lock"
+}
+
 # tell_queue_strays — for wait --lead: hand the lead each queued tell whose agent's check has stopped
 # (tell_check_live fails: its process died with a pane, a herdr or machine restart, or a plugin
 # update), so none sits unseen (tell_queue_stray).
@@ -2065,7 +2076,8 @@ tell_drop() {
 # tell_queue_send <name> <pane> — send <name>'s oldest queued tell, if it is for <pane>, through a tell
 # of its own (swarm.sh tell, logged as any tell, so findings count as a round now) to <pane> alone, from
 # the sender that queued it (SWARM_TELL_QUEUED). It is on its way meanwhile (tell_take's
-# .sending.<token>, this delivery's own). One that tell never claimed (tell_claim: it read <name> busy
+# .sending.<token>, this delivery's own), and the check stamps itself live while the tell runs
+# (tell_queue_stamp). One that tell never claimed (tell_claim: it read <name> busy
 # again, or not idle) goes back in the queue for the next look, until TELL_QUEUE_TRIES deliveries of it
 # have failed so (tell_count), when it goes to the lead; and so does one it claimed while a
 # step-up, restart or hold of its story held the story's lock. One a step-up or top-rung hold took (its
@@ -2074,14 +2086,21 @@ tell_drop() {
 # that tell logged itself; one a newer tell replaced on its way is gone (neither .sending nor .claimed is
 # left), and that tell sent nothing, so nothing goes to the lead, whatever its exit.
 tell_queue_send() {
-  local f top slug from body out rc=0 why tok back=""
+  local f top slug from body out outf child rc=0 why tok back=""
   f="$(tell_queued "$1" | head -1)"
   [[ -n "${f}" ]] || return 0
   tok="$$.${RANDOM}${RANDOM}"
   body="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || return 0
   if ! top="$(tell_take "$1" "${f}" "${body}" "$2" "${tok}")"; then rm -f "${body}"; return 0; fi
   read -r slug _ from _ <<< "${top}"   # the fourth word, born, stays out of from
-  out="$(SWARM_TELL_QUEUED="$2 ${from} ${tok}" SWARM_PROJECT="${PROJECT_DIR}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" tell "${slug}" "${f##*.}" "${body}" 2>&1)" || rc=$?
+  outf="$(mktemp "${TMPDIR:-/tmp}/swarm-tell-queued.XXXXXX")" || { tell_requeue "$1" "${f}" "${f}.sending.${tok}"; rm -f "${body}"; return 0; }
+  SWARM_TELL_QUEUED="$2 ${from} ${tok}" SWARM_PROJECT="${PROJECT_DIR}" "${BASH}" "${SWARM_HOME}/bin/swarm.sh" tell "${slug}" "${f##*.}" "${body}" </dev/null > "${outf}" 2>&1 &
+  child=$!
+  # Stamped live while the delivery runs (deliver_prompt's tries can outlast TELL_CHECK_DEAD_SECS), so
+  # wait --lead never hands a tell being sent to the lead as a stopped check's.
+  while sleep "${NOTE_WAKE_SECS}" && kill -0 "${child}" 2>/dev/null; do tell_queue_stamp "$1"; done
+  wait "${child}" || rc=$?
+  out="$(cat "${outf}" 2>/dev/null)"; rm -f "${outf}"
   if [[ -e "${f}.sending.${tok}" ]] && { [[ ${rc} -eq 0 ]] || (( $(tell_count "${f}.tries") < TELL_QUEUE_TRIES )); }; then
     tell_requeue "$1" "${f}" "${f}.sending.${tok}"; back=1
   elif [[ -e "${f}.sending.${tok}" ]]; then
@@ -2150,10 +2169,14 @@ tell_requeue() {
 # then failed (findings_goal's "the findings were delivered, but") get a `tell goal failed:` line
 # instead, which says they count as a round and must not be sent again. With [log] (a drop, which no
 # tell ran for) it logs tell:<kind> <slug> with `undelivered: <why>`, not ok, so it counts as no round;
-# a failed delivery's tell logged its own line, which a second would count twice.
+# a failed delivery's tell logged its own line, which a second would count twice. The text and the line
+# are written under the queue's lock, so two drops of one kind at once (two checks that overlap, or a
+# check and wait --lead's stray handoff) never leave one's line over the other's text; which of the two
+# the lead sees last is not ordered.
 tell_undelivered() {
-  local m="${TELL_QUEUE}/$1.$3.undelivered" q act what="tell undelivered"
-  mv -f "$4" "${m}.md" 2>/dev/null || return 0
+  local m="${TELL_QUEUE}/$1.$3.undelivered" q act what="tell undelivered" locked=""
+  ! note_lock "${TELL_QUEUE}/$1" || locked=1
+  mv -f "$4" "${m}.md" 2>/dev/null || { [[ -z "${locked}" ]] || rmdir "${TELL_QUEUE}/$1.lock"; return 0; }
   q="$(printf '%q' "${m}")"
   case "$5" in
     *"the findings were delivered, but"*)
@@ -2164,6 +2187,7 @@ tell_undelivered() {
   esac
   printf '%s: %s %s at %s (%s), exit: %s; then rm %s %s\n' "${what}" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$5" "${act}" \
     "${q}" "${q}.md" > "${m}" 2>/dev/null || true
+  [[ -z "${locked}" ]] || rmdir "${TELL_QUEUE}/$1.lock"
   [[ -z "${6:-}" ]] || record_event "tell:$3" "$2" "undelivered: $5"
 }
 

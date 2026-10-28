@@ -19,8 +19,9 @@
 # when it takes the lock, and one sent at once that read the state before the time in
 # b1.findings.sent (the last sent at once) or in a queued one's line is dropped the same way, the
 # queued one kept. While a tell is on its way to the builder (herdr's prompt for "fix round A" waits
-# for ${ROOT}/promptslow to go), a queued one its delivery claimed or one sent at once, a newer tell that
-# reads the builder idle is queued behind it, and lands after it; a mark whose process is dead
+# for ${ROOT}/promptslow to go, and keys.log gets a prompt once herdr returns it), a queued one its
+# delivery claimed or one sent at once, a newer tell that reads the builder idle is queued behind it,
+# and lands after it, its check stamped live meanwhile; a mark whose process is dead
 # (b1.findings.direct.<pid>, b1.findings.claimed.<token>) holds nothing up. A queued tell to a builder whose pane closed, or
 # whose name a new pane holds, is sent to no pane: it is dropped, and wait --lead prints a tell
 # undelivered: line for the lead, again for a later drop of its kind. One herdr sent but never showed
@@ -78,8 +79,8 @@ case "$1 $2" in
     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
     END { print "]}}" }' "$F/agents" ;;
   "agent get") printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$(awk -v p="$3" '$2 == p { print $3 }' "$F/agents")" ;;
-  "agent prompt") echo "$*" >> "$F/keys.log"
-    case "$*" in *"fix round A"*) while [ -f "$F/promptslow" ]; do sleep 0.1; done ;; esac   # that tell stays on its way until the test lets its prompt through; any other prompt goes at once
+  "agent prompt") case "$*" in *"fix round A"*) while [ -f "$F/promptslow" ]; do sleep 0.1; done ;; esac   # that tell stays on its way until the test lets its prompt through; any other prompt goes at once
+    echo "$*" >> "$F/keys.log"   # logged once herdr has it, after any stall: keys.log's order is the order herdr got them
     if [ -f "$F/blocked" ]; then echo '{"error":{"code":"agent_blocked"}}' >&2; exit 1; fi   # refused before anything was sent
     [ -f "$F/nosend" ] || echo '{"result":{"agent":{"agent_status":"working"}}}'
     [ ! -f "$F/goalwait" ] || echo '[{"sessionId": "sb", "status": "waiting", "waitingFor": "permission prompt"}]' > "$F/claude.json" ;;
@@ -224,8 +225,13 @@ fresh; state busy
 tell "fix round A" >/dev/null
 touch "${ROOT}/promptslow"; state idle
 until_ok compgen -G "${Q}/b1.findings.claimed.*" >/dev/null || true   # the check's delivery claimed it, and waits in herdr's prompt
-check "findings told at once while a queued one's delivery is sending: queued behind it, nothing sent at once" "${QUEUED} rc=0 yes 1" \
+later_time() { local t; t="$(cut -d' ' -f1 "${Q}/b1.later" 2>/dev/null)"; echo "${t:-0}"; }
+t0="$(later_time)"
+check "findings told at once while a queued one's delivery is sending: queued behind it, nothing sent at once" "${QUEUED} rc=0 yes 0" \
   "$(tell "fix round B") $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no) $(prompts)"
+sleep 2.5; t1="$(later_time)"
+check "findings told at once while a queued one's delivery is sending: its check stays stamped live through the delivery" yes \
+  "$([[ ${t1} -gt ${t0} ]] && echo yes || echo "no (${t0} ${t1})")"
 rm -f "${ROOT}/promptslow"; settle
 check "findings told at once while a queued one's delivery is sending: the older lands first, two rounds in that order" "2 yes 2" \
   "$(prompts) $(order "fix round A" "fix round B") $(rounds)"
@@ -235,8 +241,12 @@ fresh; state idle; touch "${ROOT}/promptslow"
 tell "fix round A" > "${ROOT}/a.out" &
 apid=$!
 until_ok compgen -G "${Q}/b1.findings.direct.*" >/dev/null || true
-check "findings told at once while another is being sent at once: queued behind it, nothing more sent" "${QUEUED} rc=0 yes 1" \
+check "findings told at once while another is being sent at once: queued behind it, nothing more sent" "${QUEUED} rc=0 yes 0" \
   "$(tell "fix round B") $([[ -e "${Q}/b1.findings" ]] && echo yes || echo no) $(prompts)"
+WAITS="queued: b1 (a findings tell is already on its way to it); sent at the next look"
+until_ok grep -qF "${WAITS}" "${p}/.swarm/events.tsv" || true   # B's check looked while A was still on its way
+check "a queued one's delivery that meets a tell sent at once on its way: waits for the next look, sends nothing" "yes 0" \
+  "$(grep -qF "${WAITS}" "${p}/.swarm/events.tsv" && echo yes || echo no) $(prompts)"
 rm -f "${ROOT}/promptslow"; wait "${apid}" || true; settle
 check "findings told at once while another is being sent at once: the first lands first, its mark gone, two rounds" "told b1 rc=0|2 yes 2|no" \
   "$(cat "${ROOT}/a.out")|$(prompts) $(order "fix round A" "fix round B") $(rounds)|$(compgen -G "${Q}/b1.findings.direct.*" >/dev/null && echo yes || echo no)"
