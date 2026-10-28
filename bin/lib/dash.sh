@@ -731,7 +731,8 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   # shorter when a read was cut before the render (pending); when the render's own reads are the first
   # cut, it is drawn again a line shorter with no pane read at all (SWARM_REPORT_END=0: each is skipped
   # at once, so no pane is read twice in a frame), the states from herdr's list alone. A frame of one
-  # line (a --project share) keeps its header, and names none.
+  # line (DASH_H, a --project share) keeps its header, and names none: a two-line one gives its second
+  # line to the names.
   [[ ! -s "${REPORT_SKIP_FILE:-/dev/null}" ]] || pending=1
   [[ ${pending} == 0 || ${lines} -le 1 ]] || lines=$((lines - 1))
   read_end="${SWARM_REPORT_END:-}"
@@ -753,7 +754,7 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
   [[ ${pass} == 1 && ${pending} == 0 && -n "${skipped}" && ${lines} -gt 1 ]] || break
   lines=$((lines - 1)); pending=1; read_end=0
   done
-  [[ ${lines} != 1 ]] || skipped=""
+  [[ ${DASH_H:-0} != 1 ]] || skipped=""
   # Cut to the width with …, as the legend is, so the line never wraps onto a second.
   if [[ ${#skipped} -gt ${DASH_W:-100} ]]; then skipped="${skipped:0:$((${DASH_W:-100} - 1))}…"; fi
   printf '%s' "${out}"

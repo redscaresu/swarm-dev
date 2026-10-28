@@ -17,10 +17,10 @@ read still running at the deadline is stopped, and a read that comes later is sk
 the frame from what the other reads gave, then names the stopped and skipped reads on its last line:
 `skipped (over 30 s): gh PR states, herdr agent list`. So `--watch` draws its first frame within
 about 30 seconds plus its own work, even when herdr or GitHub hangs. When the GitHub reads are cut
-short, dash keeps what they got and, for the rest, what the last full read gave, for the next
-minute; a PR no read has answered yet shows as its URL. With `--project` each project's frame has 30
-seconds of its own. `dash --check` reads everything in full, and so do the `status` and `next` it
-compares with.
+short, dash keeps what they got; a PR they did not reach keeps the state from whichever run last
+read it, until a run reaches it again, and one no run has read shows as its URL. With `--project`
+each project's frame has 30 seconds of its own. `dash --check` reads everything in full, and so do
+the `status` and `next` it compares with.
 
 To watch more than one project, name each with `--project <dir>`: `swarm.sh dash --project
 ~/src/app --project ~/src/infra` draws app's screen and then infra's, each headed by its project's
