@@ -87,7 +87,12 @@ a stalled or stuck builder by the give-up and stuck rules above. When the builde
 nothing (\`no fix pushed\`, or a red head left as it was), nudge it once, naming the stop line, and
 start the review agent again once \`swarm.sh wait <slug>\` returns. A note whose why is the merge's
 comes after the review passed: for a \`dequeued\` merge, nudge the builder with the failing checks,
-telling it to merge origin/<base> in and push, and its new head gets a new review agent as above; an
+telling it to merge origin/<base> in and push, and its new head gets a new review agent as above; for
+\`base merged, red:\`, \`base merged, conflict:\` or a moved base, the review agent has nudged the
+builder already, so wait on it and start the review agent again on the head it pushes; for a
+\`held:\` line of \`swarm.sh merge\` (\`costs money\`, or one that ends \`the user merges it\`), the
+user merges the PR, maybe days later, so close its builder with a bare \`swarm.sh close <slug>\`,
+which counts nothing for a story in review, and list the PR under Waits on the user; an
 \`unconfirmed\` merge or a base red or timed out after it goes in your report for the lead. A second
 stop of the story for the same reason, a story held for the lead, a refused tell or a failed step-up
 goes in your report for the lead.
@@ -879,15 +884,15 @@ review_start_failed() {
   fi
   case "${unclear}:${state}" in
     yes:unlisted)
-      die "review-agent: review-$1's start was unclear and herdr could not list its agents, so its state is unknown${kept}; no head is on record. Once herdr answers, look at it (herdr agent read ${name}); to review again, close it and run swarm.sh review-agent $1 <PR URL>" ;;
+      die "review-agent: review-$1's start was unclear and herdr could not list its agents, so its state is unknown${kept}; no head is on record. A conductor starts nothing; once herdr answers, the lead looks at it (herdr agent read ${name}) and, to review again, closes it and runs swarm.sh review-agent $1 <PR URL>" ;;
     yes:none|yes:gone|yes:herdr:) ;;   # nothing runs to have the brief
     yes:busy|yes:running|yes:waiting*|yes:herdr:working|yes:herdr:blocked)
-      echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: wait for it with swarm.sh wait review-$1"
+      echo "review-agent: review-$1's start was unclear, but the agent is running${kept}: it has the PR, so a conductor starts nothing; the lead may wait for it with swarm.sh wait review-$1"
       return 0 ;;
     yes:auth)
-      die "review-agent: review-$1 took its brief and stopped on an expired login${kept}; no head is on record. Only your /login clears it; then close it (herdr pane close ${pane}) and run swarm.sh review-agent $1 <PR URL>" ;;
+      die "review-agent: review-$1 took its brief and stopped on an expired login${kept}; no head is on record. A conductor starts nothing: only the user's /login clears it, and then the lead closes it (herdr pane close ${pane}) and runs swarm.sh review-agent $1 <PR URL>" ;;
     yes:*)
-      die "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}; no head is on record. Look at it (herdr agent read ${name}); to review again, close it (herdr pane close ${pane}) and run swarm.sh review-agent $1 <PR URL>" ;;
+      die "review-agent: review-$1's start was unclear: it reads ${state} and may have its brief${kept}; no head is on record. A conductor starts nothing; the lead looks at it (herdr agent read ${name}) and, to review again, closes it (herdr pane close ${pane}) and runs swarm.sh review-agent $1 <PR URL>" ;;
   esac
   if [[ -n "${pane}" ]]; then
     note=" (its pane ${pane} is closed)"
@@ -1054,10 +1059,12 @@ or with a line that ends \`merge origin/<base> in, push, and merge the new head\
 nudge the builder as the green step says (${nudge}, then \`$5 tell $1 nudge ${nudge}\`), naming the red
 check or the base to merge in, re-run the tests and push, and telling it to pull its branch first
 (\`git pull --ff-only origin story/$1\`): the PR's head may be GitHub's merge commit, which its
-worktree does not have. Then stop: the head the builder pushes gets a new review agent from the
-conductor once watch reports its checks finished. A \`base merged, head moved:\` refusal is a moved
+worktree does not have. Then send the conductor the stop note, as for any other refusal below,
+naming that line, and stop: the head the builder pushes gets a new review agent from the conductor
+once watch reports its checks finished. A \`base merged, head moved:\` refusal is a moved
 head, as above. Any other \`base merged, <cause>:\` refusal is one of the other refusals below.
-When merge refuses with \`held:\`, the user merges the PR: the review is the handoff.
+When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the
+conductor the stop note, as for any other refusal below, naming that line, so it closes the builder.
 Once the last of these commands has exited, run nothing more in this worktree (a merge removes it):
 reply with ${3}, what the last command printed, and \`codex skipped: <why>\` when codex was, then
 stop. On any other refusal or failure (a merge \`dequeued\` or \`unconfirmed\`, CI on the base red
