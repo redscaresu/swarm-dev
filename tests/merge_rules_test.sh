@@ -2,7 +2,7 @@
 # merge_rules_test.sh — merge_test.sh's cases on what swarm.sh merge merges (the story or epic that
 # lists the PR) and --release (the version bump, its docs gate, merge = human's release grant, the
 # plugin's own upgrade), who may run it, a story marked costs, merge = human's HLD grant, and
-# merge --board's epic guard. On merge_fixture.sh, as merge_test.sh is.
+# merge's epic guard, on a board PR and a story PR. On merge_fixture.sh, as merge_test.sh is.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -507,9 +507,12 @@ check "merge = human, the same story PR under grants: [merge]: the grant read s.
 granted merge; checks "${FX}/${H1}.checks" "$(run test completed failure)"; merge "${URL}"
 refused "merge = human, a red head under grants: [merge]" "the head 1111111 is not green: test (failure)"
 check "merge = human, a red head under grants: [merge]: no HLD read" no_grant_read
+# The epic guard lists the files first (read 1); pr_hld's own list is read 2.
 granted merge; echo '[]' > "${FX}/files.fail"; merge "${URL}"
-refused "merge = human, a PR whose files cannot be listed" "cannot tell which HLD ${URL} is under, so it waits on the user's merge"
-check "merge = human, a PR whose files cannot be listed: pr_hld says why" said "grants: cannot list every file ${URL} changes"
+refused "merge = human, a PR whose files cannot be listed" "cannot list every file ${URL} changes, so whether it sets an epic active with no ticket is unknown"
+granted merge; : > "${FX}/files.2.fail"; merge "${URL}"
+refused "merge = human, a PR whose files cannot be listed by pr_hld" "cannot tell which HLD ${URL} is under, so it waits on the user's merge"
+check "merge = human, a PR whose files cannot be listed by pr_hld: pr_hld says why" said "grants: cannot list every file ${URL} changes"
 granted merge "costs: money"; merge "${URL}"; refused "merge = human, a costs: money story under grants: [merge]" "held: s costs money"
 granted merge; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"; refused "merge = human, a conductor's pane under grants: [merge]" "pane w:c"
 granted "merge, deploy"; merge "${URL}"; refused "merge = human, an HLD with a grant swarm.sh does not know" "hld/h.md cannot be read, so ${URL} waits on the user's merge"
@@ -656,6 +659,39 @@ rm -rf "${P}/docs/hld" "${P}/docs/epics"
 epr e1 "merge = human"; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
 guarded "--board, merge = human, a draft-to-active flip under no HLD" e1
 check "--board, merge = human, a draft-to-active flip under no HLD: not merge_grant's refusal" bash -c "! grep -qF 'waits on the user' '${ROOT}/out'"
+# A plain merge of a story PR runs the same guard, its line with no --board: prefix.
+# spr — fresh: story s's PR changes s.md and docs/epics/e1.md, a draft at the base.
+spr() {
+  fresh; fx_at e1.md main "status: draft"; echo 2 > "${FX}/nfiles"
+  echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"modified"}]' > "${FX}/files"
+}
+story_merged() { is "$1" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"; }
+spr; fx_at e1.md "${H1}" "status: active"; merge "${URL}"; guarded "a story PR that sets a draft epic active with no ticket" e1
+check "a story PR that sets a draft epic active with no ticket: the line has no --board: prefix" \
+  grep -qxF "swarm: merge: ${URL} sets e1 ${NT} e1" "${ROOT}/out"
+spr; fx_at hs.md main "status: agreed" "grants: [epics]"; fx_at hs.md "${H1}" "status: agreed" "grants: [epics]"
+fx_at e1.md "${H1}" "status: active" "hld: hs"; merge "${URL}"
+story_merged "a story PR that sets a draft epic active under an HLD granting epics merges"
+check "a story PR that sets a draft epic active under an HLD granting epics: reads the HLD at the base branch" hld_read hs
+spr; fx_at e1.md "${H1}" "status: draft" "depends_on: []"; merge "${URL}"; story_merged "a story PR that leaves the epic draft merges"
+# The PR's files API lists a later head's harmless files; the pinned head (compare main...${H1}) flips e1.
+spr; fx_at e1.md "${H1}" "status: active"; cp "${FX}/files" "${FX}/pinned"; { printf '{"files":'; cat "${FX}/pinned"; echo '}'; } > "${FX}/compare.main"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/x.md","status":"added"}]' > "${FX}/files"
+merge "${URL}"; guarded "a story PR whose pinned head sets a draft epic active behind a harmless later file list" e1
+# A story PR in another repo (o/r is the board's) changes that repo's docs/epics/, not the board's.
+# When gh cannot name the board's repo, the guard reads it all the same.
+OTHER=https://github.com/other/repo/pull/7
+spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}"; merge "${OTHER}"
+story_merged "a story PR in another repo that sets its own docs/epics/e1.md active merges"
+spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}"; echo 'gh: HTTP 502' > "${FX}/origin.fail"
+merge "${OTHER}"; refused "a story PR in another repo, gh cannot name the board's repo" "${OTHER} sets e1 ${NT} e1"
+spr; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.main.fail"; merge "${URL}"
+refused "a story PR, a 502 on the epic's read at the base" "merge: gh cannot read docs/epics/e1.md at main, so whether ${URL} sets e1 ${UK} e1"
+# Under merge = human the guard runs before merge_grant, which lets s's PR through under grants: [merge].
+granted merge; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; echo 2 > "${FX}/nfiles"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"modified"}]' > "${FX}/files"
+merge "${URL}"; guarded "merge = human, a story PR under grants: [merge] that sets a draft epic active with no ticket" e1
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
 check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"

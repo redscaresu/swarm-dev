@@ -75,7 +75,7 @@ granted; changes hooks/x.sh; merge "${URL}"
 refused "merge = human, granted, a story PR changing hooks/x.sh" "${URL} waits on the user's merge (merge = human, and no HLD grants merge for it)"
 granted; changes bin/x.sh; merge "${URL}"
 is "merge = human, granted, a story PR changing bin/x.sh merges" "${OK}" "$(events | paste -sd'|' -)"
-is "merge = human, granted: one pinned compare read, the grant's" 1 "$(compare_reads)"
+is "merge = human, granted: two pinned compare reads, the epic guard's and the grant's" 2 "$(compare_reads)"
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
 
 finish "merge protected hold"

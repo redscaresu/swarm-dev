@@ -88,8 +88,9 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # review's thread resolution, a merge method other than <method>, any classic field not known to be
 # safe, ...). Else print why and fail (1); a read that fails is a failure too, and a 404 from branch
 # protection is unprotected only when GitHub says "Branch not protected".
-# ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
-# too; fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
+# ci_gate files <owner/repo> <pr> <changed> [<base> <sha>] — every path the PR changes, a renamed file's
+# old path too, or with <base> and <sha> every path <base>...<sha> changes, the PR's files at that head
+# (GitHub's compare lists 300 at most); fails (3) unless there are <changed> of them. ci_gate files-status: the same, each line
 # "<status> <path>", the status as GitHub gives it (added, removed, modified, renamed, copied, changed
 # or unchanged), empty when it gives none.
 # ci_gate behind <owner/repo> <sha> <base> <board paths> <wait> — the number of commits <base> has that
@@ -213,7 +214,7 @@ pr_contents() {
   return 2
 }
 
-# merge_read base|head <path> — epic_unticketed's reader for merge --board: <path> at the PR's base
+# merge_read base|head <path> — epic_unticketed's reader for merge (epic_guard): <path> at the PR's base
 # branch or head SHA (merge_pr's locals base, head, repo and n), through pr_contents; fails 1 when it
 # is absent and 2 on any other failure. At the head a 404 is absent only for a path the PR removes or
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
@@ -236,7 +237,7 @@ merge_gone() {
     | json "'\n'.join(p for page in d for f in page for p in (f['filename'] if f.get('status') == 'removed' else '', f.get('previous_filename') or '') if p)"
 }
 
-# unticketed_why <line> — epic_unticketed's failure line as merge --board says it: a read error at the
+# unticketed_why <line> — epic_unticketed's failure line as merge says it: a read error at the
 # base or head names the ref gh read there, the base branch or the head SHA (merge_pr's locals base
 # and head); any other line as it is.
 unticketed_why() {
@@ -246,18 +247,28 @@ unticketed_why() {
   echo "gh cannot read ${BASH_REMATCH[1]} at ${ref}"
 }
 
-# epic_guard — merge --board's refusal of a PR that sets an epic active with no ticket (merge_pr's
-# locals files and url): epic_unticketed on one changed path at a time, so a read error or a bad
-# grants: names the epic it was checking too. A failure that printed no reason refuses all the same.
+# epic_guard — merge's refusal of a board or story PR that sets an epic active with no ticket
+# (merge_pr's locals files, only and url): epic_unticketed on one changed path at a time, so a read
+# error or a bad grants: names the epic it was checking too. A failure that printed no reason refuses
+# all the same. The line starts --board: on that route only.
 epic_guard() {
-  local p s why
+  local p s why pre="${only:+${only}: }"
   while IFS= read -r p; do
     s="$(basename "${p}" .md)"
     # Outside the $(...), where a merge_fail would not stop this.
     why="$(epic_unticketed merge_read "${p}")" \
-      || merge_fail "--board: $(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
-    [[ -z "${why}" ]] || merge_fail "--board: ${url} sets ${s} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
+      || merge_fail "${pre}$(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
+    [[ -z "${why}" ]] || merge_fail "${pre}${url} sets ${s} active with no ticket (agreed:, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${files}"
+}
+
+# other_repo <owner/repo> — true when gh names the project's origin, the board's repo, and it is not
+# <owner/repo>. False when gh cannot tell, so epic_guard reads such a PR all the same.
+other_repo() {
+  local origin own
+  origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 1
+  own="$(gh repo view "${origin}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" || return 1
+  [[ -n "${own}" && "$(tr '[:upper:]' '[:lower:]' <<< "$1")" != "${own}" ]]
 }
 
 # merge_hold <pr-url> — stop merge when pr_held holds the PR for the user. Then, with merge = agent on
@@ -431,9 +442,11 @@ short_shas() {
 # story or stacked parent costs money is the user's; and on this route, its files at the pinned head
 # change no protected path (merge_hold: .claude/, .github/, hooks/ or a root Makefile, a renamed
 # file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
-# finds an HLD granting merge, and then pr_held finds nothing) (with --board instead: the PR is in the
+# finds an HLD granting merge, and then pr_held finds nothing, and it sets no epic active with no
+# ticket (epic_guard, under either merge mode, unless the PR is in another repo than the board's,
+# other_repo)) (with --board instead: the PR is in the
 # board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
-# with no ticket (epic_unticketed, under either merge mode); with --release: the PR is in the
+# with no ticket, as for a story PR; with --release: the PR is in the
 # project's own repo and every path it changes is .claude-plugin/plugin.json, release_check's, and
 # with merge = human release_check also finds at least one story merged since the last tag, each
 # under an agreed HLD granting release), and ci_gate passes on the head. A story PR on the direct path
@@ -483,6 +496,8 @@ merge_pr() {
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
   # With merge = agent a PR whose story costs money is the user's, by any route (--board and --release too).
   [[ "${CFG_merge}" != agent ]] || merge_hold "${url}"
+  # A board at the project root has no folder to be under: its own paths (board_paths) stand in.
+  rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}"
   if [[ -z "${only}" ]]; then
     # Any item listing the URL may be the one in review.
     while IFS= read -r p; do
@@ -505,8 +520,6 @@ merge_pr() {
     own="$(gh repo view "${origin}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
       || merge_fail "${only}: gh cannot tell which GitHub repo ${origin} is"
     [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${own}" ]] || merge_fail "${only}: ${url} is not in ${own}, ${whose} repo"
-    # A board at the project root has no folder to be under: its own paths (board_paths) stand in.
-    rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}"
     # A renamed file's old path counts too: renaming bin/x to the board is not a board-only change.
     info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "${only}: cannot list every file ${url} changes: ${info}"
     files="${info}"
@@ -522,10 +535,18 @@ merge_pr() {
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
-  # An epic set active with no ticket is the user's to agree under either merge mode. After the head's
-  # CI check, as the grant below, so a red PR costs no contents reads; before the grant, so its
-  # refusal cannot hide this one.
-  [[ "${only}" != --board ]] || epic_guard
+  # An epic set active with no ticket is the user's to agree under either merge mode, in a story PR as
+  # in a board PR. After the head's CI check, as the grant below, so a red PR costs no file list or
+  # contents reads; before the grant, so its refusal cannot hide this one. A story PR's files are read
+  # at the pinned head, as the grant's are, so a push after the pin cannot hide an epic.
+  if [[ -z "${only}" ]]; then
+    files="$(ci_gate files "${repo}" "${n}" "${changed}" "${base}" "${head}")" \
+      || merge_fail "cannot list every file ${url} changes, so whether it sets an epic active with no ticket is unknown: ${files}"
+    # A story PR in another repo (its story's repo:) changes that repo's epics/, not the board's. gh
+    # is asked only for a PR with a path under the board's epics/.
+    if [[ $'\n'"${files}" == *$'\n'"${rel:+${rel}/}epics/"* ]] && other_repo "${repo}"; then files=""; fi
+  fi
+  [[ "${only}" == --release ]] || epic_guard
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
   # then under merge = agent's holds. --release is release_check's. Like epic_guard, it runs after the
   # head's CI check, which costs fewer gh calls: the grant reads the PR, its files and each board file
