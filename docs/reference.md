@@ -1879,12 +1879,13 @@ when none has one.
 
 `green_to_review_min`, the last `outcomes` column, is the minutes from the later of a PR's head going
 green and the PR opening to the first review round that started after that, before the PR closed.
-A round starts at an events.tsv `review-agent` line for the slug, the review agent's start, whose
-outcome is a bare `ok` (the conductor runs that start once the head is green, so it is round 1's),
-or at a `review-agent:next` line, whose outcome is `ok (round <n>)`; only those lines carry the
-round, though a `review-agent` line that did would count the same. A start before
-the head's green, at PR open say, is not after it and does not count, and a round before the PR
-opened is an earlier PR's of the slug. The head went green at the end of its last check run, and
+A round starts at an events.tsv `review-agent` line for the slug, a review agent's start, whose
+outcome is a bare `ok` (today the conductor starts an agent so for every round, and the agent waits
+for green itself, so a start can come before the head is green), or at a `review-agent:next` line,
+a round run in the same session, whose outcome is `ok (round <n>)`; only those lines carry the
+round, though a `review-agent` line that did would count the same. A start before the head's green
+is not after it and does not count, and a round before the PR opened is an earlier PR's of the
+slug. The head went green at the end of its last check run, and
 only when every run on it concluded `SUCCESS`, `NEUTRAL` or `SKIPPED`. gh gives the runs of the PR's
 latest head alone, so an earlier head that failed counts for nothing and a later head counts from
 its own green. A head pushed after the last round, as a base merge before the merge often is, has

@@ -190,12 +190,13 @@ def board_commits(*args):
 # ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
 ready_at, blocked_at = collections.defaultdict(list), collections.defaultdict(list)
 conducting, closed, reported = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
-# round_starts: each slug's review round starts: its review-agent lines, the review agent's start,
-# whose outcome main logs as a bare ok (the conductor runs that start once the PR's head is green, so
-# it is round 1's start), and review-agent --next's review-agent:next lines, the only ones main gives
+# round_starts: each slug's review round starts: its review-agent lines, a review agent's start,
+# whose outcome main logs as a bare ok (today the conductor starts an agent so for every round, and
+# the agent waits for green itself, so a start can come before the head is green), and review-agent
+# --next's review-agent:next lines, a round run in the same session, the only ones main gives
 # `ok (round <n>)`. A review-agent line that carried `(round <n>)` would count the same, though none
-# does today. green_to_review reads only those at or after the head's green, so a start before it, at
-# PR open say, never counts.
+# does today. green_to_review reads only those at or after the head's green, so a start before it
+# never counts.
 round_starts = collections.defaultdict(list)
 # Explicit prefixes and no colour, whatever the user's diff.noprefix, diff.dstPrefix or color.ui.
 for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:

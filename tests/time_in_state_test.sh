@@ -178,9 +178,9 @@ cp "${dir}/events.full" "${E}"
 
 # green_to_review_min: tis's review agent started (a bare ok) at 09:40, before PR #1's head went green
 # at 10:00, the end of the last of its runs (a success, a neutral and a skipped one), so that start does
-# not count; a start at 10:12 (a bare ok: main logs the plain review-agent start so, and only
-# review-agent:next lines carry `(round <n>)`) is round 1's, so 12, and one at 10:05 gives 5, whatever
-# --next round follows. With no start or round after green it is empty. In this section PR #1 opens at
+# not count; a start at 10:12 (a bare ok: main logs every plain review-agent start so, one per round
+# today, and only review-agent:next lines carry `(round <n>)`) is the first after green, so 12, and
+# one at 10:05 gives 5, whatever --next round follows. With no start or round after green it is empty. In this section PR #1 opens at
 # 09:30 (head_runs), since a round counts for a PR only once the PR is open. The fixture's events hold a
 # review-agent start at 11:47 (the second round's agent, bare ok), which counts after any green below 11:47.
 cp "${dir}/prs.json" "${dir}/prs.full"
@@ -195,13 +195,13 @@ head_runs "$(crun SUCCESS 09:50 09:58)" "$(crun NEUTRAL 09:51 10:00)" "$(crun SK
 add_events "${D}09:40:00Z"$'\treview-agent\ttis\tw:1\tok' "${D}10:12:00Z"$'\treview-agent\ttis\tw:1\tok'
 check "green_to_review_min runs from the head's green to the first start after it, not a start before green" "$(g2r)" "[12]"
 add_events "${D}09:40:00Z"$'\treview-agent\ttis\tw:1\tok' "${D}10:05:00Z"$'\treview-agent\ttis\tw:1\tok' "${D}10:30:00Z"$'\treview-agent:next\ttis\tw:1\tok (round 2)'
-check "a plain review-agent start after green is round 1's start, before any --next round" "$(g2r)" "[5]"
+check "a plain review-agent start after green is a round's start, before any --next round" "$(g2r)" "[5]"
 add_events "${D}09:40:00Z"$'\treview-agent\ttis\tw:1\tok' "${D}10:12:00Z"$'\treview-agent\ttis\tw:1\tok (round 1)'
 check "a review-agent line that carries its round counts the same, though main logs none" "$(g2r)" "[12]"
 # The fixture's own review-agent start at 11:47 is after green too, so it goes for this check.
 { grep -v $'\treview-agent\t' "${dir}/events.full"; printf '%s\n' "${D}09:40:00Z"$'\treview-agent\ttis\tw:1\tok'; } > "${E}"
 check "with no start or round after green, green_to_review_min is empty" "$(g2r)" "[]"
-# A head with a failed check is no green, though round 1's start came after its last run. The next
+# A head with a failed check is no green, though a start came after its last run. The next
 # head's runs end at 11:00, and its round 2 (review-agent --next's line) at 11:05 gives 5.
 head_runs "$(crun SUCCESS 09:50 10:00)" "$(crun FAILURE 09:50 10:05)"
 add_events "${D}10:12:00Z"$'\treview-agent\ttis\tw:1\tok'
