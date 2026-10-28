@@ -6,7 +6,8 @@
 # it too, saying why: a transient gh error is read again, a 404 is not, a hung read stops at
 # BASE_MOVED_WAIT, and a PR of over 300 files or of no file is never listed. A PR that changes none of
 # the paths merges, a --board PR reads no compare, and under merge = human merge_grant still refuses one
-# under an HLD granting merge. On merge_fixture.sh, whose gh stub answers compare/main...<head> with
+# under an HLD granting merge, the names as written (Hooks/x.sh is not hooks/x.sh to it). On
+# merge_fixture.sh, whose gh stub answers compare/main...<head> with
 # ${FX}/compare.main, else the PR's files.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
@@ -120,6 +121,9 @@ refused "merge = human, granted, a story PR changing hooks/x.sh" "${URL} waits o
 granted; changes bin/x.sh; merge "${URL}"
 is "merge = human, granted, a story PR changing bin/x.sh merges" "${OK}" "$(events | paste -sd'|' -)"
 is "merge = human, granted: one pinned compare read, the grant's" 1 "$(compare_reads)"
+# The grant's rule takes the names as written, as before: only the hold reads them in any case.
+granted; changes Hooks/x.sh; merge "${URL}"
+is "merge = human, granted, a story PR changing Hooks/x.sh merges: the grant lookup matches the case as written" "${OK}" "$(events | paste -sd'|' -)"
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
 
 finish "merge protected hold"

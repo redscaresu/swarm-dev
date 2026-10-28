@@ -276,8 +276,9 @@ merge_hold() {
 # head (ci_gate files-status on merge_pr's locals repo, n, changed, base and head), so a push after the
 # pin cannot hide one. The read tries a transient gh error again (READ_TRIES, MERGE_READ_WAIT apart)
 # and stops after BASE_MOVED_WAIT, as base_moved's compare does; a list it still cannot read holds the
-# PR too, saying why, so the user can tell a passing error from a hold that stands (a PR of over 300
-# files, the most the compare lists, or of no file). --board and --release change only board paths or
+# PR too, saying why, so the user can tell a passing error, which the next swarm.sh merge reads past,
+# from a hold that stands (a PR of over 300 files, the most the compare lists, or of no file). --board
+# and --release change only board paths or
 # plugin.json, never a protected path; with merge = human merge_grant has already refused such a PR
 # (pr_hld puts it under no HLD), so no file is read.
 protected_hold() {
@@ -286,7 +287,7 @@ protected_hold() {
     "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
   [[ ${rc} -ne 142 ]] || why="error the compare took over ${limit}s"
   [[ ${rc} -eq 0 ]] || merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: ${why#error }, so whether it changes a path only the user merges is unknown); the user merges it"
-  why="$(cut -d' ' -f2- <<< "${why}" | protected_paths)"
+  why="$(cut -d' ' -f2- <<< "${why}" | protected_paths any-case)"
   [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why%%$'\n'*}, which only the user merges; the user merges it"
 }
 

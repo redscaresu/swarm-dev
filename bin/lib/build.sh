@@ -175,9 +175,8 @@ as with merge = human. When its PR is green and reviewed,
 run \`swarm.sh review <slug> <PR URL>\` and \`swarm.sh close <slug>\`, never \`swarm.sh merge\`, which
 refuses it (\`held: <slug> costs money\`). Leave the PR for the user, and list it in your report
 under Waits on the user. When \`swarm.sh merge\` refuses any other PR with \`held: ... the user merges
-it\` (a parent it stacks on costs money, another \`costs:\` value, a story PR that changes \`.claude/\`,
-\`.github/\`, \`hooks/\` or a root Makefile, or one whose files at the pinned head it could not read),
-do the same: close its builder, leave the PR for the user and list it.
+it\` (a parent it stacks on costs money, or another \`costs:\` value), do the same: close its builder,
+leave the PR for the user and list it.
 
 When \`swarm.sh merge\` prints \`base merged: <PR URL> is now <new> (<old> with <base> merged in)\`, it
 merged nothing: code landed on <base> after <old>'s CI ran, so it had GitHub merge <base> into the
