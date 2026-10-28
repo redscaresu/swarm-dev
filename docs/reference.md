@@ -389,7 +389,7 @@ writes its note to `.swarm/reviews/<slug>.stop.md` and tells it to the story's c
 `stopped: <slug> (<the note>), exit: act on its why as <conductor>'s review rule says, or start a conductor for the story and send it the note with swarm.sh tell <conductor> note <file>`
 for each such file whose story is on the board and not done, whose conductor runs in no pane
 of the poll's herdr list or has written its report. `review-agent` removes the note when it starts
-a new agent, so the line goes then. A note whose tell failed, or that reached a
+a new agent, so the line goes then. A start that fails puts the note back. A note whose tell failed, or that reached a
 conductor that has since stopped, comes to the lead this way. It reads the same herdr list as `no-agent:`;
 a poll whose list failed keeps the `stopped:` lines it saw last.
 

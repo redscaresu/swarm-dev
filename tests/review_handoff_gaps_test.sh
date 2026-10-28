@@ -174,16 +174,16 @@ mkdir -p "${P}/.swarm"; echo report > "${P}/.swarm/conduct-e.report.md"
 fresh_lead
 check "6 a conductor that wrote its report has stopped: the line comes" "${LINE}" "$(poll)"
 rm -f "${P}/.swarm/conduct-e.report.md"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
-# review-agent's start removes the earlier agent's note, so the line goes; a refused start keeps it.
-began='review_at_head() { REVIEW_SRC="${SRC}"; REVIEW_WT="${WT}"; REVIEW_HEAD="${HB}"; }
-  agent_field() { :; }; require_trusted() { :; }; require_claude() { :; }; free_agent_name() { :; }
-  base_for() { echo main; }; start_agent() { :; }
-  review_agent s1 '"${URL}"
+# review-agent's start removes the earlier agent's note, so the line goes; a refused or failed start keeps it.
+stubs='review_at_head() { REVIEW_SRC="${SRC}"; REVIEW_WT="${WT}"; REVIEW_HEAD="${HB}"; }
+  require_trusted() { :; }; require_claude() { :; }; free_agent_name() { :; }; base_for() { echo main; }'
 # review-<slug> still open with no findings file: review-agent refuses before it touches a file.
-lib "${began/agent_field() { :; }/agent_field() { echo w:p7; }}" > /dev/null || true
-check "6 a refused review-agent start keeps the note" yes "$( [[ -f "${STOP}" ]] && echo yes || echo no)"
-lib "${began}" > /dev/null
-check "6 a review-agent start removes the earlier agent's note" no "$( [[ -f "${STOP}" ]] && echo yes || echo no)"
+lib "${stubs}; agent_field() { echo w:p7; }; start_agent() { :; }; review_agent s1 ${URL}" > /dev/null || true
+check "6 a refused review-agent start keeps the note" "${NOTE}" "$(cat "${STOP}" 2>/dev/null)"
+lib "set -o pipefail; ${stubs}; agent_field() { :; }; start_agent() { return 1; }; review_start_failed() { echo start failed; }; review_agent s1 ${URL}" > "${ROOT}/failed" || true
+check "6 a review-agent start that fails puts the note back" "start failed|${NOTE}" "$(cat "${ROOT}/failed")|$(cat "${STOP}" 2>/dev/null)"
+lib "${stubs}; agent_field() { :; }; start_agent() { :; }; review_agent s1 ${URL}" > /dev/null
+check "6 a review-agent start removes the earlier agent's note" "no|no" "$( [[ -f "${STOP}" ]] && echo yes || echo no)|$( [[ -f "${STOP}.prev" ]] && echo yes || echo no)"
 fresh_lead
 check "6 a review agent started since the note: no line" "" "$(poll)"
 echo "${NOTE}" > "${STOP}"
