@@ -1514,7 +1514,7 @@ wait_pr() {
       why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName,state,changedFiles,headRefName \
         -q '[.headRefOid, .mergeable, .baseRefName, .state, (.changedFiles | tostring), .headRefName] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
       read -r oid mergeable base state changed ref <<< "${why}"
-      if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ && -z "${head}" && -n "${want}" && "${oid}" != "${want}"* ]]; then
+      if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ && -z "${head}" && -n "${want}" && "${oid:0:${#want}}" != "${want}" ]]; then
         # Not --head's head yet: pending, its checks not read. Its mergeable state is that head's, so
         # a conflict the push fixed does not end the wait.
         stale="${stale:-${SECONDS}}"
