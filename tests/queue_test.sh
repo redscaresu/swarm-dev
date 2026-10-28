@@ -2,8 +2,8 @@
 # queue_test.sh — a story PR green and mergeable for queue_minutes with no review agent on its head:
 # `watch` returns `queued: <repo> #<n> <branch> ...`, once per head, and `next` prints the same line
 # after its step's why for every working conductor, naming it, for a head not yet sent (by watch or by
-# a tell note). With a live review agent on that head (.swarm/reviews/<slug>.head) or a passing findings
-# file for it, short of queue_minutes, for a lead story, or with a check or status that is not green on
+# a tell note). With a live review agent on that head (.swarm/reviews/<slug>.head), a passing findings
+# file for it or a base-merged line for it in events.tsv, short of queue_minutes, for a lead story, or with a check or status that is not green on
 # any page (ci_gate's rule), neither does; `status` and `dash` never look. One repo next cannot resolve
 # is warned of, and the others still count, under bash 3.2 too. gh, herdr and claude are stubs on
 # PATH; gh logs every call to gh.log, and herdr lists the agents in agents ("<name> <pane>" lines).
@@ -187,6 +187,12 @@ rm "${p}/.swarm/reviews/s1.head"
 printf 'head: h1\n## Findings\nNone.\n' > "${p}/.swarm/reviews/s1.md"
 check "a passing findings file for the head counts as its review, with no head file" "(none)" "$(nextq)"
 rm "${p}/.swarm/reviews/s1.md"
+# A head merge made by merging the base in (events.tsv's base-merged line) is merge's own to wait on
+# and merge: next sends it to no review. events.tsv is put back after.
+green 31; touch "${p}/.swarm/events.tsv"; cp "${p}/.swarm/events.tsv" "${ROOT}/events.bak"
+printf '2026-01-01T00:00:00Z\tmerge\ts1\t-\tbase-merged h1\n' >> "${p}/.swarm/events.tsv"
+check "a head recorded as base-merged gets no queued line from next" "(none)" "$(nextq)"
+cp "${ROOT}/events.bak" "${p}/.swarm/events.tsv"
 
 green 29
 check "at 29 minutes, watch does not report it" "(still watching)" "$(watchrun)"

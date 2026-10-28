@@ -126,7 +126,8 @@ case "$1 $2" in
       */releases/tags/*) serve release ;;   # its GitHub release
       */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
-      # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind (as serve
+      # compare/<head>...<base branch>, merge's read of what the base gained: ${FX}/behind.<head> when
+      # there is one, else ${FX}/behind (as serve
       # reads it, so behind.<n>.fail fails the nth read and behind.404 is a 404), else nothing (ahead_by
       # 0); with ${FX}/behind.hang it first sleeps a minute. compare/<base>...<head>: compare.<base>...<head>,
       # else compare.<base>, else compare, else for a branch
@@ -140,7 +141,8 @@ case "$1 $2" in
                    [ "${#c}" = 40 ] || [ ! -e "${FX}/compare.hang" ] || sleep 60
                    if [ "${#c}" = 40 ] && [ "${#to}" != 40 ]; then
                      [ ! -e "${FX}/behind.hang" ] || sleep 60
-                     if [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ] || [ -e "${FX}/behind.404" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
+                     if [ -e "${FX}/behind.${c}" ]; then serve "behind.${c}"
+                     elif [ -e "${FX}/behind" ] || [ -e "${FX}/behind.fail" ] || [ -e "${FX}/behind.404" ]; then serve behind; else echo '{"ahead_by":0,"files":[]}'; fi
                    elif [ -e "${FX}/compare.${c}...${to}" ] || [ -e "${FX}/compare.${c}" ] || [ -e "${FX}/compare.${c}.404" ] || [ -e "${FX}/compare" ] || [ -e "${FX}/compare.fail" ]; then
                      if [ -e "${FX}/compare.${c}...${to}" ]; then out="$(serve "compare.${c}...${to}")" || exit 1   # one pair of commits
                      elif [ -e "${FX}/compare.${c}" ] || [ -e "${FX}/compare.${c}.404" ]; then out="$(serve "compare.${c}")" || exit 1
@@ -154,10 +156,13 @@ case "$1 $2" in
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       # PUT pulls/<n>/update-branch, merge's request to merge the base in: ${FX}/update as serve reads it,
       # and ${FX}/update.422 a 422 with its message; with ${FX}/update.hang it first sleeps a minute.
-      # Whatever it answers, the PR's head becomes ${FX}/update-head, when there is one, after
+      # Whatever it answers, the PR's head becomes ${FX}/update-head.<expected_head_sha>, else
+      # ${FX}/update-head, when there is one, after
       # ${FX}/update-lag more pr views (none by default): with update.422, another merge's request went first.
       */update-branch) [ ! -e "${FX}/update.hang" ] || sleep 60
-                       [ ! -e "${FX}/update-head" ] || { cp "${FX}/update-head" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; }
+                       e=""; for a in "$@"; do case "${a}" in expected_head_sha=*) e="${a#*=}" ;; esac; done
+                       u="${FX}/update-head"; [ ! -e "${u}.${e}" ] || u="${u}.${e}"
+                       [ ! -e "${u}" ] || { cp "${u}" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; }
                        if [ -e "${FX}/update.422" ]; then get m "${FX}/update.422"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
                        serve update ;;
       */contents/.github/workflows\?*) serve workflows ;;
@@ -168,6 +173,10 @@ case "$1 $2" in
                     [ ! -e "${FX}/on-contents" ] || { sh "${FX}/on-contents"; rm -f "${FX}/on-contents"; }
                     f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
                     [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
+      # The PR's merge ref, which ci_gate head reads for the workflows a pull_request runs: a 422, as
+      # before GitHub makes one, so they are read at the head. Actions' workflows: none disabled.
+      */commits/refs/pull/*) echo "gh: No commit found for SHA: refs/pull/7/merge (HTTP 422)" >&2; exit 1 ;;
+      */actions/workflows\?*) echo '{"total_count":0,"workflows":[]}' ;;
       # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>. A
       # commit's files: commit.<sha>, else one file outside the board.
       */commits/*) [ -e "${FX}/commit.${sha}" ] || { echo '{"files":[{"filename":"bin/x"}]}'; exit 0; }; serve "commit.${sha}" ;;
@@ -246,13 +255,14 @@ fresh() {
   item s "status: review" "prs: ${URL}"
 }
 # merge [VAR=value]... <args> — swarm.sh merge outside herdr unless VARs say otherwise; sets rc,
-# output in ${ROOT}/out.
+# output in ${ROOT}/out. Its CI waits get ${MERGE_CI} seconds (5 unless the file sets it: a merge that
+# merges the base in also reads the new head's workflows, which on a loaded machine can take longer).
 merge() {
   local envs=()
   while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   rc=0
   (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
-    SWARM_MERGE_CI_SECONDS=5 SWARM_RELEASE_WAIT=0 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
+    SWARM_MERGE_CI_SECONDS="${MERGE_CI:-5}" SWARM_RELEASE_WAIT=0 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
 events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 merge_lines() { events | grep -c '^merge ' || true; }

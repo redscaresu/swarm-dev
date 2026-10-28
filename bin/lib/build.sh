@@ -179,14 +179,21 @@ under Waits on the user. When \`swarm.sh merge\` refuses any other PR with \`hel
 it\` (a parent it stacks on costs money, or another \`costs:\` value), do the same: close its builder,
 leave the PR for the user and list it.
 
-When \`swarm.sh merge\` prints \`base merged: <PR URL> is now <new> (<old> with <base> merged in)\`, it
-merged nothing: code landed on <base> after <old>'s CI ran, so it had GitHub merge <base> into the
-PR's branch and checked that the new head's only new content is <base>'s. That head needs no new
-review. Run the \`swarm.sh wait-pr <PR URL>\` the line names in the background and, once it exits 0,
-the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of the findings file's head: line.
-If that CI goes red, handle it as a red check, telling the builder to pull its branch first
-(\`git pull --ff-only origin story/<slug>\`, naming the branch: its worktree tracks origin/<base>, or
-nothing when stacked): GitHub's merge commit is not in its worktree.
+When \`swarm.sh merge\` prints \`base merged: <PR URL> is now <new> (<old> with <base> merged in)\`,
+code landed on <base> after <old>'s CI ran, so it had GitHub merge <base> into the PR's branch and
+checked that the new head's only new content is <base>'s. That head needs no new review: where you
+compare heads, a head events.tsv records as \`merge <slug> base-merged <sha>\` counts as reviewed when
+the head it was made from was, and \`swarm.sh watch\` prints no line that sends it to review. Merge
+then waits for that head's CI, checks <base> again (merging it in again if it moved, ${MERGE_BASE_ROUNDS}
+rounds at most) and merges the new head itself, so it can run up to $((MERGE_CI_SECONDS / 60)) minutes
+longer for each round: leave it to finish. If it refuses with \`base merged, <cause>:\` (the new head
+red, no check runs on it, a timeout, or <base> still moving), it merged nothing, and the PR's head is
+GitHub's merge commit, which the builder's worktree does not have. Any nudge you send the builder for it
+tells it to pull its branch first (\`git pull --ff-only origin story/<slug>\`, naming the branch: its
+worktree tracks origin/<base>, or nothing when stacked). Handle a red as a red check. On any other
+cause, run the \`swarm.sh wait-pr --head <new head> <PR URL>\` the refusal names in the background and,
+once it exits 0, the \`swarm.sh merge --head <new head> <PR URL>\` it names, in place of the findings
+file's head: line.
 When \`swarm.sh merge\` refuses with a line that ends \`merge origin/<base> in, push, and merge the new
 head\` (\`the base <base> moved past <sha>'s CI\` when GitHub could not merge it in, or a compare that
 cannot list what the base gained), it merged nothing: code may have landed on <base> after that head's

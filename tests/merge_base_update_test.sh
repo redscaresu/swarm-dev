@@ -3,9 +3,10 @@
 # merge asks GitHub to merge the base into the PR's branch (update-branch, pinned to the head it
 # read), reads the PR's head until it moves, and accepts the new head only when GitHub made it, its
 # parents are the old head, then a commit on the base, and it changes only what that commit brings. It
-# logs base-merged <new head> and stops with a base merged: line, merging nothing. Any other head, a
+# logs base-merged <new head>, prints a base merged: line, waits for the new head's CI and merges it
+# (merge_base_update_wait_test.sh has the wait and its refusals). Any other head, a
 # conflict, another failed request, a request with no answer and a head that never moves refuse, naming
-# the cause; a 422 once the head has moved checks that head. On merge_fixture.sh, whose stub serves
+# the cause, and merge nothing; a 422 once the head has moved checks that head. On merge_fixture.sh, whose stub serves
 # update-branch (${FX}/update), the PR's head after it (${FX}/update-head), the new head's commit
 # (commit.<sha>) and each compare of two commits (compare.<from>...<to>).
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
@@ -20,6 +21,9 @@ trap 'chmod -R u+rwx "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # shellcheck source=merge_fixture.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 . "$(dirname "${BASH_SOURCE[0]}")/merge_fixture.sh"
+# Merging the base in waits for the new head's CI, whose first read also reads its workflows: 60 s for it.
+# shellcheck disable=SC2034 # merge_fixture.sh's merge reads it
+MERGE_CI=60
 
 H3=3333333333333333333333333333333333333333   # the PR's head once GitHub merged main in
 B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb    # main's head
@@ -35,12 +39,14 @@ PRX='{"filename":"bin/pr.sh","status":"modified","sha":"p1","patch":"@@ -1 +1 @@
 pr_changes() { local since="$1" IFS=,; shift; echo "{\"files\":[$*]}" > "${FX}/compare.${since}...${H1}"; }
 # moved — fresh, and main gained bin/x.sh after ${H1}'s CI ran; update-branch answers, the PR's head
 # becomes ${H3}, a merge of ${H1} and ${B} that changes what ${B} brings (X), and main is at ${B}.
+# ${H3} has a green check and is up to date with main.
 moved() {
   fresh
-  echo '{"ahead_by":1,"files":[{"filename":"bin/x.sh","status":"modified"}]}' > "${FX}/behind"
+  echo '{"ahead_by":1,"files":[{"filename":"bin/x.sh","status":"modified"}]}' > "${FX}/behind.${H1}"
   echo '{"message":"Updating pull request branch."}' > "${FX}/update"; echo "${H3}" > "${FX}/update-head"
   parents "${H1}" "${B}"; printf '{"commit":{"sha":"%s"}}\n' "${B}" > "${FX}/basehead"
   changes "${H3}" "${X}"; changes "${B}" "${X}"; pr_changes "${B}" "${PRX}"
+  checks "${FX}/${H3}.checks" "$(run test completed success)"; statuses "${FX}/${H3}.status"
 }
 # parents <sha>... — ${H3}'s parents, as gh reads the commit, which GitHub made (committer web-flow,
 # signature verified) unless ${COMMITTER} names another committer or ${VERIFIED} is false.
@@ -52,30 +58,37 @@ parents() {
 }
 PUT="api -X PUT -f expected_head_sha=${H1} repos/o/r/pulls/7/update-branch"
 updated() { grep -qxF "${PUT}" "${ROOT}/gh.log"; }
-# views_after_put — the pr views after the update-branch request: merge's reads of the PR's head.
-views_after_put() { awk -v put="${PUT}" '$0 == put { on = 1; next } on && /^pr view/ { n++ } END { print n + 0 }' "${ROOT}/gh.log"; }
+# views_after_put — the pr views right after the update-branch request: merge's reads of the PR's head.
+views_after_put() { awk -v put="${PUT}" '$0 == put { on = 1; next } on && /^pr view/ { n++; next } on { exit } END { print n + 0 }' "${ROOT}/gh.log"; }
 no_base_merged() { ! logged "^merge s base-merged"; }
 is_zero_views() { [[ "$(views_after_put)" == 0 ]]; }
-MERGED_LINE="base merged: ${URL} is now 3333333 (1111111 with main merged in); wait-pr ${URL}, then merge --head ${H3} ${URL}"
+# merged_in <name> [PR URL] — the last merge merged main into the PR (${URL}, or [PR URL]) and said so,
+# waited for ${H3}'s CI and merged ${H3}; events.tsv has base-merged ${H3}, then merge ok.
+merged_in() {
+  local u="${2:-${URL}}" r; r="${u#https://github.com/}"; r="${r%/pull/*}"
+  is "$1: exits 0" 0 "${rc}"
+  check "$1: says main merged in" said "base merged: ${u} is now 3333333 (1111111 with main merged in); waiting up to 60s for its CI"
+  check "$1: waits for the new head's CI" grep -qF "api --paginate repos/${r}/commits/${H3}/check-runs" "${ROOT}/gh.log"
+  check "$1: merges the new head" grep -qxF "pr merge 7 --repo ${r} --squash --match-head-commit ${H3}" "${ROOT}/gh.log"
+  is "$1: base-merged, then merge ok" "merge s base-merged ${H3}|merge s ok" "$(events | grep '^merge ' | paste -sd'|' -)"
+}
 
-# --- main merged in, the new head's parents the old head and main's head: base merged, no merge.
+# --- main merged in, the new head's parents the old head and main's head: base merged, then that head merges.
 moved; merge "${URL}"
-refused "the base merged in" "${MERGED_LINE}"
+merged_in "the base merged in"
 check "the base merged in: update-branch pinned to the head merge read" updated
-check "the base merged in: logs base-merged with the new head" logged "^merge s base-merged ${H3}$"
-check "the base merged in: the story stays in review" grep -qx "status: review" "${S}"
 # GitHub moves the head a moment after it answers: merge reads it until it does.
 moved; echo 3 > "${FX}/update-lag"; merge "${URL}"
-refused "a head that moves on the fourth read" "${MERGED_LINE}"
+merged_in "a head that moves on the fourth read"
 is "a head that moves on the fourth read: read four times" 4 "$(views_after_put)"
 # The second parent behind main's head is still a commit on main.
 moved; parents "${H1}" "${B0}"; echo '{"status":"ahead","behind_by":0}' > "${FX}/compare.${B0}"; changes "${B0}" "${X}"; pr_changes "${B0}" "${PRX}"; merge "${URL}"
-refused "a second parent behind main's head" "${MERGED_LINE}"
+merged_in "a second parent behind main's head"
 check "a second parent behind main's head: compares it with main's head" grep -qxF "api repos/o/r/compare/${B0}...${B}" "${ROOT}/gh.log"
 # The update goes to the PR's own repo.
 OTHER=https://github.com/o/other/pull/7
 moved; item s "status: review" "prs: ${OTHER}"; merge "${OTHER}"
-refused "a PR in another repo" "base merged: ${OTHER} is now 3333333 (1111111 with main merged in)"
+merged_in "a PR in another repo" "${OTHER}"
 check "a PR in another repo: update-branch in that repo" grep -qxF "api -X PUT -f expected_head_sha=${H1} repos/o/other/pulls/7/update-branch" "${ROOT}/gh.log"
 
 # --- The new head is not the old head with main merged in: review it.
@@ -139,12 +152,11 @@ refused "a conflict" "${MOVED}, and GitHub cannot merge it in, a conflict (HTTP 
 check "a conflict: update-branch was asked" updated
 check "a conflict: no base-merged line" no_base_merged
 # A 422 once the head has moved is no conflict: that head is checked. Here another merge of this PR
-# went first and its head is GitHub's merge of main, so this one says base merged too.
+# went first and its head is GitHub's merge of main, so this one says base merged too, and merges it.
 STALE="expected head sha didn't match current head ref."
 moved; echo "${STALE}" > "${FX}/update.422"; merge "${URL}"
-refused "a 422 after another merge of this PR landed GitHub's merge" "${MERGED_LINE}"
+merged_in "a 422 after another merge of this PR landed GitHub's merge"
 is "a 422 after another merge of this PR landed GitHub's merge: reads the head once more" 1 "$(views_after_put)"
-check "a 422 after another merge of this PR landed GitHub's merge: logs base-merged" logged "^merge s base-merged ${H3}$"
 # Here a builder pushed after merge read the head: a new head to review, never a base merge to redo.
 moved; echo "${STALE}" > "${FX}/update.422"; COMMITTER=builder parents "${H1}"; merge "${URL}"
 refused "a 422 after a builder's push" "${UNCHECKED}, which GitHub did not make (committer builder, signature verified; GitHub's own merges are web-flow's, verified): review the new head as for any new head"
@@ -159,13 +171,5 @@ moved; rm "${FX}/update-head"; merge "${URL}"
 refused "a head that never moves" "${MOVED}; GitHub took the request to merge it in, but its head was still 1111111 after 20 reads 0 s apart: pull the branch first (GitHub may yet push its merge), then merge origin/main in, push, and merge the new head"
 is "a head that never moves: read 20 times, then stops" 20 "$(views_after_put)"
 check "a head that never moves: no base-merged line" no_base_merged
-
-# --- The line's next step: the new head, green and up to date, merges with --head.
-moved; merge "${URL}"
-checks "${FX}/${H3}.checks" "$(run test completed success)"; statuses "${FX}/${H3}.status"; rm "${FX}/behind"
-merge --head "${H3}" "${URL}"
-is "the base-merged head merges with --head" "0|yes" "${rc}|$(grep -qxF "pr merge 7 --repo o/r --squash --match-head-commit ${H3}" "${ROOT}/gh.log" && echo yes)"
-is "the base-merged head merges with --head: base-merged, then merge ok" "merge s base-merged ${H3}|merge s ok" \
-  "$(events | grep '^merge ' | paste -sd'|' -)"
 
 finish "merge base-update"
