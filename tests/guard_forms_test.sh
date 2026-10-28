@@ -47,7 +47,7 @@ lib() {
     eval "$1"' _ "$1" 2>&1
 }
 # rule_of <brief> — guard_rule as the brief holds it, whitespace flattened; empty when it is not there.
-rule_of() { flat "$1" | sed -n "s/.*\(The plugin's guard hook checks each Bash call.*stops you on one\.\).*/\1/p"; }
+rule_of() { flat "$1" | sed -n "s/.*\(The plugin's guard hook checks each Bash call.*stopped one on a prompt\.\).*/\1/p"; }
 # spans <rule> — each backticked form, as written, a tab, then with swarm.sh (and a SWARM_PROJECT=
 # before it) as the bare word, so one list fits every brief.
 spans() {
@@ -60,7 +60,10 @@ for f in re.findall(r"`([^`]*)`", sys.argv[1]):
 # Every form guard_rule shows, in order, and what this test does with it: allow (fed to the guard,
 # which must pass it), refuse (fed, must be refused) or none (not a guard matter: the variable delete
 # that stopped a builder on a permission prompt). The waits are each brief's own; a conductor never
-# waits on CI, so it is shown no wait-pr.
+# waits on CI, so it is shown its own watch and no wait-pr. Today the rm -rf and swarm.sh wait and watch
+# rows never say merge, git, cd or a kill, so the guard's shell fast path passes them before its Python
+# rules run: their allow checks go red only if a later guard rule refuses them. Whether auto mode
+# prompts on a delete is Claude Code's, not the guard's, so the no-prompt delete is pinned as text only.
 FORMS_HEAD="cd <dir> || exit 1 && <command>	allow
 cd <dir>; <command>	refuse
 swarm.sh merge <PR URL>	allow
@@ -69,8 +72,11 @@ FORMS_TAIL="rm -rf <absolute path>	allow
 rm -rf \"\$SP/\$m\"	none"
 WAIT_BUILDER="swarm.sh wait-pr --head <sha> <PR URL>	allow"
 WAIT_REVIEW="swarm.sh wait --stall <slug>	allow
-swarm.sh wait-pr <PR URL>	allow"
-WAIT_CONDUCT="swarm.sh watch	allow
+swarm.sh wait-pr <PR URL>	allow
+swarm.sh wait-pr --head <sha> <PR URL>	allow"
+WAIT_EPIC="swarm.sh watch --epic f	allow
+swarm.sh wait <slug>	allow"
+WAIT_BACKLOG="swarm.sh watch --backlog	allow
 swarm.sh wait <slug>	allow"
 
 # call <command> — the guard's exit code on <command> as a swarm agent's Bash call from the project.
@@ -111,16 +117,20 @@ brief_forms() {
     esac
   done < <(paste <(spans "${rule}" | cut -f1) <(cut -f2 <<< "${want}"))
   check "the $1 brief states the Write tool and quoted-heredoc guidance" "yes|yes" \
-    "$(has 'Text that mentions a merge (a PR body, a comment) goes in a file through the Write tool, or into the command as a quoted heredoc' "${rule}")|$(has 'Bash that writes it to a file, through a redirect or tee, is refused as a raw merge' "${rule}")"
+    "$(has 'Text that mentions a merge (a PR body, a comment) goes in a file through the Write tool, passed with --body-file, or into a gh pr create, edit or comment as a quoted heredoc' "${rule}")|$(has 'A gh api call that carries it is refused as a raw merge, and so is Bash that writes it to a file, through a redirect or tee' "${rule}")"
   # shellcheck disable=SC2016 # backticks to match, not run
   check "the $1 brief's no-prompt delete is the path spelled out in full" yes \
-    "$(has 'Delete with the path spelled out in full, `rm -rf <absolute path>`: auto mode runs that with no permission prompt' "${rule}")"
+    "$(has 'Delete a scratch path you made with the path spelled out in full, `rm -rf <absolute path>`: auto mode ran that for a builder with no permission prompt' "${rule}")"
 }
 
 for m in human agent; do brief_forms "builder (merge = ${m})" "$(builder "${m}")" "${WAIT_BUILDER}"; done
 brief_forms review "$(lib "review_brief s1 https://github.com/o/r/pull/7 main ${P}/.swarm/reviews/s1.md abc 1")" "${WAIT_REVIEW}"
-brief_forms conductor "$(lib 'conduct_brief f')" "${WAIT_CONDUCT}"
-brief_forms "backlog conductor" "$(lib 'conduct_brief backlog')" "${WAIT_CONDUCT}"
+brief_forms conductor "$(lib 'conduct_brief f')" "${WAIT_EPIC}"
+brief_forms "backlog conductor" "$(lib 'conduct_brief backlog')" "${WAIT_BACKLOG}"
+# What the rule says is refused, beside the forms that pass: merge text in a gh api call (a comment
+# reply), and merge text a Bash redirect writes to a file.
+check "the guard refuses merge text in a gh api comment, and written to a file by Bash" "2|2" \
+  "$(call "$(printf '%s\n' "gh api repos/o/r/pulls/7/comments/1/replies -f body=\"\$(cat <<'EOF'" 'it names gh pr merge' EOF ')"')")|$(call "$(printf '%s\n' "cat > ${P}/body.md <<'EOF'" 'it names gh pr merge' EOF)")"
 
 echo "${fails} failed"
 [[ ${fails} -eq 0 ]]
