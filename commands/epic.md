@@ -108,7 +108,7 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    non-goals that leave its edge unclear, risks not named, open questions that block planning it
    into stories; cite file:line; write findings only to `D/review.md`) and start it:
    `swarm.sh agent _epic epic-review-<slug> "$PWD" epic-review <brief>`. Wait until `D/review.md`
-   is written, then `swarm.sh wait epic-<slug>` (tell refuses a busy co-author) and hand it over:
+   is written, then hand it over (a tell to a busy co-author is queued and delivered when its turn ends):
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
    together." to a file and run `swarm.sh tell epic-<slug> nudge <file>`.
 5. Once `D/agreed` exists, and only then, on the user's agreement, set
