@@ -16,11 +16,34 @@ findings_goal() {
   send_goal "$1" "$3" findings "$2"
 }
 
-# The merge and review rules, shared by the briefs.
+# The merge and review rules, shared by the briefs. merge_rule ends with guard_rule, so a builder's
+# brief has the guard's forms, with the wait-pr form its other rules use.
 merge_rule() {
+  local sw="${SWARM_HOME}/bin/swarm.sh" guard
+  guard="$(guard_rule "\`${sw} wait-pr --head <sha> <PR URL>\`")"
   # shellcheck disable=SC2154 # assigned in another file
-  if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
-  else echo "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge)."; fi
+  if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges). ${guard}"
+  else echo "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge). ${guard}"; fi
+}
+# guard_rule <waits> — the command forms hooks/merge-guard.sh passes, and a delete auto mode ran for a
+# builder with no permission prompt, for the builder (through merge_rule), review and conductor briefs.
+# <waits> is the brief's own wait commands, with swarm.sh as the brief writes it (the review brief's
+# names the project), so a conductor, which never waits on CI, is shown its own watch and no wait-pr.
+# It shows no merge command: each brief gives its own (merge --head on the reviewed head, merge --board,
+# or none under merge = human), and the rule says only that it runs alone. Bash that writes merge text
+# to a file, or a gh api call that carries it, is a raw merge to the guard, so that text goes through
+# the Write tool or a quoted heredoc in a gh pr command. tests/guard_forms_test.sh feeds each Bash form
+# to the guard.
+guard_rule() {
+  # shellcheck disable=SC2016 # the forms are shown, not run
+  printf '%s ' "The plugin's guard hook checks each Bash call, and these forms pass it." \
+    'Write `cd <dir> || exit 1 && <command>`, never `cd <dir>; <command>`.' \
+    'Text that mentions a merge (a PR body, a comment) goes in a file through the Write tool, passed with --body-file, or into a gh pr create, edit or comment as a quoted heredoc, `--body "$(cat <<'"'EOF'"' ... EOF)"`.' \
+    'A gh api call that carries it is refused as a raw merge, and so is Bash that writes it to a file, through a redirect or tee, since that file could be run.' \
+    'The agent that merges runs the merge command its brief gives alone in its Bash call, joined to nothing: no &&, ;, | or & around it.' \
+    "Wait with $1, in the background, never a loop of your own."
+  # shellcheck disable=SC2016 # the forms are shown, not run
+  printf '%s' 'Delete a scratch path you made with the path spelled out in full, `rm -rf <absolute path>`: auto mode ran that for a builder with no permission prompt, where `rm -rf "$SP/$m"`, a path built from variables, stopped one on a prompt.'
 }
 # wait_pr_rule <then> <report> <head> — how every agent waits on a PR's CI: on <head> (wait-pr's --head:
 # right after a push GitHub can still report the old head), <then>, what it does on red, a conflict or a head the PR never got,
@@ -1085,7 +1108,7 @@ EOF
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
-# changes code, and the project's rules. After each review it fixes or declines each finding, logs each
+# changes code, the guard's forms (guard_rule) and the project's rules. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
 # before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,
@@ -1128,6 +1151,8 @@ and wait on it again."
 Review $2, the PR of story $1, at its head $5, in this worktree. Never edit, commit or push here:
 the builder changes the code. Merge only as the pass step below says. The files you write are
 ${4}, ${round} and, to nudge the builder, ${nudge}.
+
+$(guard_rule "\`${sw} wait --stall <slug>\`, \`${sw} wait-pr <PR URL>\` and, after the builder pushes, \`${sw} wait-pr --head <sha> <PR URL>\`")
 
 The story touches: $(fm "${story}" touches)
 
@@ -1402,9 +1427,12 @@ board_pr_merge_rule() {
 }
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
+# It has the guard's forms (guard_rule), as every brief does.
 # The epic backlog is the backlog conductor's: the ready stories with no epic.
 conduct_brief() {
   local epic="$1" inbox scope="Stay inside this epic: start no story outside it, and leave the HLD and other epics alone."
+  local watch="swarm.sh watch --epic ${epic}"   # its own watch, as its mode's rules run it
+  [[ "${epic}" != backlog ]] || watch="swarm.sh watch --backlog"
   inbox="$(conductor_inbox "$(conductor_name "$1")")"
   if [[ "${epic}" == backlog ]]; then
     scope="Start only stories with no \`epic:\`, and leave every epic and its stories alone."
@@ -1427,6 +1455,8 @@ EOF
 ${scope} A
 story whose \`kind\` is set and is not code, docs or chore (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
+
+$(guard_rule "\`${watch}\` and \`swarm.sh wait <slug>\`")
 
 When the board is in the project's repo, make a scope or body edit to a story in a board PR
 (\`swarm.sh board-pr\`), as the lead does, never in the main checkout. $(board_pr_merge_rule) A builder

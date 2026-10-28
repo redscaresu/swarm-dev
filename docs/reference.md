@@ -3074,6 +3074,19 @@ Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
+Every builder, review agent and conductor brief lists the forms the guard passes:
+`cd <dir> || exit 1 && <command>`, a merge run alone in its call (the brief gives its own merge
+command, or none under `merge = human`, so the rule names none), and the brief's own waits. A
+builder's is `swarm.sh wait-pr --head`. A review agent's are
+`swarm.sh wait --stall` and `swarm.sh wait-pr`, with `--head` after the builder pushes. A
+conductor's are its own `swarm.sh watch --epic <epic>` (or `--backlog`) and `swarm.sh wait`, since
+it never waits on CI. Text that mentions a merge goes through the Write tool, or into a `gh pr`
+command as a quoted heredoc (`--body "$(cat <<'EOF' ... EOF)"`). A `gh api` call that carries it is
+refused. The brief also shows a delete that auto mode ran for a builder with no permission prompt:
+`rm -rf` on a scratch path spelled out in full. A path built from variables, `rm -rf "$SP/$m"`,
+stopped a builder on a prompt. `tests/guard_forms_test.sh` feeds each of those Bash forms to the
+guard.
+
 An agent's guards come from the flags it starts with: `--disallowedTools` (no `gh pr merge`, and for
 the fallback reviewer no file tools, commit or push) and `--settings`, which sets `SWARM_AGENT`.
 When herdr restarts, it reopens each agent's pane and resumes the session. On its own it would run
