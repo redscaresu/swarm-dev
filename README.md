@@ -41,14 +41,15 @@ worktree. Every PR is reviewed before it merges, and the run stops whenever a de
    one run is split into smaller epics first.
 3. **Build.** A conductor agent starts one builder per story. Each builder works in its own git
    worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
-   fixes what they find. A story that fails twice is rebuilt once on Fable, the most capable model,
+   fixes what they find. When a review finds nothing left to fix, the review agent merges the PR
+   or hands it to you (step 4). A story that fails twice is rebuilt once on Fable, the most capable model,
    then handed to the lead. One story waits for another only when they clash: their `touches`
    name the same file in the same repo, and either the same part or both the bare file. Parts match
    on their first word (a function or section name), skipping a leading `§`, `#`, "the", "a" or
    "an". A bare file does not clash with a part of that file.
-4. **Merge.** By default you merge each green, reviewed PR yourself. The lead merges one only when
-   the agreed HLD over its work lists `merge` in its `grants:`.
-   With `merge = agent`, the conductor merges it, except a story marked `costs: money` and a story PR
+4. **Merge.** By default you merge each green, reviewed PR yourself. The lead, or the PR's review
+   agent, merges one only when the agreed HLD over its work lists `merge` in its `grants:`.
+   With `merge = agent`, the review agent or the conductor merges it, except a story marked `costs: money` and a story PR
    that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, which always wait for you.
    In that mode no conductor starts until your Claude Code settings allow
    `swarm.sh merge` (step 3 of Getting started names the rule). `swarm.sh conduct` prints the rule

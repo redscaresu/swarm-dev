@@ -1941,18 +1941,25 @@ get_fm() {
     n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
 }
 
-# review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge. A story
-# whose depends_on parents are still open is held instead: back to blocked with held_by: <parents> and
-# its prs: line, its builder, worktree and branch kept, so no merge reaches a child before its parents.
+# review <slug> [--head <sha>] <pr-url>... — the item's PRs are green and reviewed and wait on a human
+# merge. With --head, each PR's head must still be <sha>, the head its review passed (review_heads),
+# else it changes nothing. A story whose depends_on parents are still open is held instead: back to
+# blocked with held_by: <parents> and its prs: line, its builder, worktree and branch kept, so no merge
+# reaches a child before its parents.
 # A story put in review under merge = human, or one that costs money, is then noted to its conductor
 # (review_note). An epic's review sends no note.
 mark_review() {
-  local f url held
+  local f url held want=""
   f="$(item_file "${1:?slug}")"; shift
+  if [[ "${1:-}" == --head ]]; then
+    want="${2:-}"; shift; [[ $# -eq 0 ]] || shift
+    [[ "${want}" =~ ^[0-9a-f]{40}$ ]] || die "review: --head takes a full 40-character SHA, not '${want}'"
+  fi
   [[ $# -gt 0 ]] || die "review: name the PR URLs"
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+$ ]] || die "review: not a PR URL: ${url}"
   done
+  [[ -z "${want}" ]] || review_heads "$(basename "${f}" .md)" "${want}" "$@"
   review_state "${f}" "" "$@"; held="${REVIEW_HELD}"
   if [[ -n "${held}" ]]; then
     # A parent that costs money waits on the user's merge (money_walk), maybe for days.
@@ -1964,6 +1971,25 @@ mark_review() {
   if [[ "${f}" == "${BOARD}/stories/"* ]] && { [[ "${CFG_merge}" == human ]] || costs_money "${f}"; }; then
     review_note "$(basename "${f}" .md)" "$(fm "${f}" epic)" "$*"
   fi
+}
+
+REVIEW_HEAD_SECONDS=60   # how long review --head's read of one PR's head may take
+
+# review_heads <slug> <sha> <pr-url>... — dies, changing nothing, unless gh reads each PR's head as
+# <sha> within REVIEW_HEAD_SECONDS: a head pushed since the review passed has had no review, so the
+# review agent reviews it with review-agent --next. A read that fails or runs out says to run it again.
+review_heads() {
+  local slug="$1" want="$2" url head secs="${REVIEW_HEAD_SECONDS}"
+  shift 2
+  for url in "$@"; do
+    [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]]
+    head="$(within "${secs}" gh pr view "${BASH_REMATCH[2]}" --repo "${BASH_REMATCH[1]}" --json headRefOid < /dev/null \
+      | json "d['headRefOid']" 2>/dev/null)" || head=""
+    [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
+      || die "review: gh could not read the head of ${url} within ${secs}s, so whether it is still ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
+    [[ "${head}" == "${want}" ]] \
+      || die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: review the new head with swarm.sh review-agent --next ${slug} ${url}"
+  done
 }
 
 # review_note <slug> <epic> <pr-urls> — note the running conductor of <epic> (the backlog's when it is
