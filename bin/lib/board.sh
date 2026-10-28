@@ -1339,12 +1339,22 @@ plan_hld() {
   echo "${f}"
 }
 
+# protected_paths [any-case] — the paths on stdin, one a line, that only the user changes, in the order
+# given: those under .claude/, .github/ or hooks/, and a root Makefile, GNUmakefile or makefile (in any
+# repo: what checks a merge or what the agents may do). pr_hld puts a PR touching one under no HLD,
+# the names as written; protected_hold holds a story PR touching one under merge = agent, with any-case
+# in any case of letters, since a case-insensitive checkout (macOS's default) reads Hooks/x.sh as
+# hooks/x.sh.
+protected_paths() {
+  local i=""; [[ "${1:-}" != any-case ]] || i=i
+  grep "-${i}E" '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' || true   # loose-match: ok the variable is the -i flag; the pattern is literal
+}
+
 # pr_hld <pr-url> [<sha> <base>] — the one agreed HLD over a PR (one_hld), or nothing: over the stories whose prs:
 # lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
 # touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR that touches
-# .claude/, .github/, hooks/ or a root Makefile, GNUmakefile or makefile (in any repo: what checks a
-# merge or what the agents may do), or the board's hld/, is under none: only the user changes those. The one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story
+# a protected path (protected_paths), or the board's hld/, is under none: only the user changes those. The one exception is the board PR that plans an HLD, under that HLD (plan_hld). A PR no story
 # lists that touches any file but the board's epics and stories is under none too. With <sha> and
 # <base>, the head and base branch merge pinned: the files are <base>...<sha>'s (300 at most, else it
 # cannot list them all), and a PR whose head or base is not those prints "<head> <base>" and exits
@@ -1380,7 +1390,7 @@ pr_hld() (
   fi
   st="$(ci_gate files-status "${repo}" "${n}" "${count}" ${at[@]+"${at[@]}"})" || die "grants: cannot list every file ${url} changes: ${st}"
   info="$(cut -d' ' -f2- <<< "${st}")"
-  ! grep -qE '^(\.claude/|\.github/|hooks/|(GNUmakefile|makefile|Makefile)$)' <<< "${info}" || return 0
+  [[ -z "$(protected_paths <<< "${info}")" ]] || return 0
   if [[ "${repo}" != "${own}" ]]; then head=""   # the board is not in its repo, so none of its files is a board file
   # A PR that touches the board's hld/ is under none, but for the board PR that plans an HLD, whose
   # head can be read.
