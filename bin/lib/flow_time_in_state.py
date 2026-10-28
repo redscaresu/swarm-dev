@@ -5,7 +5,7 @@
 # retry's partial minutes. held is over the same PRs: each of their stories' held_min (on its earliest
 # build, as a step-up rung keeps attempts 1 and its own held_min) once, so the six states share one population. A row gives its PRs, the hours in
 # all six states, and each state as <state>:<hours>h/<share of those hours>%, largest first (a tie in
-# outcomes' column order, held last). Last, ready_wait's median and p90 (nearest rank) in minutes, over
+# outcomes' column order, held last). Then ready_wait's median and p90 (nearest rank) in minutes, over
 # the stories whose first build (the slug's earliest started, as a step-up rung keeps attempts 1 and its
 # own ready_wait_min) is dated in the window and has a ready_wait_min, merged or not (empty with none);
 # an epic with those alone still gets a row. Then green_to_review's median and p90 (nearest rank) in
