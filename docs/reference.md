@@ -2149,7 +2149,13 @@ which finishes each item whose PRs have all merged and sends back to `ready` any
 closed unmerged; that item keeps its `attempts:`, and reconcile never counts one. While the story
 file still names its repo, it also clears each story's build away: its worktree, and `story/<slug>`
 here and on origin. A merged story's build always goes; if its builder is still open, reconcile
-closes it first, which counts nothing while the story is in review. After a PR closed unmerged, the
+closes it first, which counts nothing while the story is in review. It closes the story's review
+agent, `review-<slug>`, too. When reconcile runs in that agent's own pane, as a `swarm.sh merge` run
+there does, it retires the agent instead, under a `-done` name (`review-<slug>-done` for a short
+slug), so the pane running the merge stays open; `swarm.sh tidy --yes` closes it later. Its session
+is archived to `.swarm/sessions` when it is retired, so that copy stops at the merge. A review
+agent that is working or waiting in another pane is left open, and reconcile says so: it may be
+running its own merge, whose reconcile then retires it. After a PR closed unmerged, the
 build goes only when no builder is open, and the story can then be built again. An open builder may
 be fixing that PR, so reconcile keeps its build and prints `build kept: <slug>`. It does the same when
 herdr cannot list its agents, since a builder may then be open unseen. After a merge it clears the
@@ -2184,7 +2190,7 @@ branch has no upstream (there is nothing to pull), and stays on the board until
 `swarm.sh finish <slug>` takes it off through a board PR. When reconcile holds the pull because it
 cannot read a PR in review, the item stays in review until a later reconcile pulls. A story whose
 file a pull already took off the board before reconcile saw its PRs merge (you pulled by hand, or a
-reconcile stopped after its pull) is finished after the pull in the same way: its builder closed,
+reconcile stopped after its pull) is finished after the pull in the same way: its builder and idle review agent closed (or the review agent retired, when reconcile runs in its pane),
 its build cleared in the repo the deleted file named, and `reconcile <slug> ok (finished)` logged.
 When its builder's pane cannot be closed, its build and state stay, and the next reconcile tries
 again. One whose PRs did not all merge, such as a story a board PR dropped, only loses its state. On a board outside the repo it deletes the file of the item that merged.
@@ -2764,7 +2770,7 @@ tests each PR on top of the ones ahead of it, so there every reviewed PR can be 
 
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
 
-**Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder if it is open and
+**Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder and review agent if they are open and
 removes its worktree and `story/<slug>`, here and on origin (§ Merging). By hand,
 `swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there) and keeps
 its open PR, branch and worktree, putting a `ready` story in review with that PR (`kept:`). `--drop`
