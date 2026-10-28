@@ -790,8 +790,9 @@ print("\n".join(stalled_panes(E, float(E.get("SWARM_DASH_NOW") or time.time())))
 # names (one herdr gives no name as `<pane> (no name)`). A pane's dir is its cwd taken up to the
 # nearest folder with .claude/swarm/config, as lead_project finds the lead's project; one in a story
 # worktree (<dir>-wt/<slug>, or a folder in it) is <dir>'s when <dir> has that config. The lead's dir
-# is its first pane's. Another workspace is a project's when one of its panes' dirs is the lead's, or
-# holds the lead's dir in its board (the last board_dir in its config: a board kept outside the
+# is its first pane's. A pane in a worktree of a repo with no swarm config (another repo's) is
+# skipped, as herdr_workspaces skips it. Another workspace is a project's when its dir (its first
+# pane's, as herdr_workspaces takes it) is the lead's, or holds the lead's dir in its board (the last board_dir in its config: a board kept outside the
 # repo, where the lead runs), or the project's lead-agents record (LEAD_AGENTS_RECORD) holds the
 # workspace's id and label (its panes may all be in other repos' worktrees); and its label is
 # `<part> · ...`, where <part> is the lead's <label>, the dir's name, or the dir's name and its own
@@ -855,7 +856,7 @@ panes, agents = items("SWARM_PANES", "panes"), items("SWARM_AGENTS", "agents")
 dirs, held = {}, {}
 for p in panes:
     c = (p.get("cwd") or "").rstrip("/")
-    if c:
+    if c and (os.path.isfile(config(project(c))) or not os.path.dirname(project(c)).endswith("-wt")):
         dirs.setdefault(ws_of(p), []).append(project(c))
 for a in agents:
     if a.get("name") or a.get("pane_id"):
@@ -880,7 +881,7 @@ for w in workspaces:
     if label.startswith(lead) or sep not in label:
         continue
     part = label.split(sep, 1)[0]
-    cands = dirs.get(i, []) + [d for l, d in records.get(i, []) if l == label]
+    cands = dirs.get(i, [])[:1] + [d for l, d in records.get(i, []) if l == label]
     owner = next((li for d in cands for li, own, ld in leads if ld and fits(part, own, d) and home(ld, d)), None)
     if owner is not None:
         owned.setdefault(owner, []).append(w)

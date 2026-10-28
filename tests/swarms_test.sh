@@ -13,7 +13,9 @@
 # with board_dir = ~/web-board. a/app-2's lead-agents workspace has only a pane in another repo's
 # worktree, and is its own by the project's lead-agents record. f/foo-wt/c is a main checkout in a
 # folder whose name ends in -wt. b/app's label is its real path hash; app-000000 · e11 in b/app is a
-# decoy. The lead's own agent has no name. A stalled list read is cut at SWARM_REPORT_SECONDS.
+# decoy. app · e15's first pane is in c/app, where no lead runs, so it is no project's (its dir is its
+# first pane's, as herdr_workspaces takes it), though its second is in a/app. The lead's own agent
+# has no name. A stalled list read is cut at SWARM_REPORT_SECONDS.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -88,7 +90,8 @@ ws = [("w8", "app-2 · e8", [r + "/a/app"]),
       ("w11", "app-000000 · e11", [r + "/b/app"]),
       ("w12", "app-2 · lead-agents", [r + "/x/other-wt/s9"]),
       ("L6", "swarm-lead · c", [r + "/f/foo-wt/c"]),
-      ("w13", "c · e13", [r + "/f/foo-wt/c"])]
+      ("w13", "c · e13", [r + "/f/foo-wt/c"]),
+      ("w15", "app · e15", [r + "/c/app", r + "/a/app"])]
 agents = [("L1:p1", "", "working"), ("w1:p1", "conduct-e1", "working"), ("w1:p2", "s1", "idle"),
           ("w2:p1", "conduct-e2", "working"), ("w2:p2", "s2", "idle"),
           ("w3:p1", "conduct-e3", "working"), ("w3:p2", "s3", "blocked"),
