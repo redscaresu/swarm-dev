@@ -109,22 +109,6 @@ item() { # <board> <path> <front-matter line>... — a fresh item: its file, and
 # val <slug> <key> — <key> of a story on ${b} as swarm.sh reads it: board.sh's own get_fm.
 # shellcheck source=/dev/null
 val() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${b}/stories/$1.md" "$2"); }
-# The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
-MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\` (fallback when it printed \"reviewed by fallback\"), code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
-# logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
-# and text and run as written: the outcome and reviewer of the row each logs, then has for MAPPING.
-logs_findings() {
-  local f="${p}/.swarm/findings.tsv" line n
-  while IFS= read -r line; do
-    line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"; line="${line//<reason>/nit}"; line="${line//<n>/1}"
-    line="${line%%\"<*}\"text\""   # the text placeholder is the last word
-    n=0; [[ ! -f "${f}" ]] || n="$(wc -l < "${f}")"
-    if ! (cd "${ROOT}" && env -u SWARM_PROJECT bash -c "${line}" >/dev/null 2>&1); then printf 'failed: %s|' "${line}"; continue; fi
-    [[ "$(wc -l < "${f}")" -eq $((n + 1)) ]] && printf '%s|' "$(tail -1 "${f}" | cut -f5,6 | tr '\t' ' ')" || printf 'no row|'
-  done < <(grep -E '^    SWARM_PROJECT=.* log-finding ' <<< "$1")
-  has "${MAPPING}" "$(tr -s '[:space:]' ' ' <<< "$1")"
-}
-LOGS_FINDINGS="fixed codex|declined codex|yes"
 
 # herdr: logs every call; each new pane is w:<n>, each new tab t<n>, and tab list shows their labels.
 # agent start makes the session's .jsonl; a /goal prompt is kept in goal.txt and writes its entry.
@@ -238,36 +222,44 @@ check "the conductor's brief watches only its own epic's PRs" "yes" \
   "$(grep -q 'swarm.sh watch --epic e`' "${p}/.swarm/briefs/conduct-e.md" && echo yes || echo no)"
 cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the conductor's brief includes the project's brief, so the project's rules reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
-check "the story-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${cbrief}")"
-# The kinds command finding_rule gives, run as written against another log: only kinds with a fixed,
-# escaped or pre-outcome row (never one only declined or filed), and no error with no log at all.
-kinds_cmd="$(grep -B1 '^already lists when it fits' <<< "${cbrief}" | head -1 | tr -d '`')"
-kinds_log="${ROOT}/kinds/.swarm/findings.tsv"; mkdir -p "${kinds_log%/*}"
-printf '2026-01-01\tfixed-kind\to/r#1\tx\tfixed\tcodex\n2026-01-01\tdeclined-kind\to/r#2\tx\tdeclined\tcodex\tnit\n2026-01-01\told-kind\to/r#3\tx\n2026-01-01\tescaped-kind\to/r#4\tx\tescaped\tescaped\n2026-01-01\tfiled-kind\to/r#5\tx\tfiled\tcodex\n' > "${kinds_log}"
-check "finding_rule's kinds command lists only kinds with a fixed, escaped or pre-outcome row" "escaped-kind|fixed-kind|old-kind" \
-  "$(bash -c "${kinds_cmd//${p}/${ROOT}/kinds}" | paste -sd'|' -)"
-check "finding_rule's kinds command prints nothing, not an error, with no findings log" "" "$(bash -c "${kinds_cmd//${p}/${ROOT}/none}" 2>&1)"
-check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
-  "$(has "runs codex-review with the story's slug" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
-review="$(para "A story is reviewed only when" "${cbrief}")"
-check "the review paragraph starts a review agent per green PR without waiting, waits on each, and declines out-of-scope findings" "yes|yes|yes|yes|yes" \
-  "$(has "${SWARM} review-agent <slug> <PR URL>" "${review}")|$(has "Never wait for other PRs or reviews to gather first: run one review agent for every green PR at" "${review}")|$(has "swarm.sh wait review-<slug>" "${review}")|$(has "log-finding --declined out-of-scope --reviewer <who>" "${review}")|$(has "${p}/.swarm/reviews/<slug>.md" "${review}")"
-check "the review paragraph has the conductor read the diff itself when a review agent reports codex skipped, and never run codex-review itself" "yes|0" \
-  "$(has "When a review agent reports \`codex skipped: <why>\` (its file's second line says so too), read the diff yourself in codex's place." "${review}")|$(grep -c 'Run codex-review in the background' <<< "${review}" || true)"
-check "the review paragraph takes a head moved: line or no findings section for no pass, and closes the agent and reviews again when the wait brings no file" "yes|yes" \
-  "$(has "A file with a \`head moved:\` line, or
-with no \`## Findings\` section, is not a pass: start the review again." "${review}")|$(has "When the wait returns with
-no findings file (it timed out, or the agent waits on a prompt, is gone or needs a login), close the
-review agent, never answering its prompt, and start the review again in a later round, or read the
-diff yourself as for a skipped codex." "${review}")"
-check "the review paragraph closes the review agent whatever it found, logs its out-of-scope section as declined, and checks the reviewed head before a merge" "yes|yes|yes" \
-  "$(has "then close the review
-agent (\`swarm.sh close review-<slug>\`) whatever it found." "${review}")|$(has "Log each item of the out-of-scope section with" "${review}")|$(has "compare the file's \`head:\` line with the PR's head" "${review}")"
+# The review agent waits for green, triages, tells its builder and merges or hands over: the conductor
+# only starts it, once per PR. If the brief again has the conductor wait on a review, triage it, tell
+# findings or log one, a review is driven twice and its findings go out twice, and these go red.
+review="$(para "A story is reviewed only by" "${cbrief}")"; rflat="$(tr -s '[:space:]' ' ' <<< "${review}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the review paragraph starts review-agent once on watch's opened line, on a queued: line and for a kept: PR" "yes|yes|yes|yes" \
+  "$(has "When \`swarm.sh watch\` prints \`<repo> #<n> story/<slug> opened\`, a PR of yours has opened: start its review agent once, at once, with \`${SWARM} review-agent <slug> <PR URL>\`." "${rflat}")|$(has '`queued: <repo> #<n> <branch> green <m>m with no review on <sha>`, that head has had no review: start its review agent then, the same way.' "${rflat}")|$(has 'A story `swarm.sh status` lists as `kept:` (a close kept its PR unreviewed) gets one the same way' "${rflat}")|$(has "then start the review agent on the line's PR." "${rflat}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+# A review agent started on the opened line can stop on a head the builder pushes before its first
+# round; queued: waits queue_minutes. If the paragraph drops the restart on watch's checks-finished
+# line, that head waits half an hour for a review, and this goes red.
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the review paragraph starts the review agent again on each checks finished line, and review-agent's refusal stops a second one" "yes|yes" \
+  "$(has 'When `swarm.sh watch` prints `<repo> #<n> story/<slug> checks finished on <sha>` for a PR of yours, start its review agent again the same way' "${rflat}")|$(has 'While it still reviews, review-agent refuses and nothing starts.' "${rflat}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the review paragraph starts a refused review agent again once its builder's wait returns or on watch's next line, and never waits on a PR or a review agent" "yes|yes" \
+  "$(has 'whatever the refusal says to do next, start it again once `swarm.sh wait <slug>` on that builder returns, or on `swarm.sh watch`'"'"'s next line for that PR, whichever comes first.' "${rflat}")|$(has "Never wait on a PR or a review agent, read a review file, triage, tell a builder findings, log a finding, close a review agent or merge a story's PR" "${rflat}")"
+# A review agent's stop reaches the conductor only as a note, and a base-merged head refuses review-agent
+# for as long as the merge runs: if the brief drops the note rule, the story sits; if it drops the
+# second-refusal rule, the conductor retries in a loop.
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the review paragraph acts on a review agent's stop note, and starts nothing on a second refusal of the same head" "yes|yes|yes" \
+  "$(has 'A note in your inbox that says `review-<slug> stopped on <sha>: <why>` is a review agent that stopped before a pass, and the story is yours again.' "${rflat}")|$(has 'nudge it once, naming the stop line, and start the review agent again once `swarm.sh wait <slug>` returns.' "${rflat}")|$(has 'If it refuses so again on the same head with the builder idle, start nothing more for that head' "${rflat}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the review paragraph nudges the builder on a dequeued merge's stop note, waits on an already-nudged builder after a base merge, closes the builder on a merge hold, and reports the rest for the lead" "yes|yes|yes|yes" \
+  "$(has 'for a `dequeued` merge, nudge the builder with the failing checks, telling it to merge origin/<base> in and push' "${rflat}")|$(has 'the review agent has nudged the builder already, so wait on it and start the review agent again on the head it pushes' "${rflat}")|$(has 'the user merges the PR, maybe days later, so close its builder with a bare `swarm.sh close <slug>`' "${rflat}")|$(has 'an `unconfirmed` merge or a base red or timed out after it goes in your report for the lead.' "${rflat}")"
+cflat="$(tr -s '[:space:]' ' ' <<< "${cbrief}")"
+check "the conductor's brief never waits on a review agent, tells findings, logs a finding or reviews the moment a head is green" "0|0|0|0|0" \
+  "$(grep -c 'swarm.sh wait review-<slug>' <<< "${cflat}" || true)|$(grep -c 'tell <slug> findings' <<< "${cflat}" || true)|$(grep -c 'log-finding --declined' <<< "${cflat}" || true)|$(grep -c "The moment a story's PR head is green" <<< "${cflat}" || true)|$(grep -c 'log-finding' <<< "${cflat}" || true)"
 check "the conductor's brief says what a builder's auth means and to resume it after the login, then wait on it again" "yes|yes" \
   "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${cbrief}")"
 check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
+# The review agent and the ladder limit a PR's rounds; a conductor that gives up on an unconverged
+# review clears the build (close --drop) under a live review agent. If either clause comes back, this goes red.
+check "the conductor gives up on no unconverged review, and leaves rounds to the review agent and the ladder" "no|yes" \
+  "$(grep -qF "review has not converged" <<< "$(tr -s '[:space:]' ' ' <<< "${cbrief}")" && echo yes || echo no)|$(has "A PR's review rounds are its review agent's and the ladder's to limit, never yours." "$(tr -s '[:space:]' ' ' <<< "${cbrief}")")"
 check "the story-mode conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule e "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 check "the story-mode conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \

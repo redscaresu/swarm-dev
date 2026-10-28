@@ -24,6 +24,7 @@
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh where <agent>                                  this project's agent (a slug, review-<slug>, conduct-<epic> or a herdr agent name): its pane id, its workspace's label and its tab's label; the workspace label is - when herdr gives none, the tab the name swarm-dev gave it (no label, a gone tab, or a list it could not give); exit 1 when herdr lists no such agent in this project's panes
+#   swarm.sh swarms                                         every swarm herdr runs on this machine: each `swarm-lead · <project>` workspace as a project, with its dir, then its workspaces (the lead's first) with their agents; a workspace is a project's by its label and its dir, never by a prefix of another project's label or a dir name two projects share
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog] [--foreground]        after claude plugin update: runs detached (log .swarm/upgrade-<version>.log; one per project, a second names it), in rounds: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's), a builder not while its Claude review agent is busy on the old version; one still busy after SWARM_UPGRADE_WAIT_MS (2 hours) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version, exits 1 if any is left
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
@@ -49,7 +50,7 @@
 #   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
 #   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, an agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once; it never edits the code, and on a pass it runs review --head on the head it reviewed, then merges the PR (merge = agent, or an HLD that grants merge) or leaves it for the user
 #   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
-#   swarm.sh review-agent --recheck <slug> <pr-url> <old head> <file:line>...   from review-<slug>'s own pane, after a wording fix: pass when the PR's new head is green and its diff from <old head> rewrites each named line (as at <old head>) and nothing else, writing the new head's findings file and .head; else refuse, writing nothing, and name --next when the old head, its findings, the diff or a red head rule the recheck out
+#   swarm.sh review-agent --recheck <slug> <pr-url> <old head> <file:line>...   from review-<slug>'s own pane, after a wording fix: pass when the PR's new head is green and its diff from <old head> rewrites each named line (as at <old head>) and nothing else, the lines the old head's .round.md names, writing the new head's findings file, a pass, and .head; else refuse, writing nothing, and name --next, which that refusal counts the round for, when the old head, its findings, the diff or a red head rule the recheck out
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
 #
@@ -300,6 +301,10 @@ load_config
 
 # abs_path <path> — <path>, relative to the project dir unless it is absolute.
 abs_path() { if [[ "$1" == /* ]]; then echo "$1"; else echo "${PROJECT_DIR}/$1"; fi; }
+# board_rel — the board's path from the project root with a trailing /, empty for a board at the root
+# (a board outside the repo gives its full path, with the /). Read from BOARD when called, so it
+# follows init_project, which resolves BOARD once it has made the board.
+board_rel() { [[ "${BOARD}" == "${PROJECT_DIR}" ]] || echo "${BOARD#"${PROJECT_DIR}"/}/"; }
 BOARD="$(abs_path "${CFG_board_dir}")"
 [[ -d "${BOARD}" ]] && BOARD="$(cd "${BOARD}" && pwd -P)"   # so a board_dir with .. is compared as the real path
 REPOS_DIR="$(dirname "${PROJECT_DIR}")"; [[ -z "${CFG_repos_dir}" ]] || REPOS_DIR="$(abs_path "${CFG_repos_dir}")"
@@ -610,6 +615,7 @@ dispatch() {
             local out p w t; out="$(agent_where "$1" 2>/dev/null)" || die "where: ${out:-herdr gave a list swarm.sh could not read}"
             IFS=$'\t' read -r p w t <<< "${out}"
             echo "$(agent_name "$1"): pane ${p}, workspace ${w}, tab ${t}" ;;
+    swarms) [[ $# -eq 0 ]] || die "swarms: takes no arguments (swarm.sh swarms)"; swarms ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     merge)  merge_pr "$@" ;;
@@ -637,6 +643,7 @@ dispatch() {
             next_step ;;                                          # hooks/lead-stop.sh: next's step without the gh calls next_report adds; --dash: dash --check's, its no-agent lines read as dash reads them
     _conductor) conductor_name "${1:?epic or backlog}"; echo ;;   # test hook: a conductor's agent name
     _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
+    _board-rel) board_rel ;;                                      # test hook: the board's path from the project root
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _archive) archive_session "${1:?name}" ;;                     # test hook: close's copy of an agent's session log
     _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
@@ -655,7 +662,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status where next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
+READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
@@ -1053,7 +1060,8 @@ main() {
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
     step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     # A --next round or a --recheck is no review start, so flow's review-agent starts and review_wait never
-    # read it; a recheck counts no round either (review_rounds).
+    # read it; a recheck that passes counts no round, and one refused with a full round due counts the
+    # round its wording nudge did not (review_rounds).
     review-agent) EV_TARGET="${2:-}"
             case "${EV_TARGET}" in
               --next) EV_CMD="review-agent:next"; EV_TARGET="${3:-}"; EV_OK="ok (round $(review_round "${3:-}"))" ;;

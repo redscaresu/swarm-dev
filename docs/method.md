@@ -17,9 +17,9 @@ each step is in [`reference.md`](reference.md).
 3. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. A critic and codex
    check them for gaps and overlaps, a skeptic each `risk: high` one (reference.md § Scoping an epic).
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
-   `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
-   § Building, § Merging). With a merge queue it enqueues each reviewed PR at once, else it merges
-   one at a time. A PR whose base gained code since its CI ran gets the base merged in on GitHub
+   `ready` stories in parallel panes and starts a review agent on each PR as it opens. The review
+   agent merges the PR, or hands it to you to merge (reference.md § Building, § Merging). With a
+   merge queue each reviewed PR is enqueued at once, else they merge one at a time. A PR whose base gained code since its CI ran gets the base merged in on GitHub
    (by its builder on a conflict) and runs CI again before it merges. Two stories clash only when their `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
    file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
@@ -121,7 +121,7 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main`. A repo that has none of them stops the command |
 | `sign_commits` | `false` | `true`: every builder's and conductor's brief tells it to sign each commit and merge with `-S`, and to stop if it cannot; `swarm.sh board-pr`'s commit and a stacked start's merge pass `-S` too |
-| `merge` | `human` | `human`: a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one; under that grant a story's review agent may also merge that story's PR. `agent`: the conductor merges, and so may a story's review agent for that story's PR, except a story with `costs: money` or a story PR that changes `.claude/`, `.github/`, `hooks/` or a root makefile, which `swarm.sh merge` holds for you (reference.md § Merging) |
+| `merge` | `human` | `human`: a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one; under that grant a story's review agent may also merge that story's PR. `agent`: each story's review agent merges that story's PR, except a story with `costs: money` or a story PR that changes `.claude/`, `.github/`, `hooks/` or a root makefile, which `swarm.sh merge` holds for you (reference.md § Merging); the conductor merges no story PR |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task. To `wait` and `dash`, a test suite running in the agent's pane (`make test`, `make check`, `scripts/test.sh`) is work for up to 3 times this long, so it is neither stalled nor stuck (reference.md § Building) |
 | `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building); one reviewed and left unmerged this long is `unmerged:` in `wait --lead` |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |

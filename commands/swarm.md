@@ -180,12 +180,13 @@ Repeat until a step below says stop:
      `kept: <slug> <PR URL>... (not reviewed)` line is a story whose builder was closed while its
      PRs were still open. It is in review, but its PRs are not offered to merge until
      `swarm.sh review <slug> <PR URL>...` marks them reviewed. While a conductor runs for the
-     story's epic, as `swarm.sh status` lists them, leave the story to it: an epic's conductor
-     reviews its kept stories under its merge rule. The backlog conductor's rule does not, so a
-     kept story with no epic is yours at once. One you left to its conductor is yours at
-     `collect`, when its report or `swarm.sh status` still lists the story as `kept:`. Either
-     way, the story's review agent reviews the line's PRs one at a time, and you leave each PR to
-     it. The review agent sends its findings and nudges to the story's builder, so first make sure
+     story's epic (the backlog conductor, for a story with no epic), as `swarm.sh status` lists
+     them, leave the story to it: the conductor opens the story's builder if it is closed and
+     starts its review agent, which reviews the PR and merges it or hands it to the user. A line
+     with more than one PR is yours at once, since the conductor leaves it to you. One you left to
+     its conductor is yours at `collect`, when its report or `swarm.sh status` still lists the
+     story as `kept:`. When the story is yours, its review agent reviews the line's PRs one at a
+     time, and you leave each PR to it. The review agent sends its findings and nudges to the story's builder, so first make sure
      one is open. If none is, start one in the story's worktree with
      `swarm.sh agent <tab> <slug> <worktree> <role> <brief>`, where <tab> is the story's `epic:`
      (its slug when it has none) and <role> is what `swarm.sh _role <slug>` prints. Its brief
@@ -271,9 +272,10 @@ Repeat until a step below says stop:
      (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage limit the model
      `fallback_reviewer` names. Write its findings to a file and send them with
      `swarm.sh tell <slug> findings <file>`: that tell is a round under way, and the line goes quiet.
-     If it finds nothing, send that to the story's conductor instead with
-     `swarm.sh tell <conductor> note <file>`, under the name `swarm.sh status` lists for the story's
-     epic or for the backlog. A clean run of yours clears nothing: the line stays in `status` and on
+     If it finds nothing, the PR has passed, and no conductor acts on that: hand it on yourself, as a
+     review agent does, with `swarm.sh review <slug> --head <the head you reviewed> <PR URL>` and,
+     under `merge = agent` or when `swarm.sh grants <PR URL>` lists `merge`,
+     `swarm.sh merge --head <that head> <PR URL>`. A clean run of yours clears nothing: the line stays in `status` and on
      the dashboard until a review agent starts on the PR, findings go to the builder, or the PR
      merges and the story leaves the board.
      A line with no PR URL names a `gh pr list` that finds the PR first. A
@@ -328,8 +330,8 @@ Repeat until a step below says stop:
      its next head needs a review of its own. Before the merge, if the story is not in review yet,
      close its builder if one is open (`swarm.sh close <slug> met`) and run
      `swarm.sh review <slug> <PR URL>`, as the `kept:` arm does, so merge finds the PR on the story.
-     Under `merge = agent`, run the merge, or tell the story's conductor to merge it if one runs for
-     its epic. Under `merge = human`, run it only when `swarm.sh grants <PR URL>` lists `merge`;
+     Under `merge = agent`, run the merge yourself: no conductor merges a story's PR. Under
+     `merge = human`, run it only when `swarm.sh grants <PR URL>` lists `merge`;
      otherwise tell the user it waits on their merge. A
      `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` line means an open PR of
      a ready or in-review story an agent builds conflicts with its base, so its checks will never run.
@@ -418,8 +420,8 @@ Repeat until a step below says stop:
      Otherwise handle it as `story <slug>`, which runs `swarm.sh conduct --backlog`: the backlog
      conductor waits on a story whose worktree exists, and never starts it again.
    - `story <slug>`: a one-off (a ready story with no `epic:`). The backlog conductor builds every
-     one-off as a conductor builds an epic: it reviews each PR, and hands it to the user or merges
-     it as `swarm.sh config merge` says. If `.swarm/conduct-backlog.report.md` exists and no story
+     one-off as a conductor builds an epic: it starts a review agent on each PR, which reviews it
+     and hands it to the user or merges it as `swarm.sh config merge` says. If `.swarm/conduct-backlog.report.md` exists and no story
      or epic has been added, changed or removed since it was written (`find <board>/stories
      <board>/epics \( -name '*.md' -o -type d \) -newer .swarm/conduct-backlog.report.md` prints
      nothing; a directory is listed when a file in it was removed), the last backlog conductor

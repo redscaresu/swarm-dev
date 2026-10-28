@@ -434,6 +434,15 @@ mkdir "${ROOT}/ra/.swarm/reconcile.lock"
 rc=0; out="$(SWARM_RECONCILE_WAIT=1 at ra reconcile)" || rc=$?
 check "a reconcile while another holds the lock waits, then stops naming it" "1|yes|there" \
   "${rc}|$(has "${ROOT}/ra/.swarm/reconcile.lock is still there after 1s" "${out}")|$([[ -d "${ROOT}/ra/.swarm/reconcile.lock" ]] && echo there || echo gone)"
+# --- A root board: a hand edit off its own paths (board_paths), which the pull changes too, is named as
+# a file outside the board, not as a board file.
+setup_root ro
+echo "notes/" >> "${ROOT}/ro-up/.gitignore"
+"${GIT[@]}" -C "${ROOT}/ro-up" commit -q -am "ignore notes" && "${GIT[@]}" -C "${ROOT}/ro-up" push -q origin main
+echo "local/" >> "${ROOT}/ro/.gitignore"
+rc=0; out="$(at ro reconcile)" || rc=$?
+check "a root board: a hand edit off its own paths is named as outside the board" "1|yes|no" \
+  "${rc}|$(has "files outside the board are changed here: .gitignore; commit or move each change" "${out}")|$(grep -qF "board files are changed here" <<< "${out}" && echo yes || echo no)"
 
 # herdr_stub <dir> — a herdr and a claude in <dir>/bin, herdr's state in <dir>/h: tabs ("<tab>
 # <label>"), panes ("<pane> <tab>") and agents ("<name> <pane> <status>"). A pane close takes its

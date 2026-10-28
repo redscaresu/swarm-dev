@@ -310,8 +310,8 @@ check "merge = agent keeps the guard on a story agent and on the conductor, whic
 check "a story agent's and a conductor's sessions carry SWARM_AGENT, their name, for the guard hook" "yes|yes" \
   "$(has '"SWARM_AGENT":"g2"' "$(grep "^agent start g2 " "${ROOT}/herdr.log")")|$(
   has '"SWARM_AGENT":"conduct-e"' "$(grep "^agent start conduct-e " "${ROOT}/herdr.log" | tail -1)")"
-check "a builder's brief says who merges: a human, or with merge = agent the conductor or the lead" "yes|yes" \
-  "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
+check "a builder's brief says who merges: a human, or with merge = agent the story's review agent or the lead" "yes|yes" \
+  "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the story's review agent or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
 
 # --- The review agent's and the fallback reviewer's briefs: the lead's checklist, and each line of the
@@ -356,6 +356,8 @@ CHECKLIST=(
   "- A zero or empty value shown to a person must say what it means."
   "- A repair path that changes something must say what it did."
   "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
+  "- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding."
+  "- Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed."
   "- For each wait, external call (gh, herdr, curl) and status the diff adds, name its timeout, its failure, what clears it and what a second concurrent run does; a missing answer is a finding."
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
 )
