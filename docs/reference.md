@@ -42,7 +42,8 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   A renamed epic is judged by the base's copy at its old path, when that path was an epic too. So
   renaming an `active` epic needs no ticket, and an `agreed:` date the old copy already had is not
   one. git finds a rename by content, uncommitted moves included: an epic moved and more than half
-  rewritten reads as new.
+  rewritten reads as new, and a new epic more than half the same as one the PR deletes reads as that
+  epic renamed.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
   days when `merge --board` runs, and a date after today never counts.
   To start a `later` epic on the user's go, write `agreed: <today>` in the edit that sets it `active`, as `/swarm-dev:epic` does.

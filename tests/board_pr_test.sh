@@ -408,7 +408,10 @@ guard_refused pdr "parent: a draft epic on main" "e-pdr ${NT} e-pdr"
 # (to a draft, or deleted) and add an active child.
 bpr start pdem; ep pdem epics/pact.md '---\nstatus: draft\n---\n\n# pact\n'; ep pdem epics/e-pdem.md '---\nstatus: active\nparent: pact\n---\n'
 guard_refused pdem "parent: an active epic the same PR sets back to a draft" "e-pdem ${NT} e-pdem"
-bpr start pdel; rm "${ROOT}/proj-wt/_board-pdel/board/epics/pact.md"; ep pdel epics/e-pdel.md '---\nstatus: active\nparent: pact\n---\n'
+# e-pdel's body keeps git from pairing it with pact's deletion as a rename: board_changes finds renames
+# by content, and a new epic more than half the same as a deleted one reads as that one renamed.
+bpr start pdel; rm "${ROOT}/proj-wt/_board-pdel/board/epics/pact.md"
+ep pdel epics/e-pdel.md '---\nstatus: active\nparent: pact\n---\n\n# e-pdel\n\nA child of pact, which this board PR deletes, so the parent: is no ticket.\n'
 guard_refused pdel "parent: an active epic the same PR deletes" "e-pdel ${NT} e-pdel"
 bpr start nst; ep nst epics/nostat.md '---\nstatus: active\ndepends_on: []\n---\n\n# nostat\n'
 guard_refused nst "an epic with no status: at the base, flipped to active" "nostat ${NT} nostat"
