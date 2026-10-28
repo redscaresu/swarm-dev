@@ -516,7 +516,8 @@ def pr_files(repo, n, changed, status=False, base=None, sha=None, hold=None):
     count come back (the API lists 3000 at most). With base and sha, the files of base...sha
     instead, the PR's files at that head whatever head it has now (the API lists 300 at most). With
     status, each as "<status> <path>": added, modified, removed, renamed or copied, empty when the API
-    gives none. With hold, the seconds between reads for protected_hold's read, and only there: a
+    gives none. With hold, the seconds between reads for merge's read of a story PR's files at its
+    pinned head (pinned_files, for protected_hold and the epic guard), and only there: a
     transient gh error (TRANSIENT, in gh's own words) is read again, READ_TRIES reads in all, and a
     list the compare cannot give is an Err that says why (it lists COMPARE_FILES at most, so a PR of
     more is never listed, a PR of no file has none, and a shorter list than changed is cut), where

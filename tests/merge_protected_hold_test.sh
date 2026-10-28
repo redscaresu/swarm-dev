@@ -120,7 +120,7 @@ granted; changes hooks/x.sh; merge "${URL}"
 refused "merge = human, granted, a story PR changing hooks/x.sh" "${URL} waits on the user's merge (merge = human, and no HLD grants merge for it)"
 granted; changes bin/x.sh; merge "${URL}"
 is "merge = human, granted, a story PR changing bin/x.sh merges" "${OK}" "$(events | paste -sd'|' -)"
-is "merge = human, granted: one pinned compare read, the grant's" 1 "$(compare_reads)"
+is "merge = human, granted: two pinned compare reads, the epic guard's and the grant's" 2 "$(compare_reads)"
 # The grant's rule takes the names as written, as before: only the hold reads them in any case.
 granted; changes Hooks/x.sh; merge "${URL}"
 is "merge = human, granted, a story PR changing Hooks/x.sh merges: the grant lookup matches the case as written" "${OK}" "$(events | paste -sd'|' -)"

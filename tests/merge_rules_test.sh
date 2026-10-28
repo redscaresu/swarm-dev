@@ -2,7 +2,7 @@
 # merge_rules_test.sh — merge_test.sh's cases on what swarm.sh merge merges (the story or epic that
 # lists the PR) and --release (the version bump, its docs gate, merge = human's release grant, the
 # plugin's own upgrade), who may run it, a story marked costs, merge = human's HLD grant, and
-# merge --board's epic guard. On merge_fixture.sh, as merge_test.sh is.
+# merge's epic guard, on a board PR and a story PR. On merge_fixture.sh, as merge_test.sh is.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -507,9 +507,23 @@ check "merge = human, the same story PR under grants: [merge]: the grant read s.
 granted merge; checks "${FX}/${H1}.checks" "$(run test completed failure)"; merge "${URL}"
 refused "merge = human, a red head under grants: [merge]" "the head 1111111 is not green: test (failure)"
 check "merge = human, a red head under grants: [merge]: no HLD read" no_grant_read
+# The epic guard lists the files first (read 1, read again on a 502); pr_hld's own list is read 2.
 granted merge; echo '[]' > "${FX}/files.fail"; merge "${URL}"
-refused "merge = human, a PR whose files cannot be listed" "cannot tell which HLD ${URL} is under, so it waits on the user's merge"
-check "merge = human, a PR whose files cannot be listed: pr_hld says why" said "grants: cannot list every file ${URL} changes"
+refused "merge = human, a PR whose files cannot be listed" "cannot tell whether ${URL} sets an epic active with no ticket (its files at 1111111 could not be read: "
+check "merge = human, a PR whose files cannot be listed: it waits on the user's merge" said "), so it waits on the user's merge"
+granted merge; : > "${FX}/files.2.fail"; merge "${URL}"
+refused "merge = human, a PR whose files cannot be listed by pr_hld" "cannot tell which HLD ${URL} is under, so it waits on the user's merge"
+check "merge = human, a PR whose files cannot be listed by pr_hld: pr_hld says why" said "grants: cannot list every file ${URL} changes"
+# The guard's read is bounded and read again on a transient error, as protected_hold's is.
+granted merge; touch "${FX}/compare.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
+refused "merge = human, a story PR whose pinned file read hangs" "cannot tell whether ${URL} sets an epic active with no ticket (its files at 1111111 could not be read: the compare took over 2s), so it waits on the user's merge"
+granted merge; : > "${FX}/files.1.fail"; merge "${URL}"
+is "merge = human, a 502 on the guard's first file read: read again, it merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+# Under merge = human the files are read for the guard only when it can act: with lead_epics = on the
+# one pinned compare read is the grant's.
+pinned_reads() { grep -cF "repos/o/r/compare/main...${H1}" "${ROOT}/gh.log" || true; }
+granted merge; echo "lead_epics = on" >> "${P}/.claude/swarm/config"; merge "${URL}"
+is "merge = human, lead_epics = on: one pinned compare read, the grant's, and it merges" "1|merge s ok" "$(pinned_reads)|$(events | head -1)"
 granted merge "costs: money"; merge "${URL}"; refused "merge = human, a costs: money story under grants: [merge]" "held: s costs money"
 granted merge; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"; refused "merge = human, a conductor's pane under grants: [merge]" "pane w:c"
 granted "merge, deploy"; merge "${URL}"; refused "merge = human, an HLD with a grant swarm.sh does not know" "hld/h.md cannot be read, so ${URL} waits on the user's merge"
@@ -683,6 +697,100 @@ rm -rf "${P}/docs/hld" "${P}/docs/epics"
 epr e1 "merge = human"; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; merge --board "${URL}"
 guarded "--board, merge = human, a draft-to-active flip under no HLD" e1
 check "--board, merge = human, a draft-to-active flip under no HLD: not merge_grant's refusal" bash -c "! grep -qF 'waits on the user' '${ROOT}/out'"
+# A plain merge of a story PR runs the same guard, its line with no --board: prefix.
+# spr — fresh: story s's PR changes s.md and docs/epics/e1.md, a draft at the base.
+spr() {
+  fresh; fx_at e1.md main "status: draft"; echo 2 > "${FX}/nfiles"
+  echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"modified"}]' > "${FX}/files"
+}
+story_merged() { is "$1" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"; }
+spr; fx_at e1.md "${H1}" "status: active"; merge "${URL}"; guarded "a story PR that sets a draft epic active with no ticket" e1
+check "a story PR that sets a draft epic active with no ticket: the line has no --board: prefix" \
+  grep -qxF "swarm: merge: ${URL} sets e1 ${NT} e1" "${ROOT}/out"
+spr; fx_at hs.md main "status: agreed" "grants: [epics]"; fx_at hs.md "${H1}" "status: agreed" "grants: [epics]"
+fx_at e1.md "${H1}" "status: active" "hld: hs"; merge "${URL}"
+story_merged "a story PR that sets a draft epic active under an HLD granting epics merges"
+check "a story PR that sets a draft epic active under an HLD granting epics: reads the HLD at the base branch" hld_read hs
+spr; fx_at e1.md "${H1}" "status: draft" "depends_on: []"; merge "${URL}"; story_merged "a story PR that leaves the epic draft merges"
+# The PR's files API lists a later head's harmless files; the pinned head (compare main...${H1}) flips e1.
+spr; fx_at e1.md "${H1}" "status: active"; cp "${FX}/files" "${FX}/pinned"; { printf '{"files":'; cat "${FX}/pinned"; echo '}'; } > "${FX}/compare.main"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/x.md","status":"added"}]' > "${FX}/files"
+merge "${URL}"; guarded "a story PR whose pinned head sets a draft epic active behind a harmless later file list" e1
+# A story PR whose story names repo: other, in another repo than o/r (the board's), changes that repo's
+# docs/epics/, not the board's. When gh cannot name the board's repo, merge refuses and says so. A
+# story naming no repo: is the board's repo's, whatever repo its PR is in (an origin that is a fork).
+OTHER=https://github.com/other/repo/pull/7
+spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}" "repo: other"; merge "${OTHER}"
+story_merged "a story PR in another repo that sets its own docs/epics/e1.md active merges"
+spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}" "repo: other"; echo 'gh: HTTP 502' > "${FX}/origin.fail"
+merge "${OTHER}"; refused "a story PR in another repo, gh cannot name the board's repo" \
+  "cannot tell whether ${OTHER}, whose story names repo other, is in the board's repo: gh repo view failed (gh: HTTP 502); run swarm.sh merge again"
+spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}"; merge "${OTHER}"
+refused "a story naming no repo:, its PR in another repo than the origin's" "${OTHER} sets e1 ${NT} e1"
+# With no origin remote a second run fails the same way: the line names the fix.
+spr; fx_at e1.md "${H1}" "status: active"; item s "status: review" "prs: ${OTHER}" "repo: other"
+git -C "${P}" remote remove origin; merge "${OTHER}"; git -C "${P}" remote add origin "${ROOT}/origin.git"
+refused "a story PR in another repo, the board's repo with no origin remote" \
+  "is in the board's repo: ${P}, the board's repo, has no origin remote: add one (git remote add origin <its URL>) and run swarm.sh merge again, or merge it by hand"
+# An epics/ file the guard never reads (its README.md) asks gh nothing, so a gh failure cannot refuse it.
+spr; item s "status: review" "prs: ${OTHER}" "repo: other"; echo 'gh: HTTP 502' > "${FX}/origin.fail"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/README.md","status":"modified"}]' > "${FX}/files"
+merge "${OTHER}"; story_merged "a story PR in another repo changing only docs/epics/README.md merges"
+check "a story PR in another repo changing only docs/epics/README.md: no repo lookup" bash -c "! grep -q nameWithOwner '${ROOT}/gh.log'"
+spr; item s "status: review" "prs: ${OTHER}" "repo: other"; echo 'gh: HTTP 502' > "${FX}/origin.fail"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/notes/e1.md","status":"modified"}]' > "${FX}/files"
+merge "${OTHER}"; story_merged "a story PR in another repo changing only docs/epics/notes/e1.md, in a subfolder, merges"
+check "a story PR in another repo changing only docs/epics/notes/e1.md, in a subfolder: no repo lookup" bash -c "! grep -q nameWithOwner '${ROOT}/gh.log'"
+# The pinned head renames e1 to e2, a draft; a later push restores e1, so the PR's files API lists e1
+# as modified. Its 404 at the pin is the rename's, read from the pinned compare, not gh failing.
+spr; fx_at e2.md "${H1}" "status: draft"
+echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e2.md","previous_filename":"docs/epics/e1.md","status":"renamed"}]}' > "${FX}/compare.main"
+merge "${URL}"; story_merged "a story PR whose pinned head renames an epic a later push restores merges"
+# That read is bounded as the pinned list is: here the epic's first contents read makes the compares hang.
+# The bound is 8 s, room for the pinned list's own read on a loaded machine; its 3 reads stop well
+# before the 60 s one unbounded hung read takes.
+spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
+echo "touch '${FX}/compare.hang'" > "${FX}/on-contents"; t0=${SECONDS}; merge SWARM_BASE_MOVED_WAIT=8 "${URL}"
+refused "a story PR removing an epic, its pinned compare read hanging" "gh cannot read docs/epics/e1.md at 1111111"
+check "a story PR removing an epic, its pinned compare read hanging: stops within 55 s" test $((SECONDS - t0)) -lt 55
+is "a story PR removing an epic, its pinned compare read hanging: one bound over the gone reads, so one of them" 2 "$(pinned_reads)"
+# A 404 there is not read again: only a transient gh error is.
+spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
+echo "mv '${FX}/compare.main' '${FX}/compare.main.was'; echo 'Not Found' > '${FX}/compare.main.404'" > "${FX}/on-contents"; merge "${URL}"
+refused "a story PR removing an epic, a 404 on its gone read" "gh cannot read docs/epics/e1.md at 1111111"
+is "a story PR removing an epic, a 404 on its gone read: read once" 2 "$(pinned_reads)"
+# And read again after a 502, as the pinned list's read is: read 1 is that list's, read 2 merge_gone's first.
+spr; echo '{"files":[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"removed"}]}' > "${FX}/compare.main"
+: > "${FX}/compare.main.2.fail"; merge "${URL}"; story_merged "a story PR removing an epic, a 502 on its gone read: read again, it merges"
+# The epic's own contents reads are bounded the same way: here the first, e1 at the head, hangs. Read
+# through, e1 is a draft there and the PR merges, so the refusal is the bound's, not the fixture's.
+spr; fx_at e1.md "${H1}" "status: draft"; touch "${FX}/contents.hang"; t0=${SECONDS}; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
+refused "a story PR changing an epic, its contents read hanging" "merge: gh cannot read docs/epics/e1.md at 1111111, so whether ${URL} sets e1 ${UK} e1"
+check "a story PR changing an epic, its contents read hanging: stops within 55 s" test $((SECONDS - t0)) -lt 55
+# A file read that dies saying nothing (python3 crashed, or within could not start it) names the exit.
+granted merge; real_python="$(command -v python3)"
+cat > "${ROOT}/bin/python3" <<STUB
+#!/bin/sh
+case "\$1 \$2" in *ci_gate.py\ files-status) exit 7 ;; esac
+exec "${real_python}" "\$@"
+STUB
+chmod +x "${ROOT}/bin/python3"; merge "${URL}"; rm -f "${ROOT}/bin/python3"
+refused "merge = human, a story PR whose file read dies saying nothing" "could not be read: ci_gate.py exited 7 and said nothing), so it waits on the user's merge"
+# --board reads the board's repo through the same bounded lookup, and names gh's reason.
+epr e1; echo 'gh: HTTP 502' > "${FX}/origin.fail"; merge --board "${URL}"
+refused "--board, gh cannot name the board's repo" "--board: gh repo view failed (gh: HTTP 502)"
+# The board in a project that is not a git repo: no PR changes it, so a story PR's docs/epics/ is its
+# own repo's, never read.
+spr; fx_at e1.md "${H1}" "status: active"; mv "${P}/.git" "${P}/.git.off"; merge "${URL}"; mv "${P}/.git.off" "${P}/.git"
+check "a story PR in a project that is not a git repo: no epic refusal" bash -c "! grep -qF 'sets e1' '${ROOT}/out'"
+check "a story PR in a project that is not a git repo: no epic read" bash -c "! grep -qF '/contents/docs/epics/' '${ROOT}/gh.log'"
+spr; fx_at e1.md "${H1}" "status: active"; : > "${FX}/wf.e1.md.main.fail"; merge "${URL}"
+refused "a story PR, a 502 on the epic's read at the base" "merge: gh cannot read docs/epics/e1.md at main, so whether ${URL} sets e1 ${UK} e1"
+# Under merge = human the guard runs before merge_grant, which lets s's PR through under grants: [merge].
+granted merge; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: active"; echo 2 > "${FX}/nfiles"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"modified"}]' > "${FX}/files"
+merge "${URL}"; guarded "merge = human, a story PR under grants: [merge] that sets a draft epic active with no ticket" e1
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
 check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"

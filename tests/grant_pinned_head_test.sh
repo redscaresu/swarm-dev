@@ -156,7 +156,8 @@ check "the pinned head adds a workflow the PR's file list lacks: no HLD grants m
 check "the pinned head adds a workflow the PR's file list lacks: no pr merge" not_merged
 
 # The files at the pin come back fewer than the PR changes (compare lists 300 at most): under none.
-fresh "${ON}"; echo 3 > "${FX}/nfiles"
+# The epic guard's read of them is the first; the grant's, the second, is the one cut short.
+fresh "${ON}"; echo "{\"files\":[${EPIC}]}" > "${FX}/compare.${H1}.2"
 merge --head "${H1}" "${URL}"
 is "the files at the pin cut short: exits non-zero" 1 "${rc}"
 check "the files at the pin cut short: cannot tell which HLD" said "cannot tell which HLD ${URL} is under"
