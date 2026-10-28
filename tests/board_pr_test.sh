@@ -368,6 +368,7 @@ on_main board/epics/fresh.md '---\nstatus: draft\nagreed: 2026-01-01\n---\n\n# f
 on_main board/epics/selfp.md '---\nstatus: draft\n---\n\n# selfp\n'
 on_main board/epics/pdraft.md '---\nstatus: draft\n---\n\n# pdraft\n'
 on_main board/epics/pact.md '---\nstatus: active\n---\n\n# pact\n'
+on_main board/epics/pstale.md '---\nstatus: draft\n---\n\n# pstale\n'
 on_main board/epics/nostat.md '---\ndepends_on: []\n---\n\n# nostat\n'
 # was-<status>.md: an epic at each status but active (and draft, above) on origin/main.
 for st in later split review "done"; do on_main "board/epics/was-${st}.md" "---\nstatus: ${st}\n---\n\n# was-${st}\n"; done
@@ -398,9 +399,12 @@ bpr start padd; ep padd epics/p-added.md '---\nstatus: draft\n---\n'; ep padd ep
 guard_refused padd "parent: an epic the same PR adds" "e-padd ${NT} e-padd"
 bpr start pdr; ep pdr epics/e-pdr.md '---\nstatus: active\nparent: pdraft\n---\n'
 guard_refused pdr "parent: a draft epic on main" "e-pdr ${NT} e-pdr"
-# parent: counts at the head too: one PR cannot set the parent back to a draft and add an active child.
+# parent: counts at the head too when the PR changes it: one PR cannot take the parent out of active
+# (to a draft, or deleted) and add an active child.
 bpr start pdem; ep pdem epics/pact.md '---\nstatus: draft\n---\n\n# pact\n'; ep pdem epics/e-pdem.md '---\nstatus: active\nparent: pact\n---\n'
 guard_refused pdem "parent: an active epic the same PR sets back to a draft" "e-pdem ${NT} e-pdem"
+bpr start pdel; rm "${ROOT}/proj-wt/_board-pdel/board/epics/pact.md"; ep pdel epics/e-pdel.md '---\nstatus: active\nparent: pact\n---\n'
+guard_refused pdel "parent: an active epic the same PR deletes" "e-pdel ${NT} e-pdel"
 bpr start nst; ep nst epics/nostat.md '---\nstatus: active\ndepends_on: []\n---\n\n# nostat\n'
 guard_refused nst "an epic with no status: at the base, flipped to active" "nostat ${NT} nostat"
 # selfp is on the base, so only the own-slug rule refuses it.
@@ -460,8 +464,13 @@ bpr start anext; ep anext epics/e-anext.md "---\nstatus: active\nagreed: $(day -
 guard_refused anext "agreed: tomorrow" "e-anext ${NT} e-anext"
 bpr start hdot; ep hdot epics/e-hdot.md '---\nstatus: active\nhld: H.dot\n---\n'
 guard_opens hdot "hld: an HLD name item_hld takes (capitals and a dot)"
-bpr start pok; ep pok epics/e-pok.md '---\nstatus: active\nparent: pact\n---\n'
-guard_opens pok "parent: an epic active on main and in the worktree"
+bpr start pok; ep pok epics/pact.md '---\nstatus: active\n---\n\n# pact, edited\n'; ep pok epics/e-pok.md '---\nstatus: active\nparent: pact\n---\n'
+guard_opens pok "parent: an epic active on main that the same PR edits and leaves active"
+# A parent the PR leaves alone is read on origin/main only: this branch was cut while pstale was a
+# draft, and main has set it active since.
+bpr start pst; ep pst epics/e-pst.md '---\nstatus: active\nparent: pstale\n---\n'
+on_main board/epics/pstale.md '---\nstatus: active\n---\n\n# pstale\n'
+guard_opens pst "parent: a draft at the branch's start that origin/main has set active since"
 # A later epic with no agreed:, parent: or hld: starts on the user's go: the lead writes agreed: <today>
 # in the edit that sets it active, as /epic does.
 bpr start later; ep later epics/was-later.md "---\nstatus: active\nagreed: $(date +%F)\n---\n\n# was-later\n"

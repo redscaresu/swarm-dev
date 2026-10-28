@@ -1018,17 +1018,19 @@ hld_grants() {
 # slug_list), with no board-state override.
 raw_status() { slug_list "$(awk 'sub(/^status: */, "") { print; exit }')"; }
 
-# epic_unticketed <reader> <paths> — the slug of each <board>/epics/<slug>.md among <paths> (one a
-# line; README.md excepted) that goes active with no ticket, one per line: status: active at the head
-# (raw_status), absent at the base or at any status there but active (later, split, review and done
-# too, as a draft, none or a typo), and none of an agreed: date the base did not already have, from
-# today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that is active
-# or split at both ends (epic_ticket_parent), or an hld: naming an HLD that is agreed and grants epics
-# at both ends (hld_ticket). Nothing with lead_epics = on. <reader>
-# base|head <path> prints a file's bytes, failing 1 when it is absent and 2 when it cannot be read.
-# A read error at either end, or an HLD's bad grants:, prints why and fails, so the caller refuses.
+# epic_unticketed <reader> <paths> [changed] — the slug of each <board>/epics/<slug>.md among <paths>
+# (one a line; README.md excepted) that goes active with no ticket, one per line: status: active at
+# the head (raw_status), absent at the base or at any status there but active (later, split, review
+# and done too, as a draft, none or a typo), and none of an agreed: date the base did not already
+# have, from today back AGREED_MAX_AGE days (epic_ticket_agreed), a parent: naming another epic that
+# is active or split at the base, and at the head too when the PR changes it (epic_ticket_parent), or
+# an hld: naming an HLD that is agreed and grants epics at both ends (hld_ticket). Nothing with
+# lead_epics = on. <reader> base|head <path> prints a file's bytes, failing 1 when it is absent and 2
+# when it cannot be read. [changed] is every path the PR changes, a renamed file's old path too, one
+# a line (<paths> by default). A read error at either end, or an HLD's bad grants:, prints why and
+# fails, so the caller refuses.
 epic_unticketed() (
-  local reader="$1" pre p s now was rc out=""
+  local reader="$1" pre p s now was rc out="" changed_paths="${3:-$2}"
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_lead_epics}" != on ]] || exit 0
   pre="${BOARD#"${PROJECT_DIR}"}"; pre="${pre#/}"; pre="${pre:+${pre}/}"
@@ -1047,7 +1049,7 @@ epic_unticketed() (
     [[ "$(raw_status <<< "${was}")" != active ]] || continue
     s="${s%.md}"
     epic_ticket_agreed "${now}" "${was}" && continue
-    rc=0; epic_ticket_parent "${reader}" "${now}" "${s}" "${pre}epics/" || rc=$?
+    rc=0; epic_ticket_parent "${reader}" "${now}" "${p}" "${changed_paths}" || rc=$?
     [[ ${rc} -ne 0 ]] || continue
     [[ ${rc} -eq 1 ]] || exit 1
     p="$(slug_list "$(get_fm - hld <<< "${now}")")"
@@ -1079,18 +1081,23 @@ epic_ticket_agreed() {
   return 1
 }
 
-# epic_ticket_parent <reader> <head bytes> <slug> <epics prefix> — epic_unticketed's parent: ticket:
-# true when the epic's parent: at the head names another epic (not <slug>), read through <reader> at
-# <epics prefix><parent>.md, that is active or split at both the base, so a PR cannot name a parent
-# it adds, or a draft, and the head, so it cannot set the parent back to a draft either; fails 1 when
-# not (absent at either end too); prints why and fails 2 on a read error.
+# epic_ticket_parent <reader> <head bytes> <epic path> <changed paths> — epic_unticketed's parent:
+# ticket: true when the epic's parent: at the head names another epic (not the one at <epic path>),
+# read through <reader> beside it, that is active or split at the base, so a PR cannot name a parent
+# it adds, or a draft. When <changed paths> (one a line) holds the parent's path, it must be active
+# or split at the head too, so the PR cannot take it out of either, by a status or by deleting or
+# renaming it. A parent the PR leaves alone is read at the base only: the merge keeps the base's
+# copy, while a branch cut before the parent went active still has the old one. Fails 1 when not
+# (absent too); prints why and fails 2 on a read error.
 epic_ticket_parent() {
-  local p end bytes rc
+  local p f end bytes rc
   p="$(slug_list "$(get_fm - parent <<< "$2")")"
-  [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${p}" != "$3" ]] || return 1
+  f="${3%/*}/${p}.md"
+  [[ "${p}" =~ ^[a-z0-9][a-z0-9-]*$ && "${f}" != "$3" ]] || return 1
   for end in base head; do
-    rc=0; bytes="$("$1" "${end}" "$4${p}.md")" || rc=$?
-    [[ ${rc} -le 1 ]] || { echo "cannot read $4${p}.md at the ${end}"; return 2; }
+    [[ "${end}" == base ]] || grep -qxF -- "${f}" <<< "$4" || return 0
+    rc=0; bytes="$("$1" "${end}" "${f}")" || rc=$?
+    [[ ${rc} -le 1 ]] || { echo "cannot read ${f} at the ${end}"; return 2; }
     case "$(raw_status <<< "${bytes}")" in active|split) ;; *) return 1 ;; esac   # absent: no status
   done
 }

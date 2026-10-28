@@ -34,8 +34,9 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   `open` also refuses, before it commits or pushes, when an epic goes `active` (new, or at the base
   with any status but `active`: `draft`, `later`, `split`, `review`, `done` or none) with no
   ticket: an `agreed:` date the base's copy did not already have, dated today or up to 7 days
-  before it, a `parent:` naming another epic that is `active` or `split` both on the base and in
-  the worktree (not a draft, and not one the PR adds or sets back to a draft), or an `hld:`
+  before it, a `parent:` naming another epic that is `active` or `split` on the base, and in the
+  worktree too when the PR changes its file (not a draft, and not one the PR adds or takes out of
+  `active` or `split`), or an `hld:`
   naming an HLD that is `agreed` and grants `epics` both at the base and in the worktree. It fetches `origin/<base>`
   first, and a failed fetch or read refuses. `lead_epics = on` skips the check. Commit the epic as `status: draft`, then run `/swarm-dev:epic <slug>`.
   Today is the day the check runs, not the PR's merge base, so `agreed:` must still be within 7
