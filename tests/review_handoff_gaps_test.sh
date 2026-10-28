@@ -95,8 +95,8 @@ check "2 review-agent --next's refusal is its own, base-merged or not" yes \
 : > "${P}/.swarm/events.tsv"
 check "2 the conductor starts nothing for a head the refusal calls a base merge" yes \
   "$(has 'When the refusal says the PR'"'"'s head is GitHub'"'"'s merge of the base (events.tsv'"'"'s `base-merged <sha>`), start nothing for that head' "${rule}")"
-check "2 a second refusal with no base-merged line has the builder pull the PR's head" yes \
-  "$(has 'builder idle and no such line, the builder'"'"'s worktree is behind the PR: nudge it once, with a file telling it to pull the PR'"'"'s head (`git pull --ff-only origin story/<slug>`), as `swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background' "${rule}")"
+check "2 a second refusal with no base-merged line has the builder pull for a worktree behind the PR, and commit, push or set aside uncommitted changes" yes \
+  "$(has 'builder idle and no such line, nudge the builder once, with a file telling it, when the refusal says its worktree is at another commit (behind the PR), to pull the PR'"'"'s head (`git pull --ff-only origin story/<slug>`), or, when it says the worktree has uncommitted changes, to commit and push them, or discard each by copying its file aside, as `swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>` in the background' "${rule}")"
 
 # --- 3. review-agent refuses a head its findings file passes; the start goes on otherwise.
 start='review_at_head() { REVIEW_SRC="${SRC}"; REVIEW_WT="${WT}"; REVIEW_HEAD="${HB}"; }
@@ -151,8 +151,9 @@ rm -f "${P}/.swarm/state/conduct-tab"; : > "${P}/.swarm/events.tsv"
 printf '#!/bin/sh\ncase "$1 $2" in\n  "agent list") printf '"'"'{"result":{"agents":[%%s]}}\\n'"'"' "$(cat "%s/agents" 2>/dev/null)" ;;\n  *) echo '"'"'{"result":{}}'"'"' ;;\nesac\n' "${ROOT}" > "${ROOT}/bin/herdr"
 chmod +x "${ROOT}/bin/herdr"
 : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
+# poll [grace] — with no grace given, a stop note is reported at any age (SWARM_STOP_GRACE=0).
 poll() {
-  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:lead \
+  (cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_STOP_GRACE="${1:-0}" \
     bash "${SWARM}" wait --lead 0 2>/dev/null) || true
 }
 NOTE="review-s1 stopped on ${HB}: no fix pushed: the builder declined nothing"
@@ -160,6 +161,12 @@ STOP="${P}/.swarm/reviews/s1.stop.md"
 LINE="stopped: s1 (${NOTE}), exit: act on its why as conduct-e's review rule says, or start a conductor for the story and send it the note with swarm.sh tell <conductor> note ${STOP}"
 fresh_lead() { rm -rf "${P}/.swarm/lead"; mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"; }
 echo "${NOTE}" > "${STOP}"
+fresh_lead
+# A note just written may be a model turn from its tell: it waits out the grace period first.
+check "6 a stop note younger than the grace period waits for its tell: no line" "" "$(poll 120)"
+touch -t 202610010900 "${STOP}"
+fresh_lead
+check "6 a stop note older than the grace period with no conductor running wakes the lead" "${LINE}" "$(poll 120)"
 fresh_lead
 check "6 a stop note with no conductor running wakes the lead" "${LINE}" "$(poll)"
 check "6 it wakes the lead once" "" "$(poll)"
@@ -169,19 +176,19 @@ check "6 it is an alert: a run's first read prints it" "${LINE}" "$(poll)"
 running() { printf '{"name":"conduct-e","agent_status":"working","pane_id":"w:p1"}' > "${ROOT}/agents"; echo "w:p1 conduct-e" > "${P}/.swarm/state/tab"; }
 fresh_lead; running
 check "6 a conductor started after a failed tell never got the note: the line comes" "${LINE}" "$(poll)"
-mkdir -p "${P}/.swarm/briefs"; echo brief > "${P}/.swarm/briefs/conduct-e.md"; touch -t 202610280900 "${P}/.swarm/briefs/conduct-e.md"
+mkdir -p "${P}/.swarm/briefs"; echo brief > "${P}/.swarm/briefs/conduct-e.md"; touch -t 202610010900 "${P}/.swarm/briefs/conduct-e.md"
 told() { echo conduct-e > "${STOP%.md}.told"; touch -t "$1" "${STOP%.md}.told"; }
-touch -t 202610281000 "${STOP}"; told 202610281000
+touch -t 202610011000 "${STOP}"; told 202610011000
 fresh_lead
 check "6 a running conductor the tell reached has the note: no line" "" "$(poll)"
-touch -t 202610281100 "${P}/.swarm/briefs/conduct-e.md"
+touch -t 202610011100 "${P}/.swarm/briefs/conduct-e.md"
 fresh_lead
 check "6 that conductor started again since (its inbox cleared): the line comes" "${LINE}" "$(poll)"
-touch -t 202610280900 "${P}/.swarm/briefs/conduct-e.md"
-touch -t 202610281200 "${STOP}"
+touch -t 202610010900 "${P}/.swarm/briefs/conduct-e.md"
+touch -t 202610011200 "${STOP}"
 fresh_lead
 check "6 a newer note than the tell's marker: the line comes" "${LINE}" "$(poll)"
-touch -t 202610281000 "${STOP}"
+touch -t 202610011000 "${STOP}"
 echo report > "${P}/.swarm/conduct-e.report.md"
 fresh_lead
 check "6 a conductor that wrote its report has stopped: the line comes" "${LINE}" "$(poll)"
@@ -198,6 +205,9 @@ sed -i.bak 's/^status: ready/status: review/' "${B}/stories/s1.md"; rm -f "${B}/
 echo "merge = agent" > "${P}/.claude/swarm/config"
 fresh_lead
 check "6 a story in review its review agent still merges (merge = agent): the line comes" "${LINE}" "$(poll)"
+printf '2026-10-28T11:00:00Z\tmerge\ts1\tw:1\tunconfirmed: the merge of %s was not confirmed\n' "${URL}" > "${P}/.swarm/events.tsv"
+fresh_lead
+check "6 a story in review whose merge went unconfirmed goes to the lead: the line comes" "${LINE}" "$(poll)"
 printf '2026-10-28T11:00:00Z\tmerge\ts1\tw:1\theld: s1 costs money; the user merges it\n' > "${P}/.swarm/events.tsv"
 fresh_lead
 check "6 a story in review that merge held for the user's merge: no line" "" "$(poll)"

@@ -82,7 +82,7 @@ base_stop() { printf '%s' "CI on the base timed out, or is red with no \`fix-mai
 # findings and count rounds twice. A review agent's stop note hands the story back: on head moved: it
 # starts a new one, on review's held: it waits for the parent's merge, and on the rest it acts as on its
 # own wait on the builder. A second worktree refusal on one head with no base-merged line has the
-# builder pull the PR's head.
+# builder pull the PR's head (a worktree at another commit) or commit, push or set aside its changes.
 review_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
@@ -109,8 +109,10 @@ refusal says to do next, start it again once \`swarm.sh wait <slug>\` on that bu
 on \`swarm.sh watch\`'s next line for that PR, whichever comes first. When the refusal says the PR's
 head is GitHub's merge of the base (events.tsv's \`base-merged <sha>\`), start nothing for that head:
 the review agent merging the PR waits on it itself. If it refuses so again on the same head with the
-builder idle and no such line, the builder's worktree is behind the PR: nudge it once, with a file
-telling it to pull the PR's head (\`git pull --ff-only origin story/<slug>\`), as
+builder idle and no such line, nudge the builder once, with a file telling it, when the refusal says
+its worktree is at another commit (behind the PR), to pull the PR's head
+(\`git pull --ff-only origin story/<slug>\`), or, when it says the worktree has uncommitted changes, to
+commit and push them, or discard each by copying its file aside, as
 \`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>\` in the background, and start
 the review agent again once the next \`swarm.sh wait <slug>\` on it returns.
 The review agent waits for the PR's checks, triages them, reviews each head, sends its findings to

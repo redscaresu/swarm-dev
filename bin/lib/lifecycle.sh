@@ -2725,11 +2725,34 @@ pr_lines() {
     }' <(stories_fm status kind kept repo) "${LEAD_PRS}")
 }
 
+# STOP_GRACE: how many seconds a stop note waits before stop_lines reports it (SWARM_STOP_GRACE). The
+# review agent writes the note, then tells it a model turn later; a poll between the two would wake the
+# lead with a note its conductor is about to get, and the conductor would get it twice.
+STOP_GRACE="${SWARM_STOP_GRACE:-120}"
+
+# user_merges <story-file> — true for a story in review whose PR waits on the user's merge: under merge
+# = human with no HLD merge grant (no_agent_granted), one that costs money (costs_tag), or one swarm.sh
+# merge held for the user since its last review (a held: line, or one that ends the user merges it or
+# waits on the user's merge). An unconfirmed merge, one to check by hand or the epic guard's goes to
+# the lead, so it is not the user's. A kept story waits on its review agent or the lead, not the user.
+user_merges() {
+  local slug
+  slug="$(basename "$1" .md)"
+  [[ -z "$(get_fm "$1" kept)" ]] || return 1
+  # shellcheck disable=SC2154 # load_config assigns it with printf -v
+  if [[ "${CFG_merge}" != agent ]] && ! no_agent_granted "${slug}"; then return 0; fi
+  [[ -z "$(costs_tag "$1")" ]] || return 0
+  awk -F'\t' -v s="${slug}" '$3 == s && $2 == "review" && index($5, "ok") == 1 { m = "" }
+    $3 == s && $2 == "merge" { m = $5 }
+    END { exit !(m ~ /^held:/ || m ~ /the user merges it|waits on the user.s merge/) }' "${EVENTS_LOG}" 2>/dev/null
+}
+
 # stop_lines — `stopped: <slug> (<the stop note>), exit: <exit>` for each review agent's stop note
 # (.swarm/reviews/<slug>.stop.md, which review_brief has it write and tell its conductor) that no
-# conductor has. Its story is on the board and not done (review_agent removes the note when it starts
-# a new agent, so one left is the newest agent's), and, in review, still a review agent's to act on
-# (review_agent_owns): one that waits on the user's merge (a merge held: hand-off) is not the lead's.
+# conductor has, once it is STOP_GRACE seconds old. Its story is on the board and not done
+# (review_agent removes the note when it starts a new agent, so one left is the newest agent's), and,
+# in review, not one whose PR waits on the user's merge (user_merges: a merge held: hand-off), which is
+# not the lead's.
 # A conductor has the note only when its tell reached one (tell's .told marker beside the note, no
 # older than it, naming the conductor) that still runs in a pane of the poll's herdr list (LEAD_AGENTS)
 # with no report written and was not started again since (its brief no newer than the marker: a new
@@ -2737,7 +2760,7 @@ pr_lines() {
 # never got the note, hides nothing. A poll with no herdr list keeps the stopped: lines LEAD_SEEN has,
 # so a missed read neither drops a line nor wakes the lead with it again.
 stop_lines() {
-  local f slug story cond note told
+  local f slug story cond note told age
   [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
   if [[ -z "${LEAD_AGENTS_OK}" ]]; then grep '^stopped: ' "${LEAD_SEEN}" 2>/dev/null || true; return 0; fi
   for f in "${PROJECT_DIR}"/.swarm/reviews/*.stop.md; do
@@ -2746,8 +2769,10 @@ stop_lines() {
     [[ -f "${story}" ]] || continue
     case "$(fm "${story}" status)" in
       done) continue ;;
-      review) review_agent_owns "${story}" || continue ;;
+      review) ! user_merges "${story}" || continue ;;
     esac
+    age="$(perl -e 'print time - (stat shift)[9]' "${f}" 2>/dev/null)" || age=0
+    (( ${age:-0} >= STOP_GRACE )) || continue
     told="$(cat "${f%.md}.told" 2>/dev/null)" || told=""
     if [[ -n "${told}" && ! "${f}" -nt "${f%.md}.told" && -n "$(list_field "${told}" pane_id <<< "${LEAD_AGENTS}")" \
           && ! -f "$(conductor_report "${told}")" && ! "${PROJECT_DIR}/.swarm/briefs/conduct-$(conduct_epic "${told}").md" -nt "${f%.md}.told" ]]; then
