@@ -111,12 +111,12 @@ print("%d of %d" % (len(good), len(told)))
 PY
 }
 SWARM_MD="${HERE}/../commands/swarm.md"
-# The epic brief's four (the review rule's stop note, and the clash, stacked and give-up rules), the
-# backlog's the same, and the lead's three in swarm.md (the unsent-brief and conflict arms, and the
-# restart rule's tell once the agent is back; its builder stopped on an API error gets a resume, not
-# a nudge).
-check "every nudge instruction in the epic conductor brief is wait --stall --idle, then tell, in the background" "4 of 4" "$(forms "${BRIEF_E}" "wait --stall --idle")"
-check "every nudge instruction in the backlog conductor brief is wait --stall --idle, then tell, in the background" "4 of 4" "$(forms "${BRIEF_B}" "wait --stall --idle")"
+# The epic brief's five (the review rule's stop note and its dequeued merge, and the clash, stacked and
+# give-up rules), the backlog's the same, and the lead's three in swarm.md (the unsent-brief and
+# conflict arms, and the restart rule's tell once the agent is back; its builder stopped on an API
+# error gets a resume, not a nudge).
+check "every nudge instruction in the epic conductor brief is wait --stall --idle, then tell, in the background" "5 of 5" "$(forms "${BRIEF_E}" "wait --stall --idle")"
+check "every nudge instruction in the backlog conductor brief is wait --stall --idle, then tell, in the background" "5 of 5" "$(forms "${BRIEF_B}" "wait --stall --idle")"
 check "every nudge instruction in commands/swarm.md is wait --idle, then tell, in the background" "3 of 3" "$(forms "${SWARM_MD}" "wait --idle")"
 
 # --- Run the forms. Builders, each in a pane this project recorded: nb-busy busy throughout, nb-stall
