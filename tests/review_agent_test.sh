@@ -763,7 +763,12 @@ echo "merge = agent" > "${p}/.claude/swarm/config"
 # the merge's reconcile retires review-h1 (a wait on a retired name has no agent to wait on).
 check "the brief writes h1's review file before its review --head" "yes" \
   "$(python3 -c 'import sys; t = sys.argv[1]; a = t.find(sys.argv[2]); b = t.find(sys.argv[3]); print("yes" if 0 <= a < b else "no")' "${abrief}" "Write the review to ${p}/.swarm/reviews/h1.md first" "review h1 --head ${HEAD_SHA}")"
-printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "none" "## Handled by the review agent" "none" > "${p}/.swarm/reviews/h1.md"
+# The steps the brief puts before its review --head, in its order: the review file is written there
+# only when the brief writes it first.
+before="${abrief%%"review h1 --head ${HEAD_SHA}"*}"
+if [[ "${before}" == *"Write the review to ${p}/.swarm/reviews/h1.md first"* ]]; then
+  printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "none" "## Handled by the review agent" "none" > "${p}/.swarm/reviews/h1.md"
+fi
 done_agent review-h1
 check "with the pass file written and review-h1 idle while its merge runs, the conductor's wait on it returns idle" "idle" \
   "$(run wait review-h1 5000)"
@@ -778,7 +783,11 @@ kept="$(python3 -c 'import re, sys; t = " ".join(open(sys.argv[1]).read().split(
 # The lead merges only on the multi-PR path, once every PR's agent has stopped.
 single="${kept%%Once every PR has passed*}"
 check "the lead's kept arm starts review-agent once, waits on it (again while busy, and with no file checks the board before a restart), restarts it on a moved head, and never tells findings or merges beside it" "yes|yes|yes|yes|0|0" \
-  "$(has "Then run \`swarm.sh review-agent <slug> <PR URL>\` for the line's first PR, unless \`review-<slug>\` is already open on it, and wait on it with \`swarm.sh wait review-<slug>\` in the background." "${kept}")|$(has "When the wait returns with no review file and printed \`busy\`, it ran its 60 minutes while the agent works: wait again. When it returns with no review file any other way (the agent waits on a prompt, is gone, or a merge's reconcile retired it), check the board first" "${kept}")|$(has "If the file has a \`head moved:\` line, the PR has a head nobody reviewed and the agent stopped: once the worktree is at the PR's head, start \`swarm.sh review-agent <slug> <PR URL>\` again" "${kept}")|$(has "While it is open, never triage its review file, tell the builder findings or merge the PR yourself" "${kept}")|$(grep -c 'tell <slug> findings' <<< "${kept}" || true)|$(grep -c 'swarm.sh merge' <<< "${single}" || true)"
+  "$(has "Then run \`swarm.sh review-agent <slug> <PR URL>\` for the line's first PR, unless \`review-<slug>\` is already open on it, and wait on it with \`swarm.sh wait review-<slug>\` in the background." "${kept}")|$(has "When the wait returns with no review file and printed \`busy\`, it ran its 60 minutes while the agent works: wait again. When it returns with no review file any other way (the agent waits on a prompt, is gone, or a merge's reconcile retired it), check the board first" "${kept}")|$(has "Once the file is there, read it before the board. If it has a \`head moved:\` line, the PR has a head nobody reviewed and the agent stopped: once the worktree is at the PR's head, start \`swarm.sh review-agent <slug> <PR URL>\` again" "${kept}")|$(has "While it is open, never triage its review file, tell the builder findings or merge the PR yourself" "${kept}")|$(grep -c 'tell <slug> findings' <<< "${kept}" || true)|$(grep -c 'swarm.sh merge' <<< "${single}" || true)"
+# A story in review is no pass while its file says head moved: (merge refused a push after review put it
+# there), and a multi-PR line's heads may have moved since each agent passed its PR.
+check "the kept arm reads head moved: and stopped: before taking a story in review as a pass, and re-reads each PR's head before a multi-PR review" "yes|yes" \
+  "$(python3 -c 'import sys; t = sys.argv[1]; a = t.find(sys.argv[2]); b = t.find(sys.argv[3]); c = t.find(sys.argv[4]); print("yes" if 0 <= a < b < c else "no")' "${kept}" "If it has a \`head moved:\` line" "If the file has a \`stopped:\` line" "Otherwise the file is a pass. If the story is in review with no \`kept:\` line")|$(has "Once every PR has passed, read each PR's head again (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`) and compare it with the head noted for it: a PR whose head moved since has had no review, so start the review agent on it again. Only when every PR's head is still the one that passed, run \`swarm.sh review <slug>\` with every PR URL on the line" "${kept}")"
 
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 

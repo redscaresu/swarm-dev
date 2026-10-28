@@ -2408,8 +2408,10 @@ still needs its FAIL line.
 ## Merging
 
 With `merge = human` (the default) no agent merges unless an HLD grants `merge`: each agent starts unable to run
-`gh pr merge`, its brief forbids every other route, and the plugin's merge guard (below) refuses the common ones. When a PR is green and reviewed, the lead
-runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` with its PRs on a
+`gh pr merge`, its brief forbids every other route, and the plugin's merge guard (below) refuses the common ones. When a story's PR passes review, its
+review agent runs `swarm.sh review <slug> --head <SHA> <PR URL>` on the head it reviewed; for an item no
+review agent hands over (an epic, or a story with several PRs), the lead or a conductor runs
+`swarm.sh review <slug> <PR URL>...`. Either sets the item `status: review` with its PRs on a
 `prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
 too, with every PR still waiting. A `kind: lead` story whose `after:` names its own epic does not count in it

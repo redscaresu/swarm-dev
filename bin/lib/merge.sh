@@ -425,9 +425,9 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # board-only gain when the board's repo cannot be read, naming the read. That refusal, and a compare that
 # cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, which clears them: the
 # head is then up to date, so no repo read is needed. Each read stops after
-# BASE_MOVED_WAIT. Within one project, merge_pr holds merge_lock from this compare through gh pr merge,
-# so two direct merges into one base cannot both pass it; merges from two projects, or by hand, still
-# can: only a merge queue closes that.
+# BASE_MOVED_WAIT. Within one project, merge_pr holds merge_lock from this compare through the merge and
+# its read back, so two direct merges into one base cannot both pass it; merges from two projects, or by
+# hand, still can: only a merge queue closes that.
 base_moved() {
   local out n p own why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$3 in, push, and merge the new head"
   why="cannot tell whether $3 moved past ${2:0:7}'s CI"
@@ -540,10 +540,9 @@ merge_base_update() {
 
 # merge_lock <owner/repo> <base> — take this project's lock on direct merges into <base> of <repo>,
 # .swarm/merge-<owner>-<repo>-<base>.lock: a directory holding this swarm.sh's pid ($$, which outlives
-# the dispatch subshell), its path in MERGE_LOCK. A lock whose pid is gone was left by a merge that
-# died holding it, and is taken over (two takers at once could both remove it; mkdir still lets one
-# in). A live one is waited on, a second at a time, for MERGE_LOCK_WAIT seconds; then merge refuses,
-# naming its pid, and nothing was merged.
+# the dispatch subshell), its path in MERGE_LOCK. A stale lock (merge_lock_stale) was left by a merge
+# that died holding it, and is taken over (merge_lock_clear). A live one is waited on, a second at a
+# time, for MERGE_LOCK_WAIT seconds; then merge refuses, naming its pid, and nothing was merged.
 MERGE_LOCK=""
 merge_lock() {
   local lock="${PROJECT_DIR}/.swarm/merge-${1//\//-}-${2//\//-}.lock" pid i wait="${SWARM_MERGE_LOCK_WAIT:-${MERGE_LOCK_WAIT}}"
@@ -551,10 +550,45 @@ merge_lock() {
   for ((i = 0; ; i++)); do
     if mkdir "${lock}" 2>/dev/null; then echo "$$" > "${lock}/pid"; MERGE_LOCK="${lock}"; return 0; fi
     pid="$(cat "${lock}/pid" 2>/dev/null)" || pid=""
-    if [[ "${pid}" =~ ^[0-9]+$ ]] && ! kill -0 "${pid}" 2>/dev/null; then rm -rf "${lock}"; continue; fi
+    if merge_lock_stale "${lock}" "${pid}" && merge_lock_clear "${lock}" "${pid}"; then continue; fi
     (( i < wait )) || merge_fail "another swarm.sh merge into $2 of $1 has held ${lock} (pid ${pid:-not yet written}) for ${wait}s; nothing was merged: run this again once that merge is done"
     sleep 1
   done
+}
+
+MERGE_LOCK_PIDLESS=10   # seconds after which a merge lock with no pid file, or its .clear, counts as left by a merge that died (SWARM_MERGE_LOCK_PIDLESS, for tests)
+
+# merge_lock_stale <lock> <pid> — true when <lock> is there and was left by a merge that died: <pid>,
+# read from it, is not running, or it has no pid (<pid> empty) MERGE_LOCK_PIDLESS seconds after it was
+# made (a merge killed between its mkdir and its pid write; a live one writes it at once).
+merge_lock_stale() {
+  local age
+  if [[ "$2" =~ ^[0-9]+$ ]]; then ! kill -0 "$2" 2>/dev/null && [[ -d "$1" ]]; return; fi
+  age="$(perl -e '@s = stat shift or exit 1; print time - $s[9]' "$1" 2>/dev/null)" || return 1
+  (( age >= ${SWARM_MERGE_LOCK_PIDLESS:-${MERGE_LOCK_PIDLESS}} ))
+}
+
+# merge_lock_clear <lock> <pid> — remove a stale <lock>, whose pid read as <pid> (empty for none), and
+# say so; true once it is gone. Two merges can find one stale lock at once, and the first may have taken
+# it afresh before the second removes it. So the removal runs under <lock>.clear, taken with mkdir, and
+# only after reading the pid again: the lock goes only while it still holds <pid> and is still stale.
+# Otherwise it fails, and merge_lock waits its second as for a live lock: another merge is clearing (a
+# <lock>.clear older than MERGE_LOCK_PIDLESS was left by one that died inside this, and is removed for
+# the next look), or the lock was taken afresh.
+merge_lock_clear() {
+  local now age rc=1
+  if ! mkdir "$1.clear" 2>/dev/null; then
+    age="$(perl -e '@s = stat shift or exit 1; print time - $s[9]' "$1.clear" 2>/dev/null)" || return 1
+    (( age < ${SWARM_MERGE_LOCK_PIDLESS:-${MERGE_LOCK_PIDLESS}} )) || rmdir "$1.clear" 2>/dev/null || true
+    return 1
+  fi
+  now="$(cat "$1/pid" 2>/dev/null)" || now=""
+  if [[ "${now}" == "$2" ]] && merge_lock_stale "$1" "$2"; then
+    rm -rf "$1" && rc=0
+    echo "merge: took over $1, left by a merge that died (pid ${2:-never written})"
+  fi
+  rmdir "$1.clear" 2>/dev/null || true
+  return "${rc}"
 }
 
 # short_shas <sha>... — each SHA cut to 7 characters, space-separated; none when there are none.
