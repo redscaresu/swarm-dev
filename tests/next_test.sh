@@ -1241,8 +1241,8 @@ rm -rf "${dir}"
 
 # `tell <slug> <kind> <file>` sends an idle builder the file and exits 0, leaving no temp file behind.
 # A Claude builder's state is its session's (agents.tsv's newest line for s1, then the claude stub's
-# fixture), never herdr's: it refuses one busy, waiting (naming on what), gone or unknown instead of
-# typing into it. The stub's `agent list` reports s1 as $TELL_STATUS in pane $TELL_PANE; `agent
+# fixture), never herdr's: it queues the tell for one busy (tell_queue_test.sh follows it to delivery),
+# and refuses one waiting (naming on what), gone or unknown instead of typing into it. The stub's `agent list` reports s1 as $TELL_STATUS in pane $TELL_PANE; `agent
 # prompt` appends what it was sent to ${dir}/sent as one record ending in a `--` line, and reports
 # the agent working. With $TELL_GOAL set (a goal test), a prompt that is not a /goal makes sess-s1
 # busy, as its turn starts, or $TELL_AFTER: idle (herdr said working, the session has not started)
@@ -1286,12 +1286,19 @@ tsession() { # <status> [waitingFor] — sess-s1's entry; `none` lists no entry 
 tellout() {
   local st="$1"; shift; rm -f "${dir}/sent"
   (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="${st}" TELL_GOAL="${TELL_GOAL:-}" TELL_AFTER="${TELL_AFTER:-}" CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${dir}/claude.json}" \
-    CLAUDE_PROJECTS_DIR="${dir}/projects" SWARM_PROMPT_TIMEOUT_MS="${PTO:-2000}" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 "$@" 2>&1; echo "exit $?")
+    CLAUDE_PROJECTS_DIR="${dir}/projects" SWARM_PROMPT_TIMEOUT_MS="${PTO:-2000}" SWARM_NOTE_WAKE_SECS=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 "$@" 2>&1; echo "exit $?")
 }
 refused() { # <name> <want in the message> <herdr status> <tell args...>
   local name="$1" want="$2" out; shift 2
   out="$(tellout "$@")"
   if [[ "${out}" == *"${want}"* && "${out}" == *"exit 1" && ! -f "${dir}/sent" ]]; then echo "ok   ${name}"; else
+    echo "FAIL ${name}: got '${out}', sent: $(cat "${dir}/sent" 2>/dev/null)"; fails=$((fails + 1)); fi
+}
+queued() { # <name> <herdr status> <tell args...> — queued for s1's next idle: exit 0, nothing sent
+  local name="$1" out; shift
+  out="$(tellout "$@")"
+  rm -f "${dir}/.swarm/tells/s1."{findings,nudge,resume}   # so its check ends at its next look, sending nothing
+  if [[ "${out}" == "queued: s1 (busy); delivered when its turn ends, so do not tell it again"$'\n'"exit 0" && ! -f "${dir}/sent" ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: got '${out}', sent: $(cat "${dir}/sent" 2>/dev/null)"; fails=$((fails + 1)); fi
 }
 told() { # <name> <herdr status> <tell args...>
@@ -1302,7 +1309,7 @@ told() { # <name> <herdr status> <tell args...>
 }
 tsv claude sess-s1
 tsession idle; told "tell sends an idle session the findings while herdr says working, and leaves no temp file" working findings findings.md
-tsession busy; refused "tell refuses a busy session while herdr says done: still working" "still working" "done" findings findings.md
+tsession busy; queued "tell queues for a busy session while herdr says done" "done" findings findings.md
 tsession waiting "permission prompt"; refused "tell refuses a waiting session, naming what it waits for" "waiting on permission prompt" idle findings findings.md
 tsession none; refused "tell refuses a session that is gone" "gone" idle findings findings.md
 tsession compacting; refused "tell refuses a session in a state it does not know (unknown)" "(unknown)" idle findings findings.md
@@ -1373,12 +1380,12 @@ TELL_PANE=w:77 refused "tell refuses another project's agent of the same name" "
 # A reused name: the older line's session (sess-old) is retired; the newer line's (sess-s1) decides.
 : > "${dir}/.swarm/agents.tsv"; tsv claude sess-old; tsv claude sess-s1
 OLD=busy tsession idle; told "a reused name reads the newer line (older busy, newer idle): told" working findings findings.md
-OLD=idle tsession busy; refused "a reused name reads the newer line (older idle, newer busy): refused" "still working" idle findings findings.md
+OLD=idle tsession busy; queued "a reused name reads the newer line (older idle, newer busy): queued" idle findings findings.md
 # No session recorded ('-', as a codex agent has): herdr answers for it.
 tsv codex -; tsession busy
 told "tell sends an agent with no session that herdr reports as idle" idle findings findings.md
 told "tell also sends one herdr reports as done" "done" findings findings.md
-refused "tell refuses one herdr reports as working" "still working" working findings findings.md
+queued "tell queues for one herdr reports as working" working findings findings.md
 refused "tell refuses one herdr reports as blocked on a prompt" "waiting on a prompt" blocked findings findings.md
 # herdr giving no status (agent_field reads it as unknown): refused as unknown, never as another project's.
 refused "tell refuses its own agent with no session and no herdr status as unknown" "herdr gives no state for it (unknown)" "" findings findings.md

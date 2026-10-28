@@ -653,9 +653,9 @@ Three more rules for the lead:
     prints it: `conduct-<epic>`, or `conduct-backlog-<dir>-<hash>` for the backlog's.
 
   `swarm.sh restart` and `swarm.sh conduct` take no brief and write their own prompt. Once the agent
-  is back, tell it to write its output as it goes. A builder comes back working, and `tell` refuses a
-  working builder, so run `swarm.sh wait <slug>` in the background first and send
-  `swarm.sh tell <slug> nudge <file>` once it returns idle. A conductor's
+  is back, tell it to write its output as it goes. A builder comes back working, and `tell` queues a
+  nudge to a working builder and delivers it when its turn ends, so send
+  `swarm.sh tell <slug> nudge <file>` at once. A conductor's
   `swarm.sh tell <conductor> note <file>` goes in busy or not. A planner or co-author gets the line
   in the brief you write for its rerun, before it starts.
 - Judge whether an agent is alive from `.swarm/events.tsv`, its PR where it has one, and
