@@ -66,6 +66,8 @@ epic_pr() {
   item s "status: review" "prs: ${URL}" "epic: e"; lay
 }
 noted() { grep -qF -- "$1" "${INBOX}" 2>/dev/null; }
+# ev <command> <slug> <pane> <outcome> — one events.tsv line, as swarm.sh logs it.
+ev() { printf '2026-10-28T00:00:00Z\t%s\t%s\t%s\t%s\n' "$@" >> "${P}/.swarm/events.tsv"; }
 finished() { if grep -qxF -- "${FIN}" "${INBOX}" 2>/dev/null; then echo finish; else echo hold; fi; }
 # review <args> — swarm.sh review outside herdr (its note still reads herdr's list); sets rc, output in ${ROOT}/out.
 review() {
@@ -110,27 +112,78 @@ settle; rm -rf "${P}/.swarm/inbox"; review s3 https://github.com/o/r/pull/9
 is "merge = human, s3 handed over, every story of e in review: exits 0" 0 "${rc}"
 is "merge = human, s3 handed over, every story of e in review: the finish: line" finish "$(finished)"
 # The same handover, s2's, with other work of e left: s3 blocked on x, a story of e an agent builds,
-# holds it; so does a fix-main story the conductor started (its worktree is there), until its PR merges.
+# holds it; so does a fix-main story the conductor started (its worktree is there), until its PR merges,
+# in review under merge = human too.
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item x "status: ready" "kind: code" "epic: e"
 item s3 "status: blocked" "depends_on: [x]" "epic: e"; review s2 "${U2}"
 is "merge = human, s2 handed over while s3 waits on x, an agent's story of e: no finish: line" hold "$(finished)"
-epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item fix-main-abc1234 "status: ready" "kind: code"
-mkdir -p "${ROOT}/proj-wt/fix-main-abc1234"; review s2 "${U2}"
-is "merge = human, s2 handed over while a started fix-main story is open: no finish: line" hold "$(finished)"
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item fix-main-abc1234 "status: review" "kind: code" "prs: https://github.com/o/r/pull/11"
+mkdir -p "${ROOT}/proj-wt/fix-main-abc1234"; ev story fix-main-abc1234 w:c ok; review s2 "${U2}"
+is "merge = human, s2 handed over while a fix-main story conduct-e started is in review: no finish: line" hold "$(finished)"
 # s3 blocked by hand (no depends_on) is the lead's to ready, as is one blocked on a kind: lead story:
 # it holds nothing up.
 epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item s3 "status: blocked" "epic: e"; review s2 "${U2}"
 is "merge = human, s2 handed over while s3 is blocked by hand: the finish: line" finish "$(finished)"
+# s4 waits on s3, an agent's story that waits on l, a kind: lead story: neither can move until the lead
+# acts, so neither holds anything up.
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item l "status: ready" "kind: lead" "epic: e"
+item s3 "status: blocked" "depends_on: [l]" "epic: e"; item s4 "status: blocked" "depends_on: [s3]" "epic: e"; review s2 "${U2}"
+is "merge = human, s2 handed over while s4 waits on s3, which waits on kind: lead l: the finish: line" finish "$(finished)"
+# A fix-main story another conductor started (conduct-f, in w:f) is that conductor's, not e's; and the
+# fix-main story's own handover note goes to the conductor that started it, not the backlog's.
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item fix-main-abc1234 "status: ready" "kind: code" "prs: https://github.com/o/r/pull/11"
+mkdir -p "${ROOT}/proj-wt/fix-main-abc1234"; echo 'w:f conduct-f' >> "${P}/.swarm/state/e"; ev story fix-main-abc1234 w:f ok; review s2 "${U2}"
+is "merge = human, s2 handed over while a fix-main story conduct-f started is open: the finish: line" finish "$(finished)"
+settle; rm -rf "${P}/.swarm/inbox"; lay; ev story fix-main-abc1234 w:c ok
+review fix-main-abc1234 https://github.com/o/r/pull/11
+check "merge = human, the fix-main story conduct-e started is handed over: the note goes to conduct-e" noted "Story fix-main-abc1234 is in review"
+# A depends_on cycle no merge can break, and a story reconcile reopened after its PR closed unmerged,
+# are the lead's.
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"
+item s3 "status: blocked" "depends_on: [s4]" "epic: e"; item s4 "status: blocked" "depends_on: [s3]" "epic: e"; review s2 "${U2}"
+is "merge = human, s2 handed over while s3 and s4 wait on each other: the finish: line" finish "$(finished)"
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"; item s3 "status: ready" "epic: e"; ev reconcile s3 - "ok (reopened)"
+review s2 "${U2}"
+is "merge = human, s2 handed over while s3 was reopened after its PR closed unmerged: the finish: line" finish "$(finished)"
+# A story a close kept with one PR waits for its review agent; one with several PRs is the lead's.
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"
+item s3 "status: review" "kept: 2026-10-28 stalled" "prs: https://github.com/o/r/pull/9" "epic: e"; review s2 "${U2}"
+is "merge = human, s2 handed over while s3 is kept with one PR: no finish: line" hold "$(finished)"
+epic_pr "merge = human"; item s2 "status: ready" "prs: ${U2}" "epic: e"
+item s3 "status: review" "kept: 2026-10-28 stalled" "prs: https://github.com/o/r/pull/9 https://github.com/o/r/pull/10" "epic: e"; review s2 "${U2}"
+is "merge = human, s2 handed over while s3 is kept with two PRs: the finish: line" finish "$(finished)"
+# merge = human under an HLD that grants merge: s3 in review is its review agent's to merge, until
+# swarm.sh merge holds it (here for a protected path), when it waits on the user. s2 costs money, so
+# once in review it is the user's under the grant too; epic_pr's s, in review at no cost, is gone.
+epic_pr "merge = human"; rm "${S}"; mkdir -p "${P}/docs/hld"; printf -- '---\nstatus: agreed\ngrants: [merge]\n---\n' > "${P}/docs/hld/h.md"
+printf -- '---\nstatus: active\nhld: h\n---\n' > "${P}/docs/epics/e.md"
+item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
+ev review s3 w:r "ok (https://github.com/o/r/pull/9)"; review s2 "${U2}"
+is "a merge grant, s2 handed over while s3 is in review for its review agent to merge: no finish: line" hold "$(finished)"
+settle; rm -rf "${P}/.swarm/inbox"; ev merge s3 w:r "held: s3 changes hooks/x, which only the user merges"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"
+review s2 "${U2}"
+is "a merge grant, s2 handed over once swarm.sh merge held s3 for the user: the finish: line" finish "$(finished)"
+rm -rf "${P}/docs/hld"; printf -- '---\nstatus: active\n---\n' > "${P}/docs/epics/e.md"
+# A story with no epic is the backlog's: its handover note names the backlog in the finish: line.
+epic_pr "merge = human"; BL="$(cd "${P}" && env -u SWARM_PROJECT bash "${SWARM}" _conductor backlog)"
+echo "${BL} w:k idle" >> "${H}/agents"; echo "w:k t1" >> "${H}/panes"; echo "w:k ${BL}" >> "${P}/.swarm/state/e"
+item s2 "status: ready" "prs: ${U2}"; review s2 "${U2}"
+check "merge = human, the backlog's last story handed over: the finish: line names the backlog" \
+  grep -qxF "finish: the backlog has no agent work left" "${P}/.swarm/inbox/${BL}.md"
 
 # --- merge = agent: s2, which costs money, is handed to the user with swarm.sh review. s3 in review is
 # its review agent's to merge next, so still agent work; once s3 costs money too, only the user merges
-# it, and it holds nothing up.
-epic_pr; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
+# it, and it holds nothing up. s, epic_pr's, is gone: in review at no cost it would count too.
+epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
 review s2 "${U2}"
 is "merge = agent, s2 handed over while s3 is in review for its review agent to merge: exits 0" 0 "${rc}"
 is "merge = agent, s2 handed over while s3 is in review for its review agent to merge: no finish: line" hold "$(finished)"
-epic_pr; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"
+epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"
 item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e" "costs: money"; review s2 "${U2}"
 is "merge = agent, s2 handed over while s3 in review costs money, so waits on the user: the finish: line" finish "$(finished)"
+# s3's merge was refused (its head not green) after its last review: it waits on the user.
+epic_pr; rm "${S}"; item s2 "status: ready" "prs: ${U2}" "epic: e" "costs: money"; item s3 "status: review" "prs: https://github.com/o/r/pull/9" "epic: e"
+ev review s3 w:r "ok (https://github.com/o/r/pull/9)"; ev merge s3 w:r "the head 1111111 is not green"; review s2 "${U2}"
+is "merge = agent, s2 handed over after swarm.sh merge refused s3: the finish: line" finish "$(finished)"
 
 finish epic-finish

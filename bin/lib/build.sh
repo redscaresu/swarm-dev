@@ -61,10 +61,11 @@ wait_pr_rule() {
 stop_rule() {
   local scope="of this epic" fin="epic $1"
   [[ "$1" != backlog ]] || { scope="with no \`epic:\`"; fin="the backlog"; }
-  printf '%s' "Never write your report while agent work is left: a story ${scope} of a kind an agent builds that is ready (to start, building, or with its PR open and not yet in review), blocked on work an agent builds (not blocked by hand), or in review with its review agent still to merge it, or kept by a close and still to be reviewed $(fix_running)." \
+  printf '%s' "Never write your report while agent work is left: a story ${scope} of a kind an agent builds that is ready (to start, building, or with its PR open and not yet in review), blocked on work an agent builds (not blocked by hand), or in review with its review agent still to merge it (not one \`swarm.sh merge\` has refused or held since), or kept by a close with one PR and still to be reviewed $(fix_running)." \
     " A merge or handover note that ends \`finish: ${fin} has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours that \`herdr agent list\` still lists as idle, with \`swarm.sh close review-<slug>\` (leave a working one: it is still handing its PR on, and reconcile or tidy closes it), then write your report." \
     " With no such note, write it only once you find none left by the same rule." \
-    " A story blocked only on a \`kind: lead\` story or a hand step waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up."
+    " A story another rule here has you list in your report for the lead (a build that died, a \`not held:\` line, a PR closed unmerged, a kept story with several PRs) is not agent work either." \
+    " A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up."
   if [[ "${CFG_merge}" == agent ]]; then echo " The one exception: stop and report at once when $(base_stop)."; else echo; fi
 }
 # fix_running — a fix-main story an epic conductor started has no epic, yet the conductor built it:
@@ -116,7 +117,8 @@ The review agent waits for the PR's checks, triages them, reviews each head, sen
 the builder, logs them, and merges the PR or hands it to the user. Never wait on a PR or a review
 agent (but the one wait the stop note below names), read a review file, triage, tell a builder findings, log a finding, close a review agent or
 merge a story's PR: each is the review agent's, and doing it as well would send findings twice and
-count a round twice.
+count a round twice. The one close that is yours is the stop rule's, of an idle review agent on a
+\`finish:\` line.
 A note in your inbox that says \`review-<slug> stopped on <sha>: <why>\` is a review agent that
 stopped before a pass, and the story is yours again. A why that starts \`head moved:\` names a head
 that review agent never reviewed: start the review agent again on the PR at once, as above (on

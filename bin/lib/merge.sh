@@ -1343,7 +1343,8 @@ story_note() {
   printf '%s\n' "${msg}" > "${note}"
   # A merge with a why (the board not settled, or main not green) ends no epic: a later note decides.
   fin=1; [[ -z "${why}" ]] || fin=""
-  NOTE_FINISH="${fin}" conductor_note "$3" "${note}" "${list}"
+  # A fix-main story's note goes to the conductor that started it (note_group).
+  NOTE_FINISH="${fin}" conductor_note "$(note_group "$2" "$3")" "${note}" "${list}"
   rm -f "${note}"
 }
 

@@ -283,7 +283,7 @@ report_rules() {
   # shellcheck disable=SC2016 # the backticks are the brief's
   printf '%s|%s|%s|%s|%s\n' "$(has "Never write your report while agent work is left:" "${b}")" \
     "$(has "A merge or handover note that ends \`finish: $2 has no agent work left\` says none is: on it, close each \`review-<slug>\` of yours ${FINISH_CLOSE}" "${b}")" \
-    "$(has "A story blocked only on a \`kind: lead\` story or a hand step waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
+    "$(has "A story blocked only on a \`kind: lead\` story, a hand step, or stories that themselves wait on the lead that way (or in a depends_on cycle) waits on the user, not on you: list it in your report under Waits on the user; it holds nothing up." "${b}")" \
     "$(has "only once no agent work is left (the stop rule above): write your report" "${b}")" \
     "$(grep -qF "Write your report only when no story of this epic that is yours to start is ready and none is running" <<< "${b}" && echo there || echo gone)"
 }
@@ -336,7 +336,7 @@ check "with merge = agent, the epic's and the backlog's conductor briefs report 
   "$(report_rules "${brief}" "epic f")|$(report_rules "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" "the backlog")"
 # A broken base is the one stop while agent work is left, and the merge rule's report sentence names it.
 check "with merge = agent, the epic conductor's report rules stop it on a broken base, and count a fix-main story it started until its PR merges" "yes|yes|yes|no" \
-  "$(has "The one exception: stop and report at once when CI on the base timed out, or is red with no \`fix-main:\` line." "${brief}")|$(has "Write your report only as the stop rule below says: never while agent work is left, unless CI on the base timed out" "${brief}")|$(has "kept by a close and still to be reviewed (a fix-main story you started counts as running until its PR merges)." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
+  "$(has "The one exception: stop and report at once when CI on the base timed out, or is red with no \`fix-main:\` line." "${brief}")|$(has "Write your report only as the stop rule below says: never while agent work is left, unless CI on the base timed out" "${brief}")|$(has "kept by a close with one PR and still to be reviewed (a fix-main story you started counts as running until its PR merges)." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
 check "the brief makes no claim about the block-red-pr-merge hook, which never sees swarm.sh's own gh calls" "no" \
   "$(grep -qF "block-red-pr-merge" <<< "${brief}" && echo yes || echo no)"
 printf '%s\n' "escalate_after = 0" > "${p}/.claude/swarm/config"
