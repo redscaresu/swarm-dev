@@ -409,8 +409,8 @@ prints:
 - `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` while a story of
   the epic is still an agent's, by the rule the `finish:` line uses (§ Merging): ready, blocked on
   an agent's story, or in review with a review agent still to act. `<n>` is how many such stories
-  there are, the ones the conductor's brief has it list for the lead included (a build that died,
-  a `not held:` line, a PR closed unmerged, a kept story with several PRs). For the backlog
+  there are. It includes two kinds the conductor's brief has it list for the lead: a build that
+  died and a `not held:` line. For the backlog
   conductor's report, `conduct-backlog.report.md`, the line counts the stories with no epic and
   reads `reported: backlog (...), exit: swarm.sh conduct --backlog`. The conductor stopped with
   work left, and the exit starts a fresh one. Collect a conductor still in its pane first, since

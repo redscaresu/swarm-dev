@@ -365,9 +365,10 @@ Repeat until a step below says stop:
      backlog the line is `reported: backlog (...)` and the exit is `swarm.sh conduct --backlog`.
      When `next` offers its collect step for that conductor, do that step first: the exit retires
      the conductor and deletes its report, so the collect would never run. Then read the report.
-     `<n>` also counts the stories a conductor lists for you, which a new one cannot clear: a
-     `not started:` story whose worktree is still there (a build that died), a `not held:` line, a
-     PR closed unmerged, and a kept story with several PRs. Handle each first: a build that died as
+     `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
+     `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
+     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
+     does not count. Handle all of these first: a build that died as
      the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
      there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
      report says for each (docs/reference.md § Merging lists them). Clear any other cause the report
