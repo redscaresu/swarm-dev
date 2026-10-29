@@ -64,15 +64,6 @@ Finish PR's `swarm.sh merge --board` has exited; closing it sooner kills that me
 leave the PR for the user to merge.
 **Issue.** [#692](https://github.com/redscaresu/swarm-dev/issues/692).
 
-## A merge of main that may have dropped main's lines
-
-**Symptom.** A PR's branch contains a merge of the base, especially one that resolved a conflict.
-**Check.** `git show --remerge-diff <merge commit>`: every removed line must be one the PR means to
-remove. Also, `git diff origin/<base>...<head> --stat` should match
-`git diff $(git merge-base origin/<base> <head>) <head> --stat`.
-**Step.** If a line of the base was dropped, send the builder a nudge naming it before you merge.
-**Issue.** [#693](https://github.com/redscaresu/swarm-dev/issues/693).
-
 ## A builder that keeps changing its PR
 
 **Symptom.** A builder pushes again and again after opening its PR, so CI restarts and no review

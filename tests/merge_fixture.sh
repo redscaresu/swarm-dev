@@ -109,6 +109,14 @@ case "$1 $2" in
     # gh api rate_limit (wait-pr's read of a spent budget): ${FX}/rate_limit as the --jq filter gives it
     # ("<reset epoch> <reset time>"), else nothing (the budget is not spent).
     if [ "$2" = rate_limit ]; then [ ! -e "${FX}/rate_limit" ] || put "${FX}/rate_limit"; exit 0; fi
+    # A PR's commits (pulls/<n>/commits, merge's dropped-lines reads), through its --jq filter: ${FX}/prcommits
+    # as serve reads it (with prcommits.fail, a 5xx), else one plain commit at ${FX}/head, so no merge to scan.
+    case "$*" in *"/pulls/"*"/commits?"*)
+      q=.; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
+      if [ -e "${FX}/prcommits" ] || [ -e "${FX}/prcommits.fail" ]; then out="$(serve prcommits)" || exit 1
+      else get h "${FX}/head"; out="[{\"sha\":\"${h}\",\"parents\":[{\"sha\":\"0000000000000000000000000000000000000000\"}]}]"; fi
+      printf '%s\n' "${out}" | jq -r "${q}"; exit ;;
+    esac
     for a in "$@"; do path="${a}"; done
     sha="${path#*/commits/}"; sha="${sha%%/*}"
     case "${path}" in
