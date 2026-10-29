@@ -54,6 +54,9 @@ expect() {
 has_line() { # <name> <line> — a line of next's output in out is <line>
   if grep -qxF -- "$2" <<< "${out}"; then echo "ok   $1"; else echo "FAIL $1: no line '$2' in: ${out}"; fails=$((fails + 1)); fi
 }
+no_text() { # <name> <text> — no line of next's output in out holds <text>
+  if grep -qF -- "$2" <<< "${out}"; then echo "FAIL $1: a line holds '$2' in: ${out}"; fails=$((fails + 1)); else echo "ok   $1"; fi
+}
 
 expect "empty board" "done"
 if [[ "${out}" == *"/epic <title>"* ]]; then echo "ok   an empty board names the /epic step"
@@ -66,8 +69,9 @@ expect "draft epic once active is planned" "plan-epic e1" \
   "item epics/e1.md 'status: active'"
 # A built epic (its only story planned, then deleted by its merge on the board's history) is sent to
 # conduct while its report is missing or older than that merge, and gets no step once it has a fresh
-# one; a never-planned active epic in a repo with history is still planned. The fixture commits are
-# unsigned: the repo is thrown away with the case.
+# one; a never-planned active epic in a repo with history is still planned. No line of next's output
+# offers a built epic a plan: not the step, and not the no-plan idle line, as plannable_epics leaves it
+# out. The fixture commits are unsigned: the repo is thrown away with the case.
 # shellcheck disable=SC2034 # the steps expect evals use it
 GIT_T=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false)
 BUILT=("item epics/e1.md 'status: active'" "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
@@ -76,13 +80,23 @@ BUILT=("item epics/e1.md 'status: active'" "item stories/s1.md 'status: review' 
 REPORT="mkdir -p .swarm && echo report > .swarm/conduct-e1.report.md"
 expect "a built epic with no report is conducted, not planned" "conduct e1" "${BUILT[@]}"
 has_line "the built epic's why says it has no report" "the active epic e1 is built and has no conductor's report: its conductor reports at once"
+no_text "no line offers the unreported built epic a plan" "plan-epic e1"
 expect "a built epic whose report is older than its last story's merge is conducted" "conduct e1" \
   "${BUILT[@]}" "${REPORT} && touch -t 202001010000 .swarm/conduct-e1.report.md"
 has_line "the built epic's why says its report is stale" \
   "the active epic e1 is built, and its conductor's report is older than its last story's merge: its conductor reports at once"
+no_text "no line offers the built epic with a stale report a plan" "plan-epic e1"
 expect "a built epic whose report is newer than its last story's merge gets no step" "done" "${BUILT[@]}" "${REPORT}"
 if grep -qxE 'conduct e1|plan-epic e1' <<< "${out}"; then echo "FAIL a reported built epic is conducted or planned: ${out}"; fails=$((fails + 1))
 else echo "ok   a reported built epic is neither conducted nor planned"; fi
+# A new epic that takes a finished epic's slug: the old file deleted (its Finish PR), a new one added
+# after, the old report still there and newer than the old merge. The old history is not the new epic's.
+expect "a new epic that takes a finished epic's slug is planned, not read as built" "plan-epic e1" \
+  "${BUILT[@]}" "git rm -q docs/epics/e1.md && \"\${GIT_T[@]}\" commit -qm 'Finish e1'" \
+  "item epics/e1.md 'status: active'" "\"\${GIT_T[@]}\" add -A && \"\${GIT_T[@]}\" commit -qm 'e1 again'" "${REPORT}"
+expect "a new epic file not committed yet that takes a finished epic's slug is planned too" "plan-epic e1" \
+  "${BUILT[@]}" "git rm -q docs/epics/e1.md && \"\${GIT_T[@]}\" commit -qm 'Finish e1'" \
+  "item epics/e1.md 'status: active'" "${REPORT}"
 expect "a never-planned active epic in a repo with history is planned" "plan-epic e1" \
   "item epics/e1.md 'status: active'" "\"\${GIT_T[@]}\" add -A && \"\${GIT_T[@]}\" commit -qm plan"
 expect "an escalated story comes before a draft epic" "escalated esc" \

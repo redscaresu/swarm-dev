@@ -141,29 +141,39 @@ FINISHED_NOW=""; FINISHED_SET=""
 
 # epic_built <epic> — true for an active epic with no story file left on the board (none counts in it,
 # epic_stories, and no after_story: epic_has_after) whose stories were planned and have all left it:
-# one finished (dash_finished, from the board's history) or was deleted and not committed yet
-# (epic_deleted_here). Unlike epic_planned, false on a board with no history to read (not in git, or no
-# commit yet), so a never-planned epic there is planned as before. plannable_epics leaves it out, and
-# next_step sends it to conduct while its report is missing or stale (epic_report_stale).
+# one finished (dash_finished, from the board's history) since the epic's file was last added to the
+# board (epic_story_gone over that range: a new epic that takes a finished epic's slug is not built on
+# the old one's history), or was deleted and not committed yet (epic_deleted_here). Unlike
+# epic_planned, false on a board with no history to read (not in git, or no commit yet), so a
+# never-planned epic there is planned as before. plannable_epics leaves it out, and next_step sends it
+# to conduct while its report is missing or stale (epic_report_stale).
 epic_built() {
+  local added
   [[ "$(fm "${BOARD}/epics/$1.md" status 2>/dev/null)" == active ]] || return 1
   git -C "${BOARD}" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 1
   [[ -z "$(epic_stories "$1")" ]] && ! epic_has_after "$1" || return 1
   # dash_finished reads the whole history: once a run, as NO_AGENT_NOW is read.
   if [[ -z "${FINISHED_SET}" ]]; then FINISHED_NOW="$(dash_finished)"; FINISHED_SET=1; fi
-  awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' <<< "${FINISHED_NOW}" && return 0
+  if awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' <<< "${FINISHED_NOW}"; then
+    # The first-parent commit that last added the epic's file, for a file HEAD has: a new file not
+    # committed yet (a finished epic's slug taken again) has no history of its own.
+    added=""
+    if git -C "${BOARD}" cat-file -e "HEAD:./epics/$1.md" 2>/dev/null; then
+      # --no-patch: --diff-merges turns the patch on, and the hash alone is wanted.
+      added="$(git -C "${BOARD}" log -1 --first-parent --diff-merges=first-parent --no-renames --diff-filter=A \
+        --no-patch --format=%H HEAD -- "epics/$1.md" 2>/dev/null)" || added=""
+    fi
+    if [[ -n "${added}" ]] && epic_story_gone "$1" "${added}..HEAD"; then return 0; fi
+  fi
   epic_deleted_here "$1"
 }
 
-# epic_report_stale <epic> — true when <epic>'s conductor report (.swarm/conduct-<epic>.report.md) is
-# missing, or older than the newest merge of its stories: a first-parent commit on the board's HEAD,
-# with a commit time after the report's, that deleted a story file whose front matter in the commit's
-# parent names <epic> (and is not waits_on_epic), read as release_stage reads deleted stories. The git
-# log runs only when the report is there, and reads only the commits since it.
-epic_report_stale() {
-  local report="${PROJECT_DIR}/.swarm/conduct-$1.report.md" since pre p c="" s text
-  [[ -f "${report}" ]] || return 0
-  since="$(date -r "${report}" +%s)" || return 1
+# epic_story_gone <epic> <git log arg>... — true when a first-parent commit on the board's HEAD, among
+# those the <git log arg>s take in (--since=<date> HEAD, or an <added>..HEAD range), deleted a story
+# file whose front matter in the commit's parent names <epic> (and is not waits_on_epic), read as
+# release_stage reads deleted stories. epic_built and epic_report_stale read the history through it.
+epic_story_gone() {
+  local epic="$1" pre p c="" s text; shift
   pre="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 1
   # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
   while IFS= read -r -d '' p; do
@@ -172,11 +182,22 @@ epic_report_stale() {
     s="${p#"${pre}stories/"}"
     [[ "${s}" == *.md && "${s}" != */* && "${s}" != README.md ]] || continue
     text="$(git -C "${BOARD}" show "${c}^:${p}" 2>/dev/null)" || continue
-    [[ "$(get_fm - epic <<< "${text}")" == "$1" ]] || continue
-    waits_on_epic "$(get_fm - kind <<< "${text}")" "$(get_fm - after <<< "${text}")" "$1" || return 0
+    [[ "$(get_fm - epic <<< "${text}")" == "${epic}" ]] || continue
+    waits_on_epic "$(get_fm - kind <<< "${text}")" "$(get_fm - after <<< "${text}")" "${epic}" || return 0
   done < <(git -C "${BOARD}" log -z --first-parent --diff-merges=first-parent --no-renames --diff-filter=D --name-only \
-    --format=%H --since="@$((since + 1))" HEAD -- stories/ 2>/dev/null)
+    --format=%H "$@" -- stories/ 2>/dev/null)
   return 1
+}
+
+# epic_report_stale <epic> — true when <epic>'s conductor report (.swarm/conduct-<epic>.report.md) is
+# missing, or older than the newest merge of its stories: a story of it deleted (epic_story_gone) by a
+# commit with a commit time after the report's. The git log runs only when the report is there, and
+# reads only the commits since it.
+epic_report_stale() {
+  local report="${PROJECT_DIR}/.swarm/conduct-$1.report.md" since
+  [[ -f "${report}" ]] || return 0
+  since="$(date -r "${report}" +%s)" || return 1
+  epic_story_gone "$1" --since="@$((since + 1))" HEAD
 }
 
 # epic_after_only <epic-file> — true when the epic is active, its open stories are all after_story
