@@ -60,9 +60,9 @@ if found="$(grep -rnE "${DOCS_GONE}" "${REPO}/docs" "${REPO}/commands" "${REPO}/
 else echo "ok   docs, commands, templates and skills mention nothing removed"; fi
 
 LESSONS_GONE='LESSON_|lessons_report|rules_check_step|rules_review_rule|Rules checked|lesson: <kind>|lesson: prune'
-if found="$(grep -rnE "${LESSONS_GONE}" "${REPO}/bin" "${REPO}/commands")"; then
-  echo "FAIL bin/ or commands/ still has lessons or its rule PRs:"; echo "${found}"; fails=$((fails + 1))
-else echo "ok   no lessons, rule PR or rules check in bin/ or commands/"; fi
+if found="$(grep -rnE "${LESSONS_GONE}" "${REPO}/bin" "${REPO}/commands" "${REPO}/rules.md")"; then
+  echo "FAIL bin/, commands/ or rules.md still has lessons or its rule PRs:"; echo "${found}"; fails=$((fails + 1))
+else echo "ok   no lessons, rule PR or rules check in bin/, commands/ or rules.md"; fi
 collect="$(sed -n '/collect <agent>/,/^   - /p' "${REPO}/commands/swarm.md")"
 if grep -q 'checks: <kind>' <<< "${collect}"; then
   echo "ok   commands/swarm.md's collect step files a checks: story"
