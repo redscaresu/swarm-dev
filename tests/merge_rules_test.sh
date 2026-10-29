@@ -50,6 +50,8 @@ release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge 
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
 is "--release: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+# It changes only plugin.json, so merge's dropped-lines check never runs: no read of the PR's commits.
+check "--release: reads none of the PR's commits" bash -c "! grep -q 'pulls/7/commits' '${ROOT}/gh.log'"
 # With merge = human the lead merges a release only under HLDs that grant release (below).
 # human_release [command...] — release_pr with merge = human, the command run on its fixtures, then merge --release.
 human_release() { release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; "$@"; merge --release "${URL}"; }
@@ -1027,8 +1029,5 @@ is "dropped lines in a file named 'x | y.md': recorded whole, beside the other P
 fresh; rm "${S}"; pr_head "${DROP}"; merge --board "${URL}"
 refused "dropped lines: a --board PR" "merge: held: ${URL} (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
 check "dropped lines: a --board PR: no board state written" bash -c "! grep -rqs 'dropped base lines' '${P}/.swarm/board-state'"
-# --release changes only plugin.json: it reads no commits of the PR, merges in them or not.
-release_pr; pr_head "${DROP}"; echo "${H1}" > "${FX}/head"; merge --release "${URL}"
-is "dropped lines: --release merges, reading none of the PR's commits" "0|yes|no" "${rc}|$(merged && echo yes)|$(commits_read && echo yes || echo no)"
 
 finish merge-rules
