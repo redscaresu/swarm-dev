@@ -285,6 +285,11 @@ check "dropped-lines: a repo whose origin is not <owner/repo>: exit 2 naming bot
   "swarm: dropped-lines: ${P}'s origin is ${O} (acme/widget), not elsewhere/widget"$'\n'"exit 2" "$(dl "${DROP}" elsewhere/widget)"
 check "dropped-lines: a die (a head that is no SHA) exits 2, not 1" \
   "swarm: dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"$'\n'"exit 2" "$(dl nothex)"
+# A stop before merge.sh is sourced: outside any swarm project, the EXIT trap has no dropped_refs_drop.
+check "dropped-lines: outside a swarm project, a stop at startup exits 2 with only its own line" \
+  "swarm: not in a swarm project: no .claude/swarm/config above here and not in a git repo"$'\n'"exit 2" \
+  "$(rc=0; out="$(cd "${ROOT}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" dropped-lines acme/widget 7 "${DROP}" main 2>&1)" || rc=$?
+     printf '%s\nexit %s' "${out}" "${rc}")"
 check "dropped-lines: no run added a line to events.tsv" "" "$(diff "${ROOT}/events.before" "${P}/.swarm/events.tsv" 2>&1)"
 check "dropped-lines: no run left its fetch's ref, or a FETCH_HEAD" "none" \
   "$(git -C "${P}" for-each-ref refs/swarm; [[ ! -e "${P}/.git/FETCH_HEAD" ]] && echo none)"

@@ -729,9 +729,10 @@ base_merged_from() {
 # <owner/repo>'s name, whose origin URL must end in <owner/repo> (compared lower case), it stops unless
 # gh lists <head> among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most
 # 250). It fetches refs/pull/<n>/head and <base> into refs of this run's own,
-# refs/swarm/dropped-lines/<n>-<pid>/head and /base, read once and deleted (and by swarm.sh's trap),
-# writing no FETCH_HEAD and, with an empty --refmap, no origin/<base>: two runs share neither, and
-# another fetch cannot move the base it scans against. The fetched head must be <head>, else it stops naming both. The merges on <head>'s
+# refs/swarm/dropped-lines/<n>-<pid>/head and /base, kept through the scan so git cannot prune what
+# it reads, and deleted on exit by swarm.sh's trap. It writes no FETCH_HEAD and, with an empty
+# --refmap, no origin/<base>: two runs share neither, and another fetch cannot move the base it scans
+# against. The fetched head must be <head>, else it stops naming both. The merges on <head>'s
 # first-parent chain since that base commit are scanned, except those events.tsv records as
 # GitHub's merge of the base (merge_base_update's `base-merged <sha>`, shown to bring only the base's
 # content); any other merge is scanned, web-flow's too (a conflict resolved in GitHub's web editor).
@@ -763,7 +764,6 @@ dropped_lines() {
   [[ ${rc} -eq 0 ]] || die "dropped-lines: git cannot fetch ${url}'s head and ${base} from ${origin}: ${out##*$'\n'}"
   got="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/head^{commit}")" || die "dropped-lines: the fetch of ${url}'s head left no commit at ${DROPPED_REF}/head"
   tip="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/base^{commit}")" || die "dropped-lines: the fetch of ${base} left no commit at ${DROPPED_REF}/base"
-  dropped_refs_drop; DROPPED_REF=""
   [[ "${got}" == "${head}" ]] \
     || die "dropped-lines: ${url}'s head on ${origin} (refs/pull/${n}/head) is ${got}, not ${head}: the PR moved, or GitHub has not updated the ref yet; run it on the head the PR has"
   merges="$(git -C "${src}" rev-list --first-parent --merges --reverse "${tip}..${head}" --)" \
@@ -790,7 +790,7 @@ dropped_lines() {
 }
 
 # dropped_refs_drop — delete dropped_lines' two fetched refs (DROPPED_REF's head and base, in the clone
-# DROPPED_DIR); a ref that is not there is no error. swarm.sh's EXIT trap runs it too.
+# DROPPED_DIR); a ref that is not there is no error. swarm.sh's EXIT trap runs it, once the run ends.
 dropped_refs_drop() {
   [[ -n "${DROPPED_REF}" ]] || return 0
   git -C "${DROPPED_DIR}" update-ref -d "${DROPPED_REF}/head" 2>/dev/null || true
