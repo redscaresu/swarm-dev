@@ -1,4 +1,4 @@
-import calendar, glob, json, os, re, subprocess, time
+import base64, calendar, glob, hashlib, json, os, re, shutil, signal, subprocess, time
 WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
@@ -124,6 +124,137 @@ def bg_running(log, name, projects, stall_minutes="", now=""):
         return bool(live)
     cap, t = TEST_RUN_STALLS * int(stall_minutes) * 60, float(now) if now else time.time()
     return any(t - at < cap for at in live.values())
+# SIGN_SECONDS: how long each call sign_blocked makes (git, gpg, gpg-connect-agent, ssh-add, ssh-keygen) may
+# take; one past it is killed with its process group, and the probe says unknown.
+SIGN_SECONDS = 5
+def sign_call(argv):
+    # (exit code, stdout) of argv, with no stdin and stderr dropped; None when it cannot start or runs past
+    # SIGN_SECONDS.
+    try:
+        p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True, errors="replace", start_new_session=True)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    try:
+        out = p.communicate(timeout=SIGN_SECONDS)[0]
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+        p.stdout.close()
+        return None
+    return p.returncode, out
+def sign_blocked(worktree):
+    # blocked, clear or unknown: whether the signer git is set to use in <worktree> can sign its uncommitted
+    # work unprompted. gpgsign off or a clean tree is clear before any signer call; gpg.format picks the rest.
+    git = lambda *a: sign_call(["git", "--no-optional-locks", "-C", worktree] + list(a))
+    on = git("config", "--type=bool", "--get", "commit.gpgsign")
+    if on is None or on[0] not in (0, 1):
+        return "unknown"
+    if on[1].strip() != "true":
+        return "clear"
+    st = git("status", "--porcelain")
+    if st is None or st[0] != 0:
+        return "unknown"
+    if not st[1].strip():
+        return "clear"
+    fmt, key = git("config", "--get", "gpg.format"), git("config", "--get", "user.signingkey")
+    if any(r is None or r[0] not in (0, 1) for r in (fmt, key)):
+        return "unknown"
+    fmt, key = fmt[1].strip() if fmt[0] == 0 else "openpgp", key[1].strip() if key[0] == 0 else None
+    if key == "":
+        return "unknown"
+    if fmt == "openpgp":
+        return gpg_blocked(worktree, git, key)
+    return ssh_blocked(worktree, key) if fmt == "ssh" else "unknown"
+def gpg_blocked(worktree, git, key):
+    # Run the gpg git would (the last of gpg.program and gpg.openpgp.program, else gpg on PATH), and ask the
+    # gpg-connect-agent in its directory, never one on PATH, whether gpg-agent caches the passphrase of the
+    # (sub)key `gpg -u <key>` signs with. <key> None is git's own: the committer's `Name <email>`.
+    prog = git("config", "--type=path", "--get-regexp", r"^gpg\.(openpgp\.)?program$")
+    if prog is None or prog[0] not in (0, 1):
+        return "unknown"
+    prog = ([l.split(" ", 1)[1] for l in prog[1].splitlines() if " " in l] or ["gpg"])[-1]
+    gpg = os.path.join(worktree, prog) if "/" in prog else shutil.which(prog)
+    if key is None:
+        ident = git("var", "GIT_COMMITTER_IDENT")
+        key = ident[1][:ident[1].rfind(">") + 1] if ident and ident[0] == 0 else ""
+    if not gpg or not key:
+        return "unknown"
+    ls = sign_call([gpg, "--batch", "--no-autostart", "--with-colons", "--with-keygrip", "--list-secret-keys", "--", key])
+    grip = signing_keygrip(ls[1], key) if ls and ls[0] == 0 else None
+    info = sign_call([os.path.join(os.path.dirname(gpg), "gpg-connect-agent"), "--no-autostart", "KEYINFO " + grip, "/bye"]) if grip else None
+    # S KEYINFO <keygrip> <type> <serial> <idstr> <cached> <protection> ...: cached 1, or protection C (no
+    # passphrase), signs; a key on disk (D) that is protected (P) and not cached needs a prompt.
+    for f in (l.split() for l in (info[1] if info else "").splitlines()):
+        if len(f) > 7 and f[:2] == ["S", "KEYINFO"] and f[2].upper() == grip.upper():
+            if f[6] == "1" or f[7] == "C":
+                return "clear"
+            return "blocked" if f[3] == "D" and f[7] == "P" else "unknown"
+    return "unknown"
+def signing_keygrip(listing, spec):
+    # The keygrip of the (sub)key `gpg -u <spec>` signs with, from gpg's --with-colons --with-keygrip
+    # --list-secret-keys listing of <spec>: with <spec>! the (sub)key it names; else, in the first key that
+    # has one, the newest usable signing subkey, else the primary when it can sign. Usable: s among its own
+    # capabilities, not revoked, expired or invalid, and its secret no stub (#). None when none can sign.
+    exact, blocks = re.sub("^0[xX]", "", spec[:-1]).upper() if spec.endswith("!") else "", []
+    for f in (l.split(":") for l in listing.splitlines()):
+        if f[0] == "sec":
+            blocks.append([])
+        if f[0] in ("sec", "ssb") and blocks and len(f) > 14:
+            blocks[-1].append({"ids": [f[4].upper()], "grip": None, "created": int(f[5]) if f[5].isdigit() else 0,
+                               "sign": "s" in f[11] and f[1] not in ("r", "e", "i") and f[14] != "#"})
+        elif f[0] in ("fpr", "grp") and blocks and blocks[-1] and len(f) > 9:
+            k = blocks[-1][-1]
+            if f[0] == "fpr":
+                k["ids"].append(f[9].upper())
+            elif k["grip"] is None:
+                k["grip"] = f[9]
+    for keys in blocks:
+        if exact:
+            k = next((k for k in keys if any(i.endswith(exact) for i in k["ids"] if i)), None)
+        else:
+            subs = [k for k in keys[1:] if k["sign"]]
+            k = max(subs, key=lambda k: k["created"]) if subs else keys[0] if keys and keys[0]["sign"] else None
+        if k and k["sign"] and k["grip"]:
+            return k["grip"]
+    return None
+def ssh_fingerprint(blob):
+    # OpenSSH's SHA256 fingerprint of a base64 public key blob, as ssh-keygen -l prints it; None if not base64.
+    try:
+        return "SHA256:" + base64.b64encode(hashlib.sha256(base64.b64decode(blob, validate=True)).digest()).decode().rstrip("=")
+    except ValueError:
+        return None
+def ssh_blocked(worktree, key):
+    # blocked when <key> is a public key (a key:: literal, an ssh- one git reads as key::, or a .pub path,
+    # fingerprinted by ssh-keygen -l) that ssh-add -L, on SSH_AUTH_SOCK, does not list (exit 0, or 1 for an
+    # empty or locked agent); clear when it lists it. unknown when ssh-add reaches no agent (any other exit),
+    # and for a .pub not listed with a file at its private key path (the path without -cert.pub or .pub),
+    # which ssh-keygen -Y sign falls back to and which signs unprompted when it has no passphrase: that file
+    # is only checked to exist, never opened. A private key file as <key> is unknown for the same reason.
+    # gpg.ssh.program and ssh-keygen -Y sign never run.
+    if key is None:
+        return "unknown"
+    priv = None
+    if key.startswith(("key::", "ssh-")):
+        f = key[5:].split() if key.startswith("key::") else key.split()
+        want = ssh_fingerprint(f[1]) if len(f) > 1 else None
+    elif key.endswith(".pub"):
+        path = os.path.join(worktree, os.path.expanduser(key))
+        fp = sign_call(["ssh-keygen", "-l", "-E", "sha256", "-f", path])
+        f = fp[1].split() if fp and fp[0] == 0 else []
+        want = f[1] if len(f) > 1 and f[1].startswith("SHA256:") else None
+        priv = re.sub(r"(-cert)?\.pub$", "", path)
+    else:
+        return "unknown"
+    listed = sign_call(["ssh-add", "-L"]) if want else None
+    if listed is None or listed[0] not in (0, 1):
+        return "unknown"
+    if want in (ssh_fingerprint(l.split()[1]) for l in listed[1].splitlines() if len(l.split()) > 1):
+        return "clear"
+    return "unknown" if priv and os.path.exists(priv) else "blocked"
 # USAGE_TAIL: how many of the pane's last non-empty lines the live usage-limit dialog's options sit in.
 USAGE_TAIL = 8
 USAGE_OPTION = r"[\s│]*(?:❯\s*)?(\d+)\.\s*"

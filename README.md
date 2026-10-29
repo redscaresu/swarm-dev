@@ -203,6 +203,11 @@ Restart Claude Code afterwards. Agents already running stay on the old version u
 waits while the Claude review agent reviewing its PR is busy and still on the old version. upgrade
 runs detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
 
+swarm-dev's rules, [rules.md](rules.md), ship with the plugin, so a project gets new rules with
+`claude plugin update`. They reach the agents started after the update. `swarm.sh upgrade` resumes
+each running agent's own session and sends it no new brief, so a resumed agent keeps the rules it
+started with.
+
 An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
 `next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.
 
