@@ -103,6 +103,9 @@ case "$1 $2" in
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
       # --slurp (merge_gone's read) wraps the one page in a list of pages.
       */pulls/*/files*) case " $* " in *" --slurp "*) out="$(serve files)" || exit 1; echo "[${out}]" ;; *) serve files ;; esac ;;
+      # The PR's commits, through merge's --jq filter: one plain commit at ${FX}/head, so no merge to scan.
+      */pulls/*/commits*) q=.; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
+                          printf '[{"sha":"%s","parents":[{"sha":"%040d"}]}]\n' "$(cat "${FX}/head")" 0 | jq -r "${q}" ;;
       */rules/branches/*) serve rules ;;
       */git/ref/tags/*) serve tagref ;;     # the release's tag
       */releases/tags/*) serve release ;;   # its GitHub release

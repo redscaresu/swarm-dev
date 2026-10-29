@@ -57,6 +57,9 @@ case "$1 $2" in
       */commits/*/status*) serve "${sha}.status" ;;
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
       */pulls/*/files*) serve files ;;
+      # The PR's commits, through merge's --jq filter: one plain commit at ${FX}/head, so no merge to scan.
+      */pulls/*/commits*) q=.; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
+                          printf '[{"sha":"%s","parents":[{"sha":"%040d"}]}]\n' "$(cat "${FX}/head")" 0 | jq -r "${q}" ;;
       # compare/<head>...main, merge's read of what the base gained: nothing.
       */compare/*...main) echo '{"ahead_by":0,"files":[]}' ;;
       */compare/*) serve "compare.${path##*...}" ;;

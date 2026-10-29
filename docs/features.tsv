@@ -64,3 +64,4 @@ lead-woken queue p90	lead-woken	flow lead_queue: p90_min	unavailable: p90_min la
 gone agent tell	delivery-liveness	flow tell_refusals	229 of 410 agent-pane tells refused (v0.29.0)	event:tell
 stall reads state	delivery-liveness	flow incidents: stalled inputs	7 or more of 20 stalled step-ups false (v0.29.0)	event:escalate
 start retry budget	delivery-liveness	flow start_failures	48 review agents not restarted within 10 minutes (v0.29.0)	event:review-agent
+dropped-lines hold	merge-safety	flow merges: holds by kind, dropped-lines (the column telemetry-writers adds); at the retro, swarm.sh dropped-lines over every story PR merged since v0.30.0, bar 0	2 caught by hand in the v0.29.0 build (#639, #633; HLD Problem 8)	unlogged: the command is read-only and logs no event
