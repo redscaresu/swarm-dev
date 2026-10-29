@@ -572,6 +572,7 @@ goal_preflight() {
 
 build_story() {
   local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names since
+  local try rc err why class pane
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -608,8 +609,31 @@ build_story() {
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   epic="$(fm "${story}" epic)"
-  since="$(date +%s)"   # before the brief: send_goal counts a turn that ran since as having taken it
-  start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}"
+  # A start that ran nothing (start_retryable; an unclear one, whose brief may have gone, never is) is
+  # tried again in this process, with the same worktree and brief, after a 3-second nap and once the
+  # failed try's pane is closed, up to STARTS_PER_REVIEW starts in all. Each retried failure is a story
+  # event ending (try N of STARTS_PER_REVIEW); the last try's is the command's own, from the die here.
+  # Not `if start_agent`: there set -e is ignored inside start_agent too (tell_deliver). Its die is the
+  # subshell's, so it writes no outcome, and the die below gives the command its line.
+  for (( try = 1; ; try++ )); do
+    since="$(date +%s)"   # before the brief: send_goal counts a turn that ran since as having taken it
+    set +e; { err="$( set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+    if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; break; fi
+    if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; exit "${rc}"; fi
+    why="${err##*swarm: }"; [[ -z "${err%swarm: *}" ]] || printf '%s' "${err%swarm: *}" >&2
+    # Nor is one whose pane may be left open: start_agent could not close it, or herdr cannot list its
+    # agents or panes, so the lookup below would read an open pane as none.
+    class="$(start_retryable "${err}")" && [[ "${err}" != *"could not be closed"* ]] || die "${why}"
+    { herdr agent list && herdr pane list; } >/dev/null 2>&1 \
+      || die "${why} (herdr could not list its agents or panes, so its pane may be left open: it is not started again)"
+    pane="$(agent_field "$(agent_name "${slug}")" pane_id)"; [[ -n "${pane}" ]] || pane="$(tab_pane "${epic:-${slug}}" "${slug}")"
+    if [[ -n "${pane}" ]] && ! herdr pane close "${pane}" >/dev/null 2>&1; then
+      die "${why} (its pane ${pane} could not be closed, so it is not started again: close it by hand)"
+    fi
+    why="${why//$'\n'/ }; it ran nothing: ${class} (try ${try} of ${STARTS_PER_REVIEW})"
+    [[ ${try} -lt ${STARTS_PER_REVIEW} ]] || die "${why}"
+    echo "swarm: ${why}" >&2; record_event story "${slug}" "${why}"; nap 3
+  done
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
   # Once the brief is taken up: mid-turn the goal sets at once and costs one extra short turn; after a
@@ -701,8 +725,8 @@ review_agent() {
   echo "${head}" > "${out%.md}.head"
 }
 
-# STARTS_PER_REVIEW: how many starts review_agent makes of review-<slug> while each one runs nothing
-# (start_retryable).
+# STARTS_PER_REVIEW: how many starts review_agent makes of review-<slug>, and build_story of a
+# builder, while each one runs nothing (start_retryable).
 STARTS_PER_REVIEW=3
 
 # start_unclear <err> — true when <err>, start_agent's stderr, says the brief may have gone out:
@@ -716,10 +740,11 @@ start_unclear() {
 
 # start_retryable <err> [state] — print the class and succeed when a start that failed with <err>
 # (start_agent's stderr) ran nothing and left no agent that can hold the brief, so another start loses
-# nothing. Either herdr surely sent nothing and <err> has one of herdr's texts (docs/lead-by-hand.md,
-# #688): pane_not_found (`pane ... not found`), a pane's shell that did not take the agent's
-# environment (clean_env), or agent_not_found; or the start was unclear (start_unclear) and <state>,
-# read_state's for its agent, is none, gone or herdr: (nothing runs to have the brief).
+# nothing. Either herdr surely sent nothing and <err> has one of herdr's texts (#688): pane_not_found
+# (`pane ... not found`), a pane's shell that did not take the agent's environment (clean_env), or
+# agent_not_found; or the start was unclear (start_unclear) and <state>, read_state's for its agent, is
+# none, gone or herdr: (nothing runs to have the brief). With no <state> (build_story's), an unclear
+# start never is.
 start_retryable() {
   if start_unclear "$1"; then
     case "${2:-}" in none|gone|herdr:) echo "an unclear start with no agent running (${2})"; return 0 ;; esac

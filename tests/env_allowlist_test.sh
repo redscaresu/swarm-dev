@@ -7,7 +7,10 @@
 # read it. `agent start` gives the agent its pane's environment. The stub keeps every call's argv in
 # herdr.log, each pane's screen (the typed line and its output), the launch files' modes when the line
 # is typed, and whether the file the line names is left once it has run. With a number N in runfail,
-# the next N pane runs fail before typing anything; in runtypedfail, they fail after it.
+# the next N pane runs fail before typing anything; in runtypedfail, they fail after it. In panefail,
+# the next N tab creates and pane splits fail as pane_not_found; in promptfail, the next N prompts fail
+# as agent_not_found, and in promptunread with no reply; in closefail, the next N pane closes fail. A
+# closed pane's agent is no longer listed.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -35,12 +38,14 @@ EOF
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
 next() { n=$(($(cat "$H/n" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/n"; }
+take() { k=$(cat "$H/$1" 2>/dev/null || echo 0); [ "$k" -gt 0 ] || return 1; echo $((k - 1)) > "$H/$1"; }
+nopane() { echo '{"error":{"code":"pane_not_found","message":"pane w:0 not found"}}' >&2; exit 1; }
 case "$1 $2" in
   "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "workspace list")   echo '{"result":{"workspaces":[]}}' ;;
   "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
-  "tab create")       next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "pane split")       next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
+  "tab create")       if take panefail; then nopane; fi; next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
+  "pane split")       if take panefail; then nopane; fi; next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane run")         k=$(cat "$H/runfail" 2>/dev/null || echo 0)
                       if [ "$k" -gt 0 ]; then echo $((k - 1)) > "$H/runfail"; echo '{"error":{"code":"pane_not_ready"}}' >&2; exit 1; fi
                       ls -l "$P/.swarm/launch" | awk 'NR > 1 { print substr($1, 1, 10) }' >> "$H/modes"
@@ -53,10 +58,14 @@ case "$1 $2" in
                       if [ "$k" -gt 0 ]; then echo $((k - 1)) > "$H/runtypedfail"; echo '{"error":{"code":"timeout"}}' >&2; exit 1; fi ;;
   "pane wait-output") grep -qF -- "$5" "$H/screen-$3" ;;
   "agent start")      cp "$H/env-$7" "$H/agent-env-$3"; echo "$3 $7" >> "$H/agents" ;;
-  "agent prompt")     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent prompt")     if take promptfail; then echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; fi
+                      if take promptunread; then exit 1; fi
+                      echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "pane close")       if take closefail; then exit 1; fi; echo "$3" >> "$H/closed" ;;
   "tab list")         echo '{"result":{"tabs":[]}}' ;;
   "pane list")        echo '{"result":{"panes":[]}}' ;;
-  "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent list")       awk -v closed=" $(cat "$H/closed" 2>/dev/null | tr '\n' ' ') " 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                           index(closed, " " $2 " ") { next }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
 esac
@@ -219,6 +228,54 @@ check "closing the agent removes its ZDOTDIR" "no" "$([[ -e "${p}/.swarm/zdotdir
 scr="${ROOT}/screen-$(pane_of typed-once)"
 check "a pane run that typed its line and then failed is retried with its own marker, and the wait is for that one" "2|yes" \
   "$(grep '^swarm: agent environment ready' "${scr}" | sort -u | wc -l | tr -d ' ')|$(has "--match $(grep '^swarm: agent environment ready' "${scr}" | tail -1) --timeout" "$(cat "${ROOT}/herdr.log")")"
+
+# --- swarm.sh story starts its builder again, in the same process, when a start ran nothing (#688): up to
+# 3 starts, each retried failure a story event ending (try N of 3). One whose brief may have gone is not.
+# start_retry <slug> <knob> <n>... — swarm.sh story on a new one-off story <slug>, with each stub <knob> set
+# to its <n> (its next <n> calls fail). Prints "<exit>|<panes opened>" and each story event <slug> logged,
+# one a line.
+start_retry() {
+  local slug="$1" n rc=0
+  item "stories/${slug}.md" "status: ready" "kind: code" "repo: svc"
+  rm -f "${ROOT}/panefail" "${ROOT}/runfail" "${ROOT}/promptfail" "${ROOT}/promptunread" "${ROOT}/closefail"   # an earlier case's leftover counts
+  shift; while [[ $# -gt 1 ]]; do echo "$2" > "${ROOT}/$1"; shift 2; done
+  n="$(wc -l < "${ROOT}/herdr.log")"
+  SWARM_SLEEP_SCALE=0.01 run story "${slug}" > "${ROOT}/out-${slug}" || rc=$?
+  echo "${rc}|$(tail -n +"$((n + 1))" "${ROOT}/herdr.log" | grep -cE '^(tab create|pane split) ')"
+  awk -F'\t' -v s="${slug}" '$2 == "story" && $3 == s { print $5 }' "${p}/.swarm/events.tsv"
+}
+PNF="herdr could not open a pane in tab"
+NOENV="the pane's shell did not take the agent's environment"
+ANF="herdr did not send it the brief (agent_not_found); see herdr agent read"
+check "story: pane ... not found on the first start: started on try 2, one event ending (try 1 of 3), then ok" \
+  "0|2
+${PNF} rs-pnf; it ran nothing: pane not found (try 1 of 3)
+ok" "$(start_retry rs-pnf panefail 1)"
+check "story: the pane's shell did not take the agent's environment: started on try 2" \
+  "0|2
+rs-env: ${NOENV}: {\"error\":{\"code\":\"pane_not_ready\"}}; it ran nothing: ${NOENV} (try 1 of 3)
+ok" "$(start_retry rs-env runfail 2)"
+check "story: agent_not_found with nothing sent: started on try 2, once the failed try's pane is closed" \
+  "0|2
+rs-anf: ${ANF} rs-anf; it ran nothing: agent_not_found with nothing sent (try 1 of 3)
+ok|yes" "$(start_retry rs-anf promptfail 1)|$(has "pane close $(awk '$1 == "rs-anf" { print $2; exit }' "${ROOT}/agents")" "$(cat "${ROOT}/herdr.log")")"
+check "story: three failures: exit 1, three starts, events ending (try 1 of 3), (try 2 of 3) and (try 3 of 3)" \
+  "1|3
+${PNF} rs-three; it ran nothing: pane not found (try 1 of 3)
+${PNF} rs-three; it ran nothing: pane not found (try 2 of 3)
+${PNF} rs-three; it ran nothing: pane not found (try 3 of 3)" "$(start_retry rs-three panefail 3)"
+check "story: not retried: an unclear start, whose brief may have gone, makes one start and logs its die as it was" \
+  "1|1
+rs-unclear: it may or may not have the brief: herdr's reply to the brief could not be read once, then herdr gave no status for it; it was not sent again, see herdr agent read rs-unclear" \
+  "$(start_retry rs-unclear promptunread 1)"
+check "story: not retried: a start whose pane start_agent could not close (it may still be open) makes one start" \
+  "1|1
+rs-open: ${NOENV}: {\"error\":{\"code\":\"pane_not_ready\"}} (and pane w:$(( $(cat "${ROOT}/n") + 1 )) could not be closed: close it by hand)" \
+  "$(start_retry rs-open runfail 2 closefail 1)"
+n="$(wc -l < "${ROOT}/herdr.log")"
+o="$(set +e; run story rs-pnf; echo "rc=$?")"
+check "story: a second swarm.sh story on a started story dies once with has a build already, and opens no pane" "yes|1|0" \
+  "$(has "rc=1" "${o}")|$(grep -c 'has a build already' <<< "${o}")|$(tail -n +"$((n + 1))" "${ROOT}/herdr.log" | grep -cE '^(tab create|pane split|agent start) ' || true)"
 
 # --- No value in argv, on any screen, or left on disk.
 check "neither FAKE_SECRET value appears in any recorded herdr argv" "0" "$(grep -c -e lead-secret -e server-secret "${ROOT}/herdr.log" || true)"
