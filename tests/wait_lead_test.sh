@@ -24,20 +24,33 @@ git -C "${P}" init -q
 
 # gh: pr view <n> prints ${FX}/head.<n> or else ${FX}/head, waits as many seconds as ${FX}/view.slow
 # holds (a slow gh), and fails while ${FX}/view.fail exists; a head's check runs are ${FX}/<sha>.checks
-# or else ${FX}/checks; it has no commit status.
+# or else ${FX}/checks; its commit statuses are ${FX}/<sha>.status, else none. For the main-red cases, where the project has the origin
+# o/r: repo view names it, pr list has no PR, the default branch is ${FX}/default, a branch exists and has
+# the head ${FX}/base.<branch> while that file does, and ci_gate fixed reads any commit as one that changes
+# bin/x, any compare as one behind by nothing, and no workflow run.
 printf '#!/bin/sh\nFX="%s"; LOG="%s"\n' "${FX}" "${ROOT}/gh.log" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
+for a in "$@"; do path="${a}"; done
 case "$1 $2" in
   # It reads a line of stdin, as a real gh may, so a caller that leaves its stdin open loses a line.
   "pr view") read -r _ || true
              sleep "$(cat "${FX}/view.slow" 2>/dev/null || echo 0)"
              [ ! -e "${FX}/view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
              cat "${FX}/head.$3" 2>/dev/null || cat "${FX}/head" ;;
+  "repo view") echo o/r ;;
+  "pr list") echo '[]' ;;
   api*) case "$*" in
-          *check-runs*) for a in "$@"; do path="${a}"; done; sha="${path#*/commits/}"; sha="${sha%%/*}"
+          *check-runs*) sha="${path#*/commits/}"; sha="${sha%%/*}"
                         cat "${FX}/${sha}.checks" 2>/dev/null || cat "${FX}/checks" ;;
-          */status*) echo '{"total_count":0,"statuses":[]}' ;;
+          */status*) sha="${path#*/commits/}"; sha="${sha%%/*}"
+                     cat "${FX}/${sha}.status" 2>/dev/null || echo '{"total_count":0,"statuses":[]}' ;;
+          */git/matching-refs/heads/*) b="${path#*/matching-refs/heads/}"; [ ! -e "${FX}/base.${b}" ] || echo "refs/heads/${b}" ;;
+          *"--jq .default_branch"*) cat "${FX}/default" ;;
+          *"--jq .sha "*/commits/*) cat "${FX}/base.${path#*/commits/}" ;;
+          */commits/*) echo '{"files":[{"filename":"bin/x"}],"parents":[]}' ;;
+          */compare/*) echo '{"behind_by":0}' ;;
+          */actions/runs*) echo '{"total_count":0,"workflow_runs":[]}' ;;
           *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
         esac ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -430,6 +443,79 @@ printf 'w:c conduct-e\nw:n n\n' > "${P}/.swarm/state/tab-n"
 check "close on a slug wait --lead saw still closes its pane" grep -qx 'pane close w:n' "${ROOT}/herdr.log"
 check "and leaves wait --lead's seen file as it was" grep -qx 'held: n (cleared-on-error)' "${P}/.swarm/lead/seen"
 rm -f "${P}/.swarm/state/tab-n"
+
+# --- main-red cases: each heads pass reads every base's head and its CI (lead_bases), and each poll prints one
+# main-red: line per red base, from what the pass wrote and from events.tsv (main_red_lines). The project's
+# origin is o/r here, whose default branch is main.
+B1=3333333333333333333333333333333333333333; B2=4444444444444444444444444444444444444444
+git -C "${P}" remote add origin https://github.com/o/r.git
+# based [config line]... — fresh, main the default branch, and no branch on GitHub yet.
+based() { fresh "$@"; rm -f "${FX}"/base.* "${FX}"/*.status; echo main > "${FX}/default"; }
+# red_line <sha> <base> [exit] — the main-red: line for <sha> on <base> of o/r with test failed.
+red_line() { echo "main-red: ${1:0:7} o/r $2 (test (failure)), exit: ${3:-fix $2 by hand, as no fix-main story covers it yet}"; }
+# no_red_line — no main-red: line in the queue the last poll saved.
+no_red_line() { ! grep -q '^main-red: ' "${P}/.swarm/lead/seen"; }
+# status_only <state> <sha> — <sha>'s CI is one commit status, ci, in <state>, and no check run.
+status_only() {
+  echo '{"total_count":0,"check_runs":[]}' > "${FX}/$2.checks"
+  printf '{"total_count":1,"statuses":[{"context":"ci","state":"%s","target_url":"u"}]}\n' "$1" > "${FX}/$2.status"
+}
+
+based; echo "${B1}" > "${FX}/base.main"; checks pending "${B1}"
+lead 0
+check "a base head whose CI is pending prints no main-red: line" test "$(out)|$(rc)" == "|1"
+check "the heads pass read the default branch's head" grep -qxF "api --jq .sha repos/o/r/commits/main" "${ROOT}/gh.log"
+again; checks failure "${B1}"; lead 0
+check "once its CI concludes red, the next poll prints one main-red: line" test "$(out)|$(rc)" == "$(red_line "${B1}" main)|0"
+check "it logs lead-woken for that line" grep -qx "lead-woken ${B1:0:7}" <<< "$(events)"
+again; lead 0
+check "the same red wakes no one again" test "$(out)|$(rc)" == "|1"
+again; checks success "${B1}"; lead 0
+check "a red the read found goes once a rerun turns the same head green" no_red_line
+
+based; echo "${B2}" > "${FX}/base.main"; checks success "${B2}"
+lead 0
+check "a green base head prints no main-red: line" test "$(out)|$(rc)" == "|1"
+again; checks failure "${B2}"; lead 0
+check "a head read green that a rerun turns red prints main-red: on the next poll" test "$(out)|$(rc)" == "$(red_line "${B2}" main)|0"
+
+# A red main a merge logged (fix_main's main-red line and story), then the base's head goes green with no
+# main-green written by anyone else: the read clears it.
+based; echo "${B1}" > "${FX}/base.main"; checks failure "${B1}"
+item "fix-main-${B1:0:7}" "kind: code" "status: ready" "touches: [.]"
+printf '%s\tmain-red\t%s\t-\to/r main test (failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${B1}" >> "${P}/.swarm/events.tsv"
+lead 0
+check "a red main merge logged prints one main-red: line naming its fix-main story" \
+  test "$(out)|$(rc)" == "$(red_line "${B1}" main "build fix-main-${B1:0:7}, which next names first")|0"
+again; echo "${B2}" > "${FX}/base.main"; checks success "${B2}"; lead 0
+check "once the base's head reads green, the read logs main-green for that red" \
+  grep -qx "main-green ${B2} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv")"
+check "that poll prints nothing new" test "$(out)|$(rc)" == "|1"
+check "and gone from the queue" no_red_line
+check "the red's unstarted fix-main story is retired" test ! -e "${B}/fix-main-${B1:0:7}.md"
+
+# A base whose CI posts only commit statuses: no check run is needed for its head to read green.
+based; echo "${B1}" > "${FX}/base.main"; status_only failure "${B1}"
+lead 0
+check "a base whose only CI is a failed commit status prints main-red:" test "$(out)|$(rc)" == \
+  "main-red: ${B1:0:7} o/r main (ci (failure)), exit: fix main by hand, as no fix-main story covers it yet|0"
+again; status_only success "${B1}"; lead 0
+check "once a rerun passes that status, with no check run, the line goes" no_red_line
+
+based "base_branches = dev main"; echo "${B1}" > "${FX}/base.main"; echo "${B2}" > "${FX}/base.dev"
+checks success "${B1}"; checks failure "${B2}"
+lead 0
+check "with base_branches = dev main, it reads dev, red here" test "$(out)|$(rc)" == "$(red_line "${B2}" dev)|0"
+check "and reads neither the default branch nor main" bash -c "! grep -qE 'default_branch|commits/main' '${ROOT}/gh.log'"
+# The default branch is trunk here, so a read of main can only come from base_branches.
+based "base_branches = dev main"; echo trunk > "${FX}/default"; echo "${B1}" > "${FX}/base.main"; checks failure "${B1}"
+lead 0
+check "with no dev on GitHub, it reads main, the next base_branches entry" test "$(out)|$(rc)" == "$(red_line "${B1}" main)|0"
+
+based; echo "${B1}" > "${FX}/base.main"; checks pending "${B1}"
+lead SWARM_LEAD_HEADS_EVERY=30 2500
+check "the polls between heads passes read no base head" test "$(grep -c 'commits/main' "${ROOT}/gh.log")" == 1
+git -C "${P}" remote remove origin; rm -f "${FX}"/base.* "${FX}/default" "${FX}"/*.status
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"

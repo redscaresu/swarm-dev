@@ -64,6 +64,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # named <check> (one that went red) has one of its own that passed, or <base> requires checks and
 # each of those passed (the fix renamed or dropped the job). A check a path filter skipped and
 # <base> does not require has no run that passed, so it does not count.
+# ci_gate base <owner/repo> <sha> — head's rule for a base's head (lead_bases), with no check run needed: a
+# commit status alone counts, as on main. With neither a check run nor a status it is pending (2).
 # ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
 # run or commit status finished (queued_line). Exits as head does.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
