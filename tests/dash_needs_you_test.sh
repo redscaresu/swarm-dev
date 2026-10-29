@@ -365,6 +365,15 @@ chk="$(cd "${L}" && env -u HERDR_ENV -u SWARM_PROJECT COLUMNS=100 CLAUDE_STUB_AG
 check "lead = session, merge = agent: dash --check agrees on a protected-path merge row" \
   test "${chk_rc}" -eq 0 -a "$(grep -c 'every dash figure agrees' <<< "${chk}")" -eq 1
 rm -f "${L}/docs/stories/p-prot.md" "${L}/.swarm/board-state/stories/p-prot"
+# A PR swarm.sh merge holds because its merge of the base dropped base lines is the user's too
+# (dropped-hold-shown's ` (dropped base lines)` row): p-drop lists PR 21, held so.
+litem stories/p-drop.md '' 'status: review' 'prs: https://github.com/o/l/pull/21'
+printf 'protected: https://github.com/o/l/pull/21 0123456789abcdef0123456789abcdef01234567 1793000000 dropped base lines: 2, first docs/x.md: row\n' > "${L}/.swarm/board-state/stories/p-drop"
+out="$(ldash 100)"
+check "lead = session, merge = agent: a dropped-lines merge is under needs you, with its PR" \
+  has "! merge l#21 (✓ green) p-drop (dropped base lines)" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead = session, merge = agent: a dropped-lines merge is not in the lead's queue" lacks "p-drop" "$(joined "$(lbox "lead's queue" "${out}")")"
+rm -f "${L}/docs/stories/p-drop.md" "${L}/.swarm/board-state/stories/p-drop"
 # An epic in review listing the same held PR: one row for it.
 litem epics/ep-paid.md '' 'status: review' 'prs: https://github.com/o/l/pull/5'; out="$(ldash 100)"
 check "lead = session, merge = agent: a held PR a story and its epic both list is one row" \
