@@ -38,9 +38,10 @@
 # goal on, findings delivered whose goal then failed (${ROOT}/goalwait) count one round, and the lead
 # is told not to send them again. A tell to an agent with no pane, or whose session has ended, is
 # refused once as could not reach, naming its exit by role (a builder's no-agent:, a review agent's
-# no-review:, a conductor's no conductor started:), and its pane first while that is open; a note to a
-# gone conductor too. One while herdr cannot list its agents is refused as one to send again. A queued
-# tell to a builder whose session ended reaches the lead once over three wait --lead polls.
+# no-review:, a conductor's no conductor started:, any other agent's starting command), and its pane
+# first while that is open; a note to a gone conductor too. One while herdr cannot list its agents, or
+# lists none, is refused as one to send again. A queued tell to a builder whose session ended reaches
+# the lead once over three wait --lead polls.
 # herdr and claude are stubs on PATH. herdr lists the agents in ${ROOT}/agents (`<name> <pane> <status>`)
 # and logs each prompt to ${ROOT}/keys.log; claude agents --json prints ${ROOT}/claude.json, which holds
 # b1's session sb.
@@ -439,12 +440,15 @@ check "queued findings delivered whose goal then failed: one prompt, one round, 
   "$(prompts) $(rounds) $([[ "$(lead)" == "tell goal failed: b1 findings at "*" (b1: the findings were delivered, but its builder is waiting on permission prompt, so no /goal was sent"*"), exit: the findings were delivered and count as a round, and only their goal failed, so never send them again; then rm ${U} ${U}.md" ]] && echo yes || echo no)"
 
 # A tell to an agent with no pane, or whose session has ended (gone), is refused once as could not
-# reach, naming its exit by its role: a builder's wait --lead no-agent: line, a review agent's
-# no-review: line, a conductor's next no conductor started: line. A note to a conductor whose pane is
-# open and whose session is gone is refused too, and its inbox stays empty. review-x is a builder (its
-# agents.tsv role), whatever its name says; conduct-e2 has no agents.tsv line, so its name decides.
-printf '2026-10-27\treview\treview-b1\tclaude\topus\thigh\tsr\n2026-10-27\tconduct\tconduct-e1\tclaude\topus\thigh\tsc\n2026-10-27\tcode\treview-x\tclaude\topus\thigh\tsx\n' >> "${p}/.swarm/agents.tsv"
-printf 'w:11 review-b1\nw:12 conduct-e1\nw:13 review-x\nw:14 conduct-e2\n' > "${p}/.swarm/state/e1"
+# reach, naming its exit by its role: a story's builder's wait --lead no-agent: line, a review agent's
+# no-review: line, a conductor's next no conductor started: line, and for any other agent (skeptic-e1)
+# the command that started it. A note to a conductor whose pane is open and whose session is gone is
+# refused too, and its inbox stays empty. review-x is a story's builder (its agents.tsv role and story
+# file), whatever its name says; conduct-e2 has no agents.tsv line, so its name decides. herdr lists
+# another project's agent meanwhile: a list with no agents at all proves nothing.
+printf '2026-10-27\treview\treview-b1\tclaude\topus\thigh\tsr\n2026-10-27\tconduct\tconduct-e1\tclaude\topus\thigh\tsc\n2026-10-27\tcode\treview-x\tclaude\topus\thigh\tsx\n2026-10-27\tskeptic\tskeptic-e1\tclaude\topus\thigh\tsk\n' >> "${p}/.swarm/agents.tsv"
+printf 'w:11 review-b1\nw:12 conduct-e1\nw:13 review-x\nw:14 conduct-e2\nw:15 skeptic-e1\n' > "${p}/.swarm/state/e1"
+printf -- '---\nstatus: ready\n---\n' > "${p}/docs/stories/b1.md"; cp "${p}/docs/stories/b1.md" "${p}/docs/stories/review-x.md"
 # tell_to <name> <kind> — tell <name> <kind> a file; its output, then `rc=<exit>`.
 tell_to() {
   local rc=0 out m
@@ -458,17 +462,18 @@ FINAL="this refusal is final, so do not tell it again"
 NOAGENT="swarm.sh wait --lead's no-agent: line names its exit"
 NOREVIEW="swarm.sh wait --lead's no-review: line names its exit"
 NOCOND="swarm.sh next starts a new conductor, or its no conductor started: line says why not"
+OTHER="it is no story's builder, review agent or conductor, so no swarm.sh line names its exit: start it again with the command that started it, or tell the user"
 NOPANE="no agent this project started holds the name"
 GONE="its Claude session has ended (gone)"
-for c in "b1 findings ${NOAGENT}" "review-b1 nudge ${NOREVIEW}" "conduct-e1 note ${NOCOND}" "review-x nudge ${NOAGENT}" "conduct-e2 note ${NOCOND}"; do
+for c in "b1 findings ${NOAGENT}" "review-b1 nudge ${NOREVIEW}" "conduct-e1 note ${NOCOND}" "review-x nudge ${NOAGENT}" "conduct-e2 note ${NOCOND}" "skeptic-e1 nudge ${OTHER}"; do
   read -r who kind exit <<< "${c}"
-  fresh; state idle -
+  fresh; echo '[]' > "${ROOT}/claude.json"; echo "other w:99 idle" > "${ROOT}/agents"   # no pane of this project's holds it
   check "a ${kind} tell to ${who} with no pane: one could-not-reach refusal naming its exit, exit 1" \
     "swarm: could not reach ${who}: ${NOPANE}; ${FINAL}: ${exit} rc=1" "$(tell_to "${who}" "${kind}")"
   check "a ${kind} tell to ${who} with no pane: one tell:${kind} event, the refusal" \
     "could not reach ${who}: ${NOPANE}; ${FINAL}: ${exit}" "$(told "${who}" "${kind}")"
 done
-for c in "b1 w:9 findings ${NOAGENT}" "review-b1 w:11 nudge ${NOREVIEW}" "conduct-e1 w:12 note ${NOCOND}"; do
+for c in "b1 w:9 findings ${NOAGENT}" "review-b1 w:11 nudge ${NOREVIEW}" "conduct-e1 w:12 note ${NOCOND}" "skeptic-e1 w:15 nudge ${OTHER}"; do
   read -r who pane kind exit <<< "${c}"
   fresh; echo '[]' > "${ROOT}/claude.json"; echo "${who} ${pane} idle" > "${ROOT}/agents"   # its pane open, its session gone
   open="its pane ${pane} is still open: read it (herdr agent read ${who}) and close it; after that, ${exit}"
@@ -479,10 +484,15 @@ for c in "b1 w:9 findings ${NOAGENT}" "review-b1 w:11 nudge ${NOREVIEW}" "conduc
 done
 check "a note to a conductor whose session is gone: its inbox gets nothing" no \
   "$(compgen -G "${p}/.swarm/inbox/*" >/dev/null && echo yes || echo no)"
+rm -f "${p}/docs/stories/b1.md" "${p}/docs/stories/review-x.md"
+AGAIN="swarm: tell: b1 was not told: herdr could not list its agents; tell it again rc=1"
 fresh; state idle; touch "${ROOT}/listfail"
 check "a tell while herdr cannot list its agents: refused as one to send again, never as could not reach" \
-  "swarm: tell: b1 was not told: herdr could not list its agents; tell it again rc=1|0" "$(tell_to b1 findings)|$(prompts)"
+  "${AGAIN}|0" "$(tell_to b1 findings)|$(prompts)"
 rm -f "${ROOT}/listfail"
+fresh; state idle -
+check "a tell while herdr lists no agents at all: refused as one to send again, never as could not reach" \
+  "${AGAIN}|0" "$(tell_to b1 findings)|$(prompts)"
 fresh; state busy
 check "a tell to a live busy builder: queued, exit 0, no refusal logged" "${QUEUED} rc=0|${QUEUED}" "$(tell "fix round live")|$(told b1 findings)"
 

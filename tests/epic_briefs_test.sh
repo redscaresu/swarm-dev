@@ -250,7 +250,7 @@ check "the conductor brief's story --strict rule says the same part or the bare 
 # A could-not-reach tell refusal is final, in the conductor's brief and the lead's /swarm command alike.
 TELL_FINAL="A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its session has ended, and the refusal names who acts on it. List the story under no agent"
 check "the conductor brief and commands/swarm.md say a could-not-reach tell refusal is final: list the story under no agent, never tell it again" "yes|yes" \
-  "$(has "${TELL_FINAL}" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "${TELL_FINAL}" "$(tr -s '[:space:]' ' ' < "$(dirname "${SWARM}")/../commands/swarm.md")")"
+  "$(has "${TELL_FINAL} in your report and never tell it again." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "${TELL_FINAL} and never tell it again." "$(tr -s '[:space:]' ' ' < "$(dirname "${SWARM}")/../commands/swarm.md")")"
 # startable_brief <brief> — the startable rule after a merge, after each wait (its inbox pass first) and
 # after the last inbox pass (three times), the last pass's go-back, and no wording that starts only what unblock readied.
 startable_brief() {

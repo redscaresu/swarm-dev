@@ -44,8 +44,9 @@ prompt_lines    wait --lead's prompt: lines: herdr's blocked, idle or done in th
 prompt_wanted   wait --lead's skip of prompt_lines: herdr's blocked, idle or done on this project's panes says whether to look at all
 "
 # Allowed anywhere, with no list entry:
-#   `-z "$(agent_field <name> agent_status any)"` — a name check: does any agent hold the name. Any
-#   other use of the `any` form reads herdr's status.
+#   `-z "$(agent_field <name> agent_status any)"`, or list_field's on a list already read
+#   (`-z "$(list_field <name> agent_status any <<< "${list}")"`) — a name check: does any agent hold
+#   the name. Any other use of the `any` form reads herdr's status.
 #   panes.py's agent_state after `if s is not None:` — herdr's word only when session_state gave None.
 # The one function that may call agent_state with no session (its no-entry fallback):
 #   tidy_panes — closes only empty panes and retired ones, and retired is retire_agent's rename in
@@ -76,7 +77,7 @@ walk() {
     {
       where = py ? "panes.py " def : fn
       if ($0 !~ /^[ \t]*#/) {
-        l = $0; gsub(/-z "\$\(agent_field "[^"]*" agent_status any\)"/, "", l)
+        l = $0; gsub(/-z "\$\((agent_field|list_field) "[^"]*" agent_status any( <<< "\$[^"]*")?\)"/, "", l)
         if (l ~ /agent_status/ && !(!py && ok[fn]) && !(py && def == "agent_state" && fb == 2))
           print FILENAME ":" FNR ": " where ": reads agent_status"
         if ($0 !~ /^def / && no_session($0) && fn != nosess)

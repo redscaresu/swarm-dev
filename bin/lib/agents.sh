@@ -1765,10 +1765,12 @@ note_lock() {
 
 # tell_gone <name> <why> [pane] — refuse a tell to <name>, which has no pane or whose session has ended:
 # `could not reach <name>: <why>`, final, naming where the lead finds its exit. That is by its role in
-# agents.tsv, or by its name when it has no line there: a builder's is wait --lead's no-agent: line, a
-# review agent's its no-review: line, and a conductor's is next, which starts a new one or names why
-# not in a `no conductor started:` line. Each of those waits while herdr lists the name, so with [pane],
-# still open, the refusal says to read and close it first.
+# agents.tsv, or by its name when it has no line there: a review agent's is wait --lead's no-review:
+# line, a conductor's is next, which starts a new one or names why not in a `no conductor started:`
+# line, and a story's builder's (a story on the board holds its name) is wait --lead's no-agent: line.
+# Any other agent (an epic or HLD writer, a planner, a skeptic) has no such line: it is started again
+# by the command that started it. Each of those lines waits while herdr lists the name, so with
+# [pane], still open, the refusal says to read and close it first.
 tell_gone() {
   local role where
   role="$(awk -F'\t' -v n="$1" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || role=""
@@ -1776,7 +1778,8 @@ tell_gone() {
   case "${role}" in
     conduct) where="swarm.sh next starts a new conductor, or its no conductor started: line says why not" ;;
     review) where="swarm.sh wait --lead's no-review: line names its exit" ;;
-    *) where="swarm.sh wait --lead's no-agent: line names its exit" ;;
+    *) if [[ -f "${BOARD}/stories/$1.md" ]]; then where="swarm.sh wait --lead's no-agent: line names its exit"
+       else where="it is no story's builder, review agent or conductor, so no swarm.sh line names its exit: start it again with the command that started it, or tell the user"; fi ;;
   esac
   [[ -z "${3:-}" ]] || where="its pane $3 is still open: read it (herdr agent read $1) and close it; after that, ${where}"
   die "could not reach $1: $2; this refusal is final, so do not tell it again: ${where}"
@@ -1828,13 +1831,14 @@ tell_agent() {
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
-  # A list herdr could not give, or gave with no agents in it, is no proof the agent is gone (as
-  # tell_queue_pass reads it).
-  { list="$(herdr agent list 2>/dev/null)" && [[ "${list}" == *'"agents"'* ]]; } \
+  # A list herdr could not give, or gave with no agents in it (a restart, another socket), is no proof
+  # the agent is gone; both reads below take this one list, so neither can fail on its own.
+  list="$(herdr agent list 2>/dev/null)" || list=""
+  [[ "$(json 'len(d["result"]["agents"])' <<< "${list}" 2>/dev/null)" =~ ^[1-9][0-9]*$ ]] \
     || die "tell: ${name} was not told: herdr could not list its agents; tell it again"
   pane="$(list_field "${name}" pane_id <<< "${list}")"
   if [[ -z "${pane}" ]]; then
-    [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
+    [[ -z "$(list_field "${name}" agent_status any <<< "${list}")" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
     tell_gone "${name}" "no agent this project started holds the name"
   fi
   if [[ "${kind}" == note ]]; then
