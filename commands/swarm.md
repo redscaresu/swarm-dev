@@ -366,9 +366,9 @@ Repeat until a step below says stop:
      through. With `fix-main-<short sha> waits on the lead: handle its held: or escalated: line`, act on
      that line. With `fix-main-<short sha> is not one next builds: check its status and kind`, fix the
      story's front matter (`status: ready` and an agent's `kind`) so `next` names it. With `fix <base> by
-     hand, as no fix-main story covers it yet`, no story covers the red, most often because a merge
-     `swarm.sh merge` did not make caused it: tell the user which checks are red, and merge nothing into
-     that base until it is green. The line goes once the base reads fixed.
+     hand, as no fix-main story covers it yet`, no story covers the red, most often because the red came
+     from a merge that `swarm.sh merge` did not make: tell the user which checks are red, and merge nothing
+     into that base until it is green. The line goes once the base reads fixed.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
