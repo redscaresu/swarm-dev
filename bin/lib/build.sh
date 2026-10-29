@@ -196,6 +196,38 @@ denylist, docs-misstate-code, fails-open); reuse one that
 already lists when it fits.
 EOF
 }
+# dropped_lines_cmd <PR URL> <head> <base> — the dropped-lines check of <PR URL> at <head> against
+# <base>, with the PR's owner/repo and number taken from its URL, as review_brief and review_next write it.
+dropped_lines_cmd() {
+  local path="${1#https://}"
+  path="${path#*/}"
+  printf 'SWARM_PROJECT=%q %q dropped-lines %s %s %s %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "${path%/pull/*}" "${1##*/}" "$2" "$3"
+}
+# dropped_lines_rule <PR URL> <head> <base> <findings file> — the review agent's check, before it reads
+# the diff, that the PR's own merges dropped no base line, each round on that round's head (round 1's is
+# <head>; review_next prints the command on its own). Exit 1's lines are a finding to fix that round,
+# logged as finding_rule says with the kind dropped-lines; exit 2 (cannot check) goes to the builder as a
+# nudge and stops the round with no pass, the line under <findings file>'s head: line.
+dropped_lines_rule() {
+  local sw
+  sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
+  cat <<EOF
+Before you read the diff, check that the PR's own merges dropped no line of the base: run
+\`$(dropped_lines_cmd "$1" "$2" "$3")\` on this first round, and after each
+\`review-agent --next\` the command it prints, on the head it names. Exit 0: nothing was dropped.
+Exit 1: each line it printed (\`<sha7> <file>: <text>\`) is a base line one of the PR's own merge
+commits dropped, a regression this PR brings in. It is a finding to fix this round, whatever else
+the round finds and whatever its round: list it under \`## Findings\`, from conductor, and send it to
+the builder with the round's findings. Once its fix has landed, log it as below:
+\`${sw} log-finding --reviewer conductor --round <n> dropped-lines $1 "<the first line it printed>"\`.
+When the builder declines it, saying in the PR that the drop is meant, and you accept that, log it
+declined as below, and name the drop and the builder's answer in your reply on the pass, so whoever
+merges sees it first. Exit 2: it could not check, and the round cannot pass. Nudge the builder with
+its last line as the green step says, without waiting on the builder, then stop as above: ${4}
+holds \`head: <the round's head>\`, then \`dropped-lines unchecked: <its last line>\`, then
+\`stopped: dropped-lines could not check <the round's head>\`.
+EOF
+}
 # conduct_merge_rule <epic>|backlog — what a conductor does about its stories' merges, which their review
 # agents make or hand to the user (review_rule): it merges no story PR, starts what each merge note in
 # its inbox made startable, lists the PRs that wait on the user and, for an epic, puts the epic in review
@@ -768,15 +800,16 @@ review_own_pane() {
 # own pane, in the same session; it starts no agent. Once the worktree is at the PR's head with nothing
 # uncommitted (review_at_head), the last findings file goes aside to <slug>.md.prev (so the conductor's
 # wait ends only on this round's), the head goes in .swarm/reviews/<slug>.head, and it prints the round
-# (review_round) and that round's instruction (review_round_line). Refused, touching no file under
-# .swarm/reviews, from any other pane, when the board has a story named review-<slug>, when herdr lists no
+# (review_round), that round's instruction (review_round_line) and its dropped-lines check on the new head
+# against the story's base (dropped_lines_cmd, base_for). Refused, touching no file under
+# .swarm/reviews, when that base cannot be told, from any other pane, when the board has a story named review-<slug>, when herdr lists no
 # review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
 # round since the build started: a findings tell or step-up, or a --recheck refused with a full round due),
 # when this build has no ok review-agent start (review-<slug> is an earlier build's), or while that round
 # has started already (review_rounds): no findings round since, so its review would be lost.
 # review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
-  local slug="$1" pr="$2" out pane round rounds
+  local slug="$1" pr="$2" out pane round rounds base
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --next: bad slug '${slug}' (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent --next: '${pr}' is not a PR URL (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
@@ -802,12 +835,15 @@ review_next() {
   [[ "${rounds#* }" -lt "${round}" ]] \
     || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: send this round's findings with swarm.sh tell ${slug} findings <file> first, then run it again"
   review_at_head "${slug}" "${pr}" next
+  base="$(base_for "${REVIEW_SRC}")" \
+    || die "review-agent --next: could not tell ${slug}'s base branch, which its dropped-lines check needs; no round was started: run swarm.sh review-agent --next ${slug} <PR URL> again"
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   echo "${REVIEW_HEAD}" > "${out%.md}.head"
   # The brief pins the head of the round it started: this round's head replaces it there.
   echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
   review_round_line "${round}" "${pr}"
+  echo "Before you read this round's diff, run \`$(dropped_lines_cmd "${pr}" "${REVIEW_HEAD}" "${base}")\` and act on its exit as your brief's dropped-lines check says."
 }
 
 RECHECK_CI_SECONDS=60   # how long --recheck's read of the new head's CI may take (SWARM_RECHECK_CI_SECONDS)
@@ -1194,7 +1230,7 @@ EOF
 # and code-scanning alerts, each real one, red check or conflict sent to the builder as a
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
-# sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
+# sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug, /code-review on round 1 when the PR
 # changes code, the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
@@ -1332,6 +1368,8 @@ before any findings or wording nudge went to it, write ${4} with the Write tool 
 \`head: $5\` and \`head moved: <the green head>\`, then stop; once findings went to it, run
 \`review-agent --next\` on the green head, and once a wording nudge did, \`review-agent --recheck\`
 first, as below.
+
+$(dropped_lines_rule "$2" "$5" "$3" "$4")
 
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.

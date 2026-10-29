@@ -203,6 +203,15 @@ logs_findings() {
 }
 LOGS_FINDINGS="fixed codex|declined codex|yes"
 check "the review agent's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${brief}")"
+# A base line the PR's own merge dropped reaches the base unseen unless the review agent checks for it
+# on the PR's owner/repo, number, head and base before it reads the diff. If review_brief drops the
+# rule, or fills it from the wrong place, this goes red.
+dl_cmd="${sw} dropped-lines o/svc 1 ${HEAD_SHA} main"
+dl_at="$(grep -bo -F "${dl_cmd}" <<< "${flat}" | head -1 | cut -d: -f1)"
+codex_at="$(grep -bo -F "Run \`SWARM_STORY=s1 " <<< "${flat}" | head -1 | cut -d: -f1)"
+check "the round-1 brief runs dropped-lines on o/svc 1, its head and main, before its codex paragraph, logs a drop as conductor's dropped-lines, and stops with no pass when it cannot check" \
+  "yes|yes|yes|yes" \
+  "$( [[ -n "${dl_at}" && -n "${codex_at}" && "${dl_at}" -lt "${codex_at}" ]] && echo yes || echo "no, at '${dl_at}', codex at '${codex_at}'")|$(has "log-finding --reviewer conductor --round <n> dropped-lines ${PR} \"<the first line it printed>\"" "${flat}")|$(has "Exit 1: each line it printed (\`<sha7> <file>: <text>\`) is a base line one of the PR's own merge commits dropped, a regression this PR brings in. It is a finding to fix this round, whatever else the round finds" "${flat}")|$(has "Exit 2: it could not check, and the round cannot pass. Nudge the builder with its last line as the green step says, without waiting on the builder, then stop as above:" "${flat}")"
 # The kinds command finding_rule gives, run as written against another log: only kinds with a fixed,
 # escaped or pre-outcome row (never one only declined or filed), and no error with no log at all.
 kinds_cmd="$(grep -B1 '^already lists when it fits' <<< "${brief}" | head -1 | tr -d '`')"
@@ -724,8 +733,13 @@ sed '$d' "${RW}/doc.md" > "${RW}/doc.new" && printf 'line ten' >> "${RW}/doc.new
 "${GIT[@]}" -C "${RW}" commit -q -am "fix 10" && TEN="$(git -C "${RW}" rev-parse HEAD)" && echo "${TEN}" > "${ROOT}/head"
 check "a fix to a named last line that leaves no newline at its end, its finding under the worktree's path, passes, keeping the first pass aside as r1.md.prev" "0|head: ${TEN}|head: ${NARROW}" \
   "$(set +e; HERDR_PANE_ID="${RP}" run review-agent --recheck r1 "${PR}" "${NARROW}" doc.md:10 >/dev/null; echo "$?")|$(head -1 "${p}/.swarm/reviews/r1.md")|$(head -1 "${p}/.swarm/reviews/r1.md.prev")"
-check "the recheck counts no round: the next --next prints round 2, as the one findings tell gives" "yes" \
-  "$(has "Review round 2 of story r1" "$(HERDR_PANE_ID="${RP}" run review-agent --next r1 "${PR}")")"
+o="$(HERDR_PANE_ID="${RP}" run review-agent --next r1 "${PR}")" || echo "FAIL review-agent --next r1 exited non-zero: ${o}"
+check "the recheck counts no round: the next --next prints round 2, as the one findings tell gives" "yes" "$(has "Review round 2 of story r1" "${o}")"
+# Round 2 reviews the head --next pinned, which a builder's merge of the base may have made: a check left
+# on round 1's head would pass a drop that merge brought in. If --next stops printing the check, or
+# names another head, this goes red.
+check "--next's round 2 runs dropped-lines on the new head it pins, ${TEN:0:7}, not round 1's" "yes|no" \
+  "$(has "run \`SWARM_PROJECT=${p} ${SWARM} dropped-lines o/svc 1 ${TEN} main\` and act on its exit" "${o}")|$(has "dropped-lines o/svc 1 ${OLD}" "${o}")"
 
 # --- The wording route run as the brief writes it: the nudge and --recheck commands, taken from the
 # review agents' briefs and run from their panes, in their worktrees. w1's one finding is wording, so it

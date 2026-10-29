@@ -1554,7 +1554,16 @@ has not moved, so the conductor waits on the new builder, as for its own step-up
 builder pushes gets a new review agent when `watch` reports its checks finished. One whose step-up
 failed after closing the builder ends the agent with that `step-up failed:` line as the one
 finding; the line itself says to leave the story alone, as `wait --lead` tells the lead, whose exit
-is `step-up --resume`. It
+is `step-up --resume`. Before it reads the diff, each round, it runs `swarm.sh dropped-lines
+<owner/repo> <n> <head> <base>` on the round's head: the head its brief names on round 1, and from
+round 2 the command `review-agent --next` prints, on the head that round pins. On exit 1, each line
+it printed is a base line one of the PR's own merges dropped. That is a finding to fix this round,
+whatever else the round finds, and once fixed it is logged
+`log-finding --reviewer conductor --round <n> dropped-lines <PR URL> "<first line>"`. When the
+builder answers in the PR that the drop is meant, the agent may accept that as a decline. Its reply
+on the pass then names the drop and the answer, so whoever merges sees it. On exit 2 (it could not check)
+the agent nudges the builder with the line and stops with no pass: its review file holds `head:`,
+`dropped-lines unchecked: <the line>` and a `stopped:` line, and the stop note goes to the conductor. It
 runs `codex-review` with `SWARM_STORY=<slug>` and, on the story's first round when the PR changes
 code, `/code-review <PR URL>`. From round 2 on it runs codex alone. `review-agent` counts the round
 from the findings rounds since the story's last build started: each findings `tell` that went out,
