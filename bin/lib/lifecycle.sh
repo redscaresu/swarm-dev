@@ -3249,15 +3249,22 @@ story_prs() { pr_words "$(fm "$1" prs)"; printf '%s' "${PR_WORDS}"; }
 # stories_fm <key>... — one line per story on the board, read in one pass: its slug, then each key's
 # value, separated by \x1f (not a tab: read merges empty fields between tabs). A value is fm's: the
 # state file's (BOARD_STATE_DIR) unless the front matter changed from its <key>@base: line, else the
-# front matter's first <key>: line.
+# front matter's first <key>: line. A story file or state file that is there but unreadable when the
+# board is listed is named on stderr, its story left out, and stories_fm fails. awk then opens each
+# file itself (getline) and takes one it cannot open as gone since the list, saying nothing: a story
+# file a merge deleted is left out, and a state file gone (emptied or dropped) is read as none. One
+# made unreadable in that gap is left out too, and named by the next call's check.
 stories_fm() {
-  local f files=() n=0
+  local f s files=() n=0 rc=0
   for f in "${BOARD}"/stories/*.md; do
     [[ -e "${f}" && "${f##*/}" != README.md ]] || continue
+    s="${f##*/}"; s="${BOARD_STATE_DIR}/stories/${s%.md}"
+    [[ -r "${f}" ]] || { [[ ! -e "${f}" ]] || { echo "swarm: cannot read ${f}" >&2; rc=1; }; continue; }
+    [[ ! -f "${s}" || -r "${s}" ]] || { echo "swarm: cannot read ${s}" >&2; rc=1; continue; }
     files+=("${f}"); n=$((n + 1))
-    [[ ! -f "${BOARD_STATE_DIR}/stories/$(basename "${f}" .md)" ]] || files+=("${BOARD_STATE_DIR}/stories/$(basename "${f}" .md)")
+    [[ ! -f "${s}" ]] || files+=("${s}")
   done
-  [[ ${n} -gt 0 ]] || return 0
+  [[ ${n} -gt 0 ]] || return "${rc}"
   awk -v keys="$*" -v sdir="${BOARD_STATE_DIR}/stories/" '
     function val(l, k) { l = substr(l, length(k) + 1); sub(/^ +/, "", l); sub(/\r$/, "", l); return l }
     function flush(   i, k, v, line) {
@@ -3266,21 +3273,33 @@ stories_fm() {
       for (i = 1; i <= nk; i++) { k = K[i]; v = ((k in st) && (!(k in base) || base[k] == own[k])) ? st[k] : own[k]; line = line "\x1f" v }
       print line
     }
-    BEGIN { nk = split(keys, K, " ") }
-    FNR == 1 && index(FILENAME, sdir) != 1 {
-      flush(); slug = FILENAME; sub(/.*\//, "", slug); sub(/\.md$/, "", slug)
-      n = 0; split("", own); split("", st); split("", base)
-    }
-    index(FILENAME, sdir) == 1 {
-      for (i = 1; i <= nk; i++) {
-        if (!(K[i] in st) && index($0, K[i] ":") == 1) st[K[i]] = val($0, K[i] ":")
-        if (!(K[i] in base) && index($0, K[i] "@base:") == 1) base[K[i]] = val($0, K[i] "@base:")
+    BEGIN {
+      nk = split(keys, K, " ")
+      for (a = 1; a < ARGC; a++) {
+        # Read here alone: POSIX lets an awk whose BEGIN calls getline read ARGV after it.
+        f = ARGV[a]; delete ARGV[a]
+        if (index(f, sdir) == 1) {
+          while (slug != "" && (getline l < f) > 0)
+            for (i = 1; i <= nk; i++) {
+              if (!(K[i] in st) && index(l, K[i] ":") == 1) st[K[i]] = val(l, K[i] ":")
+              if (!(K[i] in base) && index(l, K[i] "@base:") == 1) base[K[i]] = val(l, K[i] "@base:")
+            }
+          close(f); continue
+        }
+        flush(); slug = f; sub(/.*\//, "", slug); sub(/\.md$/, "", slug)
+        n = 0; got = 0; split("", own); split("", st); split("", base)
+        while ((r = (getline l < f)) > 0) {
+          got = 1
+          if (l == "---") n++
+          else if (n == 1) for (i = 1; i <= nk; i++) if (!(K[i] in own) && index(l, K[i] ":") == 1) own[K[i]] = val(l, K[i] ":")
+        }
+        close(f)
+        # Gone since the list, or empty (no line, as before): left out.
+        if (r < 0 || !got) slug = ""
       }
-      next
-    }
-    $0 == "---" { n++; next }
-    n == 1 { for (i = 1; i <= nk; i++) if (!(K[i] in own) && index($0, K[i] ":") == 1) own[K[i]] = val($0, K[i] ":") }
-    END { flush() }' "${files[@]}"
+      flush()
+    }' "${files[@]}" || return
+  return "${rc}"
 }
 
 # no_agent_theirs <slug> <status> <prs> — true for a story in review that is the user's to merge: a PR

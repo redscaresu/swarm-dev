@@ -409,6 +409,29 @@ check "close on a slug wait --lead saw still closes its pane" grep -qx 'pane clo
 check "and leaves wait --lead's seen file as it was" grep -qx 'held: n (cleared-on-error)' "${P}/.swarm/lead/seen"
 rm -f "${P}/.swarm/state/tab-n"
 
+# --- Gone story case (#691): a story file a merge deletes during a poll, between the board's list and its
+# read, prints no sed: or awk: line, and the poll's other lines are as before. The race happens every
+# time: first on PATH, ${ROOT}/gone/<tool> is the real awk or sed, except that the first call naming
+# ${B}/v.md deletes it. Each tool in turn, so the poll's first awk read of v (stories_fm) and its first
+# sed read (fm) each meet a file that is gone.
+mkdir -p "${ROOT}/gone"
+for t in awk sed; do
+  rm -f "${ROOT}/gone"/*
+  printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v "${t}")" "${B}/v.md" > "${ROOT}/gone/${t}"
+  cat >> "${ROOT}/gone/${t}" <<'STUB'
+for a in "$@"; do [ "${a}" != "${V}" ] || rm -f "${V}"; done
+exec "${REAL}" "$@"
+STUB
+  chmod +x "${ROOT}/gone/${t}"
+  fresh; lead 0   # a first run only records what it saw
+  again; held y paused; item v "kind: code" "status: ready"
+  lead PATH="${ROOT}/gone:${ROOT}/bin:${PATH}" 0
+  check "a story gone at the poll's first ${t} read of it: it went" test ! -e "${B}/v.md"
+  check "a story gone at the poll's first ${t} read of it: no sed: or awk: line" test -z "$(grep -E '(sed|awk):' "${ROOT}/out")"
+  check "a story gone at the poll's first ${t} read of it: its other lines as before" test "$(out)|$(rc)" == "held: y (paused)|0"
+done
+rm -rf "${ROOT}/gone"
+
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"
 check "the wait arm names wait --lead" grep -q 'swarm.sh wait --lead' <<< "${arm}"
