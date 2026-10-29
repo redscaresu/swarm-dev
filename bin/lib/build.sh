@@ -1566,6 +1566,10 @@ one that says it \`cannot tell\` (herdr could not list its agents, or the board'
 be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only
 warns and starts it as the epic says.
 
+A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its
+session has ended, and the refusal names who acts on it. List the story under no agent in your report
+and never tell it again.
+
 The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
 cut off before its delete), read it, act on it and delete it first. Then, if the inbox exists, \`mv\`
