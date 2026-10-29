@@ -443,9 +443,16 @@ then; a start that fails with no agent running puts the note back. It reads the 
 
 **Builders that cannot sign their work wake the lead too.** `wait --lead` prints one line for all of them:
 `sign-blocked: <slug>, <slug> (their signing key is locked; unsigned work in their worktrees), exit: unlock your signing key in your shell (gpg-agent or ssh-agent), then swarm.sh tell <slug> resume <file> for each`.
-A builder is on it when three things hold. Its newest `sign-blocked:` or `sign-clear:` incident in
+A builder is on it when four things hold. Its newest `sign-blocked:` or `sign-clear:` incident in
 `events.tsv` is a `sign-blocked:` one. It still runs in a pane of the poll's herdr list. Its worktree still
-has uncommitted work (`git status --porcelain`, cut off after 10 seconds). The slugs are sorted, so the
+has uncommitted work (`git status --porcelain`). Its worktree's last commit is still the one the incident
+names in `unsigned work since <time>`. The probe runs only on a builder that looks stalled, so a builder
+that was unblocked and went back to work gets no `sign-clear:`; a commit since the incident shows it
+signed. Each git read runs with
+`GIT_OPTIONAL_LOCKS=0` and is cut off after 10 seconds, so a read that is cut off leaves no `index.lock` to
+fail the builder's next commit. A read that fails or is cut off says nothing either way: the builder stays
+on the line if the line the last poll saw names it, and is left off if not. A builder whose worktree is
+gone leaves the line. The slugs are sorted, so the
 line reads the same from poll to poll and wakes the lead once. It changes, and wakes the lead again, when a
 builder joins or leaves it. The poll asks no signer: it runs no gpg, gpg-connect-agent, ssh-add or
 ssh-keygen. The incidents come from the conductors' `wait --stall`, which probes the signer only once a

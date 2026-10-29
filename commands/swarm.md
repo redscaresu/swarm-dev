@@ -373,8 +373,8 @@ Repeat until a step below says stop:
      (gpg-agent, or ssh-agent for an ssh key). Once they say it is unlocked, write a file telling the
      builder its key is unlocked and to commit and carry on, and send it to each builder the line names
      with `swarm.sh tell <slug> resume <file>`. The line comes from the conductors' `wait --stall`, so
-     it can come up to `stall_minutes` late. It goes once each builder's next probe reads `clear` or its
-     worktree is clean.
+     it can come up to `stall_minutes` late. A builder leaves it once its next probe reads `clear`, it
+     commits, its worktree is clean or gone, or it stops running.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a

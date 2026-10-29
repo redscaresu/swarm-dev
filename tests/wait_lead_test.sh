@@ -419,9 +419,16 @@ check "the same story with no merge grant (an ordinary handoff to the user) give
 rm -rf "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt"
 
 # --- sign-blocked: one line for the live builders whose newest sign-blocked or sign-clear incident is a
-# sign-blocked one and whose worktree holds uncommitted work. The signers are stubs on the runs' PATH that
-# log any call to ${ROOT}/log (signer_stubs): the poll reads only events.tsv, herdr's list and git status.
+# sign-blocked one, whose worktree holds uncommitted work and whose last commit is the one the incident
+# names. The signers are stubs on the runs' PATH that log any call to ${ROOT}/log (signer_stubs): the poll
+# reads only events.tsv, herdr's list and git. git is a wrapper on the runs' PATH that logs each status
+# call with its GIT_OPTIONAL_LOCKS to ${ROOT}/git-status.log, then runs the real git.
 signer_stubs "${ROOT}"
+# shellcheck disable=SC2016 # the stub's own $* and ${GIT_OPTIONAL_LOCKS}, expanded when it runs
+printf '#!/bin/sh\ncase " $* " in *" status "*) echo "${GIT_OPTIONAL_LOCKS:-unset} $*" >> "%s" ;; esac\nexec %s "$@"\n' \
+  "${ROOT}/git-status.log" "$(command -v git)" > "${ROOT}/bin/git"
+chmod +x "${ROOT}/bin/git"
+SB_AT=2026-10-29T10:00:00Z
 SB_EXIT="(their signing key is locked; unsigned work in their worktrees), exit: unlock your signing key in your shell (gpg-agent or ssh-agent), then swarm.sh tell <slug> resume <file> for each"
 # live <name>... — herdr lists conduct-e and each <name>, working in pane w:<name> of this project's.
 live() {
@@ -430,16 +437,22 @@ live() {
   for n in "$@"; do a+=",{\"name\":\"${n}\",\"agent_status\":\"working\",\"pane_id\":\"w:${n//-/}\"}"; printf 'w:%s %s\n' "${n//-/}" "${n}" >> "${P}/.swarm/state/e"; done
   printf '{"result":{"agents":[%s]}}\n' "${a}" > "${FX}/agents"
 }
-# sbwt <slug> [dirty] — <slug>'s worktree with one commit, and with dirty an uncommitted edit on it.
+# sbwt <slug> [dirty] — <slug>'s worktree with one commit at SB_AT, and with dirty an uncommitted edit on it.
 sbwt() {
   local w="${ROOT}/proj-wt/$1"
-  rm -rf "${w}"; mkdir -p "${w}"; git -C "${w}" init -q; echo a > "${w}/f"; git -C "${w}" add f
-  (isolate_signer "${ROOT}/sbsign" && git -C "${w}" -c user.name=t -c user.email=t@t commit -qm a)
+  rm -rf "${w}"; mkdir -p "${w}"; git -C "${w}" init -q
+  sbcommit "$1" "${SB_AT}"
   [[ -z "${2:-}" ]] || echo b >> "${w}/f"
 }
-# sign <slug> blocked|clear — the incident sign_held logs for <slug>'s builder.
+# sbcommit <slug> <time> — a commit in <slug>'s worktree, committed at <time>.
+sbcommit() {
+  local w="${ROOT}/proj-wt/$1"
+  echo "$2" > "${w}/f"; git -C "${w}" add f
+  (isolate_signer "${ROOT}/sbsign" && GIT_COMMITTER_DATE="$2" git -C "${w}" -c user.name=t -c user.email=t@t commit -qm "$2")
+}
+# sign <slug> blocked|clear — the incident sign_held logs for <slug>'s builder, naming the commit at SB_AT.
 sign() {
-  local t="sign-clear: $1"; [[ "$2" == clear ]] || t="sign-blocked: $1 (unsigned work since 2026-10-29T10:00:00Z)"
+  local t="sign-clear: $1"; [[ "$2" == clear ]] || t="sign-blocked: $1 (unsigned work since ${SB_AT})"
   printf '%s\tincident\t%s\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${t}" >> "${P}/.swarm/events.tsv"
 }
 fresh; rm -f "${ROOT}"/log/*; live sb-b sb-a; sbwt sb-a dirty; sbwt sb-b dirty
@@ -464,9 +477,25 @@ again; sign sb-a clear; lead 0; second="$(out)|$(rc)"
 again; sign sb-a blocked; lead 0
 check "blocked, clear, blocked prints the line, then nothing, then the line again" \
   test "${first}/${second}/$(out)|$(rc)" == "sign-blocked: sb-a ${SB_EXIT}|0/|1/sign-blocked: sb-a ${SB_EXIT}|0"
+# A read that fails (the worktree's .git moved aside) keeps the builder the last poll's line named, and
+# leaves off one it did not; a worktree that is gone drops it.
+SB_LINE="sign-blocked: sb-a ${SB_EXIT}"
+mv "${ROOT}/proj-wt/sb-a/.git" "${ROOT}/proj-wt/sb-a/.git.off"
+again; lead 0
+check "a git read that fails keeps a builder the seen line names: nothing new, and the line stays" \
+  test "$(out)|$(rc)|$(grep -cxF "${SB_LINE}" "${P}/.swarm/lead/seen")" == "|1|1"
+rm -rf "${ROOT}/proj-wt/sb-a"; again; lead 0
+check "a worktree that is gone drops it" test "$(out)|$(rc)|$(grep -c '^sign-blocked: ' "${P}/.swarm/lead/seen")" == "|1|0"
+fresh; live sb-a; sbwt sb-a dirty; sign sb-a blocked; mv "${ROOT}/proj-wt/sb-a/.git" "${ROOT}/proj-wt/sb-a/.git.off"; lead 0
+check "a git read that fails leaves off a builder the seen line does not name" test "$(out)|$(rc)" == "|1"
+fresh; live sb-a; sbwt sb-a; sign sb-a blocked; sbcommit sb-a 2026-10-29T10:05:00Z; echo c >> "${ROOT}/proj-wt/sb-a/f"; lead 0
+check "a builder that committed since its sign-blocked incident, with a new edit and no sign-clear, prints nothing" \
+  test "$(out)|$(rc)" == "|1"
 check "no poll called gpg, gpg-connect-agent, ssh-add or ssh-keygen" test -d "${ROOT}/log" -a -z "$(ls -A "${ROOT}/log")"
-rm -f "${FX}/agents" "${ROOT}"/bin/gpg "${ROOT}"/bin/gpg-connect-agent "${ROOT}"/bin/ssh-add "${ROOT}"/bin/ssh-keygen
-rm -rf "${ROOT}/proj-wt" "${ROOT}/log" "${ROOT}/stub" "${ROOT}/sbsign"; printf 'w:c conduct-e\n' > "${P}/.swarm/state/e"
+check "every git status in a worktree ran with GIT_OPTIONAL_LOCKS=0" \
+  test "$(awk '/proj-wt\/sb-a status --porcelain/ { print $1 }' "${ROOT}/git-status.log" | sort -u)" == 0
+rm -f "${FX}/agents" "${ROOT}"/bin/gpg "${ROOT}"/bin/gpg-connect-agent "${ROOT}"/bin/ssh-add "${ROOT}"/bin/ssh-keygen "${ROOT}/bin/git"
+rm -rf "${ROOT}/proj-wt" "${ROOT}/log" "${ROOT}/stub" "${ROOT}/sbsign" "${ROOT}/git-status.log"; printf 'w:c conduct-e\n' > "${P}/.swarm/state/e"
 
 # --- a review agent whose start was cut short: the poll starts its next try, within 3 tries in all.
 # One board, a story per case, each ready with no prs: under epic e, whose conductor runs (so next only
