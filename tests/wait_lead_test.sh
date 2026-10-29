@@ -528,6 +528,14 @@ check "a run that cannot name the repo keeps the red the last pass found, and wa
 again; checks success "${B1}"; lead 0
 check "a red the read found goes once a rerun turns the same head green" no_red_line
 
+# The base moves to a head whose CI cannot be read (an answer that is not JSON): the red stands until it is.
+based; echo "${B1}" > "${FX}/base.main"; checks failure "${B1}"; lead 0
+again; echo "${B2}" > "${FX}/base.main"; echo nope > "${FX}/${B2}.checks"; lead 0
+check "a red the read found stays while the base's new head's CI cannot be read" \
+  test "$(out)|$(rc)|$(red_seen)" == "|1|$(red_line "${B1}" main)"
+again; checks success "${B2}"; lead 0
+check "and goes once that head's CI is read green" no_red_line
+
 based; echo "${B2}" > "${FX}/base.main"; checks success "${B2}"
 lead 0
 check "a green base head prints no main-red: line" test "$(out)|$(rc)" == "|1"
