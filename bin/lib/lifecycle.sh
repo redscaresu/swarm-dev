@@ -31,11 +31,13 @@ origin_has() {
 # board_read base|head <path> — epic_unticketed's reader for board_pr open: <path> at origin/<base>, or
 # in the worktree <wt> (board_pr's locals); fails 1 when it is absent and 2 when it cannot be read.
 # board_read from <path> — the old path of the rename to <path> in board_pr's local changes
-# (board_changes), or nothing.
+# (board_changes), or nothing. board_read ref — origin/<base>, which open has fetched (stage_gate's).
 board_read() {
   local t
   if [[ "$1" == from ]]; then
     P="$2" awk -F'\t' '$1 ~ /^R/ && $3 == ENVIRON["P"] { print $2; exit }' <<< "${changes}"
+  elif [[ "$1" == ref ]]; then
+    echo "origin/${base}"
   elif [[ "$1" == base ]]; then
     t="$(git -C "${wt}" ls-tree --name-only "origin/${base}" -- "$2")" || return 2
     [[ -n "${t}" ]] || return 1
@@ -142,8 +144,8 @@ board_pr() {
       [[ -f "$4" && -r "$4" ]] || die "board-pr: no body file at $4"
       [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "${b}" ]] \
         || die "board-pr: ${wt} is not a worktree on ${b}; run swarm.sh board-pr start ${name}"
-      # base_for fetches origin/<base>, so the epic check reads it as it is now (an HLD superseded since
-      # the start counts).
+      # base_for fetches origin/<base>, with the tags on it, so the epic checks read it as it is now (an
+      # HLD superseded since the start counts, and so does a tag pushed since).
       base="$(base_for "${PROJECT_DIR}")" || die "board-pr: cannot fetch origin's base branch, so whether an epic goes active with no ticket is unknown"
       rel="$(board_rel)"
       # Committed and uncommitted changes since the base, new files too: each changed path, a rename's
@@ -162,6 +164,9 @@ board_pr() {
       # the $(...), where a die would not stop this.
       f="$(epic_unticketed board_read "${files}")" || die "board-pr: ${f}"
       [[ -z "${f}" ]] || { f="${f%%$'\n'*}"; die "board-pr: ${f} goes active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${f}"; }
+      # So is one that goes active above the stage the base allows, whatever lead_epics says.
+      f="$(stage_gate board_read "${files}")" || die "board-pr: ${f}"
+      [[ -z "${f}" ]] || die "board-pr: ${f}"
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
       # answer (commands/plan-epic.md step 0), written since this worktree started: an older one is an
       # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. A

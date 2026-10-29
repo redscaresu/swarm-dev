@@ -126,7 +126,11 @@ Before the ask, run `SWARM_PROJECT=<wt> swarm.sh grants $1`, which reads `<wt>`'
 `epics`, the HLD lets you write the epics `status: active` and open the board PR without asking; do
 so, and say in the report that the HLD's `epics` grant did. Without it, write each epic `status:
 draft`, and ask before `board-pr open`: each draft is then agreed by the user through `/epic
-<slug>`, and nothing plans it until then.
+<slug>`, and nothing plans it until then. Whatever the grant says, write `status: draft` for an epic
+whose `stage:` the base does not allow yet: the newest `v<x.y.z>` tag on `origin/<base>` is below
+the minor before its stage (`v0.30.0` for a `v0.31.0` epic), and no epic of that stage is `active`
+there. `board-pr open` refuses it `active`. Under the `epics` grant, `next`'s stage step sets it
+active once that tag exists, unless its stage is a `v<x>.0.0`: that draft goes through `/epic`.
 
 Write in `<wt>`, never the main checkout. Write one `docs/epics/<slug>.md` per epic. An epic file
 there that already carries `hld: $1` is this plan's own, from the run you resume: overwrite it, and
