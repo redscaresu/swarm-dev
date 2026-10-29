@@ -658,6 +658,14 @@ start_agent() {
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
   local try out
   for try in 1 2; do
+    if [[ ${try} -eq 2 ]]; then
+      # A refused first start can still hold the name in its pane (herdr's agent_not_ready: the agent
+      # started, then blocked on a dialog), so a retry there fails as agent_name_taken. Close that
+      # pane and start again in a fresh one.
+      herdr pane close "${pane}" >/dev/null 2>&1 || true
+      pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
+      clean_env "${pane}" "${name}" "${names}"
+    fi
     if [[ "${kind}" == codex ]]; then
       # No update check: codex's startup prompt to upgrade takes the pane, and the brief then
       # lands in a bare shell. A planning codex must write its one answer file, and read-only made it
@@ -665,9 +673,15 @@ start_agent() {
       # it reads as before and writes only there. Any other tab stays read-only. Hooks off: codex
       # opens a review dialog for an untrusted hook (herdr's, ~/.codex/hooks.json) when the brief
       # starts the session, and the brief is lost behind it. Off trusts nothing; none runs here.
-      local sandbox=(-s read-only) dir
+      local sandbox=(-s read-only) dir root
       dir="$(codex_out_dir "${tab}")"
       if [[ -n "${dir}" ]]; then mkdir -p "${dir}"; sandbox=(-s workspace-write -C "${dir}"); fi
+      # Codex asks whether to trust a folder inside a git repo it has not trusted, and the start
+      # then fails as not ready, its brief never sent. Trust the repo for this session only: a -c
+      # override, never written to ~/.codex/config.toml. The inline table, as a dotted key would
+      # split a path holding a dot. A path holding a quote or backslash gets no override.
+      root="$(git -C "${dir:-${cwd}}" rev-parse --show-toplevel 2>/dev/null)" || root=""
+      if [[ -n "${root}" && "${root}" != *[\"\\]* ]]; then sandbox+=(-c "projects={\"${root}\"={trust_level=\"trusted\"}}"); fi
       out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else

@@ -85,7 +85,7 @@ cat > "${ROOT}/bin/herdr" <<EOF
 echo "\$*" >> "${ROOT}/herdr.log"
 EOF
 cat >> "${ROOT}/bin/herdr" <<EOF
-A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"; N="${ROOT}/rename-noop"; L="${ROOT}/list-fails"
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"; N="${ROOT}/rename-noop"; L="${ROOT}/list-fails"; B="${ROOT}/start-blocked-once"
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
@@ -96,6 +96,7 @@ case "$1 $2" in
   "agent list")   if [ -f "$L" ]; then exit 1; fi; if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
   "agent rename") if [ -f "$A" ] && [ ! -f "$N" ]; then sed -i.bak "s/\"name\":\"[a-z0-9-]*\",\"agent_status\":\"\([a-z]*\)\",\"pane_id\":\"$3\"/\"name\":\"$4\",\"agent_status\":\"\1\",\"pane_id\":\"$3\"/" "$A"; fi ;;
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
+                  if [ -f "$B" ]; then rm -f "$B"; echo '{"error":{"code":"agent_not_ready","message":"blocked during startup"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
   "workspace list") echo '{"result":{"workspaces":[]}}' ;;
@@ -484,6 +485,20 @@ check "codex starts with hooks off, so no trust dialog can take the brief" "yes"
 (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent plan-h cxh "${p}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
 check "an HLD-planning codex (tab plan-<hld>) writes only in .swarm/<hld>" "yes" \
   "$(has "-s workspace-write -C ${p}/.swarm/h -c" "$(grep '^agent start cxh ' "${ROOT}/herdr.log")")"
+# Codex blocks its start on "Trust this folder?" inside a git repo it has not trusted (v0.29.0: every
+# planning codex failed). The start trusts the repo for that session only, by a -c override.
+pg="${ROOT}/gitproj"; mkdir -p "${pg}/.claude/swarm"; : > "${pg}/.claude/swarm/config"; git -C "${pg}" init -q
+(cd "${pg}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cxg "${pg}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
+top="$(git -C "${pg}" rev-parse --show-toplevel)"
+check "a codex in a git repo trusts that repo for its session, so the trust dialog cannot block its start; outside a repo it trusts nothing" "yes|0" \
+  "$(has "-c projects={\"${top}\"={trust_level=\"trusted\"}}" "$(grep '^agent start cxg ' "${ROOT}/herdr.log")")|$(grep '^agent start cxh ' "${ROOT}/herdr.log" | grep -c 'projects=')"
+# A start herdr refuses as not ready still holds the name in its pane: the retry closes that pane
+# and starts in a fresh one, or it fails as agent_name_taken (v0.29.0's codex start, every time).
+: > "${ROOT}/herdr.log"; touch "${ROOT}/start-blocked-once"
+(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cxb "${p}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
+check "a start refused as not ready is retried in a fresh pane, after closing the one holding the name" "2 1" \
+  "$(awk '/^agent start cxb /{n++} /^pane close /{ if (n == 1) c = 1 } END { print n + 0, c + 0 }' "${ROOT}/herdr.log")"
+rm -f "${ROOT}/start-blocked-once"
 
 # --- The session id: minted once per claude agent, passed to herdr, and recorded before the brief.
 tsv="${p}/.swarm/agents.tsv"
