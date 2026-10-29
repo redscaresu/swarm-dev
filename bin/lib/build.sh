@@ -1162,7 +1162,7 @@ EOF
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
-# changes code, the guard's forms (guard_rule) and the project's rules. After each review it fixes or declines each finding, logs each
+# changes code, the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
 # before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,

@@ -1675,7 +1675,7 @@ update README.md, AGENTS.md, docs/ or the command text to match, is reported at 
 `file:line`, or at the change when no doc covers it yet. The brief's example is swarm-dev's own
 `env:` line, which kept describing the old env allowlist after the code changed. Its brief
 carries the checks the lead used to make by hand, and so does the fallback reviewer's brief. Both
-end with the rules a builder gets, in the same order: swarm-dev's [`rules.md`](../rules.md) first,
+also carry the rules a builder gets, in the same order: swarm-dev's [`rules.md`](../rules.md) first,
 then the project's own. After the checks come the
 lines of the story and its epic that hold a `(user, <date>)` mark. Each is printed as it stands, with
 its `path:line`, cut at 1500 bytes on a character boundary, and the brief tells the reviewer to read
