@@ -95,7 +95,7 @@ Then reuse an output that exists, parses as JSON and is newer than `.swarm/$1/ba
 reference; on a board outside the repo, `docs/hld/$1.md`, with no `base-rev`), and do not start that
 agent again; an older one belongs to a previous plan, so start the agent. A `.partial` file is an unfinished run, not a result: start the agent, which carries on from it. Delete a `.partial` that is not newer than that same reference first: it belongs to a previous plan.
 
-Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
+Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first, and read `${CLAUDE_PLUGIN_ROOT}/rules.md` (its full path written out) before anything else. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
 you run and which can be behind. Read-only — write nothing but your output file and its `.partial`, never commit, never
 touch real cloud or credentials. If `<output>.partial` exists, a run was cut off: start from it and carry on, do not redo it. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
@@ -128,7 +128,7 @@ so, and say in the report that the HLD's `epics` grant did. Without it, write ea
 draft`, and ask before `board-pr open`: each draft is then agreed by the user through `/epic
 <slug>`, and nothing plans it until then.
 
-Write in `<wt>`, never the main checkout. Write one `docs/epics/<slug>.md` per epic. An epic file
+Write in `<wt>`, never the main checkout. Before the board PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose of the epic files you wrote: epics are read by the user, who agrees them. If the skill is not installed, say so in the report and go on: the project is not blocked. Write one `docs/epics/<slug>.md` per epic. An epic file
 there that already carries `hld: $1` is this plan's own, from the run you resume: overwrite it, and
 delete one the plan no longer has. Any other file of that slug in `docs/epics/` or `docs/stories/`
 would overwrite an unrelated epic or story, and a PR that changes an epic the board already has is

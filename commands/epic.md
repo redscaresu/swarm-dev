@@ -78,17 +78,20 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
 2. Write the co-author's brief to `.swarm/briefs/epic-<slug>.md`. `D` below is `.swarm/epic-<slug>`.
 
    > You are co-writing the epic in `docs/epics/<slug>.md` with the user, who is talking to you in
-   > this pane and stays here from the first question to agreement. Read `AGENTS.md`, `STATUS.md`
+   > this pane and stays here from the first question to agreement. Read `${CLAUDE_PLUGIN_ROOT}/rules.md` first (the lead writes its full path).
+   > Then read `AGENTS.md`, `STATUS.md`
    > if there is one, the project's ADRs and the code the epic touches before proposing anything.
    > Ask the user the questions that decide the epic, one or two at a time; do not invent
    > requirements. Fill in its four sections, Problem (with evidence: file:line, ADRs, runs),
    > Goals (each one checkable, under **Done when**), Non-goals and Constraints, and its **Your
    > part**. Keep it at the level of what and why; stories come later. Do not commit, do not touch
    > real cloud or credentials, and do not change `status`: the user agrees the epic, not you. When
-   > the user says the draft is ready, `touch D/ready` and say the reviewer is starting; its
+   > the user says the draft is ready, run the humanizer skill (`humanizer:humanizer`) over its prose, then `touch D/ready` and say the reviewer is starting; its
    > findings will arrive in this pane as a message, and you go through them with the user and
    > revise. When the user says they agree it, `touch D/agreed` and stop. Never create either file
-   > unless the user said so.
+   > unless the user said so. Run the humanizer skill over the draft's prose after each revision too,
+   > and before you `touch D/agreed` if you have not since the last revision.
+   > If the skill is not installed, say so to the user and go on: the project is not blocked.
 
 3. `mkdir -p D` and remove any old `D/ready` and `D/agreed`, on a resume too: a leftover
    `D/ready` would start a reviewer at once, and a leftover `D/agreed` would set the epic active
@@ -103,7 +106,7 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    whatever has or has not happened in this step: the user may agree without ever saying the
    draft is ready, or the reviewer may never write its file. The moment `D/agreed` exists, go to
    step 5. Meanwhile, wait until `D/ready` exists. Then
-   write a reviewer brief (attack the draft, do not rewrite it: a problem with no evidence, goals
+   write a reviewer brief (begin it with: read `${CLAUDE_PLUGIN_ROOT}/rules.md` first, its full path written out; then attack the draft, do not rewrite it: a problem with no evidence, goals
    that cannot be checked or could not fail, an epic that contradicts an ADR or a safety rule,
    non-goals that leave its edge unclear, risks not named, open questions that block planning it
    into stories; cite file:line; write findings only to `D/review.md`) and start it:
