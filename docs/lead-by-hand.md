@@ -27,14 +27,6 @@ story for the lead. A nudge counts no round.
 **Issue.** [#685](https://github.com/redscaresu/swarm-dev/issues/685), and
 [#686](https://github.com/redscaresu/swarm-dev/issues/686) for a lighter review in later rounds.
 
-## An agent that fails to start
-
-**Symptom.** `swarm.sh story` fails with `pane ... not found`,
-`the pane's shell did not take the agent's environment` or `agent_not_found`, often under load.
-`swarm.sh review-agent` makes up to 3 starts on these by itself, so it needs no rerun.
-**Step.** Run the `swarm.sh story` command again, up to twice.
-**Issue.** [#688](https://github.com/redscaresu/swarm-dev/issues/688).
-
 ## Finished panes left open
 
 **Symptom.** `herdr agent list` shows many agents with status `done`: review agents, planning agents,
