@@ -322,7 +322,7 @@ check "with merge = agent, neither the epic's nor the backlog's conductor brief 
 check "with merge = agent, both conductor briefs leave the merge to the review agent and start every startable story after each inbox pass" "yes|yes|yes|yes" \
   "$(has "A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR yourself." "${brief}")|$(has "A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR yourself." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")|$(merge_note "${brief}" f)|$(merge_note "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" --backlog)"
 check "with merge = agent, a costs: money PR is listed for the user, and a wave with a cleared-on-error close or a give-up starts nothing more" "yes|yes" \
-  "$(has "List each such PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\` or \`(protected path)\`) in your report under Waits on the user." "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
+  "$(has "List each such PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\`, \`(protected path)\` or \`(dropped base lines)\`) in your report under Waits on the user." "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
 check "with merge = agent, the same clash rule and merge-base-in rule" "yes|yes|yes|yes|gone" "$(clash_brief "${brief}")"
 # A merge that turns the base red writes a fix-main story outside every epic, and watch says no fix-main
 # PR opened: if the brief drops the out-of-scope start or the review agent from the builder's reply,

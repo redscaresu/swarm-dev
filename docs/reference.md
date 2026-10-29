@@ -103,7 +103,14 @@ because they change a protected path go on a line of their own, without the item
 their paths and the exit: `merge: <slug> <PR URL>... (held: changes <path>[, <path>]...; exit: the user
 merges it)`. A PR whose files could not be read is held too, and its line says `its files could not be
 read: <why>` in place of the path. `status` lists those PRs on their own row, `awaiting your merge
-(protected path): <slug> <PR URL>...`, and the item's other PRs on its untagged row. A held PR that a
+(protected path): <slug> <PR URL>...`, and the item's other PRs on its untagged row. A PR that
+`swarm.sh merge` held because its own merge of the base dropped base lines gets a row of its own too,
+`awaiting your merge (dropped base lines): <slug> <PR URL>...`, apart from any protected-path PR of the
+item. Its line names what was dropped and who fixes it: `merge: <slug> <PR URL>... (held: dropped base
+lines: <n>, first <file>: <text>; exit: the builder restores them in a commit of its own, or the user
+reads the PR's answer and merges by hand)`. When the check could not run, the line gives the reason and
+a different exit: `(held: dropped base lines unchecked: <why>; exit: the user checks the merge by hand
+and merges it, or runs swarm.sh merge again)`. A held PR that a
 story and its epic both list is printed once, under the first item, and left off the other's line. A
 hold names the head it was read at, and each heads pass first reads the head of every PR a hold names,
 story PR or not. Once a pass made after the hold reads the PR at another head (the builder pushed), the

@@ -1750,20 +1750,28 @@ protected_update() {
   state_write "$1" "$2" "protected"$'\t'"${out}"$'\n'
 }
 
+# dropped_lines_what <what> — true when a protected: entry's <what> is the one swarm.sh merge records
+# for a PR whose own merge of the base dropped base lines: `dropped base lines: <n>, first <file>:
+# <text>`, or `dropped base lines unchecked: <why>` when the check could not run.
+dropped_lines_what() { [[ "$1" == "dropped base lines: "* || "$1" == "dropped base lines unchecked: "* ]]; }
+
 # merge_rows <item-file> <name> <holds> — waiting_on_user's awaiting-your-merge rows for an item in
-# review, <name> its slug, or `epic <slug>`: the PRs it lists that <holds> (protected_holds) names on a
-# row of their own, tagged " (protected path)", then the others on the untagged row as before.
-# costs_tag's tag goes on both.
+# review, <name> its slug, or `epic <slug>`: the PRs it lists that <holds> (protected_holds) names on
+# rows of their own, tagged " (protected path)" for a path or unreadable files and " (dropped base
+# lines)" for an entry dropped_lines_what names, then the others on the untagged row as before.
+# costs_tag's tag goes on each.
 merge_rows() {
-  local u c prs held="" rest=""
+  local u c prs held="" dropped="" rest="" d="dropped base lines"
   c="$(costs_tag "$1")"; prs="$(fm "$1" prs)"
   if [[ -n "$3" ]]; then
     for u in ${prs}; do
-      if [[ $'\n'"$3" == *$'\n'"${u} "* ]]; then held+=" ${u}"; else rest+=" ${u}"; fi   # loose-match: ok quoted, a whole "<url> " line start
+      if [[ $'\n'"$3" == *$'\n'"${u} ${d}: "* || $'\n'"$3" == *$'\n'"${u} ${d} unchecked: "* ]]; then dropped+=" ${u}"   # loose-match: ok quoted, a whole "<url> <prefix>" line start
+      elif [[ $'\n'"$3" == *$'\n'"${u} "* ]]; then held+=" ${u}"; else rest+=" ${u}"; fi   # loose-match: ok quoted, a whole "<url> " line start
     done
   fi
-  [[ -n "${held}" ]] || { echo "  awaiting your merge${c}: $2 ${prs}"; return 0; }
-  echo "  awaiting your merge${c} (protected path): $2${held}"
+  [[ -n "${held}${dropped}" ]] || { echo "  awaiting your merge${c}: $2 ${prs}"; return 0; }
+  [[ -z "${held}" ]] || echo "  awaiting your merge${c} (protected path): $2${held}"
+  [[ -z "${dropped}" ]] || echo "  awaiting your merge${c} (${d}): $2${dropped}"
   [[ -z "${rest}" ]] || echo "  awaiting your merge${c}: $2${rest}"
 }
 
