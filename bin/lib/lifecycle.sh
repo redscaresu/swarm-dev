@@ -2726,10 +2726,11 @@ lead_base() {
 # line as first read, so a check that finishes later does not change the line and wake the lead twice. A head
 # that cannot be read, a head whose CI cannot be read (the line's own head or a new one: a failed read replaces
 # nothing), a base not resolved (its repo's lines stand, with no read of the base they name, which may be one no
-# longer), a repo not resolved (every line no read this pass replaced stays), and a red head whose CI now reads
+# longer), a repo gh could not name (every line no read this pass replaced stays), and a red head whose CI now reads
 # pending (a rerun under way) keep the line they had; a green head whose CI reads pending is written pending, so
 # it is read again every pass, past LEAD_BASE_RECHECK too, until the rerun concludes. Each failed read counts
-# towards a warning (lead_base_failed). On a green head of a base red_mains holds, it runs
+# towards a warning (lead_base_failed). A repo with no clone or no origin, which no pass can read, loses its
+# lines, as open_story_prs lists no PR for it. On a green head of a base red_mains holds, it runs
 # clear_red_main, which logs main-green and retires that base's unstarted fix-main stories once ci_gate fixed
 # shows the red fixed. It prints nothing on stdout.
 lead_bases() {

@@ -180,7 +180,8 @@ same commit still counts. After that it is read again only once the base moves, 
 under way: that is read until it concludes, however long the head has stood. A read that fails keeps
 what the last pass found, even once the base has moved on to a head whose CI it could not read. So does a
 repo gh could not name, a base it could not tell (nothing reads the branch it had, which may be the base no
-longer), and a rerun under way on a red head. Each poll then prints, with no gh call:
+longer), and a rerun under way on a red head. A repo with no clone or no origin cannot be read by any pass, so
+its lines go, as its PRs' lines do. Each poll then prints, with no gh call:
 
 - `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base: the red
   main that `swarm.sh merge` logged there (`main-red` in events.tsv) and no `main-green` has cleared, else
