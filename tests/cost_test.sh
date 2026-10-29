@@ -48,6 +48,7 @@ check "duplicate message counted once" "| code | 1 | claude-opus-5-5 | 1.0M | 0k
 check "cache reads priced" "| survey | 1 | claude-sonnet-5 | 0k | 0k | 10.0M | 0k | 2.00 |"
 check "codex listed, not priced" "| codex | 1 (1 not in the logs) | - |"
 check "older than since is left out" "| **total** | 3 | | 1.0M | 0k | 10.0M | 1.0M | 26.00 |"
+same "a window with no step-up prints the per-rung header and none" "$(sed -n '/^### per rung$/,$p' <<< "${out}" | head -3)" "$(printf '%s\n' '### per rung' '' none)"
 
 # --until leaves out what came after it; --epic changes no number, and says so.
 same "--until 2026-09-28 leaves out the 2026-09-29 agents" "$(cost --until 2026-09-28 | grep -F '**total**')" "| **total** | 1 | | 5.0M | 0k | 0k | 0k | 20.00 |"
@@ -130,6 +131,67 @@ out="$(cost --since 2026-09-15)"
 check "the split critic has its own row" "| split-critic | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
 check "the plan critic keeps the critic row" "| critic | 1 | claude-opus-5-5 | 0k | 0k | 0k | 2.0M | 40.00 |"
 check "a builder named split-critic counts under its own role" "| code | 2 | claude-opus-5-5 | 0k | 0k | 0k | 5.0M | 100.00 |"
+
+# The per-rung block, on a ladder of sonnet, opus and fable, with outcomes' rows given as flow passes them.
+# s-a steps up findings-3 and its PR reads as merged in outcomes, with no merge line; s-b steps up when
+# stalled and is held for the lead; s-d steps up on red CI and its last rung closes with its PR closed;
+# s-c never steps up; s-old's step-up is before the window, and a refused step-up line counts for none.
+# s-e steps up findings-3 from opus in two attempts: the first fails, the second is held for the lead,
+# and each step-up takes its own attempt's ending; the tokens are the story's, of both attempts. s-f does
+# the same twice in one day (no agents.tsv lines, so no tokens): the first fails, the second merges.
+G="${dir}/rung"; mkdir -p "${G}/projects/p"
+for s in "r1 sonnet 1000000" "r2 opus 1000000" "r3 opus 2000000" "r4 fable 1000000" "r5 sonnet 500000" "r6 opus 1000000" "r10 opus 1000000"; do
+  read -r sid model tokens <<< "${s}"   # r7 (s-d's fable rung) and s-e's but r10 have no session log
+  usage "m-${sid}" "claude-${model}-5" 0 0 0 "${tokens}" > "${G}/projects/p/${sid}.jsonl"
+done
+printf '%s\n' $'2026-10-01\tcode-sonnet\ts-a\tclaude\tsonnet\thigh\tr1' $'2026-10-01\tcode\ts-a\tclaude\topus\thigh\tr2' \
+  $'2026-10-01\tcode\ts-b\tclaude\topus\thigh\tr3' $'2026-10-01\tescalate\ts-b\tclaude\tfable\txhigh\tr4' \
+  $'2026-10-01\tcode-sonnet\ts-c\tclaude\tsonnet\thigh\tr5' $'2026-10-01\tcode\ts-d\tclaude\topus\thigh\tr6' \
+  $'2026-10-01\tescalate\ts-d\tclaude\tfable\txhigh\tr7' $'2026-10-01\tcode\ts-e\tclaude\topus\thigh\tr8' \
+  $'2026-10-01\tescalate\ts-e\tclaude\tfable\txhigh\tr9' $'2026-10-02\tcode\ts-e\tclaude\topus\thigh\tr10' \
+  $'2026-10-02\tescalate\ts-e\tclaude\tfable\txhigh\tr11' > "${G}/agents.tsv"
+ev() { printf '%s\t%s\t%s\t-\t%s\n' "$@" >> "${G}/events.tsv"; } # <time> <command> <slug> <outcome>
+ev 2026-09-01T10:00:00Z escalate s-old "ok (no-pr: sonnet -> opus)"
+ev 2026-10-01T10:00:00Z escalate s-a "ok (findings-3: sonnet -> opus)"
+ev 2026-10-01T11:00:00Z escalate s-b "ok (stalled: opus -> fable)"
+ev 2026-10-01T11:30:00Z escalate s-c "step-up: s-c's builder is on fable, at or above escalate_ladder's top rung"
+ev 2026-10-01T12:00:00Z escalate s-d "ok (ci-red-2: opus -> fable)"
+ev 2026-10-02T09:00:00Z held s-b "ok (top-rung: findings round 2 on fable)"
+ev 2026-10-01T13:00:00Z escalate s-e "ok (findings-3: opus -> fable)"
+ev 2026-10-02T13:00:00Z escalate s-e "ok (findings-3: opus -> fable)"
+ev 2026-10-02T15:00:00Z held s-e "ok (top-rung: findings round 2 on fable)"
+ev 2026-10-03T08:00:00Z escalate s-f "ok (no-pr: sonnet -> opus)"
+ev 2026-10-03T10:00:00Z escalate s-f "ok (no-pr: sonnet -> opus)"
+rows="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' date slug model attempts pr_state story_merged closes close_cause started \
+  2026-10-01 s-a sonnet 1 MERGED true 1 step-up:findings-3 '' 2026-10-01 s-a opus 1 MERGED true 1 '' '' \
+  2026-10-01 s-b opus 1 OPEN false 1 step-up:stalled '' 2026-10-01 s-b fable 1 OPEN false 0 '' '' \
+  2026-10-01 s-c sonnet 1 OPEN false 0 '' '' \
+  2026-10-01 s-d opus 1 CLOSED false 1 step-up:ci-red-2 '' 2026-10-01 s-d fable 1 CLOSED false 1 '' '' \
+  2026-10-01 s-e opus 1 '' false 1 step-up:findings-3 '' 2026-10-01 s-e fable 1 '' false 1 '' '' \
+  2026-10-02 s-e opus 2 OPEN false 1 step-up:findings-3 2026-10-02T12:00:00Z 2026-10-02 s-e fable 2 OPEN false 0 '' 2026-10-02T13:00:00Z \
+  2026-10-03 s-f sonnet 1 CLOSED true 1 step-up:no-pr '' 2026-10-03 s-f opus 1 CLOSED true 1 '' '' \
+  2026-10-03 s-f sonnet 2 MERGED true 1 step-up:no-pr '' 2026-10-03 s-f opus 2 MERGED true 0 '' '')"
+rungs() { # [until] — the cost section's per-rung block over the fixture, from --since 2026-09-15, as flow_sections runs it
+  TZ=UTC SWARM_ROWS="${rows}" python3 "$(dirname "${SWARM}")/lib/flow_report.py" 2026-09-15 "${1:-9999-12-30}" "" "${G}/agents.tsv" "${G}/events.tsv" \
+    "${G}/findings.tsv" x "code code-sonnet escalate" "${G}/projects" "${G}/sessions" "" "${G}/own" cost | sed -n '/^### per rung$/,$p'
+}
+# shellcheck disable=SC2016 # the $ is the table's, not an expansion
+same "one row per step-up in the window: its trigger, tokens per rung and outcome, then each rung's reach" "$(rungs)" "$(printf '%s\n' '### per rung' '' \
+  '| story | trigger | step-up | tokens per rung | outcome |' '|---|---|---|---|---|' \
+  '| s-a | findings-3 | sonnet -> opus | sonnet 1.0M $10.00, opus 1.0M $20.00 | merged |' \
+  '| s-b | stalled | opus -> fable | opus 2.0M $40.00, fable 1.0M $20.00 | lead |' \
+  '| s-d | ci-red-2 | opus -> fable | opus 1.0M $20.00, fable - | failed |' \
+  '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | failed |' \
+  '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | lead |' \
+  '| s-f | no-pr | sonnet -> opus | - | failed |' '| s-f | no-pr | sonnet -> opus | - | merged |' '' \
+  '| rung | builds | share |' '|---|---|---|' '| sonnet | 4 | 50% |' '| opus | 7 | 88% |' '| fable | 4 | 50% |')"
+# shellcheck disable=SC2016 # the $ is the table's, not an expansion
+same "with --until, sessions and rungs after it are left out" "$(rungs 2026-10-01 | grep -F -e '| s-e |' -e '| opus |' -e '| fable |')" \
+  "$(printf '%s\n' '| s-e | findings-3 | opus -> fable | opus -, fable - | failed |' '| opus | 4 | 80% |' '| fable | 3 | 60% |')"
+rows="$(head -1 <<< "${rows}")"
+# shellcheck disable=SC2016 # the $ is the table's, not an expansion
+same "a step-up whose story outcomes has no row for yet reads as open" "$(rungs | grep -F '| s-a |')" \
+  '| s-a | findings-3 | sonnet -> opus | sonnet 1.0M $10.00, opus 1.0M $20.00 | open |'
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"
