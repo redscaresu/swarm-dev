@@ -35,14 +35,6 @@ background test run, or could not sign a commit.
 **Step.** Leave a waiting builder alone. For GPG, see below.
 **Issue.** [#687](https://github.com/redscaresu/swarm-dev/issues/687).
 
-## An agent that fails to start
-
-**Symptom.** `swarm.sh story` fails with `pane ... not found`,
-`the pane's shell did not take the agent's environment` or `agent_not_found`, often under load.
-`swarm.sh review-agent` makes up to 3 starts on these by itself, so it needs no rerun.
-**Step.** Run the `swarm.sh story` command again, up to twice.
-**Issue.** [#688](https://github.com/redscaresu/swarm-dev/issues/688).
-
 ## A locked GPG agent
 
 **Symptom.** Builders stop with staged, unsigned work, or commits fail to sign.
