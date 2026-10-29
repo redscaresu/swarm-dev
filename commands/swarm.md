@@ -706,7 +706,8 @@ Three more rules for the lead:
   `stalled <N>m`, `status` shows the agent's state, and neither acts on anything. For
   `stall_minutes`, a story's builder shows life through worktree commits, edits and PR updates, an
   agent with no story (a planner or conductor) through its own `events.tsv` lines, and any agent
-  through its session log and a test suite running in its pane. Do not use
+  through its session log, a test suite running in its pane and a background task its session
+  waits on. Do not use
   `swarm.sh wait --stall` as a check: it blocks, nudges and resumes the agent, and can step a build up.
 
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.

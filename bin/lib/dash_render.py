@@ -132,7 +132,7 @@ def pr_ref(m):
 
 # Agents: this project's panes (its tab records). A working agent shows how long since its last sign
 # of life (dash_age's Signs.age); past stall_minutes it is stalled, and needs you, unless its pane runs a
-# test suite (TESTING): then it is working. A story's builder counts its worktree's commits and PR
+# test suite or its session waits on a background task (TESTING): then it is working. A story's builder counts its worktree's commits and PR
 # updates; an agent with no story (a conductor or planner) its own events.tsv lines: by target, and once
 # it has a start line, by the pane that ran them.
 signs = Signs(E["DASH_EVENTS"], dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l), PRS, E["DASH_PROJECTS"], NOW)
@@ -156,8 +156,8 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     if t > escalated_at.get(f[2], (0,))[0]:
         escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {f[4][len('ok (attempt '):-1]}")
 recs, stalled = [], []
-# The panes of agents past stall_minutes that run a test suite (dash.sh's test_running over dash_age's
-# stalled_panes): working, not stalled.
+# The panes of agents past stall_minutes that run a test suite or wait on a background task (dash.sh's
+# test_running and bg_running over dash_age's stalled_panes): working, not stalled.
 TESTING = set(E.get("DASH_TESTING", "").split())
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}

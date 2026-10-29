@@ -24,12 +24,15 @@
 #     <task-notification>, "[Request interrupted by user]", a slash command such as /login run in its
 #     pane and its <local-command-stdout>). A transcript that cannot be read is not
 #     expired. Never the pane.
-#   bg_running(log, name, projects) -> True when <name>'s transcript (as login_expired finds it) has a
-#     background task it started (a tool result's backgroundTaskId, an async_launched agentId, or a
-#     Monitor call's taskId; a task-list tool's taskId is none) with no <task-notification> for that
-#     <task-id> carrying a <status> since: the session
+#   bg_running(log, name, projects, stall_minutes="", now="") -> True when <name>'s transcript (as
+#     login_expired finds it) has a background task it started (a tool result's backgroundTaskId, an
+#     async_launched agentId, or a Monitor call's taskId; a task-list tool's taskId is none) with no
+#     <task-notification> for that <task-id> carrying a <status> since: the session
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
-#     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
+#     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none. With
+#     stall_minutes, only a task whose launch entry is logged less than TEST_RUN_STALLS times that
+#     before <now> (epoch; default the clock) counts, as test_running's runs: a server left running
+#     in the background is no work. A launch entry with no UTC timestamp is too old to count.
 #   test_running(info, stall_minutes) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read,
 #     a process under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk)
 #     runs a test suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh,
@@ -1209,14 +1212,15 @@ resume_agent() {
   rm -f "${f}"; return "${rc}"
 }
 
-# bg_running <name> — succeed when <name>'s Claude session has a background task (a shell, an async
-# subagent, a monitor) it started and has not yet been told the end of (panes.py's bg_running, over
-# its transcript): it is waiting on it.
+# bg_running <name> [<stall_minutes> [<now>]] — succeed when <name>'s Claude session has a background
+# task (a shell, an async subagent, a monitor) it started and has not yet been told the end of
+# (panes.py's bg_running, over its transcript): it is waiting on it. With <stall_minutes>, only one
+# started less than TEST_RUN_STALLS times that before <now> (epoch; default the clock) counts.
 bg_running() {
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
-sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
+sys.exit(0 if bg_running(*sys.argv[1:6]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "${2:-}" "${3:-}"
 }
 
 # test_running <target> — succeed when a process under pane <target>'s shell runs a test suite started
@@ -1345,8 +1349,10 @@ longest_child() {
 # life for stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last
 # commit or edit (story_work_time) and its newest own work across its session log and its subagents'
 # logs (session_mtime) as signs, print how many minutes and succeed. Only once the rest already
-# looks stalled is pane <target> asked whether it runs a test suite (test_running), which is work, so
-# no stall; and only then are its PRs asked for their updatedAt, so gh is rarely called.
+# looks stalled is pane <target> asked whether it runs a test suite (test_running), and its transcript
+# whether it waits on a background task of its own (bg_running), each younger than TEST_RUN_STALLS
+# times stall_minutes: either is work, so no stall. Only then are its PRs asked for their updatedAt,
+# so gh is rarely called.
 agent_stalled() {
   local slug url age ct sl prs=()
   slug="$(stall_py story "$1")"
@@ -1356,6 +1362,7 @@ agent_stalled() {
   # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   ! test_running "$3" || return 1
+  ! bg_running "$1" "${CFG_stall_minutes}" || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
   done

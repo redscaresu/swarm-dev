@@ -78,8 +78,14 @@ def login_expired(log, name, projects):
             return False
         break
     return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
-def bg_running(log, name, projects):
-    sid, live, monitors = session_id(log, name), set(), set()
+def logged_at(d):   # a transcript entry's UTC timestamp as epoch seconds; 0 (long ago) when it has none
+    try:
+        t = d.get("timestamp")
+        return calendar.timegm(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S")) if t.endswith("Z") else 0
+    except (AttributeError, TypeError, ValueError):
+        return 0
+def bg_running(log, name, projects, stall_minutes="", now=""):
+    sid, live, monitors = session_id(log, name), {}, set()   # live: task id -> when its launch was logged
     for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
         try:
             for l in open(path, encoding="utf-8", errors="replace"):
@@ -99,21 +105,25 @@ def bg_running(log, name, projects):
                 r = d.get("toolUseResult")
                 if isinstance(r, dict):
                     if isinstance(r.get("backgroundTaskId"), str):
-                        live.add(r["backgroundTaskId"])
+                        live[r["backgroundTaskId"]] = logged_at(d)
                     if r.get("status") == "async_launched" and isinstance(r.get("agentId"), str):
-                        live.add(r["agentId"])
+                        live[r["agentId"]] = logged_at(d)
                     # A Monitor's taskId only: a task-list tool's (TaskUpdate) gets no notification.
                     if isinstance(r.get("taskId"), str) and any(c.get("tool_use_id") in monitors for c in items):
-                        live.add(r["taskId"])
+                        live[r["taskId"]] = logged_at(d)
                     continue
                 text = json.dumps([(d.get("message") or {}).get("content"), (d.get("attachment") or {}).get("prompt")])
                 for n in re.findall(r"<task-notification>.*?</task-notification>", text):
                     if "<status>" in n:   # an end; a check-in on a running shell carries none
-                        live.difference_update(re.findall(r"<task-id>([\w-]+)</task-id>", n))
+                        for t in re.findall(r"<task-id>([\w-]+)</task-id>", n):
+                            live.pop(t, None)
         except OSError:
             return False
         break
-    return bool(live)
+    if not stall_minutes:
+        return bool(live)
+    cap, t = TEST_RUN_STALLS * int(stall_minutes) * 60, float(now) if now else time.time()
+    return any(t - at < cap for at in live.values())
 # USAGE_TAIL: how many of the pane's last non-empty lines the live usage-limit dialog's options sit in.
 USAGE_TAIL = 8
 USAGE_OPTION = r"[\s│]*(?:❯\s*)?(\d+)\.\s*"

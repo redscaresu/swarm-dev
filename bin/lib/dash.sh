@@ -728,13 +728,18 @@ for a in agents:
           f="${f:3}"; printf '%s\n' "${f#"${x}"}"
         done || true)"
   fi
-  # The working agents past stall_minutes (dash_age's stalled_panes, the rows' own rule): a test suite
-  # running under one's pane (test_running: herdr's process info, read here and never in the render,
-  # and one ps read) is work, and the render shows it working (DASH_TESTING). An agent under
-  # stall_minutes is never read; a read that fails leaves the agent stalled.
+  # The working agents past stall_minutes (dash_age's stalled_panes, the rows' own rule), each its pane
+  # and name: a test suite running under one's pane (test_running: herdr's process info, read here and
+  # never in the render, and one ps read) or a background task its session waits on (bg_running, over
+  # its transcript), each younger than 3 times stall_minutes, is work, as for wait --stall, and the
+  # render shows it working (DASH_TESTING). An agent under stall_minutes is never read; a read that
+  # fails leaves the agent stalled.
   # shellcheck disable=SC2154 # assigned in another file
-  while IFS= read -r p; do
-    [[ -z "${p}" ]] || ! test_running "${p}" < /dev/null || testing+=" ${p}"
+  while IFS=$'\t' read -r p n; do
+    [[ -n "${p}" ]] || continue
+    if test_running "${p}" < /dev/null || bg_running "${n}" "${CFG_stall_minutes}" "${SWARM_DASH_NOW:-}" < /dev/null; then
+      testing+=" ${p}"
+    fi
   done < <(DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_STATE="${STATE_DIR}" SWARM_OWN="$(own_panes)" DASH_BOARD="${board}" \
     DASH_COMMITS="${commits}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_EVENTS="${EVENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" \
     DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_SESSIONS="${sessions}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
