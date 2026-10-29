@@ -1001,6 +1001,20 @@ another workspace counts as full, so that pane opens `<epic>-2` there instead. A
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`, and a fix-main story's, which a conductor builds first when the lead's note asks), as long as their stories touch different files; shared files are the lead's alone.
 
+**A built epic.** An active epic is built when all its stories have left the board: no story file
+names it, and either a deletion of one is not committed yet, or the board's history passes two reads:
+a story under the epic's slug finished at some time (deleted by its merge), and a story naming the
+epic was deleted, by a merge or a board-only drop, since the epic's file was last added (a file HEAD
+has). So a new epic that takes a finished epic's slug is planned, until a story of its own is dropped
+from the board, when it reads as built. Its file stays until its conductor's Finish PR deletes it.
+`next` never plans a built epic again. While its report is missing, or older than the newest commit
+that deleted one of its stories, `next` prints `conduct <epic>`, after the `stage` step and before
+`plan-epic`; the why says the epic is built and whether its report is missing or stale. The conductor
+that step starts has no agent work left, so it writes its report and Finish PR at once. Once the
+report is newer than that commit, the epic gets no step. On a board with no git history (not in git,
+or no commit yet) no epic reads as built, so an active epic with no stories is still planned
+there.
+
 **The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
 first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
 `story --strict`, and a review agent per PR, which hands it over or merges it the same way. It runs in its project's
@@ -1193,7 +1207,7 @@ and its `depends_on` done, planned unasked as the `plan-epic` step does; and `th
 set it active with agreed: <today> in a board PR` for a later epic whose stories are on the board,
 as `/epic` does. `next` also prints `idle: epic <epic>
 has no plan running, exit: /swarm-dev:plan-epic <epic>` for an active epic with no stories and
-nothing in its `depends_on` holding up its planning, as the `plan-epic` step judges it, that the step
+nothing in its `depends_on` holding up its planning, and not built (**A built epic**, above), as the `plan-epic` step judges it, that the step
 `next` takes does not name, while no plan of it runs: no `scope-<epic>` tab record (or numbered
 `scope-<epic>-<n>` one) in `.swarm/state`, and no open plan board PR (its `_board-scope-<epic>`
 worktree). A plan's
@@ -3590,7 +3604,7 @@ can't list its deleted epics.
 Staged draft epics wait for the stage before theirs. Take T, the lowest stage among them, and P, the
 minor before it (v0.30.0 gives v0.29.0). Once the newest `v<x.y.z>` tag on `origin/<base>` is at or
 above `v<P>` (local refs, as for `release`), `next` prints `stage v<T>`, with the why `set <slugs> active (board PR under the
-epics grant)`. It comes after a ready one-off story and before an active epic's `plan-epic`. While
+epics grant)`. It comes after a ready one-off story and before a built epic's `conduct` and an active epic's `plan-epic`. While
 a conductor works, `next` prints its `wait` instead. The lead opens a
 board PR named `stage-v<T>` with the dots as dashes, which sets those epics `active` and changes
 nothing else. It lands it with `swarm.sh merge --board` when `merge = agent` or the HLD grants
