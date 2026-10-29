@@ -1461,7 +1461,7 @@ allowed_stage() {
   if ((y == 0 && x > 0)); then
     p="$((x - 1)).0.0"
     while read -r _ v; do
-      if [[ "${v}" == "$((x - 1))."* ]] && version_gt "${v}" "${p}"; then p="${v}"; fi
+      if [[ "${v%%.*}" == "$((x - 1))" ]] && version_gt "${v}" "${p}"; then p="${v}"; fi
     done <<< "${rows}"
     if [[ -n "${t}" ]] && ! version_gt "${p}" "${t}"; then ok=1; fi
   fi
