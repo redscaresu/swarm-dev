@@ -476,6 +476,11 @@ stuck "${H}" 90 -
 check "no findings tell and no conflict: no stuck: line" test -z "$(poll)"
 stuck "${H}" 90 61; printf '%s\tstory\twl-stuck\t-\tok\n' "$(mins 30)" >> "${P}/.swarm/events.tsv"
 check "findings told to a build that has since been started again: no stuck: line" test -z "$(poll)"
+# The builder declined every finding and the review passed on the same head: the PR waits on its merge.
+stuck "${H}" 90 61; mkdir -p "${P}/.swarm/reviews"
+printf 'head: %s\n\n## Findings\n\nnone\n' "${H}" > "${P}/.swarm/reviews/wl-stuck.md"
+check "findings told on a head whose review has since passed: no stuck: line" test -z "$(poll)"
+rm -f "${P}/.swarm/reviews/wl-stuck.md"
 # GitHub reads mergeable UNKNOWN for a while: the same head keeps the line the lead saw, a new one drops it.
 stuck "${H}" 90 61; poll > /dev/null
 sed -i.bak 's/"MERGEABLE"/"UNKNOWN"/' "${FX}/prs.json"; again; lead CLAUDE_STUB_AGENTS="${FX}/claude.json" 0

@@ -2880,8 +2880,8 @@ STUCK_PRS=""
 # <file>` for an open story PR (story_pr_rows) whose builder sits idle on a pending item, N being STUCK_MINUTES,
 # never the minutes elapsed: LEAD_SEEN dedupes whole lines, so a count would wake the lead every poll. The item
 # is a findings tell (findings_told's: tell or tell:findings, ok or sent, since the build started) newest at least
-# N minutes ago and no older than the head, or a CONFLICTING mergeable first seen on this head at least N minutes ago; a conflict wins
-# over findings. A head counts from when a poll first saw it (LEAD_PR_HEADS, which drops a PR no longer open), so a
+# N minutes ago and no older than the head, on a head no review has passed (review_pass), or a CONFLICTING mergeable
+# first seen on this head at least N minutes ago; a conflict wins over findings. A head counts from when a poll first saw it (LEAD_PR_HEADS, which drops a PR no longer open), so a
 # tell made before wait --lead first saw the head is not one. Checks, cheapest first: those file reads, the builder
 # live in the poll's herdr list (LEAD_AGENTS), its state idle (read_state's, over one claude agents read and that
 # list), no background task (bg_running), no test run in its pane (stuck_test_run). A PR of a repo the pass could
@@ -2927,6 +2927,8 @@ stuck_lines() {
       st="$(awk -v s="${slug}" -v n="${name}" '$1 == "T" && $2 == s { t = $3 } ($1 == "S" && $2 == s) || ($1 == "A" && $2 == n) { if ($3 > b) b = $3 }
         END { if (t != "" && t >= b) print t }' <<< "${told}")"
       [[ -z "${st}" ]] || (( st < first || now - st < STUCK_MINUTES * 60 )) || kind=findings
+      # A review that passed on this head leaves the builder no findings to act on (the PR waits on its merge).
+      [[ "${kind}" != findings ]] || ! review_pass "${slug}" "${head}" || kind=""
     fi
     [[ -n "${kind}" ]] || continue
     # The builder: live, idle, with no background task and no test run.
