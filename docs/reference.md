@@ -1374,6 +1374,19 @@ tell once more.
 An agent herdr answers for (codex, or a Claude agent with no session on record) gets no such report:
 its blocked is herdr's own read of its screen. While herdr reads it blocked, the tell fails on
 herdr's refusal even when the pane looks clear, and the message says no report was sent.
+A tell to an agent with no pane, or whose Claude session has ended (gone), is refused once with
+`could not reach <agent>: <why>; this refusal is final, so do not tell it again: <exit>`, and exits 1.
+A note to a conductor whose pane is open but whose session has ended is refused the same way. The
+exit depends on the agent. For a builder it is `swarm.sh wait --lead`'s `no-agent:` line, and for a
+review agent its `no-review:` line. For a conductor it is `swarm.sh next`, which starts a new one or
+says why not in a `no conductor started:` line. The agent's role in `.swarm/agents.tsv` decides
+which, or its name (`review-<slug>`, `conduct-<epic>`) when it has no line there. None of those lines
+comes while herdr still lists the agent, so when its session has ended with its pane still open, the
+exit starts `its pane <pane> is still open: read it (herdr agent read <agent>) and close it; after
+that, ...`. The lead and the conductor list the story under no agent and never tell it again. A
+`could not reach <agent> (status ...)` refusal, for a state `tell` does not know, is not final. When
+herdr cannot list its agents, nothing shows the agent gone: `tell` refuses with `tell: <agent> was not
+told: herdr could not list its agents; tell it again`.
 
 **A tell to a busy agent is queued.** On 2026-10-27 a builder never got its review findings: herdr
 listed it as working, `tell` refused, nothing tried again, and the builder waited over an hour. A

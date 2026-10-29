@@ -247,6 +247,10 @@ check "with merge = human, the conductor builds stories that share a file but no
   "yes|yes|yes|yes|gone" "$(clash_brief "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 check "the conductor brief's story --strict rule says the same part or the bare file, never the same function or file" "yes|gone" \
   "$(has "touches the same part (by its first word) of a file, or both name the bare file. On a refusal" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(grep -qF "the same function or file" "${p}/.swarm/briefs/conduct-f.md" && echo old || echo gone)"
+# A could-not-reach tell refusal is final, in the conductor's brief and the lead's /swarm command alike.
+TELL_FINAL="A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its session has ended, and the refusal names who acts on it. List the story under no agent"
+check "the conductor brief and commands/swarm.md say a could-not-reach tell refusal is final: list the story under no agent, never tell it again" "yes|yes" \
+  "$(has "${TELL_FINAL}" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "${TELL_FINAL}" "$(tr -s '[:space:]' ' ' < "$(dirname "${SWARM}")/../commands/swarm.md")")"
 # startable_brief <brief> — the startable rule after a merge, after each wait (its inbox pass first) and
 # after the last inbox pass (three times), the last pass's go-back, and no wording that starts only what unblock readied.
 startable_brief() {
