@@ -289,4 +289,11 @@ check "dropped-lines: no run added a line to events.tsv" "" "$(diff "${ROOT}/eve
 check "dropped-lines: no run left its fetch's ref, or a FETCH_HEAD" "none" \
   "$(git -C "${P}" for-each-ref refs/swarm; [[ ! -e "${P}/.git/FETCH_HEAD" ]] && echo none)"
 
+# The clone's origin/main behind origin's main: the run fetches main into its own ref and leaves
+# origin/main where it was.
+on "${W}" main; echo m2 | put "${W}" m2; git -C "${W}" push -q "${O}" main
+was="$(git -C "${P}" rev-parse origin/main)"; pull "${PLAIN}"
+check "dropped-lines: a run with origin/main behind origin's main exits 0" "exit 0" "$(dl "${PLAIN}")"
+check "dropped-lines: the run did not move the clone's origin/main" "${was}" "$(git -C "${P}" rev-parse origin/main)"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
