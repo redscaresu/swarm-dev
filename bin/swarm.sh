@@ -86,10 +86,11 @@ if [[ "${1:-}" == wait-pr ]]; then
   trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 # dropped-lines' exit 1 means base lines were dropped (DROPPED_FOUND), so any other stop, a die or a set
-# -e stop, exits 2; the refs its fetch made (dropped_refs_drop) go either way.
+# -e stop, exits 2; the refs its fetch made (dropped_refs_drop) go either way. A stop before merge.sh is
+# sourced (outside a swarm project, say) has no dropped_refs_drop, and no refs to drop.
 DROPPED_FOUND=""; DROPPED_REF=""; DROPPED_DIR=""
 if [[ "${1:-}" == dropped-lines ]]; then
-  trap 'rc=$?; dropped_refs_drop; [[ ${rc} -eq 0 || -n "${DROPPED_FOUND}" ]] || exit 2' EXIT
+  trap 'rc=$?; ! declare -F dropped_refs_drop >/dev/null || dropped_refs_drop; [[ ${rc} -eq 0 || -n "${DROPPED_FOUND}" ]] || exit 2' EXIT
 fi
 
 # SWARM_SLEEP_SCALE multiplies the fixed sleeps (nap; default 1, make test sets 0.01). It is checked

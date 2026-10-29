@@ -683,12 +683,19 @@ build_story() {
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
 # a reader of it sees only this head's. A start that ran nothing (start_retryable) is tried again, after
 # a 3-second nap, up to STARTS_PER_REVIEW starts in all; each retried failure is a review-agent event
-# ending (try N of STARTS_PER_REVIEW), and so is the last try's die. Once started, the head goes in
-# .swarm/reviews/<slug>.head, which review_on_head reads. Its later rounds run in the same session,
-# through review_next.
+# ending (try N of STARTS_PER_REVIEW), and so is the last try's die. Each try is logged as it begins,
+# before its files go aside and start_agent sends the brief, as `review-agent:try <slug> (try N of STARTS_PER_REVIEW) started`,
+# so a try cut off with no outcome reads as one that may have sent it (review_restart_try). The first
+# try is SWARM_START_TRY when set (wait --lead's restart of a start cut short, review_restart), else 1.
+# Once started, the head goes in .swarm/reviews/<slug>.head, which review_on_head reads. Its later
+# rounds run in the same session, through review_next.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head moved errf err round
-  local stop try msg rc line tries
+  local stop try msg rc line tries first="${SWARM_START_TRY:-1}"
+  # Unset once read, so the agent it starts never inherits it (AGENT_ENV passes SWARM_* on).
+  unset SWARM_START_TRY
+  [[ "${first}" =~ ^[1-9][0-9]*$ && ${first} -le ${STARTS_PER_REVIEW} ]] \
+    || die "review-agent: SWARM_START_TRY is '${first}', not a try from 1 to ${STARTS_PER_REVIEW}; nothing was started"
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -729,7 +736,10 @@ review_agent() {
   # Each further try puts the files aside again, as the first did. The last try dies here, so its
   # line is the command's own event.
   rm -f "${out%.md}.head"; stop="${out%.md}.stop.md"
-  for (( try = 1; ; try++ )); do
+  for (( try = first; ; try++ )); do
+    # Before anything goes aside: a command cut off before this line has moved nothing, and one cut off
+    # after it is an unclear try that wait --lead never starts again (review_restart_try).
+    record_event review-agent:try "${slug}" "(try ${try} of ${STARTS_PER_REVIEW}) started"
     moved=""
     if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
     if [[ -f "${stop}" ]]; then mv "${stop}" "${stop}.prev"; fi

@@ -211,6 +211,24 @@ fresh; out="$(cd "${P}" || exit 1; PI_MAP="${ROOT}/pi.map" HERDR_ENV=1 PATH="${R
 check "a builder whose make test started past 3 x stall_minutes ago is stalled" grep -qE '! s-three .*stalled 120m' <<< "${out}"
 check "a builder whose make test started past 3 x stall_minutes ago needs you" grep -qE '! look at s-three: working 120 min' <<< "${out}"
 cp "${ROOT}/ps.base" "${PS_LIST}"
+# A background task s-three's session waits on (a shell launched 60 minutes ago, with no end in its
+# transcript) is work, as for wait --stall: working, not stalled, and not under needs you. Launched
+# 100 minutes ago, past 3 x stall_minutes, it may be a server left running: stalled. The log keeps its
+# last write 2 hours ago, so only the task can make it working.
+s3log="${ROOT}/projects/p/sess-today.jsonl"; cp "${s3log}" "${ROOT}/sess-today.bak"
+launched() { # <minutes ago> — s-three's transcript with a background shell launched then, never ended
+  cp "${ROOT}/sess-today.bak" "${s3log}"
+  printf '{"type":"user","timestamp":"%s","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"Command running in background with ID: b2"}]},"toolUseResult":{"backgroundTaskId":"b2"}}\n' "$(ago "$1")" >> "${s3log}"
+  touch -t "$(mins_ago 120)" "${s3log}"
+}
+launched 60
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a builder past stall_minutes waiting on its own background task is working" grep -qE '● s-three .*working 120m' <<< "${out}"
+check "a builder waiting on its own background task is not under needs you" lacks "look at s-three" "${out}"
+launched 100
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a builder whose background task was launched past 3 x stall_minutes ago is stalled" grep -qE '! s-three .*stalled 120m' <<< "${out}"
+cp "${ROOT}/sess-today.bak" "${s3log}"; touch -t "$(mins_ago 120)" "${s3log}"
 # A file edited a minute ago in s-three's worktree (its last commit 2 hours old) is a sign of life:
 # working, not stalled. Aged past stall_minutes, it is not: stalled again.
 wt="${P}-wt/s-three"; git init -q "${wt}"
