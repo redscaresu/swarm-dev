@@ -8,7 +8,10 @@
 # clash; review and unblock write an item's keys in one write; two writers to one item keep both keys,
 # and a lock left behind stops a write; touches_rows.py compares a value with a trailing space as
 # state_value does; a state directory that cannot be written and a state file that cannot be read
-# each stop the command, naming the file. gh is a stub on PATH that logs every call to gh.log: pr
+# each stop the command, naming the file; story refuses a story whose file in the main checkout has an
+# edit origin lacks (uncommitted, staged or in a local commit), and starts one only behind origin, one
+# whose edit origin has, one whose edit is to swarm.sh's own keys, one in a sibling repo and an
+# untracked one. gh is a stub on PATH that logs every call to gh.log: pr
 # view answers the state in ${ROOT}/pr-<n> (OPEN without one) and a head. mv is a wrapper that, on a
 # board-state path, waits 0.5s while ${ROOT}/mv.slow exists, and fails while ${ROOT}/mv.fail exists,
 # after the number of moves it holds (none when it is empty).
@@ -17,6 +20,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+TEST_PATH="${PATH}"   # the test's own PATH, for st: read here, before bs exports one in its subshell
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
@@ -184,6 +188,78 @@ is "review of o with its state directory unwritable: dies naming the state file"
 chmod 000 "${ST}/stories/m"; lead story m; chmod 644 "${ST}/stories/m"
 is "story m with its state file unreadable: refused as not ready, naming the file" "1|yes|yes" \
   "${rc}|$(said "board state: cannot read ${ST}/stories/m" && echo yes)|$(said "m is not status: ready" && echo yes)"
+
+# --- story refuses a story whose file in the main checkout has an edit origin/main lacks: its builder
+# reads origin's copy. E is a clone of E.git with its board in the repo; sib, beside it, is a sibling
+# repo. herdr takes every call and claude is tests/claude_stub.sh, so a story that passes starts.
+E="${ROOT}/E"; SB="${ROOT}/start-bin"; G=(git -c user.name=t -c user.email=t@t)
+mkdir -p "${SB}"; cp "${SWARM%/bin/*}/tests/claude_stub.sh" "${SB}/claude"; printf '#!/bin/sh\necho "[]"\n' > "${SB}/gh"
+cat > "${SB}/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;
+  "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
+  "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent list")   echo '{"result":{"agents":[]}}' ;;
+esac
+STUB
+chmod +x "${SB}/claude" "${SB}/gh" "${SB}/herdr"
+for r in E sib; do
+  "${G[@]}" init -q --bare -b main "${ROOT}/${r}.git"; "${G[@]}" clone -q "${ROOT}/${r}.git" "${ROOT}/${r}" 2>/dev/null
+done
+"${G[@]}" -C "${ROOT}/sib" commit -q --allow-empty -m init; "${G[@]}" -C "${ROOT}/sib" push -q origin main
+mkdir -p "${E}/.claude/swarm" "${E}/board/stories" "${E}/board/epics"
+printf 'board_dir = board\n' > "${E}/.claude/swarm/config"; echo .swarm/ > "${E}/.gitignore"
+# story <slug> [front-matter line] — a ready story in E's board with a Done when.
+story() { { printf -- '---\nstatus: ready\nkind: code\n'; [[ -z "${2:-}" ]] || echo "$2"
+  printf -- '---\n\n# %s\n\n**Done when:**\n- it holds\n' "$1"; } > "${E}/board/stories/$1.md"; }
+for s in ed st lc bh up ky; do story "${s}"; done
+story sib "repo: sib"; story own "repo: E"
+"${G[@]}" -C "${E}" add -A; "${G[@]}" -C "${E}" commit -qm init; "${G[@]}" -C "${E}" push -q origin main
+story fx   # untracked, as fix_main writes one
+# st <slug> — swarm.sh story <slug> from E's main checkout, in herdr, with a Claude config that trusts every folder (no .claude.json); sets rc and ${ROOT}/out.
+st() { rc=0; (cd "${E}" && env -u SWARM_PROJECT CLAUDE_CONFIG_DIR="${ROOT}/start-config" HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${SB}:${TEST_PATH}" \
+  bash "${SWARM}" story "$1" > "${ROOT}/out" 2>&1) || rc=$?; }
+# built <repo> <slug> — "built" when story/<slug> or its worktree exists, else "none".
+built() { if "${G[@]}" -C "${ROOT}/$1" rev-parse -q --verify "refs/heads/story/$2" >/dev/null || [[ -e "${ROOT}/$1-wt/$2" ]]; then echo built; else echo none; fi; }
+# refused <slug> — the refusal: non-zero, naming the file, what it lacks and board-pr, with no build left.
+refused() { echo "${rc}|$(said "${E}/board/stories/$1.md in the main checkout has an edit origin/main lacks" && said 'swarm.sh board-pr' && echo named)|$(built E "$1")"; }
+# edit <slug> [clone] — a review item added to the story's file in E, or in <clone>.
+edit() { echo "- a review item" >> "${2:-${E}}/board/stories/$1.md"; }
+
+cp "${E}/board/stories/ed.md" "${ROOT}/ed.md"; edit ed; st ed
+is "story ed with an uncommitted edit to its body: refused, naming the file and board-pr, nothing built" \
+  "1|named|none" "$(refused ed)"
+cp "${ROOT}/ed.md" "${E}/board/stories/ed.md"; st ed
+is "story ed with no local edit: starts" "0|built" "${rc}|$(built E ed)"
+edit st; "${G[@]}" -C "${E}" add board/stories/st.md; st st
+is "story st with a staged, uncommitted edit: refused like an unstaged one" "1|named|none" "$(refused st)"
+edit own; st own
+is "story own, whose repo: names the project's own repo, with an edit: refused" "1|named|none" "$(refused own)"
+edit sib; st sib
+is "story sib, whose repo: names a sibling repo, with an edit to its board file: starts" "0|built" "${rc}|$(built sib sib)"
+edit fx; st fx
+is "story fx, untracked (fix_main's), with an edit: starts" "0|built" "${rc}|$(built E fx)"
+perl -pi -e 's/^kind: code$/kind: code\nattempts: 1/' "${E}/board/stories/ky.md"; st ky
+is "story ky with an uncommitted edit to swarm.sh's own keys alone (attempts:): starts" "0|built" "${rc}|$(built E ky)"
+story nw; "${G[@]}" -C "${E}" add board/stories/nw.md; "${G[@]}" -C "${E}" commit -qm "nw: a new story" board/stories/nw.md; st nw
+is "story nw, committed here and never pushed: refused" "1|named|none" "$(refused nw)"
+edit lc; "${G[@]}" -C "${E}" commit -qm "lc: a review item" board/stories/lc.md; st lc
+is "story lc with a local commit origin/main lacks: refused" "1|named|none" "$(refused lc)"
+# Another clone lands the same edits to lc (as a squash merge would) and up, and one to bh, then
+# renames lc in a later commit, and pushes; E pulls none of it. E holds up's edit uncommitted.
+"${G[@]}" clone -q "${ROOT}/E.git" "${ROOT}/other"
+for s in lc bh up; do edit "${s}" "${ROOT}/other"; done; "${G[@]}" -C "${ROOT}/other" commit -qam "board: review items"
+perl -pi -e 's/^# lc$/# lc, renamed/' "${ROOT}/other/board/stories/lc.md"; "${G[@]}" -C "${ROOT}/other" commit -qam "board: rename lc"
+"${G[@]}" -C "${ROOT}/other" push -q origin main
+edit up
+st bh
+is "story bh, its main checkout behind origin/main (which changed its file), with no local edit: starts" "0|built" "${rc}|$(built E bh)"
+st lc
+is "story lc, its local commit's edit on origin/main under another commit, with a later origin change: starts" "0|built" "${rc}|$(built E lc)"
+st up
+is "story up, its uncommitted edit already on origin/main: starts" "0|built" "${rc}|$(built E up)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failure(s)"; exit 1; }
 echo "all passed"
