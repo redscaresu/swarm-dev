@@ -29,7 +29,8 @@ git -C "${P}" init -q
 # the project has the origin o/r: repo view names it (and fails while ${FX}/repo.fail exists), pr list has no
 # PR, the default branch is ${FX}/default, a branch exists and has the head ${FX}/base.<branch> while that file
 # does, and ci_gate fixed reads any commit as one that changes bin/x, any compare as one behind by nothing,
-# and no workflow run.
+# no workflow run, the base's rules as ${FX}/rules while that file does (else the read fails, so every check
+# counts) and no classic protection.
 printf '#!/bin/sh\nFX="%s"; LOG="%s"\n' "${FX}" "${ROOT}/gh.log" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
@@ -53,6 +54,8 @@ case "$1 $2" in
           */commits/*) echo '{"files":[{"filename":"bin/x"}],"parents":[]}' ;;
           */compare/*) echo '{"behind_by":0}' ;;
           */actions/runs*) echo '{"total_count":0,"workflow_runs":[]}' ;;
+          */rules/branches/*) [ -e "${FX}/rules" ] || { echo "stub: no rules" >&2; exit 1; }; cat "${FX}/rules" ;;
+          */protection) echo 'Branch not protected (HTTP 404)' >&2; exit 1 ;;
           *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
         esac ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -621,7 +624,7 @@ rm -rf "${ROOT}/gone"
 B1=3333333333333333333333333333333333333333; B2=4444444444444444444444444444444444444444; B3=5555555555555555555555555555555555555555
 git -C "${P}" remote add origin https://github.com/o/r.git
 # based [config line]... — fresh, main the default branch, no branch on GitHub yet, and no build of a fix.
-based() { fresh "$@"; rm -f "${FX}"/base.* "${FX}"/*.status "${FX}/repo.fail"; rm -rf "${ROOT}/proj-wt"; echo main > "${FX}/default"; }
+based() { fresh "$@"; rm -f "${FX}"/base.* "${FX}"/*.status "${FX}/repo.fail" "${FX}/rules"; rm -rf "${ROOT}/proj-wt"; echo main > "${FX}/default"; }
 # red_line <sha> <base> [exit] — the main-red: line for <sha> on <base> of o/r with test failed.
 red_line() { echo "main-red: ${1:0:7} o/r $2 (test (failure)), exit: ${3:-fix $2 by hand, as no fix-main story covers it yet}"; }
 # red_out — the main-red: lines the run printed; red_seen — those in the queue the last poll saved.
@@ -639,6 +642,10 @@ test_and_build() {
   local c=null; [[ -z "${3:-}" ]] || c="\"$3\""
   printf '{"total_count":2,"check_runs":[{"name":"test","status":"completed","conclusion":"failure","html_url":"u"},{"name":"build","status":"%s","conclusion":%s,"html_url":"u"}]}\n' \
     "$2" "${c}" > "${FX}/$1.checks"
+}
+# test_and_opt <sha> — <sha>'s two check runs, both finished: test passed, and opt failed.
+test_and_opt() {
+  printf '{"total_count":2,"check_runs":[{"name":"test","status":"completed","conclusion":"success","html_url":"u"},{"name":"opt","status":"completed","conclusion":"failure","html_url":"u"}]}\n' > "${FX}/$1.checks"
 }
 # woken <sha> — the lead-woken lines events.tsv holds for <sha>'s main-red: line.
 woken() { grep -c "^lead-woken ${1:0:7}$" <<< "$(events)" || true; }
@@ -721,6 +728,20 @@ check "with two buildable fix-main stories, the newest red's exit is the one nex
   grep -qxF "$(red_line "${B2}" dev "build fix-main-${B2:0:7}, which next names first")" "${ROOT}/out"
 check "and the older red's exit names the story next names before it" \
   grep -qxF "$(red_line "${B1}" main "build fix-main-${B1:0:7}, which next names after fix-main-${B2:0:7}")" "${ROOT}/out"
+
+# A base that requires its test check, with a logged red: a later head whose test passes while an optional check
+# fails shows the red fixed, as ci_gate fixed judges it for reconcile, so the pass clears it; that poll prints the
+# head's own line for the optional check, which no story covers.
+based; echo "${B1}" > "${FX}/base.main"; checks failure "${B1}"
+item "fix-main-${B1:0:7}" "kind: code" "status: ready" "touches: [.]"; logged_red "${B1}"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
+lead 0
+again; echo "${B2}" > "${FX}/base.main"; test_and_opt "${B2}"; lead 0
+check "a head red only on a check the base does not require clears the logged red, as reconcile does" \
+  grep -qx "main-green ${B2} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv")"
+check "and that poll prints the head's own main-red: line for the optional check, with the by-hand exit" \
+  test "$(red_out)" == "main-red: ${B2:0:7} o/r main (opt (failure)), exit: fix main by hand, as no fix-main story covers it yet"
+check "and the red's unstarted fix-main story is retired by that pass" test ! -e "${B}/fix-main-${B1:0:7}.md"
 
 # A base whose CI posts only commit statuses: no check run is needed for its head to read green.
 based; echo "${B1}" > "${FX}/base.main"; status_only failure "${B1}"

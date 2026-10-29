@@ -206,9 +206,11 @@ its lines go, as its PRs' lines do. Each poll then prints, with no gh call:
   - `fix <base> by hand, as no fix-main story covers it yet` when there is none: a red that no
     `swarm.sh merge` made has no story yet.
 
-When a base with a logged red main reads green, the pass clears it as reconcile does (§ Merging): once
-that head shows the red fixed, it logs `main-green` and retires the red's fix-main story if nobody has
-started it, and the line goes on that poll. A red the pass found itself goes once the base's head reads
+When a base with a logged red main reads green, or red only on checks the base does not require, the pass
+clears it as reconcile does (§ Merging): once that head shows the red fixed (`ci_gate fixed`, which judges
+the required checks alone once each has a run), it logs `main-green` and retires the red's fix-main story
+if nobody has started it, and the line goes on that poll. With such an optional check still red, that poll
+prints the head's own `main-red:` line for it, with the by-hand exit, since no story covers it. A red the pass found itself goes once the base's head reads
 green, or moves to a head whose CI is read. The line is an alert: a run that starts with no `.swarm/lead/seen` prints it on its first
 read. As the file is a heads pass's, a line comes up to 5 minutes after CI on the base finishes. When a
 base's read fails on 3 heads passes in a row (`SWARM_LEAD_PRS_WARN_AFTER`, the same count as the open PRs'),

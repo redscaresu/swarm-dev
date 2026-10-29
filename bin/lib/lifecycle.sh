@@ -2742,9 +2742,10 @@ lead_base() {
 # pending (a rerun under way) keep the line they had; a green head whose CI reads pending is written pending, so
 # it is read again every pass, past LEAD_BASE_RECHECK too, until the rerun concludes. Each failed read counts
 # towards a warning (lead_base_failed). A repo with no clone or no origin, which no pass can read, loses its
-# lines, as open_story_prs lists no PR for it. On a green head of a base red_mains holds, it runs
-# clear_red_main, which logs main-green and retires that base's unstarted fix-main stories once ci_gate fixed
-# shows the red fixed. It prints nothing on stdout.
+# lines, as open_story_prs lists no PR for it. On a concluded head (green or red) of a base red_mains holds, it
+# runs clear_red_main, as reconcile's green_mains does on every head: that logs main-green and retires the base's
+# unstarted fix-main stories once ci_gate fixed shows the red fixed, which a head red only on checks the base
+# does not require does. It prints nothing on stdout.
 lead_bases() {
   local name nwo base todo="" reds old x sha v at head out rc nv checks line now lost="" unresolved=""
   now="$(date +%s)"; reds="$(red_mains)"
@@ -2791,9 +2792,11 @@ lead_bases() {
       fi
     fi
     echo "${line}" >> "${LEAD_BASES}.new"
-    # Green while a red main of the base stands: clear it as reconcile does, once this head shows it fixed.
+    # Concluded while a red main of the base stands: clear it as reconcile (green_mains) does, once ci_gate fixed
+    # shows this head fixed. fixed judges the required checks alone once each has a run, so a head red only on a
+    # check the base does not require clears the red too; the base's pass-found line then names that check.
     read -r x x x v x <<< "${line}"
-    if [[ "${v}" == green ]] && awk -v k="${nwo} ${base}" '$2 " " $3 == k { f = 1 } END { exit !f }' <<< "${reds}"; then
+    if [[ "${v}" == green || "${v}" == red ]] && awk -v k="${nwo} ${base}" '$2 " " $3 == k { f = 1 } END { exit !f }' <<< "${reds}"; then
       clear_red_main "${nwo} ${base}" "${head}" "CI on ${base} is green at ${head:0:7}" </dev/null >/dev/null 2>&1 || true
     fi
   done < <(awk 'NF == 2 && !seen[$0]++' <<< "${todo}")
