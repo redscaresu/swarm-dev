@@ -164,4 +164,89 @@ check "a merge of a stacked parent branch is unchecked, with its reason, not dro
 check "a range git cannot read exits 2 saying so" \
   "cannot list the merges in main..nope: fatal: bad revision 'main..nope'"$'\n'"exit 2" "$(scan "${R}" main nope)"
 
+# --- swarm.sh dropped-lines <owner/repo> <n> <head> <base>: the project P is a clone of the bare origin
+# acme/widget.git, where W, a work repo, pushes main and refs/pull/7/head. gh is a stub that serves PR 7's
+# commits (${tmp}/commits.json, honouring --jq) and logs each call.
+SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+ROOT="$(cd "${tmp}" && pwd -P)"; O="${ROOT}/acme/widget.git"; P="${ROOT}/widget"; URL7=https://github.com/acme/widget/pull/7
+mkdir -p "${ROOT}/acme" "${ROOT}/bin" "${ROOT}/oldgit"; git init -q --bare "${O}"
+# shellcheck disable=SC2016 # the stub's own variables
+printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\nFX="%s"\n' "${ROOT}" "${ROOT}" > "${ROOT}/bin/gh"
+cat >> "${ROOT}/bin/gh" <<'STUB'
+case "$*" in
+  *"/pulls/7/commits"*) q="."; prev=""; for a in "$@"; do [ "${prev}" != --jq ] || q="${a}"; prev="${a}"; done
+                        jq -r "${q}" "${FX}/commits.json" ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+STUB
+# A git that says it is 2.35.0 and is the real git for anything else.
+# shellcheck disable=SC2016 # the stub's own arguments
+printf '#!/bin/sh\ncase "$1" in version|--version) echo "git version 2.35.0" ;; *) exec "%s" "$@" ;; esac\n' "$(command -v git)" > "${ROOT}/oldgit/git"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/oldgit/git"
+
+# W: main replaces three with three-main and main-added, pr with three-pr, and pr's merge of main drops
+# main-added (DROP). PLAIN, on branch plain off main, has no merge.
+W="$(new_repo work)"; conflict "${W}"
+DROP="$(lines three-pr three-main | merge "${W}" main -)"
+git -C "${W}" checkout -q -b plain main; echo p | put "${W}" p; PLAIN="$(git -C "${W}" rev-parse HEAD)"
+git -C "${W}" push -q "${O}" main
+git clone -q "${O}" "${P}"; mkdir -p "${P}/.claude/swarm" "${P}/docs/stories" "${P}/.swarm"; : > "${P}/.claude/swarm/config"
+
+# pull <ref commit> [<listed commit>] — origin's refs/pull/7/head is <ref commit>, and gh lists main..<listed
+# commit> (by default <ref commit>), each as GitHub's own commit: committer web-flow, signature verified.
+pull() {
+  local c ps sep="" json="["
+  git -C "${W}" push -q -f "${O}" "$1:refs/pull/7/head"
+  for c in $(git -C "${W}" rev-list --reverse "main..${2:-$1}"); do
+    ps="$(git -C "${W}" rev-list --parents -n 1 "${c}" | cut -d' ' -f2- | sed -E 's/([0-9a-f]+)/{"sha":"\1"}/g; s/ /,/g')"
+    json+="${sep}{\"sha\":\"${c}\",\"committer\":{\"login\":\"web-flow\"},\"commit\":{\"verification\":{\"verified\":true}},\"parents\":[${ps}]}"
+    sep=","
+  done
+  echo "${json}]" > "${ROOT}/commits.json"
+}
+
+# dl <head> [<owner/repo>] — swarm.sh dropped-lines <owner/repo> (acme/widget) 7 <head> main, its stdout
+# and stderr, then `exit <code>`; GITPATH, when set, goes first on PATH.
+dl() {
+  local out rc=0
+  out="$(cd "${P}" && env -u HERDR_ENV SWARM_PROJECT="${P}" PATH="${GITPATH:+${GITPATH}:}${ROOT}/bin:${PATH}" \
+    bash "${SWARM}" dropped-lines "${2:-acme/widget}" 7 "$1" main 2>&1)" || rc=$?
+  printf '%sexit %s' "${out:+${out}$'\n'}" "${rc}"
+}
+
+# events.tsv before any run: one line, written by hand below.
+pull "${DROP}"
+check "dropped-lines: a builder's merge (web-flow, verified) that dropped a base line prints it, exit 1" \
+  "${DROP:0:7} f: main-added"$'\n'"exit 1" "$(dl "${DROP}")"
+check "dropped-lines: git 2.35 on a PR with a builder merge: exit 2 naming 2.36" \
+  "swarm: dropped-lines: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL7}'s merges reads: update git"$'\n'"exit 2" \
+  "$(GITPATH="${ROOT}/oldgit" dl "${DROP}")"
+pull "${PLAIN}"
+check "dropped-lines: no merge commit, refs/pull/7/head fetched and equal to the head: exit 0 (owner/repo compared lower case)" \
+  "exit 0" "$(dl "${PLAIN}" ACME/widget)"
+pull "${DROP}" "${PLAIN}"
+check "dropped-lines: no merge commit, refs/pull/7/head another commit (a stale fetch): exit 2 naming both" \
+  "swarm: dropped-lines: ${URL7}'s head on ${O} (refs/pull/7/head) is ${DROP}, not ${PLAIN}: the PR moved, or GitHub has not updated the ref yet; run it on the head the PR has"$'\n'"exit 2" \
+  "$(dl "${PLAIN}")"
+pull "${DROP}" "${PLAIN}"
+check "dropped-lines: the head absent from gh's list of the PR's commits: exit 2" \
+  "swarm: dropped-lines: ${DROP} is not among ${URL7}'s commits as gh lists them: the PR's head moved"$'\n'"exit 2" "$(dl "${DROP}")"
+
+# DROP recorded as GitHub's merge of the base (merge_base_update's line): skipped, though it drops a line.
+printf '2026-10-29T00:00:00Z\tmerge\ts\t-\tbase-merged %s from %s\n' "${DROP}" "${PLAIN}" > "${P}/.swarm/events.tsv"
+cp "${P}/.swarm/events.tsv" "${ROOT}/events.before"
+pull "${DROP}"
+check "dropped-lines: the only merge is a recorded base-merged update: exit 0" "exit 0" "$(dl "${DROP}")"
+pull "${PLAIN}" "${DROP}"
+check "dropped-lines: a recorded base-merged update, refs/pull/7/head another commit: exit 2" \
+  "swarm: dropped-lines: ${URL7}'s head on ${O} (refs/pull/7/head) is ${PLAIN}, not ${DROP}: the PR moved, or GitHub has not updated the ref yet; run it on the head the PR has"$'\n'"exit 2" \
+  "$(dl "${DROP}")"
+check "dropped-lines: a repo whose origin is not <owner/repo>: exit 2 naming both" \
+  "swarm: dropped-lines: ${P}'s origin is ${O} (acme/widget), not elsewhere/widget"$'\n'"exit 2" "$(dl "${DROP}" elsewhere/widget)"
+check "dropped-lines: a die (a head that is no SHA) exits 2, not 1" \
+  "swarm: dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"$'\n'"exit 2" "$(dl nothex)"
+check "dropped-lines: no run added a line to events.tsv" "" "$(diff "${ROOT}/events.before" "${P}/.swarm/events.tsv" 2>&1)"
+check "dropped-lines: no run left its fetch's ref, or a FETCH_HEAD" "none" \
+  "$(git -C "${P}" for-each-ref refs/swarm; [[ ! -e "${P}/.git/FETCH_HEAD" ]] && echo none)"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
