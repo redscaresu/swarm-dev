@@ -313,7 +313,7 @@ dataset_report() {
 #     or that none was flaky. dash's ci line is its origin repo's row of the CI time table of
 #     `flow --since <6 days ago>`, run with SWARM_CI_TIME_ONLY, which skips the health row and the
 #     flaky tests.
-#   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
+#   cost: tokens and estimated cost per role, then per ladder rung for each step-up (its outcome) and each rung's share of builds, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
 #     local day). Usage comes from Claude Code's own session logs (or close's copy, once Claude Code
