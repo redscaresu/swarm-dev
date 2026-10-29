@@ -161,7 +161,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   an agent only when its story names it under `env:` or the board's config lists it in `agent_env`.
   With Foundry on, its `ANTHROPIC_FOUNDRY_*` and model settings pass to every agent too.
 - In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
-  go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
+  go through `swarm.sh merge`), a `git checkout` that would drop changes, a `git reset --hard`,
+  `restore` or `clean` that would drop uncommitted work in the main checkout, and an agent's `pkill`.
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. `swarm.sh merge` reads the grant at the head it merges, and refuses if a push has moved

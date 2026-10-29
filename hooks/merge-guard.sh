@@ -8,7 +8,9 @@
 # to a file, and on swarm.sh merge joined to another command. A mention in echo, printf or grep
 # passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( ), and not in a
 # while, until or if condition), a git
-# checkout that overwrites uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git
+# checkout that overwrites uncommitted changes, a git reset --hard, restore or clean that would drop
+# work in a swarm project's main checkout (a tracked file's change; for clean, a file its own dry run
+# lists) and, in a swarm agent's session (SWARM_AGENT set), git
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
 # call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
 # kill $(pgrep ...) / $(pidof ...) is refused too, as is a kill of PID 0 or a negative one (every
@@ -60,6 +62,8 @@ MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands t
 PATTERN_KILLS = {"pkill", "killall"}
 BY_NAME = re.compile(r"(\$\(|`)\s*(pgrep|pidof)\b")  # kill $(pgrep ...): PIDs found by a pattern
 UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}  # git status codes of a conflict, which --ours/--theirs resolves
+DROPS = {"restore", "clean"}  # git subcommands that, with reset --hard, can drop work in the main checkout
+SHOWN = 5  # paths a refusal names before "and N more"
 PIPES = itertools.count()
 MESSAGE = """merge-guard: blocked ({}). In a swarm project only `swarm.sh merge <PR URL>`, run alone,
 merges a PR (docs/reference.md § Merging). Text that only mentions a merge, such as a PR body, can go
@@ -295,8 +299,9 @@ def check_code(b, rest, fed):
 
 def guard(code, cwd):
     """Raise Unsafe on a command that can lose work: a cd before ;, git checkout over a file with
-    uncommitted changes and, in a swarm agent's session, git moving or resetting the main checkout
-    and a kill by pattern or a CI wait of its own."""
+    uncommitted changes, git reset --hard, restore or clean dropping work in a swarm project's main
+    checkout and, in a swarm agent's session, git moving or resetting the main checkout and a kill
+    by pattern or a CI wait of its own."""
     home = cwd if os.environ.get("SWARM_AGENT") else None
     sh = Shell(code.strip())
     sh.parse()
@@ -353,16 +358,58 @@ def check_git(d, words, home):
         if here and ours and here[0] == ours[1]:
             raise Unsafe("git %s in the main checkout" % sub,
                          "A swarm agent never moves or resets the project's main checkout: run it in a worktree")
+    hard = sub == "reset" and "--hard" in rest
+    lost = main_drops(d, sub, rest) if (sub in DROPS or hard) and not reads_only(sub, rest) else []
+    if lost:
+        more = len(lost) - SHOWN
+        named = ", ".join(lost[:SHOWN]) + (" and %d more" % more if more > 0 else "")
+        raise Unsafe("git %s would drop work in the main checkout" % ("reset --hard" if hard else sub),
+                     "It drops %s: commit them in a board PR, or back them up with cp" % named)
     if sub == "checkout" and drops_changes(d, rest):
         raise Unsafe("git checkout over uncommitted changes",
                      "git checkout drops them: back up with cp, then restore from the copy")
 
 
 def reads_only(sub, rest):
-    """git stash list or show, or git clean -n or --dry-run: they change nothing."""
+    """git stash list or show, or git clean whose last -n, --dry-run or --no-dry-run is a dry run:
+    they change nothing."""
     if sub == "stash":
         return rest[:1] in (["list"], ["show"])
-    return sub == "clean" and any(w == "--dry-run" or re.fullmatch(r"-[A-Za-z]*n[A-Za-z]*", w) for w in rest)
+    dry = False
+    for w in clean_args(rest)[0] if sub == "clean" else []:
+        if w == "-n" or long_option(w, "--dry-run"):
+            dry = True
+        elif long_option(w, "--no-dry-run"):
+            dry = False
+    return dry
+
+
+def clean_args(rest):
+    """git clean <rest> as its options, a cluster split into one word each and -e or --exclude
+    joined to its pattern (-e<pattern>, --exclude=<pattern>), and its paths."""
+    opts, paths, k = [], [], 0
+    while k < len(rest):
+        w, k = rest[k], k + 1
+        if w == "--":
+            return opts, paths + rest[k:]
+        if w.startswith("--"):
+            if "=" not in w and long_option(w, "--exclude") and k < len(rest):
+                w, k = w + "=" + rest[k], k + 1
+            opts.append(w)
+        elif w.startswith("-") and len(w) > 1:
+            flags, e, pattern = w[1:].partition("e")  # -e takes a pattern: the rest of the word, or the next one
+            if e and not pattern and k < len(rest):
+                pattern, k = rest[k], k + 1
+            opts += ["-" + c for c in flags] + ["-e" + pattern] * (e == "e")
+        else:
+            paths.append(w)
+    return opts, paths
+
+
+def long_option(w, name):
+    """Whether w is the long option name, or a prefix of it git takes (--dry for --dry-run)."""
+    w = w.split("=")[0]
+    return len(w) > 2 and name.startswith(w)
 
 
 def drops_changes(d, rest):
@@ -377,10 +424,90 @@ def drops_changes(d, rest):
     if not paths:
         return False
     commit = any(git(d, "rev-parse", "--verify", "--quiet", w + "^{tree}") for w in src)
+    return bool(overwrites(d, paths, commit))
+
+
+def overwrites(d, paths, staged):
+    """The files under paths, run in d, whose change a checkout or restore overwrites: an unstaged
+    one, or a staged one too when staged. A conflicted path is not counted."""
+    return [line[3:] for line in status(d, paths) if line[:2] not in UNMERGED and (staged or line[1] != " ")]
+
+
+def status(d, paths=()):
+    """git status --porcelain's lines for tracked files in d with a change, under paths when given."""
     # --no-optional-locks: a status that refreshes the index would take index.lock from another git.
-    status = (git(d, "--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--", *paths)
-              or "").splitlines()
-    return any(line[:2] not in UNMERGED and (commit or line[1] != " ") for line in status)
+    return (git(d, "--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--", *paths)
+            or "").splitlines()
+
+
+def main_drops(d, sub, rest):
+    """The files git reset --hard, restore or clean <rest>, run in d, drops in a swarm project's main
+    checkout: for reset each tracked file with a change, and each untracked or ignored one in the way
+    of a file the commit it resets to has (it keeps the rest); each one a restore of the working tree overwrites;
+    and each one clean's own dry run lists, ignored ones too under -x or -X. None in a worktree or
+    outside a swarm project."""
+    dirs = git_dirs(d)
+    if not dirs or not os.path.isfile(os.path.join(dirs[0], ".claude", "swarm", "config")) \
+            or not os.path.isdir(os.path.join(dirs[0], ".git")):  # a linked worktree's .git is a file
+        return []
+    if sub == "reset":
+        return list(dict.fromkeys([line[3:] for line in status(d)] + displaced(dirs[0], rest)))
+    if sub == "clean":
+        out = git(d, "--no-optional-locks", "clean", *dry_run(rest)) or ""
+        return [line[len("Would remove "):] for line in out.splitlines() if line.startswith("Would remove ")]
+    worktree, staged = restores(rest)
+    paths = rest[rest.index("--") + 1:] if "--" in rest else [w for w in rest if not w.startswith("-")]
+    if any(w.startswith("--pathspec-from-file") for w in rest):
+        paths = [":/"]  # the paths are in a file: a change anywhere in the checkout counts
+    return overwrites(d, paths, staged) if worktree and paths else []
+
+
+def displaced(top, rest):
+    """The files in top that the index lacks, untracked or ignored, that git reset --hard <rest>
+    deletes or overwrites: each one in the way of a file the commit it resets to has and the index
+    lacks. That is a folder at the file's path, a file at one of its folders, or a file at its path
+    with other content."""
+    target = next((w for w in rest if not w.startswith("-")), "HEAD")
+    index = set((git(top, "ls-files", "-z") or "").split("\0"))
+    blobs = {}  # path: the blob the commit has there, for each path the index lacks
+    for e in (git(top, "ls-tree", "-r", "-z", target) or "").split("\0"):
+        meta, _, path = e.partition("\t")
+        if path and path not in index:
+            blobs[path] = meta.split()[-1]
+    lost, same = [], []
+    for path in blobs:
+        here = os.path.join(top, path)
+        folders = [path[:i] for i, c in enumerate(path) if c == "/"]
+        if os.path.isdir(here) and not os.path.islink(here):
+            lost.append(path)
+        elif os.path.lexists(here):
+            same.append(path)
+        else:
+            lost += [f for f in folders if f not in index and os.path.lexists(os.path.join(top, f))
+                     and not os.path.isdir(os.path.join(top, f))]
+    ids = (git(top, "hash-object", "--", *same) or "").split() if same else []
+    return lost + [p for p, i in zip(same, ids) if i != blobs[p]]
+
+
+def restores(rest):
+    """What git restore <rest> writes, as (working tree, index): the working tree unless --staged (-S)
+    comes without --worktree (-W), and the index with --staged. Long options may be cut short."""
+    staged = worktree = False
+    for w in itertools.takewhile(lambda w: w != "--", rest):
+        flags = w[1:].split("s")[0] if re.fullmatch(r"-[A-Za-z]+", w) else ""  # -s<tree>: the rest names the source
+        staged |= "S" in flags or (len(w) > 2 and "--staged".startswith(w))
+        worktree |= "W" in flags or (len(w) > 2 and "--worktree".startswith(w))
+    return worktree or not staged, staged
+
+
+def dry_run(rest):
+    """git clean <rest> as a dry run that lists all it would remove, and never removes: -n first and
+    last among the options (the last of -n and --no-dry-run wins), -i (it asks), -q (it lists
+    nothing) and --no-dry-run dropped, -f kept, since -ff lists nested repositories too."""
+    opts, paths = clean_args(rest)
+    drop = ("--interactive", "--quiet", "--no-dry-run")
+    keep = [w for w in opts if w not in ("-i", "-q") and not any(long_option(w, n) for n in drop)]
+    return ["-n"] + keep + ["-n", "--"] + paths
 
 
 def at(d, path):
@@ -392,9 +519,10 @@ def at(d, path):
 
 
 def git(d, *args):
-    """git's output, run in d, or None when it fails."""
+    """git's output, run in d, or None when it fails. LC_ALL=C keeps its messages in English."""
     try:
-        return subprocess.run(["git", "-C", d, *args], capture_output=True, text=True, check=True).stdout
+        return subprocess.run(["git", "-C", d, *args], capture_output=True, text=True, check=True,
+                              env=dict(os.environ, LC_ALL="C")).stdout
     except (OSError, subprocess.CalledProcessError):
         return None
 

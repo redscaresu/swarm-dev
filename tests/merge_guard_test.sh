@@ -4,7 +4,8 @@
 # an interpreter, a pipe or a file, spelled through quotes or not) and on swarm.sh merge joined to
 # another command, and lets a lone swarm.sh merge and plain mentions through; outside one it allows
 # everything. A call that says merge is refused when the check cannot run. It also blocks a cd before
-# ;, git checkout over uncommitted changes and, for a swarm agent, git moving the main checkout and a
+# ;, git checkout over uncommitted changes, git reset --hard, restore or clean dropping work in a swarm
+# project's main checkout and, for a swarm agent, git moving the main checkout and a
 # kill by pattern or of every process. A block writes one incident line to the project's
 # .swarm/events.tsv, and hooks.json runs the script on Bash calls.
 set -euo pipefail
@@ -40,12 +41,16 @@ check() { # <name> <test...>
   if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi
 }
 
+# payload <cwd> <command> — the hook's JSON input for a Bash call of <command> from <cwd>.
+payload() {
+  python3 -c 'import json, sys; print(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+    "cwd": sys.argv[1], "tool_input": {"command": sys.argv[2]}}))' "$1" "$2"
+}
 # call <cwd> <command> [hook command] — the hook's exit code on a Bash call of <command> from <cwd>.
 call() {
   local json rc=0 run="${3:-}"
   [[ -n "${run}" ]] || run="bash '${HOOK}'"
-  json="$(python3 -c 'import json, sys; print(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
-    "cwd": sys.argv[1], "tool_input": {"command": sys.argv[2]}}))' "$1" "$2")"
+  json="$(payload "$1" "$2")"
   (cd "$1" && printf '%s' "${json}" | CLAUDE_PLUGIN_ROOT="${REPO}" bash -c "${run}" >/dev/null 2>&1) || rc=$?
   echo "${rc}"
 }
@@ -206,6 +211,68 @@ echo d > "${C}/g"; "${G[@]}" commit -qam d; "${G[@]}" branch -q story/d; "${G[@]
 echo c > "${C}/g"; "${G[@]}" commit -qam c; "${G[@]}" merge -q story/d >/dev/null 2>&1 || true
 check "git checkout --theirs g on a conflicted g passes" as lead "${C}" 0 "git checkout --theirs g"
 check "outside a project, cd /nope; cp a b passes" as lead "${OUT}" 0 "cd /nope; cp a b"
+# In a swarm project's main checkout, any session's git reset --hard, restore or clean that would drop
+# work there is refused, naming the files; a clean main checkout and a worktree pass. M is a project
+# as init leaves it: .claude/swarm/config, and .swarm/ ignored, which only clean -x or -X reaches.
+M="${ROOT}/main"; MW="${ROOT}/main-wt"; A="board/stories/a.md"; N="board/stories/new.md"
+mkdir -p "${M}/.claude/swarm" "${M}/board/stories" "${M}/.swarm"
+echo "merge = human" > "${M}/.claude/swarm/config"; echo .swarm/ > "${M}/.gitignore"; echo a > "${M}/${A}"
+git -C "${M}" init -q && git -C "${M}" add . && git -C "${M}" -c user.name=t -c user.email=t@t commit -qm init
+git -C "${M}" worktree add -q "${MW}" -b story/m
+git -C "${M}" worktree add -q "${ROOT}/main-n" -b story/n   # story/n has ${N} as "other", a file board/x and a folder board/d
+mkdir -p "${ROOT}/main-n/board/d" && echo other > "${ROOT}/main-n/${N}" && echo x > "${ROOT}/main-n/board/x" && echo f > "${ROOT}/main-n/board/d/f"
+git -C "${ROOT}/main-n" add . && git -C "${ROOT}/main-n" -c user.name=t -c user.email=t@t commit -qm n
+echo x > "${M}/.swarm/events.tsv"
+# names <cwd> <path> <command> — the lead's call of <command> from <cwd> is refused, naming <path>.
+names() {
+  local err rc=0
+  err="$(cd "$1" && payload "$1" "$3" | bash "${HOOK}" 2>&1 >/dev/null)" || rc=$?
+  [[ "${rc}" == 2 && "${err}" == *"$2"* ]]
+}
+for c in "reset --hard" "restore ${A}" "restore ." "clean -fd"; do
+  check "git ${c} in a clean main checkout passes" as lead "${M}" 0 "git ${c}"
+done
+check "an agent's git reset --hard in a clean main checkout still blocks" as agent "${M}" 2 "git reset --hard"
+check "git clean -fdx with only an ignored .swarm/ file blocks, naming it" names "${M}" ".swarm/" "git clean -fdx"
+echo new > "${M}/${N}"   # untracked only
+check "git clean -fd with an untracked story file blocks, naming it" names "${M}" "${N}" "git clean -fd"
+check "  ... and logs guard-blocked: git clean" test "$(tail -1 "${M}/.swarm/events.tsv" | cut -f5)" == "guard-blocked: git clean would drop work in the main checkout"
+check "  ... git clean -n passes" as lead "${M}" 0 "git clean -n"
+check "  ... git reset --hard, which keeps untracked files, passes" as lead "${M}" 0 "git reset --hard"
+check "  ... git reset --hard story/n, which has it with other content, blocks, naming it" names "${M}" "${N}" "git reset --hard story/n"
+echo other > "${M}/${N}"
+check "  ... and with the same content passes" as lead "${M}" 0 "git reset --hard story/n"
+mkdir -p "${M}/board/x" && echo y > "${M}/board/x/y"
+check "  ... an untracked board/x/y where story/n has a file board/x blocks, naming board/x" names "${M}" "It drops board/x:" "git reset --hard story/n"
+rm -r "${M}/board/x"; echo y > "${M}/board/d"
+check "  ... an untracked file board/d where story/n has a folder board/d blocks, naming it" names "${M}" "board/d" "git reset --hard story/n"
+rm "${M}/board/d"; echo board/x > "${M}/.git/info/exclude"; echo mine > "${M}/board/x"
+check "  ... an ignored board/x with other content than story/n's blocks, naming it" names "${M}" "board/x" "git reset --hard story/n"
+rm "${M}/board/x"; : > "${M}/.git/info/exclude"
+echo new > "${M}/${N}"; : > "${M}/-n"
+check "  ... git clean -fd -- -n, of a file named -n, blocks" names "${M}" "It drops -n" "git clean -fd -- -n"
+rm "${M}/-n"
+check "  ... git clean -fd --no-dry-run blocks, naming it" names "${M}" "${N}" "git clean -fd --no-dry-run"
+check "  ... and the hook's own dry run leaves it there" test -f "${M}/${N}"
+check "  ... git clean -n --no-dry-run blocks" names "${M}" "${N}" "git clean -n --no-dry-run"
+check "  ... git clean -fd -e -n, whose -n is a pattern, blocks" names "${M}" "${N}" "git clean -fd -e -n"
+echo edit >> "${M}/${A}" && git -C "${M}" add "${A}"   # a staged-only change, and the untracked file
+check "git reset --hard with a staged-only change blocks, naming it" names "${M}" "${A}" "git reset --hard"
+check "  ... git restore ${A}, which restores from the index, passes" as lead "${M}" 0 "git restore ${A}"
+check "  ... git restore --staged --worktree ${A} blocks" names "${M}" "${A}" "git restore --staged --worktree ${A}"
+check "  ... git restore -SW ${A} blocks" names "${M}" "${A}" "git restore -SW ${A}"
+git -C "${M}" reset -q -- "${A}"   # an unstaged change
+for c in "reset --hard" "restore ${A}" "restore ."; do
+  check "git ${c} with an unstaged change blocks, naming it" names "${M}" "${A}" "git ${c}"
+done
+check "  ... git restore --staged ${A} passes" as lead "${M}" 0 "git restore --staged ${A}"
+printf '%s\n' "${A}" > "${ROOT}/paths"
+check "  ... git restore --pathspec-from-file blocks" names "${M}" "${A}" "git restore --pathspec-from-file=${ROOT}/paths"
+check "  ... git -C <main checkout> reset --hard from a worktree blocks" as lead "${MW}" 2 "git -C ${M} reset --hard"
+echo edit >> "${MW}/${A}"; echo new > "${MW}/${N}"
+for c in "reset --hard" "restore ${A}" "restore ." "clean -fd"; do
+  check "git ${c} in a worktree with the same changes passes" as lead "${MW}" 0 "git ${c}"
+done
 # A kill by name or pattern, or of PID 0 or -1 (every process the user owns), can hit another
 # session's process; a kill of a PID the agent holds cannot.
 # shellcheck disable=SC2016 # the substitution is the hook's to see

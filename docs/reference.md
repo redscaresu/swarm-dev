@@ -3146,6 +3146,17 @@ a `while`, `until` or `if` is not read as one: it passes, and the commands after
 where the call runs. It refuses a `git checkout`
 that would overwrite uncommitted changes: unstaged ones, and staged ones too when it checks out from
 a commit (`git checkout HEAD -- f`). Back the file up with `cp` and restore from the copy instead.
+In a swarm project's main checkout (the git top level that holds `.claude/swarm/config`, not a
+linked worktree), it refuses a `git reset --hard`, `git restore` or `git clean` that would drop work
+there, and names the files. `reset --hard` is refused when a tracked file has a staged or unstaged
+change, or when an untracked or ignored file is in the way of a file in the commit it resets to: at
+the same path with other content, where that commit has a folder, or inside a folder where it has a
+file. Any other untracked file passes, since `reset --hard` keeps it. `restore` is refused when it would
+overwrite a change: an unstaged one, and a staged one too with `--staged --worktree` (`-SW`).
+`restore --staged` alone changes only the index, so it passes. `clean` is refused when its own dry
+run, with your flags, lists a file, so under `-x` or `-X` an ignored file in `.swarm/` counts.
+`git clean -n` passes. Commit the changes in a board PR, or back the files up with `cp`. A clean
+main checkout and any worktree pass.
 swarm.sh starts every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook
 also refuses `git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the
 project's main checkout, whether the command runs there from the session's folder, after a `cd`, or
@@ -3156,7 +3167,8 @@ another session's process. `kill $!` and `kill <pid>` pass. It refuses an agent'
 any `while` or `until` loop around `gh pr checks` (a `while read` loop that checks each PR once
 passes), and names `swarm.sh wait-pr`, which stops on a red
 check, a conflict or a deadline. A single `gh pr checks` passes.
-Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it. These
+Your own session has no `SWARM_AGENT`, so only the `cd`, `git checkout` and main checkout rules
+apply to it. These
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
