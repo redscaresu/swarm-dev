@@ -407,15 +407,19 @@ run's report before it starts, so a report on disk is the newest run's. For each
 prints:
 
 - `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` while a story of
-  the epic is still an agent's, by the rule the `finish:` line uses (§ Building): ready, blocked on
+  the epic is still an agent's, by the rule the `finish:` line uses (§ Merging): ready, blocked on
   an agent's story, or in review with a review agent still to act. `<n>` is how many such stories
-  there are. For the backlog conductor's report, `conduct-backlog.report.md`, the line counts the
-  stories with no epic and reads `reported: backlog (...), exit: swarm.sh conduct --backlog`. The
-  conductor stopped with work left, and the exit starts a fresh one. Read the report first: a new
-  conductor cannot clear a build that died, or a board unchanged since the report, so clear that
-  cause before the exit (`commands/swarm.md`'s wait arm says how). The line reads board files and
-  `events.tsv` only, with no herdr or gh call, and goes once that work is done or a new conductor
-  starts.
+  there are, the ones the conductor's brief has it list for the lead included (a build that died,
+  a `not held:` line, a PR closed unmerged, a kept story with several PRs). For the backlog
+  conductor's report, `conduct-backlog.report.md`, the line counts the stories with no epic and
+  reads `reported: backlog (...), exit: swarm.sh conduct --backlog`. The conductor stopped with
+  work left, and the exit starts a fresh one. Collect a conductor still in its pane first, since
+  the exit retires it and deletes its report. Then read the report: a new conductor cannot clear
+  the stories it lists for the lead, so clear those first (`commands/swarm.md`'s wait arm says
+  how). The line makes no herdr or gh call. It reads the board, `.swarm/board-state`, `events.tsv`,
+  the tab records and the story worktrees. A report whose group no story's `epic:` line names is
+  skipped without reading further, unless a fix-main story is on the board. The line goes once
+  that work is done or a new conductor starts.
 
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and

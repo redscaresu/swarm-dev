@@ -2853,15 +2853,27 @@ main_red_lines() { :; }
 # reported_lines — `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` for each
 # conductor report on disk (conductor_report) while its group still has agent work (agent_work_left), n being
 # how many stories it counts. start_conductor removes an earlier run's report, so the one on disk is the
-# newest run's. conduct-backlog.report.md is the backlog's (-), with exit `swarm.sh conduct --backlog`. Board
-# files and events.tsv only: no herdr or gh call.
+# newest run's. conduct-backlog.report.md is the backlog's (-), with exit `swarm.sh conduct --backlog`.
+# Reports pile up until a new conduct, so one grep of the stories' epic: lines (epic is no SET_FM_KEYS key,
+# so the file's line is fm's) skips a report whose group no story names before agent_work_left's walk; any
+# fix-main story turns the skip off, as it counts for the group whose conductor started it. No herdr or gh call.
 reported_lines() {
-  local f epic group n run
-  for f in "${PROJECT_DIR}"/.swarm/conduct-*.report.md; do
+  local f epic group n run named bare fix_main=""
+  set -- "${PROJECT_DIR}"/.swarm/conduct-*.report.md
+  [[ -f "$1" ]] || return 0
+  named="$(grep -h '^epic:' "${BOARD}"/stories/*.md 2>/dev/null || true)"
+  [[ -z "${named}" ]] || named="$(sed 's/^epic: *//; s/^ *$/-/' <<< "${named}" | tr '\n' ' ')"
+  named=" ${named} "
+  # A story with no epic: line is the backlog's; the README has none either.
+  bare="$(grep -L '^epic:' "${BOARD}"/stories/*.md 2>/dev/null || true)"
+  [[ "${bare//${BOARD}\/stories\/README.md/}" != *.md* ]] || named+="- "
+  ! compgen -G "${BOARD}/stories/fix-main-*.md" > /dev/null || fix_main=1
+  for f in "$@"; do
     [[ -f "${f}" ]] || continue
     epic="${f##*/conduct-}"; epic="${epic%.report.md}"
     group="${epic}"; run="${epic}"
     [[ "${epic}" != backlog ]] || { group=-; run=--backlog; }
+    [[ -n "${fix_main}" || "${named}" == *" ${group} "* ]] || continue
     n="$(agent_work_left "${group}" count)" || continue
     echo "reported: ${epic} (${n} stories still an agent's), exit: swarm.sh conduct ${run}"
   done
