@@ -2798,7 +2798,8 @@ stop_lines() {
 # (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
-# come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs).
+# come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
+# with stuck_lines' just before them and main_red_lines', reported_lines' and sign_blocked_lines' after.
 # It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
@@ -2836,8 +2837,24 @@ lead_queue() {
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
   stop_lines
+  stuck_lines
   pr_lines
+  main_red_lines
+  reported_lines
+  sign_blocked_lines
 }
+
+# stuck_lines — prints nothing yet; the story stuck-builder-line fills it.
+stuck_lines() { :; }
+
+# main_red_lines — prints nothing yet; the story main-red-line fills it.
+main_red_lines() { :; }
+
+# reported_lines — prints nothing yet; the story reported-line fills it.
+reported_lines() { :; }
+
+# sign_blocked_lines — prints nothing yet; the story sign-blocked-line fills it.
+sign_blocked_lines() { :; }
 
 # prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
 # (own_panes) that the poll's herdr list (lead_agents) shows blocked, idle or done, and whose pane
@@ -3788,6 +3805,13 @@ unsent_lines() {
   done
 }
 
+# LEAD_QUIET: the kinds of wait --lead line (the text before a line's first ": ") that another command
+# already shows (status, next), so a first read with no LEAD_SEEN saves them without printing them.
+LEAD_QUIET="held: escalated: kept: merge: idle:"
+
+# lead_quiet <line> — true when <line>'s kind is in LEAD_QUIET.
+lead_quiet() { [[ " ${LEAD_QUIET} " == *" ${1%%: *}: "* ]]; }
+
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
 # and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
 # since its last (lead_heads), run resend_pass off that list, add the .unsent markers' lines
@@ -3796,9 +3820,8 @@ unsent_lines() {
 # `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and save the
 # queue as LEAD_SEEN. Print
 # each item that was not in LEAD_SEEN before and log `lead-woken <slug>`
-# for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet prints only the
-# alerts (`no-agent:`, `no-review:`, `step-up failed:`, `unsent brief:`, `prompt:`, `unmerged:`,
-# `conflict:`, `stopped:`, `tell undelivered:` and `tell goal failed:` lines) and saves the rest.
+# for it, its kind in the outcome (`ok (no-agent)`); true when there was one. quiet saves the lines
+# of a kind in LEAD_QUIET without printing them, and prints every other line: each is an alert.
 lead_wake() {
   local now line new="" slug u
   lead_agents
@@ -3831,9 +3854,7 @@ lead_wake() {
   now="${now}${now:+${u:+$'\n'}}${u}"
   while IFS= read -r line; do
     [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null \
-      || [[ -n "${1:-}" && "${line}" != "no-agent: "* && "${line}" != "no-review: "* && "${line}" != "step-up failed: "* && "${line}" != "unsent brief: "* \
-            && "${line}" != "prompt: "* && "${line}" != "unmerged: "* && "${line}" != "conflict: "* \
-            && "${line}" != "stopped: "* && "${line}" != "tell undelivered: "* && "${line}" != "tell goal failed: "* ]] || new+="${line}"$'\n'
+      || { [[ -n "${1:-}" ]] && lead_quiet "${line}"; } || new+="${line}"$'\n'
   done <<< "${now}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
@@ -3895,8 +3916,8 @@ lead_lock() {
 # (lead_wake). The PR heads behind its merge: lines, and the open story PRs behind its unmerged: and conflict:
 # lines, are read only in a heads pass (lead_heads, open_story_prs), on its first read and then at most once
 # every LEAD_HEADS_EVERY seconds. The first read of a run reports what
-# landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts
-# (no-agent:, step-up failed:, unsent brief:, prompt:, unmerged:, conflict:, stopped:). At the timeout (default an hour) it fails with nothing printed. It edits
+# landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
+# every line whose kind is not in LEAD_QUIET. At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file, and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
