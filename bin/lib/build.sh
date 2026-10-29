@@ -288,8 +288,8 @@ A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merg
 yourself. A story whose front matter says \`costs: money\` (merging it can spend money) is the user's
 to merge, as with merge = human: \`swarm.sh merge\` holds it for the user (\`held: <slug> costs
 money\`), and its review agent leaves the PR there, as it does every PR merge holds. List each such
-PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\` or \`(protected path)\`) in
-your report under Waits on the user.
+PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\`, \`(protected path)\` or
+\`(dropped base lines)\`) in your report under Waits on the user.
 
 $(fix_main_rule)
 
