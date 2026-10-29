@@ -37,9 +37,10 @@ background test run, or could not sign a commit.
 
 ## An agent that fails to start
 
-**Symptom.** `swarm.sh review-agent` or `swarm.sh story` fails with `pane ... not found`,
+**Symptom.** `swarm.sh story` fails with `pane ... not found`,
 `the pane's shell did not take the agent's environment` or `agent_not_found`, often under load.
-**Step.** Run the same command again, up to twice.
+`swarm.sh review-agent` makes up to 3 starts on these by itself, so it needs no rerun.
+**Step.** Run the `swarm.sh story` command again, up to twice.
 **Issue.** [#688](https://github.com/redscaresu/swarm-dev/issues/688).
 
 ## A locked GPG agent
