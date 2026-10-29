@@ -198,7 +198,8 @@ pass read red that no `main-red` covers (none logged, or one a `main-green` has 
 own. The run is detached in a session of its own and pinned to the project, so it goes on after `wait --lead`
 returns or a new run stops it. Its output goes to `.swarm/lead/fix-main-<short sha>.log`. It reads the base's
 head again (cut off after 30 seconds), then that commit's CI (cut off after 60 seconds) for the red checks
-and their URLs. Then it writes the story as `swarm.sh merge` does (§ Merging), with its log reads cut off
+and their URLs. A check still running is not one of them, so a base that later reads green clears the red
+without waiting on it. Then it writes the story as `swarm.sh merge` does (§ Merging), with its log reads cut off
 after 60 seconds, and logs `main-red`. The story says no `swarm.sh merge` wrote a fix for the red, and names
 no merged story. When the base has moved off that commit since the pass, or its CI now reads green or
 pending, the pass's read is out of date: the run writes nothing, and its log's last line starts `stale:`.
@@ -206,8 +207,9 @@ Such a run does not count as a failed one. No run starts for that head again unt
 read the base. No run starts while one for that head is running, or while `ps` shows a `swarm.sh merge` of a
 PR in that repo. `ps` shows neither the merge's base nor its project, so any such merge holds the run back,
 since the merge's own fix may log the red. Any other run that ends with no `main-red` logged has failed, and
-the next poll starts another. One still running after 10 minutes is stopped, and counts as failed. After 2
-failed runs no more start. A repo `wait --lead` cannot name (no story names it, or gh failed) gets no run,
+the next poll starts another. One still running after 10 minutes is stopped, and counts as failed. For each
+run it stops or counts as failed, `wait --lead` adds a line to the log, since a killed run writes nothing of
+its own there. After 2 failed runs no more start. A repo `wait --lead` cannot name (no story names it, or gh failed) gets no run,
 and its line names the lead's check at once; a later pass that names it starts one. What each head's runs
 did is in `.swarm/lead/fixes`.
 

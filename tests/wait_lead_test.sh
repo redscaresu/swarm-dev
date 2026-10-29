@@ -593,6 +593,18 @@ check "the next poll's one main-red: line names the story as the exit" \
 check "and starts no second run" test "$(fix_runs "${B1}")" == 1
 check "and logs no second main-red" test "$(main_reds "${B1}")" == 1
 
+# One check failed and another still runs: the story and main-red name the failed one alone, so a green
+# base clears the red without waiting for a passed run of a check that never went red.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"
+printf '{"total_count":2,"check_runs":[%s,%s]}\n' \
+  '{"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/99/job/1"}' \
+  '{"name":"build","status":"in_progress","conclusion":null,"html_url":"u"}' > "${FX}/${B1}.checks"
+lead 0
+check "with a check still running, the run ends" fix_done "${B1}"
+check "its story's red: line names only the failed check" grep -qx 'red: test (failure)' "${F}"
+check "and so does its main-red" \
+  test "$(awk -F'\t' -v s="${B1}" '$2 == "main-red" && $3 == s { print $5 }' "${P}/.swarm/events.tsv")" == "o/r main test (failure)"
+
 based; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
 lead 0
 check "with a swarm.sh merge into o/r running, the line waits on the story" test "$(out)|$(rc)" == "$(red_line "${B1}" main)|0"
@@ -614,11 +626,15 @@ check "killed before it writes, it leaves no story" test ! -e "${F}"
 again; lead SWARM_LOCK_WAIT=60 0
 check "the next poll starts the run again" test "$(fix_runs "${B1}")" == 2
 check "and the line, unchanged, wakes no one" test "$(out)|$(rc)" == "|1"
+check "the log says the killed run failed" grep -qx 'wait --lead: run 1 of 2 ended with no main-red logged: it failed' \
+  "${P}/.swarm/lead/fix-main-${B1:0:7}.log"
 fix_kill "${B1}"
 again; lead 0
 check "after two failed runs the line names the lead's check" test "$(out)|$(rc)" == \
   "$(red_line "${B1}" main "read .swarm/lead/fix-main-${B1:0:7}.log, as no run wrote fix-main-${B1:0:7}, then fix main by hand")|0"
 check "and no third run starts" test "$(fix_runs "${B1}")" == 2
+check "the log says the second run failed too" grep -qx 'wait --lead: run 2 of 2 ended with no main-red logged: it failed' \
+  "${P}/.swarm/lead/fix-main-${B1:0:7}.log"
 rmdir "${P}/.swarm/fix-main.o-r-main.lock"
 
 # A merge's fix_main logs the red while a run waits on the lock: once it has the lock, the run writes nothing.

@@ -2983,7 +2983,8 @@ main_red_lines() {
 # shows neither the base nor the project, so any such merge holds it: its own fix_main may log the red), while
 # ps cannot be read, or while this run has not resolved the repo's name. A run that is gone with the red still
 # not logged failed, and a later poll starts the next, up to LEAD_FIX_TRIES a head; one alive past
-# LEAD_FIX_SECONDS is stopped and counts as failed. A run whose log ends `stale:` found the pass's read out of
+# LEAD_FIX_SECONDS is stopped and counts as failed. Each stop and each failed run gets a line in the run's log,
+# which a killed run leaves with nothing of its own. A run whose log ends `stale:` found the pass's read out of
 # date (main_red_run) and counts as none; no run starts for that head again until a heads pass has rewritten
 # LEAD_BASES since. It writes `<owner/repo> <base> <sha> <at> <runs> <pid> <started> <state>` a head to
 # LEAD_FIXES, for main_red_lines: <at> as LEAD_BASES has it, so a head read red again after it read green
@@ -3005,11 +3006,16 @@ main_red_fix() {
     if (( got == 0 )); then got=1; ps="$(ps -A -ww -o pid=,command= 2>/dev/null)" || psok=0; fi
     if (( psok == 1 )) && awk -v p="${pid}" -v s="${sha}" '$1 == p && index($0, "swarm.sh _fix-main ") && index($0, s) { f = 1 } END { exit !f }' <<< "${ps}"; then
       state=run
-      # Past its time: stop it, its session with it; the next poll counts it failed.
-      (( now - started < LEAD_FIX_SECONDS )) || kill -TERM -- "-${pid}" 2>/dev/null || true
+      # Past its time: stop it, its session with it, once; the next poll counts it failed.
+      if (( now - started >= LEAD_FIX_SECONDS )); then
+        kill -TERM -- "-${pid}" 2>/dev/null || true
+        x="wait --lead: stopped run ${runs} of ${LEAD_FIX_TRIES} after ${LEAD_FIX_SECONDS} s"
+        [[ "$(tail -n 1 "${log}" 2>/dev/null)" == "${x}" ]] || echo "${x}" >> "${log}" 2>/dev/null || true
+      fi
     elif (( psok == 1 )) && [[ "${state}" == run ]]; then
       # Gone since the last poll: failed, unless it found the pass's read out of date, which counts as no run.
-      state="wait"; [[ "$(tail -n 1 "${log}" 2>/dev/null)" != "stale: "* ]] || { runs=$((runs - 1)); state=stale; }
+      if [[ "$(tail -n 1 "${log}" 2>/dev/null)" == "stale: "* ]]; then runs=$((runs - 1)); state=stale
+      else state="wait"; echo "wait --lead: run ${runs} of ${LEAD_FIX_TRIES} ended with no main-red logged: it failed" >> "${log}" 2>/dev/null || true; fi
     fi
     if (( psok == 0 )) || [[ "${state}" == run ]]; then
       :   # alive, or what is alive is not known: the row stays as it was
@@ -3042,14 +3048,15 @@ main_red_fix() {
 # main_red_run <repo> <base> <sha> — swarm.sh _fix-main, which main_red_fix starts detached: CI on <base> of
 # <repo> (the board's name for it, `.` for the project's own) is red at <sha>, and no main-red covers it. It
 # resolves the repo's owner/repo (lead_nwo), reads <sha>'s CI again (ci_gate base, within BASE_CI_WAIT) for the
-# red checks and their URLs, and hands them to fix_main with no merge named (MERGE_TARGET empty), which writes
+# red checks and their URLs, and hands them, without the checks still running that ci_gate lists after them, to
+# fix_main with no merge named (MERGE_TARGET empty), which writes
 # fix-main-<short sha> with <repo> as its repo: and logs main-red. First it reads <base>'s head (within
 # BASE_HEAD_WAIT): the pass's read is out of date when the base has moved off <sha>, or <sha>'s CI reads green
 # or pending now, and then it writes nothing and its last line is `stale: <why>`, which main_red_fix counts
 # as no run. It fails, writing nothing, on a bad argument, a repo it cannot resolve, or a head or CI it
 # cannot read.
 main_red_run() {
-  local rc out head
+  local rc out head reds
   [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "_fix-main: '$3' is not a whole commit sha"
   [[ -n "$2" && ! "$2" =~ ${LEAD_REF_BAD} ]] || die "_fix-main: '$2' is not a branch name"   # loose-match: ok LEAD_REF_BAD is a regex on purpose
   rc=0; lead_nwo "$1" || rc=$?
@@ -3064,9 +3071,13 @@ main_red_run() {
     2) echo "stale: CI on $2 at ${3:0:7} reads pending now; no fix-main story written"; return 0 ;;
     *) die "_fix-main: CI on $2 at ${3:0:7} could not be read (exit ${rc}); no fix-main story written" ;;
   esac
+  # Only the red checks, each ending in a conclusion (CI_CONCLUSIONS), as a merge's ci_gate main gives them: a
+  # check still running is no red, and clear_red_main would wait for a passed run of it.
+  reds="$(awk -v r=" [(](${CI_CONCLUSIONS})[)]( |\$)" '{ n = split($0, c, "; "); s = ""
+    for (i = 1; i <= n; i++) if (c[i] ~ r) s = s (s == "" ? "" : "; ") c[i]; print s }' <<< "${out%%$'\n'*}")"
   # shellcheck disable=SC2034 # fix_main, in merge.sh, reads both
   MERGE_TARGET="" FIX_MAIN_REPO="$1"
-  fix_main "${LEAD_NWO}" "$3" "$2" "${out%%$'\n'*}"
+  fix_main "${LEAD_NWO}" "$3" "$2" "${reds}"
 }
 
 # reported_lines — prints nothing yet; the story reported-line fills it.
