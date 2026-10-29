@@ -32,6 +32,8 @@ commands/*.md	named tests/doc_check_test.sh tests/roles_test.sh tests/epic_codex
 hooks/*	named tests/loose_match_test.sh tests/timeouts_test.sh
 # The docs: the tests that name the file, always the ones that check or read the real docs, and
 # command_names_test.sh, which greps README.md, three docs and all of docs/assets for a bare /swarm.
+# swarm-dev's rules, which every builder, review and conductor brief carries.
+rules.md	named tests/epic_briefs_test.sh tests/review_test.sh tests/llms_test.sh tests/doc_check_test.sh
 README.md AGENTS.md docs/**	named tests/doc_check_test.sh tests/features_test.sh tests/llms_test.sh tests/config_test.sh tests/epic_codex_test.sh tests/board_pr_test.sh tests/merge_test.sh tests/skill_test.sh tests/removed_test.sh tests/flow_sections_test.sh tests/command_names_test.sh
 # A test, and the four tests that read every tests/*_test.sh: the mktemp-root checks of
 # sleep_scale_test.sh and test_cap_test.sh, removed_test.sh's grep and test_shard_test.sh's split.

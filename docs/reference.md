@@ -1506,8 +1506,9 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it) and leave the full suite to CI, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
-(the builder runs it before opening the PR), then the project's own rules from
-`.claude/swarm/brief.md`, plus the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
+(the builder runs it before opening the PR), then swarm-dev's own rules from the plugin's
+[`rules.md`](../rules.md), then the project's own rules from
+`.claude/swarm/brief.md`, then the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
 `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md`, since a builder in another repo's worktree reads
 that repo's files, not this project's. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
@@ -1683,8 +1684,9 @@ is reported at its `file:line`. A PR that changes what a user runs, sees or must
 update README.md, AGENTS.md, docs/ or the command text to match, is reported at the stale doc's
 `file:line`, or at the change when no doc covers it yet. The brief's example is swarm-dev's own
 `env:` line, which kept describing the old env allowlist after the code changed. Its brief
-carries the project's own rules, as a builder's does, and the checks the lead used to make by hand,
-which the fallback reviewer's brief carries too. After them come the
+carries the checks the lead used to make by hand, and so does the fallback reviewer's brief. Both
+also carry the rules a builder gets, in the same order: swarm-dev's [`rules.md`](../rules.md) first,
+then the project's own. After the checks come the
 lines of the story and its epic that hold a `(user, <date>)` mark. Each is printed as it stands, with
 its `path:line`, cut at 1500 bytes on a character boundary, and the brief tells the reviewer to read
 each decision in full at that line. Together they take at most 2000 bytes; past that, the brief says
