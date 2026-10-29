@@ -2,18 +2,24 @@
 
 # fm <file> <key> — <key>'s value in the item's state file (state_value), else the first line for
 # <key> anywhere in <file>, or nothing. A <file> that is gone has no value, and says nothing on stderr
-# (item_read); one that is there but cannot be read fails, with sed's error.
-fm() { state_value "$1" "$2" || item_read "$1" sed -n "/^$2: */{s///p;q;}" "$1" || gone_ok $?; }
+# (item_gone); one that is there but cannot be read fails, with sed's error.
+fm() {
+  state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" 2>/dev/null | head -1 \
+    || item_gone "$1" sed -n "s/^$2: *//p" "$1" | head -1 || gone_ok $?
+}
 
-# ITEM_GONE: item_read's status when the file it read is gone. Neither sed nor awk exits 3.
+# ITEM_GONE: item_gone's status when the file it read is gone. Neither sed nor awk exits 3.
 ITEM_GONE=3
 
 # item_read <file> <command>... — run <command>, a read of <file> (- for stdin), with its stderr
-# dropped. When it fails and <file> is gone (a merge deleted it after the board was listed), return
-# ITEM_GONE, saying nothing. When <file> is still there it cannot be read: run <command> again, so it
-# prints its error and fails as it would have.
-item_read() {
-  "${@:2}" 2>/dev/null && return 0
+# dropped; when it fails, item_gone.
+item_read() { "${@:2}" 2>/dev/null || item_gone "$@"; }
+
+# item_gone <file> <command>... — after <command>, a read of <file> with its stderr dropped, failed:
+# when <file> is gone (a merge deleted it after the board was listed), return ITEM_GONE, saying
+# nothing. When <file> is still there it cannot be read: run <command> again, so it prints its error
+# and fails as it would have.
+item_gone() {
   [[ "$1" == - || -e "$1" || -L "$1" ]] || return "${ITEM_GONE}"
   "${@:2}"
 }

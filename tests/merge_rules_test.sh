@@ -473,7 +473,8 @@ chmod 644 "${P}/docs/stories/u.md"; rm -f "${P}/docs/stories/u.md"
 own_pr a; reviewer review-a; unreadable u; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
 refused "review-a's pane, a story there but unreadable" "a story on the board cannot be read, so whether ${URL} is story a's is unknown"
 check "review-a's pane, a story there but unreadable: the read's error names u.md" read_error
-chmod 644 "${P}/docs/stories/u.md"; rm -f "${P}/docs/stories/u.md" "${P}/.swarm/state/r" "${P}/.swarm/agents.tsv"
+# Back to fresh's board (no story a), tab records and agents.
+chmod 644 "${P}/docs/stories/u.md"; rm -f "${P}"/docs/stories/{a,u}.md "${P}/.swarm/state/r" "${P}/.swarm/agents.tsv"
 printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"; gone v
 merge PATH="${GONE_PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: money, story v gone after the list: still held" "held: s costs money"
