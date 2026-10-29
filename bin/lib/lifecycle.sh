@@ -2780,10 +2780,35 @@ findings_open() {
     END { exit !o }' "$1" 2>/dev/null
 }
 
+# story_pr_rows — the last heads pass's LEAD_PRS joined with the board as it is now, for pr_lines and
+# stuck_lines: `<slug> <PR URL> <head> <mergeable> <checks> <opened> <kept 0|1>` for each open PR whose story is
+# ready or in review, is one an agent builds (agent_kind) and names the PR's repo as its own (repo:, else the
+# project's), and `<slug> -` for each such story of a repo the pass could not read.
+story_pr_rows() {
+  awk -v kinds=" ${AGENT_KINDS} " -v sep=$'\x1f' '
+  FILENAME == ARGV[1] {
+    split($0, v, sep); r = v[5]; gsub(/["\047]/, "", r); if (r == "") r = "."
+    if ((v[2] == "ready" || v[2] == "review") && (v[3] == "" || index(kinds, " " v[3] " "))) { home[v[1]] = r; kept[v[1]] = (v[4] != "") }
+    next
+  }
+  $1 == "=" { nwo[$2] = $3; next }
+  $1 == "-" { lost[$2] = 1; next }
+  $1 == "+" { row[++n] = $0; next }
+  END {
+    for (s in home) if (home[s] in lost) print s " -"
+    for (i = 1; i <= n; i++) {
+      split(row[i], f, " ")
+      if ((f[3] in home) && nwo[home[f[3]]] == f[2] && !(home[f[3]] in lost))
+        print f[3], f[4], f[5], f[6], f[7], f[8], kept[f[3]]
+    }
+  }' <(stories_fm status kind kept repo) "${LEAD_PRS}"
+}
+
 # pr_lines — the lead's queue's lines for open story PRs, from the last heads pass's LEAD_PRS joined with the board
-# as it is now, so a poll makes no gh call. A PR counts when its story is ready or in review, is one an agent builds
+# as it is now (story_pr_rows), so a poll makes no gh call. A PR counts when its story is ready or in review, is one an agent builds
 # (agent_kind: a lead story's PR is the lead's), and names the PR's repo as its own (repo:, else the project's).
-# `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` for one CONFLICTING with its base.
+# `conflict: <slug> <PR URL>, exit: tell its builder to merge the base in` for one CONFLICTING with its base,
+# unless stuck_lines named it this poll (STUCK_PRS): one line per PR.
 # `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` for one MERGEABLE and green whose findings
 # file is a pass on its head (review_pass), opened and reviewed queue_minutes or more ago (the findings file's
 # mtime); when that file lists findings the exit is `triage .swarm/reviews/<slug>.md, then swarm.sh merge --head
@@ -2803,7 +2828,8 @@ pr_lines() {
     if [[ "${mg}" == UNKNOWN ]]; then
       grep -F -e "unmerged: ${slug} ${url}," -e "conflict: ${slug} ${url}," "${LEAD_SEEN}" 2>/dev/null || true; continue
     fi
-    [[ "${mg}" != CONFLICTING ]] || echo "conflict: ${slug} ${url}, exit: tell its builder to merge the base in"
+    # A PR stuck_lines named this poll has its stuck: line in place of this one.
+    [[ "${mg}" != CONFLICTING || " ${STUCK_PRS} " == *" ${url} "* ]] || echo "conflict: ${slug} ${url}, exit: tell its builder to merge the base in"
     [[ "${mg}" == MERGEABLE && "${ck}" == green && "${kept}" == 0 ]] || continue
     review_pass "${slug}" "${head}" || continue
     m="$(perl -e 'my ($f, $o) = @ARGV; my @s = stat $f or exit 1; my $g = time - $s[9]; $g = time - $o if time - $o < $g; print int($g / 60)' \
@@ -2820,23 +2846,7 @@ pr_lines() {
     ! findings_open "${PROJECT_DIR}/.swarm/reviews/${slug}.md" \
       || out="triage .swarm/reviews/${slug}.md, then swarm.sh merge --head ${head} ${url} once every finding is declined"
     echo "unmerged: ${slug} ${url}, exit: ${out}"
-  done < <(awk -v kinds=" ${AGENT_KINDS} " -v sep=$'\x1f' '
-    FILENAME == ARGV[1] {
-      split($0, v, sep); r = v[5]; gsub(/["\047]/, "", r); if (r == "") r = "."
-      if ((v[2] == "ready" || v[2] == "review") && (v[3] == "" || index(kinds, " " v[3] " "))) { home[v[1]] = r; kept[v[1]] = (v[4] != "") }
-      next
-    }
-    $1 == "=" { nwo[$2] = $3; next }
-    $1 == "-" { lost[$2] = 1; next }
-    $1 == "+" { row[++n] = $0; next }
-    END {
-      for (s in home) if (home[s] in lost) print s " -"
-      for (i = 1; i <= n; i++) {
-        split(row[i], f, " ")
-        if ((f[3] in home) && nwo[home[f[3]]] == f[2] && !(home[f[3]] in lost))
-          print f[3], f[4], f[5], f[6], f[7], f[8], kept[f[3]]
-      }
-    }' <(stories_fm status kind kept repo) "${LEAD_PRS}")
+  done < <(story_pr_rows)
 }
 
 # STOP_GRACE: how many seconds a stop note waits before stop_lines reports it (SWARM_STOP_GRACE). The
@@ -2961,8 +2971,115 @@ lead_queue() {
   sign_blocked_lines
 }
 
-# stuck_lines — prints nothing yet; the story stuck-builder-line fills it.
-stuck_lines() { :; }
+# STUCK_MINUTES: how long a builder's pending findings or conflict may sit on an unchanged PR head before
+# stuck_lines names it (SWARM_STUCK_MINUTES). STUCK_READ_WAIT: seconds each of stuck_lines' claude and herdr
+# reads may take (within). LEAD_PR_HEADS: `<slug> <head> <first seen> <conflict first seen, or ->` per open
+# story PR, epochs, rewritten each poll. STUCK_PRS: the PR URLs stuck_lines named this poll, for pr_lines.
+STUCK_MINUTES="${SWARM_STUCK_MINUTES:-60}"
+STUCK_READ_WAIT=10
+LEAD_PR_HEADS="${LEAD_DIR}/pr-heads"
+STUCK_PRS=""
+
+# stuck_lines — `stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume
+# <file>` for an open story PR (story_pr_rows) whose builder sits idle on a pending item, N being STUCK_MINUTES,
+# never the minutes elapsed: LEAD_SEEN dedupes whole lines, so a count would wake the lead every poll. The item
+# is a findings tell (findings_told's: tell or tell:findings, ok or sent, since the build started) newest at least
+# N minutes ago and no older than the head, on a head no review has passed (review_pass), or a CONFLICTING mergeable
+# first seen on this head at least N minutes ago; a conflict wins over findings. A head counts from when a poll first saw it (LEAD_PR_HEADS, which drops a PR no longer open), so a
+# tell made before wait --lead first saw the head is not one. Checks, cheapest first: those file reads, the builder
+# live in the poll's herdr list (LEAD_AGENTS), its state idle (read_state's, over one claude agents read and that
+# list), no background task (bg_running), no test run in its pane (stuck_test_run). A PR of a repo the pass could
+# not read, one whose mergeable is UNKNOWN on the same head, and a poll with no herdr list or no state for the
+# builder keep the stuck: line LEAD_SEEN has.
+stuck_lines() {
+  local slug url head mg ck opened kept now rows old told rec="" oh of oc first conf kind name pane st claude="" read=""
+  STUCK_PRS=""
+  [[ -s "${LEAD_PRS}" ]] || return 0
+  now="$(date +%s)"
+  rows="$(story_pr_rows)"
+  old="$(cat "${LEAD_PR_HEADS}" 2>/dev/null)" || old=""
+  # One read of events.tsv for every PR, as epochs: `T <target> <newest findings tell>`, and the newest ok build
+  # start, as build_started reads it: `S <slug>` for a story or escalate line, `A <name>` for an agent line.
+  told="$(perl -MTime::Local=timegm -F'\t' -lane 'next unless $F[0] =~ /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)Z$/; $e = timegm($6, $5, $4, $3, $2 - 1, $1);
+    if (($F[1] eq "tell" || $F[1] eq "tell:findings") && ($F[4] eq "ok" || $F[4] =~ /herdr sent it the brief/)) { $t{"T $F[2]"} = $e }
+    elsif ($F[4] =~ /^ok/ && ($F[1] eq "story" || $F[1] eq "escalate")) { $t{"S $F[2]"} = $e }
+    elsif ($F[4] =~ /^ok/ && $F[1] eq "agent") { $t{"A $F[2]"} = $e }
+    END { print "$_ $t{$_}" for sort keys %t }' "${EVENTS_LOG}" 2>/dev/null)" || told=""
+  while read -r slug url head mg ck opened kept; do
+    [[ -n "${slug}" ]] || continue
+    name=""
+    read -r oh of oc <<< "$(awk -v s="${slug}" '$1 == s { print $2, $3, $4; exit }' <<< "${old}")"
+    if [[ "${url}" == - ]]; then
+      [[ -z "${oh}" ]] || rec+="${slug} ${oh} ${of} ${oc}"$'\n'
+      stuck_seen "${slug}"; continue
+    fi
+    first="${now}"; conf=-
+    if [[ "${head}" == "${oh}" ]]; then first="${of}"; conf="${oc:--}"; fi
+    if [[ "${mg}" == UNKNOWN ]]; then
+      rec+="${slug} ${head} ${first} ${conf}"$'\n'
+      # A new head is no longer the one the line was about.
+      [[ "${head}" != "${oh}" ]] || stuck_seen "${slug}" "${url}"
+      continue
+    fi
+    if [[ "${mg}" == CONFLICTING ]]; then [[ "${conf}" != - ]] || conf="${now}"; else conf=-; fi
+    rec+="${slug} ${head} ${first} ${conf}"$'\n'
+    kind=""
+    if [[ "${conf}" != - ]] && (( now - conf >= STUCK_MINUTES * 60 )); then kind=conflict
+    else
+      # A tell before this build started (findings_told's bound) reached an earlier builder.
+      no_agent_name name "${slug}"
+      st="$(awk -v s="${slug}" -v n="${name}" '$1 == "T" && $2 == s { t = $3 } ($1 == "S" && $2 == s) || ($1 == "A" && $2 == n) { if ($3 > b) b = $3 }
+        END { if (t != "" && t >= b) print t }' <<< "${told}")"
+      [[ -z "${st}" ]] || (( st < first || now - st < STUCK_MINUTES * 60 )) || kind=findings
+      # A review that passed on this head leaves the builder no findings to act on (the PR waits on its merge).
+      [[ "${kind}" != findings ]] || ! review_pass "${slug}" "${head}" || kind=""
+    fi
+    [[ -n "${kind}" ]] || continue
+    # The builder: live, idle, with no background task and no test run.
+    [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+    if [[ -z "${LEAD_AGENTS_OK}" ]]; then stuck_seen "${slug}" "${url}"; continue; fi
+    [[ -n "${name}" ]] || no_agent_name name "${slug}"
+    pane="$(list_field "${name}" pane_id <<< "${LEAD_AGENTS}")"
+    [[ -n "${pane}" ]] || continue
+    if [[ -z "${read}" ]]; then read=1; claude="$(within "${STUCK_READ_WAIT}" claude agents --json </dev/null 2>/dev/null)" || claude=""; fi
+    st="$(session_state "${name}" "${claude}" </dev/null)"
+    [[ "${st}" != herdr ]] || st="herdr:$(list_field "${name}" agent_status <<< "${LEAD_AGENTS}")"
+    case "${st}" in
+      idle|herdr:idle|herdr:done) ;;
+      unknown|herdr:unknown) stuck_seen "${slug}" "${url}"; continue ;;
+      *) continue ;;
+    esac
+    ! bg_running "${name}" || continue
+    ! stuck_test_run "${pane}" || continue
+    STUCK_PRS+=" ${url}"
+    echo "stuck: ${slug} ${url} (${kind} pending ${STUCK_MINUTES} min), exit: swarm.sh tell ${slug} resume <file>"
+  done <<< "${rows}"
+  mkdir -p "${LEAD_DIR}" 2>/dev/null && printf '%s' "${rec}" > "${LEAD_PR_HEADS}.tmp" && mv -f "${LEAD_PR_HEADS}.tmp" "${LEAD_PR_HEADS}" || true
+}
+
+# stuck_seen <slug> [PR URL] — print the stuck: lines LEAD_SEEN has for <slug> (and that PR), and note their PRs in
+# STUCK_PRS, for a PR stuck_lines cannot check this poll.
+stuck_seen() {
+  local line u
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    u="${line#stuck: "$1" }"; u="${u%% *}"
+    STUCK_PRS+=" ${u}"; echo "${line}"
+  done < <(awk -v s="$1" -v u="${2:-}" '$1 == "stuck:" && $2 == s && (u == "" || $3 == u)' "${LEAD_SEEN}" 2>/dev/null || true)
+}
+
+# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell (panes.py's test_running, as
+# agents.sh's test_running reads it), with herdr's process info read within STUCK_READ_WAIT seconds: a read that
+# fails or hangs sees no run.
+stuck_test_run() {
+  local info
+  info="$(within "${STUCK_READ_WAIT}" herdr pane process-info --pane "$1" </dev/null 2>/dev/null)" || info=""
+  # shellcheck disable=SC2154 # assigned in another file
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
+sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "${info}" "${CFG_stall_minutes}"
+}
 
 # main_red_lines — `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` for each live red of a
 # base, once per repo, base and sha: each red main events.tsv holds (red_mains: a main-red no main-green has
