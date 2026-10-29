@@ -34,6 +34,8 @@ REPORT_SECONDS="${SWARM_REPORT_SECONDS:-30}"
 [[ "${REPORT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || REPORT_SECONDS=30
 BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and pinned_files', and each contents read of merge_read's, may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
+DROPPED_FETCH_WAIT=120  # how long dropped-lines' fetch of a PR's head and base may take (SWARM_DROPPED_FETCH_WAIT, for tests)
+DROPPED_GIT_MIN=2.36    # the oldest git with show --remerge-diff, which dropped_lines.py reads
 BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
 MERGE_LOCK_WAIT=900     # how long a direct merge waits for another into the same repo and base to finish its merge (SWARM_MERGE_LOCK_WAIT, for tests)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
@@ -723,6 +725,79 @@ base_merged() {
 # into <slug>'s PR (`base-merged <sha> from <head>`), or nothing.
 base_merged_from() {
   awk -F'\t' -v t="$1" -v o="base-merged $2 from " '$2 == "merge" && $3 == t && index($5, o) == 1 { h = substr($5, length(o) + 1) } END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
+# dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
+# only: it changes nothing on the board, and main logs nothing for it. In the clone repo_dir names for
+# <owner/repo>'s name, whose origin URL must end in <owner/repo> (compared lower case), it stops unless
+# gh lists <head> among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most
+# 250). It fetches refs/pull/<n>/head and <base> into refs of this run's own,
+# refs/swarm/dropped-lines/<n>-<pid>/head and /base, kept through the scan so git cannot prune what
+# it reads, and deleted on exit by swarm.sh's trap. It writes no FETCH_HEAD and, with an empty
+# --refmap, no origin/<base>: two runs share neither, and another fetch cannot move the base it scans
+# against. The fetched head must be <head>, else it stops naming both. The merges on <head>'s
+# first-parent chain since that base commit are scanned, except those events.tsv records as
+# GitHub's merge of the base (merge_base_update's `base-merged <sha>`, shown to bring only the base's
+# content); any other merge is scanned, web-flow's too (a conflict resolved in GitHub's web editor).
+# With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it prints
+# dropped_lines.py's lines and exits with its code: 0 none, 1 lines dropped (only with a
+# `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
+# 2 (swarm.sh's trap; DROPPED_FOUND marks the exit 1).
+dropped_lines() {
+  local repo="${1:-}" n="${2:-}" head="${3:-}" base="${4:-}" url src origin own name shas out got tip merges m ver rc=0 keep=()
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fetch="${SWARM_DROPPED_FETCH_WAIT:-${DROPPED_FETCH_WAIT}}"
+  [[ $# -eq 4 && "${repo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "${n}" =~ ^[0-9]+$ && "${head}" =~ ^[0-9a-f]{40}$ \
+     && "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] || die "dropped-lines: usage: swarm.sh dropped-lines <owner/repo> <n> <40-character head SHA> <base>"
+  url="https://github.com/${repo}/pull/${n}"
+  src="$(repo_dir "${repo#*/}")" || die "dropped-lines: ${src}"
+  origin="$(git -C "${src}" remote get-url origin 2>/dev/null)" || die "dropped-lines: ${src} has no origin, so it is not ${repo}'s clone"
+  # owner/name from the URL's last two parts: https://host/o/r(.git), git@host:o/r(.git) or a path.
+  own="${origin%/}"; own="${own%.git}"; name="${own##*/}"; own="${own%/*}"; own="${own##*[/:]}/${name}"
+  [[ "$(tr '[:upper:]' '[:lower:]' <<< "${own}")" == "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" ]] \
+    || die "dropped-lines: ${src}'s origin is ${origin} (${own}), not ${repo}"
+  shas="$(within "${limit}" gh api --paginate "repos/${repo}/pulls/${n}/commits?per_page=100" --jq '.[].sha' < /dev/null 2>&1)" || rc=$?
+  [[ ${rc} -ne 142 ]] || die "dropped-lines: gh did not list ${url}'s commits within ${limit}s"
+  [[ ${rc} -eq 0 ]] || die "dropped-lines: gh cannot list ${url}'s commits: ${shas##*$'\n'}"
+  grep -qxF "${head}" <<< "${shas}" || die "dropped-lines: ${head} is not among ${url}'s commits as gh lists them: the PR's head moved"
+  # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
+  DROPPED_DIR="${src}"; DROPPED_REF="refs/swarm/dropped-lines/${n}-$$"
+  out="$(within "${fetch}" git -C "${src}" fetch --quiet --no-tags --no-write-fetch-head --refmap= origin \
+    "+refs/pull/${n}/head:${DROPPED_REF}/head" "+refs/heads/${base}:${DROPPED_REF}/base" < /dev/null 2>&1)" || rc=$?
+  [[ ${rc} -ne 142 ]] || die "dropped-lines: git did not fetch ${url}'s head and ${base} from ${origin} within ${fetch}s"
+  [[ ${rc} -eq 0 ]] || die "dropped-lines: git cannot fetch ${url}'s head and ${base} from ${origin}: ${out##*$'\n'}"
+  got="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/head^{commit}")" || die "dropped-lines: the fetch of ${url}'s head left no commit at ${DROPPED_REF}/head"
+  tip="$(git -C "${src}" rev-parse --verify --quiet "${DROPPED_REF}/base^{commit}")" || die "dropped-lines: the fetch of ${base} left no commit at ${DROPPED_REF}/base"
+  [[ "${got}" == "${head}" ]] \
+    || die "dropped-lines: ${url}'s head on ${origin} (refs/pull/${n}/head) is ${got}, not ${head}: the PR moved, or GitHub has not updated the ref yet; run it on the head the PR has"
+  merges="$(git -C "${src}" rev-list --first-parent --merges --reverse "${tip}..${head}" --)" \
+    || die "dropped-lines: git cannot list the merges in ${base} (${tip:0:7})..${head:0:7}"
+  for m in ${merges}; do
+    awk -F'\t' -v o="base-merged ${m}" '$2 == "merge" && ($5 == o || index($5, o " from ") == 1) { f = 1; exit } END { exit !f }' \
+      "${EVENTS_LOG}" 2>/dev/null || keep+=("${m}")
+  done
+  [[ ${#keep[@]} -gt 0 ]] || return 0
+  ver="$(git version 2>/dev/null)" || ver=""; ver="${ver#git version }"; ver="${ver%% *}"
+  awk -v v="${ver}" -v min="${DROPPED_GIT_MIN}" 'BEGIN { split(v, a, "."); split(min, b, ".")
+    exit !(a[1] + 0 > b[1] + 0 || (a[1] + 0 == b[1] + 0 && a[2] + 0 >= b[2] + 0)) }' \
+    || die "dropped-lines: git ${ver:-of unknown version} is below ${DROPPED_GIT_MIN}, the first with git show --remerge-diff, which the scan of ${url}'s merges reads: update git"
+  rc=0; out="$(python3 "${SWARM_HOME}/bin/lib/dropped_lines.py" "${src}" "${tip}" "${head}" "${keep[@]}")" || rc=$?
+  case ${rc} in
+    0) [[ -z "${out}" ]] || echo "${out}" ;;
+    1) grep -Eq '^[0-9a-f]{7} .+: ' <<< "${out}" || die "dropped-lines: dropped_lines.py exited 1 with no dropped line: ${out:-it printed nothing}"
+       echo "${out}"
+       # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
+       DROPPED_FOUND=1; exit 1 ;;
+    2) echo "${out}"; exit 2 ;;
+    *) die "dropped-lines: dropped_lines.py exited ${rc}: ${out:-it printed nothing}" ;;
+  esac
+}
+
+# dropped_refs_drop — delete dropped_lines' two fetched refs (DROPPED_REF's head and base, in the clone
+# DROPPED_DIR); a ref that is not there is no error. swarm.sh's EXIT trap runs it, once the run ends.
+dropped_refs_drop() {
+  [[ -n "${DROPPED_REF}" ]] || return 0
+  git -C "${DROPPED_DIR}" update-ref -d "${DROPPED_REF}/head" 2>/dev/null || true
+  git -C "${DROPPED_DIR}" update-ref -d "${DROPPED_REF}/base" 2>/dev/null || true
 }
 
 # merge_lock <owner/repo> <base> [<then>] — take this project's lock on direct merges into <base> of <repo>,
