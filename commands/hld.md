@@ -75,9 +75,12 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    > the draft is ready, run the humanizer skill (`humanizer:humanizer`) over its prose, then `touch D/ready` and say the reviewer is starting; its findings will arrive
    > in this pane as a message, and you go through them with the user and revise. When the user
    > says they agree it, `touch D/agreed` and stop. Never create either file unless the user said so.
-   > Run the humanizer skill (`humanizer:humanizer`) over the draft's prose after each revision too,
-   > and before you `touch D/agreed` if you have not since the last revision. If the
-   > skill is not installed, say so to the user and go on: the project is not blocked.
+   > Run the humanizer skill after each revision, before you show the draft or ask the user to agree
+   > it; never change the draft between the user's agreement and `D/agreed`. If the user agrees a
+   > draft that has had no pass since its last revision (with or without `D/ready` first), run the
+   > pass, show the user what it changed and ask them to agree again; `touch D/agreed` only on
+   > agreement to the text as it now stands. If the skill is not installed, say so to the user and
+   > go on: the project is not blocked.
 
 3. `mkdir -p D` and remove any old `D/ready` and `D/agreed`, on a resume too: a leftover
    `D/ready` would start a reviewer at once, and a leftover `D/agreed` would set the HLD agreed

@@ -28,7 +28,7 @@ renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` fo
 its output file. If it exists, parses as JSON and is newer than `docs/epics/$1.md`, reuse it and do not
 start that agent again; an older one belongs to a previous plan, so start the agent. A `.partial` file is an unfinished run, not a result: start the agent, which carries on from it. Delete a `.partial` that is not newer than `docs/epics/$1.md` (for the split critic's, than the board PR's worktree) first: it belongs to a previous plan. A resume also starts a skeptic for each story the critic's file moves to `risk: high` that has no skeptic file yet.
 
-Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; read it first, and read `${CLAUDE_PLUGIN_ROOT}/rules.md` (its full path written out) before anything else.
+Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; read it first, then read `${CLAUDE_PLUGIN_ROOT}/rules.md` (its full path written out).
 Read-only — write nothing except your output file and its `.partial`, never commit, never touch real cloud or
 credentials. If `<output>.partial` exists, a run was cut off: start from it and carry on, do not redo it. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.*
 
