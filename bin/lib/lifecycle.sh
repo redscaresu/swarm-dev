@@ -2982,19 +2982,22 @@ stuck_lines() { :; }
 # fix-main-<short sha>: `fix-main-<short sha> waits on the lead: handle its held: or escalated: line` when it is
 # held or escalated; `wait for fix-main-<short sha>, whose build has started, to merge` once its build has begun
 # or it is in review; `build fix-main-<short sha>, which next names first` while next would name it (main_red's
-# test: buildable, no build begun); `fix-main-<short sha> is not one next builds: check its status and kind`
-# otherwise; `fix <base> by hand, as no fix-main story covers it yet` when there is none. It reads events.tsv,
-# that file and the board, never gh.
+# test: buildable, no build begun), or, when main_red picks another base's red over it, `build fix-main-<short
+# sha>, which next names after fix-main-<the pick's short sha>`; `fix-main-<short sha> is not one next builds:
+# check its status and kind` otherwise; `fix <base> by hand, as no fix-main story covers it yet` when there is
+# none. It reads events.tsv, that file and the board, never gh.
 main_red_lines() {
-  local sha repo base checks out f reds
-  reds="$(red_mains)"
+  local sha repo base checks out f reds pick
+  reds="$(red_mains)"; pick="$(main_red)"; pick="${pick%% *}"
   while read -r sha repo base checks; do
     [[ -n "${base}" ]] || continue
     f="${BOARD}/stories/fix-main-${sha:0:7}.md"
     if [[ ! -f "${f}" ]]; then out="fix ${base} by hand, as no fix-main story covers it yet"
     elif [[ -n "$(get_fm "${f}" held_for)" ]] || is_escalated "${f}"; then out="fix-main-${sha:0:7} waits on the lead: handle its held: or escalated: line"
     elif one_off_started "fix-main-${sha:0:7}" || [[ "$(fm "${f}" status)" == review ]]; then out="wait for fix-main-${sha:0:7}, whose build has started, to merge"
-    elif buildable_story "${f}"; then out="build fix-main-${sha:0:7}, which next names first"
+    elif buildable_story "${f}"; then
+      if [[ -z "${pick}" || "${pick}" == "${sha}" ]]; then out="build fix-main-${sha:0:7}, which next names first"
+      else out="build fix-main-${sha:0:7}, which next names after fix-main-${pick:0:7}"; fi
     else out="fix-main-${sha:0:7} is not one next builds: check its status and kind"; fi
     echo "main-red: ${sha:0:7} ${repo} ${base} ($(ci_data <<< "${checks}")), exit: ${out}"
   done < <(printf '%s\n' "${reds}"

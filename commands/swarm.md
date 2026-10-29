@@ -361,7 +361,10 @@ Repeat until a step below says stop:
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
      base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
-     next names first`, do the `fix-main` step for that story at once. With `wait for fix-main-<short
+     next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
+     which next names after fix-main-<other>`, two reds have buildable stories: do the `fix-main` step
+     for the other first, and this line's exit turns to `which next names first` once that build is
+     under way. With `wait for fix-main-<short
      sha>, whose build has started, to merge`, the fix is under way: start nothing for it, and see its PR
      through. With `fix-main-<short sha> waits on the lead: handle its held: or escalated: line`, act on
      that line. With `fix-main-<short sha> is not one next builds: check its status and kind`, fix the

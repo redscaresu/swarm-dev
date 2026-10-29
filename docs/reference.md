@@ -191,7 +191,8 @@ poll then prints, with no gh call:
   - `wait for fix-main-<short sha>, whose build has started, to merge` once its build has begun, or it is
     in review.
   - `build fix-main-<short sha>, which next names first` while `next` would name it: ready, one an agent
-    builds, and no build begun.
+    builds, and no build begun. When two such stories stand, `next` names the newest red's first, and each
+    other's exit is `build fix-main-<short sha>, which next names after fix-main-<that one's short sha>`.
   - `fix-main-<short sha> is not one next builds: check its status and kind` for any other story.
   - `fix <base> by hand, as no fix-main story covers it yet` when there is none: a red that no
     `swarm.sh merge` made has no story yet.

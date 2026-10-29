@@ -508,8 +508,8 @@ test_and_build() {
 }
 # woken <sha> — the lead-woken lines events.tsv holds for <sha>'s main-red: line.
 woken() { grep -c "^lead-woken ${1:0:7}$" <<< "$(events)" || true; }
-# logged_red <sha> — the main-red line fix_main writes for a red at <sha> on o/r main with test failed.
-logged_red() { printf '%s\tmain-red\t%s\t-\to/r main test (failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${P}/.swarm/events.tsv"; }
+# logged_red <sha> [base] — the main-red line fix_main writes for a red at <sha> on o/r <base> (main) with test failed.
+logged_red() { printf '%s\tmain-red\t%s\t-\to/r %s test (failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:-main}" >> "${P}/.swarm/events.tsv"; }
 
 based; echo "${B1}" > "${FX}/base.main"; checks pending "${B1}"
 lead 0
@@ -567,6 +567,17 @@ check "once the base's head reads green, the read logs main-green for that red" 
   grep -qx "main-green ${B3} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv")"
 check "and the line is gone from the queue" no_red_line
 check "the red's unstarted fix-main story is retired" test ! -e "${B}/fix-main-${B1:0:7}.md"
+
+# Two logged reds, on main and dev, each with a buildable fix-main story: next names the newest (main_red), and
+# the older red's exit says so.
+based; echo "${B1}" > "${FX}/base.main"; checks failure "${B1}"; echo "${B2}" > "${FX}/base.dev"; checks failure "${B2}"
+item "fix-main-${B1:0:7}" "kind: code" "status: ready" "touches: [.]"; logged_red "${B1}"
+item "fix-main-${B2:0:7}" "kind: code" "status: ready" "touches: [.]"; logged_red "${B2}" dev
+lead 0
+check "with two buildable fix-main stories, the newest red's exit is the one next names first" \
+  grep -qxF "$(red_line "${B2}" dev "build fix-main-${B2:0:7}, which next names first")" "${ROOT}/out"
+check "and the older red's exit names the story next names before it" \
+  grep -qxF "$(red_line "${B1}" main "build fix-main-${B1:0:7}, which next names after fix-main-${B2:0:7}")" "${ROOT}/out"
 
 # A base whose CI posts only commit statuses: no check run is needed for its head to read green.
 based; echo "${B1}" > "${FX}/base.main"; status_only failure "${B1}"
