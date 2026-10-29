@@ -738,8 +738,8 @@ check "the recheck counts no round: the next --next prints round 2, as the one f
 # Round 2 reviews the head --next pinned, which a builder's merge of the base may have made: a check left
 # on round 1's head would pass a drop that merge brought in. If --next stops printing the check, or
 # names another head, this goes red.
-check "--next's round 2 runs dropped-lines on the new head it pins, ${TEN:0:7}, not round 1's" "yes|no" \
-  "$(has "run \`SWARM_PROJECT=${p} ${SWARM} dropped-lines o/svc 1 ${TEN} main\` and act on its exit" "${o}")|$(has "dropped-lines o/svc 1 ${OLD}" "${o}")"
+check "--next's round 2 runs dropped-lines on the new head it pins, ${TEN:0:7}, not an earlier head" "yes|no" \
+  "$(has "run \`SWARM_PROJECT=${p} ${SWARM} dropped-lines o/svc 1 ${TEN} main\` and act on its exit" "${o}")|$(grep -qF -e "dropped-lines o/svc 1 ${OLD}" -e "dropped-lines o/svc 1 ${NARROW}" <<< "${o}" && echo yes || echo no)"
 
 # --- The wording route run as the brief writes it: the nudge and --recheck commands, taken from the
 # review agents' briefs and run from their panes, in their worktrees. w1's one finding is wording, so it
