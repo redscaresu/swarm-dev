@@ -1821,6 +1821,28 @@ note_lock() {
   return 1
 }
 
+# tell_gone <name> <why> [pane] — refuse a tell to <name>, which has no pane or whose session has ended:
+# `could not reach <name>: <why>`, final, naming where the lead finds its exit. That is by its role in
+# agents.tsv, or by its name when it has no line there: a review agent's is wait --lead's no-review:
+# line, a conductor's is next, which starts a new one or names why not in a `no conductor started:`
+# line, and a story's builder's (a story on the board holds its name) is wait --lead's no-agent: line.
+# Any other agent (an epic or HLD writer, a planner, a skeptic) has no such line: it is started again
+# by the command that started it. Each of those lines waits while herdr lists the name, so with
+# [pane], still open, the refusal says to read and close it first.
+tell_gone() {
+  local role where
+  role="$(awk -F'\t' -v n="$1" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || role=""
+  [[ -n "${role}" ]] || case "$1" in conduct-*) role=conduct ;; review-*) role=review ;; esac
+  case "${role}" in
+    conduct) where="swarm.sh next starts a new conductor, or its no conductor started: line says why not" ;;
+    review) where="swarm.sh wait --lead's no-review: line names its exit" ;;
+    *) if [[ -f "${BOARD}/stories/$1.md" ]]; then where="swarm.sh wait --lead's no-agent: line names its exit"
+       else where="it is no story's builder, review agent or conductor, so no swarm.sh line names its exit: start it again with the command that started it, or tell the user"; fi ;;
+  esac
+  [[ -z "${3:-}" ]] || where="its pane $3 is still open: read it (herdr agent read $1) and close it; after that, ${where}"
+  die "could not reach $1: $2; this refusal is final, so do not tell it again: ${where}"
+}
+
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
 # main logs it as tell:<kind>). A header line comes first, so findings that begin with '-' are never
@@ -1849,6 +1871,9 @@ note_lock() {
 # last reset the story (top_rung_since), or any after, are not sent either: the story is held for the
 # lead with them (top_rung_hold), and the tell fails, naming the round; where a step-up could not run
 # (step_up_story), nothing is held and they are sent as usual.
+# An agent with no pane, or whose session has ended, is refused once as could not reach, naming its
+# exit (tell_gone); a note to a conductor whose session has ended is refused the same way. When herdr
+# cannot list its agents, nothing shows the agent gone, so the tell is refused as one to send again.
 # A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
@@ -1856,7 +1881,7 @@ note_lock() {
 # review agent from review-<slug>'s pane, else the conductor. Either counts the same: rounds, step-ups
 # and holds do not ask who sent the findings.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane line n from who found qpane qfrom qtok born inflight="" inflight_q=""
+  local kind="$2" f="$3" list name msg state since inbox rc pane line n from who found qpane qfrom qtok born inflight="" inflight_q=""
   # Unset once read, so no agent this tell starts (a step-up) inherits it.
   read -r qpane qfrom qtok <<< "${SWARM_TELL_QUEUED:-}"; unset SWARM_TELL_QUEUED
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
@@ -1864,12 +1889,19 @@ tell_agent() {
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
-  pane="$(agent_field "${name}" pane_id)"
+  # A list herdr could not give, or gave with no agents in it (a restart, another socket), is no proof
+  # the agent is gone; both reads below take this one list, so neither can fail on its own.
+  list="$(herdr agent list 2>/dev/null)" || list=""
+  [[ "$(json 'len(d["result"]["agents"])' <<< "${list}" 2>/dev/null)" =~ ^[1-9][0-9]*$ ]] \
+    || die "tell: ${name} was not told: herdr could not list its agents; tell it again"
+  pane="$(list_field "${name}" pane_id <<< "${list}")"
   if [[ -z "${pane}" ]]; then
-    [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
-    die "could not reach ${name}: no agent this project started holds the name; is its pane still open?"
+    [[ -z "$(list_field "${name}" agent_status any <<< "${list}")" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
+    tell_gone "${name}" "no agent this project started holds the name"
   fi
   if [[ "${kind}" == note ]]; then
+    # Before the note lands; note_wake reads the state again after, so a turn begun since is seen.
+    [[ "$(upgrade_state "${name}" "${pane}")" != gone ]] || tell_gone "${name}" "its Claude session has ended (gone)" "${pane}"
     inbox="$(conductor_inbox "${name}").md"; mkdir -p "${inbox%/*}"
     # Built first, then one append: the conductor's mv between the open and a slow write would
     # take the note into a copy it has already read.
@@ -1889,7 +1921,7 @@ tell_agent() {
     busy|herdr:working) tell_queue "$1" "${name}" "${kind}" "${f}" "${pane} ${qfrom:-$(tell_from "$1")}" "${born}" "${qpane}"; return ;;
     waiting*|herdr:blocked) rc=0; found="$(pane_clear "${pane}")" || rc=$?
       [[ ${rc} -eq 0 ]] || die "${name} is waiting on $(waiting_for "${state}"), and ${found}; answer it (herdr agent read ${name}), then tell it" ;;
-    gone) die "${name}: its Claude session has ended (gone); there is no one to tell" ;;
+    gone) tell_gone "${name}" "its Claude session has ended (gone)" "${pane}" ;;
     unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;

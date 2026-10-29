@@ -247,6 +247,10 @@ check "with merge = human, the conductor builds stories that share a file but no
   "yes|yes|yes|yes|gone" "$(clash_brief "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 check "the conductor brief's story --strict rule says the same part or the bare file, never the same function or file" "yes|gone" \
   "$(has "touches the same part (by its first word) of a file, or both name the bare file. On a refusal" "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(grep -qF "the same function or file" "${p}/.swarm/briefs/conduct-f.md" && echo old || echo gone)"
+# A could-not-reach tell refusal is final, in the conductor's brief and the lead's /swarm command alike.
+TELL_FINAL="A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its session has ended, and the refusal names who acts on it. List the story under no agent"
+check "the conductor brief and commands/swarm.md say a could-not-reach tell refusal is final: list the story under no agent, never tell it again" "yes|yes" \
+  "$(has "${TELL_FINAL} in your report and never tell it again." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")|$(has "${TELL_FINAL} and never tell it again." "$(tr -s '[:space:]' ' ' < "$(dirname "${SWARM}")/../commands/swarm.md")")"
 # startable_brief <brief> — the startable rule after a merge, after each wait (its inbox pass first) and
 # after the last inbox pass (three times), the last pass's go-back, and no wording that starts only what unblock readied.
 startable_brief() {
@@ -322,7 +326,7 @@ check "with merge = agent, neither the epic's nor the backlog's conductor brief 
 check "with merge = agent, both conductor briefs leave the merge to the review agent and start every startable story after each inbox pass" "yes|yes|yes|yes" \
   "$(has "A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR yourself." "${brief}")|$(has "A story's review agent merges its PR itself, with \`swarm.sh merge\`: never merge a story's PR yourself." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")")|$(merge_note "${brief}" f)|$(merge_note "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" --backlog)"
 check "with merge = agent, a costs: money PR is listed for the user, and a wave with a cleared-on-error close or a give-up starts nothing more" "yes|yes" \
-  "$(has "List each such PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\` or \`(protected path)\`) in your report under Waits on the user." "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
+  "$(has "List each such PR (\`swarm.sh status\` shows it as \`awaiting your merge (costs money)\`, \`(protected path)\` or \`(dropped base lines)\`) in your report under Waits on the user." "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
 check "with merge = agent, the same clash rule and merge-base-in rule" "yes|yes|yes|yes|gone" "$(clash_brief "${brief}")"
 # A merge that turns the base red writes a fix-main story outside every epic, and watch says no fix-main
 # PR opened: if the brief drops the out-of-scope start or the review agent from the builder's reply,
