@@ -142,8 +142,10 @@ def ended(at, slug, trigger, frm, to):
     if any(at <= t and (not nxt or t < nxt) for t in to_lead[slug]):
         return "lead"
     last = build[-1]
+    # A close reads as failed only when gh answered for the story (story_merged is empty otherwise), so
+    # an unknown PR state is never taken for no PR open.
     if later or (last.get("closes", "0") not in ("", "0") and not last.get("close_cause", "").startswith("step-up:")
-                 and not any(r.get("pr_state") == "OPEN" for r in build)):
+                 and last.get("story_merged") and not any(r.get("pr_state") == "OPEN" for r in build)):
         return "failed"
     return "open"
 

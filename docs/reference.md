@@ -2120,7 +2120,7 @@ the build ended. The ending comes from the story's `outcomes` rows, so a PR merg
 another run counts as `merged` with no `merge` line of this run. It is `lead` when the story was
 held or escalated for the lead after the step-up and before its next build started (a `held`,
 `escalated` or `close:impossible` line). It is `failed` when the story was built again or its last
-rung closed with no PR open, and `open` otherwise, including a story with no `outcomes` row yet. A
+rung closed with no PR open (as far as `gh` could tell), and `open` otherwise, including a story with no `outcomes` row yet. A
 window with no step-up prints `none`. A second table then gives, for each rung, how many builds in the window reached it and their
 share of all builds in the window. A build is a story's attempt, and a step-up's new rung is part of
 the same attempt. With `--until`, neither table counts a session or rung that started after it.

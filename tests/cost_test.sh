@@ -142,7 +142,8 @@ check "a builder named split-critic counts under its own role" "| code | 2 | cla
 # second starts (its story line), the second merges, and the first attempt's rung, naming the PR the
 # second merged, does not make it merged. s-e's hold comes after its second story line: the second's. s-g's
 # rung starts before midnight and its step-up line comes after it: merged. s-h's rung closes, its session
-# naming no PR, while its first rung's PR is open: open.
+# naming no PR, while its first rung's PR is open: open. s-i's rung closes where gh did not answer
+# (story_merged empty): open, not failed.
 G="${dir}/rung"; mkdir -p "${G}/projects/p"
 for s in "r1 sonnet 1000000" "r2 opus 1000000" "r3 opus 2000000" "r4 fable 1000000" "r5 sonnet 500000" "r6 opus 1000000" "r10 opus 1000000"; do
   read -r sid model tokens <<< "${s}"   # r7 (s-d's fable rung) and s-e's but r10 have no session log
@@ -170,6 +171,7 @@ ev 2026-10-03T09:00:00Z escalated s-f "ok (attempts 1, 0 PRs)"
 ev 2026-10-03T09:30:00Z story s-f ok
 ev 2026-10-03T10:00:00Z escalate s-f "ok (no-pr: sonnet -> opus)"
 ev 2026-10-03T12:00:00Z escalate s-h "ok (ci-red-2: opus -> fable)"
+ev 2026-10-03T14:00:00Z escalate s-i "ok (no-pr: opus -> fable)"
 ev 2026-10-04T00:03:00Z escalate s-g "ok (stalled: opus -> fable)"
 rows="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' date slug model attempts pr_state story_merged closes close_cause started \
   2026-10-01 s-a sonnet 1 MERGED true 1 step-up:findings-3 '' 2026-10-01 s-a opus 1 MERGED true 1 '' '' \
@@ -181,7 +183,8 @@ rows="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' date slug model attempts p
   2026-10-03 s-f sonnet 1 CLOSED true 1 step-up:no-pr '' 2026-10-03 s-f opus 1 MERGED true 1 '' '' \
   2026-10-03 s-f sonnet 2 MERGED true 1 step-up:no-pr '' 2026-10-03 s-f opus 2 MERGED true 0 '' '' \
   2026-10-03 s-h opus 1 OPEN false 1 step-up:ci-red-2 '' 2026-10-03 s-h fable 1 '' false 1 '' '' \
-  2026-10-03 s-g opus 1 MERGED true 1 step-up:stalled '' 2026-10-03 s-g fable 1 MERGED true 0 '' 2026-10-03T23:58:00Z)"
+  2026-10-03 s-g opus 1 MERGED true 1 step-up:stalled '' 2026-10-03 s-g fable 1 MERGED true 0 '' 2026-10-03T23:58:00Z \
+  2026-10-03 s-i opus 1 '' '' 1 step-up:no-pr '' 2026-10-03 s-i fable 1 '' '' 1 '' '')"
 rungs() { # [until] — the cost section's per-rung block over the fixture, from --since 2026-09-15, as flow_sections runs it
   TZ=UTC SWARM_ROWS="${rows}" python3 "$(dirname "${SWARM}")/lib/flow_report.py" 2026-09-15 "${1:-9999-12-30}" "" "${G}/agents.tsv" "${G}/events.tsv" \
     "${G}/findings.tsv" x "code code-sonnet escalate" "${G}/projects" "${G}/sessions" "" "${G}/own" cost | sed -n '/^### per rung$/,$p'
@@ -195,8 +198,9 @@ same "one row per step-up in the window: its trigger, tokens per rung and outcom
   '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | failed |' \
   '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | lead |' \
   '| s-f | no-pr | sonnet -> opus | - | lead |' '| s-f | no-pr | sonnet -> opus | - | merged |' \
-  '| s-h | ci-red-2 | opus -> fable | - | open |' '| s-g | stalled | opus -> fable | - | merged |' '' \
-  '| rung | builds | share |' '|---|---|---|' '| sonnet | 4 | 40% |' '| opus | 9 | 90% |' '| fable | 6 | 60% |')"
+  '| s-h | ci-red-2 | opus -> fable | - | open |' '| s-i | no-pr | opus -> fable | - | open |' \
+  '| s-g | stalled | opus -> fable | - | merged |' '' \
+  '| rung | builds | share |' '|---|---|---|' '| sonnet | 4 | 36% |' '| opus | 10 | 91% |' '| fable | 7 | 64% |')"
 # shellcheck disable=SC2016 # the $ is the table's, not an expansion
 same "with --until, sessions and rungs after it are left out" "$(rungs 2026-10-01 | grep -F -e '| s-e |' -e '| opus |' -e '| fable |')" \
   "$(printf '%s\n' '| s-e | findings-3 | opus -> fable | opus -, fable - | failed |' '| opus | 4 | 80% |' '| fable | 3 | 60% |')"
