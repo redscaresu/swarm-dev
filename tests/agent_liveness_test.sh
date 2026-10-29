@@ -333,6 +333,31 @@ check "no argument (a token) of the old test run reaches the stalled line" lacks
 printf '%s\n' "${tree[@]:0:7}" "${old[@]//1:35:0/1:29:5}" "${cond[@]}" > "${PS_TREE}"
 check "a builder whose make test started just under 3 x stall_minutes ago is not stalled" works hung_wait
 log "$(tool 46)" "${idle[@]}"
+# A background task the builder's session waits on is work too: past stall_minutes, with no commit,
+# edit or test run, wait --stall (settle, its session busy) finds no stall while the transcript shows
+# a shell launched 60 minutes ago with no end. Once it ends (a <task-notification> with a <status>),
+# or with none launched, the builder stalls. One launched past 3 x stall_minutes (95 minutes) may be
+# a server left running, so it no longer counts.
+launch() { printf '{"type":"user","timestamp":"%s","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"Command running in background with ID: b2"}]},"toolUseResult":{"stdout":"","backgroundTaskId":"b2"}}' "$(ago "$1")"; }
+ended="{\"type\":\"user\",\"timestamp\":\"$(ago 50)\",\"message\":{\"role\":\"user\",\"content\":\"<task-notification><task-id>b2</task-id><status>completed</status></task-notification>\"}}"
+ran
+log "$(launch 60)" "$(tool 46)" "${idle[@]}"
+check "a builder waiting on its own background task is not stalled" works hung_wait
+log "$(launch 60)" "$(tool 46)" "${ended}" "${idle[@]}"
+check "the same builder once the task has ended is stalled, exit 3" stalls hung_wait
+log "$(tool 46)" "${idle[@]}"
+check "the same builder with no background task is stalled, exit 3" stalls hung_wait
+log "$(launch 95)" "$(tool 46)" "${idle[@]}"
+check "a builder whose only sign of life is a background task launched past 3 x stall_minutes ago is stalled" stalls hung_wait
+# wait --stall on a codex builder goes through herdr_wait (no Claude session to read). A build stepped
+# up from Claude to codex keeps its name; its old Claude session's log, still showing the task, is not
+# the codex builder's, so the task is no sign of life and it stalls.
+log "$(launch 60)" "$(tool 46)" "${idle[@]}"
+printf '2026-10-22\tcode\ts-hung\tcodex\tgpt\thigh\t-\n' >> "${H}/.swarm/agents.tsv"
+codex_wait() { HUNG_WAIT=timeout hung_wait; }
+check "on herdr_wait's path (a codex builder) an older Claude session's background task is no sign of life: it stalls" stalls codex_wait
+printf '2026-10-22\tcode\ts-hung\tclaude\topus\thigh\tsess-hung\n' >> "${H}/.swarm/agents.tsv"
+log "$(tool 46)" "${idle[@]}"
 # A busy agent whose pane has not changed for stall_minutes is stuck (exit 4), unless a test suite
 # runs in its pane: s-hung without --stall, and conduct-e1, which agent_stalled never reads.
 quiet() { local out rc; if out="$(swait "$1" 3000)"; then rc=0; else rc=$?; fi; [[ ${rc} == 4 ]] && grep -qE "^stuck: no output for [0-9]+m \($2\)$" <<< "${out}"; }
