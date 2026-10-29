@@ -516,6 +516,76 @@ bpr start lead; ep lead epics/e-lead.md '---\nstatus: active\n---\n'
 guard_opens lead "lead_epics = on, with no ticket"
 printf 'board_dir = board\n' > "${P}/.claude/swarm/config"
 
+# --- The stage gate (stage_gate): an epic that goes active with a stage: v<S> is refused unless the base
+# allows S: the newest v-tag on origin/main at or above the minor before S, or an epic main already has
+# active at S that the PR leaves alone. Whatever lead_epics says; never from the worktree. Each epic here
+# has a ticket (hld: h-ok, which grants epics, or agreed: today), so only its stage can refuse it. A tag
+# goes on origin's main only: open's fetch brings it.
+tag_main() { git -C "${ROOT}/origin.git" -c tag.gpgsign=false tag "$1" main; }
+# staged_line <epic> <S> <tag part> <P> — the start of the refusal, up to its exit.
+staged_line() { echo "board-pr: $1 goes active at stage v$2, above what main allows ($3, below v$4, and no v$2 epic active there); "; }
+STEP="commit it as status: draft: next's stage step sets it active once"
+# staged <name> <case> <file> <stage> [front-matter line] — in a new board PR <name>, <file> (under
+# epics/) at status: active with stage: <stage> and the line (hld: h-ok by default).
+staged() { bpr start "$1"; ep "$1" "epics/$3" "---\nstatus: active\nstage: $4\n${5:-hld: h-ok}\n---\n\n# ${3%.md}\n"; }
+# An untagged base counts as v0.0.0, so v0.1.0, whose minor before is v0.0.0, opens and v0.2.0 does not.
+staged u010 x e-v010.md v0.1.0; guard_opens u010 "stage v0.1.0 on a base with no v-tag"
+staged u020 x e-v020.md v0.2.0
+guard_refused u020 "stage v0.2.0 on a base with no v-tag" "$(staged_line e-v020 0.2.0 "no v<x.y.z> tag found" 0.1.0)${STEP} v0.1.0 is tagged"
+tag_main v0.29.1
+on_main board/epics/s30a.md '---\nstatus: active\nstage: v0.30.0\nhld: h-ok\n---\n\n# s30a\n'
+on_main board/epics/s30b.md '---\nstatus: active\nstage: v0.30.0\nhld: h-ok\n---\n\n# s30b\n'
+on_main board/epics/s31a.md '---\nstatus: draft\nstage: v0.31.0\nhld: h-ok\n---\n\n# s31a\n'
+on_main board/epics/s31b.md '---\nstatus: draft\nstage: v0.31.0\nhld: h-ok\n---\n\n# s31b\n'
+on_main board/epics/s31n.md '---\nstatus: draft\nstage: v0.31.0\n---\n\n# s31n\n'
+git -C "${P}" fetch -q origin
+# The misread: v0.30.0 epics active on main read as leave to set a v0.31.0 epic active, tag v0.29.1.
+MISREAD="$(staged_line s31a 0.31.0 "newest tag v0.29.1" 0.30.0)${STEP} v0.30.0 is tagged"
+staged mis x s31a.md v0.31.0; guard_refused mis "the misread: a v0.31.0 draft set active beside active v0.30.0 epics, tag v0.29.1" "${MISREAD}"
+is "the misread: the whole line" "swarm: ${MISREAD}" "$(cat "${ROOT}/err")"
+printf 'board_dir = board\nlead_epics = on\n' > "${P}/.claude/swarm/config"
+staged misl x s31a.md v0.31.0; guard_refused misl "the misread with lead_epics = on" "${MISREAD}"
+printf 'board_dir = board\n' > "${P}/.claude/swarm/config"
+# An active epic the PR moves to another stage is checked at that stage, so it cannot open the next one early.
+staged rst x s30a.md v0.31.0
+guard_refused rst "an active v0.30.0 epic moved to stage v0.31.0, tag v0.29.1" "$(staged_line s30a 0.31.0 "newest tag v0.29.1" 0.30.0)${STEP} v0.30.0 is tagged"
+# The plan shape: an HLD's plan PR adds its v0.30.0 epics active and its v0.31.0 epics as drafts.
+bpr start plan; ep plan epics/p30a.md '---\nstatus: active\nstage: v0.30.0\nhld: h-ok\n---\n\n# p30a\n'
+ep plan epics/p30b.md '---\nstatus: active\nstage: v0.30.0\nhld: h-ok\n---\n\n# p30b\n'
+ep plan epics/p31a.md '---\nstatus: draft\nstage: v0.31.0\nhld: h-ok\n---\n\n# p31a\n'
+guard_opens plan "the plan shape: v0.30.0 epics active beside v0.31.0 drafts, tag v0.29.1"
+# /epic's agree PR for a v0.31.0 draft under no HLD: its exit is /swarm-dev:epic, as next's stage step
+# never sets it active.
+staged agr x s31n.md v0.31.0 "agreed: ${TODAY}"
+guard_refused agr "an agree PR for a v0.31.0 epic under no HLD, tag v0.29.1" \
+  "$(staged_line s31n 0.31.0 "newest tag v0.29.1" 0.30.0)commit it as status: draft, then run /swarm-dev:epic s31n again once v0.30.0 is tagged"
+bpr start nost; ep nost epics/e-nost.md '---\nstatus: active\nhld: h-ok\n---\n\n# e-nost\n'
+guard_opens nost "an epic with no stage: set active"
+staged bad x e-bad.md v0.31
+guard_refused bad "a malformed stage:" "board-pr: e-bad goes active with stage: v0.31, which is not v<x.y.z>; fix the line, or commit it as status: draft"
+# v1.0.0 has no minor before it: it waits on a tag at or above the last minor main stages (v0.31.0).
+staged v100 x e-v100.md v1.0.0 "agreed: ${TODAY}"
+guard_refused v100 "stage v1.0.0 against tag v0.29.1" \
+  "$(staged_line e-v100 1.0.0 "newest tag v0.29.1" 0.31.0)commit it as status: draft, then run /swarm-dev:epic e-v100 again once v0.31.0 is tagged"
+# codex's interval: the v0.30.0 epics are done and v0.30.0 is not tagged yet.
+on_main board/epics/s30a.md '---\nstatus: done\nstage: v0.30.0\nhld: h-ok\n---\n\n# s30a\n'
+on_main board/epics/s30b.md '---\nstatus: done\nstage: v0.30.0\nhld: h-ok\n---\n\n# s30b\n'
+staged intv x s31a.md v0.31.0; guard_refused intv "codex's interval: no v0.30.0 epic left, tag v0.29.1, a v0.31.0 epic set active" "${MISREAD}"
+# A v0.31.0 epic already active on main lets a second one go active, but not when the same PR changes it.
+on_main board/epics/s31x.md '---\nstatus: active\nstage: v0.31.0\nhld: h-ok\n---\n\n# s31x\n'
+staged sec x s31b.md v0.31.0; guard_opens sec "a second v0.31.0 epic set active beside one active on main"
+bpr start keep; ep keep epics/s31x.md '---\nstatus: active\nstage: v0.31.0\nhld: h-ok\n---\n\n# s31x\n\nEdited.\n'
+guard_opens keep "an active v0.31.0 epic edited with its stage kept, tag v0.29.1"
+staged secd x s31b.md v0.31.0; ep secd epics/s31x.md '---\nstatus: done\nstage: v0.31.0\nhld: h-ok\n---\n\n# s31x\n'
+guard_refused secd "a v0.31.0 epic set active by the PR that sets the one active on main done" \
+  "$(staged_line s31b 0.31.0 "newest tag v0.29.1" 0.30.0)${STEP} v0.30.0 is tagged"
+# next's stage PR: v0.30.0 is tagged, a v0.30.0 epic is still active, and the v0.31.0 drafts go active.
+on_main board/epics/s31x.md '---\nstatus: done\nstage: v0.31.0\nhld: h-ok\n---\n\n# s31x\n'
+on_main board/epics/s30a.md '---\nstatus: active\nstage: v0.30.0\nhld: h-ok\n---\n\n# s30a\n'
+tag_main v0.30.0
+staged stage-v0-31-0 x s31a.md v0.31.0; ep stage-v0-31-0 epics/s31b.md '---\nstatus: active\nstage: v0.31.0\nhld: h-ok\n---\n\n# s31b\n'
+guard_opens stage-v0-31-0 "next's stage PR: tag v0.30.0, a v0.30.0 epic still active, v0.31.0 epics set active"
+
 # --- board_dir = .: the board is its own paths at the root (board_paths), as merge --board has it, so
 # open takes a story and refuses any other file.
 printf 'board_dir = .\n' > "${P}/.claude/swarm/config"
