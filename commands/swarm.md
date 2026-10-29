@@ -122,7 +122,8 @@ Repeat until a step below says stop:
      follow-ups, so you need not keep them in memory.
 2. Do the step:
    - `fix-main <slug>`: `swarm.sh merge` found CI on the base red on a commit it merged, printed
-     `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them.
+     `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them. Or
+     `wait --lead` found the base's head red with no such story, and its run wrote `<slug>` the same way.
      `next` names this step only while `<slug>` is ready and nobody has started it. Merge nothing
      else until `<slug>` merges and the base is green, and never wait on an unrelated PR to fix it.
      If a conductor is still working (`swarm.sh status` lists one with no report), write a note
@@ -358,12 +359,15 @@ Repeat until a step below says stop:
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
-     base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
-     next names first`, do the `fix-main` step for that story at once. With `fix <base> by hand, as no
-     fix-main story covers it yet`, no story covers the red, most often because a merge `swarm.sh merge`
-     did not make caused it: tell the user which checks are red, and merge nothing into that base until
-     it is green. The line goes once
-     the base reads fixed.
+     base is red at that commit, whoever merged it. Merge nothing into that base until it is green.
+     With the exit `build fix-main-<short sha>, which next names first`, do the `fix-main` step for
+     that story at once. With `wait for swarm.sh to write fix-main-<short sha>, which next then names
+     first`, `wait --lead` has started a run that writes the story: start `wait --lead` again, and the
+     line comes back with the `build` exit once the story is there. With `read
+     .swarm/lead/fix-main-<short sha>.log, as no run wrote fix-main-<short sha>, then fix <base> by
+     hand`, two runs failed to write it: read the log, and tell the user which checks are red and why no
+     story was written. With `fix <base> by hand, as no fix-main story covers it yet`, the red's story
+     has left the board: tell the user which checks are red. The line goes once the base reads fixed.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a

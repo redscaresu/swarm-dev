@@ -2603,6 +2603,10 @@ LEAD_BASES="${LEAD_DIR}/bases"        # each base's head and its CI as the last 
 LEAD_BASE_RECHECK=7200                # seconds a base head read green is read again, for a rerun that fails on the same sha
 LEAD_BASE_OF=""                       # "<owner/repo> <base>" per repo this run resolved the base of (lead_base)
 LEAD_BASE=""                          # the base lead_base last resolved
+LEAD_FIXES="${LEAD_DIR}/fixes"        # the fix-main runs main_red_fix started for each red base head, for main_red_lines
+LEAD_FIX_TRIES=2                      # runs main_red_fix starts for a red head before its main-red: line names the lead's check
+LEAD_FIX_LOG_SECONDS=60               # how long a run's reads of the failed runs' logs may take (its SWARM_FIX_MAIN_LOG_SECONDS)
+LEAD_FIX_SECONDS=600                  # how long a run may live before main_red_fix stops it and counts it failed
 # What git refuses in a branch name (a space, a control character, ~ ^ : ? * [ \), as a regex held in a
 # variable, so bash 3.2 and 5 read its backslash alike.
 LEAD_REF_BAD='[[:space:][:cntrl:]~^:?*[\]'
@@ -2950,17 +2954,119 @@ stuck_lines() { :; }
 # base, once per repo, base and sha: each red main events.tsv holds (red_mains: a main-red no main-green has
 # cleared, whoever logged it), then each base head the last heads pass read red (LEAD_BASES, lead_bases). The
 # checks are cut by ci_data. The exit is `build fix-main-<short sha>, which next names first` while that story
-# is on the board, else `fix <base> by hand, as no fix-main story covers it yet`. It reads events.tsv and that
-# file, never gh.
+# is on the board. For a head no main-red covers yet, it is what main_red_fix wrote for it this poll
+# (LEAD_FIXES): `wait for swarm.sh to write fix-main-<short sha>, which next then names first` while a run is
+# going or due, and once every run failed `read .swarm/lead/fix-main-<short sha>.log, as no run wrote
+# fix-main-<short sha>, then fix <base> by hand`. Else (a logged red whose story has left the board) it is
+# `fix <base> by hand, as no fix-main story covers it yet`. It reads events.tsv and those files, never gh.
 main_red_lines() {
-  local sha repo base checks out
+  local sha repo base checks out st
   while read -r sha repo base checks; do
     [[ -n "${base}" ]] || continue
-    out="fix ${base} by hand, as no fix-main story covers it yet"
-    [[ ! -f "${BOARD}/stories/fix-main-${sha:0:7}.md" ]] || out="build fix-main-${sha:0:7}, which next names first"
+    st="$(awk -v k="${repo} ${base} ${sha}" '$1 " " $2 " " $3 == k { print $8; exit }' "${LEAD_FIXES}" 2>/dev/null)" || st=""
+    if [[ -f "${BOARD}/stories/fix-main-${sha:0:7}.md" ]]; then out="build fix-main-${sha:0:7}, which next names first"
+    elif [[ "${st}" == failed ]]; then out="read .swarm/lead/fix-main-${sha:0:7}.log, as no run wrote fix-main-${sha:0:7}, then fix ${base} by hand"
+    elif [[ -n "${st}" ]]; then out="wait for swarm.sh to write fix-main-${sha:0:7}, which next then names first"
+    else out="fix ${base} by hand, as no fix-main story covers it yet"; fi
     echo "main-red: ${sha:0:7} ${repo} ${base} ($(ci_data <<< "${checks}")), exit: ${out}"
   done < <({ red_mains; awk '$4 == "red" { c = ""; for (i = 6; i <= NF; i++) c = c " " $i; print $3 " " $1 " " $2 c }' "${LEAD_BASES}" 2>/dev/null; } \
     | awk '!seen[$1 " " $2 " " $3]++')
+}
+
+# main_red_fix — for each base head the last heads pass read red (LEAD_BASES) that no main-red covers (key_reds
+# live: none logged, or one a main-green has cleared), start `swarm.sh _fix-main <repo> <base> <sha>`
+# (main_red_run), which writes its fix-main story. <repo> is the board's name for the repo (LEAD_REPOS, `.` for
+# the project's own). The run is detached in a session of its own (setsid, as upgrade_detach), pinned to the
+# project (SWARM_PROJECT), its log reads cut to LEAD_FIX_LOG_SECONDS, its output appended to
+# .swarm/lead/fix-main-<short sha>.log, so neither wait --lead returning nor lead_lock stopping it ends it.
+# None starts while a run for that head is alive, while ps shows a `swarm.sh merge` of a PR in that repo (ps
+# shows neither the base nor the project, so any such merge holds it: its own fix_main may log the red), while
+# ps cannot be read, or while this run has not resolved the repo's name. A run that is gone with the red still
+# not logged failed, and a later poll starts the next, up to LEAD_FIX_TRIES a head; one alive past
+# LEAD_FIX_SECONDS is stopped and counts as failed. A run whose log ends `stale:` found the pass's read out of
+# date (main_red_run) and counts as none; no run starts for that head again until a heads pass has rewritten
+# LEAD_BASES since. It writes `<owner/repo> <base> <sha> <at> <runs> <pid> <started> <state>` a head to
+# LEAD_FIXES, for main_red_lines: <at> as LEAD_BASES has it, so a head read red again after it read green
+# starts afresh, <runs> the runs that count, and <state> run, wait, stale or failed (every run failed, or the
+# repo's name is not resolved, which the log says and which counts no run). It reads LEAD_BASES, events.tsv,
+# the logs' last lines and one ps (only when such a head is there), and calls no gh: the run does.
+main_red_fix() {
+  local nwo base sha v at x old runs pid started state name log ps="" got=0 psok=1 now rows
+  rows="$(cat "${LEAD_BASES}" 2>/dev/null)" || rows=""
+  [[ -n "${rows}" ]] || { rm -f "${LEAD_FIXES}"; return 0; }
+  now="$(date +%s)"
+  { : > "${LEAD_FIXES}.new"; } 2>/dev/null || return 0
+  while read -r nwo base sha v at x; do
+    [[ "${v}" == red && "${sha}" =~ ^[0-9a-f]{40}$ ]] || continue
+    ! grep -qxF "${sha}" <<< "$(key_reds "${nwo} ${base}" live)" || continue
+    old="$(awk -v k="${nwo} ${base} ${sha} ${at}" '$1 " " $2 " " $3 " " $4 == k { print $5, $6, $7, $8; exit }' "${LEAD_FIXES}" 2>/dev/null)" || old=""
+    runs=0; pid=-; started=0; state="wait"; [[ -z "${old}" ]] || read -r runs pid started state <<< "${old}"
+    log="${LEAD_DIR}/fix-main-${sha:0:7}.log"
+    if (( got == 0 )); then got=1; ps="$(ps -A -ww -o pid=,command= 2>/dev/null)" || psok=0; fi
+    if (( psok == 1 )) && awk -v p="${pid}" -v s="${sha}" '$1 == p && index($0, "swarm.sh _fix-main ") && index($0, s) { f = 1 } END { exit !f }' <<< "${ps}"; then
+      state=run
+      # Past its time: stop it, its session with it; the next poll counts it failed.
+      (( now - started < LEAD_FIX_SECONDS )) || kill -TERM -- "-${pid}" 2>/dev/null || true
+    elif (( psok == 1 )) && [[ "${state}" == run ]]; then
+      # Gone since the last poll: failed, unless it found the pass's read out of date, which counts as no run.
+      state="wait"; [[ "$(tail -n 1 "${log}" 2>/dev/null)" != "stale: "* ]] || { runs=$((runs - 1)); state=stale; }
+    fi
+    if (( psok == 0 )) || [[ "${state}" == run ]]; then
+      :   # alive, or what is alive is not known: the row stays as it was
+    elif (( runs >= LEAD_FIX_TRIES )); then
+      state=failed
+    elif [[ "${state}" == stale && ! "${LEAD_BASES}" -nt "${log}" ]]; then
+      :   # until a heads pass reads the base again
+    else
+      state="wait"
+      name="$(awk -v r="${nwo}" 'tolower($2) == r && (n == "" || $1 == ".") { n = $1 } END { print n }' <<< "${LEAD_REPOS}")"
+      if [[ -z "${name}" ]]; then
+        # Its story's repo: is unknown. A later pass that resolves the name starts a run; no run is counted.
+        state=failed; x="wait --lead has not resolved which of the board's repos is ${nwo} (no story names it, or gh failed), so it starts no run"
+        grep -qxF "${x}" "${log}" 2>/dev/null || echo "${x}" >> "${log}" 2>/dev/null || true
+      elif ! awk -v u="https://github.com/${nwo}/pull/" \
+          'index($0, "swarm.sh merge") { for (i = 1; i <= NF; i++) if (index(tolower($i), u) == 1) f = 1 } END { exit !f }' <<< "${ps}"; then
+        runs=$((runs + 1)); started="${now}"; state=run
+        echo "run ${runs} of ${LEAD_FIX_TRIES}, $(date -u +%Y-%m-%dT%H:%M:%SZ): swarm.sh _fix-main ${name} ${base} ${sha}" >> "${log}" 2>/dev/null || true
+        SWARM_PROJECT="${PROJECT_DIR}" SWARM_FIX_MAIN_LOG_SECONDS="${LEAD_FIX_LOG_SECONDS}" \
+          nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+          bash "${SWARM_HOME}/bin/swarm.sh" _fix-main "${name}" "${base}" "${sha}" >> "${log}" 2>&1 </dev/null &
+        pid=$!
+      fi
+    fi
+    echo "${nwo} ${base} ${sha} ${at} ${runs} ${pid} ${started} ${state}" >> "${LEAD_FIXES}.new"
+  done <<< "${rows}"
+  mv "${LEAD_FIXES}.new" "${LEAD_FIXES}" 2>/dev/null || true
+}
+
+# main_red_run <repo> <base> <sha> — swarm.sh _fix-main, which main_red_fix starts detached: CI on <base> of
+# <repo> (the board's name for it, `.` for the project's own) is red at <sha>, and no main-red covers it. It
+# resolves the repo's owner/repo (lead_nwo), reads <sha>'s CI again (ci_gate base, within BASE_CI_WAIT) for the
+# red checks and their URLs, and hands them to fix_main with no merge named (MERGE_TARGET empty), which writes
+# fix-main-<short sha> with <repo> as its repo: and logs main-red. First it reads <base>'s head (within
+# BASE_HEAD_WAIT): the pass's read is out of date when the base has moved off <sha>, or <sha>'s CI reads green
+# or pending now, and then it writes nothing and its last line is `stale: <why>`, which main_red_fix counts
+# as no run. It fails, writing nothing, on a bad argument, a repo it cannot resolve, or a head or CI it
+# cannot read.
+main_red_run() {
+  local rc out head
+  [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "_fix-main: '$3' is not a whole commit sha"
+  [[ -n "$2" && ! "$2" =~ ${LEAD_REF_BAD} ]] || die "_fix-main: '$2' is not a branch name"
+  rc=0; lead_nwo "$1" || rc=$?
+  (( rc == 0 )) || die "_fix-main: cannot read the owner/repo of repo $1 ($( (( rc == 2 )) && echo "no clone or no origin" || echo "gh failed"))"
+  head="$(within "${BASE_HEAD_WAIT}" gh api --jq .sha "repos/${LEAD_NWO}/commits/$2" </dev/null 2>/dev/null)" || head=""
+  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || die "_fix-main: cannot read the head of $2; no fix-main story written"
+  [[ "${head}" == "$3" ]] || { echo "stale: $2 is at ${head:0:7} now, not ${3:0:7}; no fix-main story written"; return 0; }
+  rc=0; out="$(within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" base "${LEAD_NWO}" "$3" </dev/null 2>/dev/null)" || rc=$?
+  case ${rc} in
+    1) ;;
+    0) echo "stale: CI on $2 at ${3:0:7} reads green now; no fix-main story written"; return 0 ;;
+    2) echo "stale: CI on $2 at ${3:0:7} reads pending now; no fix-main story written"; return 0 ;;
+    *) die "_fix-main: CI on $2 at ${3:0:7} could not be read (exit ${rc}); no fix-main story written" ;;
+  esac
+  # shellcheck disable=SC2034 # fix_main, in merge.sh, reads both
+  MERGE_TARGET="" FIX_MAIN_REPO="$1"
+  fix_main "${LEAD_NWO}" "$3" "$2" "${out%%$'\n'*}"
 }
 
 # reported_lines — prints nothing yet; the story reported-line fills it.
@@ -3907,7 +4013,8 @@ lead_quiet() { [[ " ${LEAD_QUIET} " == *" ${1%%: *}: "* ]]; }
 
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
 # and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
-# since its last (lead_heads, open_story_prs, lead_bases), run resend_pass off that list, add the .unsent markers' lines
+# since its last (lead_heads, open_story_prs, lead_bases), start a fix-main story's writer for each red base
+# head none covers (main_red_fix), run resend_pass off that list, add the .unsent markers' lines
 # (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, then, after
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
 # `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and save the
@@ -3925,6 +4032,8 @@ lead_wake() {
     # Each base's head and its CI, for main_red_lines, over the repos open_story_prs has just resolved.
     lead_bases > /dev/null
   fi
+  # A fix-main story writer for each red base head none covers, started detached here, never in lead_queue's $(...).
+  main_red_fix
   now="$(lead_queue)"
   # One read budget and one read per pane for resend_pass and prompt_lines. The reads sit in
   # .swarm/lead/reads, emptied at each poll's start and end, never in TMPDIR. lead_lock stops an earlier
@@ -4015,7 +4124,8 @@ lead_lock() {
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
 # every line whose kind is not in LEAD_QUIET. At the timeout (default an hour) it fails with nothing printed. It edits
 # no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,
-# clear_red_main), and nudges no one but to submit an unsent brief (resend_pass).
+# clear_red_main) and, through a detached run, to write a red base head's fix-main story (main_red_fix), and
+# nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"

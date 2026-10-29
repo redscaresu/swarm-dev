@@ -19,6 +19,7 @@ FIX_MAIN_LINE_CHARS=300 # the most of each of those lines, and of its red checks
 # in ci_gate's lines, " (<conclusion>)". A name may hold parentheses of its own ("test (linux)").
 CI_CONCLUSIONS='failure|cancelled|timed_out|action_required|startup_failure|stale|error|skipped|neutral|success'
 FIX_MAIN_LOG_SECONDS=600  # how long fix_main waits for the failed runs to finish and give their logs (SWARM_FIX_MAIN_LOG_SECONDS)
+FIX_MAIN_REPO=.         # the repo: of a fix-main story fix_main writes outside a merge (main_red_run), . for the project's own
 BASE_HEAD_WAIT=30       # how long reconcile's read of a red base's head commit may take (green_mains)
 ANCESTRY_WAIT=30        # how long fix_main's read of which repo the project's clone is may take (fix_ancestry)
 RELEASE_WAIT=600        # how long merge --release waits for the release's tag and GitHub release (SWARM_RELEASE_WAIT)
@@ -1497,9 +1498,12 @@ main_key() { printf '%s %s\n' "$(tr '[:upper:]' '[:lower:]' <<< "$1")" "$2"; }
 # under one that calls them CI output (each cut by ci_data; main-red keeps the whole names), then
 # story: the story that covers the red, which is another one's when its own retired at once. A story
 # it cannot write leaves the red main and fix before it as they were, prints no fix-main: line, and
-# fails, saying so.
+# fails, saying so. With MERGE_TARGET empty (wait --lead's _fix-main run, main_red_run) no merge is
+# named: the story says no swarm.sh merge wrote a fix for the red, and goes in FIX_MAIN_REPO's repo. Under
+# the lock it reads key_reds again: a red another merge or run logged while this one read the logs, and
+# no main-green has cleared, gets no second story or main-red line.
 fix_main() {
-  local repo="$1" sha="$2" base="$3" key names checks runs id out rc fails="" unread="" rname="" nl=$'\n' end fence lock by="" ancestry said
+  local repo="$1" sha="$2" base="$3" key names checks runs id out rc fails="" unread="" rname="" nl=$'\n' end fence lock by="" ancestry said cause
   local none="no FAIL line in the failed runs' logs" item="${BOARD}/stories/${MERGE_TARGET}.md" f="${BOARD}/stories/fix-main-${2:0:7}.md"
   key="$(main_key "${repo}" "${base}")"; end=$((SECONDS + ${SWARM_FIX_MAIN_LOG_SECONDS:-${FIX_MAIN_LOG_SECONDS}}))
   # The whole names go into main-red, for clear_red_main to match; checks is their cut, shown copy.
@@ -1522,6 +1526,12 @@ fix_main() {
   # A fence longer than any run of backticks in what it holds, so no log line can close it.
   fence='```'; while [[ "${checks}${nl}${fails}" == *"${fence}"* ]]; do fence+='`'; done   # loose-match: ok any run of backticks in the text
   [[ ! -f "${item}" ]] || rname="$(fm "${item}" repo)"
+  [[ -n "${MERGE_TARGET}" || "${FIX_MAIN_REPO}" == . ]] || rname="${FIX_MAIN_REPO}"
+  cause="\`swarm.sh merge\` merged ${MERGE_TARGET}, and CI on ${base} at ${sha} is red. Each PR was green
+alone, so this merge and one before it break each other."
+  [[ -n "${MERGE_TARGET}" ]] || cause="CI on ${base} at ${sha} is red, and no \`swarm.sh merge\` wrote a fix-main story for
+it: \`swarm.sh wait --lead\` found it on ${base}'s head. A merge or push made outside swarm.sh, or a check
+that broke with no new commit, does that."
   ignore_fixes || echo "warning: cannot git-ignore fix-main stories in ${PROJECT_DIR}, so the story shows in git status there"
   # The reads retire_fixes' ancestry needs (gh, a fetch) come before the lock, which another run
   # waits on only STATE_LOCK_WAIT seconds.
@@ -1535,6 +1545,8 @@ fix_main() {
   ( state_lock "${lock}"
     # shellcheck disable=SC2064 # the path is fixed now
     trap "rmdir '${lock}' 2>/dev/null || true" EXIT
+  # Logged while this run read the logs (a merge's fix_main, or wait --lead's run): that one wrote the story.
+  ! grep -qxF "${sha}" <<< "$(key_reds "${key}" live)" || { echo "main-red ${sha:0:7} is logged already: no second story or main-red line"; exit 0; }
   [[ -e "${f}" ]] || {
     echo ---; echo "kind: code"; echo "status: ready"; [[ -z "${rname}" ]] || echo "repo: ${rname}"
     echo "depends_on: []"; echo "touches: [.]"; echo ---
@@ -1542,8 +1554,7 @@ fix_main() {
 
 # Fix main, red at ${sha:0:7}
 
-\`swarm.sh merge\` merged ${MERGE_TARGET}, and CI on ${base} at ${sha} is red. Each PR was green
-alone, so this merge and one before it break each other. Fix ${base}: merges stay frozen until it
+${cause} Fix ${base}: merges stay frozen until it
 is green. The fix may change whatever turns ${base} green, so its touches are the whole repo (\`.\`).
 
 The failed runs: ${runs}. \`gh run view <id> --repo ${repo} --log-failed\`

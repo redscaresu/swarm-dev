@@ -129,8 +129,8 @@ waits for the next read of the heads. So does one that leaves review and comes b
 finds a story out of review drops its result from that file.
 The lead handles each line at once and starts it again. It keeps what it last saw in
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
-any earlier one, so only one is ever watching. It edits the board only to retire the fix-main story of a red
-base that reads fixed (below).
+any earlier one, so only one is ever watching. It edits the board only to write the fix-main story of a red
+base, through a run of its own, and to retire that story once the base reads fixed (both below).
 
 **A story PR left unmerged, or conflicting with its base, wakes the lead too.** The same heads pass that
 reads the PR heads (on a run's first read, then at most once every `SWARM_LEAD_HEADS_EVERY` seconds) lists
@@ -181,11 +181,34 @@ what the last pass found, and so does a rerun under way on a head that had finis
 prints, with no gh call:
 
 - `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` for each red base, once per
-  commit: each red main that `swarm.sh merge` logged (`main-red` in events.tsv) and no `main-green` has
-  cleared, then each base head the last pass read red. The checks are cut to 300 characters. The exit is
-  `build fix-main-<short sha>, which next names first` while that story is on the board. Otherwise it is
-  `fix <base> by hand, as no fix-main story covers it yet`: a red that no `swarm.sh merge` made has no
-  story yet.
+  commit: each red main logged in events.tsv (`main-red`, by `swarm.sh merge` or by the run below) that no
+  `main-green` has cleared, then each base head the last pass read red. The checks are cut to 300
+  characters. The exit is one of these:
+  - `build fix-main-<short sha>, which next names first` while that story is on the board.
+  - `wait for swarm.sh to write fix-main-<short sha>, which next then names first` while the run below is
+    writing it or waits to start. The line changes, and wakes the lead again, once the story is there.
+  - `read .swarm/lead/fix-main-<short sha>.log, as no run wrote fix-main-<short sha>, then fix <base> by
+    hand` once 2 runs failed. This is the lead's check: the log says why each run failed.
+  - `fix <base> by hand, as no fix-main story covers it yet` for a logged red whose story has left the board.
+
+**A red base head gets its fix-main story from a run of its own.** On each poll, for each base head the last
+pass read red that no `main-red` covers (none logged, or one a `main-green` has cleared), `wait --lead` starts
+`swarm.sh _fix-main <repo> <base> <sha>`. `<repo>` is the board's name for the repo, `.` for the project's
+own. The run is detached in a session of its own and pinned to the project, so it goes on after `wait --lead`
+returns or a new run stops it. Its output goes to `.swarm/lead/fix-main-<short sha>.log`. It reads the base's
+head again (cut off after 30 seconds), then that commit's CI (cut off after 60 seconds) for the red checks
+and their URLs. Then it writes the story as `swarm.sh merge` does (§ Merging), with its log reads cut off
+after 60 seconds, and logs `main-red`. The story says no `swarm.sh merge` wrote a fix for the red, and names
+no merged story. When the base has moved off that commit since the pass, or its CI now reads green or
+pending, the pass's read is out of date: the run writes nothing, and its log's last line starts `stale:`.
+Such a run does not count as a failed one. No run starts for that head again until the next heads pass has
+read the base. No run starts while one for that head is running, or while `ps` shows a `swarm.sh merge` of a
+PR in that repo. `ps` shows neither the merge's base nor its project, so any such merge holds the run back,
+since the merge's own fix may log the red. Any other run that ends with no `main-red` logged has failed, and
+the next poll starts another. One still running after 10 minutes is stopped, and counts as failed. After 2
+failed runs no more start. A repo `wait --lead` cannot name (no story names it, or gh failed) gets no run,
+and its line names the lead's check at once; a later pass that names it starts one. What each head's runs
+did is in `.swarm/lead/fixes`.
 
 When a base with a logged red main reads green, the pass clears it as reconcile does (§ Merging): once
 that head shows the red fixed, it logs `main-green` and retires the red's fix-main story if nobody has
@@ -3135,7 +3158,11 @@ commits in the project's clone, and only when the repo is that clone's origin. B
 lock below, it asks gh which repo the clone is and fetches the base if a red's commit is missing. A red in
 another repo, a red whose commit the clone lacks, and two reds where neither descends from the
 other retire nothing. At worst one story too many stays on the board, and no fix is lost. One merge at a time per
-repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`. Merge then prints
+repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`. Under that lock it reads events.tsv
+again first: a red that another merge, or `wait --lead`'s run (§ The lead), logged in the meantime and no
+`main-green` has cleared gets no second story and no second `main-red`. That run writes the same story for
+a red base that no merge reported, in the repo the board names, saying so in place of the merged story's
+name. Merge then prints
 `fix-main: <checks> on <short sha>` with the same lines, then `story:` and the story that covers the
 red. When its own story retired at once, that is the newer red's story, and `next` and a clearing
 green treat the newer red as the base's red. When another merge's run retired it since, the line is
