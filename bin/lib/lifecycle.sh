@@ -3051,7 +3051,7 @@ main_red_fix() {
 main_red_run() {
   local rc out head
   [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "_fix-main: '$3' is not a whole commit sha"
-  [[ -n "$2" && ! "$2" =~ ${LEAD_REF_BAD} ]] || die "_fix-main: '$2' is not a branch name"
+  [[ -n "$2" && ! "$2" =~ ${LEAD_REF_BAD} ]] || die "_fix-main: '$2' is not a branch name"   # loose-match: ok LEAD_REF_BAD is a regex on purpose
   rc=0; lead_nwo "$1" || rc=$?
   (( rc == 0 )) || die "_fix-main: cannot read the owner/repo of repo $1 ($( (( rc == 2 )) && echo "no clone or no origin" || echo "gh failed"))"
   head="$(within "${BASE_HEAD_WAIT}" gh api --jq .sha "repos/${LEAD_NWO}/commits/$2" </dev/null 2>/dev/null)" || head=""
