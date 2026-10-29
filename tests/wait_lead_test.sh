@@ -542,6 +542,15 @@ check "a green base head prints no main-red: line" test "$(out)|$(rc)" == "|1"
 again; checks failure "${B2}"; lead 0
 check "a head read green that a rerun turns red prints main-red: on the next poll" test "$(out)|$(rc)" == "$(red_line "${B2}" main)|0"
 
+# A green head whose rerun is still running when the 2-hour recheck window ends: the rerun is read until it
+# concludes. The window's end is the line's epoch set back, in the file the pass wrote.
+based; echo "${B1}" > "${FX}/base.main"; checks success "${B1}"; lead 0
+again; checks pending "${B1}"; lead 0
+sed -i '' -E 's/ [0-9]+$/ 1/' "${P}/.swarm/lead/bases"
+again; checks failure "${B1}"; lead 0
+check "a rerun under way on a green head is read past the recheck window: its red prints main-red:" \
+  test "$(out)|$(rc)" == "$(red_line "${B1}" main)|0"
+
 # A red main a merge logged (fix_main's main-red line and story): the exit follows the story, a later red
 # head on the base adds no line, and once the base's head goes green, with no main-green written by anyone
 # else, the read clears it.
@@ -596,6 +605,13 @@ check "and reads neither the default branch nor main" bash -c "! grep -qE 'defau
 based "base_branches = dev main"; echo trunk > "${FX}/default"; echo "${B1}" > "${FX}/base.main"; checks failure "${B1}"
 lead 0
 check "with no dev on GitHub, it reads main, the next base_branches entry" test "$(out)|$(rc)" == "$(red_line "${B1}" main)|0"
+
+# The configured base changes to one GitHub lacks: the repo's lines stand, and the branch it had is not read,
+# so a red there now is no alert.
+based "base_branches = dev"; echo "${B1}" > "${FX}/base.dev"; checks success "${B1}"; lead 0
+again; echo 'base_branches = main' > "${P}/.claude/swarm/config"; checks failure "${B1}"; lead 0
+check "a base it cannot tell is not read on the branch it had: a red there now prints nothing" test "$(out)|$(rc)" == "|1"
+check "and that branch's head was read once, in the run that had it as the base" test "$(grep -c 'commits/dev' "${ROOT}/gh.log")" == 1
 
 # Reads that keep failing warn once on stderr, at SWARM_LEAD_PRS_WARN_AFTER heads passes in a row.
 based; lead 0   # main has no head on GitHub: the head read fails

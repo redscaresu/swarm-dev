@@ -176,10 +176,11 @@ seconds) and that commit's CI (cut off after 60 seconds), and writes what it fou
 The CI is green when every check run and commit status passed, with at least one of either: a base may post
 only statuses. A head whose CI is pending, has no check run or status yet or could not be read is read again on
 the next pass, and so is a red one. A green head is read again for 2 hours, so a rerun that fails on the
-same commit still counts. After that it is read again only once the base moves. A read that fails keeps
+same commit still counts. After that it is read again only once the base moves, unless a rerun was seen
+under way: that is read until it concludes, however long the head has stood. A read that fails keeps
 what the last pass found, even once the base has moved on to a head whose CI it could not read. So does a
-repo gh could not name, a base it could not tell, and a rerun under way on a head that had finished. Each
-poll then prints, with no gh call:
+repo gh could not name, a base it could not tell (nothing reads the branch it had, which may be the base no
+longer), and a rerun under way on a red head. Each poll then prints, with no gh call:
 
 - `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base: the red
   main that `swarm.sh merge` logged there (`main-red` in events.tsv) and no `main-green` has cleared, else

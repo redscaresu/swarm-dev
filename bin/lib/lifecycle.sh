@@ -2725,13 +2725,15 @@ lead_base() {
 # red; past that a green head's CI is read again only once the base moves. A red head read red again keeps its
 # line as first read, so a check that finishes later does not change the line and wake the lead twice. A head
 # that cannot be read, a head whose CI cannot be read (the line's own head or a new one: a failed read replaces
-# nothing), a base not resolved, a repo not resolved (every line no read this pass replaced stays), and a green
-# or red head whose CI now reads pending (a rerun under way) keep the line they had; each failed read counts
+# nothing), a base not resolved (its repo's lines stand, with no read of the base they name, which may be one no
+# longer), a repo not resolved (every line no read this pass replaced stays), and a red head whose CI now reads
+# pending (a rerun under way) keep the line they had; a green head whose CI reads pending is written pending, so
+# it is read again every pass, past LEAD_BASE_RECHECK too, until the rerun concludes. Each failed read counts
 # towards a warning (lead_base_failed). On a green head of a base red_mains holds, it runs
 # clear_red_main, which logs main-green and retires that base's unstarted fix-main stories once ci_gate fixed
 # shows the red fixed. It prints nothing on stdout.
 lead_bases() {
-  local name nwo base todo="" reds old x sha v at head out rc nv checks line now lost=""
+  local name nwo base todo="" reds old x sha v at head out rc nv checks line now lost="" unresolved=""
   now="$(date +%s)"; reds="$(red_mains)"
   while read -r name; do
     [[ -n "${name}" ]] || continue
@@ -2740,7 +2742,8 @@ lead_bases() {
     nwo="$(tr '[:upper:]' '[:lower:]' <<< "${LEAD_NWO}")"
     if lead_base "${nwo}"; then todo+="${nwo} ${LEAD_BASE}"$'\n'; lead_base_read "${nwo}"
     else
-      todo+="$(awk -v r="${nwo}" '$1 == r { print $1, $2 }' "${LEAD_BASES}" 2>/dev/null)"$'\n'
+      # Its lines stand as last read: the base they name may be one no longer, so nothing reads it.
+      unresolved+="${nwo} "
       lead_base_failed "${nwo}" "tell the base of ${nwo}"
     fi
   done < <({ echo .; awk 'NF { print $1 }' <<< "${LEAD_REPOS}"; } | sort -u)
@@ -2763,8 +2766,10 @@ lead_bases() {
       rc=0; out="$(within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" base "${nwo}" "${head}" </dev/null 2>/dev/null)" || rc=$?
       case ${rc} in 0) nv=green ;; 1) nv=red ;; 2) nv=pending ;; *) nv=unread ;; esac
       if [[ "${nv}" == unread ]]; then lead_base_failed "${nwo} ${base}" "read CI on ${base} of ${nwo}"; else lead_base_read "${nwo} ${base}"; fi
-      # A CI read that fails, on the line's head or a new one, replaces nothing: the line stands as last read.
-      if [[ "${nv}" == unread && -n "${sha}" ]] || [[ ( "${v}" == green || "${v}" == red ) && "${nv}" == pending ]] || [[ "${v}" == red && "${nv}" == red ]]; then
+      # A CI read that fails, on the line's head or a new one, replaces nothing: the line stands as last read. A red
+      # head whose rerun is under way keeps its line too, so main-red: stands until the rerun concludes. A green one
+      # is written pending, so it is read again every pass, past LEAD_BASE_RECHECK too, until the rerun concludes.
+      if [[ "${nv}" == unread && -n "${sha}" ]] || [[ "${v}" == red && ( "${nv}" == pending || "${nv}" == red ) ]]; then
         line="${old}"
       else
         [[ "${nv}" == "${v}" ]] || at="${now}"
@@ -2779,10 +2784,12 @@ lead_bases() {
       clear_red_main "${nwo} ${base}" "${head}" "CI on ${base} is green at ${head:0:7}" </dev/null >/dev/null 2>&1 || true
     fi
   done < <(awk 'NF == 2 && !seen[$0]++' <<< "${todo}")
-  # FILENAME, not FNR == NR: the new file may be empty.
-  [[ -z "${lost}" ]] || out="$(awk 'FILENAME == ARGV[1] { got[$1 " " $2] = 1; next } !(($1 " " $2) in got)' \
+  # The lines no read this pass replaced: every one when a repo could not be named (which lines are its is
+  # unknown), else those of each repo whose base could not be told. FILENAME, not FNR == NR: the new file may be empty.
+  out=""; [[ -z "${lost}${unresolved}" ]] || out="$(awk -v lost="${lost}" -v keep="${unresolved}" \
+    'FILENAME == ARGV[1] { got[$1 " " $2] = 1; next } !(($1 " " $2) in got) && (lost != "" || index(" " keep, " " $1 " "))' \
     "${LEAD_BASES}.new" "${LEAD_BASES}" 2>/dev/null)" || out=""
-  [[ -z "${lost}" || -z "${out}" ]] || echo "${out}" >> "${LEAD_BASES}.new"
+  [[ -z "${out}" ]] || echo "${out}" >> "${LEAD_BASES}.new"
   mv "${LEAD_BASES}.new" "${LEAD_BASES}"
 }
 
