@@ -905,6 +905,7 @@ codex_fallback() {
   (free_agent_name "${name}") 2> "${err}" || { holder="$(tail -1 "${err}")"; fallback_skip "$5" "fallback did not start: ${holder#swarm: }"; }
   { mkdir -p "${out%/*}" "${brief%/*}" && rm -f "${out}" && fallback_brief "$1" "$2" "${out}" > "${brief}"; } 2> "${err}" \
     || fallback_skip "$5" "fallback did not start: could not write its brief ${brief}: $(tail -1 "${err}")"
+  [[ ! -s "${err}" ]] || cat "${err}" >&2   # a brief written with a warning (project_rules: no rules.md)
   # A tab of its own, fallback-<story>: a usage limit hits every builder at once, and fallbacks
   # sharing one tab record would race on it.
   (start_agent "${full}" "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
@@ -969,7 +970,8 @@ fallback_close() {
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the
 # branch's diff against origin/<base> when codex had none), read-only, and its findings written to
-# <findings file> in the form codex prints them; review_checklist, with SWARM_STORY's story when set.
+# <findings file> in the form codex prints them; review_checklist, with SWARM_STORY's story when set,
+# then project_rules, as the review agent's brief carries them.
 fallback_brief() {
   # shellcheck disable=SC2016 # the $(...) is for the agent to run
   local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.'
@@ -980,6 +982,8 @@ here, and never merge, by any route. The one file you write is $3.
 ${2:-${diff}}
 
 $(review_checklist "${SWARM_STORY:+${BOARD}/stories/${SWARM_STORY}.md}")
+
+$(project_rules)
 
 You have no Edit, Write or NotebookEdit tool. When done, write your findings with Bash to $3.tmp,
 then mv it to $3 (codex-review waits until that exists): each finding as codex prints one, most severe first, \`- [P<0-3>] <title> — <file>:<line>\` with a line
