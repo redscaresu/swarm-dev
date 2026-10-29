@@ -995,7 +995,7 @@ rm -rf "${P}/docs/hld" "${P}/docs/epics"
 # dropped-lines cannot check (git below 2.36): held, saying why, and recorded.
 fresh; pr_head "${DROP}"; merge PATH="${ROOT}/oldgit:${ROOT}/bin:${PATH}" "${URL}"
 refused "dropped lines unchecked: git 2.35" \
-  "merge: held: s (dropped base lines unchecked: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL}'s merges reads: update git); the user checks the PR's merges by hand and merges it, or runs swarm.sh merge again"
+  "merge: held: s (dropped base lines unchecked: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL}'s merges reads: update git); the user checks the merge by hand and merges it, or runs swarm.sh merge again"
 is "dropped lines unchecked: git 2.35: recorded" \
   "${URL} ${DROP} dropped base lines unchecked: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL}'s merges reads: update git" "$(prot)"
 # gh failing on the PR's commits: held unchecked, saying so, with no fetch.

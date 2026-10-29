@@ -2828,7 +2828,7 @@ its pinned `gh pr merge` refuses that head; otherwise the PR is held, unchecked.
 line: `held: <slug> (dropped base lines: <n>, first <file>: <text>); the builder restores them in a
 commit of its own, or the user reads the PR's answer and merges by hand`. When the check cannot run, it
 holds the PR too and says why: `held: <slug> (dropped base lines unchecked: <why>); the user checks the
-PR's merges by hand and merges it, or runs swarm.sh merge again`. That covers a gh or fetch error,
+merge by hand and merges it, or runs swarm.sh merge again`. That covers a gh or fetch error,
 git below 2.36, a merge the scan cannot read (an octopus, or a stacked build's merge of its parent
 branch), and a PR with 250 or more commits, the most GitHub lists. A passing error clears on the next
 `swarm.sh merge`. When the PR's head moved on GitHub meanwhile (`refs/pull/<n>/head` is another commit,

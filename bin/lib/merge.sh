@@ -861,7 +861,7 @@ dropped_hold() {
     [[ ${rc} -ne 1 ]] || why="dropped-lines exited 1 with no dropped line: ${why}"
   fi
   dropped_note "dropped base lines unchecked: ${why}"
-  merge_fail "held: ${MERGE_TARGET} (dropped base lines unchecked: ${why}); the user checks the PR's merges by hand and merges it, or runs swarm.sh merge again"
+  merge_fail "held: ${MERGE_TARGET} (dropped base lines unchecked: ${why}); the user checks the merge by hand and merges it, or runs swarm.sh merge again"
 }
 
 # dropped_note [what] — dropped_hold's record of its verdict, on the story route only (merge_pr's f set):
