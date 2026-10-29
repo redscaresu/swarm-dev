@@ -689,10 +689,10 @@ so a new project can start a `v0.1.0` epic. A `v<x>.0.0` stage needs a tag at or
 `v<x-1>.y.z` stage on the base's board. An epic with no `stage:` is not checked, and one whose
 `stage:` is not `v<x.y.z>` is refused. `board-pr open` and `merge --board` check whatever
 `lead_epics` says; `merge` reads a story PR's epics only with `lead_epics` off, as it does for the
-ticket. A failed fetch refuses too. The refusal names the epic, its stage, the newest tag and the
+ticket. A fetch that fails refuses too, and so does one `merge` cuts off after `BASE_MOVED_WAIT`. The refusal names the epic, its stage, the newest tag and the
 tag it waits for. To go on, commit the epic as `status: draft`. Under an HLD that grants `epics`,
-`next`'s stage step sets it active once that tag exists; otherwise run `/swarm-dev:epic <slug>`
-again once it does.
+`next`'s stage step sets it active once that tag exists, unless its stage is a `v<x>.0.0`. For that
+stage, or with no such HLD, run `/swarm-dev:epic <slug>` again once the tag exists.
 
 **Stopping and resuming.** The epic is a file, so nothing is lost if you stop: run `/epic` on its
 own (or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress

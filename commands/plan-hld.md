@@ -129,8 +129,8 @@ draft`, and ask before `board-pr open`: each draft is then agreed by the user th
 <slug>`, and nothing plans it until then. Whatever the grant says, write `status: draft` for an epic
 whose `stage:` the base does not allow yet: the newest `v<x.y.z>` tag on `origin/<base>` is below
 the minor before its stage (`v0.30.0` for a `v0.31.0` epic), and no epic of that stage is `active`
-there. `board-pr open` refuses it `active`, and `next`'s stage step sets it active once that tag
-exists.
+there. `board-pr open` refuses it `active`. Under the `epics` grant, `next`'s stage step sets it
+active once that tag exists, unless its stage is a `v<x>.0.0`: that draft goes through `/epic`.
 
 Write in `<wt>`, never the main checkout. Write one `docs/epics/<slug>.md` per epic. An epic file
 there that already carries `hld: $1` is this plan's own, from the run you resume: overwrite it, and

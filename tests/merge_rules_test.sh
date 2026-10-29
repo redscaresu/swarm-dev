@@ -959,6 +959,15 @@ misread; merge --board "${URL}"
 refused "--board, a staged epic set active, origin unreachable" "--board: cannot fetch origin/main (fatal: "
 check "--board, a staged epic set active, origin unreachable: says what is unknown" \
   said "), so whether ${URL} sets an epic active above the stage main allows is unknown"
+# The fetch stops after BASE_MOVED_WAIT: an origin that never answers (ssh here, its command a sleep)
+# refuses within it, saying the fetch timed out. GIT_SSH_VARIANT skips git's ssh -G probe, which would
+# be the sleep itself; git starts the real ssh in the moment the KILL takes to reach it, and that one
+# would outlive the test.
+git -C "${P}" remote set-url origin "ssh://stall.invalid/x.git"
+# shellcheck disable=SC2119 # no config line
+misread; t0=${SECONDS}; merge GIT_SSH_VARIANT=simple "GIT_SSH_COMMAND=sleep 60; :" SWARM_BASE_MOVED_WAIT=5 --board "${URL}"
+refused "--board, a staged epic set active, origin's fetch hanging" "--board: cannot fetch origin/main (the fetch timed out after 5s)"
+check "--board, a staged epic set active, origin's fetch hanging: stops within 40 s" test $((SECONDS - t0)) -lt 40
 git -C "${P}" remote set-url origin "${ROOT}/origin.git"; git -C "${P}" fetch -q origin "+refs/heads/main:refs/remotes/origin/main"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true

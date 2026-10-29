@@ -231,14 +231,17 @@ pr_contents() {
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
 # epic would read as deleted. merge_read from <path> is merge_from's answer. merge_read ref fetches the
 # base into the project's clone, with the tags on it (git follows them), and prints origin/<base>;
-# stage_gate asks it once a merge, and only for an epic going active with a stage:. A failed fetch
-# prints git's reason (its first line) and fails 2.
+# stage_gate asks it once a merge, and only for an epic going active with a stage:. The fetch stops
+# after BASE_MOVED_WAIT, as the contents reads do, and never prompts for a credential. A failed fetch
+# prints git's reason (its first line), a cut-off one says it timed out, and either fails 2.
 merge_read() {
-  local ref="${head}" gone err rc=0
+  local ref="${head}" gone err lim rc=0
   [[ "$1" != from ]] || { merge_from "$2"; return; }
   if [[ "$1" == ref ]]; then
-    err="$(git -C "${PROJECT_DIR}" fetch -q origin "+refs/heads/${base}:refs/remotes/origin/${base}" 2>&1)" \
-      || { err="${err%%$'\n'*}"; echo "cannot fetch origin/${base} (${err:-git fetch failed})"; return 2; }
+    lim="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
+    err="$(within "${lim}" env GIT_TERMINAL_PROMPT=0 git -C "${PROJECT_DIR}" fetch -q origin "+refs/heads/${base}:refs/remotes/origin/${base}" </dev/null 2>&1)" || rc=$?
+    [[ ${rc} -ne 142 ]] || { echo "cannot fetch origin/${base} (the fetch timed out after ${lim}s)"; return 2; }
+    [[ ${rc} -eq 0 ]] || { err="${err%%$'\n'*}"; echo "cannot fetch origin/${base} (${err:-git fetch failed})"; return 2; }
     echo "origin/${base}"; return 0
   fi
   [[ "$1" == head ]] || ref="${base}"
