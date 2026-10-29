@@ -205,26 +205,39 @@ dropped_lines_cmd() {
 }
 # dropped_lines_rule <PR URL> <head> <base> <findings file> — the review agent's check, before it reads
 # the diff, that the PR's own merges dropped no base line, each round on that round's head (round 1's is
-# <head>; review_next prints the command on its own). Exit 1's lines are a finding to fix that round,
-# logged as finding_rule says with the kind dropped-lines; exit 2 (cannot check) goes to the builder as a
-# nudge and stops the round with no pass, the line under <findings file>'s head: line.
+# <head>; review_next prints the command on its own), run in the background: its gh read, fetch and git
+# calls can outlast a foreground Bash call. dropped_lines.py scores each merge, never the head, so a
+# restoring commit leaves the same lines printed: a printed line whose text the head's file has again is
+# fixed. Each other line of an exit 1 is a finding to fix that round, restored by the builder in a commit
+# of its own and logged as finding_rule says with the kind dropped-lines. A run killed or ending other
+# than 0 or 1 is an exit 2 (cannot check), run once more; a second goes to the builder as a nudge and
+# stops the round with no pass, the line under <findings file>'s head: line.
 dropped_lines_rule() {
   local sw
   sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
   cat <<EOF
 Before you read the diff, check that the PR's own merges dropped no line of the base: run
 \`$(dropped_lines_cmd "$1" "$2" "$3")\` on this first round, and after each
-\`review-agent --next\` the command it prints, on the head it names. Exit 0: nothing was dropped.
+\`review-agent --next\` the command it prints, on the head it names. Run it in the background (Bash
+run_in_background) and wait for it to exit: its reads of GitHub and git can outlast a foreground Bash
+call. A run that is killed, or that exits with anything but 0 or 1, counts as exit 2.
+Exit 0: nothing was dropped.
 Exit 1: each line it printed (\`<sha7> <file>: <text>\`) is a base line one of the PR's own merge
-commits dropped, a regression this PR brings in. It is a finding to fix this round, whatever else
-the round finds and whatever its round: list it under \`## Findings\`, from conductor, and send it to
-the builder with the round's findings. Once its fix has landed, log it as below:
+commits dropped. The check reads each merge, never the head, so it prints a line again after the
+builder has put it back. Check each line against the round's head with
+\`git show <the round's head>:<file> | grep -cF -- '<text>'\`: a count above 0 means the line is back,
+so it is fixed. Each line not back is a regression this PR brings in, and a finding to fix this round,
+whatever else the round finds and whatever its round: list it under \`## Findings\`, from conductor,
+and send it to the builder with the round's findings, telling it to restore the line in a commit of
+its own (never by rewriting the merge). Once a later round finds it back, log it as below:
 \`${sw} log-finding --reviewer conductor --round <n> dropped-lines $1 "<the first line it printed>"\`.
 When the builder declines it, saying in the PR that the drop is meant, and you accept that, log it
 declined as below, and name the drop and the builder's answer in your reply on the pass, so whoever
-merges sees it first. Exit 2: it could not check, and the round cannot pass. Nudge the builder with
-its last line as the green step says, without waiting on the builder, then stop as above: ${4}
-holds \`head: <the round's head>\`, then \`dropped-lines unchecked: <its last line>\`, then
+merges sees it first.
+Exit 2: it could not check. Run it once more first: a GitHub or fetch error, or a PR head GitHub has
+not updated yet, can clear on a second run. A second exit 2 means the round cannot pass. Nudge the
+builder with its last line as the green step says, without waiting on the builder, then stop as above:
+${4} holds \`head: <the round's head>\`, then \`dropped-lines unchecked: <its last line>\`, then
 \`stopped: dropped-lines could not check <the round's head>\`.
 EOF
 }
@@ -843,7 +856,7 @@ review_next() {
   # The brief pins the head of the round it started: this round's head replaces it there.
   echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
   review_round_line "${round}" "${pr}"
-  echo "Before you read this round's diff, run \`$(dropped_lines_cmd "${pr}" "${REVIEW_HEAD}" "${base}")\` and act on its exit as your brief's dropped-lines check says."
+  echo "Before you read this round's diff, run \`$(dropped_lines_cmd "${pr}" "${REVIEW_HEAD}" "${base}")\` in the background and act on its exit as your brief's dropped-lines check says."
 }
 
 RECHECK_CI_SECONDS=60   # how long --recheck's read of the new head's CI may take (SWARM_RECHECK_CI_SECONDS)

@@ -209,9 +209,23 @@ check "the review agent's log-finding lines name the reviewer, and log codex's f
 dl_cmd="${sw} dropped-lines o/svc 1 ${HEAD_SHA} main"
 dl_at="$(grep -bo -F "${dl_cmd}" <<< "${flat}" | head -1 | cut -d: -f1 || true)"
 codex_at="$(grep -bo -F "Run \`SWARM_STORY=s1 " <<< "${flat}" | head -1 | cut -d: -f1 || true)"
-check "the round-1 brief runs dropped-lines on o/svc 1, its head and main, before its codex paragraph, logs a drop as conductor's dropped-lines, and stops with no pass when it cannot check" \
-  "yes|yes|yes|yes" \
-  "$( [[ -n "${dl_at}" && -n "${codex_at}" && "${dl_at}" -lt "${codex_at}" ]] && echo yes || echo "no, at '${dl_at}', codex at '${codex_at}'")|$(has "log-finding --reviewer conductor --round <n> dropped-lines ${PR} \"<the first line it printed>\"" "${flat}")|$(has "Exit 1: each line it printed (\`<sha7> <file>: <text>\`) is a base line one of the PR's own merge commits dropped, a regression this PR brings in. It is a finding to fix this round, whatever else the round finds" "${flat}")|$(has "Exit 2: it could not check, and the round cannot pass. Nudge the builder with its last line as the green step says, without waiting on the builder, then stop as above:" "${flat}")"
+check "the round-1 brief runs dropped-lines on o/svc 1, its head and main, in the background before its codex paragraph, logs a drop as conductor's dropped-lines, has the builder restore it in a commit of its own, and stops with no pass on a second exit 2" \
+  "yes|yes|yes|yes|yes" \
+  "$( [[ -n "${dl_at}" && -n "${codex_at}" && "${dl_at}" -lt "${codex_at}" ]] && echo yes || echo "no, at '${dl_at}', codex at '${codex_at}'")|$(has "log-finding --reviewer conductor --round <n> dropped-lines ${PR} \"<the first line it printed>\"" "${flat}")|$(has "Each line not back is a regression this PR brings in, and a finding to fix this round, whatever else the round finds and whatever its round: list it under \`## Findings\`, from conductor, and send it to the builder with the round's findings, telling it to restore the line in a commit of its own (never by rewriting the merge)." "${flat}")|$(has "Exit 2: it could not check. Run it once more first: a GitHub or fetch error, or a PR head GitHub has not updated yet, can clear on a second run. A second exit 2 means the round cannot pass. Nudge the builder with its last line as the green step says, without waiting on the builder, then stop as above:" "${flat}")|$(has "Run it in the background (Bash run_in_background) and wait for it to exit: its reads of GitHub and git can outlast a foreground Bash call. A run that is killed, or that exits with anything but 0 or 1, counts as exit 2." "${flat}")"
+# dropped-lines reads each merge, never the head, so it prints a line again after the builder restored
+# it: the brief's git show | grep command is how the agent tells a restored line from one still gone.
+# Run as the brief writes it, on a head with the line back and on one without. If the command stops
+# finding a restored line, or finds one that is gone, the agent loops on a fixed drop or passes a live
+# one, and this goes red.
+back_cmd="$({ grep -o "\`git show <the round's head>:<file> | grep [^\`]*\`" <<< "${flat}" || true; } | head -1 | tr -d '\`')"
+DL="${ROOT}/dl"; "${GIT[@]}" init -q "${DL}"
+printf '%s\n' "keep" "the dropped line" > "${DL}/f.txt"; "${GIT[@]}" -C "${DL}" add f.txt; "${GIT[@]}" -C "${DL}" commit -q -m back
+DL_BACK="$(git -C "${DL}" rev-parse HEAD)"
+printf '%s\n' "keep" > "${DL}/f.txt"; "${GIT[@]}" -C "${DL}" commit -q -am gone
+DL_GONE="$(git -C "${DL}" rev-parse HEAD)"
+back_on() { local rh="<the round's head>" c; c="${back_cmd//"${rh}"/$1}"; c="${c//<file>/f.txt}"; c="${c//<text>/the dropped line}"; (cd "${DL}" && bash -c "${c}" 2>&1 || true); }
+check "the brief's is-it-back command counts the restored line on a head that has it, and none on one that dropped it" "1|0" \
+  "$(back_on "${DL_BACK}")|$(back_on "${DL_GONE}")"
 # The kinds command finding_rule gives, run as written against another log: only kinds with a fixed,
 # escaped or pre-outcome row (never one only declined or filed), and no error with no log at all.
 kinds_cmd="$(grep -B1 '^already lists when it fits' <<< "${brief}" | head -1 | tr -d '`')"
@@ -739,7 +753,7 @@ check "the recheck counts no round: the next --next prints round 2, as the one f
 # on round 1's head would pass a drop that merge brought in. If --next stops printing the check, or
 # names another head, this goes red.
 check "--next's round 2 runs dropped-lines on the new head it pins, ${TEN:0:7}, not an earlier head" "yes|no" \
-  "$(has "run \`SWARM_PROJECT=${p} ${SWARM} dropped-lines o/svc 1 ${TEN} main\` and act on its exit" "${o}")|$(grep -qF -e "dropped-lines o/svc 1 ${OLD}" -e "dropped-lines o/svc 1 ${NARROW}" <<< "${o}" && echo yes || echo no)"
+  "$(has "run \`SWARM_PROJECT=${p} ${SWARM} dropped-lines o/svc 1 ${TEN} main\` in the background and act on its exit" "${o}")|$(grep -qF -e "dropped-lines o/svc 1 ${OLD}" -e "dropped-lines o/svc 1 ${NARROW}" <<< "${o}" && echo yes || echo no)"
 
 # --- The wording route run as the brief writes it: the nudge and --recheck commands, taken from the
 # review agents' briefs and run from their panes, in their worktrees. w1's one finding is wording, so it
