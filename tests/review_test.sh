@@ -351,11 +351,6 @@ fallback() {
 }
 fbrief="$(fallback rv1)"; fbare="$(fallback)"
 CHECKLIST=(
-  "- A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified."
-  "- An audit or test scoped to one file, when the defect class spans many, is a finding."
-  "- A new code path must enforce every rule the existing paths enforce."
-  "- A zero or empty value shown to a person must say what it means."
-  "- A repair path that changes something must say what it did."
   "- An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches."
   "- Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding."
   "- Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed."
@@ -371,6 +366,13 @@ checklist_of() { awk '/^Hold the PR to these as well:$/ { on = 1; next } on && /
 WANT="$(printf '%s\n' "${CHECKLIST[@]}")"
 check "both briefs' checklists are CHECKLIST, line for line: the re-read line is the builder's now, the exception line stays" \
   "${WANT}|${WANT}" "$(checklist_of "${brief}")|$(checklist_of "${fbrief}")"
+# swarm-dev's rules.md: the review agent's brief and the fallback's (with a story and without) carry
+# every line of it, on this project with no brief of its own. If project_rules stops printing it, or
+# review_brief or fallback_brief stops calling project_rules, this goes red.
+RULES="$(dirname "${SWARM}")/../rules.md"
+missing_rules() { local l n=0; while IFS= read -r l; do [[ -z "${l}" ]] || grep -qxF -- "${l}" <<< "$1" || n=$((n + 1)); done < "${RULES}"; echo "${n}"; }
+check "with no brief of the project's, the review agent's and the fallback's briefs carry every line of rules.md" "no brief|0|0|0" \
+  "$([[ -e "${p}/.claude/swarm/brief.md" ]] && echo "a brief" || echo "no brief")|$(missing_rules "${brief}")|$(missing_rules "${fbrief}")|$(missing_rules "${fbare}")"
 SCOPE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
 check "both briefs say, in the same words, a point only a file outside the touches can fix is out of scope and a gap in the PR's own code is a finding" "yes|yes" \
   "$(has "${SCOPE}" "${brief}")|$(has "${SCOPE}" "${fbrief}")"

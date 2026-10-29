@@ -6,7 +6,7 @@
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
 #   swarm.sh wait [--stall] [--idle] <name> [timeout-ms]    block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls; --idle, on a builder's wait (not a conductor's or a review agent's): exit 5 when it ends on anything but idle or done (auth, waiting, gone, stepped up:, stepping up:)
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
-#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (prompt: <agent> (<kind>), exit: <exit>), a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ...), or a ready story with no build past queue_minutes (idle: <story> is ready with no build, exit: <exit>), as next prints them, a reviewed green story PR left unmerged past queue_minutes (unmerged: <slug> <PR URL>, ...), or a story PR that conflicts with its base (conflict: <slug> <PR URL>, ...); print each new one
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (prompt: <agent> (<kind>), exit: <exit>), a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ...), or a ready story with no build past queue_minutes (idle: <story> is ready with no build, exit: <exit>), as next prints them, a reviewed green story PR left unmerged past queue_minutes (unmerged: <slug> <PR URL>, ...), a story PR that conflicts with its base (conflict: <slug> <PR URL>, ...), or any other line § The lead in docs/reference.md lists; print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--drop] [--all]          close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree and branch, but while its PR is open it keeps the PR, branch and worktree and counts nothing, unless --drop, which clears them too and prints each head SHA; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell, watch and a review pane's wait-pr run it themselves
@@ -905,6 +905,7 @@ codex_fallback() {
   (free_agent_name "${name}") 2> "${err}" || { holder="$(tail -1 "${err}")"; fallback_skip "$5" "fallback did not start: ${holder#swarm: }"; }
   { mkdir -p "${out%/*}" "${brief%/*}" && rm -f "${out}" && fallback_brief "$1" "$2" "${out}" > "${brief}"; } 2> "${err}" \
     || fallback_skip "$5" "fallback did not start: could not write its brief ${brief}: $(tail -1 "${err}")"
+  [[ ! -s "${err}" ]] || cat "${err}" >&2   # a brief written with a warning (project_rules: no rules.md)
   # A tab of its own, fallback-<story>: a usage limit hits every builder at once, and fallbacks
   # sharing one tab record would race on it.
   (start_agent "${full}" "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
@@ -969,7 +970,8 @@ fallback_close() {
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the
 # branch's diff against origin/<base> when codex had none), read-only, and its findings written to
-# <findings file> in the form codex prints them; review_checklist, with SWARM_STORY's story when set.
+# <findings file> in the form codex prints them; review_checklist, with SWARM_STORY's story when set,
+# then project_rules, as the review agent's brief carries them.
 fallback_brief() {
   # shellcheck disable=SC2016 # the $(...) is for the agent to run
   local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.'
@@ -980,6 +982,8 @@ here, and never merge, by any route. The one file you write is $3.
 ${2:-${diff}}
 
 $(review_checklist "${SWARM_STORY:+${BOARD}/stories/${SWARM_STORY}.md}")
+
+$(project_rules)
 
 You have no Edit, Write or NotebookEdit tool. When done, write your findings with Bash to $3.tmp,
 then mv it to $3 (codex-review waits until that exists): each finding as codex prints one, most severe first, \`- [P<0-3>] <title> — <file>:<line>\` with a line
