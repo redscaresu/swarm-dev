@@ -546,7 +546,7 @@ check "a head read green that a rerun turns red prints main-red: on the next pol
 # concludes. The window's end is the line's epoch set back, in the file the pass wrote.
 based; echo "${B1}" > "${FX}/base.main"; checks success "${B1}"; lead 0
 again; checks pending "${B1}"; lead 0
-sed -i '' -E 's/ [0-9]+$/ 1/' "${P}/.swarm/lead/bases"
+sed -i.bak -E 's/ [0-9]+$/ 1/' "${P}/.swarm/lead/bases" && rm -f "${P}/.swarm/lead/bases.bak"
 again; checks failure "${B1}"; lead 0
 check "a rerun under way on a green head is read past the recheck window: its red prints main-red:" \
   test "$(out)|$(rc)" == "$(red_line "${B1}" main)|0"
