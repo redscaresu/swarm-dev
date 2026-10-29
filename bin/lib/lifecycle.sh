@@ -2491,8 +2491,8 @@ held_heads() {
 # lead_review_items — waiting_on_user's review items as the lead's queue weighs them: a `kept: <slug>
 # <PR URL>... (not reviewed)` line as it is, and with merge = human (or for a held item, under merge =
 # agent too) `<tag> merge: <slug> <PR URL>...` for a story or epic awaiting a merge, <tag> p for a row
-# of PRs held for a protected path (its ` (protected path)` tag, with or without costs money), 1 for a
-# costs: money one, else -. It reads files only. [holds] goes to waiting_on_user.
+# of PRs held for a protected path or for dropped base lines (its ` (protected path)` or ` (dropped base
+# lines)` tag, with or without costs money), 1 for a costs: money one, else -. It reads files only. [holds] goes to waiting_on_user.
 lead_review_items() {
   local line tag
   # waiting_on_user's last line has no newline.
@@ -2500,7 +2500,8 @@ lead_review_items() {
     # A kept story (a give-up's PR, not reviewed) is the lead's to look at, never one to merge.
     if [[ "${line}" == "  kept: "* ]]; then echo "${line#  }"; continue; fi
     case "${line}" in
-      "  awaiting your merge (protected path): "* | "  awaiting your merge (costs money) (protected path): "*) tag=p ;;
+      "  awaiting your merge (protected path): "* | "  awaiting your merge (costs money) (protected path): "* \
+        | "  awaiting your merge (dropped base lines): "* | "  awaiting your merge (costs money) (dropped base lines): "*) tag=p ;;
       "  awaiting your merge (costs money): "*) tag=1 ;;
       "  awaiting your merge: "*) tag=- ;;
       *) continue ;;
@@ -2514,24 +2515,35 @@ lead_review_items() {
 }
 
 # lead_merge_shown <tag> <merge: line> <holds> — the line as lead_queue prints it, and so as LEAD_SEEN
-# holds it: for a protected-path row (tag p) the line, then ` (held: <why>; exit: the user merges it)`,
-# <why> from each PR's entry in <holds> (protected_holds): `changes <path>[, <path>]...` for the paths, and
-# `its files could not be read: <why>` for each unreadable one, joined by "; ". Any other line as it is.
+# holds it: for a held row (tag p) the line, then ` (held: <why>; exit: <exit>)`, <why> from each PR's
+# entry in <holds> (protected_holds), joined by "; ": `changes <path>[, <path>]...` for the paths and
+# `its files could not be read: <why>` for each unreadable one, with the exit `the user merges it`; a
+# dropped-lines entry (dropped_lines_what) as it is, with the exit `the builder restores them in a commit
+# of its own, or the user reads the PR's answer and merges by hand`, or for an unchecked one `the user
+# checks the merge by hand and merges it, or runs swarm.sh merge again`. A row with more than one exit
+# joins them by "; ". Any other line as it is.
 # LEAD_HEADS keeps the bare line, whose every word after the slug is a PR URL.
 lead_merge_shown() {
-  local u w paths="" why=""
+  local u w e paths="" why="" exits=""
   [[ "$1" == p ]] || { echo "$2"; return 0; }
   for u in ${2#merge: * }; do
     w="$(awk -v u="${u}" '$1 == u { sub(/^[^ ]+ /, ""); print; exit }' <<< "$3")"
+    e="the user merges it"
     case "${w}" in
-      "") ;;
-      "unreadable: "*) w="its files could not be read: ${w#unreadable: }"
-        [[ "; ${why}; " == *"; ${w}; "* ]] || why+="${why:+; }${w}" ;;   # loose-match: ok quoted, a whole "; <why>; " entry
-      *) [[ ", ${paths}, " == *", ${w}, "* ]] || paths+="${paths:+, }${w}" ;;   # loose-match: ok quoted, a whole ", <path>, " entry
+      "") continue ;;
+      "unreadable: "*) w="its files could not be read: ${w#unreadable: }" ;;
+      *) if ! dropped_lines_what "${w}"; then
+           [[ ", ${paths}, " == *", ${w}, "* ]] || paths+="${paths:+, }${w}"   # loose-match: ok quoted, a whole ", <path>, " entry
+           w=""
+         elif [[ "${w}" == "dropped base lines: "* ]]; then
+           e="the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand"
+         else e="the user checks the merge by hand and merges it, or runs swarm.sh merge again"; fi ;;
     esac
+    [[ -z "${w}" || "; ${why}; " == *"; ${w}; "* ]] || why+="${why:+; }${w}"   # loose-match: ok quoted, a whole "; <why>; " entry
+    [[ "; ${exits}; " == *"; ${e}; "* ]] || exits+="${exits:+; }${e}"   # loose-match: ok quoted, a whole "; <exit>; " entry
   done
   [[ -z "${paths}" ]] || why="changes ${paths}${why:+; }${why}"
-  echo "$2 (held: ${why:-a protected path}; exit: the user merges it)"
+  echo "$2 (held: ${why:-a protected path}; exit: ${exits:-the user merges it})"
 }
 
 # lead_unreported <seen> <PR URL>... — each URL that <seen> (space-separated) does not hold, after a space.
@@ -2545,7 +2557,7 @@ lead_unreported() {
 # (heads_green) and write its verdict to LEAD_HEADS, `<verdict> merge: <slug> <PR URL>...`: green when
 # every head is, unread when none is red but one could not be read, red otherwise. wait_lead runs it on a
 # run's first read and then at most once every LEAD_HEADS_EVERY seconds, as does open_story_prs beside it,
-# so the polls between make no gh call. A held PR (costs: money or a protected path) an earlier item already
+# so the polls between make no gh call. A held PR (costs: money, a protected path or dropped base lines) an earlier item already
 # reports is not read again: a later held row loses it (lead_unreported), and a row left with none gets no
 # verdict. It reads the heads of the held PRs first (held_heads), so a hold the builder pushed past is
 # stale before the holds are read. The verdict is keyed by the item's whole line, as lead_queue looks it up. Whether the lead has seen
@@ -2798,7 +2810,8 @@ stop_lines() {
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
 # heads pass's (lead_heads), wakes the lead (lead_head_wakes), with ` (held: changes <path>; exit: the user
-# merges it)` after the URLs of a row held for a protected path (lead_merge_shown), and less any held PR an
+# merges it)` after the URLs of a row held for a protected path, or its dropped-lines why and exit after
+# those of a row held for dropped base lines (lead_merge_shown), and less any held PR an
 # earlier line reported (lead_unreported). It reads the holds once (protected_holds) for its rows and its
 # lines. Then, from no_agent_lines record: `step-up
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
