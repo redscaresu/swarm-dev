@@ -67,6 +67,9 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # named <check> (one that went red) has one of its own that passed, or <base> requires checks and
 # each of those passed (the fix renamed or dropped the job). A check a path filter skipped and
 # <base> does not require has no run that passed, so it does not count.
+# ci_gate base <owner/repo> <sha> — head's rule for a base's head (lead_bases), with no check run needed: a
+# commit status alone counts, as on main. With neither a check run nor a status it is pending (2). When
+# red it prints the red checks alone, not those still running.
 # ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
 # run or commit status finished (queued_line). Exits as head does.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -1910,7 +1913,7 @@ clear_red_main() {
     retire_fixes "$1" - "$3" )
 }
 
-# green_mains — reconcile's, and the only read of a red base's CI that next relies on: clear each red
+# green_mains — reconcile's read of a red base's CI (wait --lead's heads pass, lead_bases, is the other): clear each red
 # main whose base's head shows it fixed (clear_red_main), however it got there: a revert, a re-run,
 # a merge swarm.sh did not make. Each gh read is bounded, and a failed one clears nothing.
 green_mains() {
@@ -1927,7 +1930,7 @@ green_mains() {
 # fix-main story is on the board, buildable (buildable_story: ready, an agent's kind, so not one
 # escalated or held for the lead) with no build; nothing when no red main of any repo and base
 # has such a fix. It reads the board and events.tsv alone, never gh: next_step runs it every dash
-# frame, and reconcile's green_mains is what clears a base gone green.
+# frame, and reconcile's green_mains and wait --lead's heads pass (lead_bases) are what clear a base gone green.
 main_red() {
   local line pick="" sha f
   while read -r line; do
