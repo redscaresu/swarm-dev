@@ -224,6 +224,28 @@ check "when the pid file cannot be made, it stops instead of spinning" returned 
 check "it says it cannot write the pid file" grep -q 'cannot write .*/lead/pid' "${ROOT}/out"
 stop; rm -f "${FX}/ln.fail"
 
+# --- a run's first read with no .swarm/lead/seen: a LEAD_QUIET kind is saved unprinted, any other line prints.
+# fresh holds h; s waits on d, which it shares no file with, so next has an idle: line for s.
+fresh "merge = human"
+item s "kind: code" "status: blocked" "depends_on: [d]" "touches: [a.sh]"
+item d "kind: code" "status: ready" "touches: [b.sh]"
+IDLE="idle: s waits on d but shares no touches part with it and needs nothing from it"
+lead 0
+check "a held: line prints nothing on a run's first read" test -z "$(grep '^held: ' "${ROOT}/out")"
+check "an idle: line prints nothing on a run's first read" test -z "$(grep '^idle: ' "${ROOT}/out")"
+check "with nothing else, that first read wakes no one" test "$(out)|$(rc)" == "|1"
+check "it saves both lines as seen" test "$(grep -cxF -e "held: h (paused)" -e "${IDLE}" "${P}/.swarm/lead/seen")" == 2
+# A started story with a worktree and a builder record, whose builder closed and is not listed: a
+# no-agent: line, which is no LEAD_QUIET kind.
+rm -rf "${P}/.swarm/lead"; again
+item wl-quiet "kind: code" "status: ready" "touches: [c.sh]"
+mkdir -p "${ROOT}/proj-wt/wl-quiet"; printf '2026-10-01\tcode\twl-quiet\tclaude\tsonnet\thigh\ts-wl-quiet\n' > "${P}/.swarm/agents.tsv"
+printf '%s\t%s\twl-quiet\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" story "$(date -u +%Y-%m-%dT%H:%M:%SZ)" close >> "${P}/.swarm/events.tsv"
+lead 0
+check "a no-agent: line prints on a run's first read, alone" test "$(out)|$(rc)" == \
+  "no-agent: wl-quiet, exit: swarm.sh restart wl-quiet, or swarm.sh hold wl-quiet <reason>|0"
+rm -rf "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${ROOT}/proj-wt"
+
 fresh; lead 0900
 check "a timeout with a leading zero is decimal, not octal" test "$(out)|$(rc)" == "|1"
 
@@ -541,6 +563,42 @@ printf 'w:c conduct-e\nw:n n\n' > "${P}/.swarm/state/tab-n"
 check "close on a slug wait --lead saw still closes its pane" grep -qx 'pane close w:n' "${ROOT}/herdr.log"
 check "and leaves wait --lead's seen file as it was" grep -qx 'held: n (cleared-on-error)' "${P}/.swarm/lead/seen"
 rm -f "${P}/.swarm/state/tab-n"
+
+# --- Gone story case (#691): a story file a merge deletes during a poll, between the board's list and its
+# read, prints no sed: or awk: line, and the poll's other lines are as before. The race happens every
+# time: first on PATH, ${ROOT}/gone/<tool> is the real awk or sed, except that the first call naming
+# ${B}/v.md deletes it. Each tool in turn, so the poll's first awk read of v (stories_fm) and its first
+# sed read (fm) each meet a file that is gone.
+mkdir -p "${ROOT}/gone"
+for t in awk sed; do
+  rm -f "${ROOT}/gone"/*
+  printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v "${t}")" "${B}/v.md" > "${ROOT}/gone/${t}"
+  cat >> "${ROOT}/gone/${t}" <<'STUB'
+for a in "$@"; do [ "${a}" != "${V}" ] || rm -f "${V}"; done
+exec "${REAL}" "$@"
+STUB
+  chmod +x "${ROOT}/gone/${t}"
+  fresh; lead 0   # a first run only records what it saw
+  again; held y paused; item v "kind: code" "status: ready"
+  lead PATH="${ROOT}/gone:${ROOT}/bin:${PATH}" 0
+  check "a story gone at the poll's first ${t} read of it: it went" test ! -e "${B}/v.md"
+  check "a story gone at the poll's first ${t} read of it: no sed: or awk: line" test -z "$(grep -E '(sed|awk):' "${ROOT}/out")"
+  check "a story gone at the poll's first ${t} read of it: its other lines as before" test "$(out)|$(rc)" == "held: y (paused)|0"
+done
+# A story made unreadable at that first awk read (stories_fm) is not gone: that poll names it, as
+# stories_fm's check of the board names a file there but unreadable.
+rm -f "${ROOT}/gone"/*
+printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v awk)" "${B}/v.md" > "${ROOT}/gone/awk"
+cat >> "${ROOT}/gone/awk" <<'STUB'
+for a in "$@"; do [ "${a}" != "${V}" ] || chmod 000 "${V}"; done
+exec "${REAL}" "$@"
+STUB
+chmod +x "${ROOT}/gone/awk"
+fresh; lead 0; again; held y paused; item v "kind: code" "status: ready"
+lead PATH="${ROOT}/gone:${ROOT}/bin:${PATH}" 0
+check "a story made unreadable during a poll: that poll names it" grep -qxF "swarm: cannot read ${B}/v.md" "${ROOT}/out"
+chmod 644 "${B}/v.md"
+rm -rf "${ROOT}/gone"
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"
