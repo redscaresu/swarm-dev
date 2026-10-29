@@ -374,6 +374,19 @@ Repeat until a step below says stop:
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
+     base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
+     next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
+     which next names after fix-main-<other>`, two reds have buildable stories: do the `fix-main` step
+     for the other first, and this line's exit turns to `which next names first` once that build is
+     under way. With `wait for fix-main-<short
+     sha>, whose build has started, to merge`, the fix is under way: start nothing for it, and see its PR
+     through. With `fix-main-<short sha> waits on the lead: handle its held: or escalated: line`, act on
+     that line. With `fix-main-<short sha> is not one next builds: check its status and kind`, fix the
+     story's front matter (`status: ready` and an agent's `kind`) so `next` names it. With `fix <base> by
+     hand, as no fix-main story covers it yet`, no story covers the red, most often because the red came
+     from a merge that `swarm.sh merge` did not make: tell the user which checks are red, and merge nothing
+     into that base until it is green. The line goes once the base reads fixed. A
      `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` line means the
      epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
      ready, blocked on an agent's story, or in review with a review agent still to act. For the
