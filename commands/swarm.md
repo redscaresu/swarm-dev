@@ -356,7 +356,18 @@ Repeat until a step below says stop:
      why yourself, as the `kept:` arm above says for a review file with a `stopped:` or `head moved:`
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
-     nudge. The line goes once a review agent starts on the story again or it leaves the board.
+     nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` line means the
+     epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
+     ready, blocked on an agent's story, or in review with a review agent still to act. For the
+     backlog the line is `reported: backlog (...)` and the exit is `swarm.sh conduct --backlog`.
+     Read the report first. A new conductor would stop the same way when the report lists a story
+     under `not started:` whose worktree is still there (a build that died), or when no story or
+     epic has changed since the report was written (the `story <slug>` step's `find ... -newer`
+     check, run against this report). Then start none: handle the first as the `resume <slug>`
+     step says and the second as the `story <slug>` step says. Otherwise run the exit, which starts
+     a fresh conductor and removes the old report. The line goes once that work is done or a new
+     conductor starts.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a

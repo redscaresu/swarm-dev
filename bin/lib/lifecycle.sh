@@ -2850,8 +2850,22 @@ stuck_lines() { :; }
 # main_red_lines — prints nothing yet; the story main-red-line fills it.
 main_red_lines() { :; }
 
-# reported_lines — prints nothing yet; the story reported-line fills it.
-reported_lines() { :; }
+# reported_lines — `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` for each
+# conductor report on disk (conductor_report) while its group still has agent work (agent_work_left), n being
+# how many stories it counts. start_conductor removes an earlier run's report, so the one on disk is the
+# newest run's. conduct-backlog.report.md is the backlog's (-), with exit `swarm.sh conduct --backlog`. Board
+# files and events.tsv only: no herdr or gh call.
+reported_lines() {
+  local f epic group n run
+  for f in "${PROJECT_DIR}"/.swarm/conduct-*.report.md; do
+    [[ -f "${f}" ]] || continue
+    epic="${f##*/conduct-}"; epic="${epic%.report.md}"
+    group="${epic}"; run="${epic}"
+    [[ "${epic}" != backlog ]] || { group=-; run=--backlog; }
+    n="$(agent_work_left "${group}" count)" || continue
+    echo "reported: ${epic} (${n} stories still an agent's), exit: swarm.sh conduct ${run}"
+  done
+}
 
 # sign_blocked_lines — prints nothing yet; the story sign-blocked-line fills it.
 sign_blocked_lines() { :; }
