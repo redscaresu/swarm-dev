@@ -1,24 +1,29 @@
 import re, subprocess, sys
 from collections import Counter
 
-# dropped_lines.py <repo-dir> <base> <head> [<merge sha>...] — the base lines a PR's own merge commits
-# dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges <base>..<head>`,
-# oldest first, and with merge SHAs given scans only those (full SHAs, matched exactly). Each merge
-# must have two parents, one an ancestor of <base> (the base side) and one not (the PR side); the order
-# of the two does not matter. Otherwise it scans nothing: an octopus is not remerged this way, and a
-# merge with neither parent on <base> (a stacked build's merge of its parent branch) is unchecked, not
-# clean. Of each merge's `git show --remerge-diff`, a removed line L of file F prints when L is in the
-# base side's F and the PR side's F has at least as many copies of L as the merge base's F (`git
-# merge-base` of the two parents), so L is new on the base side or still on the PR side: a base line the
-# resolution dropped that the PR's own commits had not removed. Copies are counted, not just found, so a
-# line the PR removed while it keeps another copy (a block's closing `}`) is the PR's removal. Inside
-# a conflict section a line's side is the section's (the first parent's part, then the second's, followed
-# across the diff's hunks), never its text found elsewhere in the base file, so a PR-side line in a conflict never counts as a base
-# line. Conflict markers, the merge base's part of a section and whitespace-only lines never print. It
-# prints `<merge sha7> <file>: <text>` per dropped line, control characters taken off and the text cut
-# to TEXT_CHARS (it reaches events.tsv, state files and panes, as ci_data's lines do), and exits 1; with
-# nothing dropped, it prints nothing and exits 0. When it cannot check, it prints one line on stdout
-# saying why and exits 2, before printing any dropped line.
+# dropped_lines.py <repo-dir> <base> <head> [<merge sha>...] — the base lines a PR's own merge
+# commits dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges
+# <base>..<head>`, oldest first, and with merge SHAs given scans only those (full SHAs, matched
+# exactly). Each merge must have two parents, one an ancestor of <base> (the base side) and one not
+# (the PR side); the order of the two does not matter. Otherwise it scans nothing: an octopus is not
+# remerged this way, and a merge with neither parent on <base> (a stacked build's merge of its parent
+# branch) is unchecked, not clean. Of each merge's `git show --remerge-diff`, a removed line L of
+# file F prints when L is in the base side's F and the merge's F has fewer copies of L than a merge
+# of the two sides keeps: the base side's copies, plus the PR side's, less the merge base's (`git
+# merge-base` of the two parents), and it prints L once per copy the merge's F is short of, so a copy
+# the resolution moved, removed in one place and added back in another, is no second report. So a
+# copy the base added, or one both sides had, that the resolution dropped prints, and a copy the PR's
+# own commits removed does not, whatever other copies of L the file holds. Each side's F is read
+# under that side's own name for it: a file renamed on one side is found through `git diff -M`
+# against the merge. Inside a conflict section a line's side is the section's (the first parent's
+# part, then the second's, followed across the diff's hunks), never its text found elsewhere in the
+# base file, so a PR-side line in a conflict never counts as a base line; a base-side line whose file
+# the base side does not have under any name git finds is unchecked. Conflict markers, the merge
+# base's part of a section and whitespace-only lines never print. It prints `<merge sha7> <file>:
+# <text>` per dropped line, control characters taken off and the text cut to TEXT_CHARS (it reaches
+# events.tsv, state files and panes, as ci_data's lines do), and exits 1; with nothing dropped, it
+# prints nothing and exits 0. When it cannot check, it prints one line on stdout saying why and exits
+# 2, before printing any dropped line.
 
 TEXT_CHARS = 300   # the most of a dropped line's text it prints (merge.sh's FIX_MAIN_LINE_CHARS)
 GIT_SECONDS = 120  # the longest one git call may run
@@ -89,8 +94,9 @@ def unquote(path):
     return bytes(out)
 
 def removed(diff):
-    """(file, section, text) for each line the remerge diff removes, conflict markers left out"""
-    path, header, old, new, section, size = None, False, 0, 0, OUTSIDE, 0
+    """(file, its name in the merge or None, section, text) for each line the remerge diff removes, markers
+    left out; the file is the remerged one's name"""
+    path, after, header, old, new, section, size = None, None, False, 0, 0, OUTSIDE, 0
     for line in diff.split(b"\n"):
         if old > 0 or new > 0:
             tag, text = line[:1], line[1:]
@@ -112,13 +118,16 @@ def removed(diff):
             elif section == SECOND and text[:size + 1] in (b">" * size, b">" * size + b" "):
                 section = OUTSIDE
             if tag == b"-" and not marker and path is not None:
-                yield path, section, text
+                yield path, after, section, text
             continue
         if line.startswith(b"diff --git "):
-            path, header, section = None, True, OUTSIDE
-        elif header and line.startswith(b"--- "):
+            path, after, header, section = None, None, True, OUTSIDE
+        elif header and line.startswith((b"--- ", b"+++ ")):
             name = unquote(line[4:].rstrip(b"\t"))
-            path = name[2:] if name.startswith(b"a/") else None
+            if line.startswith(b"--- "):
+                path = name[2:] if name.startswith(b"a/") else None
+            else:
+                after = name[2:] if name.startswith(b"b/") else None
         elif header or path is not None:
             m = HUNK.match(line)
             if m:
@@ -136,25 +145,60 @@ def scan(m, pr, base_side, ours):
     if rc not in (0, 1):
         stop("cannot find the merge base of merge %s's parents: %s" % (m[:7], err))
     mb = mb.decode().strip() if rc == 0 else None   # 1: no common ancestor, so every line is new
-    files, found = {}, []
+    files, renames, found = {}, {}, []
 
-    def lines(rev, path):
-        """each line of path at rev and its count; none where rev has no such path, a stop when git cannot read it"""
-        if rev is None:
-            return Counter()
+    def read(rev, path):
+        """each line of path at rev and its count; None where rev has no such path, a stop when git cannot read it"""
         if (rev, path) not in files:
             rc, blob, err = git("cat-file", "blob", rev.encode() + b":" + path)
             if rc != 0:
                 gone, listed, _ = git("--literal-pathspecs", "ls-tree", "--name-only", "-z", rev, "--", path)
                 if gone != 0 or listed:
                     stop("cannot read %s at %s for merge %s: %s" % (clean(path), rev[:7], m[:7], err))
-            files[rev, path] = Counter(blob.split(b"\n")) if rc == 0 else Counter()
+            files[rev, path] = Counter(blob.split(b"\n")) if rc == 0 else None
         return files[rev, path]
 
-    for path, section, text in removed(out):
+    def renamed(rev):
+        """each path in m's tree that rev holds under another name (git diff -M), mapped to that name"""
+        if rev not in renames:
+            rc, out, err = git("diff", "-M", "--name-status", "-z", "--no-ext-diff", rev, m, "--")
+            if rc != 0:
+                stop("cannot read the renames between %s and merge %s: %s" % (rev[:7], m[:7], err))
+            f, renames[rev], i = out.split(b"\0"), {}, 0
+            while i + 1 < len(f) and f[i]:
+                if f[i][:1] in (b"R", b"C"):
+                    renames[rev][f[i + 2]] = f[i + 1]
+                    i += 3
+                else:
+                    i += 2
+        return renames[rev]
+
+    def copies(rev, path, after):
+        """the file's lines at rev, read under rev's own name for it: after (its name in m) or what rev
+        renamed to after, else path; None where rev has none of them"""
+        if rev is None:
+            return Counter()
+        got = read(rev, after or path)
+        if got is None and after is not None and after in renamed(rev):
+            got = read(rev, renamed(rev)[after])
+        return got
+
+    short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
+    for path, after, section, text in removed(out):
         if not text.strip() or section not in (OUTSIDE, ours):
             continue
-        if lines(base_side, path)[text] and lines(pr, path)[text] >= lines(mb, path)[text]:
+        base = copies(base_side, path, after)
+        if base is None:
+            if section == ours:   # the base's part of a conflict, so the base side has this file
+                stop("merge %s is unchecked: %s, in a conflict, is not on its base side under that name or"
+                     " a rename git finds" % (m[:7], clean(path)))
+            continue
+        side, root = copies(pr, path, after) or Counter(), copies(mb, path, after) or Counter()
+        kept = (read(m, after) or Counter()) if after is not None else Counter()
+        if (path, text) not in short:
+            short[path, text] = base[text] + side[text] - root[text] - kept[text] if base[text] else 0
+        if short[path, text] > 0:   # a copy the resolution moved is removed here and added back elsewhere
+            short[path, text] -= 1
             found.append("%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS]))
     return found
 

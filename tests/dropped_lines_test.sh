@@ -83,6 +83,13 @@ on "${R}" main; conflict "${R}"
 lines three-pr three-main main-added | merge "${R}" main - >/dev/null
 check "a conflict resolved by keeping both sides drops only its markers: nothing, exit 0" "exit 0" "$(scan "${R}" main pr)"
 
+# The same, with the base file's own '=======' dropped as well: that line prints once, and the
+# conflict's '=======' marker, the same text, is not a second.
+R="$(new_repo markers)"; conflict "${R}"
+M="$(lines three-pr three-main main-added | grep -vx '=======' | merge "${R}" main -)"
+check "a dropped '=======' line prints once; the conflict marker of that text does not" \
+  "${M:0:7} f: ======="$'\n'"exit 1" "$(scan "${R}" main pr)"
+
 # The PR-side drop: the resolution keeps the base's side and drops three-pr.
 R="$(new_repo prside)"; conflict "${R}"
 lines three-main main-added | merge "${R}" main - >/dev/null
@@ -133,6 +140,39 @@ git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true
 printf '%s\n' x '}' y z-main | put "${R}" d
 check "a copy of a duplicated line that the PR removed, which the resolution follows: nothing" \
   "exit 0" "$(scan "${R}" main pr)"
+
+# A file the PR renamed: pr moves f to g and edits three, main edits three in f, and the resolution
+# in g keeps only three-pr. main's lines are read from its f, not from a g it does not have.
+R="$(new_repo rename)"; lines three-main main-added | put "${R}" f; on "${R}" pr
+git -C "${R}" mv f g; lines three-pr | put "${R}" g
+M="$(git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true; lines three-pr | put "${R}" g; git -C "${R}" rev-parse HEAD)"
+check "a file the PR renamed: the base lines the resolution dropped there print under its new name" \
+  "${M:0:7} g: three-main"$'\n'"${M:0:7} g: main-added"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# The PR removed the merge base's one 'return nil'; main added a second copy in a hunk that conflicts,
+# and the resolution drops main's copy. The base side's copy is still owed, though the PR's removal
+# leaves no copy on the PR side.
+R="$(new_repo prremoved)"; printf '%s\n' a 'return nil' b c d e | put "${R}" d; git -C "${R}" branch -f pr main
+printf '%s\n' a 'return nil' b c-main 'return nil' d e | put "${R}" d; on "${R}" pr
+printf '%s\n' a b c-pr d e | put "${R}" d
+M="$(git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true; printf '%s\n' a b c-pr d e | put "${R}" d; git -C "${R}" rev-parse HEAD)"
+check "a base copy of a line the PR removed another copy of, which the resolution dropped, prints" \
+  "${M:0:7} d: c-main"$'\n'"${M:0:7} d: return nil"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# The merge base has '}' twice; the PR removes the first and the resolution drops the second as well,
+# which both parents had.
+R="$(new_repo twobraces)"; printf '%s\n' x '}' y '}' z | put "${R}" d; git -C "${R}" branch -f pr main
+printf '%s\n' x '}' y '}' z-main | put "${R}" d; on "${R}" pr; printf '%s\n' x y '}' z | put "${R}" d
+M="$(git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true; printf '%s\n' x y z-main | put "${R}" d; git -C "${R}" rev-parse HEAD)"
+check "the other copy of a duplicated line the PR removed one of, dropped by the resolution, prints" \
+  "${M:0:7} d: }"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
+# main's conflict section adds a second '}' and the resolution drops it, and moves the base file's own
+# '}' to the top: two removed '}' lines and one added back, with the file short of one copy.
+R="$(new_repo moved)"; lines three-main '}' | put "${R}" f; on "${R}" pr; lines three-pr | put "${R}" f
+M="$({ echo '}'; lines three-pr three-main | grep -vx '}'; } | merge "${R}" main -)"
+check "two copies of a line removed and one added back, the file short of one: it prints once" \
+  "${M:0:7} f: }"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
 # Both sides add file n: the merge base has no n, so main's line, which the resolution drops, is new.
 R="$(new_repo addadd)"; echo n-main | put "${R}" n; on "${R}" pr; echo n-pr | put "${R}" n
