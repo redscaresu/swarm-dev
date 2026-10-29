@@ -1158,14 +1158,16 @@ there still in review whose PR gh cannot read, or whose builder's pane could not
 state until a later reconcile can finish it (§ Merging). When gh can never read that PR (its repo
 deleted or renamed, a bad URL), reconcile says so each time: remove
 `.swarm/board-state/stories/<slug>`, and `.swarm/escalated/<slug>` if it is there, by hand. A file removed only by hand, or never committed, keeps its state.
-Because swarm.sh never edits a tracked story file, an edit to one in the main checkout is a person's,
-such as a **From review** item. On a board in the repo, a builder reads its story from its worktree,
-which starts from `origin/<base>`, so it would never see that edit. `swarm.sh story` therefore refuses
-a story whose file there has uncommitted changes, staged or not, or a local commit that leaves it
-unlike `origin/<base>`'s copy. It refuses before any worktree or branch exists, and names the file. Land the edit with
-`swarm.sh board-pr` (or push it), then start the story again. A main checkout that is only behind
-origin passes. So does a story in a sibling repo or an untracked one (`fix_main`'s), whose builder
-reads the board's own copy.
+A person can still edit a tracked story file in the main checkout, for example to add a **From review**
+item. On a board in the repo, a builder reads its story from its worktree, which starts from
+`origin/<base>`, so it would never see that edit. `swarm.sh story` therefore refuses a story whose file
+there has an edit `origin/<base>` lacks, uncommitted (staged or not) or in a local commit. It refuses
+before any worktree or branch exists, and names the file. Land the edit with `swarm.sh board-pr` (or
+push it), then start the story again. The check merges the main checkout's copy into origin's, from
+their merge base. A main checkout that is only behind origin passes. An edit origin already has
+passes too, even under another commit with later changes. So does an edit to only the keys above,
+which an older swarm.sh wrote into the file. A story in a sibling repo or an untracked one (`fix_main`'s) is not
+checked, since its builder reads the board's own copy.
 
 **Pick the wave.** Only `ready` stories that do not clash. Two stories clash only when their
 `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name

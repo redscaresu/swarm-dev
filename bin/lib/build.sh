@@ -342,21 +342,36 @@ story_path() {
   else echo "${BOARD}/stories/$1.md"; fi
 }
 
+# board_text — stdin without the SET_FM_KEYS lines of its front matter: an older swarm.sh wrote its own
+# keys there, and a builder reads none of them (keys_only compares files the same way).
+board_text() {
+  # shellcheck disable=SC2016 # $0 is awk's
+  awk -v keys=" ${SET_FM_KEYS} " '/^---$/ { n++ } n == 1 && match($0, /^[a-z_]+:/) && index(keys, " " substr($0, 1, RLENGTH - 1) " ") { next } { print }'
+}
+
 # story_unpushed <slug> <src> <base> — refuse a story whose file in the main checkout has an edit
-# origin/<base> lacks: uncommitted (staged or not), or in a local commit that leaves the file unlike
-# origin's. Its builder reads the worktree's copy, made from origin/<base>, so it would miss the edit;
-# swarm.sh writes no tracked story file (reference.md § Board state), so the edit is a person's. Only a
-# story story_path names relative to the worktree is checked: a sibling repo's story and an untracked
-# one (fix_main's) are read from the board itself. A main checkout that is only behind origin passes.
+# origin/<base> lacks, uncommitted (staged or not) or in a local commit. Its builder reads the
+# worktree's copy, made from origin/<base>, so it would miss the edit. The check is a three-way merge
+# of the main checkout's copy into origin's, from their merge base, each read through board_text: it
+# refuses on a conflict or when the merge changes origin's copy. So a main checkout only behind origin
+# passes, and so does an edit origin already has (a squash-merged board PR, even with later origin
+# changes to the file), or one to swarm.sh's own keys alone. A file missing from a side reads as empty,
+# so a story committed only here is refused. Only a story story_path names relative to the worktree is
+# checked: a sibling repo's story and an untracked one (fix_main's) are read from the board itself.
 story_unpushed() {
-  local rel why
+  local rel mb tmp rc=0
   rel="$(story_path "$1" "$2")"
   [[ "${rel}" != /* ]] || return 0
-  if [[ -n "$(git -C "${PROJECT_DIR}" status --porcelain -- "${rel}")" ]]; then why="uncommitted changes"
-  elif [[ -n "$(git -C "${PROJECT_DIR}" rev-list -1 "origin/$3..HEAD" -- "${rel}")" ]] \
-    && ! git -C "${PROJECT_DIR}" diff --quiet "origin/$3" HEAD -- "${rel}"; then why="a local commit origin/$3 lacks"
-  else return 0; fi
-  die "$1: ${BOARD}/stories/$1.md has ${why} in the main checkout, and its builder reads the copy on origin/$3, so it would miss them; nothing was started: land the edit with swarm.sh board-pr (or push it), then start $1 again"
+  mb="$(git -C "${PROJECT_DIR}" merge-base HEAD "origin/$3")" || mb="origin/$3"   # no shared history: any edit counts
+  tmp="$(mktemp -d)" || die "$1: mktemp failed; nothing was started"
+  board_text < "${PROJECT_DIR}/${rel}" > "${tmp}/here"
+  { git -C "${PROJECT_DIR}" show "${mb}:${rel}" 2>/dev/null || true; } | board_text > "${tmp}/base"
+  { git -C "${PROJECT_DIR}" show "origin/$3:${rel}" 2>/dev/null || true; } | board_text > "${tmp}/origin"
+  git merge-file -p "${tmp}/here" "${tmp}/base" "${tmp}/origin" > "${tmp}/merged" 2>/dev/null || rc=$?
+  cmp -s "${tmp}/merged" "${tmp}/origin" || rc=1
+  rm -rf "${tmp}"
+  [[ ${rc} -ne 0 ]] || return 0
+  die "$1: ${BOARD}/stories/$1.md in the main checkout has an edit origin/$3 lacks (uncommitted or in a local commit), and its builder reads the copy on origin/$3, so it would miss it; nothing was started: land the edit with swarm.sh board-pr (or push it), then start $1 again"
 }
 
 # goal_condition <slug> <src> — the builder's /goal, on one line: the story's **Done when**
