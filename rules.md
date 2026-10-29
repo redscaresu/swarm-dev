@@ -22,13 +22,13 @@ Builders follow these rules before they write, and reviewers hold each PR to the
   Why: once they share code, a missing secret on the real repo passes as quietly as a fork's run does.
 - Match on exact records, never on a heuristic such as a unique truncated prefix.
   Why: a prefix that is unique today matches the wrong record once the data grows.
-- Prove each new or changed test can fail: break what it guards and watch it go red. Your brief says where to break it.
+- Prove each new or changed test can fail: break what it guards and watch it go red. A builder's brief says where to break it.
   Why: a test that still passes with its fix removed proves nothing.
 - Describe test coverage by the contract it checks, not by its line count.
   Why: a count of test lines says nothing about which behaviour would go red.
 - Add no CI work that brings an ongoing LLM cost unless something material changes.
   Why: that cost recurs on every run, whether or not the work still pays for itself.
-- Never generate load (stress loops, parallel test repeats, load containers) on the machine the swarm runs on; a check that needs load runs on another machine. If load does run here, the load rule in your brief (`load_rule`: 4 CPUs in all, torn down when the check ends) is the enforced cap.
+- Never generate load (stress loops, parallel test repeats, load containers) on the machine the swarm runs on; a check that needs load runs on another machine. If load does run here, the cap in a builder's brief holds it: at most 4 CPUs in all, torn down as soon as the check ends.
   Why: all the swarm's agents share that machine, and load there slows or stalls every build.
-- Never read `~/.claude/projects` or any session log yourself, yours or another agent's.
+- Never read `~/.claude/projects` or any session log, yours or another agent's, unless your brief orders that read; then read only the log it names.
   Why: a session log holds a whole conversation and anything printed in it, and the swarm's own tools already read what they need from it.
