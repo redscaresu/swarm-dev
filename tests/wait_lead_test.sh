@@ -26,8 +26,8 @@ git -C "${P}" init -q
 # gh: pr view <n> prints ${FX}/head.<n> or else ${FX}/head, waits as many seconds as ${FX}/view.slow
 # holds (a slow gh), and fails while ${FX}/view.fail exists; a head's check runs are ${FX}/<sha>.checks
 # or else ${FX}/checks; its commit statuses are ${FX}/<sha>.status, else none. For the main-red cases, where
-# the project has the origin o/r: repo view names it (and fails while ${FX}/repo.fail exists), pr list has no
-# PR, the default branch is ${FX}/default, a branch exists and has the head ${FX}/base.<branch> while that file
+# the project has the origin o/r: repo view names it (and fails while ${FX}/repo.fail exists), pr list lists
+# ${FX}/prs.json's PRs, else none, the default branch is ${FX}/default, a branch exists and has the head ${FX}/base.<branch> while that file
 # does, and ci_gate fixed reads any commit as one that changes bin/x, any compare as one behind by nothing,
 # no workflow run, the base's rules as ${FX}/rules while that file does (else the read fails, so every check
 # counts) and no classic protection.
@@ -41,8 +41,9 @@ case "$1 $2" in
              sleep "$(cat "${FX}/view.slow" 2>/dev/null || echo 0)"
              [ ! -e "${FX}/view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
              cat "${FX}/head.$3" 2>/dev/null || cat "${FX}/head" ;;
+  # The heads pass's read of the open story PRs, once the project has an origin (the main-red and stuck: cases).
   "repo view") [ ! -e "${FX}/repo.fail" ] || exit 1; echo o/r ;;
-  "pr list") echo '[]' ;;
+  "pr list") cat "${FX}/prs.json" 2>/dev/null || echo '[]' ;;
   api*) case "$*" in
           *check-runs*) sha="${path#*/commits/}"; sha="${sha%%/*}"
                         cat "${FX}/${sha}.checks" 2>/dev/null || cat "${FX}/checks" ;;
@@ -58,9 +59,6 @@ case "$1 $2" in
           */protection) echo 'Branch not protected (HTTP 404)' >&2; exit 1 ;;
           *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
         esac ;;
-  # The heads pass's read of the open story PRs, once the project has an origin (the stuck: cases).
-  "repo view") echo o/r ;;
-  "pr list") cat "${FX}/prs.json" 2>/dev/null || echo '[]' ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
