@@ -1383,6 +1383,23 @@ tell once more.
 An agent herdr answers for (codex, or a Claude agent with no session on record) gets no such report:
 its blocked is herdr's own read of its screen. While herdr reads it blocked, the tell fails on
 herdr's refusal even when the pane looks clear, and the message says no report was sent.
+A tell to an agent with no pane, or whose Claude session has ended (gone), is refused once with
+`could not reach <agent>: <why>; this refusal is final, so do not tell it again: <exit>`, and exits 1.
+A note to a conductor whose pane is open but whose session has ended is refused the same way. The
+exit depends on the agent. For a story's builder (a story on the board holds its name) it is
+`swarm.sh wait --lead`'s `no-agent:` line, and for a review agent its `no-review:` line. For a
+conductor it is `swarm.sh next`, which starts a new one or says why not in a `no conductor started:`
+line. The agent's role in `.swarm/agents.tsv` decides which, or its name (`review-<slug>`,
+`conduct-<epic>`) when it has no line there. Any other agent, such as an epic or HLD writer, a planner
+or a skeptic, has no such line: the exit says to start it again with the command that started it, or
+to tell the user. None of those lines
+comes while herdr still lists the agent, so when its session has ended with its pane still open, the
+exit starts `its pane <pane> is still open: read it (herdr agent read <agent>) and close it; after
+that, ...`. The lead and the conductor list the story under no agent and never tell it again. A
+`could not reach <agent> (status ...)` refusal, for a state `tell` does not know, is not final. When
+herdr cannot list its agents, or lists none at all (a restart, another socket), nothing shows the
+agent gone: `tell` refuses with `tell: <agent> was not
+told: herdr could not list its agents; tell it again`.
 
 **A tell to a busy agent is queued.** On 2026-10-27 a builder never got its review findings: herdr
 listed it as working, `tell` refused, nothing tried again, and the builder waited over an hour. A
@@ -2629,7 +2646,7 @@ pid that holds it. A lock whose pid is gone, or that has no pid file 10 seconds 
 left by a merge that died: merge takes it over and says so, one merge at a time. A merge that has
 GitHub merge a moved base into its PR frees the lock while it waits for the new head's CI, and takes
 it again before it checks the base once more (§ Merging, Waiting for the new head). `swarm.sh unblock` then readies a
-blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` each story's review agent merges that story's PR instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`). It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one (the review agent sends its conductor a stop note on either hold, and the conductor closes the builder); a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`). When it still cannot read them, it holds the PR and says why. A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands. `--board` and `--release` PRs cannot change those paths. Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story. `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path. `status` and `wait --lead` read the record with no gh call. They leave it out once a `wait --lead` heads pass made after the hold read the PR at another head (`.swarm/lead/held`); with no such pass, as when no `wait --lead` runs, the hold stands. A held PR's review agent leaves it for your merge. The conductor merges no story PR: the story's review agent does, and the lead may. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
+blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` each story's review agent merges that story's PR instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). When another merge deletes a story file after `swarm.sh merge` listed the board, `merge` lists the board again, once, and reads it again. If a story file on that second list is gone by its read too, or a file is there but unreadable, the PR is still held, and a review agent merging its own story's PR is refused in the same cases. `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`). It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one (the review agent sends its conductor a stop note on either hold, and the conductor closes the builder); a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`). When it still cannot read them, it holds the PR and says why. A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands. `--board` and `--release` PRs cannot change those paths. Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story. `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path. `status` and `wait --lead` read the record with no gh call. They leave it out once a `wait --lead` heads pass made after the hold read the PR at another head (`.swarm/lead/held`); with no such pass, as when no `wait --lead` runs, the hold stands. A held PR's review agent leaves it for your merge. The conductor merges no story PR: the story's review agent does, and the lead may. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file. The review agent runs `swarm.sh review <slug> --head <that SHA> <PR URL>`, then
 `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
 with `--match-head-commit` (with `--auto` only to enqueue it on a base with a merge queue), waits for CI on the base, and runs `swarm.sh reconcile`.
@@ -3180,6 +3197,19 @@ a `while`, `until` or `if` is not read as one: it passes, and the commands after
 where the call runs. It refuses a `git checkout`
 that would overwrite uncommitted changes: unstaged ones, and staged ones too when it checks out from
 a commit (`git checkout HEAD -- f`). Back the file up with `cp` and restore from the copy instead.
+In a swarm project's main checkout (the git top level that holds `.claude/swarm/config`, not a
+linked worktree), it refuses a `git reset --hard`, `git restore` or `git clean` that would drop work
+there, and names the files. `reset --hard` is refused when a tracked file has a staged or unstaged
+change, or when an untracked or ignored file is in the way of a file in the commit it resets to: at
+the same path with other content, where that commit has a folder, or inside a folder where it has a
+file. Any other untracked file passes, since `reset --hard` keeps it. `restore` is refused when it would
+overwrite a change: an unstaged one, and a staged one too with `--staged --worktree` (`-SW`). With
+`--source`, an untracked or ignored file in the way of a file it writes counts too, as for
+`reset --hard`.
+`restore --staged` alone changes only the index, so it passes. `clean` is refused when its own dry
+run, with your flags, lists a file, so under `-x` or `-X` an ignored file in `.swarm/` counts.
+`git clean -n` passes. Commit the changes in a board PR, or back the files up with `cp`. A clean
+main checkout and any worktree pass.
 swarm.sh starts every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook
 also refuses `git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the
 project's main checkout, whether the command runs there from the session's folder, after a `cd`, or
@@ -3190,7 +3220,8 @@ another session's process. `kill $!` and `kill <pid>` pass. It refuses an agent'
 any `while` or `until` loop around `gh pr checks` (a `while read` loop that checks each PR once
 passes), and names `swarm.sh wait-pr`, which stops on a red
 check, a conflict or a deadline. A single `gh pr checks` passes.
-Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it. These
+Your own session has no `SWARM_AGENT`, so only the `cd`, `git checkout` and main checkout rules
+apply to it. These
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 

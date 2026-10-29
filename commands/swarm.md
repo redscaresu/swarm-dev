@@ -147,7 +147,9 @@ Repeat until a step below says stop:
      not clear the story. If that leaves the story stuck, list it for the user
      with why. While a conductor works, `next` also starts conductors for other ready work and prints
      `started:` or `no conductor` lines after the why: handle them as under `wait <agent>`. Then go
-     back to 1.
+     back to 1. A `could not reach <name>:` refusal from `swarm.sh tell` is final: the agent has no
+     pane, or its session has ended, and the refusal names who acts on it. List the story under no
+     agent and never tell it again.
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns
