@@ -138,8 +138,9 @@ check "a builder named split-critic counts under its own role" "| code | 2 | cla
 # s-c never steps up; s-old's step-up is before the window, and a refused step-up line counts for none.
 # s-e steps up findings-3 from opus in two attempts: the first fails, the second is held for the lead,
 # and each step-up takes its own attempt's ending; the tokens are the story's, of both attempts. s-f does
-# the same twice in one day (no agents.tsv lines, so no tokens): the first fails, the second merges,
-# and the first attempt's rung, naming the PR the second merged, does not make it merged. s-g's
+# the same twice in one day (no agents.tsv lines, so no tokens): the first goes to the lead before the
+# second starts (its story line), the second merges, and the first attempt's rung, naming the PR the
+# second merged, does not make it merged. s-e's hold comes after its second story line: the second's. s-g's
 # rung starts before midnight and its step-up line comes after it: merged. s-h's rung closes, its session
 # naming no PR, while its first rung's PR is open: open.
 G="${dir}/rung"; mkdir -p "${G}/projects/p"
@@ -161,9 +162,12 @@ ev 2026-10-01T11:30:00Z escalate s-c "step-up: s-c's builder is on fable, at or 
 ev 2026-10-01T12:00:00Z escalate s-d "ok (ci-red-2: opus -> fable)"
 ev 2026-10-02T09:00:00Z held s-b "ok (top-rung: findings round 2 on fable)"
 ev 2026-10-01T13:00:00Z escalate s-e "ok (findings-3: opus -> fable)"
+ev 2026-10-02T12:00:00Z story s-e ok
 ev 2026-10-02T13:00:00Z escalate s-e "ok (findings-3: opus -> fable)"
 ev 2026-10-02T15:00:00Z held s-e "ok (top-rung: findings round 2 on fable)"
 ev 2026-10-03T08:00:00Z escalate s-f "ok (no-pr: sonnet -> opus)"
+ev 2026-10-03T09:00:00Z escalated s-f "ok (attempts 1, 0 PRs)"
+ev 2026-10-03T09:30:00Z story s-f ok
 ev 2026-10-03T10:00:00Z escalate s-f "ok (no-pr: sonnet -> opus)"
 ev 2026-10-03T12:00:00Z escalate s-h "ok (ci-red-2: opus -> fable)"
 ev 2026-10-04T00:03:00Z escalate s-g "ok (stalled: opus -> fable)"
@@ -190,7 +194,7 @@ same "one row per step-up in the window: its trigger, tokens per rung and outcom
   '| s-d | ci-red-2 | opus -> fable | opus 1.0M $20.00, fable - | failed |' \
   '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | failed |' \
   '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | lead |' \
-  '| s-f | no-pr | sonnet -> opus | - | failed |' '| s-f | no-pr | sonnet -> opus | - | merged |' \
+  '| s-f | no-pr | sonnet -> opus | - | lead |' '| s-f | no-pr | sonnet -> opus | - | merged |' \
   '| s-h | ci-red-2 | opus -> fable | - | open |' '| s-g | stalled | opus -> fable | - | merged |' '' \
   '| rung | builds | share |' '|---|---|---|' '| sonnet | 4 | 40% |' '| opus | 9 | 90% |' '| fable | 6 | 60% |')"
 # shellcheck disable=SC2016 # the $ is the table's, not an expansion
