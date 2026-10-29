@@ -1,13 +1,15 @@
 ---
-status: draft
+status: active
 hld: 2026-10-28-swarm-dev-0-30-and-0-31
-stage: v0.31.0
-depends_on: [review-rounds-end, telemetry-writers, merge-safety]
+stage: v0.30.0
+depends_on: [delivery-liveness, lead-woken, merge-safety]
 ---
 
 # reference-split
 
 HLD Goal 10 (v0.31.0): no story clashes on docs/reference.md as a whole. Read where v0.29.0's 92 merge-ins fell, split the file by that evidence, and move the anchors, briefs and tests that name it in the same PR.
+
+Moved into v0.30.0 by the user on 2026-10-29: in the v0.29.0 and v0.30.0 builds, docs/reference.md caused most merge-main conflicts and the repeated 'base merge unchecked' review loops (one PR went round four times). So it is built after the three epics now building, and before telemetry-readers, telemetry-writers and review-rounds-end are planned, which now depend on it. It is built alone, with no other story in flight, so its split meets no conflicting PR.
 
 **Done when:**
 - stage: v0.31.0

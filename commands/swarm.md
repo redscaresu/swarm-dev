@@ -376,15 +376,38 @@ Repeat until a step below says stop:
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board. A
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
-     base is red at that commit, whoever merged it. Merge nothing into that base until it is green.
-     With the exit `build fix-main-<short sha>, which next names first`, do the `fix-main` step for
-     that story at once. With `wait for fix-main-<short sha>, which a fix-main run is writing and next
-     then names first`, `wait --lead` has started a run that writes the story: start `wait --lead` again, and the
-     line comes back with the `build` exit once the story is there. With `read
-     .swarm/lead/fix-main-<short sha>.log, as no run wrote fix-main-<short sha>, then fix <base> by
-     hand`, two runs failed to write it: read the log, and tell the user which checks are red and why no
-     story was written. With `fix <base> by hand, as no fix-main story covers it yet`, the red's story
-     has left the board: tell the user which checks are red. The line goes once the base reads fixed.
+     base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
+     next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
+     which next names after fix-main-<other>`, two reds have buildable stories: do the `fix-main` step
+     for the other first, and this line's exit turns to `which next names first` once that build is
+     under way. With `wait for fix-main-<short
+     sha>, whose build has started, to merge`, the fix is under way: start nothing for it, and see its PR
+     through. With `fix-main-<short sha> waits on the lead: handle its held: or escalated: line`, act on
+     that line. With `fix-main-<short sha> is not one next builds: check its status and kind`, fix the
+     story's front matter (`status: ready` and an agent's `kind`) so `next` names it. With `wait for
+     fix-main-<short sha>, which a fix-main run is writing and next then names first`, `wait --lead` has
+     started a run that writes the story: start `wait --lead` again, and the line comes back with a
+     `build` exit once the story is there. With `read .swarm/lead/fix-main-<short sha>.log, as no run
+     wrote fix-main-<short sha>, then fix <base> by hand`, two runs failed to write it: read the log, and
+     tell the user which checks are red and why no story was written. With `fix <base> by hand, as no
+     fix-main story covers it yet`, the red's story has left the board: tell the user which checks are
+     red. Merge nothing into that base until it is green. The line goes once the base reads fixed. A
+     `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` line means the
+     epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
+     ready, blocked on an agent's story, or in review with a review agent still to act. For the
+     backlog the line is `reported: backlog (...)` and the exit is `swarm.sh conduct --backlog`.
+     When `next` offers its collect step for that conductor, do that step first: the exit retires
+     the conductor and deletes its report, so the collect would never run. Then read the report.
+     `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
+     `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
+     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
+     does not count. Handle all of these first: a build that died as
+     the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
+     there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
+     report says for each (docs/reference.md § Merging lists them). Clear any other cause the report
+     names as the lead's (CI on the base red or timed out, a story escalated to you) before the
+     exit too. Then run the exit, which starts a fresh conductor and removes the old report. The
+     line goes once that work is done or a new conductor starts.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a

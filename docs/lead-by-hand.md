@@ -35,14 +35,6 @@ background test run, or could not sign a commit.
 **Step.** Leave a waiting builder alone. For GPG, see below.
 **Issue.** [#687](https://github.com/redscaresu/swarm-dev/issues/687).
 
-## An agent that fails to start
-
-**Symptom.** `swarm.sh story` fails with `pane ... not found`,
-`the pane's shell did not take the agent's environment` or `agent_not_found`, often under load.
-`swarm.sh review-agent` makes up to 3 starts on these by itself, so it needs no rerun.
-**Step.** Run the `swarm.sh story` command again, up to twice.
-**Issue.** [#688](https://github.com/redscaresu/swarm-dev/issues/688).
-
 ## A locked GPG agent
 
 **Symptom.** Builders stop with staged, unsigned work, or commits fail to sign.
@@ -63,15 +55,6 @@ Finish PR's `swarm.sh merge --board` has exited; closing it sooner kills that me
 **Step.** If a lead story covers it, list it with `swarm.sh review <slug> <PR URL>` first. Otherwise
 leave the PR for the user to merge.
 **Issue.** [#692](https://github.com/redscaresu/swarm-dev/issues/692).
-
-## A merge of main that may have dropped main's lines
-
-**Symptom.** A PR's branch contains a merge of the base, especially one that resolved a conflict.
-**Check.** `git show --remerge-diff <merge commit>`: every removed line must be one the PR means to
-remove. Also, `git diff origin/<base>...<head> --stat` should match
-`git diff $(git merge-base origin/<base> <head>) <head> --stat`.
-**Step.** If a line of the base was dropped, send the builder a nudge naming it before you merge.
-**Issue.** [#693](https://github.com/redscaresu/swarm-dev/issues/693).
 
 ## A builder that keeps changing its PR
 

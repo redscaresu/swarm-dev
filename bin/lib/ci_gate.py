@@ -862,10 +862,10 @@ try:
             sys.exit(1)
     elif mode == "base":
         # head's rule for a base's head: a commit status alone counts, as on main, but with no check
-        # run and no status nothing has concluded.
+        # run and no status nothing has concluded. A red head prints its red checks alone.
         red, wait, ok = checks(repo, args[0], need_run=False)
         wait = wait if red or wait or ok else ["no check runs or statuses"]
-        print("; ".join(red + wait or ok))
+        print("; ".join(red or wait or ok))
         if red or wait:
             sys.exit(1 if red else 2)
     elif mode == "age":
