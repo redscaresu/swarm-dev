@@ -1,8 +1,32 @@
 # shellcheck shell=bash
 
 # fm <file> <key> — <key>'s value in the item's state file (state_value), else the first line for
-# <key> anywhere in <file>, or nothing.
-fm() { state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" | head -1; }
+# <key> anywhere in <file>, or nothing. A <file> that is gone has no value, and says nothing on stderr
+# (item_gone); one that is there but cannot be read fails, with sed's error.
+fm() {
+  state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" 2>/dev/null | head -1 \
+    || item_gone "$1" sed -n "s/^$2: *//p" "$1" | head -1 || gone_ok $?
+}
+
+# ITEM_GONE: item_gone's status when the file it read is gone. Neither sed nor awk exits 3.
+ITEM_GONE=3
+
+# item_read <file> <command>... — run <command>, a read of <file> (- for stdin), with its stderr
+# dropped; when it fails, item_gone.
+item_read() { "${@:2}" 2>/dev/null || item_gone "$@"; }
+
+# item_gone <file> <command>... — after <command>, a read of <file> with its stderr dropped, failed:
+# when <file> is gone (a merge deleted it after the board was listed), return ITEM_GONE, saying
+# nothing. When <file> is still there it cannot be read: run <command> again, so it prints its error
+# and fails as it would have.
+item_gone() {
+  [[ "$1" == - || -e "$1" || -L "$1" ]] || return "${ITEM_GONE}"
+  "${@:2}"
+}
+
+# gone_ok <status> — succeed for ITEM_GONE, else return <status>: fm and get_fm read a file that is
+# gone as having no value.
+gone_ok() { [[ "$1" -eq ${ITEM_GONE} ]] || return "$1"; }
 
 # BOARD_STATE_DIR: where swarm.sh keeps the SET_FM_KEYS it writes for the board's items, a root of its
 # own: STATE_DIR's files are tab records named after epic and story slugs.
@@ -48,7 +72,9 @@ state_value() {
 
 # state_read <state-file> <item-file> <key> — state_value's read of <key> from <state-file>, against
 # <item-file>'s front matter (- for stdin): its value, failing when it has no line for <key> or its
-# <key>@base: is no longer the item's value.
+# <key>@base: is no longer the item's value. It fails quietly when a file cannot be opened: every
+# caller reads <item-file> next when it fails, and that read names one that cannot be read and reads
+# one that is gone (a merge deleted it after state_path saw it) as no value.
 state_read() {
   awk -v k="$3" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
     FILENAME == ARGV[1] { if (!h && index($0, k ":") == 1) { v = val($0, length(k) + 1); h = 1 }
@@ -56,7 +82,7 @@ state_read() {
       next }
     /^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { t = val($0, length(k) + 1); exit }
-    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "$1" "$2"
+    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "$1" "$2" 2>/dev/null
 }
 
 # board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
@@ -1249,16 +1275,25 @@ pr_held() {
 
 # pr_stories <pr-url> — the slugs of the stories whose prs: (get_fm: their state file over their
 # front matter; split on spaces and commas) lists the PR in any spelling: owner and repo in any case,
-# the number with leading zeros. Fails when a story or its state file cannot be read.
+# the number with leading zeros. Fails when a story or its state file cannot be read. A story file
+# gone between the board's list and its read (a merge deleted it) is no such story: it lists the board
+# again, once, and reads it again; a story file on that list that is gone by its read fails.
 pr_stories() {
-  local f v rows=""
-  while IFS= read -r f; do
-    v="$(get_fm "${f}" prs)" || return 1
-    rows+="$(basename "${f}" .md) ${v}"$'\n'
-  done < <(board stories)
+  local rows
+  rows="$(stories_prs)" || { [[ $? -eq ${ITEM_GONE} ]] && rows="$(stories_prs)"; } || return 1
   awk -v k="$1" 'function canon(u) { u = tolower(u); gsub(/[][,"\047]/, "", u); sub(/\/pull\/0+/, "/pull/", u); return u }
     BEGIN { k = canon(k) }
     { for (j = 2; j <= NF; j++) { m = split($j, u, ","); for (i = 1; i <= m; i++) if (canon(u[i]) == k) { print $1; next } } }' <<< "${rows}"
+}
+
+# stories_prs — "<slug> <prs: value>" for each story on the board (get_fm_or_gone), failing as
+# get_fm_or_gone does at the first story it cannot read: with ITEM_GONE for one that is gone.
+stories_prs() {
+  local f v
+  while IFS= read -r f; do
+    v="$(get_fm_or_gone "${f}" prs)" || return
+    f="${f##*/}"; printf '%s %s\n' "${f%.md}" "${v}"
+  done < <(board stories)
 }
 
 # GRANTS: the values an HLD's grants: may hold.
@@ -1415,6 +1450,125 @@ hld_ticket() {
 # board_reader <end> <path> — epic_unticketed's reader over the board as it is now, the same bytes at
 # either end: prints <path>, failing 1 when it is absent and 2 when it cannot be read.
 board_reader() { [[ -e "$2" ]] || return 1; cat "$2" 2> /dev/null || return 2; }
+
+# stage_gate <reader> <paths> [changed] — board-pr open's and merge's refusal of an epic set active
+# above the stage the base allows, whatever lead_epics says: for the first <board>/epics/<slug>.md among
+# <paths> (one a line; README.md excepted) that goes active (status: active at the head, raw_status, and
+# not at the base, epic_was_active, both read through <reader> as epic_unticketed reads them; an active
+# epic the PR moves to another stage counts too) with a stage: that is malformed (stage_of) or that
+# allowed_stage refuses, the line that says so, ending in
+# the exit there is: for a minor stage under an hld: that grants epics (hld_ticket), next's stage step;
+# else /swarm-dev:epic once the base has the tag. Nothing for an epic with no stage:. "<reader> ref"
+# names the base, origin/<base> in the project's clone, fetched with its tags; it is asked once, and
+# only once an epic going active has a stage:. [changed] is every path the PR changes (<paths> by
+# default). A read error prints why and fails.
+stage_gate() (
+  local reader="$1" changed="${3:-$2}" pre p s now raw v rc why ref="" want tag ex h y t
+  pre="$(board_rel)"
+  while IFS= read -r p; do
+    s="${p#"${pre}epics/"}"
+    [[ "${p}" == "${pre}epics/"* && "${s}" =~ ^[^/]+\.md$ && "${s}" != README.md ]] || continue
+    s="${s%.md}"
+    rc=0; now="$("${reader}" head "${p}")" || rc=$?
+    [[ ${rc} -ne 1 ]] || continue
+    [[ ${rc} -eq 0 ]] || { echo "cannot read ${p} at the head"; exit 1; }
+    [[ "$(raw_status <<< "${now}")" == active ]] || continue
+    raw="$(fm_text stage <<< "${now}")"; v="$(stage_of "${raw}")"
+    [[ "${v}" != - ]] || continue
+    rc=0; why="$(epic_was_active "${reader}" "${p}" "${now}")" || rc=$?
+    # One already active goes on at the stage it had; moved to another, it could open that stage early.
+    [[ ${rc} -ne 0 || "${why}" != "${v}" ]] || continue
+    [[ ${rc} -le 1 ]] || { echo "${why}"; exit 1; }
+    [[ "${v}" != bad ]] || { echo "${s} goes active with stage: ${raw}, which is not v<x.y.z>; fix the line, or commit it as status: draft"; exit 0; }
+    if [[ -z "${ref}" ]]; then ref="$("${reader}" ref)" || { echo "${ref:-cannot name the base}"; exit 1; }; fi
+    rc=0; why="$(allowed_stage "${v}" "${ref}" "${changed}")" || rc=$?
+    [[ ${rc} -ne 0 ]] || continue
+    [[ ${rc} -eq 1 ]] || { echo "${why}"; exit 1; }
+    read -r want tag <<< "${why}"
+    why="newest tag v${tag}"; [[ "${tag}" != - ]] || why="no v<x.y.z> tag found"
+    ex="commit it as status: draft, then run /swarm-dev:epic ${s} again once v${want} is tagged"
+    # next's stage step sets a staged draft active (staged_draft): a minor above 0, under its own hld:.
+    h="$(slug_list "$(fm_text hld <<< "${now}")")"; IFS=. read -r _ y _ <<< "${v}"
+    if ((10#${y} > 0)) && [[ "${h}" =~ ^[A-Za-z0-9._-]+$ ]] && t="$(mktemp)"; then   # item_hld's pattern: no /
+      if hld_ticket "${reader}" "${pre}hld/${h}.md" "${t}" > /dev/null; then
+        ex="commit it as status: draft: next's stage step sets it active once v${want} is tagged"
+      fi
+      rm -f "${t}" "${t}.err"
+    fi
+    echo "${s} goes active at stage v${v}, above what ${ref#origin/} allows (${why}, below v${want}, and no v${v} epic active there); ${ex}"
+    exit 0
+  done <<< "$2"
+)
+
+# epic_was_active <reader> <path> <head bytes> — true when the epic at <path> is active at the base, as
+# epic_unticketed reads it: at <path>, or, absent there, at the old path "<reader> from" names when that
+# is an epic too and the epic keeps its heading (epic_heading); then it prints that base copy's stage
+# (stage_of). Fails 1 when not (absent too); prints why and fails 2 on a read error.
+epic_was_active() {
+  local pre b="$2" o was rc=0
+  pre="$(board_rel)"
+  was="$("$1" base "$2")" || rc=$?
+  if [[ ${rc} -eq 1 ]]; then
+    b="$("$1" from "$2")" || { echo "cannot tell what $2 was renamed from"; return 2; }
+    o="${b#"${pre}epics/"}"
+    [[ "${b}" == "${pre}epics/"* && "${o}" =~ ^[^/]+\.md$ && "${o}" != README.md ]] || return 1
+    rc=0; was="$("$1" base "${b}")" || rc=$?
+  fi
+  [[ ${rc} -ne 1 ]] || return 1
+  [[ ${rc} -eq 0 ]] || { echo "cannot read ${b} at the base"; return 2; }
+  [[ "$(raw_status <<< "${was}")" == active ]] || return 1
+  if [[ "${b}" != "$2" ]]; then
+    o="$(epic_heading <<< "$3")"
+    [[ -n "${o}" && "${o}" == "$(epic_heading <<< "${was}")" ]] || return 1
+  fi
+  stage_of "$(fm_text stage <<< "${was}")"
+}
+
+# allowed_stage <x.y.z> <ref> <changed> — "<P> <T>", and true when the base at <ref> (origin/<base> in
+# the project's clone) lets an epic go active at stage <x.y.z>: when T, the newest v<x.y.z> tag on <ref>
+# (newest_tag; - for none, which counts as 0.0.0), is at or above P, the minor before the stage
+# (v0.31.0's is 0.30.0: staged_draft's <prev>, stage_due's rule), or when an epic at <ref> that is not
+# among <changed> (one a line) is active at the same stage (stage_rows). A v<x>.0.0 stage has no minor
+# before it: its P is the highest v<x-1>.y.z stage an epic at <ref> carries, whatever its status
+# (<x-1>.0.0 for none), and only a real tag reaches it. v0.0.0 has nothing before it. Fails 1 when the
+# base does not allow it; prints why and fails 2 when git cannot read <ref>'s epics.
+allowed_stage() {
+  local x y p t rows v ok=""
+  IFS=. read -r x y _ <<< "$1"; x=$((10#${x})); y=$((10#${y}))
+  t="$(newest_tag "$2")"
+  if ((y > 0 || x == 0)); then
+    p="${x}.$((y > 0 ? y - 1 : 0)).0"
+    if ! version_gt "${p}" "${t:-0.0.0}"; then echo "${p} ${t:--}"; return 0; fi
+  fi
+  # Read only when the tag alone does not decide.
+  rows="$(stage_rows "$2" "$3")" || { echo "${rows}"; return 2; }
+  if ((y == 0 && x > 0)); then
+    p="$((x - 1)).0.0"
+    while read -r _ v; do
+      if [[ "${v%%.*}" == "$((x - 1))" ]] && version_gt "${v}" "${p}"; then p="${v}"; fi
+    done <<< "${rows}"
+    if [[ -n "${t}" ]] && ! version_gt "${p}" "${t}"; then ok=1; fi
+  fi
+  if [[ -z "${ok}" ]] && awk -v s="$1" '$1 == "active" && $2 == s { f = 1 } END { exit !f }' <<< "${rows}"; then ok=1; fi
+  echo "${p} ${t:--}"
+  [[ -n "${ok}" ]]
+}
+
+# stage_rows <ref> <changed> — "<status> <stage>" for each epic at <ref> in the project's clone
+# (board_epics' paths): its raw_status (none for no status: line), or changed when <changed> (one a
+# line) holds its path, and stage_of its stage:. Prints why and fails when git cannot list or read them.
+stage_rows() {
+  local list p b st
+  list="$(git -C "${PROJECT_DIR}" ls-tree -r --name-only "$1" -- "$(board_rel)epics/" 2> /dev/null | board_epics)" \
+    || { echo "cannot list the epics at $1"; return 1; }
+  while IFS= read -r p; do
+    [[ -n "${p}" ]] || continue
+    b="$(git -C "${PROJECT_DIR}" show "$1:${p}" 2> /dev/null)" || { echo "cannot read ${p} at $1"; return 1; }
+    st="$(raw_status <<< "${b}")"; st="${st// /,}"
+    if grep -qxF -- "${p}" <<< "$2"; then st=changed; fi
+    echo "${st:-none} $(stage_of "$(fm_text stage <<< "${b}")")"
+  done <<< "${list}"
+}
 
 # draft_lead_why <epic file> — why the lead may set this draft epic active with no agreement, through
 # the epic guard's own tickets over the board as it is (board_reader): "lead_epics = on", "parent <p>
@@ -1834,20 +1988,28 @@ protected_update() {
   state_write "$1" "$2" "protected"$'\t'"${out}"$'\n'
 }
 
+# dropped_lines_what <what> — true when a protected: entry's <what> is the one swarm.sh merge records
+# for a PR whose own merge of the base dropped base lines: `dropped base lines: <n>, first <file>:
+# <text>`, or `dropped base lines unchecked: <why>` when the check could not run.
+dropped_lines_what() { [[ "$1" == "dropped base lines: "* || "$1" == "dropped base lines unchecked: "* ]]; }
+
 # merge_rows <item-file> <name> <holds> — waiting_on_user's awaiting-your-merge rows for an item in
-# review, <name> its slug, or `epic <slug>`: the PRs it lists that <holds> (protected_holds) names on a
-# row of their own, tagged " (protected path)", then the others on the untagged row as before.
-# costs_tag's tag goes on both.
+# review, <name> its slug, or `epic <slug>`: the PRs it lists that <holds> (protected_holds) names on
+# rows of their own, tagged " (protected path)" for a path or unreadable files and " (dropped base
+# lines)" for an entry dropped_lines_what names, then the others on the untagged row as before.
+# costs_tag's tag goes on each.
 merge_rows() {
-  local u c prs held="" rest=""
+  local u c prs held="" dropped="" rest="" d="dropped base lines"
   c="$(costs_tag "$1")"; prs="$(fm "$1" prs)"
   if [[ -n "$3" ]]; then
     for u in ${prs}; do
-      if [[ $'\n'"$3" == *$'\n'"${u} "* ]]; then held+=" ${u}"; else rest+=" ${u}"; fi   # loose-match: ok quoted, a whole "<url> " line start
+      if [[ $'\n'"$3" == *$'\n'"${u} ${d}: "* || $'\n'"$3" == *$'\n'"${u} ${d} unchecked: "* ]]; then dropped+=" ${u}"   # loose-match: ok quoted, a whole "<url> <prefix>" line start
+      elif [[ $'\n'"$3" == *$'\n'"${u} "* ]]; then held+=" ${u}"; else rest+=" ${u}"; fi   # loose-match: ok quoted, a whole "<url> " line start
     done
   fi
-  [[ -n "${held}" ]] || { echo "  awaiting your merge${c}: $2 ${prs}"; return 0; }
-  echo "  awaiting your merge${c} (protected path): $2${held}"
+  [[ -n "${held}${dropped}" ]] || { echo "  awaiting your merge${c}: $2 ${prs}"; return 0; }
+  [[ -z "${held}" ]] || echo "  awaiting your merge${c} (protected path): $2${held}"
+  [[ -z "${dropped}" ]] || echo "  awaiting your merge${c} (${d}): $2${dropped}"
   [[ -z "${rest}" ]] || echo "  awaiting your merge${c}: $2${rest}"
 }
 
@@ -2316,9 +2478,15 @@ state_write() {
 
 # get_fm <file> <key> — <key>'s value in the item's state file (state_value), else in <file>'s front
 # matter alone (fm takes the first line for <key> anywhere, so a story's body could answer). <file>
-# may be - for stdin, which is read as it is.
-get_fm() {
-  state_value "$1" "$2" || awk -v k="$2" '/^---$/ && ++n == 2 { exit }
+# may be - for stdin, which is read as it is. A <file> that is gone has no value, and says nothing on
+# stderr; one that is there but cannot be read fails, with awk's error.
+get_fm() { get_fm_or_gone "$1" "$2" || gone_ok $?; }
+
+# get_fm_or_gone <file> <key> — get_fm, but failing with ITEM_GONE for a <file> that is gone
+# (item_read), so pr_stories can list the board again.
+get_fm_or_gone() {
+  # shellcheck disable=SC2016 # $0 is awk's
+  state_value "$1" "$2" || item_read "$1" awk -v k="$2" '/^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
 }
 

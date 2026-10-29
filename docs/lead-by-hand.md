@@ -37,9 +37,10 @@ background test run, or could not sign a commit.
 
 ## An agent that fails to start
 
-**Symptom.** `swarm.sh review-agent` or `swarm.sh story` fails with `pane ... not found`,
+**Symptom.** `swarm.sh story` fails with `pane ... not found`,
 `the pane's shell did not take the agent's environment` or `agent_not_found`, often under load.
-**Step.** Run the same command again, up to twice.
+`swarm.sh review-agent` makes up to 3 starts on these by itself, so it needs no rerun.
+**Step.** Run the `swarm.sh story` command again, up to twice.
 **Issue.** [#688](https://github.com/redscaresu/swarm-dev/issues/688).
 
 ## A locked GPG agent
@@ -55,13 +56,6 @@ conductors of finished epics.
 **Step.** `herdr pane close <pane>` for each. With `merge = agent`, close a conductor only after its
 Finish PR's `swarm.sh merge --board` has exited; closing it sooner kills that merge.
 **Issue.** [#690](https://github.com/redscaresu/swarm-dev/issues/690).
-
-## A merge refused because a story file is gone
-
-**Symptom.** `swarm.sh merge` refuses with `a story on the board cannot be read` just after another
-merge.
-**Step.** `git pull` in the project, then run the merge again.
-**Issue.** [#691](https://github.com/redscaresu/swarm-dev/issues/691).
 
 ## A PR outside any story
 

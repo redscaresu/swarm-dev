@@ -2,7 +2,7 @@
 status: active
 hld: 2026-10-28-swarm-dev-0-30-and-0-31
 stage: v0.30.0
-depends_on: [delivery-liveness, lead-woken]
+depends_on: [delivery-liveness, lead-woken, reference-split]
 ---
 
 # telemetry-readers

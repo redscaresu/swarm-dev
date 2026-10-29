@@ -97,7 +97,7 @@ agent again; an older one belongs to a previous plan, so start the agent. A `.pa
 
 Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
-you run and which can be behind. Read-only — write nothing but your output file and its `.partial`, never commit, never
+you run and which can be behind. Read `${CLAUDE_PLUGIN_ROOT}/rules.md` (its full path written out) next. Read-only — write nothing but your output file and its `.partial`, never commit, never
 touch real cloud or credentials. If `<output>.partial` exists, a run was cut off: start from it and carry on, do not redo it. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
 `<project>` and the output path written out in full)
 
@@ -126,7 +126,11 @@ Before the ask, run `SWARM_PROJECT=<wt> swarm.sh grants $1`, which reads `<wt>`'
 `epics`, the HLD lets you write the epics `status: active` and open the board PR without asking; do
 so, and say in the report that the HLD's `epics` grant did. Without it, write each epic `status:
 draft`, and ask before `board-pr open`: each draft is then agreed by the user through `/epic
-<slug>`, and nothing plans it until then.
+<slug>`, and nothing plans it until then. Whatever the grant says, write `status: draft` for an epic
+whose `stage:` the base does not allow yet: the newest `v<x.y.z>` tag on `origin/<base>` is below
+the minor before its stage (`v0.30.0` for a `v0.31.0` epic), and no epic of that stage is `active`
+there. `board-pr open` refuses it `active`. Under the `epics` grant, `next`'s stage step sets it
+active once that tag exists, unless its stage is a `v<x>.0.0`: that draft goes through `/epic`.
 
 Write in `<wt>`, never the main checkout. Write one `docs/epics/<slug>.md` per epic. An epic file
 there that already carries `hld: $1` is this plan's own, from the run you resume: overwrite it, and
@@ -141,7 +145,7 @@ the same slug in the text and the path and nothing else on the line, replacing w
 resume wrote rather than adding to it. Change no line of the HLD above `## Epics`, write nothing
 after the links, and change nothing else on the board: the PR adds its epics, each carrying `hld:
 $1`, and touches no other file. `swarm.sh grants` puts the board PR under this HLD in that exact
-shape and under none in any other, where the `merge` grant no longer covers it. Commit, run one
+shape and under none in any other, where the `merge` grant no longer covers it. Right after the epic files are written, before the commit and the codex pass, run the humanizer skill (`humanizer:humanizer`) over their prose, since the user agrees them; this also applies to a board outside the repo, before the report. If the skill is not installed, say so in the report and go on: the project is not blocked. Commit, run one
 `swarm.sh codex-review` pass there, then `swarm.sh board-pr open plan-$1 "<title>" <body-file>`. If it says
 the PR on the branch has merged or closed, run `swarm.sh board-pr done plan-$1` and start again from
 the top. A board outside the project's repo is written in place: no commit, no board PR. There,
