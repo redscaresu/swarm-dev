@@ -1193,7 +1193,7 @@ pr_held() {
 # front matter; split on spaces and commas) lists the PR in any spelling: owner and repo in any case,
 # the number with leading zeros. Fails when a story or its state file cannot be read. A story file
 # gone between the board's list and its read (a merge deleted it) is no such story: it lists the board
-# again, once, and reads it again; a story file gone from that list too fails.
+# again, once, and reads it again; a story file on that list that is gone by its read fails.
 pr_stories() {
   local rows
   rows="$(stories_prs)" || { [[ $? -eq ${ITEM_GONE} ]] && rows="$(stories_prs)"; } || return 1
