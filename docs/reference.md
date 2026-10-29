@@ -378,10 +378,10 @@ hung herdr counts as a failed list, and the other lines still wake the lead. Fro
 events.tsv are read every poll; git only for a story with a start line and no current builder; herdr's
 JSON and `ps` once, whenever a story with a build record or a ready story with a step-up marker is
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
-herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet notes
-everything else and prints only these lines, `no-review:` lines, `step-up failed:` lines,
-`unsent brief:` lines, `prompt:` lines, `unmerged:` lines, `conflict:` lines, `stopped:` lines, and `tell undelivered:`
-and `tell goal failed:` lines (§ A tell to a busy agent is queued) on its first read.
+herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet prints
+these lines on its first read, and every other line except `held:`, `escalated:`, `kept:`, `merge:` and
+`idle:` lines, `tell undelivered:` and `tell goal failed:` lines (§ A tell to a busy agent is queued)
+included. Other commands already show those five, so the first read notes them without printing them.
 
 **A review agent's stop note that no conductor has wakes the lead too.** A review agent that stops
 writes its note to `.swarm/reviews/<slug>.stop.md` and tells it to the story's conductor (§ Building).
@@ -544,7 +544,10 @@ sits above the epic: HLD, then epics, then stories. It is optional; a single epi
 2. **Write it in the co-author's pane.** It reads the code and the ADRs, then asks you the questions
    that decide the design and fills its sections, Problem through Open questions, and leaves Epics
    empty until epics are planned from it. It asks which `grants:` the HLD carries and writes only
-   what you name.
+   what you name. It reads the plugin's `rules.md` first, and runs the humanizer skill over the draft's
+   prose after each revision, before it shows you the draft or asks you to agree it, never after you
+   agree. If you agree a draft with no pass since its last revision, it runs the pass, shows you what
+   changed and asks again. Without the skill it says so and goes on.
 3. **Say it is ready.** A reviewer (the `hld-review` role) attacks the draft, its `grants:` included:
    each grant hands agents a step you take today, so it names what goes wrong if the grant is
    misused. Its findings arrive in the co-author's pane.
@@ -615,7 +618,9 @@ HLD, after checking that none of those epics has work on it.
    one `codex` and one `critic`. Agents write JSON to `.swarm/<hld>/`, and a rerun reuses those newer
    than the worktree, or, on a board outside the repo, newer than the HLD file.
 3. Writes one `epics/<slug>.md` per epic with `hld: <hld>`, sets the HLD's `planned: <today>` and
-   fills its `## Epics` section with one link per epic. It changes nothing else.
+   fills its `## Epics` section with one link per epic. It changes nothing else. Right after writing
+   the epics, before the commit and codex pass (and on a board outside the repo, before the report),
+   it runs the humanizer skill over their prose; without the skill the report says so.
 4. Opens the board PR (`board-pr open plan-<hld>`) after one codex pass, with each epic `active`
    when the HLD grants `epics`; without that grant each epic is `draft`, and it asks you first.
    Findings are logged against the PR as in § Scoping an epic.
@@ -642,7 +647,11 @@ and line of code after it is for, so you write it with a co-author.
 2. **Write it in the co-author's pane.** Switch to that pane and talk to it there. It reads the
    code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the epic, one or
    two at a time, and writes your answers into the file section by section, citing evidence. It
-   does not invent requirements, commit, or change `status`.
+   does not invent requirements, commit, or change `status`. It reads the plugin's `rules.md` first, and
+   runs the humanizer skill over the draft's prose after each revision, before it shows you the
+   draft or asks you to agree it, never after you agree. If you agree a draft with no pass since its
+   last revision, it runs the pass, shows you what changed and asks again. Without the skill it says
+   so and goes on.
 3. **Say it is ready**, to the co-author, in the same pane. A reviewer (the `epic-review` role, the
    most capable model at `xhigh` effort) starts on its own and attacks the draft: a problem with no
    evidence, goals that cannot be checked, an epic that contradicts an ADR or a safety rule, unnamed
@@ -1374,6 +1383,23 @@ tell once more.
 An agent herdr answers for (codex, or a Claude agent with no session on record) gets no such report:
 its blocked is herdr's own read of its screen. While herdr reads it blocked, the tell fails on
 herdr's refusal even when the pane looks clear, and the message says no report was sent.
+A tell to an agent with no pane, or whose Claude session has ended (gone), is refused once with
+`could not reach <agent>: <why>; this refusal is final, so do not tell it again: <exit>`, and exits 1.
+A note to a conductor whose pane is open but whose session has ended is refused the same way. The
+exit depends on the agent. For a story's builder (a story on the board holds its name) it is
+`swarm.sh wait --lead`'s `no-agent:` line, and for a review agent its `no-review:` line. For a
+conductor it is `swarm.sh next`, which starts a new one or says why not in a `no conductor started:`
+line. The agent's role in `.swarm/agents.tsv` decides which, or its name (`review-<slug>`,
+`conduct-<epic>`) when it has no line there. Any other agent, such as an epic or HLD writer, a planner
+or a skeptic, has no such line: the exit says to start it again with the command that started it, or
+to tell the user. None of those lines
+comes while herdr still lists the agent, so when its session has ended with its pane still open, the
+exit starts `its pane <pane> is still open: read it (herdr agent read <agent>) and close it; after
+that, ...`. The lead and the conductor list the story under no agent and never tell it again. A
+`could not reach <agent> (status ...)` refusal, for a state `tell` does not know, is not final. When
+herdr cannot list its agents, or lists none at all (a restart, another socket), nothing shows the
+agent gone: `tell` refuses with `tell: <agent> was not
+told: herdr could not list its agents; tell it again`.
 
 **A tell to a busy agent is queued.** On 2026-10-27 a builder never got its review findings: herdr
 listed it as working, `tell` refused, nothing tried again, and the builder waited over an hour. A
@@ -1506,8 +1532,9 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop through `swarm.sh codex-review <base>`, before it pushes re-read the comments, error text and docs that name each function, flag or error message its diff changes and fix the stale ones, reply with the PR URL when CI is green, after review fixes run only the tests for the change (`scripts/select-tests.sh --run` when its worktree has it) and leave the full suite to CI, and keep any load it starts on purpose within 4 CPUs in all, remove it when the check ends and never poll for it with a `pgrep -f` pattern that matches the poll itself), the epic's `check:` command when it has one
-(the builder runs it before opening the PR), then the project's own rules from
-`.claude/swarm/brief.md`, plus the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
+(the builder runs it before opening the PR), then swarm-dev's own rules from the plugin's
+[`rules.md`](../rules.md), then the project's own rules from
+`.claude/swarm/brief.md`, then the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
 `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md`, since a builder in another repo's worktree reads
 that repo's files, not this project's. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
@@ -1683,8 +1710,9 @@ is reported at its `file:line`. A PR that changes what a user runs, sees or must
 update README.md, AGENTS.md, docs/ or the command text to match, is reported at the stale doc's
 `file:line`, or at the change when no doc covers it yet. The brief's example is swarm-dev's own
 `env:` line, which kept describing the old env allowlist after the code changed. Its brief
-carries the project's own rules, as a builder's does, and the checks the lead used to make by hand,
-which the fallback reviewer's brief carries too. After them come the
+carries the checks the lead used to make by hand, and so does the fallback reviewer's brief. Both
+also carry the rules a builder gets, in the same order: swarm-dev's [`rules.md`](../rules.md) first,
+then the project's own. After the checks come the
 lines of the story and its epic that hold a `(user, <date>)` mark. Each is printed as it stands, with
 its `path:line`, cut at 1500 bytes on a character boundary, and the brief tells the reviewer to read
 each decision in full at that line. Together they take at most 2000 bytes; past that, the brief says
@@ -2618,7 +2646,7 @@ pid that holds it. A lock whose pid is gone, or that has no pid file 10 seconds 
 left by a merge that died: merge takes it over and says so, one merge at a time. A merge that has
 GitHub merge a moved base into its PR frees the lock while it waits for the new head's CI, and takes
 it again before it checks the base once more (§ Merging, Waiting for the new head). `swarm.sh unblock` then readies a
-blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` each story's review agent merges that story's PR instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`). It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one (the review agent sends its conductor a stop note on either hold, and the conductor closes the builder); a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`). When it still cannot read them, it holds the PR and says why. A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands. `--board` and `--release` PRs cannot change those paths. Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story. `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path. `status` and `wait --lead` read the record with no gh call. They leave it out once a `wait --lead` heads pass made after the hold read the PR at another head (`.swarm/lead/held`); with no such pass, as when no `wait --lead` runs, the hold stands. A held PR's review agent leaves it for your merge. The conductor merges no story PR: the story's review agent does, and the lead may. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
+blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` each story's review agent merges that story's PR instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). When another merge deletes a story file after `swarm.sh merge` listed the board, `merge` lists the board again, once, and reads it again. If a story file on that second list is gone by its read too, or a file is there but unreadable, the PR is still held, and a review agent merging its own story's PR is refused in the same cases. `swarm.sh merge` also holds a story PR that changes `.claude/`, `.github/`, `hooks/` or a root `Makefile`, `GNUmakefile` or `makefile`, in any case of letters, a renamed or removed file's old path included (`held: <slug> changes <path>, which only the user merges; the user merges it`). It does so after the story lookup and the head's CI check, reading the PR's files at the head it pinned, from GitHub's compare of the base with that head, so a later push cannot hide one (the review agent sends its conductor a stop note on either hold, and the conductor closes the builder); a transient gh error is read again, three reads in all, and the read stops after 60 seconds (`BASE_MOVED_WAIT`). When it still cannot read them, it holds the PR and says why. A hold from a passing error (three 5xx in a row, a read past the bound, a file count GitHub briefly reports wrong) clears on the next `swarm.sh merge`, so run it again; a PR of over 300 files (the most the compare lists) or of no file is never readable, so that hold stands. `--board` and `--release` PRs cannot change those paths. Nothing else lifts a protected-path hold for one PR: you merge it by hand, and the next reconcile finishes the story. `swarm.sh merge` records either hold on the item in review, as `protected: <PR URL> <head> <time> <path>` (or `unreadable: <why>` in place of the path) in its board-state file, and drops it when a later `swarm.sh merge` of that PR finds no protected path. `status` and `wait --lead` read the record with no gh call. They leave it out once a `wait --lead` heads pass made after the hold read the PR at another head (`.swarm/lead/held`); with no such pass, as when no `wait --lead` runs, the hold stands. A held PR's review agent leaves it for your merge. The conductor merges no story PR: the story's review agent does, and the lead may. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file. The review agent runs `swarm.sh review <slug> --head <that SHA> <PR URL>`, then
 `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
 with `--match-head-commit` (with `--auto` only to enqueue it on a base with a merge queue), waits for CI on the base, and runs `swarm.sh reconcile`.
@@ -3169,6 +3197,19 @@ a `while`, `until` or `if` is not read as one: it passes, and the commands after
 where the call runs. It refuses a `git checkout`
 that would overwrite uncommitted changes: unstaged ones, and staged ones too when it checks out from
 a commit (`git checkout HEAD -- f`). Back the file up with `cp` and restore from the copy instead.
+In a swarm project's main checkout (the git top level that holds `.claude/swarm/config`, not a
+linked worktree), it refuses a `git reset --hard`, `git restore` or `git clean` that would drop work
+there, and names the files. `reset --hard` is refused when a tracked file has a staged or unstaged
+change, or when an untracked or ignored file is in the way of a file in the commit it resets to: at
+the same path with other content, where that commit has a folder, or inside a folder where it has a
+file. Any other untracked file passes, since `reset --hard` keeps it. `restore` is refused when it would
+overwrite a change: an unstaged one, and a staged one too with `--staged --worktree` (`-SW`). With
+`--source`, an untracked or ignored file in the way of a file it writes counts too, as for
+`reset --hard`.
+`restore --staged` alone changes only the index, so it passes. `clean` is refused when its own dry
+run, with your flags, lists a file, so under `-x` or `-X` an ignored file in `.swarm/` counts.
+`git clean -n` passes. Commit the changes in a board PR, or back the files up with `cp`. A clean
+main checkout and any worktree pass.
 swarm.sh starts every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook
 also refuses `git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the
 project's main checkout, whether the command runs there from the session's folder, after a `cd`, or
@@ -3179,7 +3220,8 @@ another session's process. `kill $!` and `kill <pid>` pass. It refuses an agent'
 any `while` or `until` loop around `gh pr checks` (a `while read` loop that checks each PR once
 passes), and names `swarm.sh wait-pr`, which stops on a red
 check, a conflict or a deadline. A single `gh pr checks` passes.
-Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it. These
+Your own session has no `SWARM_AGENT`, so only the `cd`, `git checkout` and main checkout rules
+apply to it. These
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
@@ -3451,7 +3493,7 @@ changes merge's exit code.
 | `swarm.sh upgrade [<epic>\|backlog] [--foreground]` | After a plugin update, move a running epic's (or the backlog's) agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It runs detached, in rounds, until every agent is moved or 2 hours pass, logging to `.swarm/upgrade-<version>.log`; one runs per project. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. Under `merge = agent` it refuses while Claude Code's settings have no allow rule for `swarm.sh merge` (§ Merging, the conduct preflight). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (`prompt: <agent> (<kind>), exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), or an epic that can start or has no plan running (`idle: epic <epic> can start, ...`, `idle: epic <epic> has no plan running, ...`), as `next` prints them (`wait --lead` takes no step of its own, so its epic lines include the one `next`'s `plan-epic` step names), a story PR reviewed, green and left unmerged past `queue_minutes` (`unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>`), or a story PR that conflicts with its base (`conflict: <slug> <PR URL>, exit: tell its builder to merge the base in`), or a review agent's stop note no running conductor has (`stopped: <slug> (<the note>), exit: <exit>`), and print each new one. A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on you, a started story with no live agent (`no-agent: <slug>, exit: <exit>`), a PR whose review agent never started or went (`no-review: <slug> <PR URL>, exit: swarm.sh review-agent <slug> <PR URL>, or the fallback reviewer`), a failed step-up (`step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>`), a brief still unsent after its resend (`unsent brief: <stem>, exit: <exit>`), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (`prompt: <agent> (<kind>), exit: <exit>`), or a blocked story whose dependency it shares no touches with (`idle: <story> waits on <dep> but shares no touches part with it and needs nothing from it`), or a ready story with no build past `queue_minutes` (`idle: <story> is ready with no build, exit: <exit>`), or an epic that can start or has no plan running (`idle: epic <epic> can start, ...`, `idle: epic <epic> has no plan running, ...`), as `next` prints them (`wait --lead` takes no step of its own, so its epic lines include the one `next`'s `plan-epic` step names), a story PR reviewed, green and left unmerged past `queue_minutes` (`unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>`), or a story PR that conflicts with its base (`conflict: <slug> <PR URL>, exit: tell its builder to merge the base in`), or a review agent's stop note no running conductor has (`stopped: <slug> (<the note>), exit: <exit>`), or any other line [§ The lead](#the-lead) lists, and print each new one. A PR `swarm.sh merge` held for a protected path is `merge: <slug> <PR URL> (held: changes <path>; exit: the user merges it)`. |
 | `swarm.sh wait-pr [--timeout <seconds>] --head <sha> <PR URL>` | Wait for the checks on a PR's head and print the head SHA and each check. It exits 0 when all are green and 1 on red. Right after a push, GitHub can still report the old head. With `--head <sha>` (a full SHA or a prefix of 7 or more), wait-pr reads the PR again each poll until its head starts with `<sha>`, printing `pending: head <old>, not <sha>`, and reads no checks before then. If the head is still another one 5 minutes after the first read that found it (`SWARM_WAIT_PR_GRACE`), it exits 2, naming both. Without `--head` it waits on whatever head GitHub reports at its first read, so a wait started right after a push can end green on the old head before the new one has run a check. An agent that waits right after its own push passes `--head`. Green also needs a `pull_request` run of each workflow that a pull request into the base runs with the PR's files (its `branches` and `paths` filters). It reads the workflows once per wait, on its first read: at the PR's merge commit (`refs/pull/<n>/merge`), which is what GitHub runs them from, or at the head when that merge commit is missing or does not include the head yet. GitHub rebuilds the merge commit when the base moves, so a base commit pushed after the head that adds a `pull_request` workflow, or widens one's `branches` or `paths`, makes wait-pr wait on a workflow that never ran on this head. It then exits 2 after the grace, on every run, until you merge the base in and push. A workflow Actions has disabled is not waited on, and neither is one whose `types` leave out `opened` or `synchronize`. An expected workflow that has not started counts as pending, as `<path> (no run on <sha>)`, and so does one whose newest run has not finished, even when every check already there is green. If that newest run finished as anything but success, skipped or neutral, the head is red. A `push` run of the same workflow does not count. A workflow whose triggers it cannot read is not waited on, and a line of its own names it: `not waited on: <path> (triggers not read: <why>)`. It exits 2 when gh fails (a dropped connection, timeout or rate limit is retried first, up to 3 times in a row), at once when the PR conflicts with its base (`conflicts with <base>: merge origin/<base> in, then push`; GitHub's `UNKNOWN` on an open PR, still computing, is read again each poll, with the checks read beside it), when no check run appears within 5 minutes of the first read that found none (`SWARM_WAIT_PR_GRACE`) or an expected workflow still has no run by then (naming it), and when it is still waiting after `--timeout` seconds (30 minutes by default, `SWARM_MERGE_CI_SECONDS`), naming it; a read that hangs ends there too. Exit 1 always means a red check: any other failure, a bad config line included, exits 2. The first rate limit that comes while the budget it came from (GraphQL's for a `GraphQL:` error, else REST's) is spent is not retried that way: wait-pr prints `rate limited: GitHub's API budget resets at <time>; waiting until then`, waits until that time, moves its deadline back by the same amount, and starts its count of retries over. With `--timeout`, a reset past that deadline ends the wait at once, naming the reset time. A rate limit while the budget is not spent is GitHub's secondary, per-minute limit, sometimes in the same words. It is retried after the retry pause plus up to half again, so waits started together spread out, and the budget is not read again once the one reset wait is spent or the error says `secondary rate limit`. The no-check grace moves with the reset wait. It polls every 20 seconds (`SWARM_MERGE_POLL`), so run it in the background. From the story's review pane (`review-<slug>`'s, by the record `merge` and `tell` go by) with `escalate_ladder` set, a red head also counts toward the ladder's ci-red trigger, and the build's second red head steps it up, printing `stepped up: <slug>` ([§ The escalation ladder](#the-escalation-ladder)). |
 | `swarm.sh review-agent <slug> <PR URL>` | Start a review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; a conductor runs it once for each PR that opens. When a start runs nothing, it waits 3 seconds and starts again, up to 3 starts in all, so it can take three times as long. That covers herdr's `pane ... not found`, `the pane's shell did not take the agent's environment` and `agent_not_found` with nothing sent, and an unclear start that left no agent running (no pane, a session that is gone, or no status from herdr). Each failure it retries logs a `review-agent <slug>` line in events.tsv ending `(try N of 3)`, and a third failure is the command's own line, ending `(try 3 of 3)`. An unclear start whose agent runs or cannot be listed is never tried again. The agent never edits the PR's code. On a pass it runs `swarm.sh review <slug> --head <SHA> <PR URL>` with the head it reviewed, then merges the PR with `swarm.sh merge --head` under `merge = agent` or a `merge` grant, or leaves it for you ([§ Building](#building)). |
 | `swarm.sh review <slug> [--head <sha>] <PR URL>...` | Put a story or epic whose PRs are green and reviewed in review, with its PRs on its `prs:` line; a story whose `depends_on` parents are still open is held instead. With `--head`, it refuses, changing nothing, while the item has a PR it does not name: one on its `prs:` line or, for a story, one open from its branch `story/<slug>` (one review agent passes one PR). It then reads each PR's head (each gh read 60 seconds at most) and refuses unless every head is still `<sha>`, the head the review passed. A moved head needs a review of its own: the refusal names `swarm.sh review-agent --next <slug> <PR URL>` for a round that sent the builder findings, and a new `swarm.sh review-agent <slug> <PR URL>` after a pass. A read that fails says to run it again. A review that succeeds is logged in events.tsv as `review <slug> ok (<PR URLs>)`, with or without `--head`. |
