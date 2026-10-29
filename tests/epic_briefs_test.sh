@@ -444,6 +444,49 @@ printf '%s\n' "escalate_after = 3" > "${p}/.claude/swarm/config"
 check "escalate_after = 3: attempts: 2 is code, 3 is escalate" "code escalate" "$(ladder e4-a 2 3 -- "kind: code")"
 rm -f "${b}/stories/e4-a.md" "${b}/stories/e4-f.md"
 
+# --- swarm-dev's rules.md (project_rules): on a project with no brief, AGENTS.md or CLAUDE.md, the
+# builder's and the conductor's briefs carry every line of it; with a brief and a lesson: marker, it
+# comes before both. If project_rules stops printing it, or story_brief or conduct_brief stops calling
+# project_rules, this goes red.
+RULES="$(dirname "${SWARM}")/../rules.md"
+rm -f "${p}/.claude/swarm/brief.md" "${p}/AGENTS.md" "${p}/CLAUDE.md" "${p}/.claude/CLAUDE.md"
+: > "${p}/.claude/swarm/config"
+item "${b}" epics/rf.md "status: active"
+item "${b}" stories/rf1.md "status: ready" "kind: code" "epic: rf" "repo: svc"
+run story rf1 >/dev/null
+run conduct rf >/dev/null || true
+# missing_rules <brief file> — the non-empty lines of rules.md the brief lacks, as whole lines.
+missing_rules() { local l n=0; while IFS= read -r l; do [[ -z "${l}" ]] || grep -qxF -- "${l}" "$1" || n=$((n + 1)); done < "${RULES}"; echo "${n}"; }
+check "with no brief of the project's, the builder's and the conductor's briefs carry every line of rules.md" "0|0" \
+  "$(missing_rules "${p}/.swarm/briefs/rf1.md")|$(missing_rules "${p}/.swarm/briefs/conduct-rf.md")"
+check "the conductor's heading over the rules names swarm-dev's rules and the project's" "yes" \
+  "$(has "swarm-dev's rules and the project's, which every builder also gets:" "$(cat "${p}/.swarm/briefs/conduct-rf.md")")"
+printf 'RF-BRIEF-RULE\n' > "${p}/.claude/swarm/brief.md"; printf 'RF-MARKED <!-- lesson: rf-kind -->\n' > "${p}/AGENTS.md"
+order="$(run _brief rf1 | awk -v first="$(grep -m1 '^- ' "${RULES}")" -v last="$(tail -1 "${RULES}")" '
+  $0 == first { f = NR } $0 == last { l = NR } /^RF-BRIEF-RULE$/ { b = NR } /^RF-MARKED / { m = NR }
+  END { print (f && f < l && l < b && b < m) ? "rules, brief, marker" : "out of order: " f " " l " " b " " m }')"
+check "with a brief and a lesson: marker, rules.md's text comes before the brief, and the brief before the marker" "rules, brief, marker" "${order}"
+# A plugin copy with no rules.md: the brief is still written, and stderr names the missing file.
+mkdir -p "${ROOT}/norules"; cp -R "$(dirname "${SWARM}")" "${ROOT}/norules/bin"
+nr_err="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${ROOT}/norules/bin/swarm.sh" _brief rf1 2>&1 >/dev/null)"
+check "with no rules.md in the plugin, building a brief says so on stderr" "yes" \
+  "$(has "swarm: ${ROOT}/norules/rules.md is missing, so this brief carries none of swarm-dev's rules" "${nr_err}")"
+rm -rf "${ROOT}/norules"
+rm -f "${p}/.claude/swarm/brief.md" "${p}/AGENTS.md" "${b}/epics/rf.md" "${b}/stories/rf1.md"
+# rules.md itself: at least fifteen rule lines, each with a Why: line under it, and each rule this
+# test names found by its own phrase on a rule line, so a rule swapped for filler goes red.
+check "rules.md has at least fifteen rule lines, each followed by its Why: line" "yes|0" \
+  "$( (( $(grep -c '^- ' "${RULES}") >= 15 )) && echo yes || echo "no, $(grep -c '^- ' "${RULES}")")|$(
+  awk '/^- / { if (r) n++; r = 1; next } r && /^  Why: / { r = 0; next } { if (r) n++; r = 0 } END { print n + r + 0 }' "${RULES}")"
+RULE_PHRASES=("shared upstream cause" "narrow sample is not a conclusion" "against a stand-in (a mock, a sibling API, a narrower sample)"
+  "scoped to one file, when the defect class spans many" "new code path must enforce every rule the existing paths enforce"
+  "zero or empty value shown to a person must say what it means" "repair path that changes something must say what it did"
+  "allowlist of its fields" "never shares the fail-closed guard" "exact records" "test can fail" "by the contract it checks"
+  "ongoing LLM cost" "Never generate load" "any session log")
+for w in "${RULE_PHRASES[@]}"; do
+  check "rules.md has the rule: ${w}" "1" "$(grep '^- ' "${RULES}" | grep -cF -- "${w}" || true)"
+done
+
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
 printf '%s\n' "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"
 sub='"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}'
