@@ -216,6 +216,28 @@ check "when the pid file cannot be made, it stops instead of spinning" returned 
 check "it says it cannot write the pid file" grep -q 'cannot write .*/lead/pid' "${ROOT}/out"
 stop; rm -f "${FX}/ln.fail"
 
+# --- a run's first read with no .swarm/lead/seen: a LEAD_QUIET kind is saved unprinted, any other line prints.
+# fresh holds h; s waits on d, which it shares no file with, so next has an idle: line for s.
+fresh "merge = human"
+item s "kind: code" "status: blocked" "depends_on: [d]" "touches: [a.sh]"
+item d "kind: code" "status: ready" "touches: [b.sh]"
+IDLE="idle: s waits on d but shares no touches part with it and needs nothing from it"
+lead 0
+check "a held: line prints nothing on a run's first read" test -z "$(grep '^held: ' "${ROOT}/out")"
+check "an idle: line prints nothing on a run's first read" test -z "$(grep '^idle: ' "${ROOT}/out")"
+check "with nothing else, that first read wakes no one" test "$(out)|$(rc)" == "|1"
+check "it saves both lines as seen" test "$(grep -cxF -e "held: h (paused)" -e "${IDLE}" "${P}/.swarm/lead/seen")" == 2
+# A started story with a worktree and a builder record, whose builder closed and is not listed: a
+# no-agent: line, which is no LEAD_QUIET kind.
+rm -rf "${P}/.swarm/lead"; again
+item wl-quiet "kind: code" "status: ready" "touches: [c.sh]"
+mkdir -p "${ROOT}/proj-wt/wl-quiet"; printf '2026-10-01\tcode\twl-quiet\tclaude\tsonnet\thigh\ts-wl-quiet\n' > "${P}/.swarm/agents.tsv"
+printf '%s\t%s\twl-quiet\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" story "$(date -u +%Y-%m-%dT%H:%M:%SZ)" close >> "${P}/.swarm/events.tsv"
+lead 0
+check "a no-agent: line prints on a run's first read, alone" test "$(out)|$(rc)" == \
+  "no-agent: wl-quiet, exit: swarm.sh restart wl-quiet, or swarm.sh hold wl-quiet <reason>|0"
+rm -rf "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${ROOT}/proj-wt"
+
 fresh; lead 0900
 check "a timeout with a leading zero is decimal, not octal" test "$(out)|$(rc)" == "|1"
 
