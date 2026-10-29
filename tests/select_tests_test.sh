@@ -44,13 +44,14 @@ CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; d
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
 BIN_FLOOR=(); for t in agent_state command_names doc_check events lib_path loose_match removed roles skill timeouts; do BIN_FLOOR+=("tests/${t}_test.sh"); done
 SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh)
+RULES_FLOOR=(tests/epic_briefs_test.sh tests/review_test.sh tests/llms_test.sh tests/doc_check_test.sh)
 TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh)
 git init -q -b main "${G}"
 mkdir -p "${G}/bin/lib" "${G}/bin/gh-shim" "${G}/board/stories" "${G}/commands" "${G}/docs" "${G}/hooks" "${G}/scripts" "${G}/tests"
 for f in bin/lib/x.sh bin/gh-shim/gh board/stories/a.md board/stories/README.md commands/swarm.md commands/plan-epic.md docs/method.md \
-  hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh; do echo base > "${G}/${f}"; done
+  hooks/merge-guard.sh hooks/agent-state.sh scripts/board-only.sh scripts/test.sh Makefile tests/helper.sh rules.md; do echo base > "${G}/${f}"; done
 cp "${REPO}/scripts/test-map.tsv" "${G}/scripts/"
-for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
+for t in "${DOC_FLOOR[@]}" "${CMD_FLOOR[@]}" "${SHIM_FLOOR[@]}" "${TEST_FLOOR[@]}" "${BIN_FLOOR[@]}" "${RULES_FLOOR[@]}" tests/board_readme_test.sh; do echo 'echo floor' > "${G}/${t}"; done
 echo 'echo hooks/agent-state.sh' > "${G}/tests/select_tests_test.sh"
 echo 'cat docs/method.md' > "${G}/tests/names_method_test.sh"
 echo 'cat commands/swarm.md' > "${G}/tests/names_swarm_test.sh"
@@ -60,6 +61,7 @@ echo 'cp scripts/board-only.sh .' > "${G}/tests/names_gate_test.sh"
 echo 'bin/gh-shim/gh api' > "${G}/tests/names_shim_test.sh"
 echo 'cat commands/renamed.md' > "${G}/tests/names_renamed_test.sh"
 echo 'source tests/helper.sh' > "${G}/tests/names_helper_test.sh"
+echo 'cat rules.md' > "${G}/tests/names_rules_test.sh"
 echo 'echo plan-swarm.md old-board-only.sh merge-guard.shx' > "${G}/tests/x_test.sh"   # near misses
 # --functions' fixture: a dispatch case in bin/swarm.sh, and functions of both forms in bin/lib/x.sh,
 # one of which runs named.py, which imports helper.py, which imports util.py; another imports
@@ -203,6 +205,8 @@ commit='git add -A && git commit -qm change'
 
 check "a doc selects the doc floor and the test that names it" "$(sel "echo 1 >> docs/method.md; ${commit}")" \
   "$(lines "${DOC_FLOOR[@]}" tests/names_method_test.sh)"
+check "rules.md selects the briefs' and the docs' tests its row names, and the test that names it" "$(sel "echo 1 >> rules.md; ${commit}")" \
+  "$(lines "${RULES_FLOOR[@]}" tests/names_rules_test.sh)"
 check "an unstaged command selects the command floor and the test that names it, no other" "$(sel 'echo 1 >> commands/swarm.md')" \
   "$(lines "${CMD_FLOOR[@]}" tests/names_swarm_test.sh)"
 check "a command only its own test names still selects command_names_test.sh, which greps every command" \

@@ -503,11 +503,14 @@ EOF
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
 }
 
-# project_rules — the brief, then only the tagged rule lines (the grep below) of the project's
-# AGENTS.md, CLAUDE.md and .claude/CLAUDE.md, those it has: a builder in another repo's worktree
-# never reads them. These are the files the removed lessons_file could name, so its rules still land.
+# project_rules — swarm-dev's own rules (rules.md at the plugin root), the brief, then only the
+# tagged rule lines (the grep below) of the project's AGENTS.md, CLAUDE.md and .claude/CLAUDE.md,
+# those it has: a builder in another repo's worktree never reads them. These are the files the
+# removed lessons_file could name, so its rules still land. A missing rules.md is said on stderr.
 project_rules() {
   local f
+  if [[ -f "${SWARM_HOME}/rules.md" ]]; then cat "${SWARM_HOME}/rules.md"; echo
+  else echo "swarm: ${SWARM_HOME}/rules.md is missing, so this brief carries none of swarm-dev's rules" >&2; fi
   [[ ! -f "${PROJECT_BRIEF}" ]] || { cat "${PROJECT_BRIEF}"; echo; }   # a brief may lack its final newline
   for f in AGENTS.md CLAUDE.md .claude/CLAUDE.md; do
     grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${PROJECT_DIR}/${f}" 2>/dev/null || true
@@ -740,22 +743,28 @@ start_unclear() {
 
 # start_retryable <err> [state] — print the class and succeed when a start that failed with <err>
 # (start_agent's stderr) ran nothing and left no agent that can hold the brief, so another start loses
-# nothing. Either herdr surely sent nothing and <err> has one of herdr's texts (#688): pane_not_found
-# (`pane ... not found`), a pane's shell that did not take the agent's environment (clean_env), or
-# agent_not_found; or the start was unclear (start_unclear) and <state>, read_state's for its agent, is
-# none, gone or herdr: (nothing runs to have the brief). With no <state> (build_story's), an unclear
-# start never is.
+# nothing. Either herdr surely sent nothing and a line of <err> has one of herdr's texts (#688):
+# pane_not_found or `pane <id> not found`, a pane's shell that did not take the agent's environment
+# (clean_env), or agent_not_found; or the start was unclear (start_unclear) and <state>, read_state's
+# for its agent, is none, gone or herdr: (nothing runs to have the brief). With no <state>
+# (build_story's), an unclear start never is. Line by line, so words from two lines (a warning, then
+# another failure) never make one of herdr's texts.
 start_retryable() {
+  local line pane_re='(^|[^[:alnum:]_])pane [^[:space:]]+ not found'
   if start_unclear "$1"; then
     case "${2:-}" in none|gone|herdr:) echo "an unclear start with no agent running (${2})"; return 0 ;; esac
     return 1
   fi
-  case "$1" in
-    *pane_not_found*|*"pane "*" not found"*) echo "pane not found" ;;
-    *"the pane's shell did not take the agent's environment"*) echo "the pane's shell did not take the agent's environment" ;;
-    *agent_not_found*) echo "agent_not_found with nothing sent" ;;
-    *) return 1 ;;
-  esac
+  while IFS= read -r line; do
+    if [[ "${line}" == *pane_not_found* || "${line}" =~ ${pane_re} ]]; then   # loose-match: ok a constant regex, herdr's pane <id> not found
+      echo "pane not found"; return 0
+    fi
+    case "${line}" in
+      *"the pane's shell did not take the agent's environment"*) echo "the pane's shell did not take the agent's environment"; return 0 ;;
+      *agent_not_found*) echo "agent_not_found with nothing sent"; return 0 ;;
+    esac
+  done <<< "$1"
+  return 1
 }
 
 # review_round <slug> — the review round a story's PR is on: one more than the findings rounds of its
@@ -1189,17 +1198,13 @@ user_decisions() {
 }
 
 # review_checklist [story file] — the checks the lead learned by hand, one line each, for the review
-# agent's and the fallback reviewer's briefs. With a story file, also the check on the user's
-# decisions and each decision its story and its epic mark (user_decisions).
+# agent's and the fallback reviewer's briefs; the generic ones live in rules.md (project_rules). With
+# a story file, also the check on the user's decisions and each decision its story and its epic mark
+# (user_decisions).
 review_checklist() {
   local epic decisions files
   cat <<'EOF'
 Hold the PR to these as well:
-- A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified.
-- An audit or test scoped to one file, when the defect class spans many, is a finding.
-- A new code path must enforce every rule the existing paths enforce.
-- A zero or empty value shown to a person must say what it means.
-- A repair path that changes something must say what it did.
 - An exception to the scope rule above: a comment, doc or error-text line the changed code no longer matches is a finding at its file:line, even when that file is outside the touches.
 - Another exception to the scope rule: a PR that changes what a user runs, sees or must do and does not update README.md, AGENTS.md, docs/ or command text to match is a finding.
 - Report it at the stale doc's file:line, or at the change when no doc covers it. Example: swarm-dev's env: line, which kept the old env allowlist in AGENTS.md and README.md after the code changed.
@@ -1291,7 +1296,7 @@ EOF
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), codex-review with the slug, /code-review on round 1 when the PR
-# changes code, the guard's forms (guard_rule) and the project's rules. After each review it fixes or declines each finding, logs each
+# changes code, the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
 # before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,
@@ -1662,6 +1667,10 @@ one that says it \`cannot tell\` (herdr could not list its agents, or the board'
 be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only
 warns and starts it as the epic says.
 
+A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its
+session has ended, and the refusal names who acts on it. List the story under no agent in your report
+and never tell it again.
+
 The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
 cut off before its delete), read it, act on it and delete it first. Then, if the inbox exists, \`mv\`
@@ -1688,7 +1697,7 @@ EOF
   local rules sign; sign="$(sign_rule)"
   [[ -z "${sign}" ]] || printf '\n%s\n' "${sign}"
   rules="$(project_rules)"
-  [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
+  [[ -z "${rules}" ]] || printf '\nswarm-dev'"'"'s rules and the project'"'"'s, which every builder also gets:\n\n%s\n' "${rules}"
   cat <<EOF
 
 Your last act, after everything else, and only once no agent work is left (the stop rule above): write

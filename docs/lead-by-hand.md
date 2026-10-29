@@ -49,13 +49,6 @@ conductors of finished epics.
 Finish PR's `swarm.sh merge --board` has exited; closing it sooner kills that merge.
 **Issue.** [#690](https://github.com/redscaresu/swarm-dev/issues/690).
 
-## A merge refused because a story file is gone
-
-**Symptom.** `swarm.sh merge` refuses with `a story on the board cannot be read` just after another
-merge.
-**Step.** `git pull` in the project, then run the merge again.
-**Issue.** [#691](https://github.com/redscaresu/swarm-dev/issues/691).
-
 ## A PR outside any story
 
 **Symptom.** `swarm.sh merge` refuses with `no story or epic lists <PR URL>`.

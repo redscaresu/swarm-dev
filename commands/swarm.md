@@ -147,7 +147,9 @@ Repeat until a step below says stop:
      not clear the story. If that leaves the story stuck, list it for the user
      with why. While a conductor works, `next` also starts conductors for other ready work and prints
      `started:` or `no conductor` lines after the why: handle them as under `wait <agent>`. Then go
-     back to 1.
+     back to 1. A `could not reach <name>:` refusal from `swarm.sh tell` is final: the agent has no
+     pane, or its session has ended, and the refusal names who acts on it. List the story under no
+     agent and never tell it again.
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns
@@ -357,8 +359,8 @@ Repeat until a step below says stop:
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
      nudge. The line goes once a review agent starts on the story again or it leaves the board.
-     Each line comes once, and again only after it has gone from the queue. Unlike `held:` and `merge:` lines, `unmerged:`, `conflict:` and `stopped:` lines come on a
-     run's first read too. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
+     Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
+     `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.

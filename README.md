@@ -161,7 +161,8 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   an agent only when its story names it under `env:` or the board's config lists it in `agent_env`.
   With Foundry on, its `ANTHROPIC_FOUNDRY_*` and model settings pass to every agent too.
 - In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
-  go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
+  go through `swarm.sh merge`), a `git checkout` that would drop changes, a `git reset --hard`,
+  `restore` or `clean` that would drop uncommitted work in the main checkout, and an agent's `pkill`.
 - Nothing merges until you say so, unless you set `merge = agent`, or the agreed HLD over the work
   lists `merge` in its `grants:`, which only you set. `swarm.sh grants <PR URL>` shows the HLD and
   its grants. `swarm.sh merge` reads the grant at the head it merges, and refuses if a push has moved
@@ -202,6 +203,11 @@ Restart Claude Code afterwards. Agents already running stay on the old version u
 `swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session. A builder
 waits while the Claude review agent reviewing its PR is busy and still on the old version. upgrade
 runs detached until every agent is moved, and prints its log, `.swarm/upgrade-<version>.log`.
+
+swarm-dev's rules, [rules.md](rules.md), ship with the plugin, so a project gets new rules with
+`claude plugin update`. They reach the agents started after the update. `swarm.sh upgrade` resumes
+each running agent's own session and sends it no new brief, so a resumed agent keeps the rules it
+started with.
 
 An epic with `stage: v<x.y.z>` holds its release. Until every epic of that stage has left the board,
 `next` prints a `release-held:` line and offers at most a patch; then it prints `release v<x.y.z>`.

@@ -149,7 +149,15 @@ rm -f "${P}/.swarm/state/conduct-tab"; : > "${P}/.swarm/events.tsv"
 # --- 6. wait --lead: a stopped: line for a stop note no running conductor has.
 # herdr lists the agents in ${ROOT}/agents; each poll is one `swarm.sh wait --lead 0`, which reads the queue once.
 printf '#!/bin/sh\ncase "$1 $2" in\n  "agent list") printf '"'"'{"result":{"agents":[%%s]}}\\n'"'"' "$(cat "%s/agents" 2>/dev/null)" ;;\n  *) echo '"'"'{"result":{}}'"'"' ;;\nesac\n' "${ROOT}" > "${ROOT}/bin/herdr"
-chmod +x "${ROOT}/bin/herdr"
+# ps: the real one, except that a process list (-A) holds only this run's processes, which start no
+# swarm.sh of their own. The poll reads the machine's whole list for a process that answers for s1 (a
+# `swarm.sh tell s1`, `step-up s1` or `wait-pr` on its PR), and another test running one at the same
+# time (step_up_slow_start_test.sh's `swarm.sh step-up s1 stalled`, in the same CI shard) would make s1
+# busy here and the no-review: case below quiet.
+# shellcheck disable=SC2016 # the stub's own shell expands $*
+printf '#!/bin/sh\ncase " $* " in *" -A "*) %s "$@" | grep -F "%s"; exit 0 ;; esac\nexec %s "$@"\n' \
+  "$(command -v ps)" "${ROOT}" "$(command -v ps)" > "${ROOT}/bin/ps"
+chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/ps"
 : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
 # poll [grace] — with no grace given, a stop note is reported at any age (SWARM_STOP_GRACE=0).
 poll() {
@@ -352,6 +360,12 @@ review-agent: review-s1 did not start${put_back}; it ran nothing: pane not found
 check "7 and after them the findings file and the stop note are back in place, with nothing left aside" \
   "head: OLD|${NOTE}|no|no|no" \
   "$(cat "${F}")|$(cat "${STOP}")|$([[ -e "${F}.prev" ]] && echo yes || echo no)|$([[ -e "${STOP}.prev" ]] && echo yes || echo no)|$([[ -e "${F%.md}.head" ]] && echo yes || echo no)"
+# next_pane's warning, then another failure: the words "pane" and "not found" sit on two lines, which is
+# none of herdr's texts.
+twoline=$'swarm: herdr would not open a pane at /x in the lead-agents workspace ahead of this one, outside the project; the agent opens in this workspace instead\nswarm: review-s1: python3: command not found'
+check "7 not retried: a pane warning, then a failure on another line, makes one start and logs as today with no (try suffix" \
+  "1|0|1
+review-agent: review-s1 did not start${put_back}" "$(retry 1 "${twoline}")"
 check "7 not retried: an unclear start whose agent reads idle with the brief makes one start and logs ok" \
   "1|0|0
 ok" "$(retry 1 "${unclear}" idle)"
