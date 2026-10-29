@@ -232,10 +232,21 @@ pr_contents() {
 # reads past it. The file list read below (merge_files) is bounded the same way on either route. At
 # the head a 404 is absent only for a path the PR removes or
 # renames away (merge_gone): one it keeps there means gh cannot read the head (a fork's), where every
-# epic would read as deleted. merge_read from <path> is merge_from's answer.
+# epic would read as deleted. merge_read from <path> is merge_from's answer. merge_read ref fetches the
+# base into the project's clone, with the tags on it (git follows them), and prints origin/<base>;
+# stage_gate asks it once a merge, and only for an epic going active with a stage:. The fetch stops
+# after BASE_MOVED_WAIT, as the contents reads do, and never prompts for a credential. A failed fetch
+# prints git's reason (its first line), a cut-off one says it timed out, and either fails 2.
 merge_read() {
-  local ref="${head}" gone rc=0
+  local ref="${head}" gone err lim rc=0
   [[ "$1" != from ]] || { merge_from "$2"; return; }
+  if [[ "$1" == ref ]]; then
+    lim="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}"
+    err="$(within "${lim}" env GIT_TERMINAL_PROMPT=0 git -C "${PROJECT_DIR}" fetch -q origin "+refs/heads/${base}:refs/remotes/origin/${base}" </dev/null 2>&1)" || rc=$?
+    [[ ${rc} -ne 142 ]] || { echo "cannot fetch origin/${base} (the fetch timed out after ${lim}s)"; return 2; }
+    [[ ${rc} -eq 0 ]] || { err="${err%%$'\n'*}"; echo "cannot fetch origin/${base} (${err:-git fetch failed})"; return 2; }
+    echo "origin/${base}"; return 0
+  fi
   [[ "$1" == head ]] || ref="${base}"
   # gh's error is left out: epic_guard's line names the file and the ref it could not read.
   pr_contents "${repo}" "${ref}" "$2" "${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" 2>/dev/null || rc=$?
@@ -305,10 +316,12 @@ unticketed_why() {
 }
 
 # epic_guard — merge's refusal of a board or story PR that sets an epic active with no ticket
-# (merge_pr's locals files, only and url): epic_unticketed on one changed path under the board's epics/
-# at a time (board_epics), so a read error or a bad grants: names the epic it was checking too, with
-# every changed path for its parent: check. A failure that printed no reason refuses all the same. The
-# line starts --board: on that route only.
+# (merge_pr's locals files, only, url and base): epic_unticketed on one changed path under the board's
+# epics/ at a time (board_epics), so a read error or a bad grants: names the epic it was checking too,
+# with every changed path for its parent: check. Then stage_gate's refusal of one set active above the
+# stage the base allows, whatever lead_epics says, on every changed epic at once, so the base is fetched
+# once. A failure that printed no reason refuses all the same. The line starts --board: on that route
+# only.
 epic_guard() {
   local p s why list pre="${only:+${only}: }"
   list="$(board_epics <<< "${files}")"
@@ -320,6 +333,9 @@ epic_guard() {
       || merge_fail "${pre}$(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
     [[ -z "${why}" ]] || merge_fail "${pre}${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${list}"
+  why="$(stage_gate merge_read "${list}" "${files}")" \
+    || merge_fail "${pre}$(unticketed_why "${why:-cannot check the stages}"), so whether ${url} sets an epic active above the stage ${base} allows is unknown"
+  [[ -z "${why}" ]] || merge_fail "${pre}${why}"
 }
 
 # board_epics — each line of stdin that is a board epic, <board>/epics/<slug>.md with no subfolder and
@@ -937,13 +953,14 @@ short_shas() {
 # passed, its files at the pinned head change no protected path (protected_hold: .claude/, .github/,
 # hooks/ or a root Makefile, a renamed file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing; and, under either merge mode, it sets
-# no epic active with no ticket (epic_guard, read at the pinned head, unless the board is not in the
-# project's repo or the PR is in another repo than the board's, story_elsewhere), and, at the pinned head,
-# no merge of the PR's own dropped a line of the base, nor could that go unchecked (dropped_hold: a
-# hold for the user, recorded on the item in review; a head that moved refuses for a new review))
-# (with --board instead: the PR is in the
+# no epic active with no ticket, or above the stage the base allows (epic_guard, read at the pinned
+# head, unless the board is not in the project's repo or the PR is in another repo than the board's,
+# story_elsewhere), and, at the pinned head, no merge of the PR's own dropped a line of the base, nor
+# could that go unchecked (dropped_hold: a hold for the user, recorded on the item in review; a head
+# that moved refuses for a new review)) (with --board instead: the PR is in the
 # board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
-# with no ticket and drops no base line, as for a story PR, recording nothing; with --release: the PR is in the
+# with no ticket or above the stage the base allows and drops no base line, as for a story PR,
+# recording nothing; with --release: the PR is in the
 # project's own repo and every path it changes is .claude-plugin/plugin.json, release_check's, and
 # with merge = human release_check also finds at least one story merged since the last tag, each
 # under an agreed HLD granting release), and ci_gate passes on the head. A story PR on the direct path

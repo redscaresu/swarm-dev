@@ -401,9 +401,11 @@ put() { # <path> <front-matter line>... — a board file in that clone, staged
 land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
 pulled() { git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'; }
 # With lead_epics = on: these board PRs set epics active with no ticket, which merge --board's epic
-# guard (its own cases above) would refuse; what they test is ready_tell.
+# guard (its own cases above) would refuse; what they test is ready_tell. The stage gate still reads
+# each epic they change at the head, whatever lead_epics says: gh serves the clone's copy.
 bfresh() { # [config line]... — fresh, no story s, the PR the last land's commit, and the merge commit origin's tip (OID), green
   fresh "lead_epics = on" "$@"; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
+  git -C "${ROOT}/up" diff --name-only --diff-filter=d HEAD~1 HEAD -- docs/epics | while IFS= read -r f; do cp "${ROOT}/up/${f}" "${FX}/wf.${f##*/}.${H1}"; done
   git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | python3 -c 'import json, sys; print(json.dumps([{"filename": l.strip(), "status": "modified"} for l in sys.stdin]))' > "${FX}/files"
   git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ' > "${FX}/nfiles"
   checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
