@@ -1317,6 +1317,14 @@ and `dash` show `usage-limit` for the agent in place of working or idle. `wait -
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
 worktree, its own work in its session log, a PR update, a swarm action on its story, a test suite
 running in its pane or a background task its session waits on, each up to 3 times `stall_minutes` old) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
+Before it calls a builder stalled, it asks the signer probe (`sign_blocked`, over the builder's
+worktree) whether git can sign the uncommitted work there without a prompt. The probe says `blocked` when
+`commit.gpgsign` is on, the tree has changes, and gpg-agent holds no cached passphrase for the signing key
+(or ssh-agent does not list the ssh key). A blocked builder is waiting on a person to unlock the key, so
+the wait does not return on it. It logs a `sign-blocked: <slug> (unsigned work since <time>)` incident
+instead, `<time>` being the worktree's last commit in UTC, once per change of state: a later `blocked` adds
+none unless a `sign-clear: <slug>` incident (the probe reading `clear` on a builder that was blocked) or a
+new commit came between. A probe that cannot tell (`unknown`) changes nothing, and the builder can stall.
 So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at the timeout or when
 herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
@@ -1872,7 +1880,9 @@ expired login: a second wait adds none, and a `tell` (the resume after the `/log
 one. `tell` writes `stale-blocked` when herdr refused a tell as blocked though the agent's pane read clear,
 so `tell` reported the agent idle to herdr. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
 unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the waits on that builder write
-none, so one stuck builder is one incident. `swarm.sh intervene <kind> "<one line>"` writes one with
+none, so one stuck builder is one incident. `wait --stall` writes `sign-blocked` when a builder it would call stalled cannot
+sign its uncommitted work, and `sign-clear` when that builder can sign again, each once per change of state
+([§ Building](#building)). Neither ends a login episode. `swarm.sh intervene <kind> "<one line>"` writes one with
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
 first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write.
