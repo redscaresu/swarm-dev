@@ -138,7 +138,9 @@ check "a builder named split-critic counts under its own role" "| code | 2 | cla
 # s-c never steps up; s-old's step-up is before the window, and a refused step-up line counts for none.
 # s-e steps up findings-3 from opus in two attempts: the first fails, the second is held for the lead,
 # and each step-up takes its own attempt's ending; the tokens are the story's, of both attempts. s-f does
-# the same twice in one day (no agents.tsv lines, so no tokens): the first fails, the second merges.
+# the same twice in one day (no agents.tsv lines, so no tokens): the first fails, the second merges. s-g's
+# rung starts before midnight and its step-up line comes after it: merged. s-h's rung closes, its session
+# naming no PR, while its first rung's PR is open: open.
 G="${dir}/rung"; mkdir -p "${G}/projects/p"
 for s in "r1 sonnet 1000000" "r2 opus 1000000" "r3 opus 2000000" "r4 fable 1000000" "r5 sonnet 500000" "r6 opus 1000000" "r10 opus 1000000"; do
   read -r sid model tokens <<< "${s}"   # r7 (s-d's fable rung) and s-e's but r10 have no session log
@@ -162,6 +164,8 @@ ev 2026-10-02T13:00:00Z escalate s-e "ok (findings-3: opus -> fable)"
 ev 2026-10-02T15:00:00Z held s-e "ok (top-rung: findings round 2 on fable)"
 ev 2026-10-03T08:00:00Z escalate s-f "ok (no-pr: sonnet -> opus)"
 ev 2026-10-03T10:00:00Z escalate s-f "ok (no-pr: sonnet -> opus)"
+ev 2026-10-03T12:00:00Z escalate s-h "ok (ci-red-2: opus -> fable)"
+ev 2026-10-04T00:03:00Z escalate s-g "ok (stalled: opus -> fable)"
 rows="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' date slug model attempts pr_state story_merged closes close_cause started \
   2026-10-01 s-a sonnet 1 MERGED true 1 step-up:findings-3 '' 2026-10-01 s-a opus 1 MERGED true 1 '' '' \
   2026-10-01 s-b opus 1 OPEN false 1 step-up:stalled '' 2026-10-01 s-b fable 1 OPEN false 0 '' '' \
@@ -170,7 +174,9 @@ rows="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' date slug model attempts p
   2026-10-01 s-e opus 1 '' false 1 step-up:findings-3 '' 2026-10-01 s-e fable 1 '' false 1 '' '' \
   2026-10-02 s-e opus 2 OPEN false 1 step-up:findings-3 2026-10-02T12:00:00Z 2026-10-02 s-e fable 2 OPEN false 0 '' 2026-10-02T13:00:00Z \
   2026-10-03 s-f sonnet 1 CLOSED true 1 step-up:no-pr '' 2026-10-03 s-f opus 1 CLOSED true 1 '' '' \
-  2026-10-03 s-f sonnet 2 MERGED true 1 step-up:no-pr '' 2026-10-03 s-f opus 2 MERGED true 0 '' '')"
+  2026-10-03 s-f sonnet 2 MERGED true 1 step-up:no-pr '' 2026-10-03 s-f opus 2 MERGED true 0 '' '' \
+  2026-10-03 s-h opus 1 OPEN false 1 step-up:ci-red-2 '' 2026-10-03 s-h fable 1 '' false 1 '' '' \
+  2026-10-03 s-g opus 1 MERGED true 1 step-up:stalled '' 2026-10-03 s-g fable 1 MERGED true 0 '' 2026-10-03T23:58:00Z)"
 rungs() { # [until] — the cost section's per-rung block over the fixture, from --since 2026-09-15, as flow_sections runs it
   TZ=UTC SWARM_ROWS="${rows}" python3 "$(dirname "${SWARM}")/lib/flow_report.py" 2026-09-15 "${1:-9999-12-30}" "" "${G}/agents.tsv" "${G}/events.tsv" \
     "${G}/findings.tsv" x "code code-sonnet escalate" "${G}/projects" "${G}/sessions" "" "${G}/own" cost | sed -n '/^### per rung$/,$p'
@@ -183,8 +189,9 @@ same "one row per step-up in the window: its trigger, tokens per rung and outcom
   '| s-d | ci-red-2 | opus -> fable | opus 1.0M $20.00, fable - | failed |' \
   '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | failed |' \
   '| s-e | findings-3 | opus -> fable | opus 1.0M $20.00, fable - | lead |' \
-  '| s-f | no-pr | sonnet -> opus | - | failed |' '| s-f | no-pr | sonnet -> opus | - | merged |' '' \
-  '| rung | builds | share |' '|---|---|---|' '| sonnet | 4 | 50% |' '| opus | 7 | 88% |' '| fable | 4 | 50% |')"
+  '| s-f | no-pr | sonnet -> opus | - | failed |' '| s-f | no-pr | sonnet -> opus | - | merged |' \
+  '| s-h | ci-red-2 | opus -> fable | - | open |' '| s-g | stalled | opus -> fable | - | merged |' '' \
+  '| rung | builds | share |' '|---|---|---|' '| sonnet | 4 | 40% |' '| opus | 9 | 90% |' '| fable | 6 | 60% |')"
 # shellcheck disable=SC2016 # the $ is the table's, not an expansion
 same "with --until, sessions and rungs after it are left out" "$(rungs 2026-10-01 | grep -F -e '| s-e |' -e '| opus |' -e '| fable |')" \
   "$(printf '%s\n' '| s-e | findings-3 | opus -> fable | opus -, fable - | failed |' '| opus | 4 | 80% |' '| fable | 3 | 60% |')"

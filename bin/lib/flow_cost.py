@@ -76,6 +76,7 @@ if epic:
 RANK = ("haiku", "sonnet", "opus", "fable")
 by_rank = lambda m: (RANK.index(m) if m in RANK else len(RANK), m)
 LEAD = ("held", "escalated", "close:impossible")
+RUNG_LAG_MIN = 10   # a rung starts before its step-up line: its brief's tries and one more read, up to 600 s
 ups, to_lead, every = [], collections.defaultdict(list), collections.defaultdict(list)   # every: step-up times by (slug, trigger, from)
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     e = line.rstrip("\n").split("\t")
@@ -108,13 +109,15 @@ def ended(at, slug, trigger, frm, to):
     # merged, lead, failed or open, as above, for the step-up of <slug> from <frm> to <to> logged at <at>.
     mine = [r for r in rows if r.get("slug") == slug]
     # outcomes closes the build a step-up replaced with close_cause step-up:<trigger>, and its attempt is the
-    # build's: a row closed so on <frm> whose next row, the rung, is on <to> and started the
-    # day the step-up was logged; of the same day's, the k-th last line pairs with the k-th last row, as
-    # outcomes pairs them in order. With none, the build has no row yet.
-    day = local_day(merge_time(at)).isoformat()
+    # build's: a row closed so on <frm> whose next row, the rung, is on <to> and started the day the
+    # step-up was logged (or the day before, when the rung started just before midnight); of those, the
+    # k-th last line pairs with the k-th last row, as outcomes pairs them in order. With none, the build
+    # has no row yet.
+    near = lambda t: {local_day(merge_time(t) - datetime.timedelta(minutes=m)).isoformat() for m in (0, RUNG_LAG_MIN)}
+    days = near(at)
     was = [r for r, rung in zip(mine, mine[1:]) if r.get("close_cause") == f"step-up:{trigger}" and r.get("model") == frm
-           and rung.get("model") == to and rung.get("date") == day]
-    same = [t for t in every[(slug, trigger, frm)] if local_day(merge_time(t)).isoformat() == day]
+           and rung.get("model") == to and rung.get("date") in days]
+    same = [t for t in every[(slug, trigger, frm)] if near(t) & days]
     k = len(same) - same.index(at)
     if k > len(was):
         return "open"
@@ -130,7 +133,7 @@ def ended(at, slug, trigger, frm, to):
         return "lead"
     last = build[-1] if build else {}
     if later or (last.get("closes", "0") not in ("", "0") and not last.get("close_cause", "").startswith("step-up:")
-                 and last.get("pr_state") != "OPEN"):
+                 and not any(r.get("pr_state") == "OPEN" for r in build)):
         return "failed"
     return "open"
 
