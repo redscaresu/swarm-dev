@@ -64,7 +64,8 @@ case "$1 $2" in
 esac
 STUB
 printf '#!/bin/sh\n[ ! -e "%s/ps-fail" ] || exit 1\nexec %s "$@"\n' "${ROOT}" "$(command -v ps)" > "${ROOT}/bin/ps"
-chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ps"
+cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${ROOT}/bin/claude"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ps" "${ROOT}/bin/claude"
 
 LISTS='^pr list .*--json url,headRefName,headRefOid,'   # open_story_prs' gh pr list in gh.log
 fails=0
@@ -214,6 +215,24 @@ check "a conflict that comes back wakes the lead again" has "${CC}" "$(lead)"
 rm "${P}/.swarm/lead/seen"; out="$(lead)"
 check "a run's first read, with no seen file, prints an unmerged: line" has "${UA}" "${out}"
 check "and a conflict: line" has "${CC}" "${out}"
+
+# c's builder sits idle with its PR conflicting on one head: past SWARM_STUCK_MINUTES (60) since the conflict was
+# first seen on that head, a stuck: line takes the place of its conflict: line; under that, conflict: stays.
+# conflicted <minutes ago> — the head wait --lead first saw on c's PR, and its conflict, that long ago.
+conflicted() { local t=$(( $(date +%s) - 60 * $1 )); echo "c ${H} ${t} ${t}" > "${P}/.swarm/lead/pr-heads"; }
+board agent building
+printf '2026-10-01\tcode\tc\tclaude\tsonnet\thigh\ts-ucl-c\n' > "${P}/.swarm/agents.tsv"
+echo '[{"sessionId":"s-ucl-c","status":"idle"}]' > "${ROOT}/claude.json"
+conflicted 90; out="$(lead CLAUDE_STUB_AGENTS="${ROOT}/claude.json")"
+check "a conflict pending past SWARM_STUCK_MINUTES with its builder idle is stuck:" \
+  has "stuck: c $(url 2) (conflict pending 60 min), exit: swarm.sh tell c resume <file>" "${out}"
+check "and that PR has no conflict: line" none "conflict: c " "${out}"
+board agent building
+printf '2026-10-01\tcode\tc\tclaude\tsonnet\thigh\ts-ucl-c\n' > "${P}/.swarm/agents.tsv"
+conflicted 5; out="$(lead CLAUDE_STUB_AGENTS="${ROOT}/claude.json")"
+check "a conflict not yet past SWARM_STUCK_MINUTES still prints its conflict: line" has "${CC}" "${out}"
+check "and no stuck: line" none "stuck: " "${out}"
+rm -f "${P}/.swarm/agents.tsv" "${ROOT}/claude.json"
 
 # Story x lives in repo other: its PR there conflicts, and so does a story/a PR there, which is not a's.
 board agent building

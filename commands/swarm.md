@@ -356,6 +356,14 @@ Repeat until a step below says stop:
      story's worktree with `swarm.sh agent`, as the `kept:` arm says. If the story has no worktree, add
      one on the PR's branch first: `git -C <repo> fetch origin story/<slug>`, then
      `git -C <repo> worktree add <repo>-wt/<slug> story/<slug>`. A
+     `stuck: <slug> <PR URL> (<findings|conflict> pending <N> min), exit: swarm.sh tell <slug> resume <file>`
+     line names a builder with an open PR and a pending item: findings it was told, or a conflict with
+     the base. It has sat idle on the same head for N minutes (60 unless `SWARM_STUCK_MINUTES` says
+     otherwise), with no background task and no test run. It is not `wait`'s `stuck: api error` or
+     `stuck: no output for <N>m (<pane>)`, which name a turn that stopped on an error or a pane that went
+     quiet. Read its pane (`herdr agent read <slug>`), then send it a file that names the pending item and
+     asks it to carry on, with the `swarm.sh tell <slug> resume <file>` the exit names. For a conflict,
+     the line stands in place of its `conflict:` line. A
      `stopped: <slug> (review-<slug> stopped on <sha>: <why>), exit: <exit>` line is a review
      agent's stop note that no running conductor has: its tell failed, or the conductor it reached
      has stopped or was started again since (a new start clears its inbox). To hand it to a
