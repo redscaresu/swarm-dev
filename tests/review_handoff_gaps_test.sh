@@ -274,5 +274,92 @@ check "1 nor once review-s1 is closed" no "$(has 'no-review:' "$(poll)")"
 rm -f "${F}" "${F%.md}.head" "${P}/.claude/swarm/config" "${ROOT}/bin/gh"; rm -rf "${ROOT}/proj-wt"; : > "${P}/.swarm/events.tsv"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
 sed -i.bak -e 's/^status: review/status: ready/' -e '/^prs: /d' "${B}/stories/s1.md"; rm -f "${B}/stories/s1.md.bak"
 
+# --- 7. review-agent starts again, up to 3 starts, when a start ran nothing: herdr's texts
+# (docs/lead-by-hand.md, #688) and review_start_failed's yes:none, yes:gone and yes:herdr:. An unclear
+# start whose agent runs or cannot be listed makes one start, as before.
+# retry <fails> <err> [state] — review_agent s1 as swarm.sh's main runs it, in a subshell under set -e and
+# pipefail, out of any condition (its die line, or ok, is the command's own review-agent event), where start_agent fails its first <fails> tries with <err>; with
+# [state], a failed start leaves pane w:p7, which read_state reads as [state] (unlisted: herdr cannot
+# list agents). herdr's pane list lists RETRY_LIVE's panes, and each pane close goes in ${ROOT}/closed. Prints "<starts>|<naps>|<exit>" and then each review-agent outcome in events.tsv, one a line.
+retry() {
+  rm -f "${ROOT}/starts" "${ROOT}/naps" "${ROOT}/began" "${ROOT}/closed" "${F}.prev" "${F%.md}.head" "${STOP}.prev"
+  echo "head: OLD" > "${F}"; echo "${NOTE}" > "${STOP}"; : > "${P}/.swarm/events.tsv"
+  RETRY_FAILS="$1" RETRY_ERR="$2" RETRY_STATE="${3:-}" RETRY_ROOT="${ROOT}" lib "set -o pipefail; ${stubs}
+    nap() { echo nap >> \"\${RETRY_ROOT}/naps\"; }
+    json() { python3 -c \"import json,os,sys; d=json.load(sys.stdin); e=os.environ; print(\$1)\"; }   # swarm.sh's
+    herdr() {
+      case \"\$1 \$2\" in
+        'pane list') [[ -z \"\${RETRY_LIVE:-}\" ]] || printf '{\"result\":{\"panes\":[{\"pane_id\":\"%s\"}]}}\n' \"\${RETRY_LIVE}\" ;;
+        'pane close') echo \"\$3\" >> \"\${RETRY_ROOT}/closed\" ;;
+        'agent list') [[ \"\${RETRY_STATE}\" != unlisted ]] ;;
+      esac
+    }
+    agent_field() { [[ -z \"\${RETRY_STATE}\" || \"\${RETRY_STATE}\" == unlisted || ! -e \"\${RETRY_ROOT}/began\" ]] || echo w:p7; }
+    read_state() { echo \"\${RETRY_STATE}\"; }; session_took() { :; }; login_expired() { return 1; }
+    start_agent() {
+      local n; n=\$(( \$(cat \"\${RETRY_ROOT}/starts\" 2>/dev/null || echo 0) + 1 )); echo \"\${n}\" > \"\${RETRY_ROOT}/starts\"
+      [[ \${n} -le \${RETRY_FAILS} ]] || return 0
+      touch \"\${RETRY_ROOT}/began\"; printf '%s\n' \"\${RETRY_ERR}\" >&2; return 1
+    }
+    (set -e; review_agent s1 ${URL}) 2> \"\${RETRY_ROOT}/err\"; rc=\$?
+    if [[ \${rc} -eq 0 ]]; then record_event review-agent s1 ok
+    else record_event review-agent s1 \"\$(sed -n 's/^swarm: //p' \"\${RETRY_ROOT}/err\" | tail -1)\"; fi
+    echo \"\$(cat \"\${RETRY_ROOT}/starts\")|\$(cat \"\${RETRY_ROOT}/naps\" 2>/dev/null | wc -l | tr -d ' ')|\${rc}\"" | tail -1
+  awk -F'\t' '$2 == "review-agent" && $3 == "s1" { print $5 }' "${P}/.swarm/events.tsv"
+}
+put_back="; ${F} is put back"
+pnf=$'pane w:p9 not found\nswarm: herdr could not open a pane in tab e'
+noenv="swarm: review-s1: the pane's shell did not take the agent's environment: timeout waiting for output"
+anf="swarm: review-s1: herdr did not send it the brief (agent_not_found); see herdr agent read review-s1"
+unclear="swarm: review-s1: it may or may not have the brief: herdr's reply to the brief could not be read once, then agent_prompt_stalled; it was not sent again, see herdr agent read review-s1"
+check "7 pane ... not found on the first start: a second start, one event ending (try 1 of 3), then ok" \
+  "2|1|0
+review-agent: review-s1 did not start${put_back}; it ran nothing: pane not found (try 1 of 3)
+ok" "$(retry 1 "${pnf}")"
+check "7 the pane's shell did not take the agent's environment: started on the second try" \
+  "2|1|0
+review-agent: review-s1 did not start${put_back}; it ran nothing: the pane's shell did not take the agent's environment (try 1 of 3)
+ok" "$(retry 1 "${noenv}")"
+check "7 agent_not_found with nothing sent: started on the second try" \
+  "2|1|0
+review-agent: review-s1 did not start${put_back}; it ran nothing: agent_not_found with nothing sent (try 1 of 3)
+ok" "$(retry 1 "${anf}")"
+# agent_not_found: herdr lists no agent, but the pane the start opened is in the tab's record, and still
+# open, so it is closed before the next try.
+echo "w:p8 review-s1" > "${P}/.swarm/state/e"
+check "7 agent_not_found with the start's pane still open: the pane its tab records is closed, then a second start" \
+  "2|1|0
+review-agent: review-s1 did not start (its pane w:p8 is closed)${put_back}; it ran nothing: agent_not_found with nothing sent (try 1 of 3)
+ok|w:p8" "$(RETRY_LIVE=w:p8 retry 1 "${anf}")|$(cat "${ROOT}/closed" 2>/dev/null)"
+rm -f "${P}/.swarm/state/e"
+check "7 an unclear start with no pane (yes:none): started on the second try" \
+  "2|1|0
+review-agent: review-s1 did not start${put_back}; it ran nothing: an unclear start with no agent running (none) (try 1 of 3)
+ok" "$(retry 1 "${unclear}")"
+check "7 an unclear start whose session is gone (yes:gone): started on the second try" \
+  "2|1|0
+review-agent: review-s1 did not start (its pane w:p7 is closed)${put_back}; it ran nothing: an unclear start with no agent running (gone) (try 1 of 3)
+ok" "$(retry 1 "${unclear}" gone)"
+check "7 an unclear start herdr has no status for (yes:herdr:): started on the second try" \
+  "2|1|0
+review-agent: review-s1 did not start (its pane w:p7 is closed)${put_back}; it ran nothing: an unclear start with no agent running (herdr:) (try 1 of 3)
+ok" "$(retry 1 "${unclear}" herdr:)"
+check "7 three failures in a row: three starts, two naps, the last try's die is the command's event (try 3 of 3)" \
+  "3|2|1
+review-agent: review-s1 did not start${put_back}; it ran nothing: pane not found (try 1 of 3)
+review-agent: review-s1 did not start${put_back}; it ran nothing: pane not found (try 2 of 3)
+review-agent: review-s1 did not start${put_back}; it ran nothing: pane not found (try 3 of 3)" "$(retry 3 "${pnf}")"
+check "7 and after them the findings file and the stop note are back in place, with nothing left aside" \
+  "head: OLD|${NOTE}|no|no|no" \
+  "$(cat "${F}")|$(cat "${STOP}")|$([[ -e "${F}.prev" ]] && echo yes || echo no)|$([[ -e "${STOP}.prev" ]] && echo yes || echo no)|$([[ -e "${F%.md}.head" ]] && echo yes || echo no)"
+check "7 not retried: an unclear start whose agent reads idle with the brief makes one start and logs ok" \
+  "1|0|0
+ok" "$(retry 1 "${unclear}" idle)"
+check "7 not retried: an unclear start herdr cannot list makes one start and logs its die with no (try suffix" \
+  "1|0|1
+review-agent: review-s1's start was unclear and herdr could not list its agents, so its state is unknown; the last review is kept aside in ${F}.prev; no head is on record. A conductor starts nothing; once herdr answers, the lead looks at it (herdr agent read review-s1) and, to review again, closes it and runs swarm.sh review-agent s1 <PR URL>" \
+  "$(retry 1 "${unclear}" unlisted)"
+rm -f "${F}" "${F}.prev" "${F%.md}.head" "${STOP}" "${STOP}.prev" "${ROOT}/starts" "${ROOT}/naps" "${ROOT}/began" "${ROOT}/err"; : > "${P}/.swarm/events.tsv"
+
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
