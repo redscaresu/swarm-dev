@@ -1595,7 +1595,7 @@ it printed is a base line one of the PR's own merges dropped. The check reads ea
 the head, so it prints a line again after the builder has put it back. The agent counts the
 whole-line copies of the text in the merge's file and in the round's head, with control characters
 such as tabs taken off as the check takes them off
-(`git show <rev>:<file> | LC_ALL=C tr -d '\000-\011\013-\037\177' | grep -cxF -- '<text>'`). A line
+(`git show <rev>:<file> | LC_ALL=C sed 's/[[:cntrl:]]//g' | grep -cxF -- '<text>'`). A line
 is fixed only when the head's count is at least the merge's plus the times the check printed it, so
 another copy of the text, or a longer line holding it, does not count. A line the check cut to 300
 characters never matches and stays a finding. Each line

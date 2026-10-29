@@ -227,7 +227,7 @@ Exit 1: each line it printed (\`<sha7> <file>: <text>\`) is a base line one of t
 commits dropped. The check reads each merge, never the head, so it prints a line again after the
 builder has put it back. To tell, count the whole-line copies of its text in a commit's file, with
 control characters such as tabs taken off as the check takes them off:
-\`git show <rev>:<file> | LC_ALL=C tr -d '\000-\011\013-\037\177' | grep -cxF -- '<text>'\`.
+\`git show <rev>:<file> | LC_ALL=C sed 's/[[:cntrl:]]//g' | grep -cxF -- '<text>'\`.
 Count with <rev> the merge (its <sha7>) and with the round's head. The line is back, so fixed, only
 when the head's count is at least the merge's count plus the number of times the check printed that
 same line: another copy of the text, or a longer line that holds it, is not the dropped copy. A line
