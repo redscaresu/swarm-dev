@@ -15,7 +15,7 @@ From dropped-lines-scan it uses bin/lib/dropped_lines.py: arguments <repo-dir> <
 
 **Done when:**
 - tests/dropped_lines_test.sh command cases (a real bare origin with refs/pull/7/head pushed, a gh stub for the commits read): a PR whose builder merge dropped a base line prints it and exits 1.
-- A PR with no merge commit, and one whose only merge is committer web-flow and verified, exit 0 and fetch nothing (refs/pull/7/head is never fetched into the test repo).
+- A PR with no merge commit, and one whose only merge is a recorded base-merged update, exit 0 after refs/pull/7/head is fetched and found equal to <head>; with refs/pull/7/head another commit, the same PRs exit 2.
 - Stale fetch: refs/pull/7/head on origin is another commit than <head>, so exit 2 with a line naming both. <head> absent from gh's list: exit 2.
 - A git stub first on PATH answering `git version 2.35.0`, on a PR that has a builder merge: exit 2 with a line naming 2.36.
 - A repo whose origin is not <owner/repo>: exit 2 naming both.
