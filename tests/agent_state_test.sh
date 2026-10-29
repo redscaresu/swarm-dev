@@ -42,6 +42,7 @@ turn_ended      an API-error or auto-denied stop: herdr's done or idle, while op
 resend_pass     wait --lead's resend: herdr's idle in the poll's one list picks whose pane to read; the session log (turn_since) decides
 prompt_lines    wait --lead's prompt: lines: herdr's blocked, idle or done in the poll's one list picks whose pane to read; the pane (stuck_kind) decides
 prompt_wanted   wait --lead's skip of prompt_lines: herdr's blocked, idle or done on this project's panes says whether to look at all
+stuck_lines     wait --lead's stuck: lines: read_state's herdr fallback over the poll's one list, for a builder no session answers for (codex, or no session recorded)
 "
 # Allowed anywhere, with no list entry:
 #   `-z "$(agent_field <name> agent_status any)"`, or list_field's on a list already read
