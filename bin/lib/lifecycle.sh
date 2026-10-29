@@ -3074,7 +3074,7 @@ main_red_run() {
   # Only the red checks, each ending in a conclusion (CI_CONCLUSIONS), as a merge's ci_gate main gives them: a
   # check still running is no red, and clear_red_main would wait for a passed run of it.
   reds="$(awk -v r=" [(](${CI_CONCLUSIONS})[)]( |\$)" '{ n = split($0, c, "; "); s = ""
-    for (i = 1; i <= n; i++) if (c[i] ~ r) s = s (s == "" ? "" : "; ") c[i]; print s }' <<< "${out%%$'\n'*}")"
+    for (i = 1; i <= n; i++) if (c[i] ~ r) s = s (s == "" ? "" : "; ") c[i]; print s }' <<< "${out%%$'\n'*}")"   # loose-match: ok r is a regex of CI_CONCLUSIONS on purpose
   # shellcheck disable=SC2034 # fix_main, in merge.sh, reads both
   MERGE_TARGET="" FIX_MAIN_REPO="$1"
   fix_main "${LEAD_NWO}" "$3" "$2" "${reds}"
