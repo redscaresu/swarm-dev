@@ -95,9 +95,9 @@ Then reuse an output that exists, parses as JSON and is newer than `.swarm/$1/ba
 reference; on a board outside the repo, `docs/hld/$1.md`, with no `base-rev`), and do not start that
 agent again; an older one belongs to a previous plan, so start the agent. A `.partial` file is an unfinished run, not a result: start the agent, which carries on from it. Delete a `.partial` that is not newer than that same reference first: it belongs to a previous plan.
 
-Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first, and read `${CLAUDE_PLUGIN_ROOT}/rules.md` (its full path written out) before anything else. `<wt>`
+Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
-you run and which can be behind. Read-only — write nothing but your output file and its `.partial`, never commit, never
+you run and which can be behind. Read `${CLAUDE_PLUGIN_ROOT}/rules.md` (its full path written out) next. Read-only — write nothing but your output file and its `.partial`, never commit, never
 touch real cloud or credentials. If `<output>.partial` exists, a run was cut off: start from it and carry on, do not redo it. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
 `<project>` and the output path written out in full)
 
