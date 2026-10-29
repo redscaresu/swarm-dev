@@ -147,7 +147,9 @@ Repeat until a step below says stop:
      not clear the story. If that leaves the story stuck, list it for the user
      with why. While a conductor works, `next` also starts conductors for other ready work and prints
      `started:` or `no conductor` lines after the why: handle them as under `wait <agent>`. Then go
-     back to 1.
+     back to 1. A `could not reach <name>:` refusal from `swarm.sh tell` is final: the agent has no
+     pane, or its session has ended, and the refusal names who acts on it. List the story under no
+     agent and never tell it again.
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns
@@ -282,7 +284,14 @@ Repeat until a step below says stop:
      `swarm.sh merge --head <that head> <PR URL>`. A clean run of yours clears nothing: the line stays in `status` and on
      the dashboard until a review agent starts on the PR, findings go to the builder, or the PR
      merges and the story leaves the board.
-     A line with no PR URL names a `gh pr list` that finds the PR first. A
+     A line with no PR URL names a `gh pr list` that finds the PR first. A line with
+     `(started N of 3)` after the PR URL means `wait --lead` has already run try N of a
+     review-agent start that was cut short (a review-agent command stopped partway, with tries
+     left). Leave it: the next poll is quiet while that start runs. If the start fails, the line
+     comes back without `(started ...)`. A line with
+     `(try N of 3 was cut off mid-start and may have sent the brief)` means the poll will not
+     start that try again. Check that no pane still holds `review-<slug>` (`swarm.sh status` lists
+     an empty pane, and `swarm.sh tidy` closes it), then run the exit. A
      `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` line means a step-up closed
      the story's builder and then could not start the next model's. Its conductor leaves the story
      alone, so it is yours. The `step-up:failed` line in `.swarm/events.tsv` says where it stopped,
@@ -706,7 +715,8 @@ Three more rules for the lead:
   `stalled <N>m`, `status` shows the agent's state, and neither acts on anything. For
   `stall_minutes`, a story's builder shows life through worktree commits, edits and PR updates, an
   agent with no story (a planner or conductor) through its own `events.tsv` lines, and any agent
-  through its session log and a test suite running in its pane. Do not use
+  through its session log, a test suite running in its pane and a background task its session
+  waits on. Do not use
   `swarm.sh wait --stall` as a check: it blocks, nudges and resumes the agent, and can step a build up.
 
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.

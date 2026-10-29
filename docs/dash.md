@@ -89,7 +89,7 @@ is one column, top to bottom:
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
-  by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story,
+  by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story, for any agent no test suite running in its pane and no background task its session waits on, each counting only while younger than 3 times `stall_minutes`,
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
   pane, nudges, resumes, incidents and failed tells excepted), `agree` a draft epic, `staged epic
   <slug>: stage v<T>, after v<P>` for a staged draft epic, which the lead sets active once the base
@@ -119,7 +119,9 @@ is one column, top to bottom:
   `costs: money` merge stays in needs you. With `merge = human`, so does any other `merge <PR>` row,
   unless the story's or epic's agreed HLD grants `merge`. So do a plan PR row, unless its HLD grants
   `merge`, and every finish PR row. With `merge = agent`, a `(protected path)` merge row, a PR that
-  changes a protected path and which `swarm.sh merge` holds for you, stays in needs you too. Until
+  changes a protected path and which `swarm.sh merge` holds for you, stays in needs you too. So does a
+  `(dropped base lines)` row: a PR that `swarm.sh merge` holds because its merge of the base dropped
+  base lines. Until
   `swarm.sh merge` holds the PR, its row is the lead's, as dash reads no PR's files. The box holds the other `merge` rows, the `stage PR awaiting
   merge` row, every `answer`, `close`,
   `look at`, `staged epic`, `set draft epic <slug> active` and `no agent on story` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
