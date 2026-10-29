@@ -376,12 +376,12 @@ for l in lines("DASH_WAITING"):
         no_agree.add(m.group(1))
         add(lq, bang + [(f"staged epic {m.group(1)}: ", ""), (m.group(2), "dim")], ("epics", m.group(1)))
         continue
-    m = re.match(r"awaiting your merge( \(costs money\))?( \(protected path\))?: (epic )?(\S+) ?(.*)$", l)
+    m = re.match(r"awaiting your merge( \(costs money\))?( \((?:protected path|dropped base lines)\))?: (epic )?(\S+) ?(.*)$", l)
     if m:
         costs, protected = m.group(1), m.group(2)
         # swarm.sh merge holds a costs: money PR for the user under either merge setting, and under
-        # merge = agent a story PR that changes a protected path (protected_hold), so no lead session
-        # can merge those. With merge = human it merges the rest only under an agreed HLD that grants
+        # merge = agent a story PR that changes a protected path (protected_hold) or whose merge of the
+        # base dropped base lines, so no lead session can merge those. With merge = human it merges the rest only under an agreed HLD that grants
         # merge; with merge = agent it merges the rest. dash reads no PR's files, so a PR that changes a
         # protected path is tagged only once swarm.sh merge has held it; until then its row stays the lead's.
         item = ("epics" if m.group(3) else "stories", m.group(4))
