@@ -629,7 +629,14 @@ ssh_case "${S}/signing.pub"; printf '256 %s builder (ED25519)\n' "$(fp "${K1#* }
 check "a .pub path whose key ssh-add -L lists (ssh-keygen -l fingerprints the file): clear" \
   test "$(ssb)|$(calls ssh-keygen)" = "1|clear|-l -E sha256 -f ${S}/signing.pub"
 ssh_case "${S}/signing.pub"; printf '256 %s builder (ED25519)\n' "$(fp "${K1#* }")" > "${S}/stub/ssh-keygen.out"; printf '%s o\n' "${K2}" > "${S}/stub/ssh-add.out"
-check "a .pub path whose key ssh-add -L does not list: blocked" test "$(ssb)" = "0|blocked"
+check "a .pub path whose key ssh-add -L does not list, with no file at its private key path: blocked" test "$(ssb)" = "0|blocked"
+# ssh-keygen -Y sign falls back to the private key beside a .pub the agent lacks (the path without .pub),
+# which may sign unprompted: with a file there (empty: the probe only checks it exists) it is unknown.
+: > "${S}/beside"
+ssh_case "${S}/beside.pub"; printf '256 %s builder (ED25519)\n' "$(fp "${K1#* }")" > "${S}/stub/ssh-keygen.out"; printf '%s o\n' "${K2}" > "${S}/stub/ssh-add.out"
+check "a .pub path ssh-add -L does not list, with a file at its private key path: unknown, exit 1" test "$(ssb)" = "1|unknown"
+ssh_case "key::${K1} builder"; echo 2 > "${S}/stub/ssh-add.rc"
+check "ssh-add -L reaching no agent (exit 2): unknown, exit 1" test "$(ssb)|$(calls ssh-add)" = "1|unknown|-L"
 ssh_case "${S}/signing_key"
 check "a private key file is unknown, exit 1, never opened, with no ssh-add or ssh-keygen call" test "$(ssb)|$(none)" = "1|unknown|none"
 check "across the ssh cases ssh-keygen ran only -l, and gpg.ssh.program never" \

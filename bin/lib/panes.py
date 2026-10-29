@@ -219,24 +219,32 @@ def ssh_fingerprint(blob):
         return None
 def ssh_blocked(worktree, key):
     # blocked when <key> is a public key (a key:: literal, an ssh- one git reads as key::, or a .pub path,
-    # fingerprinted by ssh-keygen -l) that ssh-add -L, on SSH_AUTH_SOCK, does not list; clear when it lists
-    # it. A private key file is unknown: it is never opened to see whether it is encrypted. gpg.ssh.program
-    # and ssh-keygen -Y sign never run.
+    # fingerprinted by ssh-keygen -l) that ssh-add -L, on SSH_AUTH_SOCK, does not list (exit 0, or 1 for an
+    # empty or locked agent); clear when it lists it. unknown when ssh-add reaches no agent (any other exit),
+    # and for a .pub not listed with a file at its private key path (the path without -cert.pub or .pub),
+    # which ssh-keygen -Y sign falls back to and which signs unprompted when it has no passphrase: that file
+    # is only checked to exist, never opened. A private key file as <key> is unknown for the same reason.
+    # gpg.ssh.program and ssh-keygen -Y sign never run.
     if key is None:
         return "unknown"
+    priv = None
     if key.startswith(("key::", "ssh-")):
         f = key[5:].split() if key.startswith("key::") else key.split()
         want = ssh_fingerprint(f[1]) if len(f) > 1 else None
     elif key.endswith(".pub"):
-        fp = sign_call(["ssh-keygen", "-l", "-E", "sha256", "-f", os.path.join(worktree, os.path.expanduser(key))])
+        path = os.path.join(worktree, os.path.expanduser(key))
+        fp = sign_call(["ssh-keygen", "-l", "-E", "sha256", "-f", path])
         f = fp[1].split() if fp and fp[0] == 0 else []
         want = f[1] if len(f) > 1 and f[1].startswith("SHA256:") else None
+        priv = re.sub(r"(-cert)?\.pub$", "", path)
     else:
         return "unknown"
     listed = sign_call(["ssh-add", "-L"]) if want else None
-    if listed is None:
+    if listed is None or listed[0] not in (0, 1):
         return "unknown"
-    return "clear" if want in (ssh_fingerprint(l.split()[1]) for l in listed[1].splitlines() if len(l.split()) > 1) else "blocked"
+    if want in (ssh_fingerprint(l.split()[1]) for l in listed[1].splitlines() if len(l.split()) > 1):
+        return "clear"
+    return "unknown" if priv and os.path.exists(priv) else "blocked"
 # USAGE_TAIL: how many of the pane's last non-empty lines the live usage-limit dialog's options sit in.
 USAGE_TAIL = 8
 USAGE_OPTION = r"[\s│]*(?:❯\s*)?(\d+)\.\s*"

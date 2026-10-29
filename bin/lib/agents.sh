@@ -38,9 +38,11 @@
 #     newest signing subkey before the primary, or the one a trailing ! names), asked with KEYINFO of
 #     the gpg-connect-agent beside the gpg git runs (gpg.program or gpg.openpgp.program, else gpg on
 #     PATH), never one found on PATH; for ssh, user.signingkey is a public key (a key:: or ssh- literal,
-#     or a .pub path) that ssh-add -L does not list. clear with gpgsign off or a clean tree (before any
-#     signer call), a cached key, one with no passphrase, or a listed ssh key. unknown for x509, a
-#     private ssh key file (never opened), anything it cannot read, and a call past SIGN_SECONDS (killed).
+#     or a .pub path with no file at its private key path beside it) that ssh-add -L does not list (an
+#     empty or locked agent included). clear with gpgsign off or a clean tree (before any signer call),
+#     a cached key, one with no passphrase, or a listed ssh key. unknown for x509, a private ssh key file
+#     (never opened; nor is the one beside a .pub, only checked to exist), an agent ssh-add cannot reach,
+#     anything else it cannot read, and a call past SIGN_SECONDS (killed).
 #     It never signs or prompts, never runs gpg.ssh.program, and prints no key.
 #   test_running(info, stall_minutes) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read,
 #     a process under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk)
