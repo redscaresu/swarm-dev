@@ -476,8 +476,9 @@ printf '{"result":{"agents":[%s]}}\n' "${agents}" > "${FX}/agents"
 
 # poll — one wait --lead read; a review agent it starts inherits its PATH, with the claude stub first.
 poll() { again; lead PATH="${RBIN}:${ROOT}/bin:${PATH}" 0; }
-# run <command>... — swarm.sh in the project, as the lead runs it, with the same stubs.
-run() { (cd "${P}" && env -u SWARM_PROJECT PATH="${RBIN}:${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me COLUMNS=400 bash "${SWARM}" "$@" 2>&1); }
+# run <command>... — swarm.sh in the project, as the lead runs it, with the same stubs. A report deadline
+# of 10 minutes: at 30 s, a loaded machine cuts dash's herdr read, and dash then draws no case at all.
+run() { (cd "${P}" && env -u SWARM_PROJECT PATH="${RBIN}:${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me COLUMNS=400 SWARM_REPORT_SECONDS=600 bash "${SWARM}" "$@" 2>&1); }
 # starts [slug] — herdr's agent starts, of review-<slug> or of any agent.
 starts() { grep -c "^agent start ${1:+review-$1 }" "${ROOT}/herdr.log" 2>/dev/null || true; }
 restarts() { awk -F'\t' '$2 == "review-agent:restart"' "${P}/.swarm/events.tsv" | wc -l | tr -d ' '; }
