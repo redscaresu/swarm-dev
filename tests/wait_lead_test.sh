@@ -14,8 +14,8 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
-lpid=""
-trap 'stop; rm -rf "${ROOT}"' EXIT
+lpid=""; tpid=""
+trap 'stop; [[ -z "${tpid}" ]] || kill "${tpid}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111; H2=2222222222222222222222222222222222222222; URL=https://github.com/o/r/pull/7
@@ -40,14 +40,18 @@ case "$1 $2" in
           */status*) echo '{"total_count":0,"statuses":[]}' ;;
           *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
         esac ;;
+  # The heads pass's read of the open story PRs, once the project has an origin (the stuck: cases).
+  "repo view") echo o/r ;;
+  "pr list") cat "${FX}/prs.json" 2>/dev/null || echo '[]' ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
-# herdr: conduct-e is running, busy.
-printf '#!/bin/sh\necho "$*" >> "%s"\n' "${ROOT}/herdr.log" > "${ROOT}/bin/herdr"
+# herdr: conduct-e is running, busy, beside the agents ${FX}/agents lists; a pane's process info is ${FX}/pi.
+printf '#!/bin/sh\necho "$*" >> "%s"\nFX="%s"\n' "${ROOT}/herdr.log" "${FX}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}'"$(cat "${FX}/agents" 2>/dev/null)"']}}' ;;
+  "pane process-info") cat "${FX}/pi" 2>/dev/null || echo '{"result":{}}' ;;
   *) echo '{"result":{}}' ;;
 esac
 STUB
@@ -57,7 +61,8 @@ cat >> "${ROOT}/bin/ln" <<'STUB'
 sleep "$(cat "${FX}/ln.slow" 2>/dev/null || echo 0)"
 STUB
 printf 'exec %s "$@"\n' "$(command -v ln)" >> "${ROOT}/bin/ln"
-chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ln"
+cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${ROOT}/bin/claude"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ln" "${ROOT}/bin/claude"
 printf 'w:c conduct-e\n' > "${P}/.swarm/state/e"
 
 # checks <conclusion> [sha] — the head's (or <sha>'s) one check run, completed with <conclusion>, or
@@ -430,6 +435,71 @@ printf 'w:c conduct-e\nw:n n\n' > "${P}/.swarm/state/tab-n"
 check "close on a slug wait --lead saw still closes its pane" grep -qx 'pane close w:n' "${ROOT}/herdr.log"
 check "and leaves wait --lead's seen file as it was" grep -qx 'held: n (cleared-on-error)' "${P}/.swarm/lead/seen"
 rm -f "${P}/.swarm/state/tab-n"
+
+# --- stuck: a builder idle on findings told to it on an unchanged PR head.
+# Story wl-stuck is building PR 9 (head H), its builder live in pane w:b; Claude Code lists its session
+# idle. stuck <head> <first seen, minutes ago> <tell, minutes ago or -> sets the PR's head, the head wait
+# --lead first saw and when, and the findings tell; poll [VAR=value]... reads the queue once, as a run
+# with no seen file, and prints its stuck: lines.
+SURL=https://github.com/o/r/pull/9
+SLINE="stuck: wl-stuck ${SURL} (findings pending 60 min), exit: swarm.sh tell wl-stuck resume <file>"
+mins() { perl -MPOSIX -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - 60 * shift))' "$1"; }
+stuck() {
+  printf '[{"url":"%s","headRefName":"story/wl-stuck","headRefOid":"%s","mergeable":"MERGEABLE","createdAt":"%s","statusCheckRollup":[]}]\n' \
+    "${SURL}" "$1" "$(mins 600)" > "${FX}/prs.json"
+  mkdir -p "${P}/.swarm/lead"; echo "wl-stuck ${H} $(( $(date +%s) - 60 * $2 )) -" > "${P}/.swarm/lead/pr-heads"
+  rm -f "${P}/.swarm/events.tsv"
+  [[ "$3" == - ]] || printf '%s\ttell:findings\twl-stuck\tw:r\tok\n' "$(mins "$3")" > "${P}/.swarm/events.tsv"
+}
+poll() { rm -f "${P}/.swarm/lead/seen"; again; lead "$@" CLAUDE_STUB_AGENTS="${FX}/claude.json" 0; grep '^stuck: ' "${ROOT}/out" || true; }
+fresh "merge = human"
+git -C "${P}" remote add origin https://github.com/o/r.git
+item wl-stuck "kind: code" "status: ready" "touches: [s.sh]"
+printf 'w:b wl-stuck\n' > "${P}/.swarm/state/wl-stuck"
+printf '2026-10-01\tcode\twl-stuck\tclaude\tsonnet\thigh\ts-wl-stuck\n' > "${P}/.swarm/agents.tsv"
+printf ',{"name":"wl-stuck","agent_status":"idle","pane_id":"w:b"}' > "${FX}/agents"
+echo '[{"sessionId":"s-wl-stuck","status":"idle"}]' > "${FX}/claude.json"
+stuck "${H}" 90 61
+check "an idle builder whose findings tell is past SWARM_STUCK_MINUTES on an unchanged head is stuck:" test "$(poll)" == "${SLINE}"
+check "the line names N, the threshold, never the minutes elapsed" test "$(poll SWARM_STUCK_MINUTES=30)" == "${SLINE/pending 60 /pending 30 }"
+first="$(poll)"; second="$(poll)"
+check "two polls in a row print the same stuck: line text" test "${first}|${second}" == "${SLINE}|${SLINE}"
+check "and the head's first sighting is kept, not reset" grep -q "^wl-stuck ${H} " "${P}/.swarm/lead/pr-heads"
+stuck "${H}" 90 5
+check "findings told 5 minutes ago on a head seen 90 minutes ago: no stuck: line" test -z "$(poll)"
+stuck "${H}" 90 61
+check "the same findings told 61 minutes ago: a stuck: line" test "$(poll)" == "${SLINE}"
+stuck "${H2}" 90 61
+check "a head that changed since the tell: no stuck: line" test -z "$(poll)"
+check "and the new head is kept as first seen now" grep -q "^wl-stuck ${H2} " "${P}/.swarm/lead/pr-heads"
+stuck "${H}" 90 -
+check "no findings tell and no conflict: no stuck: line" test -z "$(poll)"
+stuck "${H}" 90 61; printf '%s\tstory\twl-stuck\t-\tok\n' "$(mins 30)" >> "${P}/.swarm/events.tsv"
+check "findings told to a build that has since been started again: no stuck: line" test -z "$(poll)"
+# GitHub reads mergeable UNKNOWN for a while: the same head keeps the line the lead saw, a new one drops it.
+stuck "${H}" 90 61; poll > /dev/null
+sed -i.bak 's/"MERGEABLE"/"UNKNOWN"/' "${FX}/prs.json"; again; lead CLAUDE_STUB_AGENTS="${FX}/claude.json" 0
+check "an UNKNOWN mergeable on the same head keeps the stuck: line" grep -qxF "${SLINE}" "${P}/.swarm/lead/seen"
+sed -i.bak "s/${H}/${H2}/" "${FX}/prs.json"; again; lead CLAUDE_STUB_AGENTS="${FX}/claude.json" 0
+check "an UNKNOWN mergeable on a new head drops it" test -z "$(grep '^stuck: ' "${P}/.swarm/lead/seen")"
+rm -f "${FX}/prs.json.bak"
+stuck "${H}" 90 61
+echo '[{"sessionId":"s-wl-stuck","status":"busy"}]' > "${FX}/claude.json"
+check "a busy builder: no stuck: line" test -z "$(poll)"
+echo '[{"sessionId":"s-wl-stuck","status":"idle"}]' > "${FX}/claude.json"
+# A selected test run (make test, as select-tests.sh --run execs it) under the builder's pane shell, which is this shell.
+bash -c 'exec -a make perl -e "sleep 600" test' & tpid=$!
+printf '{"result":{"process_info":{"pane_id":"w:b","shell_pid":%s}}}\n' "$$" > "${FX}/pi"
+check "a builder whose pane runs a test suite: no stuck: line" test -z "$(poll)"
+kill "${tpid}" 2>/dev/null || true; wait "${tpid}" 2>/dev/null || true; tpid=""; rm -f "${FX}/pi"
+mkdir -p "${CLAUDE_CONFIG_DIR}/projects/p"
+printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":{"backgroundTaskId":"bx-1"}}\n' \
+  > "${CLAUDE_CONFIG_DIR}/projects/p/s-wl-stuck.jsonl"
+check "a builder whose transcript has a live background task: no stuck: line" test -z "$(poll)"
+rm -rf "${CLAUDE_CONFIG_DIR}/projects/p"
+check "with the task gone, the line is back" test "$(poll)" == "${SLINE}"
+rm -f "${FX}/agents" "${FX}/prs.json" "${FX}/claude.json" "${P}/.swarm/state/wl-stuck" "${P}/.swarm/agents.tsv"
+git -C "${P}" remote remove origin
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"
