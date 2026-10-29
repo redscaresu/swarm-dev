@@ -420,6 +420,38 @@ lead 0
 check "the same story with no merge grant (an ordinary handoff to the user) gives none" test "$(out)|$(rc)" == "|1"
 rm -rf "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt"
 
+# --- a conductor that reported with agent work left: reported:, with conduct's exit (reported_lines).
+# report <group> — a conductor report for <group> (an epic, or backlog), as a conductor leaves it last.
+report() { echo "# conduct-$1 report" > "${P}/.swarm/conduct-$1.report.md"; }
+# Each case is its own fresh board, whose held h is quiet on a run's first read, so the run prints only alerts.
+RE="reported: e (1 stories still an agent's), exit: swarm.sh conduct e|0"
+fresh "merge = human"; report e; item wl-r "kind: code" "status: ready" "epic: e"; lead 0
+check "a report with a ready story of its epic prints reported:" test "$(out)|$(rc)" == "${RE}"
+fresh "merge = human"; report e; item wl-b "kind: code" "status: blocked" "epic: e" "depends_on: [wl-d]"
+item wl-d "kind: code" "status: ready" "epic: other"; lead 0
+check "a report with a blocked story of its epic, not lead-held, prints reported:" test "$(out)|$(rc)" == "${RE}"
+fresh "merge = agent"; report e; item wl-v "kind: code" "status: review" "epic: e"; lead 0
+check "a report with a review story of its epic its review agent owns prints reported:" test "$(out)|$(rc)" == "${RE}"
+fresh "merge = human"; report e; item wl-b "kind: code" "status: blocked" "epic: e" "depends_on: [wl-l]"
+item wl-l "kind: lead" "status: ready" "epic: e"; lead 0
+check "a report whose only story left is lead-held prints nothing" test "$(out)|$(rc)" == "|1"
+fresh "merge = human"; report e; item wl-l "kind: lead" "status: ready" "epic: e"; lead 0
+check "a report whose only story left is a lead story prints nothing" test "$(out)|$(rc)" == "|1"
+fresh "merge = human"; report e; item wl-x "kind: code" "status: done" "epic: e"; lead 0
+check "a report with no story left prints nothing" test "$(out)|$(rc)" == "|1"
+fresh "merge = human"; rm -f "${P}/.swarm/conduct-e.report.md"; item wl-r "kind: code" "status: ready" "epic: e"; lead 0
+check "a ready story with no report prints nothing" test "$(out)|$(rc)" == "|1"
+fresh "merge = human"; report backlog; item wl-r "kind: code" "status: ready"; lead 0
+check "a backlog report with a ready story of no epic prints conduct --backlog's exit" test "$(out)|$(rc)" == \
+  "reported: backlog (1 stories still an agent's), exit: swarm.sh conduct --backlog|0"
+rm -f "${P}/.swarm/conduct-backlog.report.md"
+fresh "merge = agent"; report e; item wl-r "kind: code" "status: ready" "epic: e"
+item wl-b "kind: code" "status: blocked" "epic: e" "depends_on: [wl-r]"; item wl-v "kind: code" "status: review" "epic: e"
+lead 0
+check "a report with three stories still an agent's counts all three" test "$(out)|$(rc)" == \
+  "reported: e (3 stories still an agent's), exit: swarm.sh conduct e|0"
+rm -f "${P}/.swarm/conduct-e.report.md"
+
 # --- a review agent whose start was cut short: the poll starts its next try, within 3 tries in all.
 # One board, a story per case, each ready with no prs: under epic e, whose conductor runs (so next only
 # waits on it), built (its story start), its builder listed in a pane of its own, and its review starts
