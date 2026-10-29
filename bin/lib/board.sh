@@ -830,23 +830,29 @@ lead_blocked() {
 # (one_off_started), in any status until its PR merges; one not started yet is nobody's. Stories the
 # brief has the conductor list for the lead without a board mark (a build that died, a not held: line)
 # still count: the brief exempts them. conductor_note's finish: line is its negation.
+# agent_work_left <epic> count — the same exit status, after printing how many such stories there are
+# (reported_lines' n); without count it stops at the first.
 agent_work_left() {
-  local f slug e
+  local f slug e n=0
   while IFS= read -r f; do
     slug="$(basename "${f}" .md)"; e="$(fm "${f}" epic)"
     agent_kind "$(fm "${f}" kind)" || continue
     if [[ "${slug}" == fix-main-* && -z "${e}" ]]; then
-      one_off_started "${slug}" && [[ "$(fix_main_owner "${slug}")" == "$1" ]] && return 0
-      continue
+      one_off_started "${slug}" && [[ "$(fix_main_owner "${slug}")" == "$1" ]] || continue
+    else
+      [[ "${e:--}" == "$1" ]] || continue
+      case "$(fm "${f}" status)" in
+        ready) [[ "$(last_event "${slug}")" != $'reconcile\tok (reopened)' ]] || continue ;;
+        blocked) ! lead_held "${f}" || continue ;;
+        review) review_agent_owns "${f}" || continue ;;
+        *) continue ;;
+      esac
     fi
-    [[ "${e:--}" == "$1" ]] || continue
-    case "$(fm "${f}" status)" in
-      ready) [[ "$(last_event "${slug}")" == $'reconcile\tok (reopened)' ]] || return 0 ;;
-      blocked) lead_held "${f}" || return 0 ;;
-      review) ! review_agent_owns "${f}" || return 0 ;;
-    esac
+    [[ "${2:-}" == count ]] || return 0
+    n=$((n + 1))
   done < <(board stories)
-  return 1
+  [[ "${2:-}" != count ]] || echo "${n}"
+  [[ ${n} -gt 0 ]]
 }
 
 # fix_main_owner <slug> — the group (an epic, or - for the backlog) whose conductor started fix-main
