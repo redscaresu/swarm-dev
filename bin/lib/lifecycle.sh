@@ -2491,8 +2491,8 @@ held_heads() {
 # lead_review_items — waiting_on_user's review items as the lead's queue weighs them: a `kept: <slug>
 # <PR URL>... (not reviewed)` line as it is, and with merge = human (or for a held item, under merge =
 # agent too) `<tag> merge: <slug> <PR URL>...` for a story or epic awaiting a merge, <tag> p for a row
-# of PRs held for a protected path (its ` (protected path)` tag, with or without costs money), 1 for a
-# costs: money one, else -. It reads files only. [holds] goes to waiting_on_user.
+# of PRs held for a protected path or for dropped base lines (its ` (protected path)` or ` (dropped base
+# lines)` tag, with or without costs money), 1 for a costs: money one, else -. It reads files only. [holds] goes to waiting_on_user.
 lead_review_items() {
   local line tag
   # waiting_on_user's last line has no newline.
@@ -2500,7 +2500,8 @@ lead_review_items() {
     # A kept story (a give-up's PR, not reviewed) is the lead's to look at, never one to merge.
     if [[ "${line}" == "  kept: "* ]]; then echo "${line#  }"; continue; fi
     case "${line}" in
-      "  awaiting your merge (protected path): "* | "  awaiting your merge (costs money) (protected path): "*) tag=p ;;
+      "  awaiting your merge (protected path): "* | "  awaiting your merge (costs money) (protected path): "* \
+        | "  awaiting your merge (dropped base lines): "* | "  awaiting your merge (costs money) (dropped base lines): "*) tag=p ;;
       "  awaiting your merge (costs money): "*) tag=1 ;;
       "  awaiting your merge: "*) tag=- ;;
       *) continue ;;
@@ -2514,24 +2515,35 @@ lead_review_items() {
 }
 
 # lead_merge_shown <tag> <merge: line> <holds> — the line as lead_queue prints it, and so as LEAD_SEEN
-# holds it: for a protected-path row (tag p) the line, then ` (held: <why>; exit: the user merges it)`,
-# <why> from each PR's entry in <holds> (protected_holds): `changes <path>[, <path>]...` for the paths, and
-# `its files could not be read: <why>` for each unreadable one, joined by "; ". Any other line as it is.
+# holds it: for a held row (tag p) the line, then ` (held: <why>; exit: <exit>)`, <why> from each PR's
+# entry in <holds> (protected_holds), joined by "; ": `changes <path>[, <path>]...` for the paths and
+# `its files could not be read: <why>` for each unreadable one, with the exit `the user merges it`; a
+# dropped-lines entry (dropped_lines_what) as it is, with the exit `the builder restores them in a commit
+# of its own, or the user reads the PR's answer and merges by hand`, or for an unchecked one `the user
+# checks the merge by hand and merges it, or runs swarm.sh merge again`. A row with more than one exit
+# joins them by "; ". Any other line as it is.
 # LEAD_HEADS keeps the bare line, whose every word after the slug is a PR URL.
 lead_merge_shown() {
-  local u w paths="" why=""
+  local u w e paths="" why="" exits=""
   [[ "$1" == p ]] || { echo "$2"; return 0; }
   for u in ${2#merge: * }; do
     w="$(awk -v u="${u}" '$1 == u { sub(/^[^ ]+ /, ""); print; exit }' <<< "$3")"
+    e="the user merges it"
     case "${w}" in
-      "") ;;
-      "unreadable: "*) w="its files could not be read: ${w#unreadable: }"
-        [[ "; ${why}; " == *"; ${w}; "* ]] || why+="${why:+; }${w}" ;;   # loose-match: ok quoted, a whole "; <why>; " entry
-      *) [[ ", ${paths}, " == *", ${w}, "* ]] || paths+="${paths:+, }${w}" ;;   # loose-match: ok quoted, a whole ", <path>, " entry
+      "") continue ;;
+      "unreadable: "*) w="its files could not be read: ${w#unreadable: }" ;;
+      *) if ! dropped_lines_what "${w}"; then
+           [[ ", ${paths}, " == *", ${w}, "* ]] || paths+="${paths:+, }${w}"   # loose-match: ok quoted, a whole ", <path>, " entry
+           w=""
+         elif [[ "${w}" == "dropped base lines: "* ]]; then
+           e="the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand"
+         else e="the user checks the merge by hand and merges it, or runs swarm.sh merge again"; fi ;;
     esac
+    [[ -z "${w}" || "; ${why}; " == *"; ${w}; "* ]] || why+="${why:+; }${w}"   # loose-match: ok quoted, a whole "; <why>; " entry
+    [[ "; ${exits}; " == *"; ${e}; "* ]] || exits+="${exits:+; }${e}"   # loose-match: ok quoted, a whole "; <exit>; " entry
   done
   [[ -z "${paths}" ]] || why="changes ${paths}${why:+; }${why}"
-  echo "$2 (held: ${why:-a protected path}; exit: the user merges it)"
+  echo "$2 (held: ${why:-a protected path}; exit: ${exits:-the user merges it})"
 }
 
 # lead_unreported <seen> <PR URL>... — each URL that <seen> (space-separated) does not hold, after a space.
@@ -2545,7 +2557,7 @@ lead_unreported() {
 # (heads_green) and write its verdict to LEAD_HEADS, `<verdict> merge: <slug> <PR URL>...`: green when
 # every head is, unread when none is red but one could not be read, red otherwise. wait_lead runs it on a
 # run's first read and then at most once every LEAD_HEADS_EVERY seconds, as does open_story_prs beside it,
-# so the polls between make no gh call. A held PR (costs: money or a protected path) an earlier item already
+# so the polls between make no gh call. A held PR (costs: money, a protected path or dropped base lines) an earlier item already
 # reports is not read again: a later held row loses it (lead_unreported), and a row left with none gets no
 # verdict. It reads the heads of the held PRs first (held_heads), so a hold the builder pushed past is
 # stale before the holds are read. The verdict is keyed by the item's whole line, as lead_queue looks it up. Whether the lead has seen
@@ -2890,13 +2902,15 @@ stop_lines() {
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
 # heads pass's (lead_heads), wakes the lead (lead_head_wakes), with ` (held: changes <path>; exit: the user
-# merges it)` after the URLs of a row held for a protected path (lead_merge_shown), and less any held PR an
+# merges it)` after the URLs of a row held for a protected path, or its dropped-lines why and exit after
+# those of a row held for dropped base lines (lead_merge_shown), and less any held PR an
 # earlier line reported (lead_unreported). It reads the holds once (protected_holds) for its rows and its
 # lines. Then, from no_agent_lines record: `step-up
 # failed: <slug>, exit: swarm.sh step-up --resume <slug>` for a ready story whose step-up stopped
 # after closing its builder, `no-agent: <slug>, exit: <exit>` for a started story no agent works
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
-# events.tsv line for a story whose missing agent no event explains yet. Then stop_lines' `stopped: <slug>
+# events.tsv line for a story whose missing agent no event explains yet, and start again a review agent
+# whose start was cut short with tries left (no_review_line's restart). Then stop_lines' `stopped: <slug>
 # (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
@@ -3448,7 +3462,59 @@ no_review_pr() {
   printf '%s' "${u}"
 }
 
-# no_review_line <slug> <fields> <prs repo> — `no-review: <slug> <pr>, exit: swarm.sh review-agent
+# review_restart_try <slug> — whether a review-agent start of <slug> was cut short, from events.tsv since
+# the newest ok `story` start or reopen, or ok `review-agent` start: `restart <N>` when the newest outcome is a
+# start that ran nothing (a `review-agent` line ending (try N of STARTS_PER_REVIEW)) or wait --lead's
+# restart (a `review-agent:restart` line), a trailing `interrupted` changing nothing, and fewer than
+# STARTS_PER_REVIEW tries are spent; `unclear <N>` when try N began (its `review-agent:try` line) and has
+# no outcome, so it may have sent the brief; else nothing. The tries spent are the highest try number
+# on record, since each try takes the next: a restart's own command logs its try again, so a count of
+# lines would count that try twice, and a restart line always raises the number, so the restarts stop.
+review_restart_try() {
+  local log="${EVENTS_LOG}"
+  [[ -f "${log}" ]] || return 0
+  awk -F'\t' -v s="$1" -v max="${STARTS_PER_REVIEW}" '
+    function num(t) { sub(/.*\(try /, "", t); sub(/ of .*/, "", t); return t + 0 }
+    NF != 5 || $3 != s { next }
+    ($2 == "story" && $5 ~ /^ok/) || ($2 == "reconcile" && $5 == "ok (reopened)") || ($2 == "review-agent" && $5 ~ /^ok/) {
+      hi = 0; go = 0; open = 0; next
+    }
+    $2 == "review-agent:try" && $5 ~ /^\(try [0-9]+ of [0-9]+\) started$/ { n = num($5); if (n > hi) hi = n; open = n; next }
+    $2 == "review-agent:restart" && $5 ~ /^started \(try [0-9]+ of [0-9]+\)$/ { n = num($5); if (n > hi) hi = n; go = 1; open = 0; next }
+    $2 != "review-agent" || $5 == "interrupted" { next }
+    $5 ~ / \(try [0-9]+ of [0-9]+\)$/ { n = num($5); if (n > hi) hi = n; go = 1; open = 0; next }
+    { go = 0; open = 0 }
+    END { if (open) print "unclear", open; else if (go && hi < max) print "restart", hi + 1 }' "${log}" 2>/dev/null || true
+}
+
+# review_restart <slug> <PR URL> <try> — wait --lead's restart of review-<slug> at try <try>: log it first
+# (review-agent:restart, which review_restart_try counts, so a restart killed before its own line still
+# spends its try), then run swarm.sh review-agent detached, as upgrade_detach runs its worker, pinned to
+# this project, with SWARM_START_TRY for its first try and its output in .swarm/lead/review-<slug>.restart.
+# The poll runs inside lead_queue's $(...): every stream of the child is a file, so the poll never waits
+# on it, and while it runs no_agent_busy keeps the next poll quiet. Two polls can overlap while a new
+# wait --lead takes over, and the second's ps read may come before the first's start. So it holds <slug>'s
+# restart lock (mkdir, tried once), and under it starts nothing while the last restart's pid, in
+# .swarm/lead/review-<slug>.restart.pid, is alive, or unless review_restart_try still says this try: the
+# second poll reads the first one's restart line and pid. False when it started nothing. A poll killed
+# holding the lock leaves it, as does a pid another process took since, and the story then gets its line
+# with no restart until the lock is removed or that process ends.
+review_restart() {
+  local outf="${LEAD_DIR}/review-$1.restart" lock="${LEAD_DIR}/review-$1.restart.lock" pid rc=1
+  mkdir -p "${LEAD_DIR}" 2>/dev/null || true
+  perl -e 'mkdir shift or exit 1' "${lock}" 2>/dev/null || return 1
+  pid="$(cat "${outf}.pid" 2>/dev/null)" || pid=""
+  if ! { [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; } && [[ "$(review_restart_try "$1")" == "restart $3" ]]; then
+    record_event review-agent:restart "$1" "started (try $3 of ${STARTS_PER_REVIEW})"
+    SWARM_START_TRY="$3" SWARM_PROJECT="${PROJECT_DIR}" nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+      "${BASH}" "${SWARM_HOME}/bin/swarm.sh" review-agent "$1" "$2" </dev/null > "${outf}" 2>&1 &
+    echo "$!" > "${outf}.pid"; rc=0
+  fi
+  rmdir "${lock}" 2>/dev/null || true
+  return "${rc}"
+}
+
+# no_review_line <slug> <fields> <prs repo> [record] — `no-review: <slug> <pr>, exit: swarm.sh review-agent
 # <slug> <pr>, or the fallback reviewer` for a story whose review agent never started or started and
 # went (no_agent_lines' review case), from <fields>, its no_review_events line past the slug, and the
 # poll's NO_AGENT_LIVE list and NO_AGENT_PS. Nothing while a round is under way: review-<slug> listed,
@@ -3456,9 +3522,13 @@ no_review_pr() {
 # a start, or a wait-pr or merge on its PR, on prs:, or on its review brief's (no_agent_busy). Nothing either for an ok start with no
 # .swarm/reviews/<slug>.head, or with a findings file that passes on that head (review_pass). A URL a
 # failed line names counts only when <prs> is empty or holds it. With no PR known, the exit finds it
-# first, as no_agent_exit's does.
+# first, as no_agent_exit's does. A start cut short (review_restart_try) takes its PR from its brief
+# when that names one, over prs: and the rest: its command wrote that brief. With record (wait --lead's poll), one with
+# tries left and a PR is started again at its next try (review_restart), and the line says
+# ` (started <N> of STARTS_PER_REVIEW)` after the PR; next, status and dash only read. A try cut off
+# mid-start is never started again: its line says so and names the lead's check.
 no_review_line() {
-  local slug="$1" ok url under wrote prs repo rname f="${PROJECT_DIR}/.swarm/reviews/$1.md" head origin
+  local slug="$1" ok url under wrote prs repo rname f="${PROJECT_DIR}/.swarm/reviews/$1.md" head origin what n brief note="" check=""
   read -r ok url under wrote <<< "$2"; read -r repo prs <<< "$3"
   [[ "${repo}" != - ]] || repo=""
   no_agent_name rname "review-${slug}"
@@ -3473,12 +3543,21 @@ no_review_line() {
   [[ "${url}" != - ]] || url="$(no_review_pr "${slug}" "${wrote}" "${prs}")"
   # A wait-pr or merge on the PR of any earlier start of this review answers for the story too.
   ! no_agent_busy "${slug}" "${rname}" "${prs} ${url} $(review_brief_url "${slug}")" || return 0
+  read -r what n <<< "$(review_restart_try "${slug}")"
+  # A start cut short wrote its brief before its first try, so the brief names its PR, whatever prs: holds.
+  [[ -z "${what}" ]] || { brief="$(review_brief_url "${slug}")"; [[ -z "${brief}" ]] || url="${brief}"; }
+  if [[ "${what}" == restart && -n "${url}" && "${4:-}" == record ]]; then
+    ! review_restart "${slug}" "${url}" "${n}" || note=" (started ${n} of ${STARTS_PER_REVIEW})"
+  elif [[ "${what}" == unclear ]]; then
+    note=" (try ${n} of ${STARTS_PER_REVIEW} was cut off mid-start and may have sent the brief)"
+    check="check that no pane holds review-${slug} (swarm.sh status, then swarm.sh tidy for an empty one), then "
+  fi
   if [[ -z "${url}" ]]; then
     origin="$(git -C "$(repo_dir "${repo}")" remote get-url origin 2>/dev/null)" || origin="<its repo's origin>"
-    echo "no-review: ${slug}, exit: gh pr list -R ${origin} --head story/${slug}, then swarm.sh review-agent ${slug} <PR URL>, or the fallback reviewer"
+    echo "no-review: ${slug}${note}, exit: ${check}gh pr list -R ${origin} --head story/${slug}, then swarm.sh review-agent ${slug} <PR URL>, or the fallback reviewer"
     return 0
   fi
-  echo "no-review: ${slug} ${url}, exit: swarm.sh review-agent ${slug} ${url}, or the fallback reviewer"
+  echo "no-review: ${slug} ${url}${note}, exit: ${check}swarm.sh review-agent ${slug} ${url}, or the fallback reviewer"
 }
 
 # pr_words <prs value> — a prs: value's URLs, space-separated: split on spaces and commas as pr_stories
@@ -3611,7 +3690,8 @@ no_agent_granted() {
 # project opened (own_panes) listed under its builder's or review-<slug>'s name; no tell pending and no
 # wait-pr or merge on its PR (no_agent_busy); and, for a ready story, no .swarm/briefs/<slug>.step-up
 # marker. It prints one only when an event explains the agent's absence (no_agent_events); with record
-# set, a story with none gets a `no-agent <slug>` events.tsv line, so the next poll prints it. A hold
+# set, a story with none gets a `no-agent <slug>` events.tsv line, so the next poll prints it, and
+# no_review_line may start a review agent again (its restart of a start cut short). A hold
 # line answers the alert until a new event: the next poll writes one. A ready story with a .step-up
 # marker gets `step-up failed: <slug>, exit: swarm.sh step-up --resume <slug>` instead, unless its
 # step-up still runs (step_up_running), or a pane is listed under its builder's name while the marker
@@ -3626,7 +3706,8 @@ no_agent_granted() {
 # Cost: the poll's herdr list (lead_agents, read here when the poll has none); every story's front
 # matter in one pass (stories_fm), a review story's epic chain and HLD under merge = human
 # (no_agent_granted), events.tsv once (no_agent_events), then once more
-# (no_review_events) for the stories with a build record; per story only for one that passed those: its
+# (no_review_events) for the stories with a build record, and once more for each that reaches its
+# no-review: line (review_restart_try); per story only for one that passed those: its
 # costs: walk (a review story), git (a start line but no current builder, or no-review: with no PR
 # known), then herdr's JSON and one ps once a started story or a marker is left. No gh. dash (dash_render) hands it its own herdr list
 # instead, in LEAD_AGENTS and LEAD_AGENTS_OK with LEAD_AGENTS_READ set, so it runs from outside a herdr
@@ -3714,7 +3795,7 @@ no_agent_lines() {
     # One line per story: its no-agent: exit comes first (a restart, or in review the review-agent
     # exit already), and the next poll brings no-review: once the builder is back.
     [[ " ${said} " != *" ${slug} "* ]] || continue
-    no_review_line "${slug}" "${fields}" "${repo:--} ${prs}"
+    no_review_line "${slug}" "${fields}" "${repo:--} ${prs}" "${1:-}"
   done <<< "${rv:-}"
   return 0
 }

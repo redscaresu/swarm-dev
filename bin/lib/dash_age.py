@@ -60,8 +60,9 @@ class Signs:
         return stall_age(self.seen, epic, base, ([since, self.ran.get(pane)] if since else []) + [logged], self.now), "no swarm action"
 
 def stalled_panes(E, now):
-    # dash.sh's pre-pass, ahead of the render: the panes of this project's agents (pane_records over its
-    # own live panes, as the rows read them) that are working and whose age has reached stall_minutes.
+    # dash.sh's pre-pass, ahead of the render: "<pane>\t<name>" for each of this project's agents
+    # (pane_records over its own live panes, as the rows read them, herdr's name or else the record's)
+    # that is working and whose age has reached stall_minutes.
     # Working is agent_state over the session's state; shown_state's pane read is left out, so an agent
     # the rows show on its usage limit is listed too. Nothing that cannot be read lists anything.
     try:
@@ -98,5 +99,5 @@ def stalled_panes(E, now):
         except Exception:
             continue
         if age is not None and age >= int(E["DASH_STALL_MIN"]):
-            out.append(pane)
+            out.append(f"{pane}\t{name}")
     return out

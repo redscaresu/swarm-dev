@@ -6,7 +6,8 @@
 # (held: changes <path>; exit: the user merges it)`, once when a story and its epic both list it, the
 # epic's line left with its other held PRs. A review item with no hold gets no merge: line, a hold stops
 # tagging a PR the item no longer lists or that a heads pass saw at another head, and a later merge that
-# passes the hold drops it.
+# passes the hold drops it. A PR held because its merge of the base dropped base lines gets its own row,
+# tagged (dropped base lines), and its wait --lead line names the lines and its own exit.
 # status and lead_queue read files only: the gh calls are the heads pass's. On merge_fixture.sh for the
 # merges; then gh is a stub of the reads wait --lead makes, logging each to gh.log.
 # shellcheck disable=SC2153,SC2154 # merge_fixture.sh sets URL, rc and the rest
@@ -203,5 +204,33 @@ echo '{"squashMergeAllowed":false,"mergeCommitAllowed":false,"rebaseMergeAllowed
 merge "${URL}"
 check "PR 7, no longer changing hooks/x.sh, gets past the hold" said "allows no merge method"
 is "the hold no longer tags PR 7" "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge: s ${URL} ${U8}" "$(merge_rows)"
+
+# --- A PR held for dropped base lines (dropped-lines-hold's protected: entry): status gives it a row of its
+# own, tagged (dropped base lines), apart from the item's protected-path PR, and wait --lead prints its
+# count, first file and text with the builder's exit. The entries are written by hand, as merge records them.
+# dropped_board <what> [front-matter line]... — merge = agent; story s (with the lines) lists PRs 7 and
+# 8, story r PR 9, both in review; s's protected: state holds PR 7 for <what> and PR 8 for hooks/x.sh,
+# both at ${H1}. Then gh is reads_stub.
+dropped_board() {
+  fresh; item s "status: review" "prs: ${URL} ${U8}" "${@:2}"; item r "status: review" "prs: ${U9}"
+  rm -rf "${P}/docs/epics" "${P}/.swarm/lead" "${ROOT}"/head.*
+  mkdir -p "${P}/.swarm/board-state/stories"
+  printf 'protected: %s %s %s %s | %s %s %s hooks/x.sh\n' "${URL}" "${H1}" "$(date +%s)" "$1" "${U8}" "${H1}" "$(date +%s)" \
+    > "${P}/.swarm/board-state/stories/s"
+  reads_stub
+}
+dropped_board "dropped base lines: 2, first docs/x.md: row"
+is "status lists the dropped-lines PR on a (dropped base lines) row, the path one on its (protected path) row" \
+  "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge (protected path): s ${U8}"$'\n'"  awaiting your merge (dropped base lines): s ${URL}" "$(merge_rows)"
+lead 20000
+is "wait --lead prints the path PR's line, then the dropped-lines PR's with its count, first file, text and exit" \
+  "merge: s ${U8} (held: changes hooks/x.sh; exit: the user merges it)"$'\n'"merge: s ${URL} (held: dropped base lines: 2, first docs/x.md: row; exit: the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand)" "$(merge_out)"
+# An unchecked one, on a costs: money story: both tags, its why and its own exit.
+dropped_board "dropped base lines unchecked: git 2.37 has no merge-tree --write-tree" "costs: money"
+is "status tags an unchecked dropped-lines PR of a costs: money story with both tags" \
+  "  awaiting your merge: r ${U9}"$'\n'"  awaiting your merge (costs money) (protected path): s ${U8}"$'\n'"  awaiting your merge (costs money) (dropped base lines): s ${URL}" "$(merge_rows)"
+lead 20000
+is "wait --lead prints the unchecked PR's why and the exit that the user checks the merge by hand" \
+  "merge: s ${U8} (held: changes hooks/x.sh; exit: the user merges it)"$'\n'"merge: s ${URL} (held: dropped base lines unchecked: git 2.37 has no merge-tree --write-tree; exit: the user checks the merge by hand and merges it, or runs swarm.sh merge again)" "$(merge_out)"
 
 finish "protected hold queue"
