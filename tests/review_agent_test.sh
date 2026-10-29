@@ -207,8 +207,8 @@ check "the review agent's log-finding lines name the reviewer, and log codex's f
 # on the PR's owner/repo, number, head and base before it reads the diff. If review_brief drops the
 # rule, or fills it from the wrong place, this goes red.
 dl_cmd="${sw} dropped-lines o/svc 1 ${HEAD_SHA} main"
-dl_at="$(grep -bo -F "${dl_cmd}" <<< "${flat}" | head -1 | cut -d: -f1)"
-codex_at="$(grep -bo -F "Run \`SWARM_STORY=s1 " <<< "${flat}" | head -1 | cut -d: -f1)"
+dl_at="$(grep -bo -F "${dl_cmd}" <<< "${flat}" | head -1 | cut -d: -f1 || true)"
+codex_at="$(grep -bo -F "Run \`SWARM_STORY=s1 " <<< "${flat}" | head -1 | cut -d: -f1 || true)"
 check "the round-1 brief runs dropped-lines on o/svc 1, its head and main, before its codex paragraph, logs a drop as conductor's dropped-lines, and stops with no pass when it cannot check" \
   "yes|yes|yes|yes" \
   "$( [[ -n "${dl_at}" && -n "${codex_at}" && "${dl_at}" -lt "${codex_at}" ]] && echo yes || echo "no, at '${dl_at}', codex at '${codex_at}'")|$(has "log-finding --reviewer conductor --round <n> dropped-lines ${PR} \"<the first line it printed>\"" "${flat}")|$(has "Exit 1: each line it printed (\`<sha7> <file>: <text>\`) is a base line one of the PR's own merge commits dropped, a regression this PR brings in. It is a finding to fix this round, whatever else the round finds" "${flat}")|$(has "Exit 2: it could not check, and the round cannot pass. Nudge the builder with its last line as the green step says, without waiting on the builder, then stop as above:" "${flat}")"
