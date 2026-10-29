@@ -177,21 +177,33 @@ The CI is green when every check run and commit status passed, with at least one
 only statuses. A head whose CI is pending, has no check run or status yet or could not be read is read again on
 the next pass, and so is a red one. A green head is read again for 2 hours, so a rerun that fails on the
 same commit still counts. After that it is read again only once the base moves. A read that fails keeps
-what the last pass found, and so does a rerun under way on a head that had finished. Each poll then
-prints, with no gh call:
+what the last pass found. So does a repo gh could not name, a base it could not tell, and a rerun under way
+on a head that had finished. Each poll then prints, with no gh call:
 
-- `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` for each red base, once per
-  commit: each red main that `swarm.sh merge` logged (`main-red` in events.tsv) and no `main-green` has
-  cleared, then each base head the last pass read red. The checks are cut to 300 characters. The exit is
-  `build fix-main-<short sha>, which next names first` while that story is on the board. Otherwise it is
-  `fix <base> by hand, as no fix-main story covers it yet`: a red that no `swarm.sh merge` made has no
-  story yet.
+- `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base: the red
+  main that `swarm.sh merge` logged there (`main-red` in events.tsv) and no `main-green` has cleared, else
+  the head the last pass read red there. The checks are the red ones alone, cut to 300 characters. A head
+  read red again keeps its line as first read, so a check that finishes later does not wake the lead a
+  second time. The exit follows the base's fix-main story:
+  - `fix-main-<short sha> waits on the lead: handle its held: or escalated: line` when it is held or
+    escalated.
+  - `wait for fix-main-<short sha>, whose build has started, to merge` once its build has begun, or it is
+    in review.
+  - `build fix-main-<short sha>, which next names first` while `next` would name it: ready, one an agent
+    builds, and no build begun.
+  - `fix-main-<short sha> is not one next builds: check its status and kind` for any other story.
+  - `fix <base> by hand, as no fix-main story covers it yet` when there is none: a red that no
+    `swarm.sh merge` made has no story yet.
 
 When a base with a logged red main reads green, the pass clears it as reconcile does (§ Merging): once
 that head shows the red fixed, it logs `main-green` and retires the red's fix-main story if nobody has
 started it, and the line goes on that poll. A red the pass found itself goes once the base's head reads
 green or moves. The line is an alert: a run that starts with no `.swarm/lead/seen` prints it on its first
-read. As the file is a heads pass's, a line comes up to 5 minutes after CI on the base finishes.
+read. As the file is a heads pass's, a line comes up to 5 minutes after CI on the base finishes. When a
+base's read fails on 3 heads passes in a row (`SWARM_LEAD_PRS_WARN_AFTER`, the same count as the open PRs'),
+`wait --lead` prints one `warning: wait --lead could not read CI on <base> of <owner/repo> ...` line on
+stderr, or `could not tell the base of <owner/repo>` when it could not pick the base. The lead clears it:
+check `gh auth status`, that gh can see the repo, and `base_branches`.
 
 **A brief left in an idle agent's input box is submitted once.** herdr types a long brief into the
 pane as a collapsed paste (`[Pasted text #1 +40 lines]`), and an agent can sit idle with it still in
