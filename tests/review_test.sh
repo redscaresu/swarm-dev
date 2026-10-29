@@ -494,11 +494,24 @@ check "a codex in a git repo trusts that repo for its session, so the trust dial
   "$(has "-c projects={\"${top}\"={trust_level=\"trusted\"}}" "$(grep '^agent start cxg ' "${ROOT}/herdr.log")")|$(grep '^agent start cxh ' "${ROOT}/herdr.log" | grep -c 'projects=')"
 # A start herdr refuses as not ready still holds the name in its pane: the retry closes that pane
 # and starts in a fresh one, or it fails as agent_name_taken (v0.29.0's codex start, every time).
+# In a project of their own, so the panes these starts record do not reach tidy's checks below.
+pb="${ROOT}/retryproj"; mkdir -p "${pb}/.claude/swarm"; : > "${pb}/.claude/swarm/config"
 : > "${ROOT}/herdr.log"; touch "${ROOT}/start-blocked-once"
-(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cxb "${p}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
-check "a start refused as not ready is retried in a fresh pane, after closing the one holding the name" "2 1" \
-  "$(awk '/^agent start cxb /{n++} /^pane close /{ if (n == 1) c = 1 } END { print n + 0, c + 0 }' "${ROOT}/herdr.log")"
+rc=0; (cd "${pb}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cxb "${pb}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || rc=$?
+check "a start refused as not ready is retried in a fresh pane, after closing the one holding the name, and that start goes on to send the brief" "2 1|0|yes" \
+  "$(awk '/^agent start cxb /{n++} /^pane close /{ if (n == 1) c = 1 } END { print n + 0, c + 0 }' "${ROOT}/herdr.log")|${rc}|$(grep -q '^agent prompt ' "${ROOT}/herdr.log" && echo yes || echo no)"
 rm -f "${ROOT}/start-blocked-once"
+# A pane-busy refusal keeps the old retry: the same pane, nothing closed between the two starts.
+: > "${ROOT}/herdr.log"; touch "${ROOT}/start-fails-once"
+(cd "${pb}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cxp "${pb}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
+check "a start refused as pane-busy retries in the same pane, closing nothing" "2 0" \
+  "$(awk '/^agent start cxp /{n++} /^pane close /{ if (n == 1) c = 1 } END { print n + 0, c + 0 }' "${ROOT}/herdr.log")"
+# A repo the user marked untrusted in codex's config gets no override.
+mkdir -p "${ROOT}/codexhome"; printf '[projects."%s"]\ntrust_level = "untrusted"\n' "${top}" > "${ROOT}/codexhome/config.toml"
+: > "${ROOT}/herdr.log"
+(cd "${pg}" && CODEX_HOME="${ROOT}/codexhome" HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cxu "${pg}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
+check "a repo codex's config marks untrusted is left untrusted" "1|0" \
+  "$(grep -c '^agent start cxu ' "${ROOT}/herdr.log")|$(grep '^agent start cxu ' "${ROOT}/herdr.log" | grep -c 'projects=')"
 
 # --- The session id: minted once per claude agent, passed to herdr, and recorded before the brief.
 tsv="${p}/.swarm/agents.tsv"

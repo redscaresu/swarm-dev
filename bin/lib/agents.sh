@@ -658,11 +658,12 @@ start_agent() {
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
   local try out
   for try in 1 2; do
-    if [[ ${try} -eq 2 ]]; then
-      # A refused first start can still hold the name in its pane (herdr's agent_not_ready: the agent
-      # started, then blocked on a dialog), so a retry there fails as agent_name_taken. Close that
-      # pane and start again in a fresh one.
-      herdr pane close "${pane}" >/dev/null 2>&1 || true
+    if [[ ${try} -eq 2 && "${out}" == *agent_not_ready* ]]; then
+      # A first start herdr refused as not ready still holds the name in its pane (the agent started,
+      # then blocked on a dialog), so a retry there fails as agent_name_taken. Close that pane and
+      # start again in a fresh one. Any other refusal (agent_pane_busy) retries in the same pane.
+      herdr pane close "${pane}" >/dev/null 2>&1 \
+        || die "${name}: herdr refused the start as not ready (${out}), and pane ${pane}, which may hold the name, could not be closed: close it by hand"
       pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
       clean_env "${pane}" "${name}" "${names}"
     fi
@@ -679,9 +680,12 @@ start_agent() {
       # Codex asks whether to trust a folder inside a git repo it has not trusted, and the start
       # then fails as not ready, its brief never sent. Trust the repo for this session only: a -c
       # override, never written to ~/.codex/config.toml. The inline table, as a dotted key would
-      # split a path holding a dot. A path holding a quote or backslash gets no override.
+      # split a path holding a dot. A path holding a quote, backslash or control character gets no
+      # override, and neither does a repo the user marked untrusted in codex's own config.
       root="$(git -C "${dir:-${cwd}}" rev-parse --show-toplevel 2>/dev/null)" || root=""
-      if [[ -n "${root}" && "${root}" != *[\"\\]* ]]; then sandbox+=(-c "projects={\"${root}\"={trust_level=\"trusted\"}}"); fi
+      if [[ -n "${root}" && "${root}" != *[\"\\[:cntrl:]]* ]] && ! codex_distrusts "${root}"; then
+        sandbox+=(-c "projects={\"${root}\"={trust_level=\"trusted\"}}")
+      fi
       out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
@@ -730,6 +734,17 @@ start_agent() {
 
 # codex_out_dir <tab> — where a planning tab's agents write their answers: .swarm/<epic> for
 # scope-<epic>, .swarm/<hld> for plan-<hld>; empty for any other tab.
+# codex_distrusts <root> — true when codex's own config marks <root> untrusted
+# ([projects."<root>"] with trust_level = "untrusted"), so the start leaves that choice alone.
+codex_distrusts() {
+  local cfg="${CODEX_HOME:-${HOME}/.codex}/config.toml"
+  [[ -f "${cfg}" ]] || return 1
+  awk -v want="[projects.\"$1\"]" '
+    /^[[:space:]]*\[/ { sec = $0; sub(/^[[:space:]]+/, "", sec); sub(/[[:space:]]+$/, "", sec); next }
+    sec == want && /^[[:space:]]*trust_level[[:space:]]*=[[:space:]]*"untrusted"/ { found = 1 }
+    END { exit !found }' "${cfg}"
+}
+
 codex_out_dir() {
   case "$1" in
     scope-?*) echo "${PROJECT_DIR}/.swarm/${1#scope-}" ;;
