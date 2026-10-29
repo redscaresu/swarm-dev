@@ -36,6 +36,7 @@ BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, m
 BASE_MOVED_WAIT=60      # how long each compare read of base_moved's, merge_base_update's and pinned_files', and each contents read of merge_read's, may take, retries included (SWARM_BASE_MOVED_WAIT, for tests)
 DROPPED_FETCH_WAIT=120  # how long dropped-lines' fetch of a PR's head and base may take (SWARM_DROPPED_FETCH_WAIT, for tests)
 DROPPED_GIT_MIN=2.36    # the oldest git with show --remerge-diff, which dropped_lines.py reads
+PR_COMMITS_MAX=250      # the most commits GitHub lists for one PR (pulls/<n>/commits): dropped_hold sees no further
 BEHIND_UNLISTED=4       # ci_gate behind's exit when the compare cannot list what the base gained (ci_gate.py's UNLISTED)
 MERGE_LOCK_WAIT=900     # how long a direct merge waits for another into the same repo and base to finish its merge (SWARM_MERGE_LOCK_WAIT, for tests)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
@@ -388,12 +389,13 @@ protected_hold() {
 }
 
 # protected_note [what] — protected_hold's record of its verdict for status and wait --lead
-# (protected_record): on the item in review (merge_pr's f), keyed to the PR (url) at the pinned head,
-# [what] the path it changes or `unreadable: <why>`; none drops the record. A write that fails warns:
-# it must not hide the hold or stop a merge.
+# (protected_record), and dropped_hold's (dropped_note): on the item in review (merge_pr's f), keyed to
+# the PR (url) at the pinned head, [what] the path it changes, `unreadable: <why>` or dropped_hold's
+# `dropped base lines...`; none drops the record. A write that fails warns: it must not hide the hold
+# or stop a merge.
 protected_note() {
   ( protected_record "${f}" "${url}" "${head}" "${1:-}" ) \
-    || echo "warning: merge: cannot record on ${f} whether ${url} is held for a protected path; status and wait --lead may not show it" >&2
+    || echo "warning: merge: cannot record on ${f} whether ${url} is held${1:+ (${1})}; status and wait --lead may not show it" >&2
 }
 
 # story_files — the story route's read of the PR's files, setting merge_pr's local files to the paths
@@ -797,6 +799,76 @@ dropped_refs_drop() {
   git -C "${DROPPED_DIR}" update-ref -d "${DROPPED_REF}/base" 2>/dev/null || true
 }
 
+# dropped_hold — merge's hold on a PR whose own merges of the base dropped base lines (#693), on the
+# pinned head, on the story and --board routes (merge_pr's locals repo, n, head, base, url and f). It
+# lists the PR's commits through gh first, every page within BASE_MOVED_WAIT: when the list holds the
+# pinned head, none has two parents and there are fewer than PR_COMMITS_MAX, the PR has no merge to
+# scan, and it passes with no fetch. A list without the head passes too when gh pr view now reads
+# another head (the PR moved: the merge, pinned with --match-head-commit, refuses it), and otherwise
+# holds the PR unchecked.
+# Otherwise it runs dropped_lines in a subshell of its own, which exits as swarm.sh dropped-lines does
+# and drops the refs it fetched. An exit 1 with `<sha7> <file>: <text>` lines holds the PR, <n> counting
+# only those lines: `held: <slug> (dropped base lines: <n>, first <file>: <text>); ...`. Any other
+# failure, an exit 1 with no such line too, holds it as `dropped base lines unchecked: <why>`, except a
+# head that moved (refs/pull/<n>/head is another commit, or gh no longer lists the head), which is
+# refused for a new review. On the story route either hold is recorded on the item in review
+# (dropped_note), and a pass drops the record; --board records nothing, since no item is in review.
+dropped_hold() {
+  local out rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" tmp lines k what now why=""
+  # dropped_lines' two lines for a moved head: the fetched refs/pull/<n>/head, and gh's list.
+  local moved_ref='\(refs/pull/[0-9]+/head\) is ([0-9a-f]{40}), not [0-9a-f]{40}: the PR moved'
+  local moved_list="^[0-9a-f]{40} is not among .+'s commits as gh lists them: the PR's head moved\$"
+  out="$(within "${limit}" gh api --paginate --jq '.[] | "\(.sha) \(.parents | length)"' \
+    "repos/${repo}/pulls/${n}/commits?per_page=100" < /dev/null 2>&1)" || rc=$?
+  if [[ ${rc} -eq 142 ]]; then why="gh did not list ${url}'s commits within ${limit}s"
+  elif [[ ${rc} -ne 0 ]]; then why="gh cannot list ${url}'s commits: ${out##*$'\n'}"
+  elif [[ -z "${out}" ]] || grep -Evq '^[0-9a-f]{40} [0-9]+$' <<< "${out}"; then why="gh listed ${url}'s commits in a form merge cannot read"
+  elif [[ $(grep -c '' <<< "${out}") -ge ${PR_COMMITS_MAX} ]]; then
+    why="gh lists at most ${PR_COMMITS_MAX} of a PR's commits and lists that many for ${url}, so not every merge in it can be read"
+  elif ! awk -v h="${head}" '$1 == h { f = 1 } END { exit !f }' <<< "${out}"; then
+    # A list without the pinned head is another head's, or stale. When the PR moved, the merge, pinned to
+    # that head, refuses it later; when it did not, the list cannot vouch for the head.
+    now="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null 2>/dev/null | json "d['headRefOid']")" || now=""
+    [[ ! "${now}" =~ ^[0-9a-f]{40}$ || "${now}" == "${head}" ]] || return 0
+    why="gh's list of ${url}'s commits does not hold its head ${head:0:7}${now:+ yet}"
+  elif ! awk '$2 > 1 { f = 1 } END { exit !f }' <<< "${out}"; then dropped_note; return 0
+  fi
+  if [[ -z "${why}" ]]; then
+    tmp="$(mktemp "${TMPDIR:-/tmp}/swarm-dropped.XXXXXX")" || merge_fail "cannot make a temp file for the scan of ${url}'s merges"
+    # In the background, so set -e holds inside it, with swarm.sh dropped-lines' trap: a die exits 2.
+    ( DROPPED_FOUND=""; trap 'rc=$?; dropped_refs_drop; [[ ${rc} -eq 0 || -n "${DROPPED_FOUND}" ]] || exit 2' EXIT
+      set -e; dropped_lines "${repo}" "${n}" "${head}" "${base}" ) > "${tmp}" 2> "${tmp}.err" &
+    rc=0; wait $! || rc=$?
+    lines="$(grep -E '^[0-9a-f]{7} .+: ' "${tmp}" || true)"
+    # The why: its die line, else the last line it printed (dropped_lines.py's reason).
+    why="$(awk 'index($0, "swarm: ") == 1 { l = substr($0, 8) } END { print l }' "${tmp}.err")"
+    [[ -n "${why}" ]] || why="$(awk 'NF { l = $0 } END { print l }' "${tmp}")"
+    rm -f "${tmp}" "${tmp}.err"
+    [[ ${rc} -ne 0 ]] || { dropped_note; return 0; }
+    if [[ ${rc} -eq 1 && -n "${lines}" ]]; then
+      k="$(grep -c '' <<< "${lines}")"; what="${lines%%$'\n'*}"; what="dropped base lines: ${k}, first ${what#* }"
+      dropped_note "${what}"
+      merge_fail "held: ${MERGE_TARGET} (${what}); the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand"
+    fi
+    why="$(tr -d '\000-\037\177' <<< "${why#dropped-lines: }")"
+    if [[ "${why}" =~ ${moved_ref} ]]; then   # loose-match: ok moved_ref is a fixed regex
+      merge_fail "the head of ${url} on GitHub (refs/pull/${n}/head) is ${BASH_REMATCH[1]:0:7}, not ${head:0:7}, the head merge checked for dropped base lines: review the new head"
+    fi
+    if [[ "${why}" =~ ${moved_list} ]]; then   # loose-match: ok moved_list is a fixed regex
+      merge_fail "the head of ${url} moved off ${head:0:7}: gh no longer lists it among the PR's commits: review the new head"
+    fi
+    [[ -n "${why}" ]] || why="dropped-lines exited ${rc} and said nothing"
+    [[ ${rc} -ne 1 ]] || why="dropped-lines exited 1 with no dropped line: ${why}"
+  fi
+  dropped_note "dropped base lines unchecked: ${why}"
+  merge_fail "held: ${MERGE_TARGET} (dropped base lines unchecked: ${why}); the user checks the PR's merges by hand and merges it, or runs swarm.sh merge again"
+}
+
+# dropped_note [what] — dropped_hold's record of its verdict, on the story route only (merge_pr's f set):
+# protected_note, with each | in <what> made ¦, since the record joins its entries with " | " and a file
+# name or a line of text may hold one; none drops the record.
+dropped_note() { local w="${1:-}"; [[ -z "${f}" ]] || protected_note "${w//|/¦}"; }
+
 # merge_lock <owner/repo> <base> [<then>] — take this project's lock on direct merges into <base> of <repo>,
 # .swarm/merge-<owner>-<repo>-<base>.lock: a directory holding this swarm.sh's pid ($$, which outlives
 # the dispatch subshell), its path in MERGE_LOCK. A stale lock (merge_lock_stale) was left by a merge
@@ -866,9 +938,12 @@ short_shas() {
 # hooks/ or a root Makefile, a renamed file's old path too), which only the user merges, by hand; with merge = human and no --release, merge_grant
 # finds an HLD granting merge, and then pr_held finds nothing; and, under either merge mode, it sets
 # no epic active with no ticket (epic_guard, read at the pinned head, unless the board is not in the
-# project's repo or the PR is in another repo than the board's, story_elsewhere)) (with --board instead: the PR is in the
+# project's repo or the PR is in another repo than the board's, story_elsewhere), and, at the pinned head,
+# no merge of the PR's own dropped a line of the base, nor could that go unchecked (dropped_hold: a
+# hold for the user, recorded on the item in review; a head that moved refuses for a new review))
+# (with --board instead: the PR is in the
 # board's own repo and every path it changes, old or new, is on the board, and it sets no epic active
-# with no ticket, as for a story PR; with --release: the PR is in the
+# with no ticket and drops no base line, as for a story PR, recording nothing; with --release: the PR is in the
 # project's own repo and every path it changes is .claude-plugin/plugin.json, release_check's, and
 # with merge = human release_check also finds at least one story merged since the last tag, each
 # under an agreed HLD granting release), and ci_gate passes on the head. A story PR on the direct path
@@ -974,6 +1049,9 @@ merge_pr() {
     epic_guard
     rm -f "${flist}"; flist=""
   fi
+  # A merge of the base that dropped the base's lines is the user's under either merge mode, the PR at
+  # the pinned head: after the epic guard, before the grant. A release changes only plugin.json.
+  [[ "${only}" == --release ]] || dropped_hold
   # With merge = human the lead merges a story or board PR only under an HLD that grants merge, and
   # then under the costs: hold (merge_hold; the protected-path hold is merge = agent's alone: merge_grant
   # has refused such a PR, the names as written). --release is release_check's. Like epic_guard, it runs after the
