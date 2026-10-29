@@ -2,6 +2,7 @@
 kind: lead
 status: blocked
 epic: merge-safety
+after: merge-safety
 depends_on: [dropped-lines-hold, dropped-hold-shown]
 needs: [dropped-lines-hold (the holds this story reconciles), dropped-hold-shown (where they show)]
 touches: []
