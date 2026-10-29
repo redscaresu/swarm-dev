@@ -361,7 +361,7 @@ Repeat until a step below says stop:
      epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
      ready, blocked on an agent's story, or in review with a review agent still to act. For the
      backlog the line is `reported: backlog (...)` and the exit is `swarm.sh conduct --backlog`.
-     When `next` offers `collect <agent>` for that conductor, do that step first: the exit retires
+     When `next` offers its collect step for that conductor, do that step first: the exit retires
      the conductor and deletes its report, so the collect would never run. Then read the report.
      `<n>` also counts the stories a conductor lists for you, which a new one cannot clear: a
      `not started:` story whose worktree is still there (a build that died), a `not held:` line, a
