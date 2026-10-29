@@ -191,7 +191,9 @@ check "6 a newer note than the tell's marker: the line comes" "${LINE}" "$(poll)
 touch -t 202610011000 "${STOP}"
 echo report > "${P}/.swarm/conduct-e.report.md"
 fresh_lead
-check "6 a conductor that wrote its report has stopped: the line comes" "${LINE}" "$(poll)"
+# s1 is still an agent's, so the report gives a reported: line after it (wait_lead_test.sh).
+check "6 a conductor that wrote its report has stopped: the line comes" \
+  "${LINE}"$'\n'"reported: e (1 stories still an agent's), exit: swarm.sh conduct e" "$(poll)"
 rm -f "${P}/.swarm/conduct-e.report.md" "${STOP%.md}.told" "${P}/.swarm/briefs/conduct-e.md"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
 # The tell itself leaves the marker: swarm.sh tell <conductor> note <stop note>, to conduct-e in its pane.
 running
