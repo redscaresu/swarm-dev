@@ -5,7 +5,8 @@
 # dash shows beside the agent. herdr and gh are stubs on PATH: herdr lists this project's agents (and
 # another project's) and prints ${ROOT}/pane-<pane> for `agent read`. Then flow counts both kinds per
 # epic. Then deliver_prompt reads an agent's own status when the prompt's reply can't be read, and
-# sends the brief again only to an agent idle or done there. Last, sign_blocked, with the signer stubbed.
+# sends the brief again only to an agent idle or done there. Last, sign_blocked, with the signer stubbed,
+# and wait --stall on a builder whose worktree it says cannot sign.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -250,9 +251,9 @@ idle=("{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"timestamp\":\"$(a
   "{\"type\":\"user\",\"isCompactSummary\":true,\"timestamp\":\"$(ago 11)\",\"message\":{\"role\":\"user\",\"content\":\"This session is being continued.\"}}"
   "{\"type\":\"user\",\"timestamp\":\"$(ago 2)\",\"message\":{\"role\":\"user\",\"content\":\"<task-notification><task-id>b1</task-id></task-notification>\"}}"
   '{"type":"summary","summary":"Compacted while idle","leafUuid":"x"}')
-# swait <args...> — swarm.sh wait <args...> in the project, its wait begun 2 hours ago; hung_wait is
-# wait --stall on s-hung.
-swait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
+# swait <args...> — swarm.sh wait <args...> in the project, its wait begun 2 hours ago (WAIT_AGO seconds
+# ago when set); hung_wait is wait --stall on s-hung.
+swait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - ${WAIT_AGO:-7200} )) \
   CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
 hung_wait() { swait --stall s-hung 3000; }
 # Its last own work, a tool call 40 minutes ago, came after every tool shell started: none is the
@@ -668,6 +669,66 @@ check "across the ssh cases ssh-keygen ran only -l, and gpg.ssh.program never" \
   test "$(cut -d' ' -f1-2 "${S}/ssh-signers" | sort -u)" = "ssh-keygen -l"
 sset commit.gpgsign true gpg.format x509
 check "gpg.format=x509 reports unknown, exit 1, and calls no signer" test "$(sb)|$(none)" = "1|unknown|none"
+
+# wait --stall on s-hung (past stall_minutes, no test run or background task) with a worktree of its own,
+# ${ROOT}/hung-wt/s-hung, whose last commit and uncommitted edit are old, and the stub signer above. A
+# blocked probe is no stall, logged once per change of state as a sign-blocked incident naming the last
+# commit's time; a clear one after it logs sign-clear and the builder stalls. Its pane changed just now
+# (a fresh pane record), so pane_quiet never ends a wait as stuck.
+HW="${ROOT}/hung-wt/s-hung"; git init -q "${HW}"
+rm -rf "${ROOT}/projects/p/sess-hung"; log "$(tool 46)" "${idle[@]}"; ran
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+# hw_commit <minutes ago> — commit a file in the worktree that long ago (the fixture's own commit, with
+# gpgsign unset), then turn gpgsign on and leave an edit of that age uncommitted; prints the commit's
+# time in ISO UTC.
+hw_commit() {
+  local at=$(($(date +%s) - $1 * 60))
+  git -C "${HW}" config --unset-all commit.gpgsign || true
+  echo "$1" > "${HW}/done.txt"; git -C "${HW}" add done.txt
+  GIT_COMMITTER_DATE="@${at} +0000" GIT_AUTHOR_DATE="@${at} +0000" git -C "${HW}" commit -qm "c$1"
+  git -C "${HW}" config commit.gpgsign true
+  echo "$1" > "${HW}/work.txt"
+  python3 -c 'import datetime, os, sys; a = int(sys.argv[2]); os.utime(sys.argv[1], (a, a)); print(datetime.datetime.fromtimestamp(a, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "${HW}/work.txt" "${at}"
+}
+signs() { cut -f2,3,5 "${H}/.swarm/events.tsv" | grep $'^incident\ts-hung\tsign-' | cut -f3 || true; }
+t1="$(hw_commit 100)"
+gpgkey "${SG}:1:P"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "with a clear probe, the idle builder with no commit, background task or test run since is stalled, exit 3" \
+  test "${rc}:$(head -1 <<< "${out}" | cut -d' ' -f1-2)" = "3:stalled: working"
+check "and no sign-blocked or sign-clear incident is logged" test -z "$(signs)"
+gpgkey "${SG}:-:P"
+check "a builder whose signer cannot sign its uncommitted work is not stalled, poll 1" works hung_wait
+check "poll 2" works hung_wait
+check "poll 3" works hung_wait
+check "across the three, one sign-blocked incident with the last commit's time" test "$(signs)" = "sign-blocked: s-hung (unsigned work since ${t1})"
+t2="$(hw_commit 90)"
+check "after a new commit, still blocked, it is not stalled" works hung_wait
+check "and a second incident names the new commit's time" test "$(signs)" = "$(printf '%s\n' \
+  "sign-blocked: s-hung (unsigned work since ${t1})" "sign-blocked: s-hung (unsigned work since ${t2})")"
+gpgkey "${SG}:1:P"
+check "once the signer can sign, the builder stalls" stalls hung_wait
+gpgkey "${SG}:-:P"
+check "blocked again with no new commit, it is not stalled" works hung_wait
+check "blocked, clear, blocked logs sign-blocked, sign-clear, sign-blocked" test "$(signs)" = "$(printf '%s\n' \
+  "sign-blocked: s-hung (unsigned work since ${t1})" "sign-blocked: s-hung (unsigned work since ${t2})" \
+  "sign-clear: s-hung" "sign-blocked: s-hung (unsigned work since ${t2})")"
+# Past 3 x stall_minutes (90 min) with no sign of life (a commit and an edit 100 minutes old, its own
+# work 120), a blocked builder may be hung on something else: the probe is not asked, and it stalls.
+before="$(signs)"; hw_commit 100 > /dev/null; log "$(tool 120)" "${idle[@]}"
+check "a blocked builder with no sign of life past 3 x stall_minutes is stalled, exit 3" stalls hung_wait
+check "and no sign incident is logged for it" test "$(signs)" = "${before}"
+# A real wait is shorter than the cap (the default times out after 60 minutes), so the cap measures the
+# builder's own signs, never the wait's start: a wait begun 40 minutes ago (past stall_minutes) on that
+# builder still stalls it, with no incident. One on a builder whose commit is 50 minutes old holds it,
+# and logs that commit's time.
+near_wait() { WAIT_AGO=2400 hung_wait; }
+check "a wait begun 40 minutes ago on a blocked builder quiet past 3 x stall_minutes is stalled, exit 3" stalls near_wait
+check "and it logs no sign incident" test "$(signs)" = "${before}"
+t3="$(hw_commit 50)"
+check "a wait begun 40 minutes ago on a blocked builder whose commit is 50 minutes old is not stalled" works near_wait
+check "and it logs a sign-blocked incident with that commit's time" \
+  test "$(signs)" = "$(printf '%s\n' "${before}" "sign-blocked: s-hung (unsigned work since ${t3})")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

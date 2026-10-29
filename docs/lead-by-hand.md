@@ -27,20 +27,6 @@ story for the lead. A nudge counts no round.
 **Issue.** [#685](https://github.com/redscaresu/swarm-dev/issues/685), and
 [#686](https://github.com/redscaresu/swarm-dev/issues/686) for a lighter review in later rounds.
 
-## A false stall step-up
-
-**Symptom.** `escalate` moves a builder up a model (`stalled`) while it was waiting on its own
-background test run, or could not sign a commit.
-**Check.** `herdr agent read <slug>`: a live background shell or a GPG error.
-**Step.** Leave a waiting builder alone. For GPG, see below.
-**Issue.** [#687](https://github.com/redscaresu/swarm-dev/issues/687).
-
-## A locked GPG agent
-
-**Symptom.** Builders stop with staged, unsigned work, or commits fail to sign.
-**Step.** Ask the user to unlock GPG, then nudge each builder that was waiting.
-**Issue.** [#689](https://github.com/redscaresu/swarm-dev/issues/689).
-
 ## Finished panes left open
 
 **Symptom.** `herdr agent list` shows many agents with status `done`: review agents, planning agents,
