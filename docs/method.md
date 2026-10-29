@@ -40,7 +40,9 @@ it files as filed in the findings log). With nothing to offer it prints no proje
 are the swarm's own list of follow-ups. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
 first (a conductor still working, then an already-started one-off with `resume <slug>`, then an active epic's ready stories with `conduct <epic>`, then new one-offs), then
-planning (an active epic with no stories). An epic is planned
+reporting (`conduct <epic>` for a built epic: all its stories have merged and left the board, and its
+conductor's report is missing or older than the last merge), then planning (an active epic with no
+stories that was never built). An epic is planned
 only once every epic it `depends_on` is done or has only stories in `review` left, so its stories
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.

@@ -64,6 +64,27 @@ if [[ "${out}" == *"draft epic: e1, run /epic e1"* ]]; then echo "ok   a draft e
 else echo "FAIL a draft epic is not named as waiting on the user: ${out}"; fails=$((fails + 1)); fi
 expect "draft epic once active is planned" "plan-epic e1" \
   "item epics/e1.md 'status: active'"
+# A built epic (its only story planned, then deleted by its merge on the board's history) is sent to
+# conduct while its report is missing or older than that merge, and gets no step once it has a fresh
+# one; a never-planned active epic in a repo with history is still planned. The fixture commits are
+# unsigned: the repo is thrown away with the case.
+# shellcheck disable=SC2034 # the steps expect evals use it
+GIT_T=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false)
+BUILT=("item epics/e1.md 'status: active'" "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
+  "\"\${GIT_T[@]}\" add -A && \"\${GIT_T[@]}\" commit -qm plan"
+  "git rm -q docs/stories/s1.md && GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \"\${GIT_T[@]}\" commit -qm 'Merge story/s1'")
+REPORT="mkdir -p .swarm && echo report > .swarm/conduct-e1.report.md"
+expect "a built epic with no report is conducted, not planned" "conduct e1" "${BUILT[@]}"
+has_line "the built epic's why says it has no report" "the active epic e1 is built and has no conductor's report: its conductor reports at once"
+expect "a built epic whose report is older than its last story's merge is conducted" "conduct e1" \
+  "${BUILT[@]}" "${REPORT} && touch -t 202001010000 .swarm/conduct-e1.report.md"
+has_line "the built epic's why says its report is stale" \
+  "the active epic e1 is built, and its conductor's report is older than its last story's merge: its conductor reports at once"
+expect "a built epic whose report is newer than its last story's merge gets no step" "done" "${BUILT[@]}" "${REPORT}"
+if grep -qxE 'conduct e1|plan-epic e1' <<< "${out}"; then echo "FAIL a reported built epic is conducted or planned: ${out}"; fails=$((fails + 1))
+else echo "ok   a reported built epic is neither conducted nor planned"; fi
+expect "a never-planned active epic in a repo with history is planned" "plan-epic e1" \
+  "item epics/e1.md 'status: active'" "\"\${GIT_T[@]}\" add -A && \"\${GIT_T[@]}\" commit -qm plan"
 expect "an escalated story comes before a draft epic" "escalated esc" \
   "item epics/e1.md 'status: draft'" \
   "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'"

@@ -419,7 +419,10 @@ Repeat until a step below says stop:
      so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
-   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When it
+   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When the
+     why says the epic is built (all its stories have left the board, and its report is missing or
+     older than its last story's merge), its conductor has no agent work left and reports at once:
+     collect it as usual. When it
      (or the story step's `swarm.sh conduct --backlog`) stops with `no conductor started: merge = agent
      and no allow rule for swarm.sh merge ...`, adding that rule is the user's step: tell them the rule
      and the files the line names, then stop.
