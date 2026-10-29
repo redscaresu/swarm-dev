@@ -556,7 +556,10 @@ sits above the epic: HLD, then epics, then stories. It is optional; a single epi
 2. **Write it in the co-author's pane.** It reads the code and the ADRs, then asks you the questions
    that decide the design and fills its sections, Problem through Open questions, and leaves Epics
    empty until epics are planned from it. It asks which `grants:` the HLD carries and writes only
-   what you name.
+   what you name. It reads the plugin's `rules.md` first, and runs the humanizer skill over the draft's
+   prose after each revision, before it shows you the draft or asks you to agree it, never after you
+   agree. If you agree a draft with no pass since its last revision, it runs the pass, shows you what
+   changed and asks again. Without the skill it says so and goes on.
 3. **Say it is ready.** A reviewer (the `hld-review` role) attacks the draft, its `grants:` included:
    each grant hands agents a step you take today, so it names what goes wrong if the grant is
    misused. Its findings arrive in the co-author's pane.
@@ -627,7 +630,9 @@ HLD, after checking that none of those epics has work on it.
    one `codex` and one `critic`. Agents write JSON to `.swarm/<hld>/`, and a rerun reuses those newer
    than the worktree, or, on a board outside the repo, newer than the HLD file.
 3. Writes one `epics/<slug>.md` per epic with `hld: <hld>`, sets the HLD's `planned: <today>` and
-   fills its `## Epics` section with one link per epic. It changes nothing else.
+   fills its `## Epics` section with one link per epic. It changes nothing else. Right after writing
+   the epics, before the commit and codex pass (and on a board outside the repo, before the report),
+   it runs the humanizer skill over their prose; without the skill the report says so.
 4. Opens the board PR (`board-pr open plan-<hld>`) after one codex pass, with each epic `active`
    when the HLD grants `epics`; without that grant each epic is `draft`, and it asks you first.
    Findings are logged against the PR as in § Scoping an epic.
@@ -654,7 +659,11 @@ and line of code after it is for, so you write it with a co-author.
 2. **Write it in the co-author's pane.** Switch to that pane and talk to it there. It reads the
    code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the epic, one or
    two at a time, and writes your answers into the file section by section, citing evidence. It
-   does not invent requirements, commit, or change `status`.
+   does not invent requirements, commit, or change `status`. It reads the plugin's `rules.md` first, and
+   runs the humanizer skill over the draft's prose after each revision, before it shows you the
+   draft or asks you to agree it, never after you agree. If you agree a draft with no pass since its
+   last revision, it runs the pass, shows you what changed and asks again. Without the skill it says
+   so and goes on.
 3. **Say it is ready**, to the co-author, in the same pane. A reviewer (the `epic-review` role, the
    most capable model at `xhigh` effort) starts on its own and attacks the draft: a problem with no
    evidence, goals that cannot be checked, an epic that contradicts an ADR or a safety rule, unnamed
