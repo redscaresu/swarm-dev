@@ -430,6 +430,19 @@ STUB
   check "a story gone at the poll's first ${t} read of it: no sed: or awk: line" test -z "$(grep -E '(sed|awk):' "${ROOT}/out")"
   check "a story gone at the poll's first ${t} read of it: its other lines as before" test "$(out)|$(rc)" == "held: y (paused)|0"
 done
+# A story made unreadable at that first awk read (stories_fm) is not gone: that poll names it, as
+# stories_fm's check of the board names a file there but unreadable.
+rm -f "${ROOT}/gone"/*
+printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v awk)" "${B}/v.md" > "${ROOT}/gone/awk"
+cat >> "${ROOT}/gone/awk" <<'STUB'
+for a in "$@"; do [ "${a}" != "${V}" ] || chmod 000 "${V}"; done
+exec "${REAL}" "$@"
+STUB
+chmod +x "${ROOT}/gone/awk"
+fresh; lead 0; again; held y paused; item v "kind: code" "status: ready"
+lead PATH="${ROOT}/gone:${ROOT}/bin:${PATH}" 0
+check "a story made unreadable during a poll: that poll names it" grep -qxF "swarm: cannot read ${B}/v.md" "${ROOT}/out"
+chmod 644 "${B}/v.md"
 rm -rf "${ROOT}/gone"
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.

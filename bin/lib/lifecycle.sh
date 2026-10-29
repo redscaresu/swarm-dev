@@ -3253,7 +3253,8 @@ story_prs() { pr_words "$(fm "$1" prs)"; printf '%s' "${PR_WORDS}"; }
 # board is listed is named on stderr, its story left out, and stories_fm fails. awk then opens each
 # file itself (getline) and takes one it cannot open as gone since the list, saying nothing: a story
 # file a merge deleted is left out, and a state file gone (emptied or dropped) is read as none. One
-# made unreadable in that gap is left out too, and named by the next call's check.
+# made unreadable in that gap is left out too, and the next call's check names it (a wait --lead poll
+# calls stories_fm more than once).
 stories_fm() {
   local f s files=() n=0 rc=0
   for f in "${BOARD}"/stories/*.md; do
