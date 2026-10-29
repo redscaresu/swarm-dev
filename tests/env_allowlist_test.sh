@@ -231,12 +231,12 @@ check "a pane run that typed its line and then failed is retried with its own ma
 
 # --- swarm.sh story starts its builder again, in the same process, when a start ran nothing (#688): up to
 # 3 starts, each retried failure a story event ending (try N of 3). One whose brief may have gone is not.
-# start_retry <slug> <knob> <n>... — swarm.sh story on a new one-off story <slug>, with each stub <knob> set
-# to its <n> (its next <n> calls fail). Prints "<exit>|<panes opened>" and each story event <slug> logged,
+# start_retry <slug> <knob> <n>... — swarm.sh story on one-off story <slug> (made ready unless the board has
+# it), with each stub <knob> set to its <n> (its next <n> calls fail). Prints "<exit>|<panes opened>" and each story event <slug> logged,
 # one a line.
 start_retry() {
   local slug="$1" n rc=0
-  item "stories/${slug}.md" "status: ready" "kind: code" "repo: svc"
+  [[ -f "${b}/stories/${slug}.md" ]] || item "stories/${slug}.md" "status: ready" "kind: code" "repo: svc"
   rm -f "${ROOT}/panefail" "${ROOT}/runfail" "${ROOT}/promptfail" "${ROOT}/promptunread" "${ROOT}/closefail"   # an earlier case's leftover counts
   shift; while [[ $# -gt 1 ]]; do echo "$2" > "${ROOT}/$1"; shift 2; done
   n="$(wc -l < "${ROOT}/herdr.log")"
@@ -272,6 +272,19 @@ check "story: not retried: a start whose pane start_agent could not close (it ma
   "1|1
 rs-open: ${NOENV}: {\"error\":{\"code\":\"pane_not_ready\"}} (and pane w:$(( $(cat "${ROOT}/n") + 1 )) could not be closed: close it by hand)" \
   "$(start_retry rs-open runfail 2 closefail 1)"
+# A stacked story keeps its parents across a retry: the failed try's story line ends the stacked event
+# stack_start logged, so try 2 logs its own, and once the parent's branch moves status still says to merge it.
+"${GIT[@]}" -C "${ROOT}/svc" checkout -q -b story/rs-par
+"${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m par && "${GIT[@]}" -C "${ROOT}/svc" push -q origin story/rs-par
+item stories/rs-par.md "status: review" "kind: code" "repo: svc"
+item stories/rs-kid.md "status: ready" "kind: code" "repo: svc" "depends_on: [rs-par]"
+check "story: a stacked story whose first start fails is started on try 2" "0|2
+${PNF} rs-kid; it ran nothing: pane not found (try 1 of 3)
+ok" "$(start_retry rs-kid panefail 1)"
+"${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m par2 && "${GIT[@]}" -C "${ROOT}/svc" push -q origin story/rs-par
+"${GIT[@]}" -C "${ROOT}/svc" checkout -q main
+check "story: and status still names its parent once the parent's branch moves" "yes" \
+  "$(has "rs-kid: merge origin/story/rs-par" "$(run status)")"
 n="$(wc -l < "${ROOT}/herdr.log")"
 o="$(set +e; run story rs-pnf; echo "rc=$?")"
 check "story: a second swarm.sh story on a started story dies once with has a build already, and opens no pane" "yes|1|0" \

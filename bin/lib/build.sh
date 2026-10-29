@@ -635,7 +635,11 @@ build_story() {
     fi
     why="${why//$'\n'/ }; it ran nothing: ${class} (try ${try} of ${STARTS_PER_REVIEW})"
     [[ ${try} -lt ${STARTS_PER_REVIEW} ]] || die "${why}"
-    echo "swarm: ${why}" >&2; record_event story "${slug}" "${why}"; nap 3
+    echo "swarm: ${why}" >&2; record_event story "${slug}" "${why}"
+    # That failed story line ends stack_start's stacked event for stacked_parents, so the next try's
+    # build needs its own, as the same worktree still sits on its parents.
+    [[ -z "${parents}" ]] || record_event stacked "${slug}" "ok (on ${parents})"
+    nap 3
   done
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
