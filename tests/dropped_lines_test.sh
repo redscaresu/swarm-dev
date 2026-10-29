@@ -167,6 +167,13 @@ M="$(git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true; printf '%s
 check "the other copy of a duplicated line the PR removed one of, dropped by the resolution, prints" \
   "${M:0:7} d: }"$'\n'"exit 1" "$(scan "${R}" main pr)"
 
+# main's conflict section adds a second '}' and the resolution drops it, and moves the base file's own
+# '}' to the top: two removed '}' lines and one added back, with the file short of one copy.
+R="$(new_repo moved)"; lines three-main '}' | put "${R}" f; on "${R}" pr; lines three-pr | put "${R}" f
+M="$({ echo '}'; lines three-pr three-main | grep -vx '}'; } | merge "${R}" main -)"
+check "two copies of a line removed and one added back, the file short of one: it prints once" \
+  "${M:0:7} f: }"$'\n'"exit 1" "$(scan "${R}" main pr)"
+
 # Both sides add file n: the merge base has no n, so main's line, which the resolution drops, is new.
 R="$(new_repo addadd)"; echo n-main | put "${R}" n; on "${R}" pr; echo n-pr | put "${R}" n
 git -C "${R}" merge -q --no-commit main >/dev/null 2>&1 || true

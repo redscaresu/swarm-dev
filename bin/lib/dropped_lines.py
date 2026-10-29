@@ -1,26 +1,29 @@
 import re, subprocess, sys
 from collections import Counter
 
-# dropped_lines.py <repo-dir> <base> <head> [<merge sha>...] — the base lines a PR's own merge commits
-# dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges <base>..<head>`,
-# oldest first, and with merge SHAs given scans only those (full SHAs, matched exactly). Each merge
-# must have two parents, one an ancestor of <base> (the base side) and one not (the PR side); the order
-# of the two does not matter. Otherwise it scans nothing: an octopus is not remerged this way, and a
-# merge with neither parent on <base> (a stacked build's merge of its parent branch) is unchecked, not
-# clean. Of each merge's `git show --remerge-diff`, a removed line L of file F prints when L is in the
-# base side's F and the merge's F has fewer copies of L than a merge of the two sides keeps: the base
-# side's copies, plus the PR side's, less the merge base's (`git merge-base` of the two parents). So a
+# dropped_lines.py <repo-dir> <base> <head> [<merge sha>...] — the base lines a PR's own merge
+# commits dropped (#693), from local git alone. It walks `git rev-list --first-parent --merges
+# <base>..<head>`, oldest first, and with merge SHAs given scans only those (full SHAs, matched
+# exactly). Each merge must have two parents, one an ancestor of <base> (the base side) and one not
+# (the PR side); the order of the two does not matter. Otherwise it scans nothing: an octopus is not
+# remerged this way, and a merge with neither parent on <base> (a stacked build's merge of its parent
+# branch) is unchecked, not clean. Of each merge's `git show --remerge-diff`, a removed line L of
+# file F prints when L is in the base side's F and the merge's F has fewer copies of L than a merge
+# of the two sides keeps: the base side's copies, plus the PR side's, less the merge base's (`git
+# merge-base` of the two parents), and it prints L once per copy the merge's F is short of, so a copy
+# the resolution moved, removed in one place and added back in another, is no second report. So a
 # copy the base added, or one both sides had, that the resolution dropped prints, and a copy the PR's
-# own commits removed does not, whatever other copies of L the file holds. Each side's F is read under
-# that side's own name for it: a file renamed on one side is found through `git diff -M` against the
-# merge. Inside a conflict section a line's side is the section's (the first parent's part, then the
-# second's, followed across the diff's hunks), never its text found elsewhere in the base file, so a
-# PR-side line in a conflict never counts as a base line; a base-side line whose file the base side
-# does not have under any name git finds is unchecked. Conflict markers, the merge base's part of a
-# section and whitespace-only lines never print. It prints `<merge sha7> <file>: <text>` per dropped line, control characters taken off and the text cut
-# to TEXT_CHARS (it reaches events.tsv, state files and panes, as ci_data's lines do), and exits 1; with
-# nothing dropped, it prints nothing and exits 0. When it cannot check, it prints one line on stdout
-# saying why and exits 2, before printing any dropped line.
+# own commits removed does not, whatever other copies of L the file holds. Each side's F is read
+# under that side's own name for it: a file renamed on one side is found through `git diff -M`
+# against the merge. Inside a conflict section a line's side is the section's (the first parent's
+# part, then the second's, followed across the diff's hunks), never its text found elsewhere in the
+# base file, so a PR-side line in a conflict never counts as a base line; a base-side line whose file
+# the base side does not have under any name git finds is unchecked. Conflict markers, the merge
+# base's part of a section and whitespace-only lines never print. It prints `<merge sha7> <file>:
+# <text>` per dropped line, control characters taken off and the text cut to TEXT_CHARS (it reaches
+# events.tsv, state files and panes, as ci_data's lines do), and exits 1; with nothing dropped, it
+# prints nothing and exits 0. When it cannot check, it prints one line on stdout saying why and exits
+# 2, before printing any dropped line.
 
 TEXT_CHARS = 300   # the most of a dropped line's text it prints (merge.sh's FIX_MAIN_LINE_CHARS)
 GIT_SECONDS = 120  # the longest one git call may run
@@ -180,6 +183,7 @@ def scan(m, pr, base_side, ours):
             got = read(rev, renamed(rev)[after])
         return got
 
+    short = {}   # (file, text): the copies of text the merge's file is short of, less those printed
     for path, after, section, text in removed(out):
         if not text.strip() or section not in (OUTSIDE, ours):
             continue
@@ -191,7 +195,10 @@ def scan(m, pr, base_side, ours):
             continue
         side, root = copies(pr, path, after) or Counter(), copies(mb, path, after) or Counter()
         kept = (read(m, after) or Counter()) if after is not None else Counter()
-        if base[text] and kept[text] < base[text] + side[text] - root[text]:
+        if (path, text) not in short:
+            short[path, text] = base[text] + side[text] - root[text] - kept[text] if base[text] else 0
+        if short[path, text] > 0:   # a copy the resolution moved is removed here and added back elsewhere
+            short[path, text] -= 1
             found.append("%s %s: %s" % (m[:7], clean(path), clean(text)[:TEXT_CHARS]))
     return found
 
