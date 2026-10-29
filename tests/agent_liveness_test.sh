@@ -4,8 +4,8 @@
 # incident, once per occurrence, and the time its pane last changed lands in .swarm/panes, which
 # dash shows beside the agent. herdr and gh are stubs on PATH: herdr lists this project's agents (and
 # another project's) and prints ${ROOT}/pane-<pane> for `agent read`. Then flow counts both kinds per
-# epic. Last, deliver_prompt reads an agent's own status when the prompt's reply can't be read, and
-# sends the brief again only to an agent idle or done there.
+# epic. Then deliver_prompt reads an agent's own status when the prompt's reply can't be read, and
+# sends the brief again only to an agent idle or done there. Last, sign_blocked, with the signer stubbed.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -519,6 +519,123 @@ check "a session busy before the prompt and after it is no sign the brief was ta
   test "$(SESS='busy busy' PROMPT_REPLY=junk OWN='- idle' dp)" = "1|1|4|${unsure} herdr sent it the brief once, then herdr reads it idle, ${nobase}"
 check "a session busy before the prompt whose log has the brief since took it" \
   test "$(SESS='busy busy' SLOG=1 PROMPT_REPLY=junk OWN='- unclear' dp)" = "0|1|2|"
+
+# sign_blocked <worktree> (agents.sh; panes.py's sign_blocked) prints blocked, clear or unknown for whether
+# the signer git is set to use can sign a builder's uncommitted work, and succeeds only on blocked. From
+# here on the signer is isolated (isolate_signer): HOME and git's global config are under ${S}, no system
+# config is read, and stub gpg, gpg-connect-agent, ssh-add and ssh-keygen come first on PATH. No real key:
+# the keys below are text.
+S="${ROOT}/sign" W="${ROOT}/sign/wt"
+isolate_signer "${S}"
+printf '[user]\n\tname = Builder\n\temail = builder@example.test\n' > "${GIT_CONFIG_GLOBAL}"
+git init -q "${W}"
+PG=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA SG=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB TG=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+# key <primary's capabilities> [<subkey id>:<created>:<keygrip>]... — gpg's --with-colons --with-keygrip
+# secret key listing: a primary (keygrip ${PG}) and signing subkeys.
+key() {
+  local caps="$1" s id at grip; shift
+  printf 'sec:u:255:22:1111111111111111:1700000000:::u:::%s:::+::ed25519:::0:\nfpr:::::::::0000000000000000000000001111111111111111:\n' "${caps}"
+  printf 'grp:::::::::%s:\nuid:u::::1700000000::0::Builder <builder@example.test>::::::::::0:\n' "${PG}"
+  for s in "$@"; do
+    IFS=: read -r id at grip <<< "${s}"
+    printf 'ssb:u:255:22:%s:%s::::::s:::+::ed25519::\nfpr:::::::::000000000000000000000000%s:\ngrp:::::::::%s:\n' "${id}" "${at}" "${id}" "${grip}"
+  done
+}
+# agent <keygrip>:<cached>:<protection>... — gpg-agent's KEYINFO lines for them.
+agent() {
+  local s grip cached prot
+  for s in "$@"; do IFS=: read -r grip cached prot <<< "${s}"; printf 'S KEYINFO %s D - - %s %s - - -\n' "${grip}" "${cached}" "${prot}"; done
+  echo OK
+}
+# gpgkey <keygrip>:<cached>:<protection>... — a primary that only certifies with one signing subkey
+# (keygrip ${SG}), and what gpg-agent says of the keygrips.
+gpgkey() { key cSC "2222222222222222:1700000100:${SG}" > "${S}/stub/gpg.out"; agent "$@" > "${S}/stub/gpg-connect-agent.out"; }
+# sset [<key> <value>]... — the worktree's own signing config is only these; every stub's log and files go.
+sset() {
+  local k
+  for k in commit.gpgsign gpg.format user.signingkey gpg.program gpg.ssh.program; do git -C "${W}" config --unset-all "${k}" || true; done
+  rm -f "${S:?}"/log/* "${S:?}"/stub/* "${S:?}"/*/log/* "${S:?}"/*/stub/*
+  while [[ $# -gt 1 ]]; do git -C "${W}" config "$1" "$2"; shift 2; done
+}
+sb() { # sign_blocked on the worktree: <exit>|<what it printed>
+  local out rc=0
+  out="$(SWARM_HOME="${HERE}/.." PROJECT_DIR="${S}" bash -c 'source "$1/bin/lib/agents.sh"; sign_blocked "$2"' _ "${HERE}/.." "${W}")" || rc=$?
+  printf '%s|%s' "${rc}" "${out}"
+}
+calls() { cat "${S}/log/$1" 2>/dev/null || true; }   # stub <name>'s calls, a line each
+none() { [[ -z "$(calls gpg)$(calls gpg-connect-agent)$(calls ssh-add)$(calls ssh-keygen)" ]] && echo none; }
+LIST="--batch --no-autostart --with-colons --with-keygrip --list-secret-keys --"
+sset commit.gpgsign true; gpgkey "${SG}:-:P"
+check "a clean tree is clear, exit 1, before any signer call" test "$(sb)|$(none)" = "1|clear|none"
+echo edit > "${W}/work.txt"
+sset commit.gpgsign true; gpgkey "${PG}:1:P" "${SG}:-:P"
+check "gpgsign true, uncommitted work and the signing subkey's passphrase not cached: blocked, exit 0" test "$(sb)" = "0|blocked"
+check "it lists the key git signs with, the committer's Name <email> with no user.signingkey, and asks for the subkey's keygrip" \
+  test "$(calls gpg)|$(calls gpg-connect-agent)" = "${LIST} Builder <builder@example.test>|--no-autostart KEYINFO ${SG} /bye"
+sset commit.gpgsign true; gpgkey "${PG}:-:P" "${SG}:1:P"
+check "the signing subkey's passphrase cached (the primary's, which only certifies, not): clear, exit 1" test "$(sb)" = "1|clear"
+sset commit.gpgsign true; gpgkey "${PG}:-:P" "${SG}:-:C"
+check "a signing subkey with no passphrase (KEYINFO protection C): clear, exit 1" test "$(sb)" = "1|clear"
+sset; gpgkey "${SG}:-:P"
+check "gpgsign unset: clear, exit 1, and no signer stub is called" test "$(sb)|$(none)" = "1|clear|none"
+sset commit.gpgsign false; gpgkey "${SG}:-:P"
+check "gpgsign false: clear, exit 1, and no signer stub is called" test "$(sb)|$(none)" = "1|clear|none"
+# gpgsign and the key set only in git's global config, the test's temp file: the probe reads that file.
+sset; gpgkey "${SG}:-:P"; git config --global commit.gpgsign true; git config --global user.signingkey temp-config-key
+check "the probe reads git's global config from the test's temp HOME (its gpgsign and key), not ~/.gitconfig" \
+  test "$(sb)|$(calls gpg)" = "0|blocked|${LIST} temp-config-key"
+git config --global --unset commit.gpgsign; git config --global --unset user.signingkey
+# A primary that signs too, and two signing subkeys: gpg signs with the newest subkey, or with the one a
+# trailing ! names.
+sset commit.gpgsign true
+key scSC "2222222222222222:1700000100:${SG}" "3333333333333333:1700000200:${TG}" > "${S}/stub/gpg.out"
+agent "${PG}:1:P" "${SG}:1:P" "${TG}:-:P" > "${S}/stub/gpg-connect-agent.out"
+check "with a primary that signs and two signing subkeys, the newest subkey's keygrip is read: blocked" \
+  test "$(sb)|$(calls gpg-connect-agent)" = "0|blocked|--no-autostart KEYINFO ${TG} /bye"
+git -C "${W}" config user.signingkey '2222222222222222!'; rm -f "${S:?}"/log/*
+check "user.signingkey <subkey id>! reads that subkey's keygrip: clear" \
+  test "$(sb)|$(calls gpg-connect-agent)" = "1|clear|--no-autostart KEYINFO ${SG} /bye"
+# gpg.program in another directory: the gpg-connect-agent beside it answers (not cached), never PATH's
+# (which would say cached).
+signer_stubs "${S}/alt"
+sset commit.gpgsign true gpg.program "${S}/alt/bin/gpg"; gpgkey "${SG}:1:P"
+key cSC "2222222222222222:1700000100:${SG}" > "${S}/alt/stub/gpg.out"; agent "${SG}:-:P" > "${S}/alt/stub/gpg-connect-agent.out"
+check "with gpg.program in another directory, the gpg-connect-agent beside it answers, never the one on PATH" \
+  test "$(sb)|$(calls gpg)$(calls gpg-connect-agent)|$(cat "${S}/alt/log/gpg-connect-agent")" = "0|blocked||--no-autostart KEYINFO ${SG} /bye"
+# A gpg-connect-agent that hangs is killed at SIGN_SECONDS: unknown, within SIGN_SECONDS + 5 s.
+sset commit.gpgsign true; gpgkey "${SG}:-:P"; echo 30 > "${S}/stub/gpg-connect-agent.sleep"
+limit=$(( $(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from panes import SIGN_SECONDS; print(SIGN_SECONDS)' "${HERE}/../bin/lib") + 5 ))
+t0=${SECONDS}; out="$(sb)"; took=$((SECONDS - t0))
+check "a gpg-connect-agent that hangs: unknown, exit 1, within SIGN_SECONDS + 5 s (${took} of ${limit} s)" \
+  test "${out}|$(calls gpg-connect-agent | wc -l | tr -d ' ')" = "1|unknown|1" -a "${took}" -le "${limit}"
+# gpg.format=ssh. gpg.ssh.program is a stub of its own that must never run, and ssh-keygen may run only -l.
+signer_stubs "${S}/sshprog"
+blob() { printf '%s' "$1" | base64 | tr -d '\n'; }
+K1="ssh-ed25519 $(blob 'the builder signing key')" K2="ssh-ed25519 $(blob 'another key')"
+fp() { python3 -I -c 'import base64, hashlib, sys; print("SHA256:" + base64.b64encode(hashlib.sha256(base64.b64decode(sys.argv[1])).digest()).decode().rstrip("="))' "$1"; }
+ssh_case() { sset commit.gpgsign true gpg.format ssh gpg.ssh.program "${S}/sshprog/bin/ssh-keygen" user.signingkey "$1"; }
+ssb() { # sb, keeping each ssh-keygen and gpg.ssh.program call in ${S}/ssh-signers
+  sb
+  { sed 's/^/ssh-keygen /' "${S}/log/ssh-keygen"; sed 's/^/gpg.ssh.program /' "${S}/sshprog/log/ssh-keygen"; } >> "${S}/ssh-signers" 2>/dev/null || true
+}
+ssh_case "key::${K1} builder"; printf '%s comment\n' "${K2}" "${K1}" > "${S}/stub/ssh-add.out"
+check "gpg.format=ssh with a key:: key ssh-add -L lists: clear, exit 1, and no gpg call" \
+  test "$(ssb)|$(calls gpg)$(calls gpg-connect-agent)|$(calls ssh-add)" = "1|clear||-L"
+ssh_case "key::${K1} builder"; echo 'The agent has no identities.' > "${S}/stub/ssh-add.out"; echo 1 > "${S}/stub/ssh-add.rc"
+check "gpg.format=ssh with ssh-add -L listing nothing (a locked agent, or the key not added): blocked, exit 0" test "$(ssb)" = "0|blocked"
+ssh_case "${K1} builder"; printf '%s other\n' "${K2}" > "${S}/stub/ssh-add.out"
+check "a raw ssh- key (git reads it as key::) that ssh-add -L does not list: blocked" test "$(ssb)" = "0|blocked"
+ssh_case "${S}/signing.pub"; printf '256 %s builder (ED25519)\n' "$(fp "${K1#* }")" > "${S}/stub/ssh-keygen.out"; printf '%s b\n' "${K1}" > "${S}/stub/ssh-add.out"
+check "a .pub path whose key ssh-add -L lists (ssh-keygen -l fingerprints the file): clear" \
+  test "$(ssb)|$(calls ssh-keygen)" = "1|clear|-l -E sha256 -f ${S}/signing.pub"
+ssh_case "${S}/signing.pub"; printf '256 %s builder (ED25519)\n' "$(fp "${K1#* }")" > "${S}/stub/ssh-keygen.out"; printf '%s o\n' "${K2}" > "${S}/stub/ssh-add.out"
+check "a .pub path whose key ssh-add -L does not list: blocked" test "$(ssb)" = "0|blocked"
+ssh_case "${S}/signing_key"
+check "a private key file is unknown, exit 1, never opened, with no ssh-add or ssh-keygen call" test "$(ssb)|$(none)" = "1|unknown|none"
+check "across the ssh cases ssh-keygen ran only -l, and gpg.ssh.program never" \
+  test "$(cut -d' ' -f1-2 "${S}/ssh-signers" | sort -u)" = "ssh-keygen -l"
+sset commit.gpgsign true gpg.format x509
+check "gpg.format=x509 reports unknown, exit 1, and calls no signer" test "$(sb)|$(none)" = "1|unknown|none"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

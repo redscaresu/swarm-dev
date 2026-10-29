@@ -30,6 +30,18 @@
 #     <task-id> carrying a <status> since: the session
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
+#   sign_blocked(worktree) -> blocked, clear or unknown: whether the signer git is set to use in
+#     <worktree> can sign its uncommitted work unprompted. blocked only when the worktree's effective git
+#     config has commit.gpgsign true, git status --porcelain is not empty and that signer cannot sign:
+#     for gpg.format openpgp (the default), gpg-agent caches no passphrase for the keygrip of the (sub)key
+#     `gpg -u` signs with (user.signingkey, else the committer's `Name <email>`, as git passes it; the
+#     newest signing subkey before the primary, or the one a trailing ! names), asked with KEYINFO of
+#     the gpg-connect-agent beside the gpg git runs (gpg.program or gpg.openpgp.program, else gpg on
+#     PATH), never one found on PATH; for ssh, user.signingkey is a public key (a key:: or ssh- literal,
+#     or a .pub path) that ssh-add -L does not list. clear with gpgsign off or a clean tree (before any
+#     signer call), a cached key, one with no passphrase, or a listed ssh key. unknown for x509, a
+#     private ssh key file (never opened), anything it cannot read, and a call past SIGN_SECONDS (killed).
+#     It never signs or prompts, never runs gpg.ssh.program, and prints no key.
 #   test_running(info, stall_minutes) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read,
 #     a process under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk)
 #     runs a test suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh,
@@ -1217,6 +1229,16 @@ bg_running() {
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
+}
+
+# sign_blocked <worktree> — print blocked, clear or unknown for whether the signer git is set to use in
+# <worktree> can sign its uncommitted work unprompted (panes.py's sign_blocked, over git and gpg-agent or
+# ssh-agent, never a pane), and succeed only on blocked.
+sign_blocked() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import sign_blocked
+s = sign_blocked(sys.argv[1]); print(s); sys.exit(0 if s == "blocked" else 1)' "$1"
 }
 
 # test_running <target> — succeed when a process under pane <target>'s shell runs a test suite started
