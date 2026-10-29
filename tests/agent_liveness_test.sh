@@ -713,6 +713,11 @@ check "blocked again with no new commit, it is not stalled" works hung_wait
 check "blocked, clear, blocked logs sign-blocked, sign-clear, sign-blocked" test "$(signs)" = "$(printf '%s\n' \
   "sign-blocked: s-hung (unsigned work since ${t1})" "sign-blocked: s-hung (unsigned work since ${t2})" \
   "sign-clear: s-hung" "sign-blocked: s-hung (unsigned work since ${t2})")"
+# Past 3 x stall_minutes (90 min) with no sign of life (a commit and an edit 100 minutes old, its own
+# work 120), a blocked builder may be hung on something else: the probe is not asked, and it stalls.
+before="$(signs)"; hw_commit 100 > /dev/null; log "$(tool 120)" "${idle[@]}"
+check "a blocked builder with no sign of life past 3 x stall_minutes is stalled, exit 3" stalls hung_wait
+check "and no sign incident is logged for it" test "$(signs)" = "${before}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
