@@ -681,10 +681,14 @@ build_story() {
 # hand-off ran), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
-# a reader of it sees only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
-# which review_on_head reads. Its later rounds run in the same session, through review_next.
+# a reader of it sees only this head's. A start that ran nothing (start_retryable) is tried again, after
+# a 3-second nap, up to STARTS_PER_REVIEW starts in all; each retried failure is a review-agent event
+# ending (try N of STARTS_PER_REVIEW), and so is the last try's die. Once started, the head goes in
+# .swarm/reviews/<slug>.head, which review_on_head reads. Its later rounds run in the same session,
+# through review_next.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head moved errf err round
+  local stop try msg rc line tries
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -720,18 +724,73 @@ review_agent() {
   # An earlier agent's stop note goes aside the same way, so a stop file left is the newest agent's
   # (stop_lines). It comes back when review_start_failed dies (no agent runs) and the new agent wrote
   # none, and goes for good once an agent runs: a started one, or an unclear start whose agent runs.
-  rm -f "${out%.md}.head"; moved=""
-  if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
-  if [[ -f "${out%.md}.stop.md" ]]; then mv "${out%.md}.stop.md" "${out%.md}.stop.md.prev"; fi
-  if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
-      | { tee "${errf}" >&2 || cat >/dev/null; }; } 3>&1; then
-    rm -f "${out}.prev" "${out%.md}.stop.md.prev" "${errf}"
-  else
-    err="$(cat "${errf}")"; rm -f "${errf}"
-    review_start_failed "${slug}" "${moved}" "${err}" "${out%.md}.stop.md"
-    rm -f "${out%.md}.stop.md.prev"
-  fi
+  # review_start_failed dies, so each try runs it in a subshell: its stdout goes out as it comes, and
+  # its die line, which ends (try N of STARTS_PER_REVIEW) only for a start that ran nothing, is kept.
+  # Each further try puts the files aside again, as the first did. The last try dies here, so its
+  # line is the command's own event.
+  rm -f "${out%.md}.head"; stop="${out%.md}.stop.md"
+  for (( try = 1; ; try++ )); do
+    moved=""
+    if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
+    if [[ -f "${stop}" ]]; then mv "${stop}" "${stop}.prev"; fi
+    if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
+        | { tee "${errf}" >&2 || cat >/dev/null; }; } 3>&1; then
+      rm -f "${out}.prev" "${stop}.prev"; break
+    fi
+    err="$(cat "${errf}")"; tries="${try} of ${STARTS_PER_REVIEW}"; rc=0
+    { msg="$(set -e; review_start_failed "${slug}" "${moved}" "${err}" "${stop}" "${tries}" 2>&1 1>&3)" || rc=$?; } 3>&1
+    if [[ ${rc} -eq 0 ]]; then
+      [[ -z "${msg}" ]] || printf '%s\n' "${msg}" >&2
+      rm -f "${stop}.prev"; break
+    fi
+    line="${msg##*$'\n'}"; line="${line#swarm: }"
+    [[ "${msg}" != *$'\n'* ]] || printf '%s\n' "${msg%$'\n'*}" >&2
+    if [[ ${try} -lt ${STARTS_PER_REVIEW} && "${line% (try "${tries}")}" != "${line}" ]]; then
+      echo "swarm: ${line}" >&2; record_event review-agent "${slug}" "${line}"; nap 3; continue
+    fi
+    rm -f "${errf}"; die "${line}"
+  done
+  rm -f "${errf}"
   echo "${head}" > "${out%.md}.head"
+}
+
+# STARTS_PER_REVIEW: how many starts review_agent makes of review-<slug> while each one runs nothing
+# (start_retryable).
+STARTS_PER_REVIEW=3
+
+# start_unclear <err> — true when <err>, start_agent's stderr, says the brief may have gone out:
+# deliver_prompt's sent or unread tries.
+start_unclear() {
+  case "$1" in
+    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) return 0 ;;
+  esac
+  return 1
+}
+
+# start_retryable <err> [state] — print the class and succeed when a start that failed with <err>
+# (start_agent's stderr) ran nothing and left no agent that can hold the brief, so another start loses
+# nothing. Either herdr surely sent nothing and a line of <err> has one of herdr's texts
+# (docs/lead-by-hand.md, #688): pane_not_found or `pane <id> not found`, a pane's shell that did not
+# take the agent's environment (clean_env), or agent_not_found; or the start was unclear
+# (start_unclear) and <state>, read_state's for its agent, is none, gone or herdr: (nothing runs to
+# have the brief). Line by line, so words from two lines (a warning, then another failure) never
+# make one of herdr's texts.
+start_retryable() {
+  local line pane_re='(^|[^[:alnum:]_])pane [^[:space:]]+ not found'
+  if start_unclear "$1"; then
+    case "${2:-}" in none|gone|herdr:) echo "an unclear start with no agent running (${2})"; return 0 ;; esac
+    return 1
+  fi
+  while IFS= read -r line; do
+    if [[ "${line}" == *pane_not_found* || "${line}" =~ ${pane_re} ]]; then   # loose-match: ok a constant regex, herdr's pane <id> not found
+      echo "pane not found"; return 0
+    fi
+    case "${line}" in
+      *"the pane's shell did not take the agent's environment"*) echo "the pane's shell did not take the agent's environment"; return 0 ;;
+      *agent_not_found*) echo "agent_not_found with nothing sent"; return 0 ;;
+    esac
+  done <<< "$1"
+  return 1
 }
 
 # review_round <slug> — the review round a story's PR is on: one more than the findings rounds of its
@@ -1014,11 +1073,21 @@ above, then run \`/code-review $2\`."
   fi
 }
 
+# tab_pane <tab> <pane-name> — the last pane <tab>'s records (next_pane's, <tab> and <tab>-<n>) hold
+# under <pane-name> that herdr still lists, or nothing.
+tab_pane() {
+  local live
+  live=$(herdr pane list 2>/dev/null | json "' '.join(p['pane_id'] for p in d['result']['panes'])" 2>/dev/null) || return 0
+  # A tab with no <tab>-<n> record is the usual case: cat's failure on the unmatched glob is no error.
+  { cat "${STATE_DIR}/$1" "${STATE_DIR}/$1"-[0-9]* 2>/dev/null || true; } \
+    | awk -v n="$2" -v live=" ${live} " 'NF == 2 && $2 == n && index(live, " " $1 " ") { p = $1 } END { if (p != "") print p }'
+}
+
 # stop_back [stop] — put back the stop note review_agent moved aside to <stop>.prev, unless <stop> is
 # empty or a stop note is there again (the new agent's).
 stop_back() { [[ -z "${1:-}" || -e "$1" || ! -f "$1.prev" ]] || mv "$1.prev" "$1"; }
 
-# review_start_failed <slug> <moved> <err> [stop] — after review_agent's start of review-<slug> failed with
+# review_start_failed <slug> <moved> <err> [stop] [try] — after review_agent's start of review-<slug> failed with
 # <err> (its stderr), the last findings file moved aside to <slug>.md.prev when <moved> is non-empty.
 # Each time it dies, it first puts back the stop note review_agent moved aside to <stop>.prev, unless a
 # stop note is at <stop> again (stop_back): no agent runs, so the last one's stop still stands.
@@ -1029,18 +1098,23 @@ stop_back() { [[ -z "${1:-}" || -e "$1" || ! -f "$1.prev" ]] || mv "$1.prev" "$1
 # aside. Dies otherwise. When the
 # brief may have reached an agent that is not running, or herdr cannot list its agents, the file stays
 # aside and the message says what to do. In any other case (herdr surely sent nothing, no pane, a
-# session that is gone or that herdr has no status for), it closes the pane and puts back the file
-# this start moved, unless a findings file is there again (a quick agent's, which stays).
+# session that is gone or that herdr has no status for), it closes the pane (with no agent listed, the
+# one its tab records for review-<slug>: tab_pane) and puts back the file
+# this start moved, unless a findings file is there again (a quick agent's, which stays). That last
+# die names the class and ends ` (try <try>)` when the start ran nothing (start_retryable), its pane
+# is closed and no quick agent's file is there, which review_agent reads as a start to try again.
 review_start_failed() {
-  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" state=none pane unclear="" kept="" note="" back=""
+  local name f="${PROJECT_DIR}/.swarm/reviews/$1.md" state=none pane unclear="" kept="" note="" back="" class retry="" left="" tab
   name="$(agent_name "review-$1")"; pane="$(agent_field "${name}" pane_id)"
   # agent_field is empty too when herdr's list fails: that is no answer, not no pane.
   if [[ -n "${pane}" ]]; then state="$(read_state "${name}")"
-  elif ! herdr agent list >/dev/null 2>&1; then state=unlisted; fi
+  elif ! herdr agent list >/dev/null 2>&1; then state=unlisted
+  else
+    # No agent in it (agent_not_found) is no pane: the one the start opened is in its tab's record.
+    tab="$(fm "${BOARD}/stories/$1.md" epic)"; pane="$(tab_pane "${tab:-$1}" "review-$1")"
+  fi
   [[ ! -f "${f}.prev" ]] || kept="; the last review is kept aside in ${f}.prev"
-  case "$3" in
-    *"may or may not have the brief"*|*"herdr sent it the brief"*|*"could not be read"*) unclear=yes ;;
-  esac
+  ! start_unclear "$3" || unclear=yes
   # Idle is no sign of a brief that was not taken: its session log has the brief when it was. An
   # agent that took it and then stopped on an expired login is idle too, and runs nothing.
   if [[ "${unclear}:${state}" == yes:idle ]] \
@@ -1064,12 +1138,15 @@ review_start_failed() {
   esac
   if [[ -n "${pane}" ]]; then
     note=" (its pane ${pane} is closed)"
-    herdr pane close "${pane}" >/dev/null 2>&1 || note=" (its pane ${pane} could not be closed: close it by hand)"
+    herdr pane close "${pane}" >/dev/null 2>&1 || { note=" (its pane ${pane} could not be closed: close it by hand)"; left=yes; }
   fi
+  # A findings file there now is a quick agent's: it ran, so this start is not tried again. Nor is one
+  # whose pane is left open, which may still hold the agent's name.
+  if [[ -n "${5:-}" && -z "${left}" && ! -f "${f}" ]] && class="$(start_retryable "$3" "${state}")"; then retry="; it ran nothing: ${class} (try $5)"; fi
   if [[ -n "$2" && ! -f "${f}" ]]; then mv "${f}.prev" "${f}"; back="; ${f} is put back"; fi
   [[ ! -f "${f}.prev" ]] || back+="; the last review is kept aside in ${f}.prev"
   stop_back "${4:-}"
-  die "review-agent: review-$1 did not start${note}${back}"
+  die "review-agent: review-$1 did not start${note}${back}${retry}"
 }
 
 # BASE_MERGED_LINKS: how many base-merged heads review_pass follows back from a head to a reviewed one.
@@ -1621,6 +1698,10 @@ that says the named story \`is open\`, start yours in a later wave, after the na
 one that says it \`cannot tell\` (herdr could not list its agents, or the board's touches could not
 be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only
 warns and starts it as the epic says.
+
+A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its
+session has ended, and the refusal names who acts on it. List the story under no agent in your report
+and never tell it again.
 
 The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
