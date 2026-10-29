@@ -19,6 +19,7 @@ HLD Goal 16 and Rollout § Readings (v0.31.0): every later, parked or orphaned l
 - release-v0-31-0 gets a Done when that closes the story and a step that records the checkpoint's and the retro's readings; its step 4 agrees with retro-report's retro over v0.27.2..v0.31.0 running before the cut.
 - docs/lead-by-hand.md has no #696 entry (lines 91-96 today): release-v0-30-0's docs step removes it once rules-file-briefs has merged (lead_now); if it is still there when this epic plans, a docs story here removes it (critic: the entry had no owner).
 - codex-agent-name is recorded as absorbed by lead-woken's #691 story (its file deleted there); the seven kind: lead standing steps (config-switch-ons, flow-after-the-epic, merge-agent-on, merge-queue-on, merge-admin-on-for-infrafactory, merge-agent-for-infrafactory, review-yield-tuning) are named as retro-v0.31.0's to close or re-date, not this epic's.
+- The retro reading of Goals 1 to 14 is written inside the retro-v0.31.0 lead story (its own step), not by a story that depends on it, since that story leaves the board when it is done.
 
 **Out of scope:**
 The retro itself (retro-report); the seven standing lead steps; new features; release-v0-30-0 (the lead edits it now, lead_now).
