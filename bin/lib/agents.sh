@@ -1377,10 +1377,10 @@ longest_child() {
 # whether it waits on a background task of its own (bg_running), each younger than TEST_RUN_STALLS
 # times stall_minutes: either is work, so no stall. Only then are its PRs asked for their updatedAt,
 # so gh is rarely called. Last, with no PR update either, its worktree is asked whether its signer can
-# sign its uncommitted work (sign_held): a builder that cannot, with no sign of life for less than
-# TEST_RUN_STALLS times stall_minutes, waits on a person, so no stall.
+# sign its uncommitted work (sign_held): a builder that cannot, whose own last sign of life (the wait's
+# start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits on a person, so no stall.
 agent_stalled() {
-  local slug url age ct sl prs=()
+  local slug url age own ct sl prs=()
   slug="$(stall_py story "$1")"
   [[ -n "${slug}" ]] || return 1
   ct="$(story_work_time "${slug}")"; sl="$(session_mtime "$1")"
@@ -1394,14 +1394,19 @@ agent_stalled() {
   done
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
-  ! sign_held "$1" "${slug}" "${age}" || return 1
+  # The builder's own age, with the wait's start ($2) left out: that start keeps age under the wait's
+  # length, and a 60-minute wait would hold a builder quiet for a day.
+  own="$(stall_py age "${slug}" "$1" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
+  ! sign_held "$1" "${slug}" "${own}" || return 1
   echo "${age}"
 }
 
 # sign_held <name> <slug> <age> — succeed when <slug>'s worktree (found as story_work_time finds it)
 # holds uncommitted work its signer cannot sign unprompted (sign_blocked says blocked) and <age>, the
-# minutes since the builder's last sign of life, is under TEST_RUN_STALLS times stall_minutes: past that
-# the builder may be hung on something else, so the probe is not asked and it stalls. Each change of
+# minutes since the builder's own last sign of life (its worktree, session log, PRs and the swarm's
+# actions on its story; never the wait's start), is under TEST_RUN_STALLS times stall_minutes: past
+# that, or with no sign at all (an empty <age>), the builder may be hung on something else, so the probe
+# is not asked and it stalls. Each change of
 # the probe's state is an incident for <name>, since both callers of agent_stalled run it in $(...) and
 # keep nothing between polls: on blocked, `sign-blocked: <slug> (unsigned work since <time>)`, <time> the
 # worktree's last commit in ISO UTC, unless the newest sign-blocked or sign-clear incident for <name> is
@@ -1416,7 +1421,7 @@ sign_held() {
   cap="$(SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import TEST_RUN_STALLS; print(TEST_RUN_STALLS)')" || return 1
-  [[ "$3" -lt $((cap * CFG_stall_minutes)) ]] || return 1
+  [[ -n "$3" && "$3" -lt $((cap * CFG_stall_minutes)) ]] || return 1
   src="$(repo_dir "$(fm "${BOARD}/stories/$2.md" repo 2>/dev/null)")" || return 1
   wt="$(worktree_for "${src}" "$2")"
   [[ -d "${wt}" ]] || return 1

@@ -1392,8 +1392,9 @@ Before it calls a builder stalled, once its PRs show no update either, it asks t
 prompt. The probe says `blocked` when `commit.gpgsign` is on, the tree has changes, and gpg-agent holds no
 cached passphrase for the signing key (or ssh-agent does not list the ssh key). A blocked builder is
 waiting on a person to unlock the key, so the wait does not call it stalled while its last sign of life is
-under 3 times `stall_minutes` old. Past that it may be hung on something else: the probe is not asked,
-and the builder stalls. A blocked builder whose pane has not changed for `stall_minutes` can still end the
+under 3 times `stall_minutes` old: its commits, edits, own session work, PR updates and the swarm's actions
+on its story, never the start of the wait, which would keep a 60-minute wait under the cap. Past that it
+may be hung on something else: the probe is not asked, and the builder stalls. A blocked builder whose pane has not changed for `stall_minutes` can still end the
 wait as `stuck: no output`. The wait logs a `sign-blocked: <slug> (unsigned work since <time>)`
 incident, `<time>` being the worktree's last commit in UTC, once per change of state: a later `blocked`
 adds none unless a `sign-clear: <slug>` incident (the probe reading `clear` on a builder that was blocked)
