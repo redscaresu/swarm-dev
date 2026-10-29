@@ -166,13 +166,15 @@ epic_deleted_here() {
 FINISHED_NOW=""; FINISHED_SET=""
 
 # epic_built <epic> — true for an active epic with no story file left on the board (none counts in it,
-# epic_stories, and no after_story: epic_has_after) whose stories were planned and have all left it:
-# one finished (dash_finished, from the board's history) since the epic's file was last added to the
-# board (epic_story_gone over that range: a new epic that takes a finished epic's slug is not built on
-# the old one's history), or was deleted and not committed yet (epic_deleted_here). Unlike
-# epic_planned, false on a board with no history to read (not in git, or no commit yet), so a
-# never-planned epic there is planned as before. plannable_epics leaves it out, and next_step sends it
-# to conduct while its report is missing or stale (epic_report_stale).
+# epic_stories, and no after_story: epic_has_after) whose stories have all left it, on two reads of
+# the board's history: a story under its slug finished at some time (dash_finished), and a story
+# naming it was deleted, by a merge or a board-only drop, since the epic's file was last added
+# (epic_story_gone over that range, for a file HEAD has); or one was deleted and not committed yet
+# (epic_deleted_here). So a new epic that takes a finished epic's slug is planned, until a story of
+# its own is dropped from the board. Unlike epic_planned, false on a board with no history to read
+# (not in git, or no commit yet), so a never-planned epic there is planned as before. plannable_epics
+# leaves it out, and next_step sends it to conduct while its report is missing or stale
+# (epic_report_stale).
 epic_built() {
   local added
   [[ "$(fm "${BOARD}/epics/$1.md" status 2>/dev/null)" == active ]] || return 1

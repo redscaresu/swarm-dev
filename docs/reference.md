@@ -939,10 +939,11 @@ story gets a tab of its own. Conductors of different epics can run side by side 
 `watch --epic`, and a fix-main story's, which a conductor builds first when the lead's note asks), as long as their stories touch different files; shared files are the lead's alone.
 
 **A built epic.** An active epic is built when all its stories have left the board: no story file
-names it, and the board's history shows one of its stories finished (deleted by its merge) since the
-epic's file was last added, or a deletion of one is not committed yet. A new epic that takes a
-finished epic's slug is not built on the old one's history. Its file stays until its conductor's
-Finish PR deletes it.
+names it, and either a deletion of one is not committed yet, or the board's history passes two reads:
+a story under the epic's slug finished at some time (deleted by its merge), and a story naming the
+epic was deleted, by a merge or a board-only drop, since the epic's file was last added (a file HEAD
+has). So a new epic that takes a finished epic's slug is planned, until a story of its own is dropped
+from the board, when it reads as built. Its file stays until its conductor's Finish PR deletes it.
 `next` never plans a built epic again. While its report is missing, or older than the newest commit
 that deleted one of its stories, `next` prints `conduct <epic>`, after the `stage` step and before
 `plan-epic`; the why says the epic is built and whether its report is missing or stale. The conductor
