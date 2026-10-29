@@ -4,7 +4,7 @@
 # on an assistant entry that ended its turn, system entries aside; its session is agents.tsv's when
 # herdr lists none, as herdr 0.9.5 does; with none recorded either, herdr's working stands), sends it
 # one prompt to process the inbox as its brief says (via <inbox>.reading.md) and end its turn,
-# leaving its waits alone. One mid-turn gets the note and no prompt. One prompt a minute at most (SWARM_NOTE_WAKE_SECS, 4 here), per conductor: a second
+# leaving its waits alone. One mid-turn gets the note and no prompt. One prompt a minute at most (SWARM_NOTE_WAKE_SECS, 8 here, more than one tell takes on a loaded machine), per conductor: a second
 # note within it, after the conductor took the inbox to read it too, or two at once (each prompt
 # takes a second with ${ROOT}/slow), send one prompt now; a deferred check sends one more once the
 # minute is up while the inbox is still there, which also retries a prompt that was dropped (one
@@ -37,7 +37,7 @@ p="${ROOT}/o'proj"   # an apostrophe in the path, which the deferred check's tra
 settle() { local i; for ((i = 0; i < 100; i++)); do compgen -G "${p}/.swarm/inbox/*.later" >/dev/null || return 0; sleep 0.2; done; }
 trap 'settle; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/claude-config/projects"
-export CLAUDE_STUB_AGENTS="${ROOT}/claude.json" SWARM_NOTE_WAKE_SECS=4
+export CLAUDE_STUB_AGENTS="${ROOT}/claude.json" SWARM_NOTE_WAKE_SECS=8
 mkdir -p "${ROOT}/bin" "${CLAUDE_PROJECTS_DIR}/p"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${ROOT}/bin/claude"
 fails=0

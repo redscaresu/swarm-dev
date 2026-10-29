@@ -4,7 +4,8 @@
 # logging one lead-woken line each; at its timeout it fails with nothing printed. What it last saw is kept
 # across runs, and a new run takes over from an earlier one. gh is a stub on PATH answering the PR's
 # head and its check runs from ${FX}; herdr is a stub listing a running conductor, read once per poll for
-# its agent list (no-agent: lines, no_agent_test.sh). Both log each call.
+# its agent list (no-agent: lines, no_agent_test.sh). Both log each call. A review agent whose start was
+# cut short is started again by the poll alone, within its three tries, through a real swarm.sh review-agent.
 # ln is a stub that fails while ${FX}/ln.fail exists and waits as many seconds as ${FX}/ln.slow holds.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -43,11 +44,18 @@ case "$1 $2" in
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
-# herdr: conduct-e is running, busy.
-printf '#!/bin/sh\necho "$*" >> "%s"\n' "${ROOT}/herdr.log" > "${ROOT}/bin/herdr"
+# herdr: conduct-e is running, busy, or the agents ${FX}/agents lists. An agent start (the review agent
+# wait --lead starts again) gets a pane, and its brief reads as taken.
+printf '#!/bin/sh\necho "$*" >> "%s"\nFX="%s"\n' "${ROOT}/herdr.log" "${FX}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}]}}' ;;
+  "agent list") cat "${FX}/agents" 2>/dev/null || echo '{"result":{"agents":[{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}]}}' ;;
+  "--version ") echo "herdr 0.9.5" ;;
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"w:r1"}}}' ;;
+  "pane split") echo '{"result":{"pane":{"pane_id":"w:r2"}}}' ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
   *) echo '{"result":{}}' ;;
 esac
 STUB
@@ -407,6 +415,132 @@ lead 0
 check "the same story with no merge grant (an ordinary handoff to the user) gives none" test "$(out)|$(rc)" == "|1"
 rm -rf "${P}/docs/epics" "${P}/docs/hld" "${P}/.swarm/reviews" "${P}/.swarm/briefs" "${ROOT}/proj-wt"
 
+# --- a review agent whose start was cut short: the poll starts its next try, within 3 tries in all.
+# One board, a story per case, each ready with no prs: under epic e, whose conductor runs (so next only
+# waits on it), built (its story start), its builder listed in a pane of its own, and its review starts
+# on record as the case writes them. Their repo svc, beside the
+# project, has a worktree for each at the PR's head, so a swarm.sh review-agent the poll runs reaches
+# herdr's agent start. One poll reads every case, and a second checks that nothing more starts. Slugs
+# and URLs no other test's processes name: no_agent_busy reads the real ps.
+RBIN="${ROOT}/rbin"; GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
+mkdir -p "${RBIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${RBIN}/claude"   # review-agent reads its version
+"${GIT[@]}" init -q --bare "${ROOT}/svc.git"
+"${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
+"${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m init && "${GIT[@]}" -C "${ROOT}/svc" push -q origin main
+rurl() { echo "https://github.com/wl-owner/$1/pull/7"; }
+began() { echo "(try $1 of 3) started"; }
+ran() { echo "review-agent: review-$1 did not start; it ran nothing: pane not found (try $2 of 3)"; }
+# cutshort <slug> [nobrief] [prs=<url>] <command> <outcome>... — story <slug> as above (with prs: <url>),
+# then these review-agent events, a pair of words each; its review brief names its PR (rurl) unless nobrief.
+# dash draws only an initialised board (init's README marker).
+fresh; mkdir -p "${P}/.swarm/briefs" "${P}/docs/epics"; git -C "${ROOT}/svc" rev-parse HEAD > "${FX}/head"; : > "${B}/README.md"
+printf -- '---\nstatus: active\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+agents='{"name":"conduct-e","agent_status":"working","pane_id":"w:c"}'; n=0
+cutshort() {
+  local slug="$1" brief=yes prs=(); shift
+  [[ "$1" != nobrief ]] || { brief=""; shift; }
+  [[ "$1" != prs=* ]] || { prs=("prs: ${1#prs=}"); shift; }
+  n=$((n + 1))
+  item "${slug}" "kind: code" "status: ready" "epic: e" "repo: svc" "touches: [x.sh]" ${prs[@]+"${prs[@]}"}
+  printf '\n**Done when:**\n- it holds\n' >> "${B}/${slug}.md"
+  "${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${slug}" "${ROOT}/svc-wt/${slug}"
+  agents+=",{\"name\":\"${slug}\",\"agent_status\":\"working\",\"pane_id\":\"w:b${n}\"}"
+  printf 'w:b%s %s\n' "${n}" "${slug}" > "${P}/.swarm/state/${slug}"
+  [[ -z "${brief}" ]] || printf 'Review %s, the PR of story %s, at its head x, in this worktree.\n' "$(rurl "${slug}")" "${slug}" > "${P}/.swarm/briefs/review-${slug}.md"
+  printf '2026-10-29T00:00:00Z\tstory\t%s\t-\tok\n' "${slug}" >> "${P}/.swarm/events.tsv"
+  while [[ $# -gt 1 ]]; do printf '2026-10-29T00:01:00Z\t%s\t%s\t-\t%s\n' "$1" "${slug}" "$2" >> "${P}/.swarm/events.tsv"; shift 2; done
+}
+# Started again: a start that ran nothing on try 1; a command cut off in its nap after that try
+# (main_signal's interrupted line), whose PR comes from the brief though prs: still names an older one;
+# a restart killed before its command logged a line, which still spends try 2.
+cutshort wlr-one review-agent:try "$(began 1)" review-agent "$(ran wlr-one 1)"
+cutshort wlr-cut prs=https://github.com/wl-owner/wlr-cut/pull/6 review-agent:try "$(began 1)" review-agent "$(ran wlr-cut 1)" review-agent interrupted
+cutshort wlr-killed review-agent:try "$(began 1)" review-agent "$(ran wlr-killed 1)" review-agent:restart "started (try 2 of 3)"
+# Never started again: three tries spent; a failure outside the retry class (no (try suffix); no PR
+# known (no prs:, no brief); two restarts killed so; and try 2 begun (its brief may have gone), then
+# its command interrupted.
+cutshort wlr-spent review-agent:try "$(began 1)" review-agent "$(ran wlr-spent 1)" review-agent:try "$(began 2)" \
+  review-agent "$(ran wlr-spent 2)" review-agent:try "$(began 3)" review-agent "$(ran wlr-spent 3)"
+cutshort wlr-out review-agent:try "$(began 1)" review-agent "review-agent: review-wlr-out did not start; herdr could not start the agent: agent_name_taken"
+cutshort wlr-nourl nobrief review-agent:try "$(began 1)" review-agent "$(ran wlr-nourl 1)"
+cutshort wlr-twice review-agent:try "$(began 1)" review-agent "$(ran wlr-twice 1)" review-agent:restart "started (try 2 of 3)" \
+  review-agent:restart "started (try 3 of 3)"
+cutshort wlr-mid review-agent:try "$(began 1)" review-agent "$(ran wlr-mid 1)" review-agent:try "$(began 2)" review-agent interrupted
+# Nor while another poll holds the story's restart lock (polls overlap while a new wait --lead takes
+# over), or the last restart's command still runs (its pid file names a live process: this test's own).
+cutshort wlr-locked review-agent:try "$(began 1)" review-agent "$(ran wlr-locked 1)"
+mkdir -p "${P}/.swarm/lead/review-wlr-locked.restart.lock"
+cutshort wlr-running review-agent:try "$(began 1)" review-agent "$(ran wlr-running 1)" review-agent:restart "started (try 2 of 3)"
+echo "$$" > "${P}/.swarm/lead/review-wlr-running.restart.pid"
+printf '{"result":{"agents":[%s]}}\n' "${agents}" > "${FX}/agents"
+
+# poll — one wait --lead read; a review agent it starts inherits its PATH, with the claude stub first.
+poll() { again; lead PATH="${RBIN}:${ROOT}/bin:${PATH}" 0; }
+# run <command>... — swarm.sh in the project, as the lead runs it, with the same stubs. A report deadline
+# of 10 minutes: at 30 s, a loaded machine cuts dash's herdr read, and dash then draws no case at all.
+run() { (cd "${P}" && env -u SWARM_PROJECT PATH="${RBIN}:${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me COLUMNS=400 SWARM_REPORT_SECONDS=600 bash "${SWARM}" "$@" 2>&1); }
+# starts [slug] — herdr's agent starts, of review-<slug> or of any agent.
+starts() { grep -c "^agent start ${1:+review-$1 }" "${ROOT}/herdr.log" 2>/dev/null || true; }
+restarts() { awk -F'\t' '$2 == "review-agent:restart"' "${P}/.swarm/events.tsv" | wc -l | tr -d ' '; }
+said() { grep "^no-review: $1[ ,]" "${ROOT}/out" || true; }
+today() { echo "no-review: $1 $(rurl "$1"), exit: swarm.sh review-agent $1 $(rurl "$1"), or the fallback reviewer"; }
+again_at() { echo "no-review: $1 $(rurl "$1") (started $2 of 3), exit: swarm.sh review-agent $1 $(rurl "$1"), or the fallback reviewer"; }
+revents() { awk -F'\t' -v s="$1" '$3 == s && $2 ~ /^review-agent/ { print $2 " " $5 }' "${P}/.swarm/events.tsv"; }
+# restarted <slug> — the output file of the review-agent the poll started detached for <slug>, once that
+# command has logged its outcome (main logs it as it exits) after the poll's restart line; at most 60 s.
+# A command still running then is killed, by its pid, and it fails.
+restarted() {
+  local i pid
+  for ((i = 0; i < 600; i++)); do
+    if awk -F'\t' -v s="$1" '$3 == s && $2 == "review-agent:restart" { r = 1; d = 0; next }
+                             r && $3 == s && $2 == "review-agent" { d = 1 } END { exit !d }' "${P}/.swarm/events.tsv"; then
+      cat "${P}/.swarm/lead/review-$1.restart"; return 0
+    fi
+    sleep 0.1
+  done
+  for pid in $(pgrep -f "swarm.sh review-agent $1 " || true); do kill "${pid}" 2>/dev/null || true; done
+  return 1
+}
+
+for c in next status dash; do run "${c}" > "${ROOT}/${c}.out" || true; done
+check "next, status and dash read every case and start no agent, logging no restart" test "$(starts)|$(restarts)" == "0|4"
+check "status prints a start cut short as today" grep -qxF "  $(today wlr-one)" "${ROOT}/status.out"
+check "dash shows it too" grep -qF "$(today wlr-one)" "${ROOT}/dash.out"
+
+poll
+check "after a start that ran nothing on try 1, the poll starts try 2 and says so" test "$(said wlr-one)" == "$(again_at wlr-one 2)"
+check "it ran swarm.sh review-agent detached, with its output in a file that has the agent's start" \
+  grep -q '^review-wlr-one w:r[12] ' <<< "$(restarted wlr-one)"
+check "herdr's log has one agent start, and the command's first try is 2 (SWARM_START_TRY), after the restart line" \
+  test "$(starts wlr-one)|$(revents wlr-one | tail -3)" == "1|review-agent:restart started (try 2 of 3)
+review-agent:try $(began 2)
+review-agent ok"
+check "a command cut off after try 1: the poll starts try 2, on its brief's PR" test "$(said wlr-cut)" == "$(again_at wlr-cut 2)"
+check "and writes its restart line before the start's own lines; herdr's log has one agent start" \
+  test "$(restarted wlr-cut > /dev/null; revents wlr-cut)|$(starts wlr-cut)" == "review-agent:try $(began 1)
+review-agent $(ran wlr-cut 1)
+review-agent interrupted
+review-agent:restart started (try 2 of 3)
+review-agent:try $(began 2)
+review-agent ok|1"
+check "a restart that left no line of its own still spent try 2: the poll starts try 3, once" \
+  test "$(said wlr-killed)|$(restarted wlr-killed > /dev/null && starts wlr-killed)" == "$(again_at wlr-killed 3)|1"
+check "after try 3 of 3 the poll starts nothing, and the line is as today" test "$(said wlr-spent)|$(starts wlr-spent)" == "$(today wlr-spent)|0"
+check "a failure outside the retry class starts nothing, and the line is as today" test "$(said wlr-out)|$(starts wlr-out)" == "$(today wlr-out)|0"
+check "with no PR URL known, nothing is started and the exit finds the PR first, as today" test "$(said wlr-nourl)|$(starts wlr-nourl)" == \
+  "no-review: wlr-nourl, exit: gh pr list -R ${ROOT}/svc.git --head story/wlr-nourl, then swarm.sh review-agent wlr-nourl <PR URL>, or the fallback reviewer|0"
+check "two restarts killed before a line of their own: the poll stops at 3 in all, and the line is as today" \
+  test "$(said wlr-twice)|$(starts wlr-twice)" == "$(today wlr-twice)|0"
+check "a restart lock another poll holds: nothing is started, and the line is as today" \
+  test "$(said wlr-locked)|$(starts wlr-locked)" == "$(today wlr-locked)|0"
+check "a last restart whose command still runs: no next try, and the line is as today" \
+  test "$(said wlr-running)|$(starts wlr-running)" == "$(today wlr-running)|0"
+check "a try cut off mid-start starts no agent and names the lead's check" test "$(said wlr-mid)|$(starts wlr-mid)" == \
+  "no-review: wlr-mid $(rurl wlr-mid) (try 2 of 3 was cut off mid-start and may have sent the brief), exit: check that no pane holds review-wlr-mid (swarm.sh status, then swarm.sh tidy for an empty one), then swarm.sh review-agent wlr-mid $(rurl wlr-mid), or the fallback reviewer|0"
+poll
+check "a second poll starts nothing more, for any case" test "$(starts)|$(restarts)" == "3|7"
+rm -rf "${P}/.swarm/briefs" "${P}/.swarm/reviews" "${P}/.swarm/agents.tsv" "${P}/.swarm/state"/wlr-* "${FX}/agents" "${B}/README.md" "${P}/docs/epics"
+
 # --- no change: a short timeout.
 fresh
 start 3000
@@ -430,6 +564,42 @@ printf 'w:c conduct-e\nw:n n\n' > "${P}/.swarm/state/tab-n"
 check "close on a slug wait --lead saw still closes its pane" grep -qx 'pane close w:n' "${ROOT}/herdr.log"
 check "and leaves wait --lead's seen file as it was" grep -qx 'held: n (cleared-on-error)' "${P}/.swarm/lead/seen"
 rm -f "${P}/.swarm/state/tab-n"
+
+# --- Gone story case (#691): a story file a merge deletes during a poll, between the board's list and its
+# read, prints no sed: or awk: line, and the poll's other lines are as before. The race happens every
+# time: first on PATH, ${ROOT}/gone/<tool> is the real awk or sed, except that the first call naming
+# ${B}/v.md deletes it. Each tool in turn, so the poll's first awk read of v (stories_fm) and its first
+# sed read (fm) each meet a file that is gone.
+mkdir -p "${ROOT}/gone"
+for t in awk sed; do
+  rm -f "${ROOT}/gone"/*
+  printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v "${t}")" "${B}/v.md" > "${ROOT}/gone/${t}"
+  cat >> "${ROOT}/gone/${t}" <<'STUB'
+for a in "$@"; do [ "${a}" != "${V}" ] || rm -f "${V}"; done
+exec "${REAL}" "$@"
+STUB
+  chmod +x "${ROOT}/gone/${t}"
+  fresh; lead 0   # a first run only records what it saw
+  again; held y paused; item v "kind: code" "status: ready"
+  lead PATH="${ROOT}/gone:${ROOT}/bin:${PATH}" 0
+  check "a story gone at the poll's first ${t} read of it: it went" test ! -e "${B}/v.md"
+  check "a story gone at the poll's first ${t} read of it: no sed: or awk: line" test -z "$(grep -E '(sed|awk):' "${ROOT}/out")"
+  check "a story gone at the poll's first ${t} read of it: its other lines as before" test "$(out)|$(rc)" == "held: y (paused)|0"
+done
+# A story made unreadable at that first awk read (stories_fm) is not gone: that poll names it, as
+# stories_fm's check of the board names a file there but unreadable.
+rm -f "${ROOT}/gone"/*
+printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v awk)" "${B}/v.md" > "${ROOT}/gone/awk"
+cat >> "${ROOT}/gone/awk" <<'STUB'
+for a in "$@"; do [ "${a}" != "${V}" ] || chmod 000 "${V}"; done
+exec "${REAL}" "$@"
+STUB
+chmod +x "${ROOT}/gone/awk"
+fresh; lead 0; again; held y paused; item v "kind: code" "status: ready"
+lead PATH="${ROOT}/gone:${ROOT}/bin:${PATH}" 0
+check "a story made unreadable during a poll: that poll names it" grep -qxF "swarm: cannot read ${B}/v.md" "${ROOT}/out"
+chmod 644 "${B}/v.md"
+rm -rf "${ROOT}/gone"
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"

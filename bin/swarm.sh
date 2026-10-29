@@ -12,7 +12,7 @@
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-<step_up_findings> (findings-3 by default), ci-red-2, stalled or no-pr. close, wait --stall, tell, watch and a review pane's wait-pr run it themselves
 #   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
 #   swarm.sh restart <slug>                                start a started story's builder again once herdr no longer lists it, in its worktree, branch and tab: it reopens the builder's last Claude session when its resume command names one that took its brief, else starts a fresh builder on the last model with a handover brief; holds the story's step-up lock; refused while the builder is listed, with no worktree or one off story/<slug> or holding a git step left unfinished, for a story not ready, kind: lead, held or escalated, with a PR merged or set to auto-merge, or with a step-up waiting (step-up --resume)
-#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents, or queue it for a busy one's next idle; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not, and prompt one whose turn has ended to read it (once a minute at most, the rest a minute later)
+#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents, or queue it for a busy one's next idle; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not, and prompt one whose turn has ended to read it (once a minute at most, the rest a minute later); one with no pane, or whose session has ended, is refused once as could not reach, naming its exit
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
@@ -38,6 +38,7 @@
 #   swarm.sh review <slug> [--head <sha>] <pr-url>...       a story or epic whose PRs are green and reviewed now waits on a human merge; --head: only while each PR's head is still <sha>, the head its review passed, and its prs: lists no other PR, else nothing changes (a moved head's refusal names review-agent --next)
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none), and a story PR held for the user when it changes .claude/, .github/, hooks/ or a root Makefile (the user merges it by hand); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile; with merge = human, a story or board PR only under an agreed HLD that grants merge, and even then held for the user when it has costs: money; --release only when at least one story merged since the last tag and every one of them is under an HLD that grants release; a story or --board PR that sets an epic active with no ticket (agreed:, parent:, an HLD granting epics, or lead_epics = on) is refused
+#   swarm.sh dropped-lines <owner/repo> <n> <head> <base>  read-only: fetch PR <n>'s head (refs/pull/<n>/head) into the clone of <owner/repo>, check it is <head>, and print each base line a merge on its first-parent chain dropped (`<sha7> <file>: <text>`), skipping only GitHub's merges of the base that merge recorded as base-merged; exit 0 none, 1 lines dropped, 2 when it cannot check (a moved or stale head, another origin, git below 2.36)
 #   swarm.sh wait-pr [--timeout <seconds>] --head <sha> <pr-url>  wait for a PR's checks on <sha>, read again each poll until the PR's head is <sha> (a prefix of 7 or more; still another after 5 minutes exits 2); with no --head, on the head of its first read, which right after a push can be the old one: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs (or no run of a workflow its pull_request triggers) within 5 minutes, or still pending after <seconds> (default 1800); from the story's review pane with escalate_ladder set, a red head counts toward the ladder's ci-red step-up, which it runs itself (stepped up: <slug>)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
@@ -83,6 +84,13 @@ DIE_LEVEL=-1
 WAIT_PR_RED=""; WAIT_PR_TMP=""
 if [[ "${1:-}" == wait-pr ]]; then
   trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+fi
+# dropped-lines' exit 1 means base lines were dropped (DROPPED_FOUND), so any other stop, a die or a set
+# -e stop, exits 2; the refs its fetch made (dropped_refs_drop) go either way. A stop before merge.sh is
+# sourced (outside a swarm project, say) has no dropped_refs_drop, and no refs to drop.
+DROPPED_FOUND=""; DROPPED_REF=""; DROPPED_DIR=""
+if [[ "${1:-}" == dropped-lines ]]; then
+  trap 'rc=$?; ! declare -F dropped_refs_drop >/dev/null || dropped_refs_drop; [[ ${rc} -eq 0 || -n "${DROPPED_FOUND}" ]] || exit 2' EXIT
 fi
 
 # SWARM_SLEEP_SCALE multiplies the fixed sleeps (nap; default 1, make test sets 0.01). It is checked
@@ -619,6 +627,7 @@ dispatch() {
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     merge)  merge_pr "$@" ;;
+    dropped-lines) dropped_lines "$@" ;;
     wait-pr) wait_pr "$@" ;;
     board-pr) board_pr "$@" ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
@@ -662,7 +671,7 @@ dispatch() {
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
+READ_ONLY_COMMANDS="dash status where swarms next config policy grants cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch dropped-lines base _base _role _name _conductor _brief _board-rel _target _trusted _pane _mtime _step-up _review-red-scan _step _tell-queue-check"
 
 # timed <command> <function> [args] — run the function, then log the run's row in RUN_TIMES_LOG (run_time_end).
 # run_time_start <command> — note the run's start, its time and the 1-minute load average then.
