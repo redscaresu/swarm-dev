@@ -3152,7 +3152,9 @@ there, and names the files. `reset --hard` is refused when a tracked file has a 
 change, or when an untracked or ignored file is in the way of a file in the commit it resets to: at
 the same path with other content, where that commit has a folder, or inside a folder where it has a
 file. Any other untracked file passes, since `reset --hard` keeps it. `restore` is refused when it would
-overwrite a change: an unstaged one, and a staged one too with `--staged --worktree` (`-SW`).
+overwrite a change: an unstaged one, and a staged one too with `--staged --worktree` (`-SW`). With
+`--source`, an untracked or ignored file in the way of a file it writes counts too, as for
+`reset --hard`.
 `restore --staged` alone changes only the index, so it passes. `clean` is refused when its own dry
 run, with your flags, lists a file, so under `-x` or `-X` an ignored file in `.swarm/` counts.
 `git clean -n` passes. Commit the changes in a board PR, or back the files up with `cp`. A clean

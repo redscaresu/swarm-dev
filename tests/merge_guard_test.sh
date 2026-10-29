@@ -219,8 +219,9 @@ mkdir -p "${M}/.claude/swarm" "${M}/board/stories" "${M}/.swarm"
 echo "merge = human" > "${M}/.claude/swarm/config"; echo .swarm/ > "${M}/.gitignore"; echo a > "${M}/${A}"
 git -C "${M}" init -q && git -C "${M}" add . && git -C "${M}" -c user.name=t -c user.email=t@t commit -qm init
 git -C "${M}" worktree add -q "${MW}" -b story/m
-git -C "${M}" worktree add -q "${ROOT}/main-n" -b story/n   # story/n has ${N} as "other", a file board/x and a folder board/d
+git -C "${M}" worktree add -q "${ROOT}/main-n" -b story/n   # story/n has ${N} as "other", files board/x and board/l.md and a folder board/d
 mkdir -p "${ROOT}/main-n/board/d" && echo other > "${ROOT}/main-n/${N}" && echo x > "${ROOT}/main-n/board/x" && echo f > "${ROOT}/main-n/board/d/f"
+echo l > "${ROOT}/main-n/board/l.md"
 git -C "${ROOT}/main-n" add . && git -C "${ROOT}/main-n" -c user.name=t -c user.email=t@t commit -qm n
 echo x > "${M}/.swarm/events.tsv"
 # names <cwd> <path> <command> — the lead's call of <command> from <cwd> is refused, naming <path>.
@@ -249,6 +250,11 @@ check "  ... an untracked file board/d where story/n has a folder board/d blocks
 rm "${M}/board/d"; echo board/x > "${M}/.git/info/exclude"; echo mine > "${M}/board/x"
 check "  ... an ignored board/x with other content than story/n's blocks, naming it" names "${M}" "board/x" "git reset --hard story/n"
 rm "${M}/board/x"; : > "${M}/.git/info/exclude"
+echo new > "${M}/${N}"; ln -s stories "${M}/board/l.md"   # a link to a folder, which hash-object cannot read
+check "  ... ${N} with other content beside a board/l.md that cannot be hashed blocks, naming it" names "${M}" "${N}" "git reset --hard story/n"
+rm "${M}/board/l.md"
+check "  ... git restore --source=story/n ${N} over the untracked file blocks, naming it" names "${M}" "${N}" "git restore --source=story/n ${N}"
+check "  ... and so does git restore -s story/n ${N}" names "${M}" "${N}" "git restore -s story/n ${N}"
 echo new > "${M}/${N}"; : > "${M}/-n"
 check "  ... git clean -fd -- -n, of a file named -n, blocks" names "${M}" "It drops -n" "git clean -fd -- -n"
 rm "${M}/-n"

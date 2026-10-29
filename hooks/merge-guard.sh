@@ -9,8 +9,9 @@
 # passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( ), and not in a
 # while, until or if condition), a git
 # checkout that overwrites uncommitted changes, a git reset --hard, restore or clean that would drop
-# work in a swarm project's main checkout (a tracked file's change; for clean, a file its own dry run
-# lists) and, in a swarm agent's session (SWARM_AGENT set), git
+# work in a swarm project's main checkout (a tracked file's change, an untracked or ignored file in the
+# way of a file reset --hard or restore --source writes, or for clean a file its own dry run lists)
+# and, in a swarm agent's session (SWARM_AGENT set), git
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
 # call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
 # kill $(pgrep ...) / $(pidof ...) is refused too, as is a kill of PID 0 or a negative one (every
@@ -443,36 +444,41 @@ def status(d, paths=()):
 def main_drops(d, sub, rest):
     """The files git reset --hard, restore or clean <rest>, run in d, drops in a swarm project's main
     checkout: for reset each tracked file with a change, and each untracked or ignored one in the way
-    of a file the commit it resets to has (it keeps the rest); each one a restore of the working tree overwrites;
-    and each one clean's own dry run lists, ignored ones too under -x or -X. None in a worktree or
-    outside a swarm project."""
+    of a file the commit it resets to has (it keeps the rest); for a restore of the working tree each
+    file with a change it overwrites, and with --source each untracked or ignored one in the way of a
+    file it writes; and each one clean's own dry run lists, ignored ones too under -x or -X. None in a
+    worktree or outside a swarm project."""
     dirs = git_dirs(d)
     if not dirs or not os.path.isfile(os.path.join(dirs[0], ".claude", "swarm", "config")) \
             or not os.path.isdir(os.path.join(dirs[0], ".git")):  # a linked worktree's .git is a file
         return []
     if sub == "reset":
-        return list(dict.fromkeys([line[3:] for line in status(d)] + displaced(dirs[0], rest)))
+        target = next((w for w in rest if not w.startswith("-")), "HEAD")
+        return list(dict.fromkeys([line[3:] for line in status(d)] + displaced(dirs[0], target)))
     if sub == "clean":
         out = git(d, "--no-optional-locks", "clean", *dry_run(rest)) or ""
         return [line[len("Would remove "):] for line in out.splitlines() if line.startswith("Would remove ")]
-    worktree, staged = restores(rest)
-    paths = rest[rest.index("--") + 1:] if "--" in rest else [w for w in rest if not w.startswith("-")]
+    worktree, staged, source, paths = restore_args(rest)
     if any(w.startswith("--pathspec-from-file") for w in rest):
         paths = [":/"]  # the paths are in a file: a change anywhere in the checkout counts
-    return overwrites(d, paths, staged) if worktree and paths else []
+    if not (worktree and paths):
+        return []
+    # The source's files the paths name, as root-relative paths: ls-files matches pathspecs as restore does.
+    named = git(d, "ls-files", "--full-name", "-z", "--with-tree=" + source, "--", *paths) if source else None
+    extra = displaced(dirs[0], source, set(named.split("\0"))) if named else []
+    return list(dict.fromkeys(overwrites(d, paths, staged) + extra))
 
 
-def displaced(top, rest):
-    """The files in top that the index lacks, untracked or ignored, that git reset --hard <rest>
-    deletes or overwrites: each one in the way of a file the commit it resets to has and the index
-    lacks. That is a folder at the file's path, a file at one of its folders, or a file at its path
-    with other content."""
-    target = next((w for w in rest if not w.startswith("-")), "HEAD")
+def displaced(top, target, keep=None):
+    """The files in top that the index lacks, untracked or ignored, that writing commit target's
+    files deletes or overwrites: each one in the way of a file target has and the index lacks, of
+    those in keep when given. That is a folder at the file's path, a file at one of its folders, or a
+    file at its path with other content; a file that cannot be hashed counts as other content."""
     index = set((git(top, "ls-files", "-z") or "").split("\0"))
     blobs = {}  # path: the blob the commit has there, for each path the index lacks
     for e in (git(top, "ls-tree", "-r", "-z", target) or "").split("\0"):
         meta, _, path = e.partition("\t")
-        if path and path not in index:
+        if path and path not in index and (keep is None or path in keep):
             blobs[path] = meta.split()[-1]
     lost, same = [], []
     for path in blobs:
@@ -485,19 +491,38 @@ def displaced(top, rest):
         else:
             lost += [f for f in folders if f not in index and os.path.lexists(os.path.join(top, f))
                      and not os.path.isdir(os.path.join(top, f))]
-    ids = (git(top, "hash-object", "--", *same) or "").split() if same else []
-    return lost + [p for p, i in zip(same, ids) if i != blobs[p]]
+    # One path per hash-object: a path it cannot read fails the call, and must not hide the others.
+    return lost + [p for p in same if (git(top, "hash-object", "--", p) or "").strip() != blobs[p]]
 
 
-def restores(rest):
-    """What git restore <rest> writes, as (working tree, index): the working tree unless --staged (-S)
-    comes without --worktree (-W), and the index with --staged. Long options may be cut short."""
+def restore_args(rest):
+    """git restore <rest> as (working tree, index, source, paths): it writes the working tree unless
+    --staged (-S) comes without --worktree (-W), and the index with --staged, from --source (-s) when
+    given. Long options may be cut short."""
     staged = worktree = False
-    for w in itertools.takewhile(lambda w: w != "--", rest):
-        flags = w[1:].split("s")[0] if re.fullmatch(r"-[A-Za-z]+", w) else ""  # -s<tree>: the rest names the source
-        staged |= "S" in flags or (len(w) > 2 and "--staged".startswith(w))
-        worktree |= "W" in flags or (len(w) > 2 and "--worktree".startswith(w))
-    return worktree or not staged, staged
+    source, paths, k = None, [], 0
+    while k < len(rest):
+        w, k = rest[k], k + 1
+        if w == "--":
+            return worktree or not staged, staged, source, paths + rest[k:]
+        if w.startswith("--"):
+            name, eq, value = w.partition("=")
+            staged |= long_option(name, "--staged")
+            worktree |= long_option(name, "--worktree")
+            takes, attached = long_option(name, "--source") and not long_option(name, "--staged"), eq == "="
+        elif w.startswith("-") and len(w) > 1:
+            flags, s, value = w[1:].partition("s")  # -s takes the source: the rest of the word, or the next one
+            staged |= "S" in flags
+            worktree |= "W" in flags
+            takes, attached = s == "s", value != ""
+        else:
+            paths.append(w)
+            continue
+        if takes:
+            if not attached and k < len(rest):
+                value, k = rest[k], k + 1
+            source = value
+    return worktree or not staged, staged, source, paths
 
 
 def dry_run(rest):
