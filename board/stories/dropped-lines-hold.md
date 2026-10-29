@@ -3,6 +3,7 @@ kind: code
 status: blocked
 epic: merge-safety
 depends_on: [dropped-lines-command]
+needs: [dropped-lines-command (dropped_lines in bin/lib/merge.sh and its exit codes, which merge_pr's new step calls)]
 touches: [bin/lib/merge.sh:merge_pr (dropped-lines step), bin/lib/merge.sh:dropped_hold (new), tests/merge_fixture.sh:gh stub pull commits default, tests/merge_rules_test.sh:dropped-lines hold cases, bin/swarm.sh:merge usage line, docs/reference.md:held for dropped base lines paragraph (new, in Merging), docs/reference.md:merge command row (in Commands), AGENTS.md:swarm.sh merge bullet, docs/lead-by-hand.md:#693 entry, docs/features.tsv:Goal 8 row, tests/grant_pinned_head_test.sh:gh stub commits default, tests/merge_board_root_test.sh:gh stub commits default]
 estimate_lines: 270
 easy: false
