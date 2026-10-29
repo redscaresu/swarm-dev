@@ -732,8 +732,8 @@ base_merged_from() {
 # gh lists <head> among the PR's commits (every page, within BASE_MOVED_WAIT; GitHub lists at most
 # 250). It fetches refs/pull/<n>/head and <base> into refs of this run's own,
 # refs/swarm/dropped-lines/<n>-<pid>/head and /base, read once and deleted (and by swarm.sh's trap),
-# writing no FETCH_HEAD, so two runs share neither and another fetch cannot move the base it scans
-# against; the fetched head must be <head>, else it stops naming both. The merges on <head>'s
+# writing no FETCH_HEAD and, with an empty --refmap, no origin/<base>: two runs share neither, and
+# another fetch cannot move the base it scans against. The fetched head must be <head>, else it stops naming both. The merges on <head>'s
 # first-parent chain since that base commit are scanned, except those events.tsv records as
 # GitHub's merge of the base (merge_base_update's `base-merged <sha>`, shown to bring only the base's
 # content); any other merge is scanned, web-flow's too (a conflict resolved in GitHub's web editor).
@@ -759,7 +759,7 @@ dropped_lines() {
   grep -qxF "${head}" <<< "${shas}" || die "dropped-lines: ${head} is not among ${url}'s commits as gh lists them: the PR's head moved"
   # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
   DROPPED_DIR="${src}"; DROPPED_REF="refs/swarm/dropped-lines/${n}-$$"
-  out="$(within "${fetch}" git -C "${src}" fetch --quiet --no-tags --no-write-fetch-head origin \
+  out="$(within "${fetch}" git -C "${src}" fetch --quiet --no-tags --no-write-fetch-head --refmap= origin \
     "+refs/pull/${n}/head:${DROPPED_REF}/head" "+refs/heads/${base}:${DROPPED_REF}/base" < /dev/null 2>&1)" || rc=$?
   [[ ${rc} -ne 142 ]] || die "dropped-lines: git did not fetch ${url}'s head and ${base} from ${origin} within ${fetch}s"
   [[ ${rc} -eq 0 ]] || die "dropped-lines: git cannot fetch ${url}'s head and ${base} from ${origin}: ${out##*$'\n'}"
