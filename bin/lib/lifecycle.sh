@@ -2853,8 +2853,35 @@ main_red_lines() { :; }
 # reported_lines — prints nothing yet; the story reported-line fills it.
 reported_lines() { :; }
 
-# sign_blocked_lines — prints nothing yet; the story sign-blocked-line fills it.
-sign_blocked_lines() { :; }
+# SIGN_STATUS_WAIT: how many seconds sign_blocked_lines' git status of one builder's worktree may take.
+SIGN_STATUS_WAIT=10
+
+# sign_blocked_lines — `sign-blocked: <slug>, <slug> (their signing key is locked; unsigned work in their
+# worktrees), exit: unlock your signing key in your shell (gpg-agent or ssh-agent), then swarm.sh tell
+# <slug> resume <file> for each`, one line for every builder that cannot sign its work: its newest
+# sign-blocked or sign-clear incident in events.tsv (sign_held's, which the conductors' wait --stall
+# writes) is a sign-blocked one, it still runs in a pane of the poll's herdr list (LEAD_AGENTS), and its
+# worktree still holds uncommitted work (git status --porcelain, cut off after SIGN_STATUS_WAIT seconds).
+# The slugs are sorted, so the line reads the same each poll for LEAD_SEEN. It asks no signer: the line
+# comes once a builder's stall check has run, so up to stall_minutes late. A poll with no herdr list keeps
+# the sign-blocked: line LEAD_SEEN has.
+sign_blocked_lines() {
+  local name slug src wt slugs=""
+  [[ -f "${EVENTS_LOG}" ]] || return 0
+  [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+  if [[ -z "${LEAD_AGENTS_OK}" ]]; then grep '^sign-blocked: ' "${LEAD_SEEN}" 2>/dev/null || true; return 0; fi
+  while read -r name slug; do
+    [[ -n "$(list_field "${name}" pane_id <<< "${LEAD_AGENTS}")" ]] || continue
+    src="$(repo_dir "$(fm "${BOARD}/stories/${slug}.md" repo 2>/dev/null)")" || continue
+    wt="$(worktree_for "${src}" "${slug}")"
+    [[ -n "$(within "${SIGN_STATUS_WAIT}" git -C "${wt}" status --porcelain </dev/null 2>/dev/null)" ]] || continue
+    slugs+="${slug}"$'\n'
+  done < <(awk -F'\t' '$2 == "incident" && $5 ~ /^sign-(blocked|clear): / { l[$3] = $5 }
+    END { for (n in l) if (l[n] ~ /^sign-blocked: /) { s = substr(l[n], 15); sub(/ .*/, "", s); print n, s } }' "${EVENTS_LOG}")
+  [[ -n "${slugs}" ]] || return 0
+  slugs="$(printf '%s' "${slugs}" | LC_ALL=C sort -u | paste -sd, - | sed 's/,/, /g')"
+  echo "sign-blocked: ${slugs} (their signing key is locked; unsigned work in their worktrees), exit: unlock your signing key in your shell (gpg-agent or ssh-agent), then swarm.sh tell <slug> resume <file> for each"
+}
 
 # prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
 # (own_panes) that the poll's herdr list (lead_agents) shows blocked, idle or done, and whose pane

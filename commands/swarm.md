@@ -356,7 +356,16 @@ Repeat until a step below says stop:
      why yourself, as the `kept:` arm above says for a review file with a `stopped:` or `head moved:`
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
-     nudge. The line goes once a review agent starts on the story again or it leaves the board.
+     nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `sign-blocked: <slug>, <slug> (their signing key is locked; unsigned work in their worktrees), exit: ...`
+     line names the builders whose signing key is locked: their last signer probe read `blocked`, they
+     still run, and their worktrees hold uncommitted work they cannot commit. Unlocking the key is the
+     user's step, never yours or an agent's: ask the user to unlock their signing key in their shell
+     (gpg-agent, or ssh-agent for an ssh key). Once they say it is unlocked, write a file telling the
+     builder its key is unlocked and to commit and carry on, and send it to each builder the line names
+     with `swarm.sh tell <slug> resume <file>`. The line comes from the conductors' `wait --stall`, so
+     it can come up to `stall_minutes` late. It goes once each builder's next probe reads `clear` or its
+     worktree is clean.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
