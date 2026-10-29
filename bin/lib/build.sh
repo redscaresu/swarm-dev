@@ -207,8 +207,9 @@ dropped_lines_cmd() {
 # the diff, that the PR's own merges dropped no base line, each round on that round's head (round 1's is
 # <head>; review_next prints the command on its own), run in the background: its gh read, fetch and git
 # calls can outlast a foreground Bash call. dropped_lines.py scores each merge, never the head, so a
-# restoring commit leaves the same lines printed: a printed line whose text the head's file has again is
-# fixed. Each other line of an exit 1 is a finding to fix that round, restored by the builder in a commit
+# restoring commit leaves the same lines printed: a printed line is fixed once the head's file has more
+# whole-line copies of its text (control characters off, as the check takes them off) than the merge's
+# file by at least the times the check printed it. Each other line of an exit 1 is a finding to fix that round, restored by the builder in a commit
 # of its own and logged as finding_rule says with the kind dropped-lines. A run killed or ending other
 # than 0 or 1 is an exit 2 (cannot check), run once more; a second goes to the builder as a nudge and
 # stops the round with no pass, the line under <findings file>'s head: line.
@@ -224,9 +225,13 @@ call. A run that is killed, or that exits with anything but 0 or 1, counts as ex
 Exit 0: nothing was dropped.
 Exit 1: each line it printed (\`<sha7> <file>: <text>\`) is a base line one of the PR's own merge
 commits dropped. The check reads each merge, never the head, so it prints a line again after the
-builder has put it back. Check each line against the round's head with
-\`git show <the round's head>:<file> | grep -cF -- '<text>'\`: a count above 0 means the line is back,
-so it is fixed. Each line not back is a regression this PR brings in, and a finding to fix this round,
+builder has put it back. To tell, count the whole-line copies of its text in a commit's file, with
+control characters such as tabs taken off as the check takes them off:
+\`git show <rev>:<file> | LC_ALL=C tr -d '\000-\011\013-\037\177' | grep -cxF -- '<text>'\`.
+Count with <rev> the merge (its <sha7>) and with the round's head. The line is back, so fixed, only
+when the head's count is at least the merge's count plus the number of times the check printed that
+same line: another copy of the text, or a longer line that holds it, is not the dropped copy. A line
+the check cut to its first 300 characters never matches, so it is not back. Each line not back is a regression this PR brings in, and a finding to fix this round,
 whatever else the round finds and whatever its round: list it under \`## Findings\`, from conductor,
 and send it to the builder with the round's findings, telling it to restore the line in a commit of
 its own (never by rewriting the merge). Once a later round finds it back, log it as below:

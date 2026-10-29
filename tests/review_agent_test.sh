@@ -213,19 +213,25 @@ check "the round-1 brief runs dropped-lines on o/svc 1, its head and main, in th
   "yes|yes|yes|yes|yes" \
   "$( [[ -n "${dl_at}" && -n "${codex_at}" && "${dl_at}" -lt "${codex_at}" ]] && echo yes || echo "no, at '${dl_at}', codex at '${codex_at}'")|$(has "log-finding --reviewer conductor --round <n> dropped-lines ${PR} \"<the first line it printed>\"" "${flat}")|$(has "Each line not back is a regression this PR brings in, and a finding to fix this round, whatever else the round finds and whatever its round: list it under \`## Findings\`, from conductor, and send it to the builder with the round's findings, telling it to restore the line in a commit of its own (never by rewriting the merge)." "${flat}")|$(has "Exit 2: it could not check. Run it once more first: a GitHub or fetch error, or a PR head GitHub has not updated yet, can clear on a second run. A second exit 2 means the round cannot pass. Nudge the builder with its last line as the green step says, without waiting on the builder, then stop as above:" "${flat}")|$(has "Run it in the background (Bash run_in_background) and wait for it to exit: its reads of GitHub and git can outlast a foreground Bash call. A run that is killed, or that exits with anything but 0 or 1, counts as exit 2." "${flat}")"
 # dropped-lines reads each merge, never the head, so it prints a line again after the builder restored
-# it: the brief's git show | grep command is how the agent tells a restored line from one still gone.
-# Run as the brief writes it, on a head with the line back and on one without. If the command stops
-# finding a restored line, or finds one that is gone, the agent loops on a fixed drop or passes a live
-# one, and this goes red.
-back_cmd="$({ grep -o "\`git show <the round's head>:<file> | grep [^\`]*\`" <<< "${flat}" || true; } | head -1 | tr -d '\`')"
+# it: the brief's count of whole-line copies, in the merge and in the round's head, is how the agent
+# tells a restored line from one still gone. Here the check printed a dropped `fi` once (n = 1), and the
+# merge's file keeps another, tab-indented `fi` and a longer line holding it. Run as the brief writes
+# it: the merge and a head that restored nothing count 1 each, so 1 < 1 + 1 is not back; a head that
+# put the line back counts 2, which is. If the count takes any line holding the text, or misses a copy
+# whose tab the check took off, the agent passes a live drop or loops on a fixed one, and this goes red.
+back_cmd="$({ grep -o "\`git show <rev>:<file> | [^\`]*\`" <<< "${flat}" || true; } | head -1 | tr -d '\`')"
 DL="${ROOT}/dl"; "${GIT[@]}" init -q "${DL}"
-printf '%s\n' "keep" "the dropped line" > "${DL}/f.txt"; "${GIT[@]}" -C "${DL}" add f.txt; "${GIT[@]}" -C "${DL}" commit -q -m back
-DL_BACK="$(git -C "${DL}" rev-parse HEAD)"
-printf '%s\n' "keep" > "${DL}/f.txt"; "${GIT[@]}" -C "${DL}" commit -q -am gone
+printf 'if a; then\n\tfi\necho fi done\n' > "${DL}/f.sh"; "${GIT[@]}" -C "${DL}" add f.sh; "${GIT[@]}" -C "${DL}" commit -q -m merge
+DL_MERGE="$(git -C "${DL}" rev-parse HEAD)"
+echo "x=1" >> "${DL}/f.sh"; "${GIT[@]}" -C "${DL}" commit -q -am other
 DL_GONE="$(git -C "${DL}" rev-parse HEAD)"
-back_on() { local rh="<the round's head>" c; c="${back_cmd//"${rh}"/$1}"; c="${c//<file>/f.txt}"; c="${c//<text>/the dropped line}"; (cd "${DL}" && bash -c "${c}" 2>&1 || true); }
-check "the brief's is-it-back command counts the restored line on a head that has it, and none on one that dropped it" "1|0" \
-  "$(back_on "${DL_BACK}")|$(back_on "${DL_GONE}")"
+echo "fi" >> "${DL}/f.sh"; "${GIT[@]}" -C "${DL}" commit -q -am restore
+DL_BACK="$(git -C "${DL}" rev-parse HEAD)"
+copies() { local c="${back_cmd//<rev>/$1}"; c="${c//<file>/f.sh}"; c="${c//<text>/fi}"; (cd "${DL}" && bash -c "${c}" 2>&1 || true); }
+back() { if [[ "$(copies "$1")" -ge $(( $(copies "${DL_MERGE}") + 1 )) ]]; then echo back; else echo "not back"; fi; }
+check "the brief's is-it-back count: whole lines, tabs off, 1 in the merge and in a head that restored nothing (not back), 2 once restored (back)" \
+  "1|1|2|not back|back|yes" \
+  "$(copies "${DL_MERGE}")|$(copies "${DL_GONE}")|$(copies "${DL_BACK}")|$(back "${DL_GONE}")|$(back "${DL_BACK}")|$(has "The line is back, so fixed, only when the head's count is at least the merge's count plus the number of times the check printed that same line" "${flat}")"
 # The kinds command finding_rule gives, run as written against another log: only kinds with a fixed,
 # escaped or pre-outcome row (never one only declined or filed), and no error with no log at all.
 kinds_cmd="$(grep -B1 '^already lists when it fits' <<< "${brief}" | head -1 | tr -d '`')"
