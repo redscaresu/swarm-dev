@@ -405,7 +405,8 @@ JSON and `ps` once, whenever a story with a build record or a ready story with a
 left after those reads, before the listing is checked. No gh call is made for these lines. Outside
 herdr, or when herdr's list or `ps` fails, it prints none. A run with no `.swarm/lead/seen` yet prints
 these lines on its first read, and every other line except `held:`, `escalated:`, `kept:`, `merge:` and
-`idle:` lines. Other commands already show those five, so the first read notes them without printing them.
+`idle:` lines, `tell undelivered:` and `tell goal failed:` lines (§ A tell to a busy agent is queued)
+included. Other commands already show those five, so the first read notes them without printing them.
 
 **A review agent's stop note that no conductor has wakes the lead too.** A review agent that stops
 writes its note to `.swarm/reviews/<slug>.stop.md` and tells it to the story's conductor (§ Building).
