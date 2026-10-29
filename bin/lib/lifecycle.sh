@@ -2695,7 +2695,7 @@ lead_base() {
   else
     LEAD_BASE="$(within "${BASE_HEAD_WAIT}" gh api --jq .default_branch "repos/$1" </dev/null 2>/dev/null)" || LEAD_BASE=""
   fi
-  [[ -n "${LEAD_BASE}" && ! "${LEAD_BASE}" =~ ${LEAD_REF_BAD} ]] || { LEAD_BASE=""; return 1; }
+  [[ -n "${LEAD_BASE}" && ! "${LEAD_BASE}" =~ ${LEAD_REF_BAD} ]] || { LEAD_BASE=""; return 1; }   # loose-match: ok LEAD_REF_BAD is a regex on purpose
   LEAD_BASE_OF+="$1 ${LEAD_BASE}"$'\n'
 }
 
