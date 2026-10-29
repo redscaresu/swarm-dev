@@ -360,6 +360,12 @@ review-agent: review-s1 did not start${put_back}; it ran nothing: pane not found
 check "7 and after them the findings file and the stop note are back in place, with nothing left aside" \
   "head: OLD|${NOTE}|no|no|no" \
   "$(cat "${F}")|$(cat "${STOP}")|$([[ -e "${F}.prev" ]] && echo yes || echo no)|$([[ -e "${STOP}.prev" ]] && echo yes || echo no)|$([[ -e "${F%.md}.head" ]] && echo yes || echo no)"
+# next_pane's warning, then another failure: the words "pane" and "not found" sit on two lines, which is
+# none of herdr's texts.
+twoline=$'swarm: herdr would not open a pane at /x in the lead-agents workspace ahead of this one, outside the project; the agent opens in this workspace instead\nswarm: review-s1: python3: command not found'
+check "7 not retried: a pane warning, then a failure on another line, makes one start and logs as today with no (try suffix" \
+  "1|0|1
+review-agent: review-s1 did not start${put_back}" "$(retry 1 "${twoline}")"
 check "7 not retried: an unclear start whose agent reads idle with the brief makes one start and logs ok" \
   "1|0|0
 ok" "$(retry 1 "${unclear}" idle)"

@@ -729,21 +729,28 @@ start_unclear() {
 
 # start_retryable <err> [state] — print the class and succeed when a start that failed with <err>
 # (start_agent's stderr) ran nothing and left no agent that can hold the brief, so another start loses
-# nothing. Either herdr surely sent nothing and <err> has one of herdr's texts (docs/lead-by-hand.md,
-# #688): pane_not_found (`pane ... not found`), a pane's shell that did not take the agent's
-# environment (clean_env), or agent_not_found; or the start was unclear (start_unclear) and <state>,
-# read_state's for its agent, is none, gone or herdr: (nothing runs to have the brief).
+# nothing. Either herdr surely sent nothing and a line of <err> has one of herdr's texts
+# (docs/lead-by-hand.md, #688): pane_not_found or `pane <id> not found`, a pane's shell that did not
+# take the agent's environment (clean_env), or agent_not_found; or the start was unclear
+# (start_unclear) and <state>, read_state's for its agent, is none, gone or herdr: (nothing runs to
+# have the brief). Line by line, so words from two lines (a warning, then another failure) never
+# make one of herdr's texts.
 start_retryable() {
+  local line pane_re='(^|[^[:alnum:]_])pane [^[:space:]]+ not found'
   if start_unclear "$1"; then
     case "${2:-}" in none|gone|herdr:) echo "an unclear start with no agent running (${2})"; return 0 ;; esac
     return 1
   fi
-  case "$1" in
-    *pane_not_found*|*"pane "*" not found"*) echo "pane not found" ;;
-    *"the pane's shell did not take the agent's environment"*) echo "the pane's shell did not take the agent's environment" ;;
-    *agent_not_found*) echo "agent_not_found with nothing sent" ;;
-    *) return 1 ;;
-  esac
+  while IFS= read -r line; do
+    if [[ "${line}" == *pane_not_found* || "${line}" =~ ${pane_re} ]]; then   # loose-match: ok a constant regex, herdr's pane <id> not found
+      echo "pane not found"; return 0
+    fi
+    case "${line}" in
+      *"the pane's shell did not take the agent's environment"*) echo "the pane's shell did not take the agent's environment"; return 0 ;;
+      *agent_not_found*) echo "agent_not_found with nothing sent"; return 0 ;;
+    esac
+  done <<< "$1"
+  return 1
 }
 
 # review_round <slug> — the review round a story's PR is on: one more than the findings rounds of its
@@ -1645,6 +1652,10 @@ that says the named story \`is open\`, start yours in a later wave, after the na
 one that says it \`cannot tell\` (herdr could not list its agents, or the board's touches could not
 be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only
 warns and starts it as the epic says.
+
+A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its
+session has ended, and the refusal names who acts on it. List the story under no agent in your report
+and never tell it again.
 
 The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read

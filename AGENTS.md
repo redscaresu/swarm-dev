@@ -103,9 +103,11 @@ Useful while it runs:
   (`CLAUDE_CODE_USE_FOUNDRY`), the session's `ANTHROPIC_FOUNDRY_*` and
   `ANTHROPIC_DEFAULT_<MODEL>_MODEL` settings pass to every agent too.
 - The plugin's guard hook refuses a raw merge, a `cd <dir>` followed by `;` (write
-  `cd <dir> || exit 1 &&`), a `git checkout` that drops uncommitted changes, and, for an agent,
-  `git checkout`, `switch`, `restore`, `reset --hard`, `stash` or `clean` in the main checkout,
-  `pkill`, `killall` and `gh pr checks` loops (reference.md § Merging).
+  `cd <dir> || exit 1 &&`), a `git checkout` that drops uncommitted changes, a `git reset --hard`,
+  `restore` or `clean` that would drop uncommitted changes or untracked files in the main checkout
+  (in any session, the lead's too), and, for an agent, `git checkout`, `switch`, `restore`,
+  `reset --hard`, `stash` or `clean` in the main checkout, `pkill`, `killall` and `gh pr checks`
+  loops (reference.md § Merging).
 - Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
   agent. List them for the user.
 - One conductor per epic. Two stories clash only when their `touches` name the same file in the same repo and
