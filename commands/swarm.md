@@ -386,7 +386,23 @@ Repeat until a step below says stop:
      story's front matter (`status: ready` and an agent's `kind`) so `next` names it. With `fix <base> by
      hand, as no fix-main story covers it yet`, no story covers the red, most often because the red came
      from a merge that `swarm.sh merge` did not make: tell the user which checks are red, and merge nothing
-     into that base until it is green. The line goes once the base reads fixed.
+     into that base until it is green. The line goes once the base reads fixed. A
+     `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` line means the
+     epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
+     ready, blocked on an agent's story, or in review with a review agent still to act. For the
+     backlog the line is `reported: backlog (...)` and the exit is `swarm.sh conduct --backlog`.
+     When `next` offers its collect step for that conductor, do that step first: the exit retires
+     the conductor and deletes its report, so the collect would never run. Then read the report.
+     `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
+     `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
+     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
+     does not count. Handle all of these first: a build that died as
+     the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
+     there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
+     report says for each (docs/reference.md § Merging lists them). Clear any other cause the report
+     names as the lead's (CI on the base red or timed out, a story escalated to you) before the
+     exit too. Then run the exit, which starts a fresh conductor and removes the old report. The
+     line goes once that work is done or a new conductor starts.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
