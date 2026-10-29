@@ -43,7 +43,7 @@ check "only epics next would offer are planned early" yes \
 check "a restarted planner gets the line in its brief" yes \
   "$(has "${DOC}" 'A planner or co-author gets the line in the brief you write for its rerun, before it starts')"
 check "each agent's stall signs are named" yes \
-  "$(has "${DOC}" 'a story.s builder shows life through worktree commits, edits and PR updates, an agent with no story .a planner or conductor. through its own `events.tsv` lines, and any agent through its session log and a test suite running in its pane')"
+  "$(has "${DOC}" 'a story.s builder shows life through worktree commits, edits and PR updates, an agent with no story .a planner or conductor. through its own `events.tsv` lines, and any agent through its session log, a test suite running in its pane and a background task its session waits on')"
 check "cross-epic order goes in depends_on through board-pr" yes \
   "$(has "${DOC}" 'put that order in a story.s `depends_on` once the other epic.s plan exists.*`swarm.sh board-pr`')"
 check "restart at the first API-error stop, naming each route" yes \
