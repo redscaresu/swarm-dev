@@ -1,8 +1,32 @@
 # shellcheck shell=bash
 
 # fm <file> <key> — <key>'s value in the item's state file (state_value), else the first line for
-# <key> anywhere in <file>, or nothing.
-fm() { state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" | head -1; }
+# <key> anywhere in <file>, or nothing. A <file> that is gone has no value, and says nothing on stderr
+# (item_gone); one that is there but cannot be read fails, with sed's error.
+fm() {
+  state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" 2>/dev/null | head -1 \
+    || item_gone "$1" sed -n "s/^$2: *//p" "$1" | head -1 || gone_ok $?
+}
+
+# ITEM_GONE: item_gone's status when the file it read is gone. Neither sed nor awk exits 3.
+ITEM_GONE=3
+
+# item_read <file> <command>... — run <command>, a read of <file> (- for stdin), with its stderr
+# dropped; when it fails, item_gone.
+item_read() { "${@:2}" 2>/dev/null || item_gone "$@"; }
+
+# item_gone <file> <command>... — after <command>, a read of <file> with its stderr dropped, failed:
+# when <file> is gone (a merge deleted it after the board was listed), return ITEM_GONE, saying
+# nothing. When <file> is still there it cannot be read: run <command> again, so it prints its error
+# and fails as it would have.
+item_gone() {
+  [[ "$1" == - || -e "$1" || -L "$1" ]] || return "${ITEM_GONE}"
+  "${@:2}"
+}
+
+# gone_ok <status> — succeed for ITEM_GONE, else return <status>: fm and get_fm read a file that is
+# gone as having no value.
+gone_ok() { [[ "$1" -eq ${ITEM_GONE} ]] || return "$1"; }
 
 # BOARD_STATE_DIR: where swarm.sh keeps the SET_FM_KEYS it writes for the board's items, a root of its
 # own: STATE_DIR's files are tab records named after epic and story slugs.
@@ -48,7 +72,9 @@ state_value() {
 
 # state_read <state-file> <item-file> <key> — state_value's read of <key> from <state-file>, against
 # <item-file>'s front matter (- for stdin): its value, failing when it has no line for <key> or its
-# <key>@base: is no longer the item's value.
+# <key>@base: is no longer the item's value. It fails quietly when a file cannot be opened: every
+# caller reads <item-file> next when it fails, and that read names one that cannot be read and reads
+# one that is gone (a merge deleted it after state_path saw it) as no value.
 state_read() {
   awk -v k="$3" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
     FILENAME == ARGV[1] { if (!h && index($0, k ":") == 1) { v = val($0, length(k) + 1); h = 1 }
@@ -56,7 +82,7 @@ state_read() {
       next }
     /^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { t = val($0, length(k) + 1); exit }
-    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "$1" "$2"
+    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "$1" "$2" 2>/dev/null
 }
 
 # board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
@@ -1165,16 +1191,25 @@ pr_held() {
 
 # pr_stories <pr-url> — the slugs of the stories whose prs: (get_fm: their state file over their
 # front matter; split on spaces and commas) lists the PR in any spelling: owner and repo in any case,
-# the number with leading zeros. Fails when a story or its state file cannot be read.
+# the number with leading zeros. Fails when a story or its state file cannot be read. A story file
+# gone between the board's list and its read (a merge deleted it) is no such story: it lists the board
+# again, once, and reads it again; a story file on that list that is gone by its read fails.
 pr_stories() {
-  local f v rows=""
-  while IFS= read -r f; do
-    v="$(get_fm "${f}" prs)" || return 1
-    rows+="$(basename "${f}" .md) ${v}"$'\n'
-  done < <(board stories)
+  local rows
+  rows="$(stories_prs)" || { [[ $? -eq ${ITEM_GONE} ]] && rows="$(stories_prs)"; } || return 1
   awk -v k="$1" 'function canon(u) { u = tolower(u); gsub(/[][,"\047]/, "", u); sub(/\/pull\/0+/, "/pull/", u); return u }
     BEGIN { k = canon(k) }
     { for (j = 2; j <= NF; j++) { m = split($j, u, ","); for (i = 1; i <= m; i++) if (canon(u[i]) == k) { print $1; next } } }' <<< "${rows}"
+}
+
+# stories_prs — "<slug> <prs: value>" for each story on the board (get_fm_or_gone), failing as
+# get_fm_or_gone does at the first story it cannot read: with ITEM_GONE for one that is gone.
+stories_prs() {
+  local f v
+  while IFS= read -r f; do
+    v="$(get_fm_or_gone "${f}" prs)" || return
+    f="${f##*/}"; printf '%s %s\n' "${f%.md}" "${v}"
+  done < <(board stories)
 }
 
 # GRANTS: the values an HLD's grants: may hold.
@@ -2351,9 +2386,15 @@ state_write() {
 
 # get_fm <file> <key> — <key>'s value in the item's state file (state_value), else in <file>'s front
 # matter alone (fm takes the first line for <key> anywhere, so a story's body could answer). <file>
-# may be - for stdin, which is read as it is.
-get_fm() {
-  state_value "$1" "$2" || awk -v k="$2" '/^---$/ && ++n == 2 { exit }
+# may be - for stdin, which is read as it is. A <file> that is gone has no value, and says nothing on
+# stderr; one that is there but cannot be read fails, with awk's error.
+get_fm() { get_fm_or_gone "$1" "$2" || gone_ok $?; }
+
+# get_fm_or_gone <file> <key> — get_fm, but failing with ITEM_GONE for a <file> that is gone
+# (item_read), so pr_stories can list the board again.
+get_fm_or_gone() {
+  # shellcheck disable=SC2016 # $0 is awk's
+  state_value "$1" "$2" || item_read "$1" awk -v k="$2" '/^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
 }
 

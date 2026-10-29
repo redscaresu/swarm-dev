@@ -433,6 +433,58 @@ merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "a costs: m
 fresh "merge = agent"; item a "status: ready"; chmod 000 "${P}/docs/stories/a.md"; item s "status: review" "prs: ${URL}" "costs: money"
 merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "a story on the board that cannot be read" "cannot be read, so whether it costs money is unknown"
 chmod 644 "${P}/docs/stories/a.md"; rm -f "${P}/docs/stories/a.md"
+# --- Gone story cases (#691): a story file another merge deleted between the board's list and its read.
+# pr_stories lists the board again, once, so merge_caller and pr_held read on with no sed: or awk: line;
+# a second file gone, or one there but unreadable, still fails closed. The race happens every time:
+# first on GONE_PATH, ${ROOT}/gone's awk and sed are the real ones, except that a call naming a file in
+# ${ROOT}/gone/victims deletes that file first.
+mkdir -p "${ROOT}/gone"; GONE_PATH="${ROOT}/gone:${ROOT}/bin:${PATH}"
+for t in awk sed; do
+  printf '#!/bin/sh\nREAL="%s"; V="%s"\n' "$(command -v "${t}")" "${ROOT}/gone/victims" > "${ROOT}/gone/${t}"
+  cat >> "${ROOT}/gone/${t}" <<'STUB'
+for a in "$@"; do
+  while IFS= read -r v; do [ "${a}" != "${v}" ] || rm -f "${v}"; done < "${V}"
+done
+exec "${REAL}" "$@"
+STUB
+  chmod +x "${ROOT}/gone/${t}"
+done
+# gone <slug>... — ready stories that go at the first read that names them.
+gone() { local s; : > "${ROOT}/gone/victims"; for s in "$@"; do item "${s}" "status: ready"; echo "${P}/docs/stories/${s}.md" >> "${ROOT}/gone/victims"; done; }
+went() { test ! -e "${P}/docs/stories/$1.md"; }
+quiet() { ! grep -qE '(sed|awk):' "${ROOT}/out" && ! said 'cannot be read'; }
+# unreadable <slug> — a ready story that is there but cannot be read. read_error — the last merge
+# printed the read's own error naming u.md, as before: u was read as unreadable, never as gone.
+unreadable() { item "$1" "status: ready"; chmod 000 "${P}/docs/stories/$1.md"; }
+read_error() { said "${P}/docs/stories/u.md"; }
+own_pr a; reviewer review-a; gone v; merge PATH="${GONE_PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+is "review-a's pane, story a's PR, story v gone after the list: exits 0" 0 "${rc}"
+check "review-a's pane, story a's PR, story v gone after the list: gh pr merge ran" merged
+check "review-a's pane, story a's PR, story v gone after the list: v went during the merge" went v
+check "review-a's pane, story a's PR, story v gone after the list: no 'cannot be read', sed: or awk: line" quiet
+own_pr a; reviewer review-a; gone ga gb; merge PATH="${GONE_PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "review-a's pane, a story gone after each of two lists" "a story on the board cannot be read, so whether ${URL} is story a's is unknown"
+check "review-a's pane, a story gone after each of two lists: the second list was read (gb went)" went gb
+own_pr a; reviewer review-a; gone g; unreadable u; merge PATH="${GONE_PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "review-a's pane, a story gone, then one there but unreadable" "a story on the board cannot be read, so whether ${URL} is story a's is unknown"
+check "review-a's pane, a story gone, then one there but unreadable: g went" went g
+check "review-a's pane, a story gone, then one there but unreadable: the read's error names u.md" read_error
+chmod 644 "${P}/docs/stories/u.md"; rm -f "${P}/docs/stories/u.md"
+own_pr a; reviewer review-a; unreadable u; merge HERDR_ENV=1 HERDR_PANE_ID=w:r "${URL}"
+refused "review-a's pane, a story there but unreadable" "a story on the board cannot be read, so whether ${URL} is story a's is unknown"
+check "review-a's pane, a story there but unreadable: the read's error names u.md" read_error
+# Back to fresh's board (no story a), tab records and agents.
+chmod 644 "${P}/docs/stories/u.md"; rm -f "${P}"/docs/stories/{a,u}.md "${P}/.swarm/state/r" "${P}/.swarm/agents.tsv"
+printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"; gone v
+merge PATH="${GONE_PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: money, story v gone after the list: still held" "held: s costs money"
+check "costs: money, story v gone after the list: v went during the merge" went v
+check "costs: money, story v gone after the list: no 'cannot be read', sed: or awk: line" quiet
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"; gone g; unreadable u
+merge PATH="${GONE_PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"
+refused "costs: money, a story gone, then one there but unreadable" "cannot be read, so whether it costs money is unknown"
+check "costs: money, a story gone, then one there but unreadable: the read's error names u.md" read_error
+chmod 644 "${P}/docs/stories/u.md"; rm -f "${P}"/docs/stories/{v,ga,gb,g,u}.md
 # A value it does not know fails closed, naming it.
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: maybe"
 merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: maybe with merge = agent" "held: s has costs: maybe, not money or none"

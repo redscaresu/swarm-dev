@@ -97,7 +97,7 @@ agent again; an older one belongs to a previous plan, so start the agent. A `.pa
 
 Every brief begins: *You are decomposing the agreed HLD `<wt>/docs/hld/$1.md`; read it first. `<wt>`
 is origin's copy of the project: read the code, epics and stories there, not in `<project>`, where
-you run and which can be behind. Read-only — write nothing but your output file and its `.partial`, never commit, never
+you run and which can be behind. Read `${CLAUDE_PLUGIN_ROOT}/rules.md` (its full path written out) next. Read-only — write nothing but your output file and its `.partial`, never commit, never
 touch real cloud or credentials. If `<output>.partial` exists, a run was cut off: start from it and carry on, do not redo it. Write your findings early to `<output>.partial` and update it as you go, so a timed-out turn loses one item, not all, then rename it to the output file as your last step: only the output file means you finished. Cite evidence as file:line. Keep free text short.* (with `<wt>`,
 `<project>` and the output path written out in full)
 
@@ -145,7 +145,7 @@ the same slug in the text and the path and nothing else on the line, replacing w
 resume wrote rather than adding to it. Change no line of the HLD above `## Epics`, write nothing
 after the links, and change nothing else on the board: the PR adds its epics, each carrying `hld:
 $1`, and touches no other file. `swarm.sh grants` puts the board PR under this HLD in that exact
-shape and under none in any other, where the `merge` grant no longer covers it. Commit, run one
+shape and under none in any other, where the `merge` grant no longer covers it. Right after the epic files are written, before the commit and the codex pass, run the humanizer skill (`humanizer:humanizer`) over their prose, since the user agrees them; this also applies to a board outside the repo, before the report. If the skill is not installed, say so in the report and go on: the project is not blocked. Commit, run one
 `swarm.sh codex-review` pass there, then `swarm.sh board-pr open plan-$1 "<title>" <body-file>`. If it says
 the PR on the branch has merged or closed, run `swarm.sh board-pr done plan-$1` and start again from
 the top. A board outside the project's repo is written in place: no commit, no board PR. There,
