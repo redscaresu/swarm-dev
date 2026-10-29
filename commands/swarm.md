@@ -363,8 +363,8 @@ Repeat until a step below says stop:
      `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
      base is red at that commit, whoever merged it. Merge nothing into that base until it is green.
      With the exit `build fix-main-<short sha>, which next names first`, do the `fix-main` step for
-     that story at once. With `wait for swarm.sh to write fix-main-<short sha>, which next then names
-     first`, `wait --lead` has started a run that writes the story: start `wait --lead` again, and the
+     that story at once. With `wait for fix-main-<short sha>, which a fix-main run is writing and next
+     then names first`, `wait --lead` has started a run that writes the story: start `wait --lead` again, and the
      line comes back with the `build` exit once the story is there. With `read
      .swarm/lead/fix-main-<short sha>.log, as no run wrote fix-main-<short sha>, then fix <base> by
      hand`, two runs failed to write it: read the log, and tell the user which checks are red and why no

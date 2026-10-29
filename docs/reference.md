@@ -185,8 +185,9 @@ prints, with no gh call:
   `main-green` has cleared, then each base head the last pass read red. The checks are cut to 300
   characters. The exit is one of these:
   - `build fix-main-<short sha>, which next names first` while that story is on the board.
-  - `wait for swarm.sh to write fix-main-<short sha>, which next then names first` while the run below is
-    writing it or waits to start. The line changes, and wakes the lead again, once the story is there.
+  - `wait for fix-main-<short sha>, which a fix-main run is writing and next then names first` while the
+    run below is writing it or waits to start. The line changes, and wakes the lead again, once the story
+    is there.
   - `read .swarm/lead/fix-main-<short sha>.log, as no run wrote fix-main-<short sha>, then fix <base> by
     hand` once 2 runs failed. This is the lead's check: the log says why each run failed.
   - `fix <base> by hand, as no fix-main story covers it yet` for a logged red whose story has left the board.

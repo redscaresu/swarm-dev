@@ -478,7 +478,7 @@ merging() { printf '99999 bash /x/bin/swarm.sh merge --head %s https://github.co
 # based [config line]... — fresh, main the default branch, no branch on GitHub yet, and a merge into o/r running.
 based() { fresh "$@"; rm -f "${FX}"/base.* "${FX}"/*.status; echo main > "${FX}/default"; merging o/r; }
 # red_line <sha> <base> [exit] — the main-red: line for <sha> on <base> of o/r with test failed.
-red_line() { echo "main-red: ${1:0:7} o/r $2 (test (failure)), exit: ${3:-wait for swarm.sh to write fix-main-${1:0:7}, which next then names first}"; }
+red_line() { echo "main-red: ${1:0:7} o/r $2 (test (failure)), exit: ${3:-wait for fix-main-${1:0:7}, which a fix-main run is writing and next then names first}"; }
 # no_red_line — no main-red: line in the queue the last poll saved.
 no_red_line() { ! grep -q '^main-red: ' "${P}/.swarm/lead/seen"; }
 # status_only <state> <sha> — <sha>'s CI is one commit status, ci, in <state>, and no check run.
@@ -524,7 +524,7 @@ check "the red's unstarted fix-main story is retired" test ! -e "${B}/fix-main-$
 based; echo "${B1}" > "${FX}/base.main"; status_only failure "${B1}"
 lead 0
 check "a base whose only CI is a failed commit status prints main-red:" test "$(out)|$(rc)" == \
-  "main-red: ${B1:0:7} o/r main (ci (failure)), exit: wait for swarm.sh to write fix-main-${B1:0:7}, which next then names first|0"
+  "main-red: ${B1:0:7} o/r main (ci (failure)), exit: wait for fix-main-${B1:0:7}, which a fix-main run is writing and next then names first|0"
 again; status_only success "${B1}"; lead 0
 check "once a rerun passes that status, with no check run, the line goes" no_red_line
 

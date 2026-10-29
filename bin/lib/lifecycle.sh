@@ -2955,10 +2955,10 @@ stuck_lines() { :; }
 # cleared, whoever logged it), then each base head the last heads pass read red (LEAD_BASES, lead_bases). The
 # checks are cut by ci_data. The exit is `build fix-main-<short sha>, which next names first` while that story
 # is on the board. For a head no main-red covers yet, it is what main_red_fix wrote for it this poll
-# (LEAD_FIXES): `wait for swarm.sh to write fix-main-<short sha>, which next then names first` while a run is
-# going or due, and once every run failed `read .swarm/lead/fix-main-<short sha>.log, as no run wrote
-# fix-main-<short sha>, then fix <base> by hand`. Else (a logged red whose story has left the board) it is
-# `fix <base> by hand, as no fix-main story covers it yet`. It reads events.tsv and those files, never gh.
+# (LEAD_FIXES): `wait for fix-main-<short sha>, which a fix-main run is writing and next then names first`
+# while a run is going or due, and once every run failed `read .swarm/lead/fix-main-<short sha>.log, as no
+# run wrote fix-main-<short sha>, then fix <base> by hand`. Else (a logged red whose story has left the board)
+# it is `fix <base> by hand, as no fix-main story covers it yet`. It reads events.tsv and those files, never gh.
 main_red_lines() {
   local sha repo base checks out st
   while read -r sha repo base checks; do
@@ -2966,7 +2966,7 @@ main_red_lines() {
     st="$(awk -v k="${repo} ${base} ${sha}" '$1 " " $2 " " $3 == k { print $8; exit }' "${LEAD_FIXES}" 2>/dev/null)" || st=""
     if [[ -f "${BOARD}/stories/fix-main-${sha:0:7}.md" ]]; then out="build fix-main-${sha:0:7}, which next names first"
     elif [[ "${st}" == failed ]]; then out="read .swarm/lead/fix-main-${sha:0:7}.log, as no run wrote fix-main-${sha:0:7}, then fix ${base} by hand"
-    elif [[ -n "${st}" ]]; then out="wait for swarm.sh to write fix-main-${sha:0:7}, which next then names first"
+    elif [[ -n "${st}" ]]; then out="wait for fix-main-${sha:0:7}, which a fix-main run is writing and next then names first"
     else out="fix ${base} by hand, as no fix-main story covers it yet"; fi
     echo "main-red: ${sha:0:7} ${repo} ${base} ($(ci_data <<< "${checks}")), exit: ${out}"
   done < <({ red_mains; awk '$4 == "red" { c = ""; for (i = 6; i <= NF; i++) c = c " " $i; print $3 " " $1 " " $2 c }' "${LEAD_BASES}" 2>/dev/null; } \
