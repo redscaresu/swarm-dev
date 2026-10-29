@@ -457,6 +457,26 @@ check by hand, goes to the lead, so its note does get a line. `review-agent` rem
 then; a start that fails with no agent running puts the note back. It reads the same herdr list as
 `no-agent:`; a poll whose list failed keeps the `stopped:` lines it saw last.
 
+**A conductor that reported with agent work left wakes the lead too.** A conductor writes
+`.swarm/conduct-<epic>.report.md` as its last act, and a new `swarm.sh conduct` removes an earlier
+run's report before it starts, so a report on disk is the newest run's. For each one, `wait --lead`
+prints:
+
+- `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` while a story of
+  the epic is still an agent's, by the rule the `finish:` line uses (§ Merging): ready, blocked on
+  an agent's story, or in review with a review agent still to act. `<n>` is how many such stories
+  there are. It includes two kinds the conductor's brief has it list for the lead: a build that
+  died and a `not held:` line. For the backlog
+  conductor's report, `conduct-backlog.report.md`, the line counts the stories with no epic and
+  reads `reported: backlog (...), exit: swarm.sh conduct --backlog`. The conductor stopped with
+  work left, and the exit starts a fresh one. Collect a conductor still in its pane first, since
+  the exit retires it and deletes its report. Then read the report: a new conductor cannot clear
+  the stories it lists for the lead, so clear those first (`commands/swarm.md`'s wait arm says
+  how). The line makes no herdr or gh call. It reads the board, `.swarm/board-state`, `events.tsv`,
+  the tab records and the story worktrees. A report whose group no story's `epic:` line names is
+  skipped without reading further, unless a fix-main story is on the board. The line goes once
+  that work is done or a new conductor starts.
+
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
 `<kind>` says what it marks. Its first line holds the marker's own fields. A `pid <n>` line names the
