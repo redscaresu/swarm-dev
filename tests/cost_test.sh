@@ -138,7 +138,8 @@ check "a builder named split-critic counts under its own role" "| code | 2 | cla
 # s-c never steps up; s-old's step-up is before the window, and a refused step-up line counts for none.
 # s-e steps up findings-3 from opus in two attempts: the first fails, the second is held for the lead,
 # and each step-up takes its own attempt's ending; the tokens are the story's, of both attempts. s-f does
-# the same twice in one day (no agents.tsv lines, so no tokens): the first fails, the second merges. s-g's
+# the same twice in one day (no agents.tsv lines, so no tokens): the first fails, the second merges,
+# and the first attempt's rung, naming the PR the second merged, does not make it merged. s-g's
 # rung starts before midnight and its step-up line comes after it: merged. s-h's rung closes, its session
 # naming no PR, while its first rung's PR is open: open.
 G="${dir}/rung"; mkdir -p "${G}/projects/p"
@@ -173,7 +174,7 @@ rows="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' date slug model attempts p
   2026-10-01 s-d opus 1 CLOSED false 1 step-up:ci-red-2 '' 2026-10-01 s-d fable 1 CLOSED false 1 '' '' \
   2026-10-01 s-e opus 1 '' false 1 step-up:findings-3 '' 2026-10-01 s-e fable 1 '' false 1 '' '' \
   2026-10-02 s-e opus 2 OPEN false 1 step-up:findings-3 2026-10-02T12:00:00Z 2026-10-02 s-e fable 2 OPEN false 0 '' 2026-10-02T13:00:00Z \
-  2026-10-03 s-f sonnet 1 CLOSED true 1 step-up:no-pr '' 2026-10-03 s-f opus 1 CLOSED true 1 '' '' \
+  2026-10-03 s-f sonnet 1 CLOSED true 1 step-up:no-pr '' 2026-10-03 s-f opus 1 MERGED true 1 '' '' \
   2026-10-03 s-f sonnet 2 MERGED true 1 step-up:no-pr '' 2026-10-03 s-f opus 2 MERGED true 0 '' '' \
   2026-10-03 s-h opus 1 OPEN false 1 step-up:ci-red-2 '' 2026-10-03 s-h fable 1 '' false 1 '' '' \
   2026-10-03 s-g opus 1 MERGED true 1 step-up:stalled '' 2026-10-03 s-g fable 1 MERGED true 0 '' 2026-10-03T23:58:00Z)"

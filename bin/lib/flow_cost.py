@@ -76,7 +76,6 @@ if epic:
 RANK = ("haiku", "sonnet", "opus", "fable")
 by_rank = lambda m: (RANK.index(m) if m in RANK else len(RANK), m)
 LEAD = ("held", "escalated", "close:impossible")
-RUNG_LAG_MIN = 10   # a rung starts before its step-up line: its brief's tries and one more read, up to 600 s
 ups, to_lead, every = [], collections.defaultdict(list), collections.defaultdict(list)   # every: step-up times by (slug, trigger, from)
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     e = line.rstrip("\n").split("\t")
@@ -105,33 +104,39 @@ def rung_tokens(slug):
     return ", ".join(f"{m} " + (f"{n(sum(t for t, _ in got[m]))} ${sum(u for _, u in got[m]):.2f}" if got[m] else "-")
                      for m in sorted(got, key=by_rank))
 
+def paired(mine, slug, trigger, frm, to):
+    # {step-up line's time: its build's attempt}. outcomes closes the build a step-up replaced with close_cause
+    # step-up:<trigger>, and the rung is its next row, on <to>, started the day the step-up was logged or
+    # the day before (a rung starts before its step-up line, which can fall after midnight). Newest line
+    # first, each takes the newest such row not taken, as outcomes pairs them in order. A line with none
+    # has no row yet.
+    was = [(r, rung.get("date")) for r, rung in zip(mine, mine[1:])
+           if r.get("close_cause") == f"step-up:{trigger}" and r.get("model") == frm and rung.get("model") == to]
+    got = {}
+    for t in reversed(every[(slug, trigger, frm)]):
+        days = {local_day(merge_time(t) - datetime.timedelta(days=d)).isoformat() for d in (0, 1)}
+        i = next((i for i in range(len(was) - 1, -1, -1) if was[i][1] in days), None)
+        if i is not None:
+            got[t] = was.pop(i)[0].get("attempts")
+    return got
+
 def ended(at, slug, trigger, frm, to):
     # merged, lead, failed or open, as above, for the step-up of <slug> from <frm> to <to> logged at <at>.
     mine = [r for r in rows if r.get("slug") == slug]
-    # outcomes closes the build a step-up replaced with close_cause step-up:<trigger>, and its attempt is the
-    # build's: a row closed so on <frm> whose next row, the rung, is on <to> and started the day the
-    # step-up was logged (or the day before, when the rung started just before midnight); of those, the
-    # k-th last line pairs with the k-th last row, as outcomes pairs them in order. With none, the build
-    # has no row yet.
-    near = lambda t: {local_day(merge_time(t) - datetime.timedelta(minutes=m)).isoformat() for m in (0, RUNG_LAG_MIN)}
-    days = near(at)
-    was = [r for r, rung in zip(mine, mine[1:]) if r.get("close_cause") == f"step-up:{trigger}" and r.get("model") == frm
-           and rung.get("model") == to and rung.get("date") in days]
-    same = [t for t in every[(slug, trigger, frm)] if near(t) & days]
-    k = len(same) - same.index(at)
-    if k > len(was):
+    att = paired(mine, slug, trigger, frm, to).get(at)
+    if att is None:
         return "open"
-    att = was[-k].get("attempts")
     build = [r for r in mine if r.get("attempts") == att]
     num = lambda a: int(a) if (a or "").isdigit() else 0
     later = any(num(r.get("attempts")) > num(att) for r in mine)
-    if any(r.get("pr_state") == "MERGED" for r in build) or (not later and any(r.get("story_merged") == "true" for r in mine)):
+    # A later attempt means this one's close counted it failed, and clear_build closed its PRs.
+    if not later and (any(r.get("pr_state") == "MERGED" for r in build) or any(r.get("story_merged") == "true" for r in mine)):
         return "merged"
     # A hold after the next attempt started (its session's first time, else its day) is that attempt's.
     nxt = min((r.get("started") or r.get("date", "") for r in mine if num(r.get("attempts")) > num(att)), default="")
     if any(at <= t and (not nxt or t < nxt) for t in to_lead[slug]):
         return "lead"
-    last = build[-1] if build else {}
+    last = build[-1]
     if later or (last.get("closes", "0") not in ("", "0") and not last.get("close_cause", "").startswith("step-up:")
                  and not any(r.get("pr_state") == "OPEN" for r in build)):
         return "failed"

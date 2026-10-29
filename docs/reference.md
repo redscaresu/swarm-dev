@@ -3556,8 +3556,9 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   `stalled:`.
 - `tell <slug> findings` steps up a builder on its `step_up_findings`-th findings of the build (the third by default) or any after, and
   does not send them: they go into the handover brief, and the tell fails, saying so. The count is
-  per rung. It runs from the build's newest start, and a step-up is a start, so each rung is sent
-  2 findings rounds at the default of 3 and steps up on the third. An earlier
+  per rung. It runs from the build's newest start, and a step-up is a start, so at the default of 3
+  each rung below the top is sent 2 findings rounds and steps up on the third. The top rung follows
+  `top_rung_rounds` instead (below). An earlier
   tell counts when it went through, or when herdr sent the findings but the builder was not seen
   taking them up. That tell fails and says what to do. When the builder may or may not have the
   findings, do not send them again. When herdr read it idle with no turn after both tries ("not
