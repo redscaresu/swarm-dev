@@ -32,10 +32,12 @@ for f in hld epic plan-hld swarm; do
   fi
 done
 echo "ok   hld, epic, plan-hld and swarm name the humanizer"
+# shellcheck disable=SC2016  # the literal text of the placeholder, not a shell expansion
+rules_ref='${CLAUDE_PLUGIN_ROOT}/rules.md'
 # hld and epic carry two briefs (co-author, reviewer); plan-epic and plan-hld carry one set of ground rules.
 for spec in hld:2 epic:2 plan-epic:1 plan-hld:1; do
   f="${spec%%:*}"; want="${spec##*:}"
-  got="$(grep -cF '${CLAUDE_PLUGIN_ROOT}/rules.md' "commands/${f}.md" || true)"
+  got="$(grep -cF "${rules_ref}" "commands/${f}.md" || true)"
   if (( got < want )); then
     echo "FAIL commands/${f}.md names \${CLAUDE_PLUGIN_ROOT}/rules.md ${got} times, needs ${want}"; exit 1
   fi
