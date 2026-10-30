@@ -71,6 +71,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate base <owner/repo> <sha> — head's rule for a base's head (lead_bases), with no check run needed: a
 # commit status alone counts, as on main. With neither a check run nor a status it is pending (2). When
 # red it prints the red checks alone, not those still running.
+# ci_gate required <owner/repo> <base> — the checks <base> requires (its rulesets and branch protection), one name a
+# line, none when it requires none (main_red_run). An error (3) when any part cannot be read.
 # ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
 # run or commit status finished (queued_line). Exits as head does.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every

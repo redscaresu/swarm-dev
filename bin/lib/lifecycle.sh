@@ -3182,9 +3182,10 @@ main_red_lines() {
 # date (main_red_run) and counts as none; no run starts for that head again until a heads pass has rewritten
 # LEAD_BASES since. One whose log ends `not required:` found the head red only on checks the base does not
 # require, which the next pass clears at once (clear_red_main); it counts as none, and no run starts for that
-# head again (state skip). It writes `<owner/repo> <base> <sha> <at> <runs> <pid> <started> <state>` a head to
+# head again (state skip). One whose log ends `absent:` waited on a required check with no run: it counts, and
+# the next starts only after a heads pass too, so a check that never reports ends in the lead's check. It writes `<owner/repo> <base> <sha> <at> <runs> <pid> <started> <state>` a head to
 # LEAD_FIXES, for main_red_lines: <at> as LEAD_BASES has it, so a head read red again after it read green
-# starts afresh, <runs> the runs that count, and <state> run, wait, stale, skip or failed (every run failed). A
+# starts afresh, <runs> the runs that count, and <state> run, wait, stale, absent, skip or failed (every run failed). A
 # repo this run has not named keeps its row's state, and no run starts for it. It reads LEAD_BASES, events.tsv,
 # the logs' last lines and one ps (only when such a head is there), and calls no gh: the run does.
 main_red_fix() {
@@ -3214,6 +3215,7 @@ main_red_fix() {
       case "$(tail -n 1 "${log}" 2>/dev/null)" in
         "stale: "*) runs=$((runs - 1)); state=stale ;;
         "not required: "*) runs=$((runs - 1)); state=skip ;;
+        "absent: "*) state=absent ;;   # counted: the log says which required check never ran
         *) state="wait"; echo "wait --lead: run ${runs} of ${LEAD_FIX_TRIES} ended with no main-red logged: it failed" >> "${log}" 2>/dev/null || true ;;
       esac
     fi
@@ -3221,7 +3223,7 @@ main_red_fix() {
       :   # alive, red only on checks the base does not require, or what is alive is not known: the row stays
     elif (( runs >= LEAD_FIX_TRIES )); then
       state=failed
-    elif [[ "${state}" == stale && ! "${LEAD_BASES}" -nt "${log}" ]]; then
+    elif [[ ( "${state}" == stale || "${state}" == absent ) && ! "${LEAD_BASES}" -nt "${log}" ]]; then
       :   # until a heads pass reads the base again
     else
       name="$(awk -v r="${nwo}" 'tolower($2) == r && (n == "" || $1 == ".") { n = $1 } END { print n }' <<< "${LEAD_REPOS}")"
@@ -3255,12 +3257,13 @@ main_red_fix() {
 # BASE_HEAD_WAIT): the pass's read is out of date when the base has moved off <sha>, or <sha>'s CI reads green
 # or pending now, and then it writes nothing and its last line is `stale: <why>`, which main_red_fix counts
 # as no run. It writes nothing either when ci_gate fixed reads the head as its own red's fix (the base requires
-# checks and each passed), as clear_red_main would on the next pass: its last line is then `not required:`. And
-# when fixed waits on a check the base requires that is still running or has no run yet, with none of those
-# failed, so whether the red is one the base requires is not known: that is `stale:` too. It fails, writing nothing, on a bad argument, a repo it cannot resolve, or a head or CI it
-# cannot read.
+# checks and each passed), as clear_red_main would on the next pass: its last line is then `not required:`.
+# When none of the red checks is one the base requires (ci_gate required) and fixed waits on a required check, it
+# writes nothing either: `absent: <checks>` for a required check with no run yet, which main_red_fix counts as a
+# run, and `stale:` for one still running. It fails, writing nothing, on a bad argument, a repo it cannot resolve,
+# or a head or CI it cannot read.
 main_red_run() {
-  local rc out head n why names=()
+  local rc out head n why req hard names=()
   [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "_fix-main: '$3' is not a whole commit sha"
   [[ -n "$2" && ! "$2" =~ ${LEAD_REF_BAD} ]] || die "_fix-main: '$2' is not a branch name"   # loose-match: ok LEAD_REF_BAD is a regex on purpose
   rc=0; lead_nwo "$1" || rc=$?
@@ -3283,13 +3286,25 @@ main_red_run() {
   if (( rc == 0 )); then
     echo "not required: CI on $2 at ${3:0:7} is red only on checks $2 does not require; no fix-main story written"; return 0
   fi
-  # fixed waits on a check the base requires, still running or with no run yet: unless a required one already
-  # failed, whether the red is one the base requires is not known, so the next heads pass decides again. With a
-  # required check absent, fixed counts every check, so its red entries say nothing.
+  # A red check the base requires (ci_gate required) is a red it requires, whatever fixed waits on: with a required
+  # check absent, fixed counts every check, so its own red entries cannot tell. A list it cannot read names none.
+  req="$(within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" required "${LEAD_NWO}" "$2" </dev/null 2>/dev/null)" || req=""
+  hard=""; for n in ${names[@]+"${names[@]}"}; do if grep -qxF -- "${n}" <<< "${req}"; then hard=1; fi; done
   why="$(tr ';' '\n' <<< "${why%%$'\n'*}")"
-  if (( rc == 1 )) && grep -qE ' [(](queued|in_progress|waiting|requested|pending|required, absent)[)]$' <<< "${why}" \
-    && { grep -qF '(required, absent)' <<< "${why}" || ! grep -qE " [(](${CI_CONCLUSIONS})[)]" <<< "${why}"; }; then   # loose-match: ok CI_CONCLUSIONS is a regex on purpose
-    echo "stale: CI on $2 at ${3:0:7} has a check $2 requires still running or not started; no fix-main story written"; return 0
+  if (( rc == 1 )) && [[ -z "${hard}" ]]; then
+    # A required check with no run yet, none failed: `absent:`, which counts as a run, so one that never reports
+    # on the base ends in the lead's check after LEAD_FIX_TRIES heads passes, never in an endless wait.
+    if grep -qF '(required, absent)' <<< "${why}"; then
+      n="$(awk '/[(]required, absent[)]$/ { sub(/^ /, ""); sub(/ [(]required, absent[)]$/, ""); print }' <<< "${why}" | paste -sd, -)"
+      echo "absent: CI on $2 at ${3:0:7} has no run yet of ${n}, which $2 requires, and no check it requires has failed; no fix-main story written"
+      return 0
+    fi
+    # A required check still running, none failed: whether the red is one the base requires is not known, so the
+    # next heads pass decides again.
+    if grep -qE ' [(](queued|in_progress|waiting|requested|pending)[)]$' <<< "${why}" \
+      && ! grep -qE " [(](${CI_CONCLUSIONS})[)]" <<< "${why}"; then   # loose-match: ok CI_CONCLUSIONS is a regex on purpose
+      echo "stale: CI on $2 at ${3:0:7} has a check $2 requires still running; no fix-main story written"; return 0
+    fi
   fi
   # shellcheck disable=SC2034 # fix_main, in merge.sh, reads both
   MERGE_TARGET="" FIX_MAIN_REPO="$1"

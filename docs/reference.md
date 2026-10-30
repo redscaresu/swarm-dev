@@ -241,9 +241,11 @@ Such a run does not count as a failed one. No run starts for that head again unt
 read the base. A head red only on checks the base does not require gets no story either: before it writes,
 the run asks `ci_gate fixed` whether the head is its own red's fix, as the next pass's clear would, and when
 it is, the log's last line starts `not required:`. That run does not count as failed, and no run starts for
-that head again. When a check the base requires has not finished, or has no run yet, and none of those
-failed, whether the red is one the base requires is not known: that run writes nothing either, and ends
-`stale:` as above. No run starts while one for that head is running, or while `ps` shows a `swarm.sh merge` of
+that head again. When none of the red checks is one the base requires, and a required check is still
+running, whether the red is one the base requires is not known: that run writes nothing either, and ends
+`stale:` as above. When a required check has no run yet, the run ends `absent:`, naming it. That run counts,
+and the next starts only after the next heads pass, so a required check that never reports on the base ends,
+after 2 runs, in the lead's check, never in an endless wait. No run starts while one for that head is running, or while `ps` shows a `swarm.sh merge` of
 a PR in that repo. `ps` shows neither the merge's base nor its project, so any such merge holds the run back,
 since the merge's own fix may log the red. Any other run that ends with no `main-red` logged has failed, and
 the next poll starts another. One still running after 10 minutes is stopped, and counts as failed. For each

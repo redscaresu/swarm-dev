@@ -925,12 +925,40 @@ check "with the required check still running, the run for the optional check's r
 check "having written no story" test ! -e "${F}"
 check "and logged no main-red" test "$(main_reds "${B1}")" == 0
 check "its log ends stale:, as the required check has not finished" test "$(tail -n 1 "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == \
-  "stale: CI on main at ${B1:0:7} has a check main requires still running or not started; no fix-main story written"
+  "stale: CI on main at ${B1:0:7} has a check main requires still running; no fix-main story written"
 # The next heads pass's file must be newer than the log, and bash 3.2's -nt compares whole seconds.
 sleep 1; again; lead 0
 check "it counts as no run: the next heads pass's run is run 1 again" \
   test "$(grep -c '^run 1 of 2,' "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == 2
 must "that run ends too" fix_done "${B1}"
+
+# A required check failed while another required check has no run yet: the red is one the base requires, so the
+# run writes the story, though fixed still waits on the absent check.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"},{"context":"build"}]}}]' > "${FX}/rules"
+lead 0
+check "a required check red and another with no run: the run ends" fix_done "${B1}"
+check "having written the story" test -f "${F}"
+check "and logged one main-red" test "$(main_reds "${B1}")" == 1
+
+# A required check that never reports on the base, and only an optional check red: each run ends absent:, which
+# counts, so after LEAD_FIX_TRIES runs, a heads pass apart, the line is the lead's check, never an endless wait.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
+printf '{"total_count":1,"check_runs":[{"name":"opt","status":"completed","conclusion":"failure","html_url":"u"}]}\n' > "${FX}/${B1}.checks"
+lead 0
+check "a required check with no run and only an optional one red: the run ends" fix_done "${B1}"
+check "having written no story" test ! -e "${F}"
+check "its log ends absent:, naming the required check" test "$(tail -n 1 "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == \
+  "absent: CI on main at ${B1:0:7} has no run yet of test, which main requires, and no check it requires has failed; no fix-main story written"
+# Each next run waits for a heads pass newer than the log, and bash 3.2's -nt compares whole seconds.
+sleep 1; again; lead 0
+check "the next heads pass starts the second run" test "$(fix_runs "${B1}")" == 2
+must "the second run ends" fix_done "${B1}"
+sleep 1; again; lead 0
+check "after LEAD_FIX_TRIES absent: runs the line is the lead's check, not a wait" test "$(red_seen)" == \
+  "main-red: ${B1:0:7} o/r main (opt (failure)), exit: read .swarm/lead/fix-main-${B1:0:7}.log, as no run wrote fix-main-${B1:0:7}, then fix main by hand"
+check "and no third run starts" test "$(fix_runs "${B1}")" == 2
 
 # A base whose CI posts only commit statuses: no check run is needed for its head to read green.
 based; echo "${B1}" > "${FX}/base.main"; status_only failure "${B1}"

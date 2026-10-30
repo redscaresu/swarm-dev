@@ -868,6 +868,13 @@ try:
         print("; ".join(red or wait or ok))
         if red or wait:
             sys.exit(1 if red else 2)
+    elif mode == "required":
+        # The checks base requires, one name a line (none for a base that requires none); an error when any
+        # part of its rules cannot be read.
+        req, why = required(repo, args[0])
+        if why:
+            raise Err(why)
+        print("\n".join(sorted({c for c, _ in req})))
     elif mode == "age":
         # head's rule; once green, the whole minutes since its last run or status finished.
         done = []
