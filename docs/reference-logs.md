@@ -642,9 +642,9 @@ the tell's place), or the `ok` `review` or `merge` after the last tell closes it
 line after that tell means the builder declined the findings and pushed nothing, so the `review` or
 `merge` after it closes no new round. A `decline-only` line that comes while a round is still open
 closes that round: its findings went by a line `flow` does not close a round on, such as a tell that
-failed after herdr had sent it. The line names the round it ended, and a build with fewer rounds than
-that gets rows up to it, as it does for a finding on a later round. A round no review agent opened
-has no minutes.
+failed after herdr had sent it. The line names the round it ended, counted from the story's last
+`story` line; when the builds since that line have fewer rounds, the build it ends gets rows up to it,
+as a build does for a finding on a later round. A round no review agent opened has no minutes.
 
 The first block is TSV `story pr round model minutes fixed declined step_up`, a row per round: the
 builder's model (each build start and each step-up takes the next of the builder's `agents.tsv`
