@@ -408,7 +408,16 @@ Repeat until a step below says stop:
      report says for each (docs/reference.md § Merging lists them). Clear any other cause the report
      names as the lead's (CI on the base red or timed out, a story escalated to you) before the
      exit too. Then run the exit, which starts a fresh conductor and removes the old report. The
-     line goes once that work is done or a new conductor starts.
+     line goes once that work is done or a new conductor starts. A
+     `sign-blocked: <slug>, <slug> (their signing key is locked; unsigned work in their worktrees), exit: ...`
+     line names the builders whose signing key is locked: their last signer probe read `blocked`, they
+     still run, and their worktrees hold uncommitted work they cannot commit. Unlocking the key is the
+     user's step, never yours or an agent's: ask the user to unlock their signing key in their shell
+     (gpg-agent, or ssh-agent for an ssh key). Once they say it is unlocked, write a file telling the
+     builder its key is unlocked and to commit and carry on, and send it to each builder the line names
+     with `swarm.sh tell <slug> resume <file>`. The line comes from the conductors' `wait --stall`, so
+     it can come up to `stall_minutes` late. A builder leaves it once its next probe reads `clear`, it
+     commits, its worktree is clean or gone, or it stops running.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
