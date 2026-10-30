@@ -382,11 +382,12 @@ origin_repo() {
 }
 
 # merge_hold <pr-url> — stop merge when pr_held holds the PR for the user (a story's costs:). The
-# protected-path hold is protected_hold's, later in merge_pr.
+# protected-path hold is protected_hold's, later in merge_pr. Every hold here is the costs: hold, a story
+# that cannot be read included (it fails closed on money), so its line carries hold=money whatever the why.
 merge_hold() {
   local why
   why="$(pr_held "$1")"
-  [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it"; }
+  [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it" hold=money; }
 }
 
 # protected_hold <rc> <out> — on the story route under merge = agent, once the story lookup has set MERGE_TARGET to
@@ -395,19 +396,19 @@ merge_hold() {
 # exit and output; a list it could not read holds the PR too, saying why, so the user can tell a
 # passing error, which the next swarm.sh merge reads past, from a hold that stands (a PR of over 300
 # files, the most the compare lists, or of no file). Either hold is recorded on the item in review
-# (protected_note), and a pass drops the record. --board and --release change only board paths or
-# plugin.json, never a protected path. With merge = human it does not run: merge_grant, later in
+# (protected_note), and a pass drops the record; either merge line carries hold=protected. --board and
+# --release change only board paths or plugin.json, never a protected path. With merge = human it does not run: merge_grant, later in
 # merge_pr, refuses such a PR (pr_hld puts it under no HLD).
 protected_hold() {
   local why
   if [[ $1 -ne 0 ]]; then
     protected_note "unreadable: ${2%%$'\n'*}"
-    merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it"
+    merge_fail "held: ${MERGE_TARGET} (its files at ${head:0:7} could not be read: $2, so whether it changes a path only the user merges is unknown); the user merges it" hold=protected
   fi
   why="$(cut -d' ' -f2- <<< "$2" | protected_paths any-case)"
   why="${why%%$'\n'*}"
   protected_note "${why}"
-  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges; the user merges it"
+  [[ -z "${why}" ]] || merge_fail "held: ${MERGE_TARGET} changes ${why}, which only the user merges; the user merges it" hold=protected
 }
 
 # protected_note [what] — protected_hold's record of its verdict for status and wait --lead
@@ -476,9 +477,11 @@ merged_state() {
   echo "${state:-unreadable} ${oid}"
 }
 
-# merge_fail <why> — merge's one line for a refusal, then stop; merge_files' cache (merge_pr's local
-# flist), when the guard made one, goes with it. main logs nothing for merge.
-merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; [[ -z "${flist:-}" ]] || rm -f "${flist}"; die "merge: $1"; }
+# merge_fail <why> [key=value...] — merge's one line for a refusal, then stop; merge_files' cache
+# (merge_pr's local flist), when the guard made one, goes with it. main logs nothing for merge. A hold for
+# the user passes hold=<kind> (money, protected or dropped-lines), which the line carries in its field tail
+# (append_event) for flow's merges section; no other refusal passes a field.
+merge_fail() { record_event merge "${MERGE_TARGET}" "$1" "${@:2}"; [[ -z "${flist:-}" ]] || rm -f "${flist}"; die "merge: $1"; }
 
 # base_moved <owner/repo> <head> <base> <pr> [<merged>] — stop a story PR whose base has commits <head> lacks, since
 # CI on <head> never ran with them, unless every path they change is on the board (ci_gate behind,
@@ -840,6 +843,7 @@ dropped_refs_drop() {
 # head that moved (refs/pull/<n>/head is another commit, or gh no longer lists the head), which is
 # refused for a new review. On the story route either hold is recorded on the item in review
 # (dropped_note), and a pass drops the record; --board records nothing, since no item is in review.
+# Either hold's merge line carries hold=dropped-lines; the refusal for a moved head carries none.
 dropped_hold() {
   local out rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" tmp lines k what now why=""
   # dropped_lines' two lines for a moved head: the fetched refs/pull/<n>/head, and gh's list.
@@ -875,7 +879,7 @@ dropped_hold() {
     if [[ ${rc} -eq 1 && -n "${lines}" ]]; then
       k="$(grep -c '' <<< "${lines}")"; what="${lines%%$'\n'*}"; what="dropped base lines: ${k}, first ${what#* }"
       dropped_note "${what}"
-      merge_fail "held: ${MERGE_TARGET} (${what}); the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand"
+      merge_fail "held: ${MERGE_TARGET} (${what}); the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand" hold=dropped-lines
     fi
     why="$(tr -d '\000-\037\177' <<< "${why#dropped-lines: }")"
     if [[ "${why}" =~ ${moved_ref} ]]; then   # loose-match: ok moved_ref is a fixed regex
@@ -888,7 +892,7 @@ dropped_hold() {
     [[ ${rc} -ne 1 ]] || why="dropped-lines exited 1 with no dropped line: ${why}"
   fi
   dropped_note "dropped base lines unchecked: ${why}"
-  merge_fail "held: ${MERGE_TARGET} (dropped base lines unchecked: ${why}); the user checks the merge by hand and merges it, or runs swarm.sh merge again"
+  merge_fail "held: ${MERGE_TARGET} (dropped base lines unchecked: ${why}); the user checks the merge by hand and merges it, or runs swarm.sh merge again" hold=dropped-lines
 }
 
 # dropped_note [what] — dropped_hold's record of its verdict, on the story route only (merge_pr's f set):
@@ -1094,7 +1098,7 @@ merge_pr() {
     # A board PR could lift a hold (costs: money to none, or a story deleted) before it merges.
     info="$(gh pr diff "${n}" --repo "${repo}" --color never)" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"
     p="$(costs_diff <<< "${info}")"
-    [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; the user merges it"
+    [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; the user merges it" hold=money
   fi
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
