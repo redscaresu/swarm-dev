@@ -887,8 +887,8 @@ EVENT_OUTCOME_AWK="function outcome(s,  i) { i = index(s, \"${EVENT_SEP}\"); ret
 append_event() {
   local x o="${3:-ok}" tail="" cols=()
   o="${o//[$'\t\n\r']/ }"
-  if [[ "${o}" == *"${EVENT_SEP}"* ]]; then
-    while [[ "${o}" == *"${EVENT_SEP}"* ]]; do o="${o//"${EVENT_SEP}"/ }"; done
+  if [[ "${o}" == *"${EVENT_SEP}"* ]]; then   # loose-match: ok the separator anywhere in the outcome
+    while [[ "${o}" == *"${EVENT_SEP}"* ]]; do o="${o//"${EVENT_SEP}"/ }"; done   # loose-match: ok the separator anywhere in it
     o="${o%"${o##*[! ]}"}"
   fi
   for x in "${@:4}"; do
