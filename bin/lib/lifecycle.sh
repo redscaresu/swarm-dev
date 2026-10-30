@@ -3255,10 +3255,12 @@ main_red_fix() {
 # BASE_HEAD_WAIT): the pass's read is out of date when the base has moved off <sha>, or <sha>'s CI reads green
 # or pending now, and then it writes nothing and its last line is `stale: <why>`, which main_red_fix counts
 # as no run. It writes nothing either when ci_gate fixed reads the head as its own red's fix (the base requires
-# checks and each passed), as clear_red_main would on the next pass: its last line is then `not required:`. It fails, writing nothing, on a bad argument, a repo it cannot resolve, or a head or CI it
+# checks and each passed), as clear_red_main would on the next pass: its last line is then `not required:`. And
+# when fixed waits on a check the base requires that is still running or has no run yet, with none of those
+# failed, so whether the red is one the base requires is not known: that is `stale:` too. It fails, writing nothing, on a bad argument, a repo it cannot resolve, or a head or CI it
 # cannot read.
 main_red_run() {
-  local rc out head n names=()
+  local rc out head n why names=()
   [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "_fix-main: '$3' is not a whole commit sha"
   [[ -n "$2" && ! "$2" =~ ${LEAD_REF_BAD} ]] || die "_fix-main: '$2' is not a branch name"   # loose-match: ok LEAD_REF_BAD is a regex on purpose
   rc=0; lead_nwo "$1" || rc=$?
@@ -3276,9 +3278,18 @@ main_red_run() {
   # The red checks' names, as clear_red_main takes them from main-red.
   while IFS= read -r n; do [[ -z "${n}" ]] || names+=("${n}"); done \
     <<< "$(awk '{ n = split($0, c, "; "); for (i = 1; i <= n; i++) { sub(" \\((" r ")\\)( .*)?$", "", c[i]); print c[i] } }' r="${CI_CONCLUSIONS}" <<< "${out%%$'\n'*}")"
-  if within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" fixed "${LEAD_NWO}" "$3" "$2" "$3" "$(board_paths)" \
-      ${names[@]+"${names[@]}"} >/dev/null 2>&1 </dev/null; then
+  rc=0; why="$(within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" fixed "${LEAD_NWO}" "$3" "$2" "$3" "$(board_paths)" \
+    ${names[@]+"${names[@]}"} </dev/null 2>/dev/null)" || rc=$?
+  if (( rc == 0 )); then
     echo "not required: CI on $2 at ${3:0:7} is red only on checks $2 does not require; no fix-main story written"; return 0
+  fi
+  # fixed waits on a check the base requires, still running or with no run yet: unless a required one already
+  # failed, whether the red is one the base requires is not known, so the next heads pass decides again. With a
+  # required check absent, fixed counts every check, so its red entries say nothing.
+  why="$(tr ';' '\n' <<< "${why%%$'\n'*}")"
+  if (( rc == 1 )) && grep -qE ' [(](queued|in_progress|waiting|requested|pending|required, absent)[)]$' <<< "${why}" \
+    && { grep -qF '(required, absent)' <<< "${why}" || ! grep -qE " [(](${CI_CONCLUSIONS})[)]" <<< "${why}"; }; then
+    echo "stale: CI on $2 at ${3:0:7} has a check $2 requires still running or not started; no fix-main story written"; return 0
   fi
   # shellcheck disable=SC2034 # fix_main, in merge.sh, reads both
   MERGE_TARGET="" FIX_MAIN_REPO="$1"

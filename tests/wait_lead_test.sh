@@ -115,11 +115,14 @@ item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "$
 held() { item "$1" "kind: lead" "status: ready" "escalated_from: code" "held_for: $2"; }
 escalated() { item "$1" "kind: lead" "status: ready" "escalated_from: code"; }
 
-# fix_stop — KILL every fix-main run wait --lead started (main_red_fix), with its session: one left would
-# write into the next case's board, or into ${ROOT} once the test has removed it.
+# fix_stop — KILL every fix-main run wait --lead started (main_red_fix), with its session, and see each gone
+# within 5 s: one left would write into the next case's board, or into ${ROOT} while the test removes it.
 fix_stop() {
-  local p
-  while read -r p; do kill -KILL -- "-${p}" "${p}" 2>/dev/null || true; done < <(awk '$6 ~ /^[0-9]+$/ { print $6 }' "${P}/.swarm/lead/fixes" 2>/dev/null)
+  local p i
+  while read -r p; do
+    kill -KILL -- "-${p}" "${p}" 2>/dev/null || true
+    for ((i = 0; i < 50; i++)); do kill -0 "${p}" 2>/dev/null || break; sleep 0.1; done
+  done < <(awk '$6 ~ /^[0-9]+$/ { print $6 }' "${P}/.swarm/lead/fixes" 2>/dev/null)
 }
 # fresh [config line]... — a board with one held story, h, and nothing else; no events, no earlier run.
 fresh() {
@@ -910,6 +913,24 @@ again; lead 0
 check "then the head's own main-red: line for the optional check has the by-hand exit" \
   test "$(red_seen)" == "main-red: ${B2:0:7} o/r main (opt (failure)), exit: fix main by hand, as no fix-main story covers it yet"
 check "and no other run starts for that head" test "$(fix_runs "${B2}")" == 1
+
+# An optional check failed while the check the base requires still runs: whether the red is one the base
+# requires is not known yet, so the run writes nothing, its log ends stale:, and it counts as no run.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
+printf '{"total_count":2,"check_runs":[%s,%s]}\n' '{"name":"test","status":"in_progress","conclusion":null,"html_url":"u"}' \
+  '{"name":"opt","status":"completed","conclusion":"failure","html_url":"u"}' > "${FX}/${B1}.checks"
+lead 0
+check "with the required check still running, the run for the optional check's red ends" fix_done "${B1}"
+check "having written no story" test ! -e "${F}"
+check "and logged no main-red" test "$(main_reds "${B1}")" == 0
+check "its log ends stale:, as the required check has not finished" test "$(tail -n 1 "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == \
+  "stale: CI on main at ${B1:0:7} has a check main requires still running or not started; no fix-main story written"
+# The next heads pass's file must be newer than the log, and bash 3.2's -nt compares whole seconds.
+sleep 1; again; lead 0
+check "it counts as no run: the next heads pass's run is run 1 again" \
+  test "$(grep -c '^run 1 of 2,' "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == 2
+must "that run ends too" fix_done "${B1}"
 
 # A base whose CI posts only commit statuses: no check run is needed for its head to read green.
 based; echo "${B1}" > "${FX}/base.main"; status_only failure "${B1}"
