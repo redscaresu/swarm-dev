@@ -112,8 +112,7 @@ and no lines, since a hook there runs in every repo. Last, init lists the files 
 track yet, for you to commit: CI runs only once its workflow is committed. The next `/swarm-dev:swarm` asks
 once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
-`.claude/swarm/config` holds `key = value` lines and `#` comments, parsed and never run; an unknown
-key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` prints each setting and its source.
+`.claude/swarm/config` holds `key = value` lines and `#` comments, parsed and never run; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` prints each setting and its source.
 
 | Key | Default | What it does |
 |---|---|---|
