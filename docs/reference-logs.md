@@ -78,6 +78,20 @@ fails the command. The outcome field is the one place free text gets in: the rea
 `reset` or `drop`, the answer given to `dialog`, the PR URLs a `review` names (`ok (<PR URLs>)`),
 and the first line of a failed command's error.
 
+The outcome field can end in a tail of `key=value` fields, for example
+`ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
+`EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
+fields, and no caller passes any yet. It first takes every separator out of the outcome text: each
+one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
+then any trailing spaces. That way the first separator in the field is always where the tail starts,
+and an outcome that ends in one is written without it. Fields are separated by spaces. A key is
+lowercase letters and `_`. A value is not empty and holds no whitespace.
+A pair that breaks these rules is left out, with a warning on stderr, and the line is still written
+with the valid pairs. Readers strip the tail with `outcome(row)` in `bin/lib/events_outcome.py`
+(`fields(row)` there returns the fields as a dict) or with the awk function `outcome(s)` in
+`EVENT_OUTCOME_AWK`. Rows written before the tail existed have none, and both return their outcome
+unchanged.
+
 **The run-times log.** Each `status`, `next` and `dash` run appends one row to
 `.swarm/run-times.tsv`: when it started (UTC), the command, the seconds it took (to the millisecond)
 and the 1-minute load average at its start (`-` when `uptime` gives none). Nothing else writes
