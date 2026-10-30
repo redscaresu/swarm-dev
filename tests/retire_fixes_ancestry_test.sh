@@ -49,7 +49,10 @@ is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2'
 # shellcheck disable=SC2034,SC2317,SC2329 # merge.sh's functions read these and call these
 run() {
   (
-    PROJECT_DIR="${P}"; BOARD="${P}/board"; EVENTS_LOG="${P}/.swarm/events.tsv"; BOARD_IN_REPO=0; SWARM_HOME="${REPO}"; MERGE_TARGET=s
+    PROJECT_DIR="${P}"
+    # shellcheck source=/dev/null
+    . "${REPO}/bin/lib/agents.sh"   # first, as swarm.sh loads it: EVENT_OUTCOME_AWK, which merge.sh's readers use
+    BOARD="${P}/board"; EVENTS_LOG="${P}/.swarm/events.tsv"; BOARD_IN_REPO=0; SWARM_HOME="${REPO}"; MERGE_TARGET=s
     rm -rf "${BOARD}" "${P}/.swarm" "${ROOT}"/out-* "${ROOT}/gh.log"; mkdir -p "${BOARD}/stories" "${P}/.swarm"
     # shellcheck source=/dev/null
     . "${REPO}/bin/lib/merge.sh"
