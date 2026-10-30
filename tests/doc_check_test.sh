@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # doc_check_test.sh — the docs name only what swarm.sh has. In README.md, docs/*.md, commands/*.md,
-# skills/ and templates/ (AGENTS.md is the lead's, so it is not read), every `swarm.sh <command>` in
+# skills/ and templates/ (not AGENTS.md, the lead's, nor llms.txt), every `swarm.sh <command>` in
 # code must be one of dispatch's arms (or version and update, which run before it), every key in a
 # setting table (header `| Key |`) or after `swarm.sh config` one of CONFIG_KEYS, and every repo path
 # in code or a markdown link must exist; a docs/ path may instead be one templates/docs gives a board,
 # and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh. Every
 # `](<path>#<slug>)` or `](#<slug>)` link in those files, AGENTS.md and llms.txt must name a heading of
-# its markdown target, slugged as GitHub does; AGENTS.md and llms.txt get only that check.
+# its markdown target, slugged as GitHub does. AGENTS.md and llms.txt get only their links checked:
+# each target must exist and each #anchor be a heading.
 # A removed command that prints a pointer is still an arm, so it passes. tests/doc_check_known.txt
 # lists the stale references found when this landed (file, tab, text); they pass until fixed, and an
 # entry no longer found fails, so the list only shrinks.
@@ -86,20 +87,28 @@ def slugs(text):
     return seen
 
 anchors = {}
+# AGENTS.md is the lead's and llms.txt a map: check_md does not read them, so check_links reports a
+# link of theirs whose target is missing, beside every file's dead #anchors.
+LINKS_ONLY = ("AGENTS.md", "llms.txt")
 
-def check_anchors(rel, text, out):
+def check_links(rel, text, out):
     fence = False
     for line in text.splitlines():
         if line.lstrip().startswith("```"):
             fence = not fence
         if fence:
             continue
-        for link, target, slug in re.findall(r"\]\((([^)\s#]*)#([^)\s]+))\)", line):
-            if "://" in target or "<" in target or not (target or rel).endswith(".md"):
+        for link in re.findall(r"\]\(([^)\s]+)\)", line):
+            target, _, slug = link.partition("#")
+            if "://" in link or link.startswith("mailto:") or "<" in target:
                 continue
             path = os.path.normpath(os.path.join(root, os.path.dirname(rel), target) if target else os.path.join(root, rel))
-            if not os.path.isfile(path):
-                continue   # a missing file is the link check's to report
+            if not os.path.exists(path):
+                if rel in LINKS_ONLY:
+                    out.append("link " + link)   # in any other file, check_prose reports it
+                continue
+            if not slug or not (target or rel).endswith(".md") or not os.path.isfile(path):
+                continue
             if path not in anchors:
                 anchors[path] = slugs(open(path).read())
             if slug not in anchors[path]:
@@ -130,19 +139,17 @@ def check_md(rel, text, out):
 tracked = subprocess.run(["git", "-C", root, "ls-files", "-z", "README.md", "AGENTS.md", "llms.txt", "docs", "commands",
                           "skills", "templates"], check=True, capture_output=True, text=True).stdout.split("\0")[:-1]
 files = [f for f in tracked if re.fullmatch(r"README\.md|(docs|commands)/[^/]+\.md|(skills|templates)/.+", f)]
-# AGENTS.md is the lead's and llms.txt a map: only their links into docs/ are read, for #anchors.
-ANCHORS_ONLY = ("AGENTS.md", "llms.txt")
-for rel in files + [f for f in tracked if f in ANCHORS_ONLY]:
+for rel in files + [f for f in tracked if f in LINKS_ONLY]:
     path = os.path.join(root, rel)
     if not os.path.isfile(path):
         continue
     text, out = open(path).read(), []
-    if rel.endswith(".md") and rel not in ANCHORS_ONLY:
+    if rel.endswith(".md") and rel not in LINKS_ONLY:
         check_md(rel, text, out)
-    elif rel not in ANCHORS_ONLY:
+    elif rel not in LINKS_ONLY:
         check_code(text, out)
-    if rel.endswith(".md") or rel in ANCHORS_ONLY:
-        check_anchors(rel, text, out)
+    if rel.endswith(".md") or rel in LINKS_ONLY:
+        check_links(rel, text, out)
     for o in dict.fromkeys(out):
         print(rel + "\t" + o)
 EOF
@@ -197,10 +204,13 @@ cat > "${tmp}/fixture/docs/anchors.md" <<'EOF'
 
 [Up](#anchors), [the third](#the-swarmsh-merge-command--2), [a comment](#comment) and [gone](#nosuch).
 EOF
-# AGENTS.md is read for its anchors only: its unknown command passes.
+# AGENTS.md and llms.txt are read for their links only: a missing target and a dead #anchor are caught,
+# and AGENTS.md's unknown command passes.
 cat > "${tmp}/fixture/AGENTS.md" <<'EOF'
-Run `swarm.sh nosuch`, see [the lead](docs/anchors.md#the-lead) and [building](docs/anchors.md#building).
+Run `swarm.sh nosuch`, see [the lead](docs/anchors.md#the-lead), [building](docs/anchors.md#building)
+and [gone](docs/nosuch.md#building).
 EOF
+printf -- '- [anchors](docs/anchors.md)\n- [building](docs/anchors.md#buildingz)\n' > "${tmp}/fixture/llms.txt"
 cat > "${tmp}/fixture/docs/method.md" <<'EOF'
 | Key | Default | What it does |
 |---|---|---|
@@ -225,14 +235,14 @@ bin/swarm.sh nosuch1
 "${SWARM_HOME}/bin/swarm.sh" dash
 ```
 EOF
-want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead'
+want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead\nAGENTS.md\tlink docs/nosuch.md#building\nllms.txt\tanchor docs/anchors.md#buildingz'
 git -C "${tmp}/fixture" init -q && git -C "${tmp}/fixture" add -A
 printf '\0\x80\xff' > "${tmp}/fixture/templates/.DS_Store"   # untracked, and not text
 printf 'Run %sswarm.sh untracked%s.\n' '`' '`' > "${tmp}/fixture/docs/notes.md"   # untracked
 doc_check "${tmp}/fixture" > "${tmp}/fixture.found"
 got="$(cat "${tmp}/fixture.found")"
 if [[ "${got}" == "${want}" ]]; then
-  echo "ok   fixture docs: an unknown command, config key, link, path and #anchor are each caught, and nothing else"
+  echo "ok   fixture docs: an unknown command, config key, link, path and #anchor are each caught (AGENTS.md's and llms.txt's links too), and nothing else"
 else
   echo "FAIL fixture docs: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
 fi
