@@ -3183,8 +3183,65 @@ reported_lines() {
   done
 }
 
-# sign_blocked_lines — prints nothing yet; the story sign-blocked-line fills it.
-sign_blocked_lines() { :; }
+# SIGN_STATUS_WAIT: how many seconds each of sign_blocked_lines' git reads of one builder's worktree may take.
+SIGN_STATUS_WAIT=10
+
+# sign_blocked_lines — `sign-blocked: <slug>, <slug> (their signing key is locked; unsigned work in their
+# worktrees), exit: unlock your signing key in your shell (gpg-agent or ssh-agent), then swarm.sh tell
+# <slug> resume <file> for each`, one line for every builder that cannot sign its work: its newest
+# sign-blocked or sign-clear incident in events.tsv (sign_held's, which the conductors' wait --stall
+# writes) is a sign-blocked one, it still runs in a pane of the poll's herdr list (LEAD_AGENTS), its
+# worktree still holds uncommitted work (git status --porcelain), and its last commit is still the one
+# the incident names (sign_held's `unsigned work since <time>`): a builder that committed since has signed,
+# and no probe logs sign-clear for a builder that is not stalled. Each git read runs with
+# GIT_OPTIONAL_LOCKS=0, so one cut off after SIGN_STATUS_WAIT seconds leaves no index.lock to fail the
+# builder's next commit. A read that fails or is cut off says nothing: the builder stays on the line when
+# the line in LEAD_SEEN names it (sign_seen), and is left off otherwise. A worktree that is gone drops it.
+# The slugs are sorted, so the line reads the same each poll for LEAD_SEEN. It asks no signer: the line
+# comes once a builder's stall check has run, so up to stall_minutes late. A poll with no herdr list keeps
+# the sign-blocked: line LEAD_SEEN has.
+sign_blocked_lines() {
+  local name slug since src wt st at slugs=""
+  [[ -f "${EVENTS_LOG}" ]] || return 0
+  [[ -n "${LEAD_AGENTS_READ}" ]] || lead_agents
+  if [[ -z "${LEAD_AGENTS_OK}" ]]; then grep '^sign-blocked: ' "${LEAD_SEEN}" 2>/dev/null || true; return 0; fi
+  while IFS=$'\t' read -r name slug since; do
+    [[ -n "$(list_field "${name}" pane_id <<< "${LEAD_AGENTS}")" ]] || continue
+    src="$(repo_dir "$(fm "${BOARD}/stories/${slug}.md" repo 2>/dev/null)")" || continue
+    wt="$(worktree_for "${src}" "${slug}")"
+    [[ -d "${wt}" ]] || continue
+    if ! st="$(within "${SIGN_STATUS_WAIT}" env GIT_OPTIONAL_LOCKS=0 git -C "${wt}" status --porcelain </dev/null 2>/dev/null)"; then
+      ! sign_seen "${slug}" || slugs+="${slug}"$'\n'
+      continue
+    fi
+    [[ -n "${st}" ]] || continue
+    if ! at="$(within "${SIGN_STATUS_WAIT}" env GIT_OPTIONAL_LOCKS=0 TZ=UTC git -C "${wt}" log -1 --format=%cd \
+          --date=format-local:%Y-%m-%dT%H:%M:%SZ </dev/null 2>/dev/null)"; then
+      ! sign_seen "${slug}" || slugs+="${slug}"$'\n'
+      continue
+    fi
+    [[ "${at}" == "${since}" ]] || continue
+    slugs+="${slug}"$'\n'
+  done < <(awk -F'\t' '$2 == "incident" && $5 ~ /^sign-(blocked|clear): / { l[$3] = $5 }
+    END {
+      for (n in l) if (l[n] ~ /^sign-blocked: /) {
+        s = substr(l[n], 15); sub(/ .*/, "", s)
+        t = l[n]; sub(/^[^(]*\(unsigned work since /, "", t); sub(/\)$/, "", t)
+        print n "\t" s "\t" t
+      }
+    }' "${EVENTS_LOG}")
+  [[ -n "${slugs}" ]] || return 0
+  slugs="$(printf '%s' "${slugs}" | LC_ALL=C sort -u | paste -sd, - | sed 's/,/, /g')"
+  echo "sign-blocked: ${slugs} (their signing key is locked; unsigned work in their worktrees), exit: unlock your signing key in your shell (gpg-agent or ssh-agent), then swarm.sh tell <slug> resume <file> for each"
+}
+
+# sign_seen <slug> — true when the sign-blocked: line in LEAD_SEEN names <slug>.
+sign_seen() {
+  awk -v s="$1" 'index($0, "sign-blocked: ") == 1 {
+      l = substr($0, 15); sub(/ \(.*/, "", l); n = split(l, a, ", ")
+      for (i = 1; i <= n; i++) if (a[i] == s) f = 1
+    } END { exit !f }' "${LEAD_SEEN}" 2>/dev/null
+}
 
 # prompt_lines — `prompt: <agent> (<kind>), exit: <exit>` for each agent in a pane this project opened
 # (own_panes) that the poll's herdr list (lead_agents) shows blocked, idle or done, and whose pane
