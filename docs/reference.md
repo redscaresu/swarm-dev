@@ -2,8 +2,8 @@
 
 The detail behind [the guide](method.md): how each step works, every rule and every log. Read the guide first.
 
-The reference has a file per topic. A `§ <name>` in the docs, a brief or a comment means the
-section of that name, in the file listed for it here.
+The reference has a file per topic. A `§ <name>` in the docs, a brief or a comment names a section
+listed below, or a part of one (a ### heading or a bold paragraph) in one of these files.
 
 - [`reference-lead.md`](reference-lead.md): [§ The lead](reference-lead.md#the-lead)
 - [`reference-planning.md`](reference-planning.md): [§ Writing an HLD](reference-planning.md#writing-an-hld), [§ Decomposing an HLD](reference-planning.md#decomposing-an-hld), [§ Writing an epic](reference-planning.md#writing-an-epic), [§ Scoping an epic](reference-planning.md#scoping-an-epic)

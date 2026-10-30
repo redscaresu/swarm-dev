@@ -194,7 +194,7 @@ A whole number N lets at most N runs go at once on the machine, whatever their p
 for a free slot under `~/.swarm/test-slots/`. The wait has no time limit: a holder that is stopped (Ctrl-Z) or hung keeps its slot until it ends or you `rm -r` the slot directory the waiting message names. A missing file, an empty file or 0 means no cap, and
 nothing is made under `~/.swarm`. A `make test` that a test starts inside another run is nested: it
 skips the cap and takes no slot. It is no `swarm.sh` setting, so it is not in `CONFIG_KEYS` or
-reference-models.md's settings table.
+docs/method.md's settings table (§ Configuring a project).
 
 Every `tests/*_test.sh` sources `tests/test_helpers.sh` as its first command after `set -euo pipefail`. It
 drops the pane's `SWARM_*` settings and `HERDR_SOCKET_PATH`, which name the lead's real project and herdr.
