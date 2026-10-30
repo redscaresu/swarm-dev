@@ -880,20 +880,20 @@ EVENT_OUTCOME_AWK="function outcome(s,  i) { i = index(s, \"${EVENT_SEP}\"); ret
 
 # append_event <command> <target> [outcome] [key=value...] — record_event's append, failing when the
 # line was not written, for a command whose only output is that line (intervene). The outcome loses
-# every EVENT_SEP it holds (each becomes a space, and trailing spaces go), so the tail is the only
-# one. Fields follow it after EVENT_SEP, space-separated. A pair whose key is not [a-z_]+, or whose
-# value is empty or holds a space, tab or newline, is left out with a warning on stderr; the line is
-# still written, with the valid pairs.
+# every EVENT_SEP it holds (each becomes a space) and a trailing EVENT_SEP without its last space,
+# which the tail's EVENT_SEP would complete, and then its trailing spaces; so the tail's EVENT_SEP
+# is the first. Fields follow it, space-separated. A pair whose key is not [a-z_]+, or whose value is
+# empty or holds whitespace, is left out with a warning on stderr; the line is still written, with the
+# valid pairs.
 append_event() {
-  local x o="${3:-ok}" tail="" cols=()
+  local x o="${3:-ok}" tail="" cols=() cut="${EVENT_SEP% }"
   o="${o//[$'\t\n\r']/ }"
-  if [[ "${o}" == *"${EVENT_SEP}"* ]]; then   # loose-match: ok the separator anywhere in the outcome
-    while [[ "${o}" == *"${EVENT_SEP}"* ]]; do o="${o//"${EVENT_SEP}"/ }"; done   # loose-match: ok the separator anywhere in it
-    o="${o%"${o##*[! ]}"}"
-  fi
+  while [[ "${o}" == *"${EVENT_SEP}"* || "${o}" == *"${cut}" ]]; do   # loose-match: ok the separator anywhere in the outcome, or at its end
+    o="${o//"${EVENT_SEP}"/ }"; o="${o%"${cut}"}"; o="${o%"${o##*[! ]}"}"
+  done
   for x in "${@:4}"; do
     if [[ "${x}" =~ ^[a-z_]+=[^[:space:]]+$ ]]; then tail+="${tail:+ }${x}"
-    else echo "append_event: left out ${x%%[$'\t\n\r']*}: a field is key=value, the key [a-z_]+, the value not empty and with no space or tab" >&2; fi
+    else echo "append_event: left out ${x%%[$'\t\n\r']*}: a field is key=value, the key [a-z_]+, the value not empty and with no whitespace" >&2; fi
   done
   for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:--}" "${HERDR_PANE_ID:--}" "${o}${tail:+${EVENT_SEP}${tail}}"; do cols+=("${x//[$'\t\n\r']/ }"); done
   { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${cols[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null
