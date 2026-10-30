@@ -56,7 +56,7 @@ check "an escaped split-gap (a gap the split critic missed) is logged as kind sp
 check "--declined with --reviewer escaped is refused" "refused" "$(refused --declined nit --reviewer escaped rev-kind o/r#93 t)"
 check "--declined with no reason and --reviewer escaped says escaped is never declined" "refused|yes" \
   "$(refused --declined --reviewer escaped rev-kind o/r#93 t)|$(has "never declined" "$(sw log-finding --declined --reviewer escaped rev-kind o/r#93 t || true)")"
-# A declined row carries its reason as a 7th field; a missing or unknown reason is refused, naming the three.
+# A declined row carries its reason as a 7th field; a missing or unknown reason is refused, naming the four.
 check "--declined nit appends a 7-field row ending declined, codex, nit" "7|declined	codex	nit" \
   "$(sw log-finding --declined nit --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')|$(tail -1 "${F}" | cut -f5-)"
 check "a fixed row stays at 6 fields" "6" "$(sw log-finding --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')"
@@ -74,7 +74,9 @@ for r in "" x -1 1.5 1000; do
   check "--round '${r}' is refused" "refused" "$(refused --round "${r}" k o/r#94 t)"
 done
 check "the refusal says what a round is" "yes" "$(has "--round needs the review round" "$(sw log-finding --round x k o/r#94 t || true)")"
-REASONS="--declined needs a reason, one of: out-of-scope nit wrong"
+check "--declined deferred --round 3 keeps deferred in field 7 and 3 in field 8" "deferred|3" \
+  "$(sw log-finding --declined deferred --reviewer codex --round 3 k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print $7 "|" $8}')"
+REASONS="--declined needs a reason, one of: out-of-scope nit wrong deferred"
 check "--declined with no reason is refused, naming the reasons" "refused|yes" \
   "$(refused --declined --reviewer codex k o/r#94 t)|$(has "${REASONS}" "$(sw log-finding --declined --reviewer codex k o/r#94 t || true)")"
 check "--declined maybe is refused, naming the reasons" "refused|yes" \

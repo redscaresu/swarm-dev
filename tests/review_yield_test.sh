@@ -126,7 +126,7 @@ rm -rf "${dir}/heads" "${dir}/ghfail" "${P}/docs/epics" "${P}/.swarm/clean"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 # --round: a by-round block and a per-story block, printed once a row has a round. b's PR #2 (merged),
 # with one tell:findings (one round sent to its builder): round 1 fixes 3 and declines 2 nits, round 2
-# (the pass) fixes none and declines 4 nits, so b stopped in round 2 on a pass. A board PR's round 0
+# (the pass) fixes none and declines 4 nits and 1 deferred, so b stopped in round 2 on a pass. A board PR's round 0
 # counts per round but is no story's; a row with no round is round unknown.
 cp "${P}/.swarm/events.tsv" "${dir}/events.bak"
 printf '2026-10-01T15:00:00Z\ttell:findings\tb\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
@@ -134,15 +134,16 @@ printf '%s\tMERGED\t2026-10-04T00:00:00Z\n' "${U}/2" > "${dir}/prs/story_b"
 { for _ in 1 2 3; do printf '2026-10-02\tk\to/r#2\tt\tfixed\tcodex\t\t1\n'; done
   for _ in 1 2; do printf '2026-10-02\tk\to/r#2\tt\tdeclined\tcodex\tnit\t1\n'; done
   for _ in 1 2 3 4; do printf '2026-10-03\tk\to/r#2\tt\tdeclined\tcodex\tnit\t2\n'; done
+  printf '2026-10-03\tk\to/r#2\tt\tdeclined\tcodex\tdeferred\t2\n'
   printf '2026-10-02\tplan-gap\to/r#9\tt\tfixed\tskeptic\t\t0\n'
   printf '2026-10-01\told\to/r#1\tt\tfixed\tlead\n'; } > "${P}/.swarm/findings.tsv"
 by_round() { sed -n $'/^round\treviewer\t/,/^$/p; /^story\tpr\t/,/^$/p' <<< "$1" | grep -v '^exit '; }
-check "by round: round 1 3 fixed and 2 nits, round 2 0 fixed and 4 nits; b stopped in round 2 on a pass" \
-  "$(by_round "$(yield_of "${P}")")" "$(printf '%s\n' $'round\treviewer\tfixed\tdeclined\tnit\tout-of-scope\twrong\tshare_fixed' \
-  $'0\tskeptic\t1\t0\t0\t0\t0\t100%' $'0\tall\t1\t0\t0\t0\t0\t100%' \
-  $'1\tcodex\t3\t2\t2\t0\t0\t60%' $'1\tall\t3\t2\t2\t0\t0\t60%' \
-  $'2\tcodex\t0\t4\t4\t0\t0\t0%' $'2\tall\t0\t4\t4\t0\t0\t0%' \
-  $'unknown\tlead\t1\t0\t0\t0\t0\t100%' $'unknown\tall\t1\t0\t0\t0\t0\t100%' "" \
+check "by round: round 1 3 fixed and 2 nits, round 2 0 fixed, 4 nits and 1 deferred; b stopped in round 2 on a pass" \
+  "$(by_round "$(yield_of "${P}")")" "$(printf '%s\n' $'round\treviewer\tfixed\tdeclined\tnit\tout-of-scope\twrong\tdeferred\tshare_fixed' \
+  $'0\tskeptic\t1\t0\t0\t0\t0\t0\t100%' $'0\tall\t1\t0\t0\t0\t0\t0\t100%' \
+  $'1\tcodex\t3\t2\t2\t0\t0\t0\t60%' $'1\tall\t3\t2\t2\t0\t0\t0\t60%' \
+  $'2\tcodex\t0\t5\t4\t0\t0\t1\t0%' $'2\tall\t0\t5\t4\t0\t0\t1\t0%' \
+  $'unknown\tlead\t1\t0\t0\t0\t0\t0\t100%' $'unknown\tall\t1\t0\t0\t0\t0\t0\t100%' "" \
   $'story\tpr\tstopped_round\twhy' "b	${U}/2	2	pass")"
 printf '%s\tOPEN\t\n' "${U}/2" > "${dir}/prs/story_b"
 check "the same PR still open shows unmerged: its round 2 may not have happened" \
