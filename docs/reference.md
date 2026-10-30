@@ -520,6 +520,25 @@ prints:
   skipped without reading further, unless a fix-main story is on the board. The line goes once
   that work is done or a new conductor starts.
 
+**Builders that cannot sign their work wake the lead too.** `wait --lead` prints one line for all of them:
+`sign-blocked: <slug>, <slug> (their signing key is locked; unsigned work in their worktrees), exit: unlock your signing key in your shell (gpg-agent or ssh-agent), then swarm.sh tell <slug> resume <file> for each`.
+A builder is on it when four things hold. Its newest `sign-blocked:` or `sign-clear:` incident in
+`events.tsv` is a `sign-blocked:` one. It still runs in a pane of the poll's herdr list. Its worktree still
+has uncommitted work (`git status --porcelain`). Its worktree's last commit is still the one the incident
+names in `unsigned work since <time>`. The probe runs only on a builder that looks stalled, so a builder
+that was unblocked and went back to work gets no `sign-clear:`; a commit since the incident shows it
+signed. Each git read runs with
+`GIT_OPTIONAL_LOCKS=0` and is cut off after 10 seconds, so a read that is cut off leaves no `index.lock` to
+fail the builder's next commit. A read that fails or is cut off says nothing either way: the builder stays
+on the line if the line the last poll saw names it, and is left off if not. A builder whose worktree is
+gone leaves the line. The slugs are sorted, so the
+line reads the same from poll to poll and wakes the lead once. It changes, and wakes the lead again, when a
+builder joins or leaves it. The poll asks no signer: it runs no gpg, gpg-connect-agent, ssh-add or
+ssh-keygen. The incidents come from the conductors' `wait --stall`, which probes the signer only once a
+builder looks stalled (§ Building), so the line can come up to `stall_minutes` after the key locked. It
+reads the same herdr list as `no-agent:`; a poll whose list failed keeps the `sign-blocked:` line it saw
+last.
+
 **A failed step-up wakes the lead too, through a marker file.** A marker is
 `.swarm/briefs/<stem>.<kind>`, where `<stem>` names the agent's brief (the slug for a builder) and
 `<kind>` says what it marks. Its first line holds the marker's own fields. A `pid <n>` line names the
@@ -1478,6 +1497,7 @@ adds none unless a `sign-clear: <slug>` incident (the probe reading `clear` on a
 or a new commit came between. When two waits on one builder probe at once, the one that takes the lock
 (`.swarm/panes/<agent>.sign.lock`) logs and the other logs nothing. A probe that cannot tell (`unknown`)
 changes nothing, and the builder can stall.
+`wait --lead` reads these incidents for its `sign-blocked:` line (§ The lead).
 So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at the timeout or when
 herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
