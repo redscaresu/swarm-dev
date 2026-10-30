@@ -2098,12 +2098,25 @@ rate_reset() {
     </dev/null 2>/dev/null || true
 }
 
+# first_green <owner/repo> <n> <branch> <sha> — log `first-green <slug>`, outcome <sha>, for a PR on
+# story/<slug>, once per PR: wait-pr runs again and again, so .swarm/state/first-green-seen keeps
+# <owner/repo>#<n> for each PR logged. A PR on no story branch logs none. The marker is kept only once the
+# line is written, and a log or marker it cannot write changes nothing wait-pr prints or exits with.
+first_green() {
+  local seen="${STATE_DIR}/first-green-seen"
+  [[ "$3" == story/?* ]] || return 0
+  ! grep -qxF "$1#$2" "${seen}" 2>/dev/null || return 0
+  append_event first-green "${3#story/}" "$4" || return 0
+  { mkdir -p "${STATE_DIR}" && echo "$1#$2" >> "${seen}"; } 2>/dev/null || true
+}
+
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
 # wait-pr [--timeout <seconds>] [--head <sha>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
 # MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
-# that changes. Exits 0 when all are green, printing each check; 1 on red; 2 on anything else, since a
+# that changes. Exits 0 when all are green, printing each check, the first green on a story PR logged
+# as first-green (first_green); 1 on red; 2 on anything else, since a
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
 # WAIT_PR_TRIES in a row at most, any other ends it at once. A new head has no check runs for a few
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
@@ -2192,7 +2205,7 @@ wait_pr() {
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
     fi
     case ${rc} in
-      0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; return 0 ;;
+      0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; first_green "${repo}" "${n}" "${branch}" "${head}"; return 0 ;;
       1) echo "red: ${why}"
          # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
          WAIT_PR_RED=1
@@ -2722,8 +2735,8 @@ queued_sent() {
 
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
 # needs the lead, print one line saying which and why, and exit 0. With --epic or --backlog, a story PR
-# first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>), before
-# anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
+# first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>, and an
+# events.tsv line `pr-opened <slug>` with the PR's URL), before anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
 # whose head already has a review). Watches that run at once share watch-seen, and the lead's rewrite
 # of its waiting lines can drop an opened line written meanwhile, so a PR can be said opened twice, as
 # a done or conflict line can be said twice (review-agent refuses a second start while the first still
@@ -2772,7 +2785,8 @@ watch_prs() {
         # agent; from the list and the board alone, before any read of the PR. The lead's bare watch
         # leaves that to it.
         if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}" && opened_due "${br#story/}" "${sha}"; then
-          echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"; return 0
+          echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"
+          record_event pr-opened "${br#story/}" "https://github.com/${repo}/pull/${n}"; return 0
         fi
         mergeable=""
         # No conflict read on a head already reported conflicting, or finished and queued: nothing

@@ -12,7 +12,12 @@ exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `confi
 `cost`, `outcomes`, `flow`, `dataset`, `review-yield`, `features`, `lessons`, `findings`, `dropped-lines`, `where`, the `wait`, `wait-pr` and `watch` that conductors and the lead run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The
 exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each API-error resume as
-`resume <agent>`, and `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`.
+`resume <agent>`, `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`,
+a conductor's `watch` (`--epic` or `--backlog`), which logs `pr-opened <slug>` with the PR's URL when it
+says a story PR opened, and `wait-pr`, which logs `first-green <slug>` with the head SHA the first time
+a PR on `story/<slug>` is green, once per PR (the lead's bare `watch` and a PR on any other branch log
+none). Builders open their PRs with `gh pr create`, so no `swarm.sh` command runs at that moment to log it.
+A line `watch` or `wait-pr` cannot write changes nothing they print or exit with.
 The stall rule skips those lines, because none is a sign of life. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
