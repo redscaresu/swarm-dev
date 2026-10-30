@@ -1,0 +1,400 @@
+2026-10-25T09:58:26Z	agent	zza	wa:pa	ok
+2026-10-25T10:05:41Z	board-pr:start	zzb	wa:pa	ok
+2026-10-25T10:06:16Z	board-pr:open	zzb	wa:pa	ok
+2026-10-25T10:07:26Z	codex-review	zzc	wa:pa	ok
+2026-10-25T10:14:24Z	close	zza	wa:pa	ok
+2026-10-25T10:18:32Z	merge	https://github.com/o/r/pull/1	wa:pa	--head takes a full 40-character SHA, not '2326328'
+2026-10-25T10:18:59Z	merge	https://github.com/o/r/pull/1	wa:pa	ok
+2026-10-25T10:26:13Z	main-ci	https://github.com/o/r/pull/1	wa:pa	ok
+2026-10-25T10:26:25Z	conduct	--backlog	wa:pa	ok
+2026-10-25T10:26:57Z	story	zzd	wb:pb	ok
+2026-10-25T10:27:18Z	unblock	zze	wb:pb	ok
+2026-10-25T10:30:27Z	story	zzf	wb:pc	no story /p/a
+2026-10-25T10:30:35Z	agent	zzg	wc:pd	swarm.sh needs Claude Code 2.1.145 or later, and claude --version says '2.1.144 (Claude Code)'. Update it (claude update), then try again.
+2026-10-25T10:30:35Z	conduct	zzh	wc:pd	no epic /p/b
+2026-10-25T10:30:36Z	agent	zzg	wc:pd	this session (00000000-0000-4000-8000-0000000000zzi) is not in claude agents --json: the interactive listing every agent's state is read from is missing. Restart Claude Code on 2.1.145 or later, then try again.
+2026-10-25T10:30:36Z	agent	zzg	wc:pd	could not read claude agents --json (cat: /p/c: No such file or directory), so this session (00000000-0000-4000-8000-0000000000zzi) cannot be found in it. Check that the command works here, then try again.
+2026-10-25T10:30:38Z	agent	zzg	wc:pd	Claude Code (claude) is not on PATH; swarm.sh needs 2.1.145 or later.
+2026-10-25T10:41:18Z	log-finding	zzj zzk	wb:pc	pr 'local' must be a PR URL or owner/repo#N, so the same PR always counts once
+2026-10-25T10:41:55Z	tell:nudge	zzd	wa:pa	zzd is still working; run `swarm.sh wait zzd` in the background, then tell it
+2026-10-25T10:56:46Z	incident	zzl	wa:pa	wait-timeout: busy
+2026-10-25T10:56:46Z	tell:nudge	zzl	wa:pa	zzl is still working; run `swarm.sh wait zzl` in the background, then tell it
+2026-10-25T11:11:57Z	log-finding	zzj https://github.com/o/r/pull/2	wb:pc	ok
+2026-10-25T11:18:16Z	tell:nudge	zzd	wa:pa	ok
+2026-10-25T11:19:10Z	review-agent	zzd	wb:pb	review-agent: zzd's worktree has uncommitted changes, so it is not the PR's head 0000000000000000000000000000000000000001; nothing was started: wait for its builder to commit and push, then start the review again
+2026-10-25T11:19:35Z	stacked	zzm	wb:pb	ok (on zzd)
+2026-10-25T11:26:41Z	review-agent	zzd	wb:pb	ok
+2026-10-25T11:27:05Z	incident	review-zzd	wb:pb	api-error: API Error: Must zzn one of the `zzo` or `zzp` arguments, or the
+2026-10-25T11:27:18Z	resume	review-zzd	wb:pb	ok
+2026-10-25T11:32:26Z	log-finding:declined	zzq https://github.com/o/r/pull/2	wb:pb	ok
+2026-10-25T11:32:33Z	review	zzd	wb:pb	ok (https://github.com/o/r/pull/2)
+2026-10-25T11:32:36Z	incident	-	wb:pb	merge-blocked: swarm.sh merge joined to another command
+2026-10-25T11:40:47Z	reconcile	zzd	wb:pb	ok (finished by its PR)
+2026-10-25T11:50:24Z	review	zzr	wc:pe	failed (exit 1)
+2026-10-25T11:50:24Z	tell:findings	zzr	wc:pe	ok
+2026-10-25T11:50:25Z	tell	zzr	wc:pe	tell: the kind must be findings, nudge or resume, not '' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)
+2026-10-25T11:50:25Z	close:bound	zzr	wc:pe	ok
+2026-10-25T11:50:25Z	tidy	-	wc:pe	ok
+2026-10-25T11:50:26Z	finish	zzr	wc:pe	failed (exit 1)
+2026-10-25T11:50:27Z	agent	zzs	wc:pe	no prompt file /p/d
+2026-10-25T11:50:27Z	log-finding	-	wc:pe	usage: swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <one line>
+2026-10-25T11:50:28Z	tell:findings	zzr	wc:pe	zzr: the agent holding this name is not one this project started; it is never told from here
+2026-10-25T11:50:33Z	agent	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:33Z	story	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:33Z	conduct	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:33Z	close	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:33Z	step-up	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:33Z	tell	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:42Z	tidy	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:42Z	upgrade	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:44Z	incident	-	wb:pf	lead-hand: x
+2026-10-25T11:50:45Z	reset	-	wb:pf	reset: <slug> is missing: swarm.sh reset <slug> <reason>
+2026-10-25T11:50:45Z	drop	-	wb:pf	drop: <slug> is missing: swarm.sh drop <slug> <reason>
+2026-10-25T11:50:45Z	dialog	-	wb:pf	dialog: bad slug '': swarm.sh dialog <slug> <accepted|dismissed>
+2026-10-25T11:50:45Z	plan-unasked	-	wb:pf	plan-unasked: no epic /p/e: swarm.sh plan-unasked [--declined] <epic>
+2026-10-25T11:50:45Z	merge	-	wb:pf	usage: swarm.sh merge [--board|--release] [--head <sha>] <pr-url>
+2026-10-25T11:50:46Z	board-pr	-	wb:pf	usage: swarm.sh board-pr start <name> | open <name> "<title>" <body-file> | done <name>
+2026-10-25T11:50:47Z	codex-review	-	wb:pf	usage: swarm.sh codex-review <base>
+2026-10-25T11:50:47Z	review-agent	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:50:47Z	_archive	-	wb:pf	failed (exit 1)
+2026-10-25T11:52:01Z	agent	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:01Z	story	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:01Z	conduct	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:02Z	close	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:02Z	step-up	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:02Z	tell	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:11Z	tidy	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:11Z	upgrade	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T11:52:15Z	review-agent	-	wb:pf	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T12:14:29Z	tell:nudge	zzm	wa:pa	zzm is still working; run `swarm.sh wait zzm` in the background, then tell it
+2026-10-25T18:16:49Z	board-pr:done	zzt	wa:pa	ok
+2026-10-25T18:28:10Z	report	backlog	wa:pa	ok (2026-10-25T12:51:38Z)
+2026-10-25T18:48:09Z	merge	https://github.com/o/r/pull/3	wa:pa	no story or epic lists https://github.com/o/r/pull/3 on its prs: line: run swarm.sh review <slug> https://github.com/o/r/pull/3 first, or pass --board for a board-only PR
+2026-10-25T19:26:03Z	log-finding:declined	zzu https://github.com/o/r/pull/4	wd:pg	reviewer 'review-agent' must be one of: codex fallback code-review ci conductor lead skeptic critic split-critic escaped
+2026-10-25T19:34:50Z	incident	-	wa:ph	guard-blocked: cd before ;
+2026-10-25T19:53:22Z	agent	zzv	wa:pa	codex: herdr could not start the agent: {"error":{"code":"agent_name_taken","message":"agent name codex is already used; candidates: zzw=zzx pane_id=wa:pi workspace_id=zzy tab_id=zzy:zzz cwd=/p/f status=Blocked"},"id":"zzaa:agent:start"}
+2026-10-25T19:53:35Z	agent	zzv	wa:pa	codex: herdr could not start the agent: {"error":{"code":"agent_name_taken","message":"agent name codex is already used; candidates: zzw=zzab pane_id=wa:pj workspace_id=zzy tab_id=zzy:zzz cwd=/p/f status=Blocked"},"id":"zzaa:agent:start"}
+2026-10-25T19:53:48Z	agent	zzac	wa:pa	zzac: herdr could not start the agent: {"error":{"code":"agent_name_taken","message":"agent name zzac is already used; candidates: zzw=zzad pane_id=wa:pk workspace_id=zzy tab_id=zzy:zzz cwd=/p/f status=Blocked"},"id":"zzaa:agent:start"}
+2026-10-25T21:46:12Z	agent	zzae	wa:pa	survey: an agent with this name is still working; wait for it, or use another name
+2026-10-25T21:54:20Z	incident	-	wa:pa	user-caught: planning zzaf: the lead planned the four v0.28.0 epics one by one though its own brief made zzag order prose, so all four could run at once
+2026-10-25T22:06:02Z	agent	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:03Z	story	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:03Z	conduct	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:03Z	close	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:03Z	step-up	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:03Z	tell	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:13Z	tidy	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:13Z	upgrade	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:06:18Z	review-agent	-	we:pl	not running inside a herdr pane (HERDR_ENV != 1)
+2026-10-25T22:17:34Z	merge	https://github.com/o/r/pull/5	wa:pa	https://github.com/o/r/pull/5 is MERGED, not open
+2026-10-25T22:18:54Z	conduct	zzah	wa:pa	conduct-zzah: an agent with this name is still working; wait for it, or use another name
+2026-10-25T23:04:37Z	finish	zzai	wa:pa	ok
+2026-10-25T23:33:51Z	tell:nudge	zzaj	wf:pm	zzaj is still working; run `swarm.sh wait zzaj` in the background, then tell it
+2026-10-25T23:44:34Z	incident	zzak	wg:pn	stalled: working 30 min with no commit, edit, own work in the session log or PR update; longest-running: none named (no foreground Bash call: every tool shell running a command started before its last own work)
+2026-10-25T23:45:23Z	escalate	zzak	wg:pn	ok (stalled: opus -> fable)
+2026-10-25T23:49:05Z	codex-review	zzc	wh:po	interrupted
+2026-10-25T23:53:00Z	log-finding:declined	zzal https://github.com/o/r/pull/6	wh:po	--declined needs a reason, one of: out-of-scope nit wrong
+2026-10-25T23:55:57Z	tell:findings	zzam	we:pp	zzam is still working; run `swarm.sh wait zzam` in the background, then tell it
+2026-10-26T00:07:53Z	story	zzan	wi:pq	zzan: zzao (epic zzap) is open and touches .github/workflows/ci.yml:shellcheck step; start zzan after it merges
+2026-10-26T00:08:11Z	hold	zzan	wi:pq	ok (clashes with zzao (epic zzap), open, on .github/workflows/ci.yml:shellcheck step)
+2026-10-26T00:18:23Z	tell:nudge	zzaq	wf:pm	zzaq is still working; run `swarm.sh wait zzaq` in the background, then tell it
+2026-10-26T00:35:22Z	tell:findings	zzaq	wf:pm	zzaq is still working; run `swarm.sh wait zzaq` in the background, then tell it
+2026-10-26T00:36:28Z	review	zzam	we:pp	held: zzam waits for zzar to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again
+2026-10-26T00:41:57Z	tell:note	conduct-zzas	wa:pa	ok
+2026-10-26T00:49:18Z	tell:findings	zzat	wh:pr	zzat is still working; run `swarm.sh wait zzat` in the background, then tell it
+2026-10-26T01:18:07Z	tell:nudge	zzak	wg:pn	zzak is still working; run `swarm.sh wait zzak` in the background, then tell it
+2026-10-26T01:41:45Z	tell:findings	zzao	wf:pm	zzao is still working; run `swarm.sh wait zzao` in the background, then tell it
+2026-10-26T02:22:43Z	held	zzao	wf:pm	ok (top-rung: findings round 2 on fable)
+2026-10-26T02:22:43Z	tell:findings	zzao	wf:pm	tell: zzao was not told: these were findings round 2 on or above the ladder's top rung, so zzao is held for the lead (held_for: top-rung, kind: lead) with them in its block; its builder and PR are kept
+2026-10-26T02:23:02Z	lead-woken	zzao	wa:pa	ok
+2026-10-26T02:23:22Z	reset:held	zzao	wa:pa	ok (top-rung hold lifted by the lead: round 2 had one small, valid finding (a missing map row for tests/command_names_test.sh); send it rather than re-scope)
+2026-10-26T02:39:58Z	unblock	zzau	wh:pr	ok
+2026-10-26T02:44:05Z	tell:nudge	zzav	wh:pr	zzav is still working; run `swarm.sh wait zzav` in the background, then tell it
+2026-10-26T02:47:09Z	story	zzaw	wf:pm	zzaw: origin/story/zzaj and origin/story/zzao conflict in README.md; no worktree or branch was made
+2026-10-26T02:55:51Z	tell:findings	zzak	wg:pn	zzak is still working; run `swarm.sh wait zzak` in the background, then tell it
+2026-10-26T03:03:05Z	tell:nudge	zzax	wf:pm	zzax is still working; run `swarm.sh wait zzax` in the background, then tell it
+2026-10-26T03:47:31Z	tell:nudge	zzay	wf:pm	zzay is still working; run `swarm.sh wait zzay` in the background, then tell it
+2026-10-26T04:06:21Z	tell:nudge	zzaz	wh:pr	zzaz is still working; run `swarm.sh wait zzaz` in the background, then tell it
+2026-10-26T04:06:21Z	tell:nudge	zzba	wh:pr	zzba is waiting on dialog open; answer it (herdr agent read zzba), then tell it
+2026-10-26T04:06:22Z	tell:nudge	zzbb	wh:pr	zzbb is still working; run `swarm.sh wait zzbb` in the background, then tell it
+2026-10-26T04:21:20Z	story	zzau	wg:pn	ok
+2026-10-26T04:46:47Z	flake	zzbc	wa:pa	test https://github.com/o/r/actions/runs/7: FAIL tests/zzbd.sh 116s;FAIL watch reads no mergeable state of a head whose conflict it reported: want '(still watching)|0', got '(still watching)|1'
+2026-10-26T04:57:59Z	incident	-	wa:pa	lead-hand: Claude Code's zzbe classifier denied swarm.sh merge in conductor sessions ('Merge Without Review') all zzbf, so conductors approved PRs but could not merge under merge = agent; the lead merged #8 #9 #10 #11 #6 #12 #13 by hand. Fix needs a Bash permission rule for swarm.sh merge (user's decision)
+2026-10-26T04:58:15Z	merge	zzat	wa:pa	gh pr merge failed: GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)
+2026-10-26T05:10:36Z	review-agent	zzau	wg:pn	ok
+2026-10-26T05:23:38Z	tell:findings	zzau	wg:pn	ok
+2026-10-26T05:23:38Z	log-finding:declined	zzbg https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:23:39Z	log-finding:declined	zzbg https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:23:39Z	log-finding:declined	zzbh https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:23:39Z	log-finding:declined	zzbi https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:23:39Z	log-finding:declined	zzbj https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:23:39Z	log-finding:declined	zzbk https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:23:40Z	log-finding:declined	zzbl https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:32:50Z	tell:findings	zzbm	wg:pn	zzbm is still working; run `swarm.sh wait zzbm` in the background, then tell it
+2026-10-26T05:41:04Z	log-finding	zzbn https://github.com/o/r/pull/14	wg:pn	ok
+2026-10-26T05:41:13Z	review-agent	zzau	wg:pn	ok
+2026-10-26T05:53:01Z	review	zzau	wg:pn	ok (https://github.com/o/r/pull/14)
+2026-10-26T07:05:42Z	main-ci	zzbo	wa:pa	red test (failure) https://github.com/o/r/actions/runs/15/job/16
+2026-10-26T07:05:46Z	main-red	0000000000000000000000000000000000000002	wa:pa	zzbp/swarm-dev main test (failure)
+2026-10-26T07:06:02Z	fix-main	zzbq	wg:pn	retired: superseded by zzbr
+2026-10-26T07:28:00Z	main-green	0000000000000000000000000000000000000003	wg:pn	zzbp/swarm-dev main 0000000000000000000000000000000000000004
+2026-10-26T07:28:24Z	merge	zzau	wg:pn	ok
+2026-10-26T07:34:34Z	main-ci	zzau	wg:pn	ok
+2026-10-26T07:35:51Z	tell:nudge	zzbs	wg:pn	zzbs is still working; run `swarm.sh wait zzbs` in the background, then tell it
+2026-10-26T07:43:05Z	story	zzbt	wh:pr	zzbt: origin/story/zzav and origin/story/zzaz conflict in bin/lib/lifecycle.sh; no worktree or branch was made
+2026-10-26T08:47:14Z	tell:nudge	zzax	wf:ps	zzax: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read zzax
+2026-10-26T09:19:08Z	close:paused	zzan	wa:pa	ok
+2026-10-26T09:21:19Z	merge	https://github.com/o/r/pull/12	wa:pa	https://github.com/o/r/pull/12 is MERGED, not open
+2026-10-26T09:26:09Z	tell:nudge	zzba	wh:pt	zzba: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read zzba
+2026-10-26T09:26:59Z	kept	zzba	wh:pt	ok (https://github.com/o/r/pull/17)
+2026-10-26T09:28:08Z	story	zzbu	wj:pu	zzbu: origin/story/zzaz and origin/story/zzbv conflict in bin/lib/lifecycle.sh, commands/swarm.md, docs/reference.md, tests/zzbw.sh; no worktree or branch was made
+2026-10-26T09:38:47Z	incident	-	wa:pa	user-caught: setup gap: a merge = agent project needs Claude Code zzbx before the first conductor runs, and swarm.sh init does none of it: (1) an allow rule for swarm.sh merge, or auto mode refuses every conductor merge as 'Merge Without Review'; (2) auto mode's environment setup done once, or its 'Teach auto mode' dialog zzby builder panes; (3) shell commands agents run (e.g. globs) allowed, or permission prompts freeze builders and can drop a pane into manual mode. init (or a preflight check) should set or verify each, and name the user step where it cannot
+2026-10-26T10:06:50Z	incident	zzan	wa:pa	idle-no-pr: closed (no cause) with no open or merged PR on story/zzan
+2026-10-26T10:13:42Z	reap	zzbz/zzca.zzcb	wh:pv	TIMEOUT after 601s
+2026-10-26T11:19:47Z	story	zzcc	wh:pt	zzcc: zzbu (epic zzah) is open and touches commands/swarm.md:wait --lead handler; start zzcc after it merges
+2026-10-26T11:19:56Z	tell:nudge	zzbt	wh:pt	zzbt is still working; run `swarm.sh wait zzbt` in the background, then tell it
+2026-10-26T11:19:57Z	tell:nudge	zzcd	wh:pt	zzcd is still working; run `swarm.sh wait zzcd` in the background, then tell it
+2026-10-26T11:43:12Z	close	zzau	wa:pa	ok
+2026-10-26T11:57:14Z	tell:nudge	zzbu	wk:pw	zzbu is still working; run `swarm.sh wait zzbu` in the background, then tell it
+2026-10-26T12:06:40Z	story	zzce	wh:pt	zzce: zzbu (epic zzah) is open and touches commands/swarm.md:wait --lead handler; start zzce after it merges
+2026-10-26T14:11:39Z	tell:resume	zzbu	wa:pa	zzbu is still working; run `swarm.sh wait zzbu` in the background, then tell it
+2026-10-26T14:47:26Z	tell:findings	zzcd	wh:pt	zzcd is still working; run `swarm.sh wait zzcd` in the background, then tell it
+2026-10-26T20:52:58Z	tell:nudge	zzce	wa:pa	zzce is still working; run `swarm.sh wait zzce` in the background, then tell it
+2026-10-26T22:16:21Z	merge	https://github.com/o/r/pull/18	wa:pa	https://github.com/o/r/pull/18 is MERGED, not open
+2026-10-26T23:46:40Z	tell:resume	zzcf	wl:px	ok
+2026-10-26T23:52:07Z	story	zzcg	wm:py	zzcg: zzch (epic zzci) is open and touches bin/lib/merge.sh:merge_pr caller line; start zzcg after it merges
+2026-10-27T00:03:04Z	story	zzcj	wn:pz	zzcj: zzck (epic zzci) is open and touches bin/lib/build.sh:story_brief, tests/epic_briefs_test.sh:builder brief checks; start zzcj after it merges
+2026-10-27T00:03:58Z	story	zzcl	wn:paa	ok
+2026-10-27T00:05:26Z	story	zzcm	wn:pab	zzcm: zzcn (epic zzci) is open and touches bin/lib/lifecycle.sh:live_agents; start zzcm after it merges
+2026-10-27T00:10:37Z	tell:nudge	zzco	wa:pa	zzco is still working; run `swarm.sh wait zzco` in the background, then tell it
+2026-10-27T00:12:49Z	no-agent	zzcp	wa:pa	ok
+2026-10-27T00:50:10Z	tell:nudge	zzcq	wn:pac	zzcq is still working; run `swarm.sh wait zzcq` in the background, then tell it
+2026-10-27T00:51:44Z	story	zzcr	wo:pad	zzcr: zzcs (epic zzct) is open and touches bin/lib/board.sh:pr_hld; start zzcr after it merges
+2026-10-27T00:55:25Z	story	zzcu	wo:pad	zzcu: zzcv (epic zzci) is open and touches bin/lib/merge.sh:wait_pr; start zzcu after it merges
+2026-10-27T00:55:59Z	story	zzcw	wo:pad	zzcw: zzch (epic zzci) is open and touches bin/lib/merge.sh:merge_pr caller line, docs/reference.md:Merging who may merge; start zzcw after it merges
+2026-10-27T01:03:17Z	story	zzcx	wp:pae	zzcx: zzcy (epic zzcz) is open and touches commands/hld.md:step 5, commands/epic.md:step 5; start zzcx after it merges
+2026-10-27T01:03:30Z	story	zzda	wp:pae	zzda: zzdb (epic zzdc) is open and touches bin/lib/dash.sh:dash_render; start zzda after it merges
+2026-10-27T01:04:21Z	incident	zzcl	wn:paa	wait-timeout: busy
+2026-10-27T01:13:35Z	story	zzdd	wp:pae	zzdd: zzcl (epic zzde) is open and touches bin/lib/lifecycle.sh:init_project, docs/reference.md:init Claude Code checks; start zzdd after it merges
+2026-10-27T01:13:50Z	story	zzdf	wp:pae	zzdf: zzcy (epic zzcz) is open and touches bin/lib/lifecycle.sh:board_pr; start zzdf after it merges
+2026-10-27T01:20:08Z	story	zzdg	wp:pae	zzdg: zzdh (epic zzdi) is open and touches bin/lib/board.sh:waiting_on_user; start zzdg after it merges
+2026-10-27T01:26:52Z	story	zzdj	wp:pae	zzdj: zzdk (epic zzdi) is open and touches tests/review_test.sh:watch --epic and --backlog section; start zzdj after it merges
+2026-10-27T01:44:32Z	tell:nudge	zzdl	wa:pa	zzdl is still working; run `swarm.sh wait zzdl` in the background, then tell it
+2026-10-27T01:48:53Z	tell:nudge	zzdm	wp:pae	zzdm is still working; run `swarm.sh wait zzdm` in the background, then tell it
+2026-10-27T01:49:06Z	tell:nudge	zzdn	wp:pae	zzdn is still working; run `swarm.sh wait zzdn` in the background, then tell it
+2026-10-27T01:49:29Z	tell:nudge	zzdo	wp:pae	zzdo is still working; run `swarm.sh wait zzdo` in the background, then tell it
+2026-10-27T01:50:29Z	tell:nudge	small-zzdp	wp:pae	small-zzdp is still working; run `swarm.sh wait small-zzdp` in the background, then tell it
+2026-10-27T01:51:55Z	tell:nudge	zzcy	wn:pz	zzcy is still working; run `swarm.sh wait zzcy` in the background, then tell it
+2026-10-27T01:52:28Z	tell:nudge	zzdq	wn:pz	zzdq is still working; run `swarm.sh wait zzdq` in the background, then tell it
+2026-10-27T01:55:17Z	tell:nudge	zzck	wl:px	zzck is still working; run `swarm.sh wait zzck` in the background, then tell it
+2026-10-27T01:55:30Z	tell:nudge	zzdr	wl:px	zzdr is still working; run `swarm.sh wait zzdr` in the background, then tell it
+2026-10-27T01:56:04Z	tell:nudge	zzds	wl:px	zzds is still working; run `swarm.sh wait zzds` in the background, then tell it
+2026-10-27T01:56:32Z	tell:nudge	zzcs	wn:pab	zzcs is still working; run `swarm.sh wait zzcs` in the background, then tell it
+2026-10-27T01:56:43Z	tell:nudge	zzcf	wl:px	zzcf is still working; run `swarm.sh wait zzcf` in the background, then tell it
+2026-10-27T01:57:09Z	tell:nudge	zzdt	wn:pab	zzdt is still working; run `swarm.sh wait zzdt` in the background, then tell it
+2026-10-27T01:57:29Z	tell:nudge	zzcn	wl:px	zzcn is still working; run `swarm.sh wait zzcn` in the background, then tell it
+2026-10-27T01:57:33Z	tell:nudge	zzcm	wn:pab	zzcm is still working; run `swarm.sh wait zzcm` in the background, then tell it
+2026-10-27T01:58:22Z	tell:nudge	zzdh	wm:py	zzdh is still working; run `swarm.sh wait zzdh` in the background, then tell it
+2026-10-27T01:58:23Z	tell:nudge	zzcv	wl:px	could not reach zzcv: no agent this project started holds the name; is its pane still open?
+2026-10-27T01:58:43Z	tell:nudge	zzdk	wm:py	zzdk is still working; run `swarm.sh wait zzdk` in the background, then tell it
+2026-10-27T01:58:43Z	tell:nudge	zzdu	wl:px	zzdu is still working; run `swarm.sh wait zzdu` in the background, then tell it
+2026-10-27T01:59:09Z	tell:nudge	zzch	wl:px	zzch is still working; run `swarm.sh wait zzch` in the background, then tell it
+2026-10-27T02:06:25Z	review-agent	zzcl	wn:paa	ok
+2026-10-27T02:11:14Z	tell:nudge	zzcp	wn:paf	zzcp is still working; run `swarm.sh wait zzcp` in the background, then tell it
+2026-10-27T02:11:35Z	tell:nudge	zzdb	wn:paf	zzdb is still working; run `swarm.sh wait zzdb` in the background, then tell it
+2026-10-27T02:22:14Z	tell:nudge	zzdv	wn:pag	zzdv is still working; run `swarm.sh wait zzdv` in the background, then tell it
+2026-10-27T02:26:06Z	lead-woken	zzcl	wa:pa	ok (no-review)
+2026-10-27T02:26:51Z	review-agent	zzcl	wa:pa	review-agent: review-zzcl is still reviewing (no /p/g yet); nothing was started: wait for it with swarm.sh wait review-zzcl, close it, then start the review again
+2026-10-27T02:27:39Z	tell:nudge	zzdw	wn:pah	zzdw is still working; run `swarm.sh wait zzdw` in the background, then tell it
+2026-10-27T02:28:14Z	tell:nudge	zzdx	wn:pah	zzdx is still working; run `swarm.sh wait zzdx` in the background, then tell it
+2026-10-27T02:31:02Z	tell:findings	zzdh	wm:py	zzdh is still working; run `swarm.sh wait zzdh` in the background, then tell it
+2026-10-27T02:57:21Z	tell:nudge	zzdy	wn:paa	zzdy is still working; run `swarm.sh wait zzdy` in the background, then tell it
+2026-10-27T02:58:00Z	tell:nudge	zzdz	wn:paa	zzdz is still working; run `swarm.sh wait zzdz` in the background, then tell it
+2026-10-27T03:11:09Z	tell:findings	zzcl	wn:paa	ok
+2026-10-27T03:11:48Z	log-finding	zzea https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:11:56Z	log-finding	zzeb https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:12:12Z	log-finding	zzec https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:12:33Z	log-finding	zzbn https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:12:38Z	log-finding	zzed https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:12:58Z	log-finding:declined	zzee https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:13:04Z	log-finding:declined	zzef https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:13:14Z	log-finding:declined	zzj https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:13:20Z	log-finding:declined	zzed https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:13:29Z	log-finding:declined	zzbn https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:13:53Z	log-finding:declined	zzeg https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T03:19:55Z	tell:nudge	zzeh	wp:pae	zzeh is still working; run `swarm.sh wait zzeh` in the background, then tell it
+2026-10-27T03:20:14Z	story	zzei	wn:pah	zzei: zzdh (epic zzdi) is open and touches docs/reference.md:next and status lines; start zzei after it merges
+2026-10-27T03:40:30Z	tell:findings	zzdo	wp:pae	zzdo is still working; run `swarm.sh wait zzdo` in the background, then tell it
+2026-10-27T04:15:54Z	incident	zzcl	wn:paa	wait-timeout: busy
+2026-10-27T04:24:00Z	review-agent	zzcl	wn:paa	ok
+2026-10-27T04:42:32Z	tell:findings	zzcv	wl:px	zzcv is still working; run `swarm.sh wait zzcv` in the background, then tell it
+2026-10-27T04:45:39Z	log-finding:declined	zzbn https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T04:45:42Z	log-finding:declined	zzej https://github.com/o/r/pull/19	wn:paa	ok
+2026-10-27T04:45:44Z	review	zzcl	wn:paa	ok (https://github.com/o/r/pull/19)
+2026-10-27T04:47:16Z	merge	zzcl	wn:paa	ok
+2026-10-27T04:55:44Z	main-ci	zzcl	wn:paa	ok
+2026-10-27T05:18:45Z	tell:nudge	zzcu	wo:pad	zzcu is still working; run `swarm.sh wait zzcu` in the background, then tell it
+2026-10-27T05:26:08Z	tell:findings	zzeh	wp:pae	zzeh is still working; run `swarm.sh wait zzeh` in the background, then tell it
+2026-10-27T05:35:04Z	tell:nudge	zzek	wn:paf	zzek is still working; run `swarm.sh wait zzek` in the background, then tell it
+2026-10-27T05:56:05Z	story	zzel	wl:px	zzel: zzdt (epic zzct) is open and touches bin/lib/board.sh:drop_gone_state; start zzel after it merges
+2026-10-27T06:02:27Z	tell:findings	zzcm	wn:pab	zzcm is still working; run `swarm.sh wait zzcm` in the background, then tell it
+2026-10-27T06:36:35Z	tell:nudge	zzcw	wo:pad	zzcw is still working; run `swarm.sh wait zzcw` in the background, then tell it
+2026-10-27T06:48:25Z	tell:nudge	zzem	wp:pae	zzem is still working; run `swarm.sh wait zzem` in the background, then tell it
+2026-10-27T06:59:39Z	tell:nudge	zzen	wn:paf	zzen is still working; run `swarm.sh wait zzen` in the background, then tell it
+2026-10-27T07:12:51Z	tell:findings	zzdm	wp:pae	zzdm is still working; run `swarm.sh wait zzdm` in the background, then tell it
+2026-10-27T07:36:20Z	tell:findings	zzcw	wo:pad	zzcw is still working; run `swarm.sh wait zzcw` in the background, then tell it
+2026-10-27T07:44:05Z	tell:findings	zzdb	wn:paf	zzdb is still working; run `swarm.sh wait zzdb` in the background, then tell it
+2026-10-27T07:58:03Z	close	zzcl	wn:paa	ok
+2026-10-27T08:18:52Z	tell:nudge	zzcv	wl:px	zzcv is still working; run `swarm.sh wait zzcv` in the background, then tell it
+2026-10-27T08:49:17Z	close	review-zzeo	wm:py	failed (exit 2)
+2026-10-27T09:00:37Z	board-pr:start	zzep	wa:pa	ok
+2026-10-27T09:01:55Z	board-pr:open	zzep	wa:pa	ok
+2026-10-27T09:04:13Z	tell:findings	zzcq	wa:pa	could not reach zzcq: no agent this project started holds the name; is its pane still open?
+2026-10-27T09:25:30Z	tell:nudge	review-zzdv	wn:pag	review-zzdv is still working; run `swarm.sh wait review-zzdv` in the background, then tell it
+2026-10-27T09:33:51Z	tell:findings	zzcu	wa:pa	zzcu is still working; run `swarm.sh wait zzcu` in the background, then tell it
+2026-10-27T09:39:15Z	review-agent	zzek	wa:pa	interrupted
+2026-10-27T09:49:36Z	story	zzeq	wn:pag	zzeq: zzds (epic zzci) is open and touches bin/swarm.sh:usage header; start zzeq after it merges
+2026-10-27T10:05:57Z	story	zzep	wa:pa	ok
+2026-10-27T10:08:21Z	tell:findings	zzek	wn:paf	zzek is still working; run `swarm.sh wait zzek` in the background, then tell it
+2026-10-27T10:09:35Z	story	zzer	wo:pad	zzer: zzcg (epic zzdi) is open and touches bin/lib/merge.sh:merge_pr story path; start zzer after it merges
+2026-10-27T10:09:44Z	story	zzes	wo:pad	zzes: zzcv (epic zzci) is open and touches bin/lib/merge.sh:wait_pr; start zzes after it merges
+2026-10-27T10:11:00Z	merge	https://github.com/o/r/pull/20	wa:pa	held: https://github.com/o/r/pull/20 (a story on the board cannot be read, so whether it costs money is unknown); the user merges it
+2026-10-27T10:12:26Z	tell:nudge	zzeo	wm:py	zzeo is still working; run `swarm.sh wait zzeo` in the background, then tell it
+2026-10-27T10:31:49Z	tell:nudge	zzdd	wp:pae	zzdd is still working; run `swarm.sh wait zzdd` in the background, then tell it
+2026-10-27T10:43:53Z	review-agent	zzdm	wa:pa	review-zzdm: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list; it runs in /p/h); it is never retired from here. Wait for it to finish, or close its pane
+2026-10-27T10:56:51Z	review-agent	zzep	wa:pa	review-agent: review-zzep is still reviewing (no /p/i yet); nothing was started: wait for it with swarm.sh wait review-zzep, close it, then start the review again
+2026-10-27T10:57:01Z	review-agent	zzep	wp:pae	ok
+2026-10-27T11:10:09Z	lead-woken	zzep	wa:pa	ok (no-review)
+2026-10-27T11:10:35Z	review-agent	zzep	wa:pa	review-agent: review-zzep is still reviewing (no /p/i yet); nothing was started: wait for it with swarm.sh wait review-zzep, close it, then start the review again
+2026-10-27T11:16:15Z	board-pr:done	zzep	wa:pa	ok
+2026-10-27T11:18:17Z	story	zzet	wp:pae	zzet: zzeu (epic zzev) is open and touches docs/reference.md:status command row; start zzet after it merges
+2026-10-27T11:25:59Z	tell:findings	zzep	wa:pa	ok
+2026-10-27T11:37:40Z	tell:findings	zzeu	wa:pa	zzeu is still working; run `swarm.sh wait zzeu` in the background, then tell it
+2026-10-27T11:39:02Z	nudge	zzei	wn:pah	ok
+2026-10-27T11:54:20Z	codex-review	zzc	wp:pai	failed (exit 143)
+2026-10-27T12:01:33Z	review-agent	zzep	wp:pae	ok
+2026-10-27T12:03:47Z	review-agent	zzep	wa:pa	review-agent: review-zzep is still reviewing (no /p/i yet); nothing was started: wait for it with swarm.sh wait review-zzep, close it, then start the review again
+2026-10-27T12:14:00Z	log-finding:declined	zzew https://github.com/o/r/pull/21	wp:pae	ok
+2026-10-27T12:14:12Z	review	zzep	wp:pae	ok (https://github.com/o/r/pull/21)
+2026-10-27T12:14:42Z	close	zzep	wp:pae	ok
+2026-10-27T12:17:27Z	incident	-	wa:pa	user-caught: zzex item (user, 2026-10-27): how much a reviewer zzey on rounds 2+ (local tests and mutation checks vs read the diff and zzez on CI) should be a config setting, not a lead message; e.g. zzfa = full | ci on later rounds, default full, this board ci
+2026-10-27T12:21:12Z	lead-woken	zzep	wa:pa	ok (no-agent)
+2026-10-27T12:42:57Z	merge	https://github.com/o/r/pull/21	wa:pa	held: https://github.com/o/r/pull/21 (a story on the board cannot be read, so whether it costs money is unknown); the user merges it
+2026-10-27T12:47:44Z	merge	zzep	wa:pa	ok
+2026-10-27T12:52:44Z	main-ci	zzep	wa:pa	ok
+2026-10-27T12:55:42Z	reconcile	zzep	wa:pa	ok (finished by its PR)
+2026-10-27T13:09:20Z	tell:findings	zzeo	wa:pa	zzeo is still working; run `swarm.sh wait zzeo` in the background, then tell it
+2026-10-27T13:26:23Z	tell:nudge	zzeu	wa:pa	zzeu is still working; run `swarm.sh wait zzeu` in the background, then tell it
+2026-10-27T13:34:50Z	review-agent	zzdb	wn:paf	zzdb: no worktree at /p/j: review-agent reviews a story built here
+2026-10-27T13:53:26Z	tell:nudge	zzfb	wn:pz	zzfb is still working; run `swarm.sh wait zzfb` in the background, then tell it
+2026-10-27T14:14:21Z	tell:nudge	zzfc	wn:pah	zzfc is still working; run `swarm.sh wait zzfc` in the background, then tell it
+2026-10-27T14:17:44Z	tell:nudge	zzfd	wa:pa	zzfd is still working; run `swarm.sh wait zzfd` in the background, then tell it
+2026-10-27T14:17:44Z	tell:findings	zzen	wn:paf	zzen is still working; run `swarm.sh wait zzen` in the background, then tell it
+2026-10-27T14:25:03Z	story	zzfe	wl:px	zzfe: origin/story/zzcv and origin/story/zzds conflict in bin/lib/build.sh; no worktree or branch was made
+2026-10-27T14:41:22Z	tell:nudge	zzff	wa:pa	zzff is still working; run `swarm.sh wait zzff` in the background, then tell it
+2026-10-27T15:04:56Z	incident	-	wa:pa	lead-hand: 6 PRs passed review (swarm.sh review ok) and zzfg green and unmerged 36-288 min (#22 zzcy 4h48m): conductors under merge = agent did not merge their passed PRs; the lead's unmerged alert was down while the watchdog was not running
+2026-10-27T15:19:00Z	tell:findings	zzds	wl:px	zzds is still working; run `swarm.sh wait zzds` in the background, then tell it
+2026-10-27T15:26:06Z	tell:nudge	zzei	wn:pah	zzei is still working; run `swarm.sh wait zzei` in the background, then tell it
+2026-10-27T15:33:52Z	review-agent	zzfh	wa:pa	review-zzfh: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list; it runs in /p/k); it is never retired from here. Wait for it to finish, or close its pane
+2026-10-27T15:34:39Z	review-agent	zzff	wa:pa	failed (exit 1)
+2026-10-27T15:52:52Z	review-agent	zzfi	wa:pa	review-zzfi: an agent with this name is still working; wait for it, or use another name
+2026-10-27T16:03:00Z	tell:nudge	zzfh	wa:pa	zzfh is still working; run `swarm.sh wait zzfh` in the background, then tell it
+2026-10-27T16:03:24Z	tell:findings	zzfh	wa:pa	zzfh is still working; run `swarm.sh wait zzfh` in the background, then tell it
+2026-10-27T16:10:16Z	tell:nudge	zzfj	wl:px	zzfj is still working; run `swarm.sh wait zzfj` in the background, then tell it
+2026-10-27T16:10:22Z	restart	zzdj	wa:pa	restart: zzdj's builder zzdj is still listed (herdr agent list): wait on it or tell it; nothing was started
+2026-10-27T16:35:10Z	tell:nudge	zzcx	wp:pae	zzcx is still working; run `swarm.sh wait zzcx` in the background, then tell it
+2026-10-27T16:36:54Z	tell:nudge	zzfk	wa:pa	zzfk is still working; run `swarm.sh wait zzfk` in the background, then tell it
+2026-10-27T17:01:09Z	main-ci	zzcu	wo:pad	timeout (gitleaks (in_progress))
+2026-10-27T17:14:39Z	review-agent	zzen	wn:paf	review-zzen: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list; it runs in /p/l); it is never retired from here. Wait for it to finish, or close its pane
+2026-10-27T17:40:44Z	tell:nudge	zzfl	wm:py	zzfl is still working; run `swarm.sh wait zzfl` in the background, then tell it
+2026-10-27T17:46:01Z	tell:nudge	zzfm	wa:pa	zzfm is still working; run `swarm.sh wait zzfm` in the background, then tell it
+2026-10-27T18:00:14Z	tell:findings	zzer	wa:pa	zzer is still working; run `swarm.sh wait zzer` in the background, then tell it
+2026-10-27T18:08:06Z	tell:nudge	zzel	wl:px	zzel is still working; run `swarm.sh wait zzel` in the background, then tell it
+2026-10-27T18:12:39Z	tell:nudge	zzet	wp:pae	zzet is still working; run `swarm.sh wait zzet` in the background, then tell it
+2026-10-27T18:13:33Z	tell:findings	zzfl	wa:pa	zzfl is still working; run `swarm.sh wait zzfl` in the background, then tell it
+2026-10-27T18:17:43Z	tell:findings	zzfb	wa:pa	zzfb is still working; run `swarm.sh wait zzfb` in the background, then tell it
+2026-10-27T18:25:45Z	tell:findings	zzfm	wn:paf	zzfm is still working; run `swarm.sh wait zzfm` in the background, then tell it
+2026-10-27T18:45:31Z	review-agent	zzdj	wa:pa	review-zzdj: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list; it runs in /p/m); it is never retired from here. Wait for it to finish, or close its pane
+2026-10-27T19:11:28Z	merge	https://github.com/o/r/pull/23	wl:px	https://github.com/o/r/pull/23 is MERGED, not open
+2026-10-27T19:41:14Z	tell:nudge	zzer	wa:pa	zzer is still working; run `swarm.sh wait zzer` in the background, then tell it
+2026-10-27T20:07:38Z	close:cleared-on-error	survey-zzci	wa:pa	ok
+2026-10-27T20:19:53Z	tell:nudge	zzfn	wm:py	zzfn is still working; run `swarm.sh wait zzfn` in the background, then tell it
+2026-10-27T20:31:13Z	tell:nudge	zzfo	wl:px	zzfo is still working; run `swarm.sh wait zzfo` in the background, then tell it
+2026-10-27T20:34:09Z	merge	https://github.com/o/r/pull/24	wa:pa	https://github.com/o/r/pull/24 is MERGED, not open
+2026-10-27T21:03:12Z	story	zzfp	wn:pab	zzfp: zzel (epic zzci) is open and touches bin/lib/board.sh:drop_gone_state; start zzfp after it merges
+2026-10-27T21:06:25Z	tell:nudge	zzcr	wo:pad	zzcr is still working; run `swarm.sh wait zzcr` in the background, then tell it
+2026-10-27T21:06:26Z	tell:nudge	zzes	wo:pad	zzes is still working; run `swarm.sh wait zzes` in the background, then tell it
+2026-10-27T21:09:48Z	upgrade	-	wa:pa	failed (exit 1)
+2026-10-27T21:55:03Z	tell:nudge	zzfq	wa:pa	zzfq is still working; run `swarm.sh wait zzfq` in the background, then tell it
+2026-10-27T22:08:55Z	tell:resume	zzet	wp:pae	zzet is still working; run `swarm.sh wait zzet` in the background, then tell it
+2026-10-27T22:10:38Z	tell:resume	zzfh	wn:pag	zzfh is still working; run `swarm.sh wait zzfh` in the background, then tell it
+2026-10-27T22:12:03Z	tell:nudge	zzfr	wa:pa	zzfr is still working; run `swarm.sh wait zzfr` in the background, then tell it
+2026-10-27T22:12:06Z	tell:resume	zzds	wl:px	zzds is still working; run `swarm.sh wait zzds` in the background, then tell it
+2026-10-27T22:12:26Z	tell:resume	zzel	wl:px	zzel is still working; run `swarm.sh wait zzel` in the background, then tell it
+2026-10-27T22:24:39Z	tell:resume	zzfs	wp:pae	zzfs is still working; run `swarm.sh wait zzfs` in the background, then tell it
+2026-10-27T22:28:02Z	tell:resume	zzfn	wm:py	zzfn is still working; run `swarm.sh wait zzfn` in the background, then tell it
+2026-10-27T22:32:42Z	tell:nudge	zzfs	wp:pae	zzfs is still working; run `swarm.sh wait zzfs` in the background, then tell it
+2026-10-27T22:32:42Z	tell:nudge	zzft	wp:pae	zzft is still working; run `swarm.sh wait zzft` in the background, then tell it
+2026-10-27T22:40:23Z	tell:nudge	zzfe	wa:pa	zzfe is still working; run `swarm.sh wait zzfe` in the background, then tell it
+2026-10-27T22:46:08Z	tell:findings	zzfj	wa:pa	zzfj is still working; run `swarm.sh wait zzfj` in the background, then tell it
+2026-10-27T22:50:54Z	tell:resume	zzfr	wp:pae	zzfr is still working; run `swarm.sh wait zzfr` in the background, then tell it
+2026-10-27T22:57:49Z	story	zzfu	wl:px	zzfu: origin/story/zzfe and origin/story/zzfj conflict in docs/reference.md; no worktree or branch was made
+2026-10-27T22:59:49Z	tell:findings	zzfk	wa:pa	zzfk is still working; run `swarm.sh wait zzfk` in the background, then tell it
+2026-10-27T23:13:43Z	tell:findings	zzft	wa:pa	zzft is still working; run `swarm.sh wait zzft` in the background, then tell it
+2026-10-27T23:14:56Z	review-agent	zzfo	wl:px	review-zzfo: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list; it runs in /p/n); it is never retired from here. Wait for it to finish, or close its pane
+2026-10-27T23:20:40Z	tell:findings	zzfn	wa:pa	zzfn is still working; run `swarm.sh wait zzfn` in the background, then tell it
+2026-10-28T00:10:29Z	tell:nudge	zzfv	wa:pa	zzfv is still working; run `swarm.sh wait zzfv` in the background, then tell it
+2026-10-28T00:50:54Z	review-agent	zzfe	wl:px	review-zzfe: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list; it runs in /p/o); it is never retired from here. Wait for it to finish, or close its pane
+2026-10-28T01:02:40Z	tell:findings	zzfq	wa:pa	zzfq is still working; run `swarm.sh wait zzfq` in the background, then tell it
+2026-10-28T01:18:39Z	story	zzfw	wo:pad	zzfw: zzfv (epic zzdp) is open and touches bin/lib/merge.sh:merge_pr story path, docs/reference.md:§ Merging epic guard; start zzfw after it merges
+2026-10-28T01:18:42Z	story	zzfx	wo:pad	zzfx: zzfm (epic zzdc) is open and touches bin/lib/lifecycle.sh:lead_queue, docs/reference.md:wait --lead lines; start zzfx after it merges
+2026-10-28T01:28:44Z	tell:findings	zzfe	wl:px	zzfe is still working; run `swarm.sh wait zzfe` in the background, then tell it
+2026-10-28T02:12:22Z	tell:findings	zzfv	wa:pa	zzfv is still working; run `swarm.sh wait zzfv` in the background, then tell it
+2026-10-28T02:27:12Z	review-agent	zzes	wo:pad	review-zzes: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list; it runs in /p/p); it is never retired from here. Wait for it to finish, or close its pane
+2026-10-28T03:13:19Z	tell:nudge	zzfy	wa:pa	zzfy is still working; run `swarm.sh wait zzfy` in the background, then tell it
+2026-10-28T03:50:17Z	tell:findings	zzfy	wa:pa	zzfy is still working; run `swarm.sh wait zzfy` in the background, then tell it
+2026-10-28T04:32:36Z	tell:nudge	zzda	wp:pae	zzda is still working; run `swarm.sh wait zzda` in the background, then tell it
+2026-10-28T05:28:39Z	tell:nudge	zzfx	wa:pa	zzfx is still working; run `swarm.sh wait zzfx` in the background, then tell it
+2026-10-28T06:11:09Z	tell:findings	zzfz	wp:pae	zzfz is still working; run `swarm.sh wait zzfz` in the background, then tell it
+2026-10-28T06:50:26Z	tell:nudge	zzfz	wa:pa	zzfz is still working; run `swarm.sh wait zzfz` in the background, then tell it
+2026-10-28T08:05:48Z	story	zzga	wa:pa	zzga is not status: ready
+2026-10-28T08:05:48Z	story	zzgb	wa:pa	zzgb is not status: ready
+2026-10-28T08:48:11Z	init	--zzgc	wa:pa	ok
+2026-10-28T09:03:57Z	story	zzgd	wq:paj	zzgd: zzfw (epic zzge) is open and touches bin/lib/build.sh:conduct_merge_rule moved-base line; start zzgd after it merges
+2026-10-28T09:03:58Z	tell:nudge	zzgf	wa:pa	zzgf is still working; run `swarm.sh wait zzgf` in the background, then tell it
+2026-10-28T09:14:16Z	tell:nudge	zzeq	wn:pak	zzeq is still working; run `swarm.sh wait zzeq` in the background, then tell it
+2026-10-28T10:07:31Z	tell:nudge	zzfu	wl:px	zzfu is still working; run `swarm.sh wait zzfu` in the background, then tell it
+2026-10-28T10:09:57Z	story	zzgg	wq:paj	zzgg: zzfw (epic zzge) is open and touches bin/lib/build.sh:conduct_merge_rule moved-base line; start zzgg after it merges
+2026-10-28T10:10:05Z	story	zzgh	wn:pak	zzgh: the pane's shell did not take the agent's environment: {"error":{"code":"timeout","message":"timed out waiting for output match"},"id":"zzaa:pane:wait-output"}
+2026-10-28T10:11:09Z	story	zzgi	wn:pak	zzgi: the pane's shell did not take the agent's environment: {"error":{"code":"timeout","message":"timed out waiting for output match"},"id":"zzaa:pane:wait-output"}
+2026-10-28T10:12:27Z	story	zzgh	wa:pa	zzgh has a build already (story/zzgh or /p/q exists in /p/f): it has started, so wait on its builder, and to build it again from scratch remove that worktree and branch first
+2026-10-28T10:13:16Z	agent	zzgh	wn:pak	zzgh: the pane's shell did not take the agent's environment: {"error":{"code":"timeout","message":"timed out waiting for output match"},"id":"zzaa:pane:wait-output"}
+2026-10-28T10:13:59Z	agent	zzgi	wn:pak	zzgi: the pane's shell did not take the agent's environment: {"error":{"code":"timeout","message":"timed out waiting for output match"},"id":"zzaa:pane:wait-output"}
+2026-10-28T10:32:56Z	tell:findings	zzfu	wl:px	zzfu is still working; run `swarm.sh wait zzfu` in the background, then tell it
+2026-10-28T10:56:49Z	tell:nudge	zzfp	wa:pa	zzfp is still working; run `swarm.sh wait zzfp` in the background, then tell it
+2026-10-28T11:29:19Z	tell:findings	zzfw	wa:pa	zzfw is still working; run `swarm.sh wait zzfw` in the background, then tell it
+2026-10-28T11:57:57Z	tell:nudge	zzgi	wn:pak	zzgi is still working; run `swarm.sh wait zzgi` in the background, then tell it
+2026-10-28T12:03:22Z	tell:nudge	zzfw	wo:pad	zzfw is still working; run `swarm.sh wait zzfw` in the background, then tell it
+2026-10-28T12:21:08Z	merge	https://github.com/o/r/pull/25	wa:pa	the head 0000005 is not green: test-shard (11) (queued); test-shard (12) (queued); test-shard (2) (queued); test-shard (8) (queued); test-shard (1) (queued); test-shard (10) (queued); test-shard (7) (queued); test-shard (3) (queued); test-shard (5) (queued); shellcheck (queued); gitleaks (in_progress); test-shard (6) (in_progress); test-shard (4) (queued); test-shard (9) (queued)
+2026-10-28T12:24:14Z	tell:nudge	zzgh	wn:pak	zzgh is still working; run `swarm.sh wait zzgh` in the background, then tell it
+2026-10-28T12:28:42Z	tell:nudge	zzgj	wa:pa	zzgj is still working; run `swarm.sh wait zzgj` in the background, then tell it
+2026-10-28T12:28:54Z	tell:nudge	zzgd	wa:pa	zzgd is still working; run `swarm.sh wait zzgd` in the background, then tell it
+2026-10-28T12:34:05Z	tell:nudge	zzgk	wa:pa	zzgk is still working; run `swarm.sh wait zzgk` in the background, then tell it
+2026-10-28T12:42:38Z	tell:findings	zzgf	wa:pa	zzgf is still working; run `swarm.sh wait zzgf` in the background, then tell it
+2026-10-28T12:43:15Z	tell:findings	zzgi	wn:pak	zzgi is still working; run `swarm.sh wait zzgi` in the background, then tell it
+2026-10-28T12:49:26Z	tell:findings	zzgd	wq:paj	zzgd is still working; run `swarm.sh wait zzgd` in the background, then tell it
+2026-10-28T12:49:43Z	review-agent	zzgf	wa:pa	review-zzgf: an agent with this name is still working; wait for it, or use another name
+2026-10-28T13:15:46Z	tell:findings	zzgh	wn:pak	zzgh is still working; run `swarm.sh wait zzgh` in the background, then tell it
+2026-10-28T13:37:07Z	tell:findings	zzgk	wa:pa	zzgk is still working; run `swarm.sh wait zzgk` in the background, then tell it
+2026-10-28T13:45:21Z	tell:nudge	zzgj	wa:pa	zzgj: its Claude session has ended (gone); there is no one to tell
+2026-10-28T13:47:49Z	tell:findings	zzgj	wa:pa	zzgj is still working; run `swarm.sh wait zzgj` in the background, then tell it
+2026-10-28T15:01:20Z	story	zzgg	wq:paj	zzgg has a build already (story/zzgg or /p/r exists in /p/f): it has started, so wait on its builder, and to build it again from scratch remove that worktree and branch first
+2026-10-28T16:34:17Z	tell:findings	zzgg	wq:paj	zzgg is still working; run `swarm.sh wait zzgg` in the background, then tell it
+2026-10-28T17:43:41Z	tell:nudge	zzgl	wa:pa	zzgl is still working; run `swarm.sh wait zzgl` in the background, then tell it
+2026-10-28T17:44:02Z	tell:findings	zzgl	wa:pa	zzgl is still working; run `swarm.sh wait zzgl` in the background, then tell it
+2026-10-28T19:39:14Z	review-agent	zzgl	wq:paj	review-zzgl: herdr could not rename it to zzgm, so its name is not free; close its pane (herdr agent list)
+2026-10-29T00:08:46Z	agent	zzv	wa:pa	codex: herdr could not start the agent: {"error":{"code":"agent_name_taken","message":"agent name codex is already used; candidates: zzw=zzgn pane_id=wr:pal workspace_id=zzgo tab_id=zzgo:zzgp cwd=/p/f status=Blocked"},"id":"zzaa:agent:start"}
+2026-10-29T00:09:09Z	agent	zzv	wa:pa	codex: herdr could not start the agent: {"error":{"code":"agent_name_taken","message":"agent name codex is already used; candidates: zzw=zzgq pane_id=wr:pam workspace_id=zzgo tab_id=zzgo:zzgp cwd=/p/f status=Blocked"},"id":"zzaa:agent:start"}
+2026-10-29T00:09:27Z	agent	zzac	wa:pa	zzac: herdr could not start the agent: {"error":{"code":"agent_name_taken","message":"agent name zzac is already used; candidates: zzw=zzgr pane_id=wr:pan workspace_id=zzgo tab_id=zzgo:zzgp cwd=/p/f status=Blocked"},"id":"zzaa:agent:start"}
+2026-10-29T00:44:04Z	conduct	zzgs	wa:pa	conduct-zzgs: the pane's shell did not take the agent's environment: {"error":{"code":"timeout","message":"timed out waiting for output match"},"id":"zzaa:pane:wait-output"}
+2026-10-29T01:14:03Z	merge	https://github.com/o/r/pull/26	wa:pa	--release: bin/lib/agents.sh changed since v0.29.0 but README.md, AGENTS.md and docs/ did not: land a docs PR first, or give the PR body a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet before it, or - or -- for the dash, also do; not in a ``` block or a > quote)

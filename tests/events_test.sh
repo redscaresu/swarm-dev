@@ -285,6 +285,10 @@ ev x t ok Round=2 'v=a b' good=1 empty=
 check "an invalid pair is left out, the line still written with the valid ones" same "$(sed -n 6p "${LOG}" | cut -f5)" "ok${SEP}good=1"
 ev x t ok Bad=1
 check "a call whose every pair is invalid writes the outcome alone" same "$(sed -n 7p "${LOG}" | cut -f5)" ok
+ev x t 'die: foo ~~' round=2
+check "an outcome ending in EVENT_SEP short of its last space loses it, so the tail starts at its own" \
+  same "$(sed -n 8p "${LOG}" | cut -f5)" "die: foo${SEP}round=2"
+ev x t 'die: foo ~~'
 check "each invalid pair is named on stderr" same "$(cut -d: -f2 "${ERR}")" "$(printf ' left out %s\n' Round=2 'v=a b' empty= Bad=1)"
 # Rows written before the tail: untailed, an outcome holding =, herdr's JSON.
 { printf '2026-10-01T00:00:00Z\tx\tt\tw:me\t%s\n' 'ok (round 2)' 'failed: key=value x=1' '{"result":{"agent":{"agent_status":"working","note":"a=b c"}}}'
@@ -303,6 +307,8 @@ a b	{}
 a b  c	{"m": "two", "n": "1"}
 ok	{"good": "1"}
 ok	{}
+die: foo	{"round": "2"}
+die: foo	{}
 ok (round 2)	{}
 failed: key=value x=1	{}
 {"result":{"agent":{"agent_status":"working","note":"a=b c"}}}	{}
