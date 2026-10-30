@@ -1118,4 +1118,25 @@ fresh; rm "${S}"; pr_head "${DROP}"; merge --board "${URL}"
 refused "dropped lines: a --board PR" "merge: held: ${URL} (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
 check "dropped lines: a --board PR: no board state written" bash -c "! grep -rqs 'dropped base lines' '${P}/.swarm/board-state'"
 
+# --- Hold fields: each hold for the user writes its kind as the merge line's hold= field, which flow's
+# merges section counts by; a refusal that is no hold has no field. fields() is events_outcome.py's reader.
+# hold_fields — the key=value fields of the last merge line in events.tsv, space-separated, sorted.
+hold_fields() {
+  awk -F'\t' '$2 == "merge"' "${P}/.swarm/events.tsv" | tail -1 | python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields
+print(" ".join(sorted(k + "=" + v for k, v in fields(sys.stdin.readline().rstrip("\n").split("\t")).items())))' "${SWARM%/*}/lib"
+}
+fresh; echo '[{"filename":"hooks/x.sh","status":"modified"}]' > "${FX}/files"; merge "${URL}"
+refused "hold field: a protected path" "held: s changes hooks/x.sh, which only the user merges"
+is "hold field: a protected path writes hold=protected" hold=protected "$(hold_fields)"
+fresh; item s "status: review" "prs: ${URL}" "costs: money"; merge "${URL}"
+refused "hold field: a costs: line" "held: s costs money"
+is "hold field: a costs: line writes hold=money" hold=money "$(hold_fields)"
+fresh; pr_head "${DROP}"; merge "${URL}"
+refused "hold field: dropped base lines" "merge: held: s (dropped base lines: 1, first f: main-added)"
+is "hold field: dropped base lines writes hold=dropped-lines" hold=dropped-lines "$(hold_fields)"
+fresh; item s "status: ready" "prs: ${URL}"; merge "${URL}"
+refused "hold field: a refusal that is no hold" "s is ready, not review"
+is "hold field: a refusal that is no hold has no field" "" "$(hold_fields)"
+
 finish merge-rules
