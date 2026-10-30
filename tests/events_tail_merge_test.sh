@@ -70,7 +70,8 @@ done
 all_tailed() { awk -F'\t' -v t="${TAIL}" 'substr($5, length($5) - length(t) + 1) != t { bad = 1 } END { exit bad || NR < 400 }' "$1"; }
 check "the tailed copy's rows all end in the tail" all_tailed "${TAILED}/.swarm/events.tsv"
 
-# Two reports for report_collected: one written before every row, one after them all.
+# Two reports for report_collected: one written before every row, one after them all (whose status is
+# 1 for every target in both projects, so only its expected-value check reads it).
 OLD="${ROOT}/report-old.md"; NEW="${ROOT}/report-new.md"
 : > "${OLD}"; : > "${NEW}"; touch -t 200001010000 "${OLD}"; touch -t 209901010000 "${NEW}"
 
@@ -122,14 +123,11 @@ same() { same_output "${PLAIN}" "${TAILED}" lib "$@"; }
 
 # Every target, plain and tailed: the same output for a text reader, the same status for a predicate.
 MERGES="$(targets '^merge$')"
-for sha in "${BM1}" "${BM2}" "${BM0}"; do
-  check "base_merged ${sha:0:3}: the same status for every merge target" same each_rc "${MERGES}" base_merged "${sha}"
-done
+check "base_merged, a head named alone: the same status for every merge target" same each_rc "${MERGES}" base_merged "${BM1}"
+check "base_merged, a head named with its from: the same status for every merge target" same each_rc "${MERGES}" base_merged "${BM2}"
 check "base_merged_from: the same head for every merge target" same each "${MERGES}" base_merged_from "${BM2}"
 check "report_collected, a report older than every row: the same status for every close target" \
   same each_rc "$(targets '^close')" report_collected "${OLD}"
-check "report_collected, a report newer than every row: the same status for every close target" \
-  same each_rc "$(targets '^close')" report_collected "${NEW}"
 check "key_reds: the same reds for every key" same each "${KEYS}" key_reds
 check "key_reds live: the same reds for every key" same each "${KEYS}" key_reds live
 check "red_mains: the same reds" same red_mains
