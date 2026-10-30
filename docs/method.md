@@ -2,30 +2,30 @@
 
 Work is planned top-down, you approve each level before the next is made, and every agent at every
 level runs in its own herdr pane so you can watch it. This is the short guide. The detail behind
-each step is in [`reference.md`](reference.md).
+each step is in the reference files that [`reference.md`](reference.md) lists.
 
 ## The planning chain
 
 1. **HLD** (optional): `/hld <title>` opens a pane where you write `docs/hld/YYYY-MM-DD-<slug>.md`
    with a co-author: a release's worth of work, and the `grants:` (`epics`, `stories`, `merge`,
    `release`) that say what the lead may do under it unasked. `/plan-hld` then splits the agreed
-   HLD into epics (reference.md § Writing an HLD, § Decomposing an HLD).
+   HLD into epics (reference-planning.md § Writing an HLD, § Decomposing an HLD).
 2. **Epic**: `/epic <title>` opens a pane on the most capable model, where you write
    `docs/epics/<slug>.md` with it as `status: draft`: the problem with evidence, goals that can be
    checked, non-goals and constraints. A reviewer attacks the draft, and it becomes `active` only
-   when you agree it (reference.md § Writing an epic).
+   when you agree it (reference-planning.md § Writing an epic).
 3. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. A critic and codex
-   check them for gaps and overlaps, a skeptic each `risk: high` one (reference.md § Scoping an epic).
+   check them for gaps and overlaps, a skeptic each `risk: high` one (reference-planning.md § Scoping an epic).
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and starts a review agent on each PR as it opens. The review
-   agent merges the PR, or hands it to you to merge (reference.md § Building, § Merging). With a
+   agent merges the PR, or hands it to you to merge (reference-building.md § Building, reference-merging.md § Merging). With a
    merge queue each reviewed PR is enqueued at once, else they merge one at a time. A PR whose base gained code since its CI ran gets the base merged in on GitHub
    (by its builder on a conflict) and runs CI again before it merges. Two stories clash only when their `touches` name the same file in the same repo and the same first word of a part (`file:part`), or when both name the bare file. A bare
    file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
    code. A review on the latest head whose findings are all declined is a pass: the review agent
-   rebuts each in the PR and logs it as declined (reference.md § The outer loop). It then marks the story in review on the head it reviewed
+   rebuts each in the PR and logs it as declined (reference-logs.md § The outer loop). It then marks the story in review on the head it reviewed
    and merges the PR under `merge = agent` or a `merge` grant, or hands it to you. An epic is done when its last story's PR deletes the epic file. The conductor starts the builds and review agents and never reviews or merges a PR. It ends the epic with its report, the lead's only sign it has finished, written only once no agent work is left: no story of the epic is ready, building, blocked on an agent's work, or in review with its review agent still to act on it. A merge or handover note says so with a `finish:` line; the conductor then closes its idle review agents and reports. A story blocked on a `lead` story waits on you and holds nothing up: the report lists it for you.
 
 `/swarm-dev:swarm` runs the chain once an HLD or epic is agreed. `swarm.sh next` reads the board and names the next
@@ -60,7 +60,7 @@ Three parties do the work, and the plan decides which one does each step, not th
   reviews and runs `lead` stories, never the agents' work. Its messages to agents go through
   `swarm.sh tell`, never a bare `herdr agent prompt`, and when the board is in the project's repo its
   board edits go through `swarm.sh board-pr`, each in its own worktree, never the main checkout
-  (reference.md § The lead). Only a plan or agreement board PR gets a codex review; an edit, a hold or a finish lands on green CI. If it stops while `next` names a step it has not started, a hook sends it back once.
+  (reference-lead.md § The lead). Only a plan or agreement board PR gets a codex review; an edit, a hold or a finish lands on green CI. If it stops while `next` names a step it has not started, a hook sends it back once.
 - **Agents** plan, conduct and build everything else, each in its own pane, builders in a worktree too.
 
 A story is `kind: lead`, never an agent's, when it:
@@ -121,23 +121,23 @@ key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config` pr
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main`. A repo that has none of them stops the command |
 | `sign_commits` | `false` | `true`: every builder's and conductor's brief tells it to sign each commit and merge with `-S`, and to stop if it cannot; `swarm.sh board-pr`'s commit and a stacked start's merge pass `-S` too |
-| `merge` | `human` | `human`: a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one; under that grant a story's review agent may also merge that story's PR. `agent`: each story's review agent merges that story's PR, except a story with `costs: money` or a story PR that changes `.claude/`, `.github/`, `hooks/` or a root makefile, which `swarm.sh merge` holds for you (reference.md § Merging); the conductor merges no story PR |
-| `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task. To `wait` and `dash`, a test suite running in the agent's pane (`make test`, `make check`, `scripts/test.sh`) or a background task its session waits on is work for up to 3 times this long, so the agent is not stalled. `wait --stall` also does not call a builder stalled while git cannot sign its uncommitted work (gpg-agent or ssh-agent holds no unlocked key), for up to 3 times this long after its own last sign of life. A test suite in that time also keeps it from being stuck (reference.md § Building) |
-| `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building); one reviewed and left unmerged this long is `unmerged:` in `wait --lead` |
-| `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
-| `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
-| `escalate_ladder` | empty | models from low to high, each once, such as `sonnet,opus,fable`: swarm.sh steps a struggling build up to the next one in the same worktree. Empty is off (reference.md § The escalation ladder) |
-| `step_up_findings` | `3` | `N`: with `escalate_ladder` set, a build's Nth round of review findings steps it up instead of being sent (reference.md § Settings) |
-| `top_rung_rounds` | `2` | `N`: with `escalate_ladder` set, the Nth round of review findings on its top rung holds the story for the lead instead; at least `2` (reference.md § Settings) |
-| `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
-| `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |
-| `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference.md § Building) |
-| `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage limit. Empty skips the review (reference.md § Building) |
-| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference.md § Settings) |
-| `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference.md § Settings) |
-| `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: an epic that is not `active` yet (new, draft, `later`, `split`, `review` or `done`) goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
-| `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
-| `agent_env` | empty | variable names, separated by spaces, that every agent of every role gets with your session's values, such as a provider's key and endpoint (reference.md § Settings) |
+| `merge` | `human` | `human`: a green, reviewed PR waits for you. The lead merges one only when the agreed HLD over it grants `merge`, and never a `costs: money` one; under that grant a story's review agent may also merge that story's PR. `agent`: each story's review agent merges that story's PR, except a story with `costs: money` or a story PR that changes `.claude/`, `.github/`, `hooks/` or a root makefile, which `swarm.sh merge` holds for you (reference-merging.md § Merging); the conductor merges no story PR |
+| `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task. To `wait` and `dash`, a test suite running in the agent's pane (`make test`, `make check`, `scripts/test.sh`) or a background task its session waits on is work for up to 3 times this long, so the agent is not stalled. `wait --stall` also does not call a builder stalled while git cannot sign its uncommitted work (gpg-agent or ssh-agent holds no unlocked key), for up to 3 times this long after its own last sign of life. A test suite in that time also keeps it from being stuck (reference-building.md § Building) |
+| `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference-building.md § Building); one reviewed and left unmerged this long is `unmerged:` in `wait --lead` |
+| `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference-models.md § Model and effort) |
+| `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference-models.md § Model and effort) |
+| `escalate_ladder` | empty | models from low to high, each once, such as `sonnet,opus,fable`: swarm.sh steps a struggling build up to the next one in the same worktree. Empty is off (reference-models.md § The escalation ladder) |
+| `step_up_findings` | `3` | `N`: with `escalate_ladder` set, a build's Nth round of review findings steps it up instead of being sent (reference-models.md § Settings) |
+| `top_rung_rounds` | `2` | `N`: with `escalate_ladder` set, the Nth round of review findings on its top rung holds the story for the lead instead; at least `2` (reference-models.md § Settings) |
+| `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference-models.md § Settings) |
+| `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference-building.md § Building) |
+| `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference-building.md § Building) |
+| `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage limit. Empty skips the review (reference-building.md § Building) |
+| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference-models.md § Settings) |
+| `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference-models.md § Settings) |
+| `lead_epics` | `off` | `on`: the lead may set an epic `active` on its own. `off`: an epic that is not `active` yet (new, draft, `later`, `split`, `review` or `done`) goes `active` only with your agreement (`agreed:`), a `parent:`, or an HLD that grants `epics` (`swarm.sh grants`; reference-models.md § Settings), and `swarm.sh board-pr` refuses a board PR that sets one `active` with none of them |
+| `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference-models.md § Settings) |
+| `agent_env` | empty | variable names, separated by spaces, that every agent of every role gets with your session's values, such as a provider's key and endpoint (reference-models.md § Settings) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up with `.claude/swarm/config`,
 else the git repo you are in; a worktree resolves to its main checkout. It need not be a git repo: a
@@ -146,5 +146,5 @@ repo, the builder leaves the story file alone and the lead runs `swarm.sh finish
 
 ## Where the rest is
 
-[`reference.md`](reference.md) holds the lead's board PRs and wake, epics, model and effort, settings,
-scoping, building, logs and outcomes, flow and features, the outer loop, merging and releases.
+[`reference.md`](reference.md) holds the commands and lists the files that hold the rest: the lead's
+board PRs and wake, epics, model and effort, settings, scoping, building, logs, merging and releases.

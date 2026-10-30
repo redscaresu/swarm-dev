@@ -1582,7 +1582,7 @@ stage_rows() {
 # the epic guard's own tickets over the board as it is (board_reader): "lead_epics = on", "parent <p>
 # is <status>" (epic_ticket_parent) or "hld <h> grants epics" (hld_ticket). Nothing for a draft that
 # needs the user's agreement, a read error included, or one with a stage:, whatever its tickets: a
-# stage next can open gives it the staged line, and one it cannot open goes through /epic (reference.md,
+# stage next can open gives it the staged line, and one it cannot open goes through /epic (reference-planning.md,
 # Staged epics), never the lead unasked.
 draft_lead_why() (
   local f="$1" now p rc

@@ -42,5 +42,5 @@ its drafts go through `/epic`, as does a staged draft with no `hld:`, under an H
 that stage has left the board.
 
 A story joins an epic with `epic: <epic-file-name-without-.md>` in its front matter. Scope a new
-epic with `/plan-epic <slug>` (swarm-dev `docs/reference.md` § Scoping an epic). In Obsidian,
+epic with `/plan-epic <slug>` (swarm-dev `docs/reference-planning.md` § Scoping an epic). In Obsidian,
 `docs/Board.base` shows the board by status and by epic, and the epics themselves.

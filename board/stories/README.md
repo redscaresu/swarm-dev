@@ -10,7 +10,7 @@ file; the PR is the record. A story in `review` has a PR that is green and revie
 a human to merge it; its `prs:` line lists the PR URLs. List them with `grep -H '^status:' docs/stories/*.md`.
 
 `kind` (code | docs | chore | lead) and `risk: high` choose who builds it
-and with which model (swarm-dev `docs/reference.md` § Model and effort); `lead` stories are
+and with which model (swarm-dev `docs/reference-models.md` § Model and effort); `lead` stories are
 never given to a swarm agent. A `lead` story says what it needs from you, and marks each step
 that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 
@@ -18,7 +18,7 @@ that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 closes the builder of a code, docs or chore story that is still `ready` with no open PR, or when
 `swarm.sh close <slug> --drop` clears a build whose PR is open (a bare close keeps that PR and puts
 the story in review with it); once it reaches `escalate_after` (2 by default) the
-story is built on Fable (swarm-dev `docs/reference.md` § Model and effort). `swarm.sh close <slug> <cause>`
+story is built on Fable (swarm-dev `docs/reference-models.md` § Model and effort). `swarm.sh close <slug> <cause>`
 says why the builder stopped (`met`, `impossible`, `stalled`, `bound`, `paused` or `cleared-on-error`;
 with `goal` on, closing a `ready` story's builder needs one). `impossible`, `paused` and
 `cleared-on-error` are not counted in `attempts:`, and while the story's PR is open they are refused
@@ -61,7 +61,7 @@ board not in git has no history, so there an active epic with only `after:` stor
 stories.
 
 `env: [NAME, ...]` names the environment variables a story's builder needs beyond the short list
-every agent starts with (swarm-dev `docs/reference.md` § Building, The agents' environment). A story
+every agent starts with (swarm-dev `docs/reference-building.md` § Building, The agents' environment). A story
 holds names, never values: each value comes from the session that starts the agent, and the epic's
 conductor gets the names too, so it can pass them on. The list goes on one line, in brackets. Each
 name must match `[A-Z_][A-Z0-9_]*`, must be set in the session that starts the build, and must not be
@@ -76,5 +76,5 @@ A story that adds a test, lint rule, hook or review-prompt line for a kind of fi
 recurring names it with `checks: <kind>`. Once it merges, `swarm.sh outcomes` shows how many PRs the
 kind was fixed on in the 30 days before the merge and in the 30 days since.
 
-Running several at once: swarm-dev `docs/reference.md` § Building. In Obsidian, `docs/` is
+Running several at once: swarm-dev `docs/reference-building.md` § Building. In Obsidian, `docs/` is
 the vault and `docs/Board.base` is the board.

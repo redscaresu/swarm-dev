@@ -1365,7 +1365,7 @@ merge_rule_stop() {
 # conduct_stop <epic> <slug>... — prints why no conductor may start for these ready stories of <epic>
 # (board_ready's column: - for the backlog) and returns 0: under merge = agent, no allow rule for
 # swarm.sh merge (merge_rule_stop); or, as /swarm-dev:swarm's story and resume
-# steps stop (docs/reference.md § The backlog conductor): its conductor's report (conductor_report) is
+# steps stop (docs/reference-building.md § Building, The backlog conductor): its conductor's report (conductor_report) is
 # newer than every story and epic file, and than the state files (BOARD_STATE_DIR) of the group's epic
 # and of <slug>..., so a new one would stop as the last did; or, for the backlog, the
 # report lists one whose worktree is still there under not started: (a build that died). Returns 1

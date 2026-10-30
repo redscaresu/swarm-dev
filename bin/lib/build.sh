@@ -1704,14 +1704,14 @@ conduct_brief() {
     scope="Start only stories with no \`epic:\`, and leave every epic and its stories alone."
     cat <<EOF
 You are the backlog conductor: you build the ready stories on the board with no \`epic:\`. Read
-AGENTS.md (and STATUS.md if there is one), ${SWARM_HOME}/docs/method.md and ${SWARM_HOME}/docs/reference.md § Building first.
+AGENTS.md (and STATUS.md if there is one), ${SWARM_HOME}/docs/method.md and ${SWARM_HOME}/docs/reference-building.md § Building first.
 
 EOF
     conduct_backlog_mode
   else
     cat <<EOF
 You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
-is one), ${SWARM_HOME}/docs/method.md, ${SWARM_HOME}/docs/reference.md § Building and the epic first.
+is one), ${SWARM_HOME}/docs/method.md, ${SWARM_HOME}/docs/reference-building.md § Building and the epic first.
 
 EOF
     conduct_story_mode "${epic}"
@@ -1957,8 +1957,8 @@ EOF
 conduct_story_mode() {
   local epic="$1"
   cat <<EOF
-Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as reference.md
-§ Building describes: pick waves of \`ready\` stories that do not clash,
+Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as
+reference-building.md § Building describes: pick waves of \`ready\` stories that do not clash,
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and start a review agent for each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
@@ -1990,8 +1990,8 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`."
   else own=""
   fi
   cat <<EOF
-Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as reference.md
-§ Building describes: pick waves of them that do not clash, start each with
+Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as
+reference-building.md § Building describes: pick waves of them that do not clash, start each with
 \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --backlog\` in the background, and start a review agent for each PR. Each story's
 base branch is in its brief, .swarm/briefs/<slug>.md.
