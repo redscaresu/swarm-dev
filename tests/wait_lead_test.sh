@@ -10,6 +10,8 @@
 # sign-blocked and whose worktree is dirty gets a sign-blocked: line, with the signers stubbed to show
 # the poll calls none.
 # ln is a stub that fails while ${FX}/ln.fail exists and waits as many seconds as ${FX}/ln.slow holds.
+# ps is the real one. A read of every process (-A) drops the real swarm.sh merge lines, which other tests on the
+# machine make, and adds the lines of ${FX}/ps: a fixture process list.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -19,7 +21,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 lpid=""; tpid=""
-trap 'stop; [[ -z "${tpid}" ]] || kill "${tpid}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+trap 'stop; fix_stop; [[ -z "${tpid}" ]] || kill "${tpid}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; FX="${ROOT}/fx"; B="${P}/docs/stories"
 H=1111111111111111111111111111111111111111; H2=2222222222222222222222222222222222222222; URL=https://github.com/o/r/pull/7
@@ -33,7 +35,7 @@ git -C "${P}" init -q
 # ${FX}/prs.json's PRs, else none, the default branch is ${FX}/default, a branch exists and has the head ${FX}/base.<branch> while that file
 # does, and ci_gate fixed reads any commit as one that changes bin/x, any compare as one behind by nothing,
 # no workflow run, the base's rules as ${FX}/rules while that file does (else the read fails, so every check
-# counts) and no classic protection.
+# counts) and no classic protection. run view reads any Actions run as completed, its failed log one FAIL line.
 printf '#!/bin/sh\nFX="%s"; LOG="%s"\n' "${FX}" "${ROOT}/gh.log" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
@@ -44,6 +46,7 @@ case "$1 $2" in
              sleep "$(cat "${FX}/view.slow" 2>/dev/null || echo 0)"
              [ ! -e "${FX}/view.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }
              cat "${FX}/head.$3" 2>/dev/null || cat "${FX}/head" ;;
+  "run view") case "$*" in *--log-failed*) printf 'test\tstep\t2026-10-29T00:00:00.0000000Z FAIL TestRed\n' ;; *) echo completed ;; esac ;;
   # The heads pass's read of the open story PRs, once the project has an origin (the main-red and stuck: cases).
   "repo view") [ ! -e "${FX}/repo.fail" ] || exit 1; echo o/r ;;
   "pr list") cat "${FX}/prs.json" 2>/dev/null || echo '[]' ;;
@@ -54,7 +57,10 @@ case "$1 $2" in
                      cat "${FX}/${sha}.status" 2>/dev/null || echo '{"total_count":0,"statuses":[]}' ;;
           */git/matching-refs/heads/*) b="${path#*/matching-refs/heads/}"; [ ! -e "${FX}/base.${b}" ] || echo "refs/heads/${b}" ;;
           *"--jq .default_branch"*) cat "${FX}/default" ;;
-          *"--jq .sha "*/commits/*) cat "${FX}/base.${path#*/commits/}" ;;
+          # A fix-main run (it has SWARM_FIX_MAIN_LOG_SECONDS) reads ${FX}/base.<branch>.run when there is one.
+          *"--jq .sha "*/commits/*) b="${path#*/commits/}"
+                                    if [ -n "${SWARM_FIX_MAIN_LOG_SECONDS:-}" ] && [ -e "${FX}/base.${b}.run" ]; then cat "${FX}/base.${b}.run"
+                                    else cat "${FX}/base.${b}"; fi ;;
           */commits/*) echo '{"files":[{"filename":"bin/x"}],"parents":[]}' ;;
           */compare/*) echo '{"behind_by":0}' ;;
           */actions/runs*) echo '{"total_count":0,"workflow_runs":[]}' ;;
@@ -87,8 +93,18 @@ cat >> "${ROOT}/bin/ln" <<'STUB'
 sleep "$(cat "${FX}/ln.slow" 2>/dev/null || echo 0)"
 STUB
 printf 'exec %s "$@"\n' "$(command -v ln)" >> "${ROOT}/bin/ln"
+printf '#!/bin/sh\nFX="%s"; PS="%s"\n' "${FX}" "$(command -v ps)" > "${ROOT}/bin/ps"
+cat >> "${ROOT}/bin/ps" <<'STUB'
+case " $* " in
+  # Less the real swarm.sh merges: other tests on the machine run them on o/r.
+  *" -A "*) out="$("${PS}" "$@")" || exit $?
+            printf '%s\n' "${out}" | grep -vF 'swarm.sh merge' || true
+            cat "${FX}/ps" 2>/dev/null || true ;;
+  *) exec "${PS}" "$@" ;;
+esac
+STUB
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${ROOT}/bin/claude"
-chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ln" "${ROOT}/bin/claude"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/ln" "${ROOT}/bin/ps" "${ROOT}/bin/claude"
 printf 'w:c conduct-e\n' > "${P}/.swarm/state/e"
 
 # checks <conclusion> [sha] — the head's (or <sha>'s) one check run, completed with <conclusion>, or
@@ -102,9 +118,18 @@ item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "$
 held() { item "$1" "kind: lead" "status: ready" "escalated_from: code" "held_for: $2"; }
 escalated() { item "$1" "kind: lead" "status: ready" "escalated_from: code"; }
 
+# fix_stop — KILL every fix-main run wait --lead started (main_red_fix), with its session, and see each gone
+# within 5 s: one left would write into the next case's board, or into ${ROOT} while the test removes it.
+fix_stop() {
+  local p i
+  while read -r p; do
+    kill -KILL -- "-${p}" "${p}" 2>/dev/null || true
+    for ((i = 0; i < 50; i++)); do kill -0 "${p}" 2>/dev/null || break; sleep 0.1; done
+  done < <(awk '$6 ~ /^[0-9]+$/ { print $6 }' "${P}/.swarm/lead/fixes" 2>/dev/null)
+}
 # fresh [config line]... — a board with one held story, h, and nothing else; no events, no earlier run.
 fresh() {
-  stop
+  stop; fix_stop; rm -f "${FX:?}/ps"
   rm -f "${B}"/*.md "${P}/.swarm/events.tsv" "${FX}/view.fail" "${FX}/view.slow" "${FX}/ln.slow" "${FX}/ln.fail" "${FX}"/head.* "${FX}"/*.checks; rm -rf "${P}/.swarm/lead" "${ROOT}"/*.log
   again
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
@@ -807,13 +832,18 @@ rm -rf "${ROOT}/gone"
 
 # --- main-red cases: each heads pass reads every base's head and its CI (lead_bases), and each poll prints one
 # main-red: line per red base, from events.tsv or else from what the pass wrote (main_red_lines). The project's
-# origin is o/r here, whose default branch is main.
+# origin is o/r here, whose default branch is main. A swarm.sh merge of a PR in o/r runs throughout (the ps
+# fixture), so no fix-main run starts (main_red_fix), except where a case takes it away.
 B1=3333333333333333333333333333333333333333; B2=4444444444444444444444444444444444444444; B3=5555555555555555555555555555555555555555
 git -C "${P}" remote add origin https://github.com/o/r.git
-# based [config line]... — fresh, main the default branch, no branch on GitHub yet, and no build of a fix.
-based() { fresh "$@"; rm -f "${FX}"/base.* "${FX}"/*.status "${FX}/repo.fail" "${FX}/rules"; rm -rf "${ROOT}/proj-wt"; echo main > "${FX}/default"; }
-# red_line <sha> <base> [exit] — the main-red: line for <sha> on <base> of o/r with test failed.
-red_line() { echo "main-red: ${1:0:7} o/r $2 (test (failure)), exit: ${3:-fix $2 by hand, as no fix-main story covers it yet}"; }
+# merging <owner/repo> — ps lists a swarm.sh merge of PR 9 in <owner/repo>.
+merging() { printf '99999 bash /x/bin/swarm.sh merge --head %s https://github.com/%s/pull/9\n' "${H}" "$1" > "${FX}/ps"; }
+# based [config line]... — fresh, main the default branch, no branch on GitHub yet, no build of a fix, and a
+# merge into o/r running.
+based() { fresh "$@"; rm -f "${FX}"/base.* "${FX}"/*.status "${FX}/repo.fail" "${FX}/rules"; rm -rf "${ROOT}/proj-wt"; echo main > "${FX}/default"; merging o/r; }
+# red_line <sha> <base> [exit] — the main-red: line for <sha> on <base> of o/r with test failed, its exit by
+# default the one a red head gets while a fix-main run would write its story.
+red_line() { echo "main-red: ${1:0:7} o/r $2 (test (failure)), exit: ${3:-wait for fix-main-${1:0:7}, which a fix-main run is writing and next then names first}"; }
 # red_out — the main-red: lines the run printed; red_seen — those in the queue the last poll saved.
 red_out() { grep '^main-red: ' "${ROOT}/out" || true; }
 red_seen() { grep '^main-red: ' "${P}/.swarm/lead/seen" || true; }
@@ -838,6 +868,33 @@ test_and_opt() {
 woken() { grep -c "^lead-woken ${1:0:7}$" <<< "$(events)" || true; }
 # logged_red <sha> [base] — the main-red line fix_main writes for a red at <sha> on o/r <base> (main) with test failed.
 logged_red() { printf '%s\tmain-red\t%s\t-\to/r %s test (failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:-main}" >> "${P}/.swarm/events.tsv"; }
+# red_run <sha> — <sha>'s one check run, test, failed in Actions run 99.
+red_run() {
+  printf '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"failure","html_url":"%s"}]}\n' \
+    https://github.com/o/r/actions/runs/99/job/1 > "${FX}/$1.checks"
+}
+# fix_runs <sha> — how many runs wait --lead started for <sha>, from their log.
+fix_runs() { local n; n="$(grep -c '^run ' "${P}/.swarm/lead/fix-main-${1:0:7}.log" 2>/dev/null)" || true; echo "${n:-0}"; }
+# fix_pid <sha> — the pid of <sha>'s last run, as wait --lead wrote it.
+fix_pid() { awk -v s="$1" '$3 == s { print $6 }' "${P}/.swarm/lead/fixes" 2>/dev/null; }
+# fix_done <sha> — true once <sha>'s last run has exited; false when it has not within 60 s, or there is none.
+fix_done() {
+  local i p
+  p="$(fix_pid "$1")"; [[ "${p}" =~ ^[0-9]+$ ]] || return 1
+  for ((i = 0; i < 600; i++)); do kill -0 "${p}" 2>/dev/null || return 0; sleep 0.1; done
+  return 1
+}
+# fix_kill <sha> — KILL <sha>'s last run with its session, and see it gone.
+fix_kill() {
+  local p
+  p="$(fix_pid "$1")"; [[ ! "${p}" =~ ^[0-9]+$ ]] || kill -KILL -- "-${p}" "${p}" 2>/dev/null || true
+  must "the run was killed" fix_done "$1"
+}
+# one_of <value> <a> <b> — <value> is <a> or <b>.
+one_of() { [[ "$1" == "$2" || "$1" == "$3" ]]; }
+# main_reds <sha> — how many main-red lines events.tsv holds for <sha>.
+main_reds() { awk -F'\t' -v s="$1" '$2 == "main-red" && $3 == s' "${P}/.swarm/events.tsv" 2>/dev/null | wc -l | tr -d ' '; }
+F="${B}/fix-main-${B1:0:7}.md"
 
 based; echo "${B1}" > "${FX}/base.main"; checks pending "${B1}"
 lead 0
@@ -923,18 +980,73 @@ based; echo "${B1}" > "${FX}/base.main"; checks failure "${B1}"
 item "fix-main-${B1:0:7}" "kind: code" "status: ready" "touches: [.]"; logged_red "${B1}"
 echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
 lead 0
-again; echo "${B2}" > "${FX}/base.main"; test_and_opt "${B2}"; lead 0
+# With no merge running, that poll starts a fix-main run for the head, which finds it red only on the optional
+# check, as ci_gate fixed reads it, so it writes no story, and no run starts for it again.
+again; echo "${B2}" > "${FX}/base.main"; test_and_opt "${B2}"; rm -f "${FX:?}/ps"; lead 0
 check "a head red only on a check the base does not require clears the logged red, as reconcile does" \
   grep -qx "main-green ${B2} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv")"
-check "and that poll prints the head's own main-red: line for the optional check, with the by-hand exit" \
-  test "$(red_out)" == "main-red: ${B2:0:7} o/r main (opt (failure)), exit: fix main by hand, as no fix-main story covers it yet"
 check "and the red's unstarted fix-main story is retired by that pass" test ! -e "${B}/fix-main-${B1:0:7}.md"
+check "the fix-main run for the optional check's red ends" fix_done "${B2}"
+check "having written no story" test ! -e "${B}/fix-main-${B2:0:7}.md"
+check "its log says the base does not require that check" \
+  grep -qx "not required: CI on main at ${B2:0:7} is red only on checks main does not require; no fix-main story written" \
+  "${P}/.swarm/lead/fix-main-${B2:0:7}.log"
+again; lead 0
+check "then the head's own main-red: line for the optional check has the by-hand exit" \
+  test "$(red_seen)" == "main-red: ${B2:0:7} o/r main (opt (failure)), exit: fix main by hand, as no fix-main story covers it yet"
+check "and no other run starts for that head" test "$(fix_runs "${B2}")" == 1
+
+# An optional check failed while the check the base requires still runs: whether the red is one the base
+# requires is not known yet, so the run writes nothing, its log ends stale:, and it counts as no run.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
+printf '{"total_count":2,"check_runs":[%s,%s]}\n' '{"name":"test","status":"in_progress","conclusion":null,"html_url":"u"}' \
+  '{"name":"opt","status":"completed","conclusion":"failure","html_url":"u"}' > "${FX}/${B1}.checks"
+lead 0
+check "with the required check still running, the run for the optional check's red ends" fix_done "${B1}"
+check "having written no story" test ! -e "${F}"
+check "and logged no main-red" test "$(main_reds "${B1}")" == 0
+check "its log ends stale:, as the required check has not finished" test "$(tail -n 1 "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == \
+  "stale: CI on main at ${B1:0:7} has a check main requires still running; no fix-main story written"
+# The next heads pass's file must be newer than the log, and bash 3.2's -nt compares whole seconds.
+sleep 1; again; lead 0
+check "it counts as no run: the next heads pass's run is run 1 again" \
+  test "$(grep -c '^run 1 of 2,' "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == 2
+must "that run ends too" fix_done "${B1}"
+
+# A required check failed while another required check has no run yet: the red is one the base requires, so the
+# run writes the story, though fixed still waits on the absent check.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"},{"context":"build"}]}}]' > "${FX}/rules"
+lead 0
+check "a required check red and another with no run: the run ends" fix_done "${B1}"
+check "having written the story" test -f "${F}"
+check "and logged one main-red" test "$(main_reds "${B1}")" == 1
+
+# A required check that never reports on the base, and only an optional check red: each run ends absent:, which
+# counts, so after LEAD_FIX_TRIES runs, a heads pass apart, the line is the lead's check, never an endless wait.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
+printf '{"total_count":1,"check_runs":[{"name":"opt","status":"completed","conclusion":"failure","html_url":"u"}]}\n' > "${FX}/${B1}.checks"
+lead 0
+check "a required check with no run and only an optional one red: the run ends" fix_done "${B1}"
+check "having written no story" test ! -e "${F}"
+check "its log ends absent:, naming the required check" test "$(tail -n 1 "${P}/.swarm/lead/fix-main-${B1:0:7}.log")" == \
+  "absent: CI on main at ${B1:0:7} has no run yet of test, which main requires, and no check it requires has failed; no fix-main story written"
+# Each next run waits for a heads pass newer than the log, and bash 3.2's -nt compares whole seconds.
+sleep 1; again; lead 0
+check "the next heads pass starts the second run" test "$(fix_runs "${B1}")" == 2
+must "the second run ends" fix_done "${B1}"
+sleep 1; again; lead 0
+check "after LEAD_FIX_TRIES absent: runs the line is the lead's check, not a wait" test "$(red_seen)" == \
+  "main-red: ${B1:0:7} o/r main (opt (failure)), exit: read .swarm/lead/fix-main-${B1:0:7}.log, as no run wrote fix-main-${B1:0:7}, then fix main by hand"
+check "and no third run starts" test "$(fix_runs "${B1}")" == 2
 
 # A base whose CI posts only commit statuses: no check run is needed for its head to read green.
 based; echo "${B1}" > "${FX}/base.main"; status_only failure "${B1}"
 lead 0
 check "a base whose only CI is a failed commit status prints main-red:" test "$(out)|$(rc)" == \
-  "main-red: ${B1:0:7} o/r main (ci (failure)), exit: fix main by hand, as no fix-main story covers it yet|0"
+  "main-red: ${B1:0:7} o/r main (ci (failure)), exit: wait for fix-main-${B1:0:7}, which a fix-main run is writing and next then names first|0"
 again; status_only success "${B1}"; lead 0
 check "once a rerun passes that status, with no check run, the line goes" no_red_line
 
@@ -967,7 +1079,101 @@ check "a base it cannot tell warns the same way" grep -qF "warning: wait --lead 
 based; echo "${B1}" > "${FX}/base.main"; checks pending "${B1}"
 lead SWARM_LEAD_HEADS_EVERY=30 4000
 check "the polls between heads passes read no base head" test "$(grep -c 'commits/main' "${ROOT}/gh.log")" == 1
+
+# --- main-red fix cases: each poll starts swarm.sh _fix-main, detached, for a red base head that no main-red
+# covers (main_red_fix), and the run writes the fix-main story (main_red_run, fix_main).
+
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
+built="$(red_line "${B1}" main "build fix-main-${B1:0:7}, which next names first")"
+lead 0
+# A run that writes the story before the poll reads the board gives the build exit at once.
+check "a red head no main-red covers prints main-red:, waiting on its story or naming it" \
+  one_of "$(out)|$(rc)" "$(red_line "${B1}" main)|0" "${built}|0"
+check "the poll started one _fix-main run" test "$(fix_runs "${B1}")" == 1
+check "the run ends" fix_done "${B1}"
+check "the run wrote fix-main-<sha>" test -f "${F}"
+check "and logged one main-red for that head" test "$(main_reds "${B1}")" == 1
+check "the story names the failed check" grep -qx 'red: test (failure)' "${F}"
+check "and its Actions run" grep -qF 'The failed runs: https://github.com/o/r/actions/runs/99.' "${F}"
+# shellcheck disable=SC2016 # the backticks are the story's own
+check "and says no swarm.sh merge wrote a fix for the red" grep -qF 'no `swarm.sh merge` wrote a fix-main story for' "${F}"
+check "it is the project's own repo's story, with no repo: line" bash -c "! grep -q '^repo:' '${F}'"
+again; lead 0
+check "the next poll's one main-red: line names the story as the exit" \
+  test "$(grep '^main-red: ' "${P}/.swarm/lead/seen")" == "${built}"
+check "and starts no second run" test "$(fix_runs "${B1}")" == 1
+check "and logs no second main-red" test "$(main_reds "${B1}")" == 1
+
+# One check failed and another still runs: the story and main-red name the failed one alone, so a green
+# base clears the red without waiting for a passed run of a check that never went red.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"
+printf '{"total_count":2,"check_runs":[%s,%s]}\n' \
+  '{"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/99/job/1"}' \
+  '{"name":"build","status":"in_progress","conclusion":null,"html_url":"u"}' > "${FX}/${B1}.checks"
+lead 0
+check "with a check still running, the run ends" fix_done "${B1}"
+check "its story's red: line names only the failed check" grep -qx 'red: test (failure)' "${F}"
+check "and so does its main-red" \
+  test "$(awk -F'\t' -v s="${B1}" '$2 == "main-red" && $3 == s { print $5 }' "${P}/.swarm/events.tsv")" == "o/r main test (failure)"
+
+based; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
+lead 0
+check "with a swarm.sh merge into o/r running, the line waits on the story" test "$(out)|$(rc)" == "$(red_line "${B1}" main)|0"
+check "and no run starts" test "$(fix_runs "${B1}")" == 0
+merging o/rx; again; lead 0
+check "a merge into another repo, o/rx, holds no run back" test "$(fix_runs "${B1}")" == 1
+check "and that run ends" fix_done "${B1}"
+check "having written the story" test -f "${F}"
+
+# fix_main's lock is held, so a run waits on it and writes nothing before it is killed.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
+mkdir -p "${P}/.swarm/fix-main.o-r-main.lock"
+lead SWARM_LOCK_WAIT=60 0
+check "a run starts" test "$(fix_runs "${B1}")" == 1
+again; lead SWARM_LOCK_WAIT=60 0
+check "a poll while it runs starts no second run" test "$(fix_runs "${B1}")" == 1
+fix_kill "${B1}"
+check "killed before it writes, it leaves no story" test ! -e "${F}"
+again; lead SWARM_LOCK_WAIT=60 0
+check "the next poll starts the run again" test "$(fix_runs "${B1}")" == 2
+check "and the line, unchanged, wakes no one" test "$(out)|$(rc)" == "|1"
+check "the log says the killed run failed" grep -qx 'wait --lead: run 1 of 2 ended with no main-red logged: it failed' \
+  "${P}/.swarm/lead/fix-main-${B1:0:7}.log"
+fix_kill "${B1}"
+again; lead 0
+check "after two failed runs the line names the lead's check" test "$(out)|$(rc)" == \
+  "$(red_line "${B1}" main "read .swarm/lead/fix-main-${B1:0:7}.log, as no run wrote fix-main-${B1:0:7}, then fix main by hand")|0"
+check "and no third run starts" test "$(fix_runs "${B1}")" == 2
+check "the log says the second run failed too" grep -qx 'wait --lead: run 2 of 2 ended with no main-red logged: it failed' \
+  "${P}/.swarm/lead/fix-main-${B1:0:7}.log"
+rmdir "${P}/.swarm/fix-main.o-r-main.lock"
+
+# A merge's fix_main logs the red while a run waits on the lock: once it has the lock, the run writes nothing.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
+mkdir -p "${P}/.swarm/fix-main.o-r-main.lock"
+lead SWARM_LOCK_WAIT=60 0
+printf '%s\tmain-red\t%s\t-\to/r main test (failure)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${B1}" >> "${P}/.swarm/events.tsv"
+rmdir "${P}/.swarm/fix-main.o-r-main.lock"
+check "a run whose red a merge logged while it waited ends" fix_done "${B1}"
+check "having written no story" test ! -e "${F}"
+check "and no second main-red" test "$(main_reds "${B1}")" == 1
+
+# The base moved after the pass read it: the run writes nothing, and the polls before the next heads pass
+# start no other run and count no failure.
+based; rm -f "${FX:?}/ps"; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"; echo "${B2}" > "${FX}/base.main.run"
+# Seen already, so the run's polls go on: its first read wakes no one.
+mkdir -p "${P}/.swarm/lead"; printf '%s\n' "held: h (paused)" "$(red_line "${B1}" main)" > "${P}/.swarm/lead/seen"
+start SWARM_LEAD_HEADS_EVERY=3600 120000
+check "a run that finds the base moved since the pass ends" fix_done "${B1}"
+check "having written no story" test ! -e "${F}"
+check "its log says why" grep -qx "stale: main is at ${B2:0:7} now, not ${B1:0:7}; no fix-main story written" \
+  "${P}/.swarm/lead/fix-main-${B1:0:7}.log"
+s="$(seen_id)"; must "a poll read after the run" first_read "${s}"; s="$(seen_id)"; must "and another" first_read "${s}"
+check "the polls before the next heads pass start no second run" test "$(fix_runs "${B1}")" == 1
+check "nor name the lead's check" bash -c "! grep -q '^main-red: .*, exit: read ' '${P}/.swarm/lead/seen'"
+stop
 git -C "${P}" remote remove origin; rm -f "${FX}"/base.* "${FX}/default" "${FX}"/*.status
+
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"

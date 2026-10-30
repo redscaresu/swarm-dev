@@ -123,7 +123,8 @@ Repeat until a step below says stop:
      follow-ups, so you need not keep them in memory.
 2. Do the step:
    - `fix-main <slug>`: `swarm.sh merge` found CI on the base red on a commit it merged, printed
-     `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them.
+     `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them. Or
+     `wait --lead` found the base's head red with no such story, and its run wrote `<slug>` the same way.
      `next` names this step only while `<slug>` is ready and nobody has started it. Merge nothing
      else until `<slug>` merges and the base is green, and never wait on an unrelated PR to fix it.
      If a conductor is still working (`swarm.sh status` lists one with no report), write a note
@@ -384,10 +385,15 @@ Repeat until a step below says stop:
      sha>, whose build has started, to merge`, the fix is under way: start nothing for it, and see its PR
      through. With `fix-main-<short sha> waits on the lead: handle its held: or escalated: line`, act on
      that line. With `fix-main-<short sha> is not one next builds: check its status and kind`, fix the
-     story's front matter (`status: ready` and an agent's `kind`) so `next` names it. With `fix <base> by
-     hand, as no fix-main story covers it yet`, no story covers the red, most often because the red came
-     from a merge that `swarm.sh merge` did not make: tell the user which checks are red, and merge nothing
-     into that base until it is green. The line goes once the base reads fixed. A
+     story's front matter (`status: ready` and an agent's `kind`) so `next` names it. With `wait for
+     fix-main-<short sha>, which a fix-main run is writing and next then names first`, `wait --lead` has
+     started a run that writes the story: start `wait --lead` again, and the line comes back with a
+     `build` exit once the story is there. With `read .swarm/lead/fix-main-<short sha>.log, as no run
+     wrote fix-main-<short sha>, then fix <base> by hand`, two runs failed to write it: read the log, and
+     tell the user which checks are red and why no story was written. With `fix <base> by hand, as no
+     fix-main story covers it yet`, either the red's story has left the board, or the head is red only on
+     checks the base does not require, so no run writes a story for it: tell the user which checks are
+     red. Merge nothing into that base until it is green. The line goes once the base reads fixed. A
      `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` line means the
      epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
      ready, blocked on an agent's story, or in review with a review agent still to act. For the
