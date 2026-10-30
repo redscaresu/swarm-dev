@@ -2,8 +2,8 @@
 kind: code
 status: blocked
 epic: telemetry-readers
-depends_on: [outcome-readers-dash, outcome-readers-flow, outcome-readers-lead, outcome-readers-merge, outcome-readers-agents, events-outcome-helper]
-needs: [outcome-readers-dash, outcome-readers-flow, outcome-readers-lead, outcome-readers-merge, outcome-readers-agents: every events outcome read already on the helper, so the scan is green on main, events-outcome-helper: events_outcome.py and EVENT_OUTCOME_AWK, the code the scan exempts]
+depends_on: [outcome-readers-dash, outcome-readers-flow, outcome-readers-lead, outcome-readers-merge, outcome-readers-agents, events-outcome-helper, deferred-reason]
+needs: [outcome-readers-dash, outcome-readers-flow, outcome-readers-lead, outcome-readers-merge, outcome-readers-agents: every events outcome read already on the helper, so the scan is green on main, events-outcome-helper: events_outcome.py and EVENT_OUTCOME_AWK, the code the scan exempts, deferred-reason: orders the shared reports.sh:out_of_scope_findings; the scanner reads it after deferred rows land]
 touches: [tests/outcome_scan_test.sh (new), scripts/test-map.tsv:bin row floor, bin/lib/reports.sh:out_of_scope_findings (mark), bin/lib/report.py:rework_of (mark), bin/lib/flow_test_runs.py:test-runs read (mark)]
 estimate_lines: 180
 easy: false

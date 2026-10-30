@@ -2,8 +2,8 @@
 kind: code
 status: blocked
 epic: review-rounds-end
-depends_on: [decline-only-event, deferred-bar-confirm, events-outcome-helper]
-needs: [decline-only-event: the decline-only end in flow_review_loops.py (a decline-only pass adds no round) and the review_loops docs it rewrote, which this story extends with totals, deferred-bar-confirm: the deferred_proved_real bar the user confirmed, written into the features.tsv row, events-outcome-helper: bin/lib/events_outcome.py and the awk outcome(), through which this story reads event outcomes (telemetry-readers)]
+depends_on: [decline-only-event, deferred-bar-confirm, events-outcome-helper, flow-tell-refusals, review-event-fields]
+needs: [decline-only-event: the decline-only end in flow_review_loops.py (a decline-only pass adds no round) and the review_loops docs it rewrote, which this story extends with totals, deferred-bar-confirm: the deferred_proved_real bar the user confirmed, written into the features.tsv row, events-outcome-helper: bin/lib/events_outcome.py and the awk outcome(), through which this story reads event outcomes (telemetry-readers), flow-tell-refusals: orders the shared docs/reference-logs.md flow row (flow-tell-refusals already follows flow-start-failures), review-event-fields: orders the shared review_loops parts of reports.sh and docs/reference-logs.md; adds totals on top of its round-end fields]
 touches: [bin/lib/flow_review_loops.py:deferred and four-plus columns (totals), bin/lib/flow_time_in_state.py:review_wait columns, bin/lib/reports.sh:review_loops doc comment (totals), bin/lib/reports.sh:time_in_state doc comment, docs/reference-logs.md:review_loops paragraph (totals), docs/reference-logs.md:time_in_state paragraph, docs/reference-logs.md:flow row, docs/features.tsv:Goal 1 rows, tests/flow_review_loops_test.sh:deferred and four-plus cases, tests/time_in_state_test.sh:review_wait cases]
 estimate_lines: 160
 easy: false
@@ -19,3 +19,4 @@ Needs from decline-only-event: flow_review_loops.py, reports.sh's review_loops c
 - tests/time_in_state_test.sh: over fixture rows with review_wait_min 10, 20, 30, 40 and 200 on merged PRs, the all row's review_wait_median is 30 and review_wait_p90 is 200; a row with none leaves both empty.
 - tests/features_test.sh passes with the three new rows (each with a metric, a uses entry and a baseline or unavailable:).
 - docs/features.tsv's prs_4plus_rounds baseline says the 43-of-125 count was taken before a decline-only pass stopped counting as a round.
+- Each new docs/features.tsv metric names a section and a column flow actually prints (no `totals` unless flow prints that header), and passes features_test's section-and-column check.

@@ -21,4 +21,4 @@ flow incidents also counts stalled step-up events and flagged panes (HLD Goal 3)
 - End to end: that bg=1 line's slug shows in flow incidents' stalled-input table and its any-input-1 count is 1.
 - Copy-aside proof: dropping the fresh read on the hand-run path turns the bg=1 case red.
 - docs/reference-logs.md's stalled sentence names the three inputs and which path writes each value.
-- A test drives a false stall (a live background shell) through the wait's path to a step-up event, and flow incidents counts it with bg=1; a flagged pane counts too.
+- A test shows a live background task stops the wait's path from stepping a builder up; the explicit step-up path logs bg=1 and flow incidents counts it; a flagged pane counts too.

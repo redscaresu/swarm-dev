@@ -1,8 +1,9 @@
 ---
 kind: code
-status: ready
+status: blocked
 epic: review-rounds-end
-depends_on: []
+depends_on: [intervene-cause]
+needs: [intervene-cause: orders the shared bin/swarm.sh usage block; this story edits it after intervene's line changes]
 touches: [bin/lib/reports.sh:FINDING_REASONS, bin/lib/reports.sh:out_of_scope_findings (deferred rows, reason passed on), bin/lib/reports.sh:record_finding doc comment (filed row), bin/lib/reports.sh:reviewers doc comment (by-round header), bin/lib/board.sh:idle_lines (finding label), bin/lib/flow_reviewers.py:REASONS (deferred column), bin/swarm.sh:usage (log-finding line), commands/swarm.md:idle findings bullet (step 1), docs/method.md:planning chain idle candidates, docs/reference-logs.md:The outer loop (reasons), docs/reference-logs.md:log-finding row, docs/reference-logs.md:reviewers by-round paragraph, tests/log_finding_test.sh:REASONS, tests/epic_codex_test.sh:bare_declined, tests/review_yield_test.sh:by-round header, tests/next_test.sh:idle findings cases]
 estimate_lines: 90
 easy: true

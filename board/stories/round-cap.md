@@ -2,8 +2,8 @@
 kind: code
 status: blocked
 epic: review-rounds-end
-depends_on: [deferred-reason, declines-to-codex, events-outcome-helper]
-needs: [deferred-reason: log-finding accepting --declined deferred, which the cap tells the review agent to log; the outer-loop text and epic_codex_test it rewrote, declines-to-codex: review_brief, § Review before closing, § The outer loop and review_handoff_gaps_test.sh with SWARM_PR and --because, the shared parts edited here next; its --because flag, which this story adds to AGENTS.md's log-finding form, events-outcome-helper: bin/lib/events_outcome.py and the awk outcome(), through which this story reads event outcomes (telemetry-readers)]
+depends_on: [deferred-reason, declines-to-codex, events-outcome-helper, outcome-readers-agents]
+needs: [deferred-reason: log-finding accepting --declined deferred, which the cap tells the review agent to log; the outer-loop text and epic_codex_test it rewrote, declines-to-codex: review_brief, § Review before closing, § The outer loop and review_handoff_gaps_test.sh with SWARM_PR and --because, the shared parts edited here next; its --because flag, which this story adds to AGENTS.md's log-finding form, events-outcome-helper: bin/lib/events_outcome.py and the awk outcome(), through which this story reads event outcomes (telemetry-readers), outcome-readers-agents: orders the shared build.sh:review_rounds; the cap edits it after it reads outcomes through the helper]
 touches: [bin/lib/build.sh:review_round_line (the cap), bin/lib/build.sh:review_brief (decline rule, deferred), bin/lib/build.sh:finding_rule (deferred, escaped repeat), bin/lib/build.sh:conduct_brief (escaped repeat line), bin/lib/build.sh:review_rounds (kept-close rule), commands/swarm.md:escaped for a deferred finding that proved real, AGENTS.md:review-agent and log-finding bullets, docs/method.md:planning chain review rounds, docs/reference-building.md:Review before closing (cap, count, reasons), docs/reference-logs.md:The outer loop (deferred rows, escaped repeat), docs/lead-by-hand.md:Review rounds that do not end (removed), tests/review_handoff_gaps_test.sh:cap cases, tests/restart_test.sh:review_round kept cases, tests/epic_codex_test.sh:finding_rule names check]
 estimate_lines: 200
 easy: false
@@ -21,3 +21,4 @@ Needs from deferred-reason: log-finding accepts --declined deferred (the cap mus
 - docs/lead-by-hand.md has no `## Review rounds that do not end` section, and scripts/select-tests.sh --run passes, tests/review_agent_test.sh and tests/doc_check_test.sh among them.
 - `swarm.sh review-agent --next` at rounds 2 and 3 carries the cap line exactly as the round line sets it (tested on review_next's output).
 - finding_rule tells whoever finds a deferred finding proved real to log it as escaped, copying the declined row's text exactly; a test pins that wording.
+- The brief's triage rule is conditional on CAP_ROUND: before round 3 it still says fix every real in-scope finding, and from round 3 it says only regressions and false lines are fixed and the rest deferred; a test asserts the round-3 brief no longer carries the unconditional fix-every-finding line.

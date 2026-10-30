@@ -2,8 +2,8 @@
 kind: code
 status: blocked
 epic: telemetry-writers
-depends_on: [flow-tell-refusals, flow-start-failures, flow-incidents-causes, lead-queue-p90, merge-holds-by-kind, pr-lifecycle-events, review-event-fields]
-needs: [flow-tell-refusals: bin/lib/flow_tell_refusals.py, flow-start-failures: bin/lib/flow_start_failures.py, flow-incidents-causes: flow incidents' cause and stalled-input tables, lead-queue-p90: flow lead_queue's p90_min, merge-holds-by-kind: flow merges' dropped_lines column]
+depends_on: [flow-tell-refusals, flow-start-failures, flow-incidents-causes, lead-queue-p90, merge-holds-by-kind, pr-lifecycle-events, review-event-fields, goal1-flow-readings]
+needs: [flow-tell-refusals: bin/lib/flow_tell_refusals.py, flow-start-failures: bin/lib/flow_start_failures.py, flow-incidents-causes: flow incidents' cause and stalled-input tables, lead-queue-p90: flow lead_queue's p90_min, merge-holds-by-kind: flow merges' dropped_lines column, goal1-flow-readings: orders the shared docs/features.tsv Goal rows; checks Goal 1's rows once they exist]
 touches: [tests/features_test.sh:section and column check, docs/features.tsv:Goal 2 to 8 rows, docs/features.tsv:Goal 6 rows (new), docs/reference-logs.md:goal-to-section table (new, Flow and features)]
 estimate_lines: 160
 easy: false

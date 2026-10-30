@@ -19,3 +19,4 @@ From incident-slug-role it uses wait_agent's wait-timeout incident line, which i
 - stall_reads cases: each of bg, test and sign is 1 with its read stubbed true and 0 otherwise.
 - Copy-aside proof: skipping the progress check turns the after-a-commit case red.
 - docs/reference-logs.md's wait-timeout sentence names activity= and when it is absent.
+- A timeout case with a session write (an assistant or tool line) during the wait and no new commit logs no activity= field; a commit-only reading of progress fails it.

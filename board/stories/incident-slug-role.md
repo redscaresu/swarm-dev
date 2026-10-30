@@ -2,8 +2,8 @@
 kind: code
 status: blocked
 epic: telemetry-writers
-depends_on: [events-outcome-helper]
-needs: [events-outcome-helper: append_event key=value fields and the outcome()/fields() readers in bin/lib/events_outcome.py (telemetry-readers)]
+depends_on: [events-outcome-helper, outcome-readers-agents]
+needs: [events-outcome-helper: append_event key=value fields and the outcome()/fields() readers in bin/lib/events_outcome.py (telemetry-readers), outcome-readers-agents: orders the shared sign_held and login_incident; adds slug= and role= after they read outcomes through the helper]
 touches: [bin/lib/agents.sh:agent_fields (new), bin/lib/agents.sh:pane_check (incident), bin/lib/agents.sh:sign_held (incident), bin/lib/agents.sh:wait_agent (stalled and wait-timeout incidents), bin/lib/agents.sh:login_incident, bin/lib/agents.sh:tell_deliver (stale-blocked incident), bin/lib/lifecycle.sh:close_agent (idle-no-pr incident), bin/lib/lifecycle.sh:pull_board_repo (incidents), bin/swarm.sh:codex_review (codex-limit and reap lines), scripts/test.sh:reap line, tests/incidents_test.sh:slug and role cases, tests/codex_test.sh:reap fields case, tests/test_file_timeout_test.sh:reap fields case, docs/reference-logs.md:incident sentence (Logs and outcomes), docs/reference-logs.md:reap sentence (Logs and outcomes), tests/tell_blocked_test.sh:stale-blocked line compare]
 estimate_lines: 240
 easy: false
