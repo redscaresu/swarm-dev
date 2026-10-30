@@ -54,6 +54,8 @@ mkdir -p "${TMPDIR}" "${CLAUDE_PROJECTS_DIR}"
 # add them, after the fixture's newest. That epic's conductor has a name herdr cut to 32 characters, so
 # only its conduct line ties it to the epic, and to the report that marks it reported. Two tell lines
 # on zzrep differ only in a tail the second has in both projects: recent shows them as one ×2 row.
+# They are zzrep's only lines, and zznotok's only line is a tell that failed, so last_seen has zzrep
+# and not zznotok through sign_time's tell test alone.
 EVENTS="${ROOT}/events.tsv"
 cp "${EVENTS_FIXTURE}" "${EVENTS}"
 {
@@ -61,6 +63,7 @@ cp "${EVENTS_FIXTURE}" "${EVENTS}"
   printf '2026-10-29T01:31:00Z\treset\tzzlead\twa:pa\tok\n'
   printf '2026-10-29T01:32:00Z\tconduct\tzzconductedepicwithalongname\twa:pa\tok\n'
   printf '2026-10-29T01:33:00Z\ttell\tzzrep\twa:pa\tok\n2026-10-29T01:34:00Z\ttell\tzzrep\twa:pa\tok ~~ n=2\n'
+  printf '2026-10-29T01:35:00Z\ttell\tzznotok\twa:pa\tzznotok is still working\n'
 } >> "${EVENTS}"
 PLAIN="${ROOT}/plain/proj"; TAILED="${ROOT}/tailed/proj"
 item() { # <project> <path under docs> <front-matter line>...
@@ -96,7 +99,7 @@ s = Signs(".swarm/events.tsv", {}, {}, "", 0)
 for name, d in (("started", s.started), ("ran", s.ran)):
     for k, t in sorted(d.items()): print(name, k, t)' "${LIB}"; }
 finished() { python3 "${LIB}/dash_finished.py" docs docs/ HEAD .swarm/events.tsv; }
-# dash's frame at a fixed now, 2026-10-29 12:00 UTC (the fixture ends at 01:31), drawn once for each
+# dash's frame at a fixed now, 2026-10-29 12:00 UTC (the fixture ends at 01:14, the synthetic rows at 01:35), drawn once for each
 # project into the directory above it (a frame takes seconds), and the parts of it read from there.
 # Each frame starts with no dash cache, and recent is compared on its newest 40 rows: the rows it gets
 # are the height the frame leaves, which other parts set.
@@ -126,7 +129,8 @@ check "dash's reset hint for an escalated lead story is the same with a tail" sa
 out="$(cd "${PLAIN}" && finished)"
 check "dash_finished.py lists the three stories events.tsv finished, not zzr" test "$(sort <<< "${out}")" == "$(printf 'story\tzzx\t-\t-\nstory\tzzx\t-\t-\nstory\tzzx\t-\t-')"
 out="$(cd "${PLAIN}" && last_seen)"
-check "last_seen counts an ok tell line as a sign of life" grep -q '^zzh ' <<< "${out}"
+check "last_seen counts an ok tell line as a sign of life" grep -q '^zzrep ' <<< "${out}"
+check "last_seen does not count a tell line that failed" lacks '^zznotok ' "${out}"
 out="$(cd "${PLAIN}" && signs)"
 check "Signs counts zzak's step-up as its start" grep -q '^started zzak ' <<< "${out}"
 out="$(cd "${PLAIN}" && speedometer)"
