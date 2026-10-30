@@ -314,8 +314,8 @@ check "with merge = human, both conductor briefs start every startable story aft
 check "with merge = human, the epic's and the backlog's conductor briefs report only once no agent work is left, on a finish: line after closing their review agents left" \
   "${REPORT_RULES}|${REPORT_RULES}" \
   "$(report_rules "$(cat "${p}/.swarm/briefs/conduct-f.md")" "epic f")|$(report_rules "$(cat "${p}/.swarm/briefs/conduct-backlog.md")" "the backlog")"
-docs="$(cd "$(dirname "${SWARM}")/../docs" && cat method.md reference.md | tr -s '[:space:]' ' ')"
-check "method.md and reference.md § Building give the clash rule, the merge-base-in rule and the pass rule" "2|2|2|0|1" \
+docs="$(cd "$(dirname "${SWARM}")/../docs" && cat method.md reference*.md | tr -s '[:space:]' ' ')"
+check "method.md and docs/reference*.md § Building give the clash rule, the merge-base-in rule and the pass rule" "2|2|2|0|1" \
   "$(grep -oF "Two stories clash only when their \`touches\` name the same file in the same repo and the same first word of a part (\`file:part\`), or when both name the bare file. A bare file does not clash with a part of it. A part's first word skips a leading \`§\`, \`#\`, \"the\", \"a\" or \"an\". Otherwise both build at once" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "A builder whose PR conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict never sends a story back to \`ready\`" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "whose findings are all declined is a pass" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "round 4" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "logged with \`log-finding --declined <reason> --reviewer <who>\`: \`nit\` for a nit, an edge case or a low-value point, \`out-of-scope\` or \`wrong\` where they apply" <<< "${docs}" | wc -l | tr -d ' ')"
 cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true

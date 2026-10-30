@@ -39,7 +39,7 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 # The fixture: the files the cases change, the real map, each row's floor tests (which name none of
 # those files), the selector's own test naming a hook it does not test, and a test naming each named
 # path, one per test.
-DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections command_names; do DOC_FLOOR+=("tests/${t}_test.sh"); done
+DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections command_names epic_briefs plan_epic upgrade; do DOC_FLOOR+=("tests/${t}_test.sh"); done
 CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
 BIN_FLOOR=(); for t in agent_state command_names doc_check events lib_path loose_match removed roles skill timeouts; do BIN_FLOOR+=("tests/${t}_test.sh"); done

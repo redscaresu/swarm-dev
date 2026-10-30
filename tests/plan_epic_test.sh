@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # plan_epic_test.sh — pins the plan-epic rules with a grep each. Run on another copy with
-# `bash tests/plan_epic_test.sh <plan-epic.md> <reference.md> <epic.md>`.
+# `bash tests/plan_epic_test.sh <plan-epic.md> <reference.md> <epic.md>`; with no <reference.md> it
+# reads every docs/reference*.md.
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -12,7 +13,7 @@ export CLAUDE_CONFIG_DIR="${iso}/claude-config"   # under its own root, so paral
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 F="${1:-$ROOT/commands/plan-epic.md}"
-M="${2:-$ROOT/docs/reference.md}"
+if [ -n "${2:-}" ]; then M=("$2"); else M=("$ROOT"/docs/reference*.md); fi
 EPIC="${3:-$ROOT/commands/epic.md}"
 fails=0
 
@@ -109,7 +110,8 @@ hasnt no-blocked-by 'blocked_by'
 hasnt no-verify 'verify'
 hasnt no-version-bump 'needs no version bump'
 
-m=$(awk '/^## Scoping an epic/{on=1;next} /^## /{on=0} on' "$M")
+# The section runs to the next ## or the end of whichever file holds it.
+m=$(awk 'FNR==1{on=0} /^## Scoping an epic/{on=1;next} /^## /{on=0} on' "${M[@]}")
 if [ -z "$m" ]; then echo "FAIL method-section"; fails=$((fails + 1)); fi
 hasnt method-three-surveys 'three surveys' "$m"
 hasnt method-then-critic 'then a critic' "$m"

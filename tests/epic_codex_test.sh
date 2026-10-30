@@ -22,14 +22,16 @@ has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi
 REPO="$(dirname "${SWARM}")/.."
 check "only codex-review runs codex exec review, and no command tells anyone to" "1|" \
   "$(cat "${SH[@]}" | grep -c 'codex exec review')|$(grep -l 'codex exec review' "${REPO}"/commands/*.md || true)"
-# notreviewed <file> — how many of <file>'s log-finding lines lack --reviewer, or none when it has none.
-notreviewed() { if ! grep -q 'log-finding' "$1"; then echo none; else grep 'log-finding' "$1" | grep -vc -- '--reviewer' || true; fi; }
+# notreviewed <file>... — how many of the files' log-finding lines lack --reviewer, or none when they have none.
+notreviewed() { if ! grep -q 'log-finding' "$@"; then echo none; else grep -h 'log-finding' "$@" | grep -vc -- '--reviewer' || true; fi; }
 check "every log-finding line of method.md names --reviewer" "none" "$(notreviewed "${REPO}/docs/method.md")"
-check "every log-finding line of reference.md names --reviewer" "0" "$(notreviewed "${REPO}/docs/reference.md")"
-# bare_declined — each --declined in finding_rule's text or reference.md's outer-loop section that is
-# not followed by a reason (out-of-scope, nit, wrong or the <reason> placeholder), or none.
+check "every log-finding line of docs/reference*.md names --reviewer" "0" "$(notreviewed "${REPO}"/docs/reference*.md)"
+# bare_declined — each --declined in finding_rule's text or the outer-loop section (from its heading to
+# the next ## or the end of whichever docs/reference*.md holds it) that is not followed by a reason
+# (out-of-scope, nit, wrong or the <reason> placeholder), or none.
 bare_declined() {
-  { sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}"; sed -n '/^## The outer loop/,/^## /p' "${REPO}/docs/reference.md"; } \
+  { sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}"
+    awk 'FNR == 1 { on = 0 } /^## / { on = ($0 == "## The outer loop") } on' "${REPO}"/docs/reference*.md; } \
     | grep -oE -- '--declined( +[^ `]+)?' | grep -vE -- '--declined +(out-of-scope|nit|wrong|<reason>)$' || echo none
 }
 check "every --declined in finding_rule and the outer-loop paragraph is followed by a reason" "none" "$(bare_declined)"

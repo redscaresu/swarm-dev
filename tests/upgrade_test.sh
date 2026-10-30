@@ -25,7 +25,7 @@
 # --foreground upgrade runs detached, outlives the shell that started it, is named by a second
 # upgrade (which starts nothing) and by status, and moves a builder busy at first once it is idle;
 # every run ends on one line per agent. A builder whose Claude review agent is busy waits for it; one
-# still busy at the end is named, and so is its builder, for it. docs/reference.md and
+# still busy at the end is named, and so is its builder, for it. docs/reference*.md and
 # commands/swarm.md describe it. An empty version record reads as unknown, and no message file is
 # left behind. claude agents --json is a stub printing ${H}/claude.json; with
 # ${H}/flip ("<n> <sed expression>"), its calls after the n-th print it through the expression, and
@@ -633,8 +633,9 @@ check "a left review agent gone busy still holds its idle builder" "1|1||1" \
   "${rc}|$(grep -c '^review-b1: left on 0.21.0: ' "${H}/out")|$(calls 'agent start b1')|$(grep -cx 'b1: left on 0.21.0: its review agent review-b1 stayed busy' "${H}/out")"
 
 # --- The docs describe it.
-for f in docs/reference.md commands/swarm.md; do
-  check "${f} describes swarm.sh upgrade" "yes" "$(grep -q 'swarm.sh upgrade' "${REPO}/${f}" && echo yes || echo no)"
+for f in 'docs/reference*.md' commands/swarm.md; do
+  # shellcheck disable=SC2086 # ${f} is unquoted so the reference glob expands to the set
+  check "${f} describes swarm.sh upgrade" "yes" "$(grep -q 'swarm.sh upgrade' "${REPO}"/${f} && echo yes || echo no)"
 done
 
 [[ ${fails} -eq 0 ]] || { cat "${H}/out"; exit 1; }
