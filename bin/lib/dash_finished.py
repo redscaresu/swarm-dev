@@ -1,4 +1,5 @@
 import os, re, subprocess, sys
+from events_outcome import outcome
 board, prefix, ref, events = sys.argv[1:5]
 def git(args, data=None):
     return subprocess.run(["git", "-c", "core.quotePath=false"] + args, cwd=board, input=data,
@@ -22,7 +23,7 @@ finished_here = set()
 try:
     for l in open(events, encoding="utf-8", errors="replace"):
         f = l.rstrip("\n").split("\t")
-        if len(f) == 5 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and "finished" in f[4])):
+        if len(f) == 5 and ((f[1] == "finish" and outcome(f) == "ok") or (f[1] == "reconcile" and "finished" in outcome(f))):
             finished_here.add(f[2])
 except OSError:
     pass
