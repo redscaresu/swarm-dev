@@ -9,7 +9,8 @@ is inside it.
 Drive the chain end to end, picking up wherever the board says it stands. Requires herdr
 (`HERDR_ENV=1`); if not inside herdr, say so and stop. Read `${CLAUDE_PLUGIN_ROOT}/docs/method.md`,
 `${CLAUDE_PLUGIN_ROOT}/docs/lead-by-hand.md` (the steps a lead still takes by hand, and when) and,
-for the sections method.md names, `${CLAUDE_PLUGIN_ROOT}/docs/reference.md` first if you have not this session.
+for the sections method.md names, `${CLAUDE_PLUGIN_ROOT}/docs/reference.md` (the commands, and which
+`docs/reference-<group>.md` file holds each other section) and those group files first if you have not this session.
 
 If `<board>/stories/README.md` does not exist, the project has no board yet. Offer to run
 `swarm.sh init` from the project's git root, and wait for the user's yes before you run it. It adds
@@ -406,7 +407,7 @@ Repeat until a step below says stop:
      does not count. Handle all of these first: a build that died as
      the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
      there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
-     report says for each (docs/reference.md § Merging lists them). Clear any other cause the report
+     report says for each (docs/reference-merging.md § Merging lists them). Clear any other cause the report
      names as the lead's (CI on the base red or timed out, a story escalated to you) before the
      exit too. Then run the exit, which starts a fresh conductor and removes the old report. The
      line goes once that work is done or a new conductor starts. A
@@ -420,7 +421,7 @@ Repeat until a step below says stop:
      it can come up to `stall_minutes` late. A builder leaves it once its next probe reads `clear`, it
      commits, its worktree is clean or gone, or it stops running.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
-     `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
+     `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference-lead.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
@@ -625,7 +626,7 @@ Repeat until a step below says stop:
      `release-held:` line, cut no minor: cut only the patch `next` names, if it names one. `merge --release` does not read the hold, so only this step keeps
      it. If a PR from a `release/v<new>` branch is open, use it. Otherwise, ship the docs
      first: list the behaviour changes since the tag (`git log v<version>..origin/<base>`), and unless docs
-     merged since the tag cover them, land a docs PR that covers each one in README.md, AGENTS.md, docs/reference.md, docs/method.md and
+     merged since the tag cover them, land a docs PR that covers each one in README.md, AGENTS.md, docs/reference*.md, docs/method.md and
      commands/*.md as they apply, its prose run through the humanizer skill. It reaches the
      base the way a fix does, through a `kind: code` story or a lead PR; stop there, and
      go back to 1 once it is on the base. Then make a worktree

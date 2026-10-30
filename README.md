@@ -147,7 +147,7 @@ of the same name already has a workspace. A conductor reuses a workspace only wh
 is this project's. Two folders of the same name can still get the same label, for example when
 both start a conductor at the same moment, when one sits in a folder whose name ends in `-wt`, or
 when one's workspace has only its builders left
-([reference.md § Building](docs/reference.md#building)).
+([reference-building.md § Building](docs/reference-building.md#building)).
 
 ## Cost and safety
 
@@ -173,7 +173,7 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   check.
 - Under either merge mode, `swarm.sh merge --board` refuses the same board PRs as
   `swarm.sh board-pr open`, and a plain `swarm.sh merge` refuses a story PR that sets an epic
-  `active` with no ticket in the same way ([reference.md § Merging](docs/reference.md#merging)).
+  `active` with no ticket in the same way ([reference-merging.md § Merging](docs/reference-merging.md#merging)).
 - Unless a story PR joins a merge queue (it never does under `merge_admin = on`), `swarm.sh merge`
   does not merge a head that lacks commits on the base that change more than board files. It has
   GitHub merge the base into the PR's branch and checks that the new head adds only the base's
@@ -181,12 +181,12 @@ included, at list prices. `swarm.sh flow` shows where your own tokens went.
   takes longer.
   If the base moves again during the wait, it does all this again, for 3 rounds at most. When GitHub cannot merge
   the base in (a conflict, say), the builder does, and the new head is reviewed before it merges
-  ([reference.md § Merging](docs/reference.md#merging)).
+  ([reference-merging.md § Merging](docs/reference-merging.md#merging)).
 - Only a plan or agreement board PR gets a codex review. A board PR that edits a story's scope,
   holds a story or finishes an item lands on green CI alone. `swarm.sh board-pr open` prints the
-  PR's kind ([reference.md § The lead](docs/reference.md#the-lead)).
+  PR's kind ([reference-lead.md § The lead](docs/reference-lead.md#the-lead)).
 
-Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
+Settings live in `.claude/swarm/config`; [reference-models.md § Settings](docs/reference-models.md#settings)
 lists them all.
 
 ## Updating
@@ -230,7 +230,7 @@ starts on one of those epics, `next` stops offering it.
 
 - [The method](docs/method.md): how planning, building and merging work, in short.
 - [What the lead still does by hand](docs/lead-by-hand.md): the gaps a lead covers today, each with its open issue.
-- [Reference](docs/reference.md): every rule, setting, command and log.
+- [Reference](docs/reference.md): every rule, setting, command and log, with a list of the topic files that hold them.
 - [AGENTS.md](AGENTS.md) for working on swarm-dev itself, and [SECURITY.md](SECURITY.md) for
   reporting a vulnerability.
 - `make test` stops a test file that runs past `TEST_FILE_TIMEOUT` seconds (600 unless set, three times that for the files in `SLOW`) and fails it as
@@ -254,7 +254,7 @@ starts on one of those epics, `next` stops offering it.
   any function, when no function runs the `.py`, or when a hook, script or test runs it. It prints
   nothing when the branch changes none of those files, or only blank lines outside their functions.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
-  see [reference.md § Building](docs/reference.md#building).
+  see [reference-building.md § Building](docs/reference-building.md#building).
 
 ## License
 
