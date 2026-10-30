@@ -17,4 +17,5 @@ Needs from events-outcome-helper: append_event's fields, EVENT_SEP, EVENT_OUTCOM
 - events_tail_agents_test.sh: over the fixture project and its tailed copy, login_incident, findings_told and review_rounds give the same result for every fixture target, each non-empty or true for at least one target untailed; inline sign-blocked:/sign-clear: incidents (no live log holds one) give the same sign_held.
 - Every fixture outcome, written through append_event with `k=v`, reads back through outcome() as the fixture's outcome and through fields() as {k: v}, so no fixture outcome holds the separator.
 - Putting one converted read back on a raw $5 / f[4] in a worktree copy without .git (AGENTS.md's mutation rule) turns the new test red; the PR names the read and keeps the FAIL line.
-- Each event-dependent reader this story changes has a positive case: non-empty and equal with and without a tail.
+- For each reader this story changes: a text reader's output is non-empty and equal with and without a tail; a predicate (one that returns a status and prints nothing) gives the expected success and failure statuses, the same with and without a tail. Synthetic rows fill any case the fixture lacks.
+- sign_held over repeated blocked polls appends no duplicate incident, and a clear appends exactly one, with and without a tail.

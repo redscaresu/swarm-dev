@@ -17,4 +17,4 @@ Needs from events-outcome-helper: events_outcome.outcome(). Needs from events-fi
 - events_tail_flow_test.sh: with TZ=UTC and gh stubbed, `flow` (every section flow_report.py lists), `outcomes` and `dataset` print the same over the fixture project and its copy with `<SEP>k=v` on every row; holds, incidents, merges and lead_queue each print at least one data row untailed.
 - An inline `reconcile <slug> ok (reopened)` row (no live log holds one) gives the same lead_queue with and without a tail.
 - Putting one converted read back on a raw $5 / f[4] in a worktree copy without .git (AGENTS.md's mutation rule) turns the new test red; the PR names the read and keeps the FAIL line.
-- Each event-dependent reader this story changes has a positive case: its output is non-empty and equal with and without a tail, adding synthetic rows where the fixture has none.
+- For each reader this story changes: a text reader's output is non-empty and equal with and without a tail; a predicate (one that returns a status and prints nothing) gives the expected success and failure statuses, the same with and without a tail. Synthetic rows fill any case the fixture lacks.

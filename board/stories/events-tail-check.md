@@ -16,7 +16,7 @@ Needs every wave-2 reader story merged: dash --check, dash and wait --lead each 
 Read the lead's queue through lead_queue (lifecycle.sh), not `wait --lead`, which blocks and writes. Keep each new test file under TEST_FILE_TIMEOUT: a Makefile SLOW entry is a protected path.
 
 **Done when:**
-- events_tail_test.sh: `dash --check` exits 0 over both projects and prints the same; `wait --lead` prints the same lines over both, at least one untailed.
+- events_tail_test.sh: `dash --check` exits 0 over both projects and prints the same; lead_queue (the function `wait --lead` reads) prints the same non-empty lines over both, at least one untailed.
 - dash_projects_test.sh: `dash --project <untailed> --project <tailed>` draws the same panel lines for both apart from the project name, with a non-empty Recent box.
 - In a worktree copy without .git, one shell and one Python reader these commands run, put back on `$5 == "ok"` / `f[4] == "ok"`, each turn events_tail_test.sh or dash_projects_test.sh red; the PR keeps the FAIL lines.
 - No test file this story adds runs `swarm.sh wait --lead`, and each runs under TEST_FILE_TIMEOUT in CI.

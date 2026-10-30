@@ -19,4 +19,6 @@ Needs from events-outcome-helper: EVENT_OUTCOME_AWK, EVENT_SEP and events_outcom
 - A tailed `tell` ok row counts as told in stuck_lines and as delivered in resend_pass, as the untailed row does.
 - tests/lib_path_test.sh passes.
 - Putting one converted read back on a raw $5 / f[4] in a worktree copy without .git (AGENTS.md's mutation rule) turns the new test red; the PR names the read and keeps the FAIL line.
-- Each event-dependent reader this story changes has a positive case: non-empty and equal with and without a tail.
+- For each reader this story changes: a text reader's output is non-empty and equal with and without a tail; a predicate (one that returns a status and prints nothing) gives the expected success and failure statuses, the same with and without a tail. Synthetic rows fill any case the fixture lacks.
+- tests/lib_path_test.sh recognises the events_outcome import and fails on a copy whose import guard is removed; the PR body quotes that FAIL line.
+- stepped_up_since and user_merges are checked by exit status (success and failure cases), not by printed output.

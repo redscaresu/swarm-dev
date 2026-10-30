@@ -18,4 +18,5 @@ Needs from events-outcome-helper: EVENT_OUTCOME_AWK. Needs from events-fixture: 
 - events_tail_merge_test.sh: over the fixture project and its tailed copy, plus inline `base-merged <sha>` and `base-merged <sha> from <sha>` merge rows (the cut has none), each function above prints the same for every target; red_mains and stacked_parents are non-empty untailed.
 - With a tailed `reconcile <slug> ok (reopened)` as a story's last row, `swarm.sh hold <slug> <why>` refuses as it does untailed.
 - Putting one converted read back on a raw $5 / f[4] in a worktree copy without .git (AGENTS.md's mutation rule) turns the new test red; the PR names the read and keeps the FAIL line.
-- Each event-dependent reader this story changes, including dropped_lines' base-merged read, base_merged and merge_refused, has a positive case that is non-empty and equal with and without a tail, adding synthetic rows where the fixture has none.
+- For each reader this story changes: a text reader's output is non-empty and equal with and without a tail; a predicate (one that returns a status and prints nothing) gives the expected success and failure statuses, the same with and without a tail. Synthetic rows fill any case the fixture lacks.
+- base_merged, merge_refused and report_collected are checked by exit status (success and failure cases), with and without a tail.

@@ -17,4 +17,4 @@ Needs from events-outcome-helper: events_outcome.outcome() and SEP. Needs from e
 - events_tail_dash_test.sh: over the fixture project and its copy with `<SEP>k=v` on every row, stall.py's last_seen, dash_finished.py's lines, and the Recent box, speedometer and escalated marks dash draws are identical, and each is non-empty untailed.
 - A Recent line drawn from a tailed row shows the outcome without the tail.
 - Putting one converted read back on a raw $5 / f[4] in a worktree copy without .git (AGENTS.md's mutation rule) turns the new test red; the PR names the read and keeps the FAIL line.
-- Each event-dependent reader this story changes has a positive case: non-empty and equal with and without a tail.
+- For each reader this story changes: a text reader's output is non-empty and equal with and without a tail; a predicate (one that returns a status and prints nothing) gives the expected success and failure statuses, the same with and without a tail. Synthetic rows fill any case the fixture lacks.
