@@ -16,9 +16,9 @@ section of that name, in the file listed for it here.
 
 Each group file ends with a `## Commands` table for the commands its sections document:
 
-- [`reference-lead.md`](reference-lead.md#commands): `/swarm-dev:swarm`, `wait --lead`, `restart`, `board-pr`, `finish` and `drop`, `hold`
-- [`reference-planning.md`](reference-planning.md#commands): `/epic`, `grants`
-- [`reference-models.md`](reference-models.md#commands): `step-up`
-- [`reference-building.md`](reference-building.md#commands): `status`, `next`, `dash`, `conduct`, `wait --until-report`, `review-agent`, `story`, `dropped-lines`, `plan-unasked`
-- [`reference-logs.md`](reference-logs.md#commands): `where`, `swarms`, `log-finding`, `intervene`, `outcomes`, `dataset`, `flow`
-- [`reference-merging.md`](reference-merging.md#commands): `init`, `upgrade`, `wait-pr`, `review`, `merge`
+- [`reference-lead.md`](reference-lead.md#commands): the lead's commands: waiting, restarts, board PRs, finish and drop, hold
+- [`reference-planning.md`](reference-planning.md#commands): `/epic` and the HLD grants
+- [`reference-models.md`](reference-models.md#commands): the escalation ladder's step-up
+- [`reference-building.md`](reference-building.md#commands): conductors, builders, review agents, status and the dashboard
+- [`reference-logs.md`](reference-logs.md#commands): the logs, findings and flow numbers, and where an agent is
+- [`reference-merging.md`](reference-merging.md#commands): init, upgrade, CI waits, review and merge
