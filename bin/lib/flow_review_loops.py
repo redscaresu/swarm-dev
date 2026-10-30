@@ -4,6 +4,7 @@
 # gh call. Each build of a story (a story start, or an escalate build) is its own loop.
 import collections, datetime, os, re, statistics
 from report import *
+from events_outcome import outcome
 
 def when(t):
     try:
@@ -28,7 +29,7 @@ def handed(t, cmd, target, out):
     return [(t, cmd, slug_of.get(pr_key(u), target), f"ok ({u})") for u in urls] or [(t, cmd, target, out)]
 
 evs = [e for f in (l.rstrip("\n").split("\t") for l in log_lines(events)) if len(f) >= 5 and when(f[0])
-       for e in handed(when(f[0]), f[1], f[2], f[4])]
+       for e in handed(when(f[0]), f[1], f[2], outcome(f))]
 slug_of.update((pr_key(review_url(cmd, out)), target) for _, cmd, target, out in evs if review_url(cmd, out))
 # Each builder's models, one agents.tsv line in a builder role per build start or step-up rung, in order,
 # read as outcomes reads them (7 fields), so they line up with its rows.
@@ -54,8 +55,10 @@ def loops(slug, lines):
     # A slug's loops, one per build, in log order. A review-agent start opens a round (a restarted one
     # moves its start); a findings tell, a findings step-up (which takes the tell's place), or the
     # review or merge after the last tell closes it, opening it first when no review agent started it
-    # (minutes then unknown). A step-up goes on the round open or last closed, or before the first, and
-    # the rounds after it run on its model; a findings step-up resumed after one that failed partway
+    # (minutes then unknown). A decline-only line (review --head passed a findings round whose builder
+    # pushed nothing) after a closed round makes the review or merge after it close no new round, and
+    # ends the loop decline-only unless a later round closes. A step-up goes on the round open or last
+    # closed, or before the first, and the rounds after it run on its model; a findings step-up resumed after one that failed partway
     # goes on the round that failure closed. Each loop: its rounds, step-ups before them, whether the
     # lead holds it, whether a merge line ended it, how its last round closed, its model at the end, its
     # PR, when it started and whether a review-agent, tell:findings or escalate line of it is in the
@@ -101,6 +104,8 @@ def loops(slug, lines):
             cur["end"] = t
             lp["rounds"].append(cur)
             cur, lp["last"] = None, cmd if cmd in ("review", "merge") else "partway" if s and s[3] == "failed" else "tell"
+        elif cmd == "decline-only" and out.startswith("ok") and not cur:
+            lp["last"] = "decline-only"
         lp["held"] = lp["held"] or cmd == "escalated" and out.startswith("ok")
         lp["pr"] = review_url(cmd, out) or lp["pr"]
         if s:
@@ -112,7 +117,7 @@ def loops(slug, lines):
             lp["merged"] = ended = True
     return out_ + ([done(lp, cur)] if shown_(lp, cur) else [])
 
-loop_cmds = ("review-agent", "tell:findings", "escalate", "escalated", "review", "merge", "story", "agent")
+loop_cmds = ("review-agent", "tell:findings", "escalate", "escalated", "review", "merge", "story", "agent", "decline-only")
 by_slug = collections.defaultdict(list)
 # An agent line names the agent (agents.tsv's name, cut at 32): its story's slug where one is known.
 slug_by_name = {agent_name(t): t for _, c, t, _ in evs if c in ("story", "review-agent", "tell:findings")}
@@ -171,7 +176,7 @@ for slug, builds in shown.items():
                            fixed_before=sum(c[(i, "fixed")] for i in range(off + 1, up + 1)),
                            fixed_after=sum(c[(i, "fixed")] for i in range(up + 1, n + 1)))
         end = "held-for-lead" if lp["held"] else "open" if not (lp["merged"] or pr_key(pr) in merged) \
-            else "merged-after-fixes" if c[(n, "fixed")] else "pass"
+            else "decline-only" if lp["last"] == "decline-only" else "merged-after-fixes" if c[(n, "fixed")] else "pass"
         ends.append(f"{slug}\t{pr}\t{n}\t{end}")
         if pr != "-":
             pr_rounds[pr_key(pr)] = max(pr_rounds.get(pr_key(pr), 0), n)

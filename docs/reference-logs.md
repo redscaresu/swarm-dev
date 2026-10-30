@@ -13,7 +13,11 @@ exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `confi
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The
 exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each API-error resume as
 `resume <agent>`, and `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`.
-The stall rule skips those lines, because none is a sign of life. `status`, `next` and `dash` log
+The stall rule skips those lines, because none is a sign of life. A `review --head` that succeeds
+can write a line before its own: `decline-only <slug> ok (round N)`. It writes one when review round
+N sent the builder findings and the PR's head is still the one that round started on. That means the
+builder declined every finding and pushed nothing. `decline-only` is not a command of its own.
+`status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
 `wait-timeout` when its wait runs out (not when herdr's wait fails sooner, not for a
@@ -619,8 +623,9 @@ loop, the one whose rounds hold its round (the last on its PR takes any later ro
 on one PR never count a finding twice. A finding with no `--round`, or on a PR no loop has, counts
 nowhere. Its rounds go in log order: an `ok` `review-agent` opens one, and a review agent started again
 before the round closed moves its start; an `ok` `tell:findings`, a `findings-*` step-up (which takes
-the tell's place), or the `ok` `review` or `merge` after the last tell closes it. A round no review
-agent opened has no minutes.
+the tell's place), or the `ok` `review` or `merge` after the last tell closes it. A `decline-only`
+line after that tell means the builder declined the findings and pushed nothing, so the `review` or
+`merge` after it closes no new round. A round no review agent opened has no minutes.
 
 The first block is TSV `story pr round model minutes fixed declined step_up`, a row per round: the
 builder's model (each build start and each step-up takes the next of the builder's `agents.tsv`
@@ -636,8 +641,8 @@ shows its step-ups on a row whose round is `-`. A PR whose findings name a later
 events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round, `rounds` its PR's last
 round in that loop:
 `held-for-lead` after an `escalated` line; once the PR merged (a `merge` line, or merged in
-`outcomes`), `pass` when its last round fixed nothing and `merged-after-fixes` when it fixed
-something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
+`outcomes`), `decline-only` when a `decline-only` line came after its last round, `pass` when its
+last round fixed nothing and `merged-after-fixes` when it fixed something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
 row over the loops with a round: the PRs (each once, loops with PR `-` left out), the median and p90
 (nearest rank) of their rounds, the minutes spent in round 3 and later (a round with unknown minutes
 adds none), the fixes, the share of them found in round 1, round 2, round 3

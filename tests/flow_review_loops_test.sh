@@ -204,6 +204,25 @@ check "a fixed finding on a top-rung round gives top_rung its share" "$(tail -1 
 check "--epic keeps that epic's stories" "$(loops "" e2 | cut -f1 | sort -u | tr '\n' ' ')" " 1 prs s-held story "
 check "--since past the loops leaves them out, in one line" "$(loops 2026-10-06)" "no review loop in the window"
 
+# decline-only cases, in logs of their own so the totals above keep their fixtures: s-dec's builder
+# declined round 1's findings and pushed nothing, so its review --head wrote a decline-only line, and
+# the review and merge after it close no round 2; s-nodec has the same lines without it.
+D="${dir}/decline"; mkdir -p "${D}"; : > "${D}/findings.tsv"
+printf '%s\n' $'2026-10-01\tcode\ts-dec\tclaude\topus\thigh\tk1' $'2026-10-01\tcode\ts-nodec\tclaude\topus\thigh\tk2' > "${D}/agents.tsv"
+P21=https://github.com/o/r/pull/21 P22=https://github.com/o/r/pull/22
+dev() { printf '2026-10-01T07:%s:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${D}/events.tsv"; }
+for s in s-dec s-nodec; do
+  dev 00 story "${s}" ok; dev 10 review-agent "${s}" ok; dev 20 tell:findings "${s}" ok
+  [[ "${s}" == s-nodec ]] || dev 30 decline-only "${s}" "ok (round 1)"
+  dev 30 review "${s}" "ok ($([[ "${s}" == s-dec ]] && echo "${P21}" || echo "${P22}"))"; dev 31 merge "${s}" ok
+done
+dout="$(SWARM_FINDING_REVIEWERS="codex" SWARM_ROWS="$(printf 'date\tslug\tepic\tpr\tpr_state')" python3 "${ROOT}/bin/lib/flow_report.py" \
+  0000-00-00 9999-12-30 "" "${D}/agents.tsv" "${D}/events.tsv" "${D}/findings.tsv" x "code" x x "" x review_loops)"
+check "decline-only cases: a review after a decline-only line closes no round, and the loop ends decline-only" \
+  "$(row s-dec "${dout}")|$(end "${dout}" s-dec)" $'s-dec\t'"${P21}"$'\t1\topus\t10\t0\t0\t-|s-dec\t'"${P21}"$'\t1\tdecline-only'
+check "decline-only cases: the same lines with no decline-only line close round 2 and end pass" \
+  "$(end "${dout}" s-nodec)" $'s-nodec\t'"${P22}"$'\t2\tpass'
+
 # flow passes escalate_ladder: with none, top_rung is -.
 P="${dir}/repo"
 mkdir -p "${P}/.swarm" "${P}/.claude/swarm"

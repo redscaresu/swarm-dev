@@ -1039,7 +1039,7 @@ main_signal() {
 # read the agent's state), logs the queued: or replaced: line tell_outcome leaves in the die file, so
 # it counts as no round.
 main() {
-  local rc why a
+  local rc why a n
   [[ "${1:-}" != init ]] || init_check
   EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""
   # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
@@ -1106,6 +1106,12 @@ main() {
   elif [[ "${EV_CMD}" == tell:* ]] && why="$(head -1 "${EV_ERR}" 2>/dev/null)" && [[ "${why}" == queued:* || "${why}" == replaced:* ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${why}"   # tell_outcome's: nothing sent, so not ok
   elif [[ "${EV_TARGET}" != + ]]; then
+    # A review --head that passes a findings round whose builder pushed nothing (it declined them all)
+    # is a decline-only end: its line goes first, so a reader meets it before the review's. A failed
+    # read of it skips the line, never the review's.
+    if [[ "${EV_CMD}" == review && "${3:-}" == --head ]] && n="$(decline_only_round "${EV_TARGET}" "${4:-}")" && [[ -n "${n}" ]]; then
+      record_event decline-only "${EV_TARGET}" "ok (round ${n})"
+    fi
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
   fi
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"

@@ -855,6 +855,19 @@ review_rounds() {
     END { print n + 1, at + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo "1 0"
 }
 
+# decline_only_round <slug> <sha> — the round a decline-only reply ended, for main's decline-only line:
+# review_rounds' <started>, printed when a review started (started > 0), a findings round came after it
+# (round > started) and the head that round started on (.swarm/reviews/<slug>.head) is still <sha>, so
+# the builder pushed nothing in reply to the findings; else nothing. Fails, printing nothing, when the
+# head file is there and cannot be read.
+decline_only_round() {
+  local round started head f="${PROJECT_DIR}/.swarm/reviews/$1.head"
+  read -r round started <<< "$(review_rounds "$1")"
+  [[ "${started}" -gt 0 && "${round}" -gt "${started}" && -e "${f}" ]] || return 0
+  head="$(cat "${f}" 2>/dev/null)" || return 1
+  [[ "${head}" != "$2" ]] || echo "${started}"
+}
+
 # review_words <slug> [next|recheck] — for review-agent's refusals (its start, --next's or --recheck's):
 # the command, what the refusal left undone and how to try again, in REVIEW_CMD, REVIEW_UNDONE and REVIEW_AGAIN.
 review_words() {

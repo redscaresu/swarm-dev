@@ -313,5 +313,51 @@ WANT
 check "the awk outcome() returns the Python outcome() for each row" same \
   "$(awk -F'\t' "${EVENT_AWK}"'{ print outcome($5) }' "${LOG}")" "$(read_py | cut -f1)"
 
+# --- decline-only cases: a review --head that passes a findings round whose builder pushed nothing (the
+# head is still the one .swarm/reviews/<slug>.head says the round started on) writes decline-only <slug>
+# ok (round N), N the started round, just before its own ok line. A project of its own, whose gh prints
+# the head H for every PR (review_heads) and lists no other open PR.
+P="${ROOT}/decline"; LOG="${P}/.swarm/events.tsv"; DB="${ROOT}/declinebin"
+H=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; OTHER=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+mkdir -p "${P}/.claude/swarm" "${P}/.swarm/reviews" "${DB}"; : > "${P}/.claude/swarm/config"; git init -q "${P}"
+# shellcheck disable=SC2016 # the stub's own shell expands $1 and $2
+printf '%s\n' '#!/bin/sh' 'case "$1 $2" in' "  'pr list') echo '[]' ;;" "  'pr view') echo '{\"headRefOid\":\"${H}\"}' ;;" '  *) exit 1 ;;' 'esac' > "${DB}/gh"
+chmod +x "${DB}/gh"
+run() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${DB}:${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" >/dev/null 2>&1); }
+# decline <slug> <head file: a sha, or dir for one that cannot be read> <command>... — a fresh ready story
+# whose events.tsv lines are those commands, each ok, and whose head file is as given
+decline() {
+  local slug="$1" head="$2" c; shift 2
+  item "stories/${slug}.md" 'status: ready' 'kind: code'
+  for c in "$@"; do printf '2026-10-01T00:00:00Z\t%s\t%s\tw:1\tok\n' "${c}" "${slug}" >> "${LOG}"; done
+  if [[ "${head}" == dir ]]; then mkdir -p "${P}/.swarm/reviews/${slug}.head"; else echo "${head}" > "${P}/.swarm/reviews/${slug}.head"; fi
+}
+# reviewed <slug> <review args...> — run review <slug> <args>, and print the command, target and outcome
+# of each line it appended
+reviewed() {
+  local slug="$1" was; shift
+  was="$(lines)"; run review "${slug}" "$@" || true
+  tail -n +"$((was + 1))" "${LOG}" | cut -f2,3,5
+}
+decline d1 "${H}" review-agent tell:findings
+check "decline-only cases: a pass on the head the findings round started on writes decline-only, then the review" \
+  same "$(reviewed d1 --head "${H}" "${U}/7")" "$(printf '%s\t%s\t%s\n' decline-only d1 'ok (round 1)' review d1 "ok (${U}/7)")"
+decline d2 "${OTHER}" review-agent tell:findings
+check "decline-only cases: none when the head file holds another sha" \
+  same "$(reviewed d2 --head "${H}" "${U}/7")" "$(printf 'review\td2\tok (%s)' "${U}/7")"
+decline d3 "${H}" review-agent tell:findings review-agent:next
+check "decline-only cases: none when a review-agent:next came after the tell" \
+  same "$(reviewed d3 --head "${H}" "${U}/7")" "$(printf 'review\td3\tok (%s)' "${U}/7")"
+decline d4 "${H}" tell:findings review-agent
+check "decline-only cases: none when no findings tell came after the review start" \
+  same "$(reviewed d4 --head "${H}" "${U}/7")" "$(printf 'review\td4\tok (%s)' "${U}/7")"
+decline d5 "${H}" review-agent tell:findings
+check "decline-only cases: none for a review without --head" \
+  same "$(reviewed d5 "${U}/7")" "$(printf 'review\td5\tok (%s)' "${U}/7")"
+# A head file that cannot be read fails decline_only_round: the review's own line is still written.
+decline d6 dir review-agent tell:findings
+check "decline-only cases: a failed decline_only_round still writes the review's ok line" \
+  same "$(reviewed d6 --head "${H}" "${U}/7")" "$(printf 'review\td6\tok (%s)' "${U}/7")"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
