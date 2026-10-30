@@ -4,7 +4,9 @@
 # code must be one of dispatch's arms (or version and update, which run before it), every key in a
 # setting table (header `| Key |`) or after `swarm.sh config` one of CONFIG_KEYS, and every repo path
 # in code or a markdown link must exist; a docs/ path may instead be one templates/docs gives a board,
-# and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh.
+# and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh. Every
+# `](<path>#<slug>)` or `](#<slug>)` link in those files, AGENTS.md and llms.txt must name a heading of
+# its markdown target, slugged as GitHub does; AGENTS.md and llms.txt get only that check.
 # A removed command that prints a pointer is still an arm, so it passes. tests/doc_check_known.txt
 # lists the stale references found when this landed (file, tab, text); they pass until fixed, and an
 # entry no longer found fails, so the list only shrinks.
@@ -65,6 +67,44 @@ def check_prose(rel, para, out):
         if not os.path.exists(os.path.normpath(os.path.join(root, os.path.dirname(rel), target))):
             out.append("link " + link)
 
+def slugs(text):
+    # The #anchors GitHub gives a file's headings: lowercase, punctuation but - and _ dropped, each
+    # space a -, and -1, -2 on a repeat. A # line inside a code fence is no heading.
+    seen, fence = {}, False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+        h = None if fence else re.match(r" {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$", line)
+        if not h:
+            continue
+        title = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", h.group(1))   # a link in a heading: its text
+        base = slug = re.sub(r"[^\w\- ]", "", title.lower()).replace(" ", "-")
+        while slug in seen:
+            seen[base] += 1
+            slug = base + "-" + str(seen[base])
+        seen[slug] = 0
+    return seen
+
+anchors = {}
+
+def check_anchors(rel, text, out):
+    fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+        if fence:
+            continue
+        for link, target, slug in re.findall(r"\]\((([^)\s#]*)#([^)\s]+))\)", line):
+            if "://" in target or "<" in target or not (target or rel).endswith(".md"):
+                continue
+            path = os.path.normpath(os.path.join(root, os.path.dirname(rel), target) if target else os.path.join(root, rel))
+            if not os.path.isfile(path):
+                continue   # a missing file is the link check's to report
+            if path not in anchors:
+                anchors[path] = slugs(open(path).read())
+            if slug not in anchors[path]:
+                out.append("anchor " + link)
+
 def check_md(rel, text, out):
     fence = in_table = False
     para = []
@@ -87,18 +127,22 @@ def check_md(rel, text, out):
     check_prose(rel, para, out)
 
 # Only tracked files: a local notes file, .DS_Store or Obsidian file is not what CI reads.
-tracked = subprocess.run(["git", "-C", root, "ls-files", "-z", "README.md", "docs", "commands", "skills", "templates"],
-                         check=True, capture_output=True, text=True).stdout.split("\0")[:-1]
+tracked = subprocess.run(["git", "-C", root, "ls-files", "-z", "README.md", "AGENTS.md", "llms.txt", "docs", "commands",
+                          "skills", "templates"], check=True, capture_output=True, text=True).stdout.split("\0")[:-1]
 files = [f for f in tracked if re.fullmatch(r"README\.md|(docs|commands)/[^/]+\.md|(skills|templates)/.+", f)]
-for rel in files:
+# AGENTS.md is the lead's and llms.txt a map: only their links into docs/ are read, for #anchors.
+ANCHORS_ONLY = ("AGENTS.md", "llms.txt")
+for rel in files + [f for f in tracked if f in ANCHORS_ONLY]:
     path = os.path.join(root, rel)
     if not os.path.isfile(path):
         continue
     text, out = open(path).read(), []
-    if rel.endswith(".md"):
+    if rel.endswith(".md") and rel not in ANCHORS_ONLY:
         check_md(rel, text, out)
-    else:
+    elif rel not in ANCHORS_ONLY:
         check_code(text, out)
+    if rel.endswith(".md") or rel in ANCHORS_ONLY:
+        check_anchors(rel, text, out)
     for o in dict.fromkeys(out):
         print(rel + "\t" + o)
 EOF
@@ -115,9 +159,9 @@ export CLAUDE_CONFIG_DIR="${tmp}/claude-config"   # under its own root, so paral
 doc_check "${REPO}" > "${tmp}/found"
 new="$(unknown "${tmp}/found" "${KNOWN}")"
 if [[ -n "${new}" ]]; then
-  echo "FAIL the docs name something swarm.sh does not have (fix the doc; AGENTS.md is the lead's):"; echo "${new}"
+  echo "FAIL the docs name something swarm.sh does not have, or a link's #anchor no heading has (fix the doc):"; echo "${new}"
   fails=$((fails + 1))
-else echo "ok   every command, config key and path the docs name exists, or is in doc_check_known.txt"; fi
+else echo "ok   every command, config key, path and #anchor the docs name exists, or is in doc_check_known.txt"; fi
 stale="$(gone "${tmp}/found" "${KNOWN}")"
 if [[ -n "${stale}" ]]; then
   echo "FAIL doc_check_known.txt lists what the docs no longer say; remove it:"; echo "${stale}"
@@ -135,6 +179,27 @@ cat > "${tmp}/fixture/README.md" <<'EOF'
 Run `swarm.sh nosuch`, `swarm.sh dash2`, `swarm.sh config merge2` or `swarm.sh dash`, then `swarm.sh cost` (removed, prints a pointer).
 See [the method](docs/method.md) and [gone](docs/nosuch.md), `bin/lib/nosuch.sh`, `./bin/gone.sh` and `./bin/swarm.sh`.
 `docs/epics/<slug>.md` lives on the board, as does `docs/stories/`; `docs/nosuch/<slug>.md` does not.
+See [building](docs/anchors.md#buildin), [the second](docs/anchors.md#building-1) and [a base](templates/Board.base#L1).
+EOF
+# Anchors: a repeated heading takes -1, punctuation and code ticks drop, and a # line in a fence is no heading.
+cat > "${tmp}/fixture/docs/anchors.md" <<'EOF'
+# Anchors
+
+## Building
+
+## Building
+
+## The `swarm.sh merge` command, § 2
+
+```bash
+# comment
+```
+
+[Up](#anchors), [the third](#the-swarmsh-merge-command--2), [a comment](#comment) and [gone](#nosuch).
+EOF
+# AGENTS.md is read for its anchors only: its unknown command passes.
+cat > "${tmp}/fixture/AGENTS.md" <<'EOF'
+Run `swarm.sh nosuch`, see [the lead](docs/anchors.md#the-lead) and [building](docs/anchors.md#building).
 EOF
 cat > "${tmp}/fixture/docs/method.md" <<'EOF'
 | Key | Default | What it does |
@@ -160,14 +225,14 @@ bin/swarm.sh nosuch1
 "${SWARM_HOME}/bin/swarm.sh" dash
 ```
 EOF
-want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1'
+want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\nREADME.md\tanchor docs/anchors.md#buildin\ndocs/anchors.md\tanchor #comment\ndocs/anchors.md\tanchor #nosuch\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1\nAGENTS.md\tanchor docs/anchors.md#the-lead'
 git -C "${tmp}/fixture" init -q && git -C "${tmp}/fixture" add -A
 printf '\0\x80\xff' > "${tmp}/fixture/templates/.DS_Store"   # untracked, and not text
 printf 'Run %sswarm.sh untracked%s.\n' '`' '`' > "${tmp}/fixture/docs/notes.md"   # untracked
 doc_check "${tmp}/fixture" > "${tmp}/fixture.found"
 got="$(cat "${tmp}/fixture.found")"
 if [[ "${got}" == "${want}" ]]; then
-  echo "ok   fixture docs: an unknown command, config key, link and path are each caught, and nothing else"
+  echo "ok   fixture docs: an unknown command, config key, link, path and #anchor are each caught, and nothing else"
 else
   echo "FAIL fixture docs: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
 fi
