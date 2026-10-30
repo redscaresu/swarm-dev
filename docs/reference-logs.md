@@ -13,10 +13,11 @@ exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `confi
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The
 exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each API-error resume as
 `resume <agent>`, `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`,
-a conductor's `watch` (`--epic` or `--backlog`), which logs `pr-opened <slug>` with the PR's URL when it
-says a story PR opened, and `wait-pr`, which logs `first-green <slug>` with the head SHA the first time
-a PR on `story/<slug>` is green, once per PR (the lead's bare `watch` and a PR on any other branch log
-none). Builders open their PRs with `gh pr create`, so no `swarm.sh` command runs at that moment to log it.
+a conductor's `watch` (`--epic` or `--backlog`), which logs `pr-opened <slug>` when it says a story PR
+opened, and `wait-pr`, which logs `first-green <slug>` the first time a PR on `story/<slug>` is green,
+once per PR, even when two waits on it go green at once (the lead's bare `watch` and a PR on any other
+branch log none). Each has the outcome `ok`, with the PR's URL in the field `url=` or the head SHA in
+`sha=`. Builders open their PRs with `gh pr create`, so no `swarm.sh` command runs at that moment to log it.
 A line `watch` or `wait-pr` cannot write changes nothing they print or exit with.
 The stall rule skips those lines, because none is a sign of life. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
@@ -86,7 +87,7 @@ and the first line of a failed command's error.
 The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
-fields, and no caller passes any yet. It first takes every separator out of the outcome text: each
+fields, such as `pr-opened`'s `url=` and `first-green`'s `sha=`. It first takes every separator out of the outcome text: each
 one becomes a space, and trailing spaces are dropped. That way the first separator in the field is
 always where the tail starts, and an outcome that ends in one is written without it. Fields are
 separated by spaces. A key is lowercase letters and `_`. A value is not empty and holds no space or tab.

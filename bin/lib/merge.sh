@@ -2098,16 +2098,16 @@ rate_reset() {
     </dev/null 2>/dev/null || true
 }
 
-# first_green <owner/repo> <n> <branch> <sha> — log `first-green <slug>`, outcome <sha>, for a PR on
-# story/<slug>, once per PR: wait-pr runs again and again, so .swarm/state/first-green-seen keeps
-# <owner/repo>#<n> for each PR logged. A PR on no story branch logs none. The marker is kept only once the
-# line is written, and a log or marker it cannot write changes nothing wait-pr prints or exits with.
+# first_green <owner/repo> <n> <branch> <sha> — log `first-green <slug>`, outcome ok and the field
+# sha=<sha>, for a PR on story/<slug>, once per PR: wait-pr runs again and again, the builder's and the
+# review agent's at once, so the wait whose mkdir makes the PR's marker (.swarm/first-green/<owner>+<repo>#<n>)
+# logs it and no other does. A PR on no story branch logs none. A line it cannot write removes the marker,
+# so the next green wait tries again, and changes nothing wait-pr prints or exits with.
 first_green() {
-  local seen="${STATE_DIR}/first-green-seen"
+  local mark="${PROJECT_DIR}/.swarm/first-green/${1/\//+}#$2"
   [[ "$3" == story/?* ]] || return 0
-  ! grep -qxF "$1#$2" "${seen}" 2>/dev/null || return 0
-  append_event first-green "${3#story/}" "$4" || return 0
-  { mkdir -p "${STATE_DIR}" && echo "$1#$2" >> "${seen}"; } 2>/dev/null || true
+  { mkdir -p "${mark%/*}" && mkdir "${mark}"; } 2>/dev/null || return 0
+  append_event first-green "${3#story/}" ok "sha=$4" || rmdir "${mark}" 2>/dev/null || true
 }
 
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
@@ -2736,7 +2736,7 @@ queued_sent() {
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
 # needs the lead, print one line saying which and why, and exit 0. With --epic or --backlog, a story PR
 # first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>, and an
-# events.tsv line `pr-opened <slug>` with the PR's URL), before anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
+# events.tsv line `pr-opened <slug>`, outcome ok and the field url=<the PR's URL>), before anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
 # whose head already has a review). Watches that run at once share watch-seen, and the lead's rewrite
 # of its waiting lines can drop an opened line written meanwhile, so a PR can be said opened twice, as
 # a done or conflict line can be said twice (review-agent refuses a second start while the first still
@@ -2786,7 +2786,7 @@ watch_prs() {
         # leaves that to it.
         if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}" && opened_due "${br#story/}" "${sha}"; then
           echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"
-          record_event pr-opened "${br#story/}" "https://github.com/${repo}/pull/${n}"; return 0
+          record_event pr-opened "${br#story/}" ok "url=https://github.com/${repo}/pull/${n}"; return 0
         fi
         mergeable=""
         # No conflict read on a head already reported conflicting, or finished and queued: nothing
