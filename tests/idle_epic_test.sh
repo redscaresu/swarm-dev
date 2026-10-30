@@ -184,6 +184,24 @@ has "another epic's scope- record leaves the line" "$(noplan e)"
 mkdir -p "${CASE}-wt/_board-scope-e"; run
 no_line "an open plan board PR (its _board-scope-<epic> worktree) is a plan running: no line" e
 
+# A built epic (its only story deleted by its merge, on the board's history) is never planned again, so
+# it gets no no-plan line, while a never-planned one on the same board still does. Its fresh report
+# keeps it from next's conduct step too. The fixture commits are unsigned: thrown away with ROOT.
+board
+(
+  cd "${CASE}" || exit 1
+  item epics/b.md "status: active"; item stories/sb.md "status: review" "kind: code" "epic: b"
+  item epics/n.md "status: active"
+  item epics/d.md "status: active"; item stories/sd.md "status: ready" "kind: code" "epic: d"
+  git add -A && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m plan
+  git rm -q docs/stories/sb.md && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m "Merge story/sb"
+  echo report > .swarm/conduct-b.report.md
+)
+run
+check "the step is the ready story's conduct" "conduct d" "${STEP}"
+no_line "a built epic gets no no-plan line" b
+has "a never-planned active epic beside it still gets the line" "$(noplan n)"
+
 # On a board outside the repo, an interrupted /plan-hld's marker (.swarm/<hld>/writing-epics) means its
 # rerun will overwrite the epic: no no-plan line for it, as plannable_epics leaves the epic.
 board; mkdir -p "${CASE}/proj/.claude/swarm" "${CASE}/proj/.swarm/h" && git -C "${CASE}/proj" init -q

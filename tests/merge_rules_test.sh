@@ -50,6 +50,8 @@ release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge 
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
 is "--release: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+# It changes only plugin.json, so merge's dropped-lines check never runs: no read of the PR's commits.
+check "--release: reads none of the PR's commits" bash -c "! grep -q 'pulls/7/commits' '${ROOT}/gh.log'"
 # With merge = human the lead merges a release only under HLDs that grant release (below).
 # human_release [command...] — release_pr with merge = human, the command run on its fixtures, then merge --release.
 human_release() { release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; "$@"; merge --release "${URL}"; }
@@ -881,6 +883,94 @@ granted merge; fx_at e1.md main "status: draft"; fx_at e1.md "${H1}" "status: ac
 echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/e1.md","status":"modified"}]' > "${FX}/files"
 merge "${URL}"; guarded "merge = human, a story PR under grants: [merge] that sets a draft epic active with no ticket" e1
 rm -rf "${P}/docs/hld" "${P}/docs/epics"
+
+# --- The stage gate (stage_gate, after epic_guard's ticket check): merge refuses a board or story PR
+# that sets an epic active above the stage the base allows, whatever lead_epics says. gh reads each
+# epic at main and the head (fx_at), as for the ticket; the newest tag and the epics active on main are
+# read in the project's clone after one fetch of main, here from stage.git, a base of its own whose
+# history holds none of v1.2.0's tags. Each epic has a ticket (hld: hs, granting epics, or agreed:
+# today), so only its stage can refuse it.
+SGO="${ROOT}/stage.git"; SGC="${ROOT}/stage"
+git init -q --bare "${SGO}"; git -C "${SGO}" symbolic-ref HEAD refs/heads/main
+git init -q "${SGC}"; git -C "${SGC}" remote add origin "${SGO}"
+# sg_main <epic file> <front-matter line>... — docs/epics/<epic file> on stage.git's main.
+sg_main() {
+  mkdir -p "${SGC}/docs/epics"; { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${SGC}/docs/epics/$1"
+  git -C "${SGC}" add -A; git -C "${SGC}" -c user.name=t -c user.email=t@t commit -q -m "$1"; git -C "${SGC}" push -q origin HEAD:refs/heads/main
+}
+sg_tag() { git -C "${SGO}" -c tag.gpgsign=false tag "$1" main; }
+sg_main s30a.md "status: active" "stage: v0.30.0" "hld: hs"
+sg_main s31a.md "status: draft" "stage: v0.31.0" "hld: hs"
+sg_main s31n.md "status: draft" "stage: v0.31.0"
+git -C "${P}" remote set-url origin "${SGO}"
+# sg <epics> [config line]... — epr, with HLD hs agreed and granting epics at main and the head.
+sg() { epr "$@"; fx_at hs.md main "status: agreed" "grants: [epics]"; fx_at hs.md "${H1}" "status: agreed" "grants: [epics]"; }
+# sl <epic> <S> <tag part> <P> — the refusal up to its exit.
+sl() { echo "--board: $1 goes active at stage v$2, above what main allows ($3, below v$4, and no v$2 epic active there); "; }
+SSTEP="commit it as status: draft: next's stage step sets it active once"
+# both <case> <text> <setup> — run <setup> and merge --board, refused saying <text>; then the same with
+# lead_epics = on, which <setup> passes on to sg as a config line.
+both() {
+  local le
+  for le in "" "lead_epics = on"; do "$3" ${le:+"${le}"}; merge --board "${URL}"; refused "$1${le:+, ${le}}" "$2"; done
+}
+v020() { sg e1 "$@"; fx_at e1.md "${H1}" "status: active" "stage: v0.2.0" "hld: hs"; }
+sg e1; fx_at e1.md "${H1}" "status: active" "stage: v0.1.0" "hld: hs"; merge --board "${URL}"
+board_merged "--board, stage v0.1.0 on a base with no v-tag"
+both "--board, stage v0.2.0 on a base with no v-tag" "$(sl e1 0.2.0 "no v<x.y.z> tag found" 0.1.0)${SSTEP} v0.1.0 is tagged" v020
+sg_tag v0.29.1
+MISREAD="$(sl s31a 0.31.0 "newest tag v0.29.1" 0.30.0)${SSTEP} v0.30.0 is tagged"
+# shellcheck disable=SC2120 # both passes it lead_epics = on
+misread() { sg s31a "$@"; fx_at s31a.md main "status: draft" "stage: v0.31.0" "hld: hs"; fx_at s31a.md "${H1}" "status: active" "stage: v0.31.0" "hld: hs"; }
+both "--board, the misread: a v0.31.0 draft set active beside an active v0.30.0 epic, tag v0.29.1" "${MISREAD}" misread
+check "--board, the misread: the whole line" grep -qxF "swarm: merge: ${MISREAD}" "${ROOT}/out"
+sg s30a; fx_at s30a.md main "status: active" "stage: v0.30.0" "hld: hs"; fx_at s30a.md "${H1}" "status: active" "stage: v0.31.0" "hld: hs"
+merge --board "${URL}"; refused "--board, an active v0.30.0 epic moved to stage v0.31.0, tag v0.29.1" \
+  "$(sl s30a 0.31.0 "newest tag v0.29.1" 0.30.0)${SSTEP} v0.30.0 is tagged"
+epr "p30a p30b p31a"; fx_at hs.md main "status: agreed" "grants: [epics]"; fx_at hs.md "${H1}" "status: agreed" "grants: [epics]"
+fx_at p30a.md "${H1}" "status: active" "stage: v0.30.0" "hld: hs"; fx_at p30b.md "${H1}" "status: active" "stage: v0.30.0" "hld: hs"
+fx_at p31a.md "${H1}" "status: draft" "stage: v0.31.0" "hld: hs"; merge --board "${URL}"
+board_merged "--board, the plan shape: v0.30.0 epics active beside a v0.31.0 draft, tag v0.29.1"
+sg s31n; fx_at s31n.md main "status: draft" "stage: v0.31.0"; fx_at s31n.md "${H1}" "status: active" "stage: v0.31.0" "agreed: $(day 0)"
+merge --board "${URL}"; refused "--board, an agree PR for a v0.31.0 epic under no HLD, tag v0.29.1" \
+  "$(sl s31n 0.31.0 "newest tag v0.29.1" 0.30.0)commit it as status: draft, then run /swarm-dev:epic s31n again once v0.30.0 is tagged"
+malformed() { sg e1 "$@"; fx_at e1.md "${H1}" "status: active" "stage: v0.31" "hld: hs"; }
+both "--board, a malformed stage:" "--board: e1 goes active with stage: v0.31, which is not v<x.y.z>; fix the line, or commit it as status: draft" malformed
+v100() { sg e1 "$@"; fx_at e1.md "${H1}" "status: active" "stage: v1.0.0" "agreed: $(day 0)"; }
+both "--board, stage v1.0.0 against tag v0.29.1" \
+  "$(sl e1 1.0.0 "newest tag v0.29.1" 0.31.0)commit it as status: draft, then run /swarm-dev:epic e1 again once v0.31.0 is tagged" v100
+sg e1; fx_at e1.md "${H1}" "status: active" "hld: hs"; merge --board "${URL}"; board_merged "--board, an epic with no stage: set active"
+# A story PR's line has no --board: prefix.
+fresh; fx_at hs.md main "status: agreed" "grants: [epics]"; fx_at hs.md "${H1}" "status: agreed" "grants: [epics]"; echo 2 > "${FX}/nfiles"
+echo '[{"filename":"docs/stories/s.md","status":"modified"},{"filename":"docs/epics/s31a.md","status":"modified"}]' > "${FX}/files"
+fx_at s31a.md main "status: draft" "stage: v0.31.0" "hld: hs"; fx_at s31a.md "${H1}" "status: active" "stage: v0.31.0" "hld: hs"; merge "${URL}"
+refused "a story PR that sets a v0.31.0 epic active, tag v0.29.1" "${MISREAD#--board: }"
+check "a story PR that sets a v0.31.0 epic active: the line has no --board: prefix" grep -qxF "swarm: merge: ${MISREAD#--board: }" "${ROOT}/out"
+# codex's interval: the v0.30.0 epic is done and v0.30.0 is not tagged yet.
+sg_main s30a.md "status: done" "stage: v0.30.0" "hld: hs"
+both "--board, codex's interval: no v0.30.0 epic left, tag v0.29.1, a v0.31.0 epic set active" "${MISREAD}" misread
+# A v0.31.0 epic already active on main lets a second one go active.
+sg_main s31x.md "status: active" "stage: v0.31.0" "hld: hs"
+# shellcheck disable=SC2119 # no config line
+misread; merge --board "${URL}"; board_merged "--board, a second v0.31.0 epic set active beside one active on main"
+# The fetch is made only for an epic going active with a stage:, and a failed one refuses with git's reason.
+git -C "${P}" remote set-url origin "${ROOT}/none.git"
+sg e1; fx_at e1.md "${H1}" "status: active" "hld: hs"; merge --board "${URL}"; board_merged "--board, an epic with no stage: set active, origin unreachable"
+# shellcheck disable=SC2119 # no config line
+misread; merge --board "${URL}"
+refused "--board, a staged epic set active, origin unreachable" "--board: cannot fetch origin/main (fatal: "
+check "--board, a staged epic set active, origin unreachable: says what is unknown" \
+  said "), so whether ${URL} sets an epic active above the stage main allows is unknown"
+# The fetch stops after BASE_MOVED_WAIT: an origin that never answers (ssh here, its command a sleep)
+# refuses within it, saying the fetch timed out. GIT_SSH_VARIANT skips git's ssh -G probe, which would
+# be the sleep itself; git starts the real ssh in the moment the KILL takes to reach it, and that one
+# would outlive the test.
+git -C "${P}" remote set-url origin "ssh://stall.invalid/x.git"
+# shellcheck disable=SC2119 # no config line
+misread; t0=${SECONDS}; merge GIT_SSH_VARIANT=simple "GIT_SSH_COMMAND=sleep 60; :" SWARM_BASE_MOVED_WAIT=5 --board "${URL}"
+refused "--board, a staged epic set active, origin's fetch hanging" "--board: cannot fetch origin/main (the fetch timed out after 5s)"
+check "--board, a staged epic set active, origin's fetch hanging: stops within 40 s" test $((SECONDS - t0)) -lt 40
+git -C "${P}" remote set-url origin "${ROOT}/origin.git"; git -C "${P}" fetch -q origin "+refs/heads/main:refs/remotes/origin/main"
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
 check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"
@@ -915,5 +1005,117 @@ check "plan-epic's small path names costs: money" grep -qF 'costs: money' <<< "$
 check "plan-epic's decompose brief names costs: money" grep -qF 'costs: money' <<< "$(step '**2. Decompose**' '**3. Verify**')"
 # shellcheck disable=SC2016 # the backticks are plan-epic's
 check "plan-epic's critic brief names costs: money" grep -qF 'costs: money' <<< "$(step 'one `critic`' '**Then report**')"
+
+# --- Dropped base lines (#693): merge holds a PR whose own merge of the base dropped a base line, at the
+# pinned head, and records the hold on the item in review. dropped-lines reads ${ROOT}/r, the clone of o/r
+# beside the project (repos_dir is the project's parent), whose origin is the bare ${ROOT}/o/r.git. W, a
+# work repo, pushes main there. From main0, main replaces f's three with three-main and main-added, and
+# 'x | y.md''s b with b-main and main-row. DROP, a branch that replaced three with three-pr, merges main
+# and drops main-added; CLEAN does the same and keeps every line; PIPE replaced b with b-pr and drops
+# main-row.
+OR="${ROOT}/o/r.git"; W="${ROOT}/w"; PIPEF='x | y.md'; U8="${URL%/*}/8"; ST="${P}/.swarm/board-state/stories/s"
+HELD_TAIL="the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand"
+wg() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c user.name=t -c user.email=t@t "$@"; }
+# wput <file> <line>... — W's <file> holds the lines, committed on the branch checked out.
+wput() { printf '%s\n' "${@:2}" > "${W}/$1"; wg -C "${W}" add -A; wg -C "${W}" commit -qm "$1"; }
+# remerge <branch> <file> <line>... — on <branch>, merge main with <file> resolved to the lines; prints its SHA.
+remerge() {
+  wg -C "${W}" checkout -q "$1"; wg -C "${W}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+  printf '%s\n' "${@:3}" > "${W}/$2"; wg -C "${W}" add -A; wg -C "${W}" commit -q --no-edit; wg -C "${W}" rev-parse HEAD
+}
+wg init -q -b main "${W}"; mkdir -p "${ROOT}/o"; wg init -q --bare "${OR}"
+wput f one two three four five; wput "${PIPEF}" a b c
+for b in drop clean pipe; do wg -C "${W}" branch "${b}"; done
+wput f one two three-main main-added four five; wput "${PIPEF}" a b-main main-row c
+wg -C "${W}" push -q "${OR}" main; wg clone -q "${OR}" "${ROOT}/r"
+wg -C "${W}" checkout -q drop; wput f one two three-pr four five
+DROP="$(remerge drop f one two three-pr three-main four five)"
+wg -C "${W}" checkout -q clean; wput f one two three-pr four five
+CLEAN="$(remerge clean f one two three-pr three-main main-added four five)"
+wg -C "${W}" checkout -q pipe; wput "${PIPEF}" a b-pr c
+PIPE="$(remerge pipe "${PIPEF}" a b-pr b-main c)"
+# A git that says it is 2.35.0 and is the real git for anything else.
+mkdir -p "${ROOT}/oldgit"
+# shellcheck disable=SC2016 # the stub's own arguments
+printf '#!/bin/sh\ncase "$1" in version|--version) echo "git version 2.35.0" ;; *) exec "%s" "$@" ;; esac\n' "$(command -v git)" > "${ROOT}/oldgit/git"
+chmod +x "${ROOT}/oldgit/git"
+# pr_head <commit> — PR 7's head is <commit>: green, pushed to o/r's refs/pull/7/head, and gh lists W's
+# main..<commit> as the PR's commits, each with its parents.
+pr_head() {
+  local c ps sep="" json="["
+  wg -C "${W}" push -q -f "${OR}" "$1:refs/pull/7/head"
+  echo "$1" > "${FX}/head"; checks "${FX}/$1.checks" "$(run test completed success)"; statuses "${FX}/$1.status"
+  for c in $(wg -C "${W}" rev-list --reverse "main..$1"); do
+    ps="$(wg -C "${W}" rev-list --parents -n 1 "${c}" | cut -d' ' -f2- | sed -E 's/([0-9a-f]+)/{"sha":"\1"}/g; s/ /,/g')"
+    json+="${sep}{\"sha\":\"${c}\",\"parents\":[${ps}]}"; sep=,
+  done
+  echo "${json}]" > "${FX}/prcommits"
+}
+# prot [file] — the protected: entries in s's board state (or [file]), one a line, each entry's time taken out.
+prot() {
+  { awk 'index($0, "protected: ") == 1 { n = split(substr($0, 12), e, / \| /); for (i = 1; i <= n; i++) print e[i] }' "${1:-${ST}}" 2>/dev/null || true; } \
+    | sed -E 's/^([^ ]+ [^ ]+) [0-9]+ /\1 /'
+}
+commits_read() { grep -q 'pulls/7/commits' "${ROOT}/gh.log"; }
+
+fresh; pr_head "${DROP}"; merge "${URL}"
+refused "dropped lines: a story PR whose builder merge dropped a base line" \
+  "merge: held: s (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
+is "dropped lines: the hold is recorded on the item's protected: state at that head" \
+  "${URL} ${DROP} dropped base lines: 1, first f: main-added" "$(prot)"
+# The same story, its builder's merge redone to keep every line: it merges, and the record is gone by
+# the merge (read as gh pr merge runs, before reconcile clears the story's state).
+printf 'cp "%s" "%s" 2>/dev/null || :\n' "${ST}" "${ROOT}/st.at-merge" > "${FX}/on-merge"; rm -f "${ROOT}/st.at-merge"
+: > "${ROOT}/gh.log"; pr_head "${CLEAN}"; merge "${URL}"
+is "dropped lines: the same story at a head whose merge drops nothing: exits 0" 0 "${rc}"
+check "dropped lines: the same story at a head whose merge drops nothing: merged" merged
+check "dropped lines: the same story at a head whose merge drops nothing: its commits were read" commits_read
+is "dropped lines: the same story at a head whose merge drops nothing: no protected: entry at the merge" "" "$(prot "${ROOT}/st.at-merge")"
+# Under an HLD granting merge (merge = human) the hold is the same, and only dropped_hold's pass drops
+# the record: protected_hold runs under merge = agent alone.
+granted merge; pr_head "${DROP}"; merge "${URL}"
+refused "dropped lines under an HLD granting merge" "merge: held: s (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
+printf 'cp "%s" "%s" 2>/dev/null || :\n' "${ST}" "${ROOT}/st.at-merge" > "${FX}/on-merge"; rm -f "${ROOT}/st.at-merge"
+pr_head "${CLEAN}"; merge "${URL}"
+is "dropped lines under an HLD granting merge, the head redone: merges, its record dropped by the merge" "0|" "${rc}|$(prot "${ROOT}/st.at-merge")"
+check "dropped lines under an HLD granting merge, the head redone: merged" merged
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
+# dropped-lines cannot check (git below 2.36): held, saying why, and recorded.
+fresh; pr_head "${DROP}"; merge PATH="${ROOT}/oldgit:${ROOT}/bin:${PATH}" "${URL}"
+refused "dropped lines unchecked: git 2.35" \
+  "merge: held: s (dropped base lines unchecked: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL}'s merges reads: update git); the user checks the merge by hand and merges it, or runs swarm.sh merge again"
+is "dropped lines unchecked: git 2.35: recorded" \
+  "${URL} ${DROP} dropped base lines unchecked: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL}'s merges reads: update git" "$(prot)"
+# gh failing on the PR's commits: held unchecked, saying so, with no fetch.
+fresh; pr_head "${DROP}"; echo '[' > "${FX}/prcommits.fail"; merge "${URL}"
+refused "dropped lines unchecked: gh cannot list the PR's commits" "merge: held: s (dropped base lines unchecked: gh cannot list ${URL}'s commits: gh: HTTP 502); "
+# gh lists the PR's commits without the pinned head while gh pr view still reads it: a stale list, as it
+# was before the builder's merge, with no merge in it. Held unchecked, since the list cannot vouch for
+# that head. (A head that moved passes this read: merge's --match-head-commit stops it, merge_test's
+# changed head.)
+fresh; pr_head "$(wg -C "${W}" rev-parse "${DROP}^1")"; cp "${FX}/prcommits" "${ROOT}/stale.commits"
+pr_head "${DROP}"; cp "${ROOT}/stale.commits" "${FX}/prcommits"
+merge "${URL}"
+refused "dropped lines unchecked: gh's list of the PR's commits lacks the pinned head" \
+  "merge: held: s (dropped base lines unchecked: gh's list of ${URL}'s commits does not hold its head ${DROP:0:7} yet); "
+# A moved head: refs/pull/7/head is another commit than the pinned head. Refused for a new review, not
+# held, and nothing recorded.
+fresh; pr_head "${DROP}"; wg -C "${W}" push -q -f "${OR}" "${CLEAN}:refs/pull/7/head"; merge "${URL}"
+refused "dropped lines: a head that moved on GitHub" \
+  "merge: the head of ${URL} on GitHub (refs/pull/7/head) is ${CLEAN:0:7}, not ${DROP:0:7}, the head merge checked for dropped base lines: review the new head"
+check "dropped lines: a head that moved on GitHub: not held" bash -c "! grep -q 'held:' '${ROOT}/out'"
+is "dropped lines: a head that moved on GitHub: nothing recorded" "" "$(prot)"
+# A dropped line in a file whose name holds ' | ': the held: line shows it as it is, and the record keeps
+# it whole, every | made ¦, beside the item's other PR's entry.
+fresh; item s "status: review" "prs: ${URL} ${U8}"; mkdir -p "${ST%/*}"
+printf 'protected: %s %s 1 changes hooks/x.sh\n' "${U8}" "${H1}" > "${ST}"
+pr_head "${PIPE}"; merge "${URL}"
+refused "dropped lines in a file named 'x | y.md'" "merge: held: s (dropped base lines: 1, first x | y.md: main-row); ${HELD_TAIL}"
+is "dropped lines in a file named 'x | y.md': recorded whole, beside the other PR's entry" \
+  "${U8} ${H1} changes hooks/x.sh"$'\n'"${URL} ${PIPE} dropped base lines: 1, first x ¦ y.md: main-row" "$(prot)"
+# --board: the same check and line, under the URL, and no board state.
+fresh; rm "${S}"; pr_head "${DROP}"; merge --board "${URL}"
+refused "dropped lines: a --board PR" "merge: held: ${URL} (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
+check "dropped lines: a --board PR: no board state written" bash -c "! grep -rqs 'dropped base lines' '${P}/.swarm/board-state'"
 
 finish merge-rules

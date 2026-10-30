@@ -251,9 +251,9 @@ idle=("{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"timestamp\":\"$(a
   "{\"type\":\"user\",\"isCompactSummary\":true,\"timestamp\":\"$(ago 11)\",\"message\":{\"role\":\"user\",\"content\":\"This session is being continued.\"}}"
   "{\"type\":\"user\",\"timestamp\":\"$(ago 2)\",\"message\":{\"role\":\"user\",\"content\":\"<task-notification><task-id>b1</task-id></task-notification>\"}}"
   '{"type":"summary","summary":"Compacted while idle","leafUuid":"x"}')
-# swait <args...> — swarm.sh wait <args...> in the project, its wait begun 2 hours ago; hung_wait is
-# wait --stall on s-hung.
-swait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
+# swait <args...> — swarm.sh wait <args...> in the project, its wait begun 2 hours ago (WAIT_AGO seconds
+# ago when set); hung_wait is wait --stall on s-hung.
+swait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - ${WAIT_AGO:-7200} )) \
   CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
 hung_wait() { swait --stall s-hung 3000; }
 # Its last own work, a tool call 40 minutes ago, came after every tool shell started: none is the
@@ -713,6 +713,22 @@ check "blocked again with no new commit, it is not stalled" works hung_wait
 check "blocked, clear, blocked logs sign-blocked, sign-clear, sign-blocked" test "$(signs)" = "$(printf '%s\n' \
   "sign-blocked: s-hung (unsigned work since ${t1})" "sign-blocked: s-hung (unsigned work since ${t2})" \
   "sign-clear: s-hung" "sign-blocked: s-hung (unsigned work since ${t2})")"
+# Past 3 x stall_minutes (90 min) with no sign of life (a commit and an edit 100 minutes old, its own
+# work 120), a blocked builder may be hung on something else: the probe is not asked, and it stalls.
+before="$(signs)"; hw_commit 100 > /dev/null; log "$(tool 120)" "${idle[@]}"
+check "a blocked builder with no sign of life past 3 x stall_minutes is stalled, exit 3" stalls hung_wait
+check "and no sign incident is logged for it" test "$(signs)" = "${before}"
+# A real wait is shorter than the cap (the default times out after 60 minutes), so the cap measures the
+# builder's own signs, never the wait's start: a wait begun 40 minutes ago (past stall_minutes) on that
+# builder still stalls it, with no incident. One on a builder whose commit is 50 minutes old holds it,
+# and logs that commit's time.
+near_wait() { WAIT_AGO=2400 hung_wait; }
+check "a wait begun 40 minutes ago on a blocked builder quiet past 3 x stall_minutes is stalled, exit 3" stalls near_wait
+check "and it logs no sign incident" test "$(signs)" = "${before}"
+t3="$(hw_commit 50)"
+check "a wait begun 40 minutes ago on a blocked builder whose commit is 50 minutes old is not stalled" works near_wait
+check "and it logs a sign-blocked incident with that commit's time" \
+  test "$(signs)" = "$(printf '%s\n' "${before}" "sign-blocked: s-hung (unsigned work since ${t3})")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

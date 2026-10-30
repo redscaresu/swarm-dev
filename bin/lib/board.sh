@@ -161,6 +161,73 @@ epic_deleted_here() {
   return 1
 }
 
+# FINISHED_NOW: dash_finished's lines epic_built reads, with FINISHED_SET set once they are read. Read
+# in a subshell, they stay that subshell's.
+FINISHED_NOW=""; FINISHED_SET=""
+
+# epic_built <epic> — true for an active epic with no story file left on the board (none counts in it,
+# epic_stories, and no after_story: epic_has_after) whose stories have all left it, on two reads of
+# the board's history: a story under its slug finished at some time (dash_finished), and a story
+# naming it was deleted, by a merge or a board-only drop, since the epic's file was last added
+# (epic_story_gone over that range, for a file HEAD has); or one was deleted and not committed yet
+# (epic_deleted_here). So a new epic that takes a finished epic's slug is planned, until a story of
+# its own is dropped from the board. Unlike epic_planned, false on a board with no history to read
+# (not in git, or no commit yet), so a never-planned epic there is planned as before. plannable_epics
+# leaves it out, and next_step sends it to conduct while its report is missing or stale
+# (epic_report_stale).
+epic_built() {
+  local added
+  [[ "$(fm "${BOARD}/epics/$1.md" status 2>/dev/null)" == active ]] || return 1
+  git -C "${BOARD}" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 1
+  [[ -z "$(epic_stories "$1")" ]] && ! epic_has_after "$1" || return 1
+  # dash_finished reads the whole history: once a run, as NO_AGENT_NOW is read.
+  if [[ -z "${FINISHED_SET}" ]]; then FINISHED_NOW="$(dash_finished)"; FINISHED_SET=1; fi
+  if awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' <<< "${FINISHED_NOW}"; then
+    # The first-parent commit that last added the epic's file, for a file HEAD has: a new file not
+    # committed yet (a finished epic's slug taken again) has no history of its own.
+    added=""
+    if git -C "${BOARD}" cat-file -e "HEAD:./epics/$1.md" 2>/dev/null; then
+      # --no-patch: --diff-merges turns the patch on, and the hash alone is wanted.
+      added="$(git -C "${BOARD}" log -1 --first-parent --diff-merges=first-parent --no-renames --diff-filter=A \
+        --no-patch --format=%H HEAD -- "epics/$1.md" 2>/dev/null)" || added=""
+    fi
+    if [[ -n "${added}" ]] && epic_story_gone "$1" "${added}..HEAD"; then return 0; fi
+  fi
+  epic_deleted_here "$1"
+}
+
+# epic_story_gone <epic> <git log arg>... — true when a first-parent commit on the board's HEAD, among
+# those the <git log arg>s take in (--since=<date> HEAD, or an <added>..HEAD range), deleted a story
+# file whose front matter in the commit's parent names <epic> (and is not waits_on_epic), read as
+# release_stage reads deleted stories. epic_built and epic_report_stale read the history through it.
+epic_story_gone() {
+  local epic="$1" pre p c="" s text; shift
+  pre="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 1
+  # -z: paths unquoted, whatever their bytes; each commit's first path follows a newline.
+  while IFS= read -r -d '' p; do
+    p="${p#$'\n'}"
+    [[ ! "${p}" =~ ^[0-9a-f]{40,}$ ]] || { c="${p}"; continue; }
+    s="${p#"${pre}stories/"}"
+    [[ "${s}" == *.md && "${s}" != */* && "${s}" != README.md ]] || continue
+    text="$(git -C "${BOARD}" show "${c}^:${p}" 2>/dev/null)" || continue
+    [[ "$(get_fm - epic <<< "${text}")" == "${epic}" ]] || continue
+    waits_on_epic "$(get_fm - kind <<< "${text}")" "$(get_fm - after <<< "${text}")" "${epic}" || return 0
+  done < <(git -C "${BOARD}" log -z --first-parent --diff-merges=first-parent --no-renames --diff-filter=D --name-only \
+    --format=%H "$@" -- stories/ 2>/dev/null)
+  return 1
+}
+
+# epic_report_stale <epic> — true when <epic>'s conductor report (.swarm/conduct-<epic>.report.md) is
+# missing, or older than the newest merge of its stories: a story of it deleted (epic_story_gone) by a
+# commit with a commit time after the report's. The git log runs only when the report is there, and
+# reads only the commits since it.
+epic_report_stale() {
+  local report="${PROJECT_DIR}/.swarm/conduct-$1.report.md" since
+  [[ -f "${report}" ]] || return 0
+  since="$(date -r "${report}" +%s)" || return 1
+  epic_story_gone "$1" --since="@$((since + 1))" HEAD
+}
+
 # epic_after_only <epic-file> — true when the epic is active, its open stories are all after_story
 # ones, it has an after_story on the board (open or done: epic_has_after), and code stories were
 # planned for it (epic_planned): it counts as done (open_item), so what depends on it goes ahead,
@@ -216,6 +283,10 @@ NO_AGENT_NOW=""; NO_AGENT_SET=""; NO_AGENT_CHECKED=""; NEXT_NO_AGENT=""
 #                     at or above the minor before T and no stage-v<T> board PR's worktree is open
 #                     (stage_due): the lead sets them active in a board PR under the epics grant;
 #                     while any such worktree exists, the gate lists it (stage PR awaiting merge)
+#   conduct <epic>    (again) an active epic is built (epic_built: every story it had left the board)
+#                     and its conductor's report is missing or older than its last story's merge
+#                     (epic_report_stale): its conductor reports at once. A conductor's wait comes
+#                     first. With a fresh report it gets no step
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this (then unblocked_epic's, below) comes before its wait
@@ -321,6 +392,19 @@ next_step() {
     echo "stage v${stage}"
     echo "origin/${base} has a tag at or above v${when}, so stage v${stage} opens: set ${slug} active (board PR under the epics grant)"; return
   fi
+  # A built epic (every story merged, its file still here) is reported, never planned again.
+  while IFS= read -r f; do
+    slug="$(basename "${f}" .md)"
+    epic_built "${slug}" || continue
+    epic_report_stale "${slug}" || continue
+    echo "conduct ${slug}"
+    if [[ -f "${PROJECT_DIR}/.swarm/conduct-${slug}.report.md" ]]; then
+      echo "the active epic ${slug} is built, and its conductor's report is older than its last story's merge: its conductor reports at once"
+    else
+      echo "the active epic ${slug} is built and has no conductor's report: its conductor reports at once"
+    fi
+    return
+  done < <(board epics)
   epic="$(plannable_epic)"
   if [[ -n "${epic}" ]]; then echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return; fi
   # Neither HLD arm calls gh: dash runs next every frame. An open plan PR (its worktree) lets the
@@ -746,23 +830,29 @@ lead_blocked() {
 # (one_off_started), in any status until its PR merges; one not started yet is nobody's. Stories the
 # brief has the conductor list for the lead without a board mark (a build that died, a not held: line)
 # still count: the brief exempts them. conductor_note's finish: line is its negation.
+# agent_work_left <epic> count — the same exit status, after printing how many such stories there are
+# (reported_lines' n); without count it stops at the first.
 agent_work_left() {
-  local f slug e
+  local f slug e n=0
   while IFS= read -r f; do
     slug="$(basename "${f}" .md)"; e="$(fm "${f}" epic)"
     agent_kind "$(fm "${f}" kind)" || continue
     if [[ "${slug}" == fix-main-* && -z "${e}" ]]; then
-      one_off_started "${slug}" && [[ "$(fix_main_owner "${slug}")" == "$1" ]] && return 0
-      continue
+      one_off_started "${slug}" && [[ "$(fix_main_owner "${slug}")" == "$1" ]] || continue
+    else
+      [[ "${e:--}" == "$1" ]] || continue
+      case "$(fm "${f}" status)" in
+        ready) [[ "$(last_event "${slug}")" != $'reconcile\tok (reopened)' ]] || continue ;;
+        blocked) ! lead_held "${f}" || continue ;;
+        review) review_agent_owns "${f}" || continue ;;
+        *) continue ;;
+      esac
     fi
-    [[ "${e:--}" == "$1" ]] || continue
-    case "$(fm "${f}" status)" in
-      ready) [[ "$(last_event "${slug}")" == $'reconcile\tok (reopened)' ]] || return 0 ;;
-      blocked) lead_held "${f}" || return 0 ;;
-      review) ! review_agent_owns "${f}" || return 0 ;;
-    esac
+    [[ "${2:-}" == count ]] || return 0
+    n=$((n + 1))
   done < <(board stories)
-  return 1
+  [[ "${2:-}" != count ]] || echo "${n}"
+  [[ ${n} -gt 0 ]]
 }
 
 # fix_main_owner <slug> — the group (an epic, or - for the backlog) whose conductor started fix-main
@@ -844,13 +934,15 @@ epic_held() {
 # plannable_epics — every active epic with no stories whose depends_on holds nothing up
 # (epic_holding_deps), one slug a line in board order. A split epic (status: split) is never planned:
 # its child epics are. An epic an interrupted /plan-hld's rerun will overwrite (hld_resuming) waits for
-# that rerun. The first is next's plan-epic step (plannable_epic); idle_epic_lines reads them all.
+# that rerun. A built epic (epic_built) is left out: next's conduct step has it until it reports. The
+# first is next's plan-epic step (plannable_epic); idle_epic_lines reads them all.
 plannable_epics() {
   local f held
   while IFS= read -r f; do
     held="$(epic_holding_deps "${f}")" || continue
     [[ -z "${held}" ]] || continue
     ! hld_resuming "${f}" || continue
+    ! epic_built "$(basename "${f}" .md)" || continue
     basename "${f}" .md
   done < <(board epics)
 }
@@ -1366,6 +1458,125 @@ hld_ticket() {
 # board_reader <end> <path> — epic_unticketed's reader over the board as it is now, the same bytes at
 # either end: prints <path>, failing 1 when it is absent and 2 when it cannot be read.
 board_reader() { [[ -e "$2" ]] || return 1; cat "$2" 2> /dev/null || return 2; }
+
+# stage_gate <reader> <paths> [changed] — board-pr open's and merge's refusal of an epic set active
+# above the stage the base allows, whatever lead_epics says: for the first <board>/epics/<slug>.md among
+# <paths> (one a line; README.md excepted) that goes active (status: active at the head, raw_status, and
+# not at the base, epic_was_active, both read through <reader> as epic_unticketed reads them; an active
+# epic the PR moves to another stage counts too) with a stage: that is malformed (stage_of) or that
+# allowed_stage refuses, the line that says so, ending in
+# the exit there is: for a minor stage under an hld: that grants epics (hld_ticket), next's stage step;
+# else /swarm-dev:epic once the base has the tag. Nothing for an epic with no stage:. "<reader> ref"
+# names the base, origin/<base> in the project's clone, fetched with its tags; it is asked once, and
+# only once an epic going active has a stage:. [changed] is every path the PR changes (<paths> by
+# default). A read error prints why and fails.
+stage_gate() (
+  local reader="$1" changed="${3:-$2}" pre p s now raw v rc why ref="" want tag ex h y t
+  pre="$(board_rel)"
+  while IFS= read -r p; do
+    s="${p#"${pre}epics/"}"
+    [[ "${p}" == "${pre}epics/"* && "${s}" =~ ^[^/]+\.md$ && "${s}" != README.md ]] || continue
+    s="${s%.md}"
+    rc=0; now="$("${reader}" head "${p}")" || rc=$?
+    [[ ${rc} -ne 1 ]] || continue
+    [[ ${rc} -eq 0 ]] || { echo "cannot read ${p} at the head"; exit 1; }
+    [[ "$(raw_status <<< "${now}")" == active ]] || continue
+    raw="$(fm_text stage <<< "${now}")"; v="$(stage_of "${raw}")"
+    [[ "${v}" != - ]] || continue
+    rc=0; why="$(epic_was_active "${reader}" "${p}" "${now}")" || rc=$?
+    # One already active goes on at the stage it had; moved to another, it could open that stage early.
+    [[ ${rc} -ne 0 || "${why}" != "${v}" ]] || continue
+    [[ ${rc} -le 1 ]] || { echo "${why}"; exit 1; }
+    [[ "${v}" != bad ]] || { echo "${s} goes active with stage: ${raw}, which is not v<x.y.z>; fix the line, or commit it as status: draft"; exit 0; }
+    if [[ -z "${ref}" ]]; then ref="$("${reader}" ref)" || { echo "${ref:-cannot name the base}"; exit 1; }; fi
+    rc=0; why="$(allowed_stage "${v}" "${ref}" "${changed}")" || rc=$?
+    [[ ${rc} -ne 0 ]] || continue
+    [[ ${rc} -eq 1 ]] || { echo "${why}"; exit 1; }
+    read -r want tag <<< "${why}"
+    why="newest tag v${tag}"; [[ "${tag}" != - ]] || why="no v<x.y.z> tag found"
+    ex="commit it as status: draft, then run /swarm-dev:epic ${s} again once v${want} is tagged"
+    # next's stage step sets a staged draft active (staged_draft): a minor above 0, under its own hld:.
+    h="$(slug_list "$(fm_text hld <<< "${now}")")"; IFS=. read -r _ y _ <<< "${v}"
+    if ((10#${y} > 0)) && [[ "${h}" =~ ^[A-Za-z0-9._-]+$ ]] && t="$(mktemp)"; then   # item_hld's pattern: no /
+      if hld_ticket "${reader}" "${pre}hld/${h}.md" "${t}" > /dev/null; then
+        ex="commit it as status: draft: next's stage step sets it active once v${want} is tagged"
+      fi
+      rm -f "${t}" "${t}.err"
+    fi
+    echo "${s} goes active at stage v${v}, above what ${ref#origin/} allows (${why}, below v${want}, and no v${v} epic active there); ${ex}"
+    exit 0
+  done <<< "$2"
+)
+
+# epic_was_active <reader> <path> <head bytes> — true when the epic at <path> is active at the base, as
+# epic_unticketed reads it: at <path>, or, absent there, at the old path "<reader> from" names when that
+# is an epic too and the epic keeps its heading (epic_heading); then it prints that base copy's stage
+# (stage_of). Fails 1 when not (absent too); prints why and fails 2 on a read error.
+epic_was_active() {
+  local pre b="$2" o was rc=0
+  pre="$(board_rel)"
+  was="$("$1" base "$2")" || rc=$?
+  if [[ ${rc} -eq 1 ]]; then
+    b="$("$1" from "$2")" || { echo "cannot tell what $2 was renamed from"; return 2; }
+    o="${b#"${pre}epics/"}"
+    [[ "${b}" == "${pre}epics/"* && "${o}" =~ ^[^/]+\.md$ && "${o}" != README.md ]] || return 1
+    rc=0; was="$("$1" base "${b}")" || rc=$?
+  fi
+  [[ ${rc} -ne 1 ]] || return 1
+  [[ ${rc} -eq 0 ]] || { echo "cannot read ${b} at the base"; return 2; }
+  [[ "$(raw_status <<< "${was}")" == active ]] || return 1
+  if [[ "${b}" != "$2" ]]; then
+    o="$(epic_heading <<< "$3")"
+    [[ -n "${o}" && "${o}" == "$(epic_heading <<< "${was}")" ]] || return 1
+  fi
+  stage_of "$(fm_text stage <<< "${was}")"
+}
+
+# allowed_stage <x.y.z> <ref> <changed> — "<P> <T>", and true when the base at <ref> (origin/<base> in
+# the project's clone) lets an epic go active at stage <x.y.z>: when T, the newest v<x.y.z> tag on <ref>
+# (newest_tag; - for none, which counts as 0.0.0), is at or above P, the minor before the stage
+# (v0.31.0's is 0.30.0: staged_draft's <prev>, stage_due's rule), or when an epic at <ref> that is not
+# among <changed> (one a line) is active at the same stage (stage_rows). A v<x>.0.0 stage has no minor
+# before it: its P is the highest v<x-1>.y.z stage an epic at <ref> carries, whatever its status
+# (<x-1>.0.0 for none), and only a real tag reaches it. v0.0.0 has nothing before it. Fails 1 when the
+# base does not allow it; prints why and fails 2 when git cannot read <ref>'s epics.
+allowed_stage() {
+  local x y p t rows v ok=""
+  IFS=. read -r x y _ <<< "$1"; x=$((10#${x})); y=$((10#${y}))
+  t="$(newest_tag "$2")"
+  if ((y > 0 || x == 0)); then
+    p="${x}.$((y > 0 ? y - 1 : 0)).0"
+    if ! version_gt "${p}" "${t:-0.0.0}"; then echo "${p} ${t:--}"; return 0; fi
+  fi
+  # Read only when the tag alone does not decide.
+  rows="$(stage_rows "$2" "$3")" || { echo "${rows}"; return 2; }
+  if ((y == 0 && x > 0)); then
+    p="$((x - 1)).0.0"
+    while read -r _ v; do
+      if [[ "${v%%.*}" == "$((x - 1))" ]] && version_gt "${v}" "${p}"; then p="${v}"; fi
+    done <<< "${rows}"
+    if [[ -n "${t}" ]] && ! version_gt "${p}" "${t}"; then ok=1; fi
+  fi
+  if [[ -z "${ok}" ]] && awk -v s="$1" '$1 == "active" && $2 == s { f = 1 } END { exit !f }' <<< "${rows}"; then ok=1; fi
+  echo "${p} ${t:--}"
+  [[ -n "${ok}" ]]
+}
+
+# stage_rows <ref> <changed> — "<status> <stage>" for each epic at <ref> in the project's clone
+# (board_epics' paths): its raw_status (none for no status: line), or changed when <changed> (one a
+# line) holds its path, and stage_of its stage:. Prints why and fails when git cannot list or read them.
+stage_rows() {
+  local list p b st
+  list="$(git -C "${PROJECT_DIR}" ls-tree -r --name-only "$1" -- "$(board_rel)epics/" 2> /dev/null | board_epics)" \
+    || { echo "cannot list the epics at $1"; return 1; }
+  while IFS= read -r p; do
+    [[ -n "${p}" ]] || continue
+    b="$(git -C "${PROJECT_DIR}" show "$1:${p}" 2> /dev/null)" || { echo "cannot read ${p} at $1"; return 1; }
+    st="$(raw_status <<< "${b}")"; st="${st// /,}"
+    if grep -qxF -- "${p}" <<< "$2"; then st=changed; fi
+    echo "${st:-none} $(stage_of "$(fm_text stage <<< "${b}")")"
+  done <<< "${list}"
+}
 
 # draft_lead_why <epic file> — why the lead may set this draft epic active with no agreement, through
 # the epic guard's own tickets over the board as it is (board_reader): "lead_epics = on", "parent <p>

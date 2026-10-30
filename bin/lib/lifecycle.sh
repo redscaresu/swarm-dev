@@ -31,11 +31,13 @@ origin_has() {
 # board_read base|head <path> — epic_unticketed's reader for board_pr open: <path> at origin/<base>, or
 # in the worktree <wt> (board_pr's locals); fails 1 when it is absent and 2 when it cannot be read.
 # board_read from <path> — the old path of the rename to <path> in board_pr's local changes
-# (board_changes), or nothing.
+# (board_changes), or nothing. board_read ref — origin/<base>, which open has fetched (stage_gate's).
 board_read() {
   local t
   if [[ "$1" == from ]]; then
     P="$2" awk -F'\t' '$1 ~ /^R/ && $3 == ENVIRON["P"] { print $2; exit }' <<< "${changes}"
+  elif [[ "$1" == ref ]]; then
+    echo "origin/${base}"
   elif [[ "$1" == base ]]; then
     t="$(git -C "${wt}" ls-tree --name-only "origin/${base}" -- "$2")" || return 2
     [[ -n "${t}" ]] || return 1
@@ -142,8 +144,8 @@ board_pr() {
       [[ -f "$4" && -r "$4" ]] || die "board-pr: no body file at $4"
       [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "${b}" ]] \
         || die "board-pr: ${wt} is not a worktree on ${b}; run swarm.sh board-pr start ${name}"
-      # base_for fetches origin/<base>, so the epic check reads it as it is now (an HLD superseded since
-      # the start counts).
+      # base_for fetches origin/<base>, with the tags on it, so the epic checks read it as it is now (an
+      # HLD superseded since the start counts, and so does a tag pushed since).
       base="$(base_for "${PROJECT_DIR}")" || die "board-pr: cannot fetch origin's base branch, so whether an epic goes active with no ticket is unknown"
       rel="$(board_rel)"
       # Committed and uncommitted changes since the base, new files too: each changed path, a rename's
@@ -162,6 +164,9 @@ board_pr() {
       # the $(...), where a die would not stop this.
       f="$(epic_unticketed board_read "${files}")" || die "board-pr: ${f}"
       [[ -z "${f}" ]] || { f="${f%%$'\n'*}"; die "board-pr: ${f} goes active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${f}"; }
+      # So is one that goes active above the stage the base allows, whatever lead_epics says.
+      f="$(stage_gate board_read "${files}")" || die "board-pr: ${f}"
+      [[ -z "${f}" ]] || die "board-pr: ${f}"
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
       # answer (commands/plan-epic.md step 0), written since this worktree started: an older one is an
       # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. A
@@ -2607,13 +2612,37 @@ lead_head_wakes() { [[ "$1" == green ]] || { [[ "$1" == unread ]] && grep -qxF "
 
 LEAD_PRS="${LEAD_DIR}/prs"            # the open story PRs the last heads pass read (open_story_prs), for pr_lines
 LEAD_PRS_WAIT="${SWARM_LEAD_PRS_WAIT:-30}"   # seconds one gh read of the heads pass (open_story_prs, pr_head) may take before it counts as failed
-LEAD_PRS_WARN_AFTER="${SWARM_LEAD_PRS_WARN_AFTER:-3}"   # heads passes in a row a repo's read fails before wait --lead warns
+LEAD_PRS_WARN_AFTER="${SWARM_LEAD_PRS_WARN_AFTER:-3}"   # heads passes in a row a repo's or a base's read fails before wait --lead warns
 LEAD_REPOS=""                         # "<name> <owner/repo>" per repo this run resolved, so each costs one gh repo view a run
 LEAD_PRS_FAILS=""                     # "<name> <n>": the heads passes in a row that could not read the repo's open PRs
+LEAD_NWO=""                           # the owner/repo lead_nwo last resolved
+LEAD_BASES="${LEAD_DIR}/bases"        # each base's head and its CI as the last heads pass read them (lead_bases), for main_red_lines
+LEAD_BASE_RECHECK=7200                # seconds a base head read green is read again, for a rerun that fails on the same sha
+LEAD_BASE_OF=""                       # "<owner/repo> <base>" per repo this run resolved the base of (lead_base)
+LEAD_BASE=""                          # the base lead_base last resolved
+# What git refuses in a branch name (a space, a control character, ~ ^ : ? * [ \), as a regex held in a
+# variable, so bash 3.2 and 5 read its backslash alike.
+LEAD_REF_BAD='[[:space:][:cntrl:]~^:?*[\]'
+LEAD_BASE_FAILS=""                    # "<what>\t<n>": the heads passes in a row that could not read a base (lead_base_failed)
+
+# lead_nwo <name> — set LEAD_NWO to the owner/repo of a repo a story names (<name>, `.` for the project's own):
+# LEAD_REPOS' entry, else resolved as repo_slug does (gh repo view on its origin, within LEAD_PRS_WAIT) and added
+# to LEAD_REPOS, so each costs one gh read a run. Fails 2 for a repo with no clone or no origin, 1 when gh
+# fails or answers no owner/repo. It runs in the caller's shell, which keeps LEAD_REPOS.
+lead_nwo() {
+  local src origin
+  LEAD_NWO="$(awk -v n="$1" '$1 == n { print $2; exit }' <<< "${LEAD_REPOS}")"
+  [[ -z "${LEAD_NWO}" ]] || return 0
+  if [[ "$1" == . ]]; then src="$(repo_dir "")" || return 2; else src="$(repo_dir "$1")" || return 2; fi
+  origin="$(git -C "${src}" remote get-url origin 2>/dev/null)" || return 2
+  LEAD_NWO="$(within "${LEAD_PRS_WAIT}" gh repo view "${origin}" --json nameWithOwner -q .nameWithOwner </dev/null 2>/dev/null)" || LEAD_NWO=""
+  [[ "${LEAD_NWO}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { LEAD_NWO=""; return 1; }
+  LEAD_REPOS+="$1 ${LEAD_NWO}"$'\n'
+}
 
 # open_story_prs — the heads pass's read of the open story PRs, for pr_lines to read each poll with no gh call (LEAD_PRS).
-# For each repo a story names (its repo:, `.` for the project's own), resolved once a run to its owner/name as
-# repo_slug does (gh repo view on its origin), it prints `= <name> <owner/repo>`, then one `gh pr list` per
+# For each repo a story names (its repo:, `.` for the project's own), resolved once a run to its owner/name
+# (lead_nwo), it prints `= <name> <owner/repo>`, then one `gh pr list` per
 # owner/repo, each gh read bounded by LEAD_PRS_WAIT seconds (within): `+ <owner/repo> <slug> <PR URL> <head>
 # <mergeable> <checks> <opened, epoch seconds>` per open story/* PR from the repo itself, never a fork's. <checks> is green when the rollup GitHub returns
 # has at least one check run and every check run and status in it passed (success, skipped or neutral); a required
@@ -2622,17 +2651,13 @@ LEAD_PRS_FAILS=""                     # "<name> <n>": the heads passes in a row 
 # A repo with no clone or no origin has no PR to list and prints nothing. It runs in the caller's shell, which
 # keeps LEAD_REPOS and LEAD_PRS_FAILS across passes.
 open_story_prs() {
-  local name src origin nwo listed="" failed="" rows
+  local name nwo listed="" failed="" rows rc
   while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
-    nwo="$(awk -v n="${name}" '$1 == n { print $2; exit }' <<< "${LEAD_REPOS}")"
-    if [[ -z "${nwo}" ]]; then
-      if [[ "${name}" == . ]]; then src="$(repo_dir "")" || continue; else src="$(repo_dir "${name}")" || continue; fi
-      origin="$(git -C "${src}" remote get-url origin 2>/dev/null)" || continue
-      nwo="$(within "${LEAD_PRS_WAIT}" gh repo view "${origin}" --json nameWithOwner -q .nameWithOwner </dev/null 2>/dev/null)" || nwo=""
-      if [[ ! "${nwo}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
-      LEAD_REPOS+="${name} ${nwo}"$'\n'
-    fi
+    rc=0; lead_nwo "${name}" || rc=$?
+    (( rc != 2 )) || continue
+    if (( rc != 0 )); then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
+    nwo="${LEAD_NWO}"
     echo "= ${name} ${nwo}"
     if grep -qxF "${nwo}" <<< "${failed}"; then echo "- ${name}"; open_prs_failed "${name}"; continue; fi
     if ! grep -qxF "${nwo}" <<< "${listed}"; then
@@ -2668,6 +2693,125 @@ open_prs_failed() {
   LEAD_PRS_FAILS="$(awk -v r="$1" '$1 != r' <<< "${LEAD_PRS_FAILS}")"$'\n'"$1 ${n}"
   [[ ${n} -eq ${LEAD_PRS_WARN_AFTER} ]] || return 0
   echo "warning: wait --lead could not read the open PRs of $([[ "$1" == . ]] && echo "the project's repo" || echo "repo $1") on ${n} heads passes in a row (gh failed or timed out), so its unmerged: and conflict: lines stand as last seen and no new one comes: check gh auth status and that gh can see the repo" >&2
+}
+
+# lead_base_failed <key> <what> — count a heads pass that could not read a base: <key> is `<owner/repo>` when it
+# could not tell the base, `<owner/repo> <base>` when it could not read the head or its CI, <what> what it could
+# not do. The LEAD_PRS_WARN_AFTER-th in a row warns on stderr, once until a read succeeds (lead_base_read).
+lead_base_failed() {
+  local n
+  n="$(awk -F'\t' -v k="$1" '$1 == k { print $2 }' <<< "${LEAD_BASE_FAILS}")"; n=$(( ${n:-0} + 1 ))
+  LEAD_BASE_FAILS="$(awk -F'\t' -v k="$1" '$1 != k' <<< "${LEAD_BASE_FAILS}")"$'\n'"$1"$'\t'"${n}"
+  [[ ${n} -eq ${LEAD_PRS_WARN_AFTER} ]] || return 0
+  echo "warning: wait --lead could not $2 on ${n} heads passes in a row (gh failed or timed out), so its main-red: line stands as last seen and no new one comes: check gh auth status, that gh can see the repo, and base_branches" >&2
+}
+
+# lead_base_read <key> — a heads pass read that base: its count of failed passes starts again.
+lead_base_read() { LEAD_BASE_FAILS="$(awk -F'\t' -v k="$1" '$1 != k' <<< "${LEAD_BASE_FAILS}")"; }
+
+# lead_base <owner/repo> — set LEAD_BASE to the repo's base as base_for picks it: the first base_branches entry
+# GitHub has, or the repo's default branch when the list is empty. Each gh read is bounded (within
+# BASE_HEAD_WAIT) and nothing is fetched, as base_for would. Resolved once a run (LEAD_BASE_OF); fails, and
+# is asked again on the next pass, when a read fails or GitHub has none of the branches. Never a guess.
+lead_base() {
+  local b refs
+  LEAD_BASE="$(awk -v r="$1" '$1 == r { print $2; exit }' <<< "${LEAD_BASE_OF}")"
+  [[ -z "${LEAD_BASE}" ]] || return 0
+  if [[ -n "${CFG_base_branches// /}" ]]; then
+    # shellcheck disable=SC2086 # branch names separated by spaces, which load_config checked
+    for b in ${CFG_base_branches}; do
+      # A ref prefix, so it also lists dev-x for dev: only the whole name counts.
+      refs="$(within "${BASE_HEAD_WAIT}" gh api --paginate --jq '.[].ref' "repos/$1/git/matching-refs/heads/${b}" </dev/null 2>/dev/null)" || return 1
+      if grep -qxF "refs/heads/${b}" <<< "${refs}"; then LEAD_BASE="${b}"; break; fi
+    done
+  else
+    LEAD_BASE="$(within "${BASE_HEAD_WAIT}" gh api --jq .default_branch "repos/$1" </dev/null 2>/dev/null)" || LEAD_BASE=""
+  fi
+  [[ -n "${LEAD_BASE}" && ! "${LEAD_BASE}" =~ ${LEAD_REF_BAD} ]] || { LEAD_BASE=""; return 1; }   # loose-match: ok LEAD_REF_BAD is a regex on purpose
+  LEAD_BASE_OF+="$1 ${LEAD_BASE}"$'\n'
+}
+
+# lead_bases — the heads pass's read of each base's CI, for main_red_lines to read each poll with no gh call
+# (LEAD_BASES). It covers the base (lead_base) of the project's repo and of each repo LEAD_REPOS holds, which
+# open_story_prs resolved earlier in the same pass, and the repo and base of each live red main (red_mains).
+# For each it reads the base's head (gh api, within BASE_HEAD_WAIT) and that head's CI (ci_gate base, within
+# BASE_CI_WAIT): green, red, pending (running, or no check run or status yet) or unread. It writes `<owner/repo> <base>
+# <sha> <verdict> <epoch> [<red checks>]` a base, the repo lowercased as main_key has it, <epoch> when <sha>
+# first read as <verdict>, and the checks cut by ci_data. A pending, unread or red head is read again on every
+# pass, and a green one for LEAD_BASE_RECHECK seconds, so a rerun that fails on the same sha still turns it
+# red; past that a green head's CI is read again only once the base moves. A red head read red again keeps its
+# line as first read, so a check that finishes later does not change the line and wake the lead twice. A head
+# that cannot be read, a head whose CI cannot be read (the line's own head or a new one: a failed read replaces
+# nothing), a base not resolved (its repo's lines stand, with no read of the base they name, which may be one no
+# longer), a repo gh could not name (every line no read this pass replaced stays), and a red head whose CI now reads
+# pending (a rerun under way) keep the line they had; a green head whose CI reads pending is written pending, so
+# it is read again every pass, past LEAD_BASE_RECHECK too, until the rerun concludes. Each failed read counts
+# towards a warning (lead_base_failed). A repo with no clone or no origin, which no pass can read, loses its
+# lines, as open_story_prs lists no PR for it. On a concluded head (green or red) of a base red_mains holds, it
+# runs clear_red_main, as reconcile's green_mains does on every head: that logs main-green and retires the base's
+# unstarted fix-main stories once ci_gate fixed shows the red fixed, which a head red only on checks the base
+# does not require does. It prints nothing on stdout.
+lead_bases() {
+  local name nwo base todo="" reds old x sha v at head out rc nv checks line now lost="" unresolved=""
+  now="$(date +%s)"; reds="$(red_mains)"
+  while read -r name; do
+    [[ -n "${name}" ]] || continue
+    # A repo gh could not name: which of the old lines are its is unknown, so none goes this pass.
+    lead_nwo "${name}" || { [[ $? -ne 1 ]] || lost=1; continue; }
+    nwo="$(tr '[:upper:]' '[:lower:]' <<< "${LEAD_NWO}")"
+    if lead_base "${nwo}"; then todo+="${nwo} ${LEAD_BASE}"$'\n'; lead_base_read "${nwo}"
+    else
+      # Its lines stand as last read: the base they name may be one no longer, so nothing reads it.
+      unresolved+="${nwo} "
+      lead_base_failed "${nwo}" "tell the base of ${nwo}"
+    fi
+  done < <({ echo .; awk 'NF { print $1 }' <<< "${LEAD_REPOS}"; } | sort -u)
+  todo+="$(awk 'NF { print $2, $3 }' <<< "${reds}")"
+  : > "${LEAD_BASES}.new" || return 0
+  while read -r nwo base; do
+    [[ -n "${base}" ]] || continue
+    old="$(awk -v r="${nwo}" -v b="${base}" '$1 == r && $2 == b { print; exit }' "${LEAD_BASES}" 2>/dev/null)"
+    sha=""; v=""; at=""; [[ -z "${old}" ]] || read -r x x sha v at x <<< "${old}"
+    [[ "${sha}" =~ ^[0-9a-f]{40}$ && "${at}" =~ ^[0-9]+$ ]] || { sha=""; v=""; }
+    head="$(within "${BASE_HEAD_WAIT}" gh api --jq .sha "repos/${nwo}/commits/${base}" </dev/null 2>/dev/null)" || head=""
+    if [[ ! "${head}" =~ ^[0-9a-f]{40}$ ]]; then
+      [[ -z "${old}" ]] || echo "${old}" >> "${LEAD_BASES}.new"
+      lead_base_failed "${nwo} ${base}" "read CI on ${base} of ${nwo}"; continue
+    fi
+    [[ "${head}" == "${sha}" ]] || v=""
+    if [[ "${v}" == green ]] && (( now - at >= LEAD_BASE_RECHECK )); then
+      line="${old}"
+    else
+      rc=0; out="$(within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" base "${nwo}" "${head}" </dev/null 2>/dev/null)" || rc=$?
+      case ${rc} in 0) nv=green ;; 1) nv=red ;; 2) nv=pending ;; *) nv=unread ;; esac
+      if [[ "${nv}" == unread ]]; then lead_base_failed "${nwo} ${base}" "read CI on ${base} of ${nwo}"; else lead_base_read "${nwo} ${base}"; fi
+      # A CI read that fails, on the line's head or a new one, replaces nothing: the line stands as last read. A red
+      # head whose rerun is under way keeps its line too, so main-red: stands until the rerun concludes. A green one
+      # is written pending, so it is read again every pass, past LEAD_BASE_RECHECK too, until the rerun concludes.
+      if [[ "${nv}" == unread && -n "${sha}" ]] || [[ "${v}" == red && ( "${nv}" == pending || "${nv}" == red ) ]]; then
+        line="${old}"
+      else
+        [[ "${nv}" == "${v}" ]] || at="${now}"
+        checks=""; [[ "${nv}" != red ]] || checks=" $(red_names_only "${out%%$'\n'*}" | ci_data)"
+        line="${nwo} ${base} ${head} ${nv} ${at}${checks}"
+      fi
+    fi
+    echo "${line}" >> "${LEAD_BASES}.new"
+    # Concluded while a red main of the base stands: clear it as reconcile (green_mains) does, once ci_gate fixed
+    # shows this head fixed. fixed judges the required checks alone once each has a run, so a head red only on a
+    # check the base does not require clears the red too; the base's pass-found line then names that check.
+    read -r x x x v x <<< "${line}"
+    if [[ "${v}" == green || "${v}" == red ]] && awk -v k="${nwo} ${base}" '$2 " " $3 == k { f = 1 } END { exit !f }' <<< "${reds}"; then
+      clear_red_main "${nwo} ${base}" "${head}" "CI on ${base} is green at ${head:0:7}" </dev/null >/dev/null 2>&1 || true
+    fi
+  done < <(awk 'NF == 2 && !seen[$0]++' <<< "${todo}")
+  # The lines no read this pass replaced: every one when a repo could not be named (which lines are its is
+  # unknown), else those of each repo whose base could not be told. FILENAME, not FNR == NR: the new file may be empty.
+  out=""; [[ -z "${lost}${unresolved}" ]] || out="$(awk -v lost="${lost}" -v keep="${unresolved}" \
+    'FILENAME == ARGV[1] { got[$1 " " $2] = 1; next } !(($1 " " $2) in got) && (lost != "" || index(" " keep, " " $1 " "))' \
+    "${LEAD_BASES}.new" "${LEAD_BASES}" 2>/dev/null)" || out=""
+  [[ -z "${out}" ]] || echo "${out}" >> "${LEAD_BASES}.new"
+  mv "${LEAD_BASES}.new" "${LEAD_BASES}"
 }
 
 # findings_open <file> — true when the ## Findings section of a review's findings file lists a finding: a
@@ -2823,7 +2967,8 @@ stop_lines() {
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
-# with stuck_lines' just before them and main_red_lines', reported_lines' and sign_blocked_lines' after.
+# with stuck_lines' just before them and main_red_lines' `main-red:` lines (from events.tsv and the file the
+# last heads pass wrote, lead_bases), reported_lines' and sign_blocked_lines' after.
 # It never calls gh. It drops
 # from LEAD_HEADS the verdict of an item no longer in review, so a review item that entered review, or
 # came back to it, since the last pass waits for the next. next's idle: lines (idle_warned) come before
@@ -2978,11 +3123,65 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
 sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "${info}" "${CFG_stall_minutes}"
 }
 
-# main_red_lines — prints nothing yet; the story main-red-line fills it.
-main_red_lines() { :; }
+# main_red_lines — `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base:
+# its red main in events.tsv (red_mains: a main-red no main-green has cleared, whoever logged it), else the head
+# the last heads pass read red there (LEAD_BASES, lead_bases). The checks are cut by ci_data. The exit follows
+# fix-main-<short sha>: `fix-main-<short sha> waits on the lead: handle its held: or escalated: line` when it is
+# held or escalated; `wait for fix-main-<short sha>, whose build has started, to merge` once its build has begun
+# or it is in review; `build fix-main-<short sha>, which next names first` while next would name it (main_red's
+# test: buildable, no build begun), or, when main_red picks another base's red over it, `build fix-main-<short
+# sha>, which next names after fix-main-<the pick's short sha>`; `fix-main-<short sha> is not one next builds:
+# check its status and kind` otherwise; `fix <base> by hand, as no fix-main story covers it yet` when there is
+# none. It reads events.tsv, that file and the board, never gh.
+main_red_lines() {
+  local sha repo base checks out f reds pick
+  reds="$(red_mains)"; pick="$(main_red)"; pick="${pick%% *}"
+  while read -r sha repo base checks; do
+    [[ -n "${base}" ]] || continue
+    f="${BOARD}/stories/fix-main-${sha:0:7}.md"
+    if [[ ! -f "${f}" ]]; then out="fix ${base} by hand, as no fix-main story covers it yet"
+    elif [[ -n "$(get_fm "${f}" held_for)" ]] || is_escalated "${f}"; then out="fix-main-${sha:0:7} waits on the lead: handle its held: or escalated: line"
+    elif one_off_started "fix-main-${sha:0:7}" || [[ "$(fm "${f}" status)" == review ]]; then out="wait for fix-main-${sha:0:7}, whose build has started, to merge"
+    elif buildable_story "${f}"; then
+      if [[ -z "${pick}" || "${pick}" == "${sha}" ]]; then out="build fix-main-${sha:0:7}, which next names first"
+      else out="build fix-main-${sha:0:7}, which next names after fix-main-${pick:0:7}"; fi
+    else out="fix-main-${sha:0:7} is not one next builds: check its status and kind"; fi
+    echo "main-red: ${sha:0:7} ${repo} ${base} ($(ci_data <<< "${checks}")), exit: ${out}"
+  done < <(printf '%s\n' "${reds}"
+    # FILENAME, not FNR == NR: the first file may be empty.
+    awk 'FILENAME == ARGV[1] { if (NF) logged[$2 " " $3] = 1; next }
+      $4 == "red" && !(($1 " " $2) in logged) { c = ""; for (i = 6; i <= NF; i++) c = c " " $i; print $3 " " $1 " " $2 c }' \
+      <(printf '%s\n' "${reds}") "${LEAD_BASES}" 2>/dev/null)
+}
 
-# reported_lines — prints nothing yet; the story reported-line fills it.
-reported_lines() { :; }
+# reported_lines — `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` for each
+# conductor report on disk (conductor_report) while its group still has agent work (agent_work_left), n being
+# how many stories it counts. start_conductor removes an earlier run's report, so the one on disk is the
+# newest run's. conduct-backlog.report.md is the backlog's (-), with exit `swarm.sh conduct --backlog`.
+# Reports pile up until a new conduct, so one grep of the stories' epic: lines (epic is no SET_FM_KEYS key,
+# so the file's line is fm's) skips a report whose group no story names before agent_work_left's walk; any
+# fix-main story turns the skip off, as it counts for the group whose conductor started it. No herdr or gh call.
+reported_lines() {
+  local f epic group n run named bare fix_main=""
+  set -- "${PROJECT_DIR}"/.swarm/conduct-*.report.md
+  [[ -f "$1" ]] || return 0
+  named="$(grep -h '^epic:' "${BOARD}"/stories/*.md 2>/dev/null || true)"
+  [[ -z "${named}" ]] || named="$(sed 's/^epic: *//; s/^ *$/-/' <<< "${named}" | tr '\n' ' ')"
+  named=" ${named} "
+  # A story with no epic: line is the backlog's; the README has none either.
+  bare="$(grep -L '^epic:' "${BOARD}"/stories/*.md 2>/dev/null || true)"
+  [[ "${bare//${BOARD}\/stories\/README.md/}" != *.md* ]] || named+="- "
+  ! compgen -G "${BOARD}/stories/fix-main-*.md" > /dev/null || fix_main=1
+  for f in "$@"; do
+    [[ -f "${f}" ]] || continue
+    epic="${f##*/conduct-}"; epic="${epic%.report.md}"
+    group="${epic}"; run="${epic}"
+    [[ "${epic}" != backlog ]] || { group=-; run=--backlog; }
+    [[ -n "${fix_main}" || "${named}" == *" ${group} "* ]] || continue
+    n="$(agent_work_left "${group}" count)" || continue
+    echo "reported: ${epic} (${n} stories still an agent's), exit: swarm.sh conduct ${run}"
+  done
+}
 
 # SIGN_STATUS_WAIT: how many seconds each of sign_blocked_lines' git reads of one builder's worktree may take.
 SIGN_STATUS_WAIT=10
@@ -4069,7 +4268,7 @@ lead_quiet() { [[ " ${LEAD_QUIET} " == *" ${1%%: *}: "* ]]; }
 
 # lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
 # and running a heads pass first when this run has none yet or LEAD_HEADS_EVERY seconds have passed
-# since its last (lead_heads), run resend_pass off that list, add the .unsent markers' lines
+# since its last (lead_heads, open_story_prs, lead_bases), run resend_pass off that list, add the .unsent markers' lines
 # (unsent_lines) after it, then prompt_lines', which share resend_pass's reads and budget, then, after
 # handing on the queued tells whose check stopped (tell_queue_strays), the `tell undelivered:` or
 # `tell goal failed:` line of each queued tell no check delivered (tell_undelivered), and save the
@@ -4084,6 +4283,8 @@ lead_wake() {
     LEAD_HEADS_AT=${SECONDS}; lead_heads
     # The open story PRs pr_lines reads each poll, on the heads pass's cadence: its gh reads come with the pass's.
     open_story_prs > "${LEAD_PRS}.new" && mv "${LEAD_PRS}.new" "${LEAD_PRS}"
+    # Each base's head and its CI, for main_red_lines, over the repos open_story_prs has just resolved.
+    lead_bases > /dev/null
   fi
   now="$(lead_queue)"
   # One read budget and one read per pane for resend_pass and prompt_lines. The reads sit in
@@ -4168,12 +4369,14 @@ lead_lock() {
 
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
 # queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
-# (lead_wake). The PR heads behind its merge: lines, and the open story PRs behind its unmerged: and conflict:
-# lines, are read only in a heads pass (lead_heads, open_story_prs), on its first read and then at most once
+# (lead_wake). The PR heads behind its merge: lines, the open story PRs behind its unmerged: and conflict:
+# lines, and the base heads behind its main-red: lines are read only in a heads pass (lead_heads,
+# open_story_prs, lead_bases), on its first read and then at most once
 # every LEAD_HEADS_EVERY seconds. The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
 # every line whose kind is not in LEAD_QUIET. At the timeout (default an hour) it fails with nothing printed. It edits
-# no board file, and nudges no one but to submit an unsent brief (resend_pass).
+# no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,
+# clear_red_main), and nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"

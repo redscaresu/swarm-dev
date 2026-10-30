@@ -1375,11 +1375,12 @@ longest_child() {
 # logs (session_mtime) as signs, print how many minutes and succeed. Only once the rest already
 # looks stalled is pane <target> asked whether it runs a test suite (test_running), and its transcript
 # whether it waits on a background task of its own (bg_running), each younger than TEST_RUN_STALLS
-# times stall_minutes: either is work, so no stall. Then its worktree is asked whether its signer can
-# sign its uncommitted work (sign_held): a builder that cannot waits on a person, so no stall. Only then
-# are its PRs asked for their updatedAt, so gh is rarely called.
+# times stall_minutes: either is work, so no stall. Only then are its PRs asked for their updatedAt,
+# so gh is rarely called. Last, with no PR update either, its worktree is asked whether its signer can
+# sign its uncommitted work (sign_held): a builder that cannot, whose own last sign of life (the wait's
+# start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits on a person, so no stall.
 agent_stalled() {
-  local slug url age ct sl prs=()
+  local slug url age own ct sl prs=()
   slug="$(stall_py story "$1")"
   [[ -n "${slug}" ]] || return 1
   ct="$(story_work_time "${slug}")"; sl="$(session_mtime "$1")"
@@ -1388,38 +1389,61 @@ agent_stalled() {
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   ! test_running "$3" || return 1
   ! bg_running "$1" "${CFG_stall_minutes}" || return 1
-  ! sign_held "$1" "${slug}" || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
   done
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
+  # The builder's own age, with the wait's start ($2) left out: that start keeps age under the wait's
+  # length, and a 60-minute wait would hold a builder quiet for a day.
+  own="$(stall_py age "${slug}" "$1" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
+  ! sign_held "$1" "${slug}" "${own}" || return 1
   echo "${age}"
 }
 
-# sign_held <name> <slug> — succeed when <slug>'s worktree (found as story_work_time finds it) holds
-# uncommitted work its signer cannot sign unprompted (sign_blocked says blocked). Each change of that
-# state is an incident for <name>, since both callers of agent_stalled run it in $(...) and keep nothing
-# between polls: on blocked, `sign-blocked: <slug> (unsigned work since <time>)`, <time> the worktree's
-# last commit in ISO UTC, unless the newest sign-blocked or sign-clear incident for <name> is that same
-# line; on clear, `sign-clear: <slug>` when the newest is a sign-blocked one. So blocked, clear, blocked
-# logs two, and a new commit before the next block logs another. unknown logs nothing and fails.
+# sign_held <name> <slug> <age> — succeed when <slug>'s worktree (found as story_work_time finds it)
+# holds uncommitted work its signer cannot sign unprompted (sign_blocked says blocked) and <age>, the
+# minutes since the builder's own last sign of life (its worktree, session log, PRs and the swarm's
+# actions on its story; never the wait's start), is under TEST_RUN_STALLS times stall_minutes: past
+# that, or with no sign at all (an empty <age>), the builder may be hung on something else, so the probe
+# is not asked and it stalls. Each change of
+# the probe's state is an incident for <name>, since both callers of agent_stalled run it in $(...) and
+# keep nothing between polls: on blocked, `sign-blocked: <slug> (unsigned work since <time>)`, <time> the
+# worktree's last commit in ISO UTC, unless the newest sign-blocked or sign-clear incident for <name> is
+# that same line; on clear, `sign-clear: <slug>` when the newest is a sign-blocked one. So blocked,
+# clear, blocked logs two, and a new commit before the next block logs another. unknown logs nothing and
+# fails. The newest is read and the line written under PANE_DIR/<name>.sign.lock (mkdir(2), as in
+# pane_check, a lock a killed wait left broken after a minute), after the probe: of two waits on one
+# builder at once, the one that takes the lock logs, and the other logs nothing but holds or fails on
+# its own probe.
 sign_held() {
-  local src wt last at line
+  local src wt cap state at line lock="${PANE_DIR}/$1.sign.lock" last
+  cap="$(SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import TEST_RUN_STALLS; print(TEST_RUN_STALLS)')" || return 1
+  [[ -n "$3" && "$3" -lt $((cap * CFG_stall_minutes)) ]] || return 1
   src="$(repo_dir "$(fm "${BOARD}/stories/$2.md" repo 2>/dev/null)")" || return 1
   wt="$(worktree_for "${src}" "$2")"
   [[ -d "${wt}" ]] || return 1
-  last="$(awk -F'\t' -v n="$1" '$2 == "incident" && $3 == n && $5 ~ /^sign-(blocked|clear):/ { l = $5 } END { print l }' \
-    "${EVENTS_LOG}" 2>/dev/null || true)"
-  case "$(sign_blocked "${wt}")" in
+  state="$(sign_blocked "${wt}")" || true
+  case "${state}" in
     blocked)
       at="$(TZ=UTC git -C "${wt}" log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-      line="sign-blocked: $2 (unsigned work since ${at:-no commit})"
-      [[ "${last}" == "${line}" ]] || record_event incident "$1" "${line}"
-      return 0 ;;
-    clear) [[ "${last}" != sign-blocked:* ]] || record_event incident "$1" "sign-clear: $2" ;;
+      line="sign-blocked: $2 (unsigned work since ${at:-no commit})" ;;
+    clear) line="sign-clear: $2" ;;
+    *) return 1 ;;
   esac
-  return 1
+  mkdir -p "${PANE_DIR}" 2>/dev/null || true
+  if perl -e 'mkdir shift or exit 1' "${lock}" \
+    || { find "${lock}" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null; perl -e 'mkdir shift or exit 1' "${lock}"; }; then
+    last="$(awk -F'\t' -v n="$1" '$2 == "incident" && $3 == n && $5 ~ /^sign-(blocked|clear):/ { l = $5 } END { print l }' \
+      "${EVENTS_LOG}" 2>/dev/null || true)"
+    if [[ "${state}" == blocked && "${last}" != "${line}" ]] || [[ "${state}" == clear && "${last}" == sign-blocked:* ]]; then
+      record_event incident "$1" "${line}"
+    fi
+    rmdir "${lock}" 2>/dev/null || true
+  fi
+  [[ "${state}" == blocked ]]
 }
 
 # STALL_POLL_MS: how often `wait --stall` checks whether the agent it waits on has stalled.
