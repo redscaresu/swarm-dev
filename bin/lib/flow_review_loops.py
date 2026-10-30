@@ -59,7 +59,8 @@ def loops(slug, lines):
     # pushed nothing) closes a round still open (review_rounds counted its findings where this reader
     # does not: a tell that failed after herdr sent it, or a recheck refused with a full round due),
     # makes the review or merge after it close no new round, and ends the loop decline-only unless a
-    # later round closes. A step-up goes on the round open or last
+    # later round closes; the round it names (ok (round N)) is the build's last round at least, as a
+    # finding's round is. A step-up goes on the round open or last
     # closed, or before the first, and the rounds after it run on its model; a findings step-up resumed after one that failed partway
     # goes on the round that failure closed. Each loop: its rounds, step-ups before them, whether the
     # lead holds it, whether a merge line ended it, how its last round closed, its model at the end, its
@@ -80,7 +81,7 @@ def loops(slug, lines):
     out_, model, paired, ended = [], models[0] if models else "?", False, False
     shown_ = lambda lp, cur: lp["rounds"] or cur or lp["pre"] or lp["held"] or lp["merged"]
     new = lambda t: {"rounds": [], "pre": [], "held": False, "merged": False, "last": None, "model": model,
-                     "pr": None, "in": False, "t0": t, "c": collections.Counter()}
+                     "pr": None, "in": False, "t0": t, "c": collections.Counter(), "declined": 0}
     lp, cur = new(lines[0][0]), None
     for t, cmd, out in lines:
         s = step_up(cmd, out)
@@ -111,7 +112,8 @@ def loops(slug, lines):
                 cur["end"] = t
                 lp["rounds"].append(cur)
                 cur = None
-            lp["last"] = "decline-only"
+            m = re.fullmatch(r"ok \(round (\d+)\)", out)
+            lp["last"], lp["declined"] = "decline-only", int(m.group(1)) if m else 0
         lp["held"] = lp["held"] or cmd == "escalated" and out.startswith("ok")
         lp["pr"] = review_url(cmd, out) or lp["pr"]
         if s:
@@ -158,7 +160,7 @@ ends = []
 for slug, builds in shown.items():
     for lp in builds:
         pr, c, rounds, off = lp["pr"] or "-", lp["c"], lp["rounds"], lp.get("off", 0)
-        n = max([off + len(rounds)] + [r for r, _ in c])   # the PR's last round in this build
+        n = max([off + len(rounds), off + lp["declined"]] + [r for r, _ in c])   # the PR's last round in this build
         rounds += [{"model": lp["model"], "start": None, "end": None, "step": []} for _ in range(n - off - len(rounds))]
         failed += sum(s[3] == "failed" for s in lp["pre"])
         if not rounds:   # no round: its step-ups alone, on a row with no round, and no end state

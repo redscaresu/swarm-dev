@@ -364,6 +364,16 @@ check "decline-only cases: none for a review without --head" \
 decline d6 dir review-agent tell:findings
 check "decline-only cases: a failed decline_only_round still writes the review's ok line" \
   same "$(reviewed d6 --head "${H}" "${U}/7")" "$(printf 'review\td6\tok (%s)' "${U}/7")"
+# The round's findings file names the head the findings were on: a wording recheck that passed moved
+# the head file past it, so its head is no decline-only; one at the same head still is.
+decline d7 "${H}" review-agent tell:findings
+printf 'head: %s\n\n## Findings\n\n- doc.md:3 says foo\n' "${OTHER}" > "${P}/.swarm/reviews/d7.round.md"
+check "decline-only cases: none when the round's findings file names another head (a wording recheck passed)" \
+  same "$(reviewed d7 --head "${H}" "${U}/7")" "$(printf 'review\td7\tok (%s)' "${U}/7")"
+decline d8 "${H}" review-agent tell:findings
+printf 'head: %s\n\n## Findings\n\n- doc.md:3 says foo\n' "${H}" > "${P}/.swarm/reviews/d8.round.md"
+check "decline-only cases: written when the round's findings file names the same head" \
+  same "$(reviewed d8 --head "${H}" "${U}/7")" "$(printf '%s\t%s\t%s\n' decline-only d8 'ok (round 1)' review d8 "ok (${U}/7)")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -15,8 +15,10 @@ exception is `wait`, which logs each nudge it sends as `nudge <agent>` and each 
 `resume <agent>`, and `wait --lead`, which logs each Enter it sends an unsent brief as `resend <agent>`.
 The stall rule skips those lines, because none is a sign of life. A `review --head` that succeeds
 can write a line before its own: `decline-only <slug> ok (round N)`. It writes one when review round
-N sent the builder findings and the PR's head is still the one that round started on. That means the
-builder declined every finding and pushed nothing. `decline-only` is not a command of its own.
+N sent the builder findings and the PR's head is still the one that round started on, as
+`.swarm/reviews/<slug>.head` and the round's findings file record it. A head a wording recheck passed
+is not that one. The line means the builder declined every finding and pushed nothing. `decline-only`
+is not a command of its own.
 `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
@@ -640,7 +642,9 @@ the tell's place), or the `ok` `review` or `merge` after the last tell closes it
 line after that tell means the builder declined the findings and pushed nothing, so the `review` or
 `merge` after it closes no new round. A `decline-only` line that comes while a round is still open
 closes that round: its findings went by a line `flow` does not close a round on, such as a tell that
-failed after herdr had sent it. A round no review agent opened has no minutes.
+failed after herdr had sent it. The line names the round it ended, and a build with fewer rounds than
+that gets rows up to it, as it does for a finding on a later round. A round no review agent opened
+has no minutes.
 
 The first block is TSV `story pr round model minutes fixed declined step_up`, a row per round: the
 builder's model (each build start and each step-up takes the next of the builder's `agents.tsv`
