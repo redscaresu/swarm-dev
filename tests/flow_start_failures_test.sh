@@ -5,7 +5,7 @@
 # after it is another slug's. s-d failed twice, at 11:00 and 11:03, and started ok at 11:12: the
 # first not restarted (12 minutes), the second restarted (9). s-e's unclear start was followed within
 # 10 minutes. s-f's ok start came before its failed one, so counts for nothing. s-g's refusal is no
-# failed start. s-h failed on 2026-10-02 and s-z on 2026-09-30, outside a one-day window. TZ is UTC.
+# failed start. s-l took its brief and stopped on an expired login, and never started again. s-h failed on 2026-10-02 and s-z on 2026-09-30, outside a one-day window. TZ is UTC.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -37,6 +37,7 @@ ev 2026-10-01T12:05:00Z s-e ok
 ev 2026-10-01T12:30:00Z s-f ok
 nostart 2026-10-01T12:35:00Z s-f
 ev 2026-10-01T12:40:00Z s-g "review-agent: x is not a PR URL"
+ev 2026-10-01T13:00:00Z s-l "review-agent: review-s-l took its brief and stopped on an expired login; no head is on record"
 nostart 2026-10-02T09:00:00Z s-h
 ev 2026-10-02T09:05:00Z s-h ok
 
@@ -45,12 +46,12 @@ fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
-day1="$(printf '%s\n' $'day\tfailed\trestarted_10m\tnot_restarted' $'2026-10-01\t7\t3\t4' '' $'slug\tfailed_at' \
-  $'s-b\t2026-10-01T10:00:00Z' $'s-c\t2026-10-01T10:20:00Z' $'s-d\t2026-10-01T11:00:00Z' $'s-f\t2026-10-01T12:35:00Z')"
+day1="$(printf '%s\n' $'day\tfailed\trestarted_10m\tnot_restarted' $'2026-10-01\t8\t3\t5' '' $'slug\tfailed_at' \
+  $'s-b\t2026-10-01T10:00:00Z' $'s-c\t2026-10-01T10:20:00Z' $'s-d\t2026-10-01T11:00:00Z' $'s-f\t2026-10-01T12:35:00Z' $'s-l\t2026-10-01T13:00:00Z')"
 out="$(sf --since 2026-10-01 --until 2026-10-01)"
 check "one day: an ok start of the slug within 10 minutes restarts it, at 11 minutes, never, before or another slug's does not" "${out}" "${day1}"
 check "each day in the window has its row, the failures outside it none" "$(sf --since 2026-10-01 | sed -n 1,3p)" \
-  "$(printf '%s\n' $'day\tfailed\trestarted_10m\tnot_restarted' $'2026-10-01\t7\t3\t4' $'2026-10-02\t1\t1\t0')"
+  "$(printf '%s\n' $'day\tfailed\trestarted_10m\tnot_restarted' $'2026-10-01\t8\t3\t5' $'2026-10-02\t1\t1\t0')"
 check "with no failed start in the window, one line" "$(sf --since 2026-10-03)" "no failed review-agent start in the window"
 
 sed 's/$/ ~~ round=2 by=lead/' "${P}/.swarm/events.tsv" > "${dir}/tailed.tsv"

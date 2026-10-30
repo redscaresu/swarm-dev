@@ -396,7 +396,7 @@ dataset_report() {
 #     with no row in the window. --epic does not narrow it.
 #   start_failures: TSV day failed restarted_10m not_restarted, per local day in the window, the review-agent
 #     lines in events.tsv whose outcome no_review_events reads as a failed start (`did not start`, `start
-#     was unclear`) and how many an ok review-agent line of the same slug followed within 10 minutes;
+#     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
 #     then TSV slug failed_at for each one not restarted, or a line when there is none in the window.
 #     --epic does not narrow it.
 #   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its runs whose start's local day is in the

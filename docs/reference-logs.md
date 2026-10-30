@@ -647,8 +647,9 @@ With no story in the window it prints one line saying so.
 
 The `start_failures` section asks whether a review agent that failed to start was started again.
 A failed start is a `review-agent` line in events.tsv whose outcome begins `review-agent:
-review-<slug> did not start` or `review-agent: review-<slug>'s start was unclear`: the agent it
-opened did not start, or may not have. A refusal before that, such as a bad PR URL or a builder
+review-<slug> did not start`, `review-agent: review-<slug>'s start was unclear` or
+`review-agent: review-<slug> took its brief`: the agent it opened did not start, may not have, or
+took its brief and stopped on an expired login. A refusal before that, such as a bad PR URL or a builder
 still at work, is not counted. It prints TSV `day failed restarted_10m
 not_restarted`, one row per local day in the window with a failed start. `failed` counts the failed
 starts that day. `restarted_10m` counts those followed, later in the log and within 10 minutes, by
