@@ -3288,7 +3288,7 @@ main_red_run() {
   # required check absent, fixed counts every check, so its red entries say nothing.
   why="$(tr ';' '\n' <<< "${why%%$'\n'*}")"
   if (( rc == 1 )) && grep -qE ' [(](queued|in_progress|waiting|requested|pending|required, absent)[)]$' <<< "${why}" \
-    && { grep -qF '(required, absent)' <<< "${why}" || ! grep -qE " [(](${CI_CONCLUSIONS})[)]" <<< "${why}"; }; then
+    && { grep -qF '(required, absent)' <<< "${why}" || ! grep -qE " [(](${CI_CONCLUSIONS})[)]" <<< "${why}"; }; then   # loose-match: ok CI_CONCLUSIONS is a regex on purpose
     echo "stale: CI on $2 at ${3:0:7} has a check $2 requires still running or not started; no fix-main story written"; return 0
   fi
   # shellcheck disable=SC2034 # fix_main, in merge.sh, reads both
