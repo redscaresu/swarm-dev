@@ -7,11 +7,15 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+LIB="${SWARM%/swarm.sh}/lib"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 P="${ROOT}/proj"; LOG="${P}/.swarm/events.tsv"
 trap 'chmod -R u+w "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+# agents.sh's EVENT_SEP and EVENT_OUTCOME_AWK, read by sourcing it, as swarm.sh does.
+from_agents() { PROJECT_DIR="${ROOT}/src" bash -c 'source "$1/agents.sh"; printf %s "${!2}"' _ "${LIB}" "$1"; }
+SEP="$(from_agents EVENT_SEP)"; EVENT_AWK="$(from_agents EVENT_OUTCOME_AWK)"
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
@@ -231,10 +235,11 @@ STUB
 printf '%s\n' '#!/bin/sh' "[ \"\$1 \$2\" = 'pr list' ] && echo '[{\"number\":1,\"state\":\"CLOSED\",\"url\":\"${U}/1\"},{\"number\":2,\"state\":\"OPEN\",\"url\":\"${U}/2\"}]'" 'exit 0' > "${EB}/gh"
 chmod +x "${EB}/herdr" "${EB}/gh"
 run() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me HERDR_WORKSPACE_ID=w PATH="${EB}:${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" >/dev/null 2>&1); }
-logged() { # <command> <target> <outcome> — events.tsv has this line, with an ISO UTC time and the actor
+logged() { # <command> <target> <outcome> — events.tsv has this line, with an ISO UTC time and the actor;
+  # the outcome compared without its key=value tail (EVENT_OUTCOME_AWK's outcome())
   # shellcheck disable=SC2016 # an awk program
-  awk -F'\t' -v c="$1" -v t="$2" -v o="$3" '$1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ \
-    && NF == 5 && $2 == c && $3 == t && $4 == "w:me" && $5 == o { f = 1 } END { exit !f }' "${LOG}"
+  awk -F'\t' -v c="$1" -v t="$2" -v o="$3" "${EVENT_AWK}"'$1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ \
+    && NF == 5 && $2 == c && $3 == t && $4 == "w:me" && outcome($5) == o { f = 1 } END { exit !f }' "${LOG}"
 }
 item stories/x1.md 'status: ready' 'kind: code' 'attempts: 2'
 item stories/y1.md 'status: ready' 'kind: code'
@@ -258,6 +263,55 @@ appends "dialog logs the answer" 1 dialog y1 "ok (accepted)" dialog y1 accepted
 check "dialog's outcome is exactly ok (accepted), so dash counts it ok" logged dialog y1 "ok (accepted)"
 appends "dialog with no result fails, naming it" 1 dialog y1 "dialog: the result must be accepted or dismissed" dialog y1
 appends "dialog of a missing story fails, naming it" 1 dialog nope "dialog: no story" dialog nope dismissed
+
+# --- The outcome column's key=value tail: append_event writes it after EVENT_SEP, and events_outcome.py
+# (outcome, fields) and EVENT_OUTCOME_AWK's outcome() read it. Each case is a row and its exact reading.
+P="${ROOT}/tail"; LOG="${P}/.swarm/events.tsv"; ERR="${ROOT}/tail.err"
+ev() { PROJECT_DIR="${P}" HERDR_PANE_ID=w:me bash -c 'source "$1/agents.sh"; shift; append_event "$@"' _ "${LIB}" "$@" 2>> "${ERR}"; }
+same() { # <got> <want>
+  [[ "$1" == "$2" ]] || { diff <(printf '%s\n' "$2") <(printf '%s\n' "$1") || true; return 1; }
+}
+check "EVENT_SEP is events_outcome.SEP" same "${SEP}" \
+  "$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import events_outcome; print(events_outcome.SEP, end="")' "${LIB}")"
+ev x t 'ok (round 2)' round=2 verdict=pass
+check "append_event with fields writes one row of 5 fields" awk -F'\t' 'NF != 5 { bad = 1 } END { exit bad || NR != 1 }' "${LOG}"
+check "its column 5 is the outcome, EVENT_SEP, then the fields" same "$(cut -f5 "${LOG}")" "ok (round 2)${SEP}round=2 verdict=pass"
+ev x t "die: no story${SEP}"
+check "an outcome ending in EVENT_SEP is written without it" same "$(sed -n 2p "${LOG}" | cut -f5)" "die: no story"
+ev x t "a${SEP}b" k=v
+ev x t "a${SEP}b"
+ev x t "a ~~ ~~ b${SEP}${SEP}c" n=1 m=two
+ev x t ok Round=2 'v=a b' good=1 empty=
+check "an invalid pair is left out, the line still written with the valid ones" same "$(sed -n 6p "${LOG}" | cut -f5)" "ok${SEP}good=1"
+ev x t ok Bad=1
+check "a call whose every pair is invalid writes the outcome alone" same "$(sed -n 7p "${LOG}" | cut -f5)" ok
+check "each invalid pair is named on stderr" same "$(cut -d: -f2 "${ERR}")" "$(printf ' left out %s\n' Round=2 'v=a b' empty= Bad=1)"
+# Rows written before the tail: untailed, an outcome holding =, herdr's JSON.
+{ printf '2026-10-01T00:00:00Z\tx\tt\tw:me\t%s\n' 'ok (round 2)' 'failed: key=value x=1' '{"result":{"agent":{"agent_status":"working","note":"a=b c"}}}'
+  printf '2026-10-01T00:00:00Z\tx\tt\tw:me\t%s\n' "base-merged abc from def${SEP}round=3 why=x=y"; } >> "${LOG}"
+read_py() { python3 -c 'import json, sys
+sys.path.insert(0, sys.argv[1])
+from events_outcome import fields, outcome
+for line in open(sys.argv[2]):
+    row = line.rstrip("\n").split("\t")
+    print(outcome(row) + "\t" + json.dumps(fields(row), sort_keys=True))' "${LIB}" "${LOG}"; }
+check "outcome() and fields() read each row exactly" same "$(read_py)" "$(cat <<'WANT'
+ok (round 2)	{"round": "2", "verdict": "pass"}
+die: no story	{}
+a b	{"k": "v"}
+a b	{}
+a b  c	{"m": "two", "n": "1"}
+ok	{"good": "1"}
+ok	{}
+ok (round 2)	{}
+failed: key=value x=1	{}
+{"result":{"agent":{"agent_status":"working","note":"a=b c"}}}	{}
+base-merged abc from def	{"round": "3", "why": "x=y"}
+WANT
+)"
+# shellcheck disable=SC2016 # an awk program
+check "the awk outcome() returns the Python outcome() for each row" same \
+  "$(awk -F'\t' "${EVENT_AWK}"'{ print outcome($5) }' "${LOG}")" "$(read_py | cut -f1)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

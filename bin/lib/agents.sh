@@ -869,12 +869,34 @@ EVENTS_LOG="${PROJECT_DIR}/.swarm/events.tsv"
 # fails the command it records.
 record_event() { append_event "$@" || true; }
 
-# append_event <command> <target> [outcome] — record_event's append, failing when the line was not
-# written, for a command whose only output is that line (intervene).
+# EVENT_SEP: what parts the outcome column's free text from its key=value tail (append_event). No
+# outcome held it when it was chosen; bin/lib/events_outcome.py's SEP is the same token.
+EVENT_SEP=" ~~ "
+# EVENT_OUTCOME_AWK: an awk function, outcome(s), that returns column 5 without its tail: the text
+# before the first EVENT_SEP, or all of it. Put it in front of an awk program that reads $5. POSIX
+# index and substr only, so macOS's awk and Linux's agree.
+# shellcheck disable=SC2034 # for the awk readers of events.tsv; tests/events_test.sh reads it
+EVENT_OUTCOME_AWK="function outcome(s,  i) { i = index(s, \"${EVENT_SEP}\"); return i ? substr(s, 1, i - 1) : s }"
+
+# append_event <command> <target> [outcome] [key=value...] — record_event's append, failing when the
+# line was not written, for a command whose only output is that line (intervene). The outcome loses
+# every EVENT_SEP it holds (each becomes a space, and trailing spaces go), so the tail is the only
+# one. Fields follow it after EVENT_SEP, space-separated. A pair whose key is not [a-z_]+, or whose
+# value is empty or holds a space, tab or newline, is left out with a warning on stderr; the line is
+# still written, with the valid pairs.
 append_event() {
-  local x fields=()
-  for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:--}" "${HERDR_PANE_ID:--}" "${3:-ok}"; do fields+=("${x//[$'\t\n\r']/ }"); done
-  { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null
+  local x o="${3:-ok}" tail="" cols=()
+  o="${o//[$'\t\n\r']/ }"
+  if [[ "${o}" == *"${EVENT_SEP}"* ]]; then
+    while [[ "${o}" == *"${EVENT_SEP}"* ]]; do o="${o//"${EVENT_SEP}"/ }"; done
+    o="${o%"${o##*[! ]}"}"
+  fi
+  for x in "${@:4}"; do
+    if [[ "${x}" =~ ^[a-z_]+=[^[:space:]]+$ ]]; then tail+="${tail:+ }${x}"
+    else echo "append_event: left out ${x%%[$'\t\n\r']*}: a field is key=value, the key [a-z_]+, the value not empty and with no space or tab" >&2; fi
+  done
+  for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:--}" "${HERDR_PANE_ID:--}" "${o}${tail:+${EVENT_SEP}${tail}}"; do cols+=("${x//[$'\t\n\r']/ }"); done
+  { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${cols[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null
 }
 
 # story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
