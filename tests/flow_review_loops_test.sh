@@ -206,15 +206,21 @@ check "--since past the loops leaves them out, in one line" "$(loops 2026-10-06)
 
 # decline-only cases, in logs of their own so the totals above keep their fixtures: s-dec's builder
 # declined round 1's findings and pushed nothing, so its review --head wrote a decline-only line, and
-# the review and merge after it close no round 2; s-nodec has the same lines without it.
+# the review and merge after it close no round 2; s-nodec has the same lines without it; s-sent's
+# findings tell failed after herdr sent it (review_rounds counts it as a round, this reader does not), so
+# its round is still open when its decline-only line comes, and that line closes it.
 D="${dir}/decline"; mkdir -p "${D}"; : > "${D}/findings.tsv"
-printf '%s\n' $'2026-10-01\tcode\ts-dec\tclaude\topus\thigh\tk1' $'2026-10-01\tcode\ts-nodec\tclaude\topus\thigh\tk2' > "${D}/agents.tsv"
-P21=https://github.com/o/r/pull/21 P22=https://github.com/o/r/pull/22
+printf '%s\n' $'2026-10-01\tcode\ts-dec\tclaude\topus\thigh\tk1' $'2026-10-01\tcode\ts-nodec\tclaude\topus\thigh\tk2' \
+  $'2026-10-01\tcode\ts-sent\tclaude\topus\thigh\tk3' > "${D}/agents.tsv"
+P21=https://github.com/o/r/pull/21 P22=https://github.com/o/r/pull/22 P23=https://github.com/o/r/pull/23
+sent='may or may not have the brief: herdr sent it the brief, but no turn started; the findings count as delivered, a findings round of its build, so do not send them again'
 dev() { printf '2026-10-01T07:%s:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${D}/events.tsv"; }
-for s in s-dec s-nodec; do
-  dev 00 story "${s}" ok; dev 10 review-agent "${s}" ok; dev 20 tell:findings "${s}" ok
+for s in s-dec s-nodec s-sent; do
+  case "${s}" in s-dec) dpr="${P21}" ;; s-nodec) dpr="${P22}" ;; *) dpr="${P23}" ;; esac
+  dev 00 story "${s}" ok; dev 10 review-agent "${s}" ok
+  if [[ "${s}" == s-sent ]]; then dev 20 tell:findings "${s}" "${sent}"; else dev 20 tell:findings "${s}" ok; fi
   [[ "${s}" == s-nodec ]] || dev 30 decline-only "${s}" "ok (round 1)"
-  dev 30 review "${s}" "ok ($([[ "${s}" == s-dec ]] && echo "${P21}" || echo "${P22}"))"; dev 31 merge "${s}" ok
+  dev 30 review "${s}" "ok (${dpr})"; dev 31 merge "${s}" ok
 done
 dout="$(SWARM_FINDING_REVIEWERS="codex" SWARM_ROWS="$(printf 'date\tslug\tepic\tpr\tpr_state')" python3 "${ROOT}/bin/lib/flow_report.py" \
   0000-00-00 9999-12-30 "" "${D}/agents.tsv" "${D}/events.tsv" "${D}/findings.tsv" x "code" x x "" x review_loops)"
@@ -222,6 +228,8 @@ check "decline-only cases: a review after a decline-only line closes no round, a
   "$(row s-dec "${dout}")|$(end "${dout}" s-dec)" $'s-dec\t'"${P21}"$'\t1\topus\t10\t0\t0\t-|s-dec\t'"${P21}"$'\t1\tdecline-only'
 check "decline-only cases: the same lines with no decline-only line close round 2 and end pass" \
   "$(end "${dout}" s-nodec)" $'s-nodec\t'"${P22}"$'\t2\tpass'
+check "decline-only cases: a decline-only line closes a round still open (its tell failed after herdr sent it), and the loop ends decline-only" \
+  "$(row s-sent "${dout}")|$(end "${dout}" s-sent)" $'s-sent\t'"${P23}"$'\t1\topus\t20\t0\t0\t-|s-sent\t'"${P23}"$'\t1\tdecline-only'
 
 # flow passes escalate_ladder: with none, top_rung is -.
 P="${dir}/repo"

@@ -56,8 +56,10 @@ def loops(slug, lines):
     # moves its start); a findings tell, a findings step-up (which takes the tell's place), or the
     # review or merge after the last tell closes it, opening it first when no review agent started it
     # (minutes then unknown). A decline-only line (review --head passed a findings round whose builder
-    # pushed nothing) after a closed round makes the review or merge after it close no new round, and
-    # ends the loop decline-only unless a later round closes. A step-up goes on the round open or last
+    # pushed nothing) closes a round still open (review_rounds counted its findings where this reader
+    # does not: a tell that failed after herdr sent it, or a recheck refused with a full round due),
+    # makes the review or merge after it close no new round, and ends the loop decline-only unless a
+    # later round closes. A step-up goes on the round open or last
     # closed, or before the first, and the rounds after it run on its model; a findings step-up resumed after one that failed partway
     # goes on the round that failure closed. Each loop: its rounds, step-ups before them, whether the
     # lead holds it, whether a merge line ended it, how its last round closed, its model at the end, its
@@ -104,7 +106,11 @@ def loops(slug, lines):
             cur["end"] = t
             lp["rounds"].append(cur)
             cur, lp["last"] = None, cmd if cmd in ("review", "merge") else "partway" if s and s[3] == "failed" else "tell"
-        elif cmd == "decline-only" and out.startswith("ok") and not cur:
+        elif cmd == "decline-only" and out.startswith("ok"):
+            if cur:   # its findings went by a line this reader does not close on: the decline-only line ends the round
+                cur["end"] = t
+                lp["rounds"].append(cur)
+                cur = None
             lp["last"] = "decline-only"
         lp["held"] = lp["held"] or cmd == "escalated" and out.startswith("ok")
         lp["pr"] = review_url(cmd, out) or lp["pr"]

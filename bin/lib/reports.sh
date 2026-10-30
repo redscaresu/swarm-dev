@@ -379,7 +379,8 @@ dataset_report() {
 #     it is in the window), from events.tsv, findings.tsv and agents.tsv with no gh call: TSV story pr round
 #     model minutes fixed declined step_up, a row per review round of each build (a review-agent opens it; a findings
 #     tell or findings step-up, or the review or merge after the last tell, closes it, unless a
-#     decline-only line came after that tell; rounds count per PR, and each finding goes to the build
+#     decline-only line came after that tell, and a decline-only line closes a round still open;
+#     rounds count per PR, and each finding goes to the build
 #     whose rounds hold its round); TSV story pr rounds end (held-for-lead; once merged, decline-only
 #     when its last round ended on a decline-only line, else pass or merged-after-fixes; else open);
 #     then one totals row: its PRs, each
