@@ -1100,7 +1100,10 @@ recheck_hunks() {
 }
 
 # review_round_line <round> <PR URL> — what review round <round> runs, for review_brief and review_next:
-# codex and, when the PR changes code, /code-review on round 1; codex alone after it.
+# codex and, when the PR changes code, /code-review on round 1; codex alone after it. Then whether the
+# round may run tests (review_verify): with full, round 1 may run the project's tests for the changed files
+# and check the builder's mutation proofs; any other round, and every round with ci, reads the diff and
+# trusts CI.
 review_round_line() {
   if [[ "$1" == 1 ]]; then
     echo "This is review round 1 of the story. When the PR
@@ -1108,6 +1111,15 @@ changes code (not only docs, board files or a dependency bump), state the touche
 above, then run \`/code-review $2\`."
   else
     echo "This is review round $1 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
+  fi
+  if [[ "${CFG_review_verify:-ci}" == full && "$1" == 1 ]]; then
+    echo "Tests (review_verify = full): on this round, round 1, you may run the project's tests for the
+files the PR changes, as its AGENTS.md or Makefile selects them, never its whole suite, and check the
+builder's mutation proofs: each FAIL line its PR body pastes names a test the diff adds or changes, and
+any proof you run again breaks the fix in a copy of this worktree, never here. Rounds 2 and later are
+ci: they run no tests of their own."
+  else
+    echo "Tests (review_verify = ci): read the diff and trust CI for the tests; run no local test suite and no mutation run."
   fi
 }
 
@@ -1364,7 +1376,7 @@ EOF
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
 # sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug, /code-review on round 1 when the PR
-# changes code, the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding, logs each
+# changes code, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
 # before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,
