@@ -78,9 +78,10 @@ lead() {
 }
 merge_out() { grep '^merge: ' "${ROOT}/out" || true; }
 gh_count() { grep -c -- "$1" "${ROOT}/gh.log" || true; }
-# gh_calls — gh.log's calls by kind, joined with |.
+# gh_calls — gh.log's calls by kind, joined with |. The heads pass's base read (lead_bases) asks for the repo's
+# default branch, which reads_stub refuses, so it reads nothing more.
 gh_calls() {
-  sed -E 's/^(pr view [0-9]+|repo view|pr list) .*/\1/; s/^api .*check-runs.*/check-runs/; s/^api .*\/status.*/status/' "${ROOT}/gh.log" | paste -sd'|' -
+  sed -E 's/^(pr view [0-9]+|repo view|pr list) .*/\1/; s/^api .*check-runs.*/check-runs/; s/^api .*\/status.*/status/; s/^api --jq \.default_branch .*/default branch/' "${ROOT}/gh.log" | paste -sd'|' -
 }
 
 # --- status: the held PR on its own tagged row, the story's other PR on the untagged row; no gh call.
@@ -94,8 +95,8 @@ lead 20000
 is "wait --lead wakes on the held PR" 0 "${rc}"
 is "it prints merge: for the held PR alone, with its path and the user's exit" "${HELD}" "$(merge_out)"
 is "it reads no head of a PR that waits on no one: PR 8 or 9" 0 "$(gh_count '^pr view [89] ')"
-is "its gh calls are the heads pass's: PR 7's head, its checks, the repo and its open PRs" \
-  "pr view 7|check-runs|status|repo view|pr list" "$(gh_calls)"
+is "its gh calls are the heads pass's: PR 7's head, its checks, the repo, its open PRs and its base" \
+  "pr view 7|check-runs|status|repo view|pr list|default branch" "$(gh_calls)"
 
 # --- A story and its epic both list the held PR: wait --lead reports it once, reading its head once, and
 # status tags it on both rows.
@@ -111,7 +112,7 @@ lead SWARM_LEAD_HEADS_EVERY=3600 3000
 is "a run that has seen the line times out with nothing" "1|" "${rc}|$(cat "${ROOT}/out")"
 is "over its three polls it reads PR 7's head once, on its heads pass, and no check run" "1|0" \
   "$(gh_count '^pr view 7 ')|$(gh_count 'check-runs')"
-is "over its three polls its only gh calls are that heads pass's" "pr view 7|repo view|pr list" "$(gh_calls)"
+is "over its three polls its only gh calls are that heads pass's" "pr view 7|repo view|pr list|default branch" "$(gh_calls)"
 
 # --- The epic lists the story's held PR 7 and a held PR 11 of its own: its line names PR 11 alone, and
 # PR 7's head is read once.

@@ -50,6 +50,8 @@ release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge 
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
 is "--release: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+# It changes only plugin.json, so merge's dropped-lines check never runs: no read of the PR's commits.
+check "--release: reads none of the PR's commits" bash -c "! grep -q 'pulls/7/commits' '${ROOT}/gh.log'"
 # With merge = human the lead merges a release only under HLDs that grant release (below).
 # human_release [command...] — release_pr with merge = human, the command run on its fixtures, then merge --release.
 human_release() { release_pr; echo "merge = human" >> "${P}/.claude/swarm/config"; "$@"; merge --release "${URL}"; }
@@ -1003,5 +1005,117 @@ check "plan-epic's small path names costs: money" grep -qF 'costs: money' <<< "$
 check "plan-epic's decompose brief names costs: money" grep -qF 'costs: money' <<< "$(step '**2. Decompose**' '**3. Verify**')"
 # shellcheck disable=SC2016 # the backticks are plan-epic's
 check "plan-epic's critic brief names costs: money" grep -qF 'costs: money' <<< "$(step 'one `critic`' '**Then report**')"
+
+# --- Dropped base lines (#693): merge holds a PR whose own merge of the base dropped a base line, at the
+# pinned head, and records the hold on the item in review. dropped-lines reads ${ROOT}/r, the clone of o/r
+# beside the project (repos_dir is the project's parent), whose origin is the bare ${ROOT}/o/r.git. W, a
+# work repo, pushes main there. From main0, main replaces f's three with three-main and main-added, and
+# 'x | y.md''s b with b-main and main-row. DROP, a branch that replaced three with three-pr, merges main
+# and drops main-added; CLEAN does the same and keeps every line; PIPE replaced b with b-pr and drops
+# main-row.
+OR="${ROOT}/o/r.git"; W="${ROOT}/w"; PIPEF='x | y.md'; U8="${URL%/*}/8"; ST="${P}/.swarm/board-state/stories/s"
+HELD_TAIL="the builder restores them in a commit of its own, or the user reads the PR's answer and merges by hand"
+wg() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c user.name=t -c user.email=t@t "$@"; }
+# wput <file> <line>... — W's <file> holds the lines, committed on the branch checked out.
+wput() { printf '%s\n' "${@:2}" > "${W}/$1"; wg -C "${W}" add -A; wg -C "${W}" commit -qm "$1"; }
+# remerge <branch> <file> <line>... — on <branch>, merge main with <file> resolved to the lines; prints its SHA.
+remerge() {
+  wg -C "${W}" checkout -q "$1"; wg -C "${W}" merge -q --no-ff --no-commit main >/dev/null 2>&1 || true
+  printf '%s\n' "${@:3}" > "${W}/$2"; wg -C "${W}" add -A; wg -C "${W}" commit -q --no-edit; wg -C "${W}" rev-parse HEAD
+}
+wg init -q -b main "${W}"; mkdir -p "${ROOT}/o"; wg init -q --bare "${OR}"
+wput f one two three four five; wput "${PIPEF}" a b c
+for b in drop clean pipe; do wg -C "${W}" branch "${b}"; done
+wput f one two three-main main-added four five; wput "${PIPEF}" a b-main main-row c
+wg -C "${W}" push -q "${OR}" main; wg clone -q "${OR}" "${ROOT}/r"
+wg -C "${W}" checkout -q drop; wput f one two three-pr four five
+DROP="$(remerge drop f one two three-pr three-main four five)"
+wg -C "${W}" checkout -q clean; wput f one two three-pr four five
+CLEAN="$(remerge clean f one two three-pr three-main main-added four five)"
+wg -C "${W}" checkout -q pipe; wput "${PIPEF}" a b-pr c
+PIPE="$(remerge pipe "${PIPEF}" a b-pr b-main c)"
+# A git that says it is 2.35.0 and is the real git for anything else.
+mkdir -p "${ROOT}/oldgit"
+# shellcheck disable=SC2016 # the stub's own arguments
+printf '#!/bin/sh\ncase "$1" in version|--version) echo "git version 2.35.0" ;; *) exec "%s" "$@" ;; esac\n' "$(command -v git)" > "${ROOT}/oldgit/git"
+chmod +x "${ROOT}/oldgit/git"
+# pr_head <commit> — PR 7's head is <commit>: green, pushed to o/r's refs/pull/7/head, and gh lists W's
+# main..<commit> as the PR's commits, each with its parents.
+pr_head() {
+  local c ps sep="" json="["
+  wg -C "${W}" push -q -f "${OR}" "$1:refs/pull/7/head"
+  echo "$1" > "${FX}/head"; checks "${FX}/$1.checks" "$(run test completed success)"; statuses "${FX}/$1.status"
+  for c in $(wg -C "${W}" rev-list --reverse "main..$1"); do
+    ps="$(wg -C "${W}" rev-list --parents -n 1 "${c}" | cut -d' ' -f2- | sed -E 's/([0-9a-f]+)/{"sha":"\1"}/g; s/ /,/g')"
+    json+="${sep}{\"sha\":\"${c}\",\"parents\":[${ps}]}"; sep=,
+  done
+  echo "${json}]" > "${FX}/prcommits"
+}
+# prot [file] — the protected: entries in s's board state (or [file]), one a line, each entry's time taken out.
+prot() {
+  { awk 'index($0, "protected: ") == 1 { n = split(substr($0, 12), e, / \| /); for (i = 1; i <= n; i++) print e[i] }' "${1:-${ST}}" 2>/dev/null || true; } \
+    | sed -E 's/^([^ ]+ [^ ]+) [0-9]+ /\1 /'
+}
+commits_read() { grep -q 'pulls/7/commits' "${ROOT}/gh.log"; }
+
+fresh; pr_head "${DROP}"; merge "${URL}"
+refused "dropped lines: a story PR whose builder merge dropped a base line" \
+  "merge: held: s (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
+is "dropped lines: the hold is recorded on the item's protected: state at that head" \
+  "${URL} ${DROP} dropped base lines: 1, first f: main-added" "$(prot)"
+# The same story, its builder's merge redone to keep every line: it merges, and the record is gone by
+# the merge (read as gh pr merge runs, before reconcile clears the story's state).
+printf 'cp "%s" "%s" 2>/dev/null || :\n' "${ST}" "${ROOT}/st.at-merge" > "${FX}/on-merge"; rm -f "${ROOT}/st.at-merge"
+: > "${ROOT}/gh.log"; pr_head "${CLEAN}"; merge "${URL}"
+is "dropped lines: the same story at a head whose merge drops nothing: exits 0" 0 "${rc}"
+check "dropped lines: the same story at a head whose merge drops nothing: merged" merged
+check "dropped lines: the same story at a head whose merge drops nothing: its commits were read" commits_read
+is "dropped lines: the same story at a head whose merge drops nothing: no protected: entry at the merge" "" "$(prot "${ROOT}/st.at-merge")"
+# Under an HLD granting merge (merge = human) the hold is the same, and only dropped_hold's pass drops
+# the record: protected_hold runs under merge = agent alone.
+granted merge; pr_head "${DROP}"; merge "${URL}"
+refused "dropped lines under an HLD granting merge" "merge: held: s (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
+printf 'cp "%s" "%s" 2>/dev/null || :\n' "${ST}" "${ROOT}/st.at-merge" > "${FX}/on-merge"; rm -f "${ROOT}/st.at-merge"
+pr_head "${CLEAN}"; merge "${URL}"
+is "dropped lines under an HLD granting merge, the head redone: merges, its record dropped by the merge" "0|" "${rc}|$(prot "${ROOT}/st.at-merge")"
+check "dropped lines under an HLD granting merge, the head redone: merged" merged
+rm -rf "${P}/docs/hld" "${P}/docs/epics"
+# dropped-lines cannot check (git below 2.36): held, saying why, and recorded.
+fresh; pr_head "${DROP}"; merge PATH="${ROOT}/oldgit:${ROOT}/bin:${PATH}" "${URL}"
+refused "dropped lines unchecked: git 2.35" \
+  "merge: held: s (dropped base lines unchecked: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL}'s merges reads: update git); the user checks the merge by hand and merges it, or runs swarm.sh merge again"
+is "dropped lines unchecked: git 2.35: recorded" \
+  "${URL} ${DROP} dropped base lines unchecked: git 2.35.0 is below 2.36, the first with git show --remerge-diff, which the scan of ${URL}'s merges reads: update git" "$(prot)"
+# gh failing on the PR's commits: held unchecked, saying so, with no fetch.
+fresh; pr_head "${DROP}"; echo '[' > "${FX}/prcommits.fail"; merge "${URL}"
+refused "dropped lines unchecked: gh cannot list the PR's commits" "merge: held: s (dropped base lines unchecked: gh cannot list ${URL}'s commits: gh: HTTP 502); "
+# gh lists the PR's commits without the pinned head while gh pr view still reads it: a stale list, as it
+# was before the builder's merge, with no merge in it. Held unchecked, since the list cannot vouch for
+# that head. (A head that moved passes this read: merge's --match-head-commit stops it, merge_test's
+# changed head.)
+fresh; pr_head "$(wg -C "${W}" rev-parse "${DROP}^1")"; cp "${FX}/prcommits" "${ROOT}/stale.commits"
+pr_head "${DROP}"; cp "${ROOT}/stale.commits" "${FX}/prcommits"
+merge "${URL}"
+refused "dropped lines unchecked: gh's list of the PR's commits lacks the pinned head" \
+  "merge: held: s (dropped base lines unchecked: gh's list of ${URL}'s commits does not hold its head ${DROP:0:7} yet); "
+# A moved head: refs/pull/7/head is another commit than the pinned head. Refused for a new review, not
+# held, and nothing recorded.
+fresh; pr_head "${DROP}"; wg -C "${W}" push -q -f "${OR}" "${CLEAN}:refs/pull/7/head"; merge "${URL}"
+refused "dropped lines: a head that moved on GitHub" \
+  "merge: the head of ${URL} on GitHub (refs/pull/7/head) is ${CLEAN:0:7}, not ${DROP:0:7}, the head merge checked for dropped base lines: review the new head"
+check "dropped lines: a head that moved on GitHub: not held" bash -c "! grep -q 'held:' '${ROOT}/out'"
+is "dropped lines: a head that moved on GitHub: nothing recorded" "" "$(prot)"
+# A dropped line in a file whose name holds ' | ': the held: line shows it as it is, and the record keeps
+# it whole, every | made ¦, beside the item's other PR's entry.
+fresh; item s "status: review" "prs: ${URL} ${U8}"; mkdir -p "${ST%/*}"
+printf 'protected: %s %s 1 changes hooks/x.sh\n' "${U8}" "${H1}" > "${ST}"
+pr_head "${PIPE}"; merge "${URL}"
+refused "dropped lines in a file named 'x | y.md'" "merge: held: s (dropped base lines: 1, first x | y.md: main-row); ${HELD_TAIL}"
+is "dropped lines in a file named 'x | y.md': recorded whole, beside the other PR's entry" \
+  "${U8} ${H1} changes hooks/x.sh"$'\n'"${URL} ${PIPE} dropped base lines: 1, first x ¦ y.md: main-row" "$(prot)"
+# --board: the same check and line, under the URL, and no board state.
+fresh; rm "${S}"; pr_head "${DROP}"; merge --board "${URL}"
+refused "dropped lines: a --board PR" "merge: held: ${URL} (dropped base lines: 1, first f: main-added); ${HELD_TAIL}"
+check "dropped lines: a --board PR: no board state written" bash -c "! grep -rqs 'dropped base lines' '${P}/.swarm/board-state'"
 
 finish merge-rules

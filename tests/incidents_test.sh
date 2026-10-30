@@ -4,7 +4,8 @@
 # nothing printed and read_state saying herdr:working; nor for a conductor's hour slice, nor for
 # herdr's wait failing early); an expired
 # login one login line however often it is waited on, and one more after a resume (matched through
-# agent_name, so a long slug's counts) or a new start, but not after a note or a failed tell; a close
+# agent_name, so a long slug's counts) or a new start, but not after a note, a failed tell or a stalled,
+# sign-blocked or sign-clear incident; a close
 # that ends a stuck builder's build with no open or merged PR one idle-no-pr line (its waits none), and
 # none for a stalled, paused, cleared-on-error or impossible close or a build with an open PR. Then flow's incidents section over a
 # fixture events.tsv holding six kinds on two days prints the per-day count of each.
@@ -67,6 +68,9 @@ sites() (
       wait_agent a 1000; record_event story a; wait_agent a 1000 ;;
     login-stalled) settle() { echo idle; }; login_expired() { return 0; }
       wait_agent a 1000; record_event incident a "stalled: working 40 min; longest-running: pid 1, 40 min: sleep 9"; wait_agent a 1000 ;;
+    login-signing) settle() { echo idle; }; login_expired() { return 0; }
+      wait_agent a 1000; record_event incident a "sign-blocked: a (unsigned work since 2026-10-29T10:00:00Z)"
+      record_event incident a "sign-clear: a"; wait_agent a 1000 ;;
     stalled|paused|cleared-on-error|impossible) close_agent a "$1" ;;
     open-pr) stub_prs='[{"state":"OPEN"}]'; close_agent a ;;
   esac >/dev/null 2>&1 || true
@@ -91,6 +95,8 @@ check "a note or a failed tell does not end a login episode" "$(sites login-no-p
 check "the agent's start line ends a login episode" "$(sites login-restart)" "${login2}"
 check "a stalled incident between two waits does not end a login episode" "$(sites login-stalled)" \
   "$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tstalled: working 40 min; longest-running: pid 1, 40 min: sleep 9')"
+check "a sign-blocked then a sign-clear incident between two waits do not end a login episode" "$(sites login-signing)" \
+  "$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tsign-blocked: a (unsigned work since 2026-10-29T10:00:00Z)' $'incident\ta\tsign-clear: a')"
 # With escalate_ladder set, a stall stepped up prints step-up's line, then the longest-running one.
 ladder() (
   PROJECT_DIR="${ROOT}/p-ladder"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_goal=off; CFG_step_up_findings=3; CFG_top_rung_rounds=2

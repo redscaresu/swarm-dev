@@ -108,7 +108,8 @@ Repeat until a step below says stop:
      `unasked_plan:` set (the gate shows its plan or the user's decline), or for the later epic
      `next`'s `plan-epic` step names.
    - `idle: epic <epic> has no plan running, exit: /swarm-dev:plan-epic <epic>`: the epic is active
-     with no stories, nothing in its `depends_on` holds up its planning, no plan of it runs (no
+     with no stories, it is not built (all its stories merged and left the board: `next`'s `conduct`
+     step has it), nothing in its `depends_on` holds up its planning, no plan of it runs (no
      `scope-<epic>` record in `.swarm/state` and no open plan board PR), and the step above is not
      `plan-epic` for it. Plan it with the exit, beside the step.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
@@ -373,7 +374,36 @@ Repeat until a step below says stop:
      why yourself, as the `kept:` arm above says for a review file with a `stopped:` or `head moved:`
      line: a `head moved:` why gets `swarm.sh review-agent <slug> <PR URL>` again, a `held: <slug>
      waits for <p> to merge` why (after `swarm: `) waits for <p>'s merge, and a builder that pushed nothing gets one
-     nudge. The line goes once a review agent starts on the story again or it leaves the board.
+     nudge. The line goes once a review agent starts on the story again or it leaves the board. A
+     `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>` line means CI on that
+     base is red at that commit, whoever merged it. With the exit `build fix-main-<short sha>, which
+     next names first`, do the `fix-main` step for that story at once. With `build fix-main-<short sha>,
+     which next names after fix-main-<other>`, two reds have buildable stories: do the `fix-main` step
+     for the other first, and this line's exit turns to `which next names first` once that build is
+     under way. With `wait for fix-main-<short
+     sha>, whose build has started, to merge`, the fix is under way: start nothing for it, and see its PR
+     through. With `fix-main-<short sha> waits on the lead: handle its held: or escalated: line`, act on
+     that line. With `fix-main-<short sha> is not one next builds: check its status and kind`, fix the
+     story's front matter (`status: ready` and an agent's `kind`) so `next` names it. With `fix <base> by
+     hand, as no fix-main story covers it yet`, no story covers the red, most often because the red came
+     from a merge that `swarm.sh merge` did not make: tell the user which checks are red, and merge nothing
+     into that base until it is green. The line goes once the base reads fixed. A
+     `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` line means the
+     epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
+     ready, blocked on an agent's story, or in review with a review agent still to act. For the
+     backlog the line is `reported: backlog (...)` and the exit is `swarm.sh conduct --backlog`.
+     When `next` offers its collect step for that conductor, do that step first: the exit retires
+     the conductor and deletes its report, so the collect would never run. Then read the report.
+     `<n>` also counts two kinds a conductor lists for you, which a new one cannot clear: a
+     `not started:` story whose worktree is still there (a build that died) and a `not held:` line.
+     The report may also list a PR closed unmerged or a kept story with several PRs, which `<n>`
+     does not count. Handle all of these first: a build that died as
+     the `resume <slug>` step says, but for an epic's report delete `.swarm/conduct-<epic>.report.md`
+     there, not the backlog's, and run this line's exit, not `conduct --backlog`; the others as the
+     report says for each (docs/reference.md § Merging lists them). Clear any other cause the report
+     names as the lead's (CI on the base red or timed out, a story escalated to you) before the
+     exit too. Then run the exit, which starts a fresh conductor and removes the old report. The
+     line goes once that work is done or a new conductor starts.
      Each line comes once, and again only after it has gone from the queue. A run's first read prints every line but `held:`, `escalated:`, `kept:`,
      `merge:` and `idle:` lines, which other commands already show; § The lead in docs/reference.md lists every line. Then start `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
@@ -436,7 +466,10 @@ Repeat until a step below says stop:
      so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
-   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When it
+   - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`. When the
+     why says the epic is built (all its stories have left the board, and its report is missing or
+     older than its last story's merge), its conductor has no agent work left and reports at once:
+     collect it as usual. When it
      (or the story step's `swarm.sh conduct --backlog`) stops with `no conductor started: merge = agent
      and no allow rule for swarm.sh merge ...`, adding that rule is the user's step: tell them the rule
      and the files the line names, then stop.
