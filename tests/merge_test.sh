@@ -574,6 +574,7 @@ check "commands/swarm.md's release arm lists the behaviour changes every project
   grep -qF 'lists the behaviour changes every project gets on upgrade' <<< "${arm}"
 check "commands/swarm.md's release arm names the infrafactory build or says none" \
   grep -qF 'names the infrafactory build they were tried on, or says none' <<< "${arm}"
-check "reference.md § Merging merges with swarm.sh merge" \
-  bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
+# § Merging runs from its heading to the next ## or the end of whichever docs/reference*.md holds it.
+merging="$(awk 'FNR == 1 { on = 0 } /^## / { on = ($0 == "## Merging") } on' "${REPO}"/docs/reference*.md)"
+check "docs/reference*.md § Merging merges with swarm.sh merge" grep -qF 'swarm.sh merge' <<< "${merging}"
 finish merge
