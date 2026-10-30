@@ -4,6 +4,7 @@ from report import *
 from panes import *
 from stall import *
 from dash_age import *
+from events_outcome import outcome
 W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
 # Now, and so today and the header's clock: SWARM_DASH_NOW (epoch seconds) fixes them, so a test's
@@ -144,17 +145,18 @@ ESCALATION = ("escalate", "dialog", "escalated", "reset", "reset:held", "drop")
 escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
 conduct_names = set()   # conduct-<epic> for each epic an ok conduct event started a conductor for
 for f in read_tsv(E["DASH_EVENTS"], 5):
-    if f[1] == "reset" and f[4].startswith("ok"):
+    o = outcome(f)
+    if f[1] == "reset" and o.startswith("ok"):
         was_reset.add(f[2])
-    if f[1] == "conduct" and f[4] == "ok" and f[2] != "--backlog":
+    if f[1] == "conduct" and o == "ok" and f[2] != "--backlog":
         conduct_names.add("conduct-" + f[2])
     t = epoch(f[0]) if f[1] == "escalate" else None
-    if t is None or not escalate_build(f[4], ESCALATE_MODEL):
+    if t is None or not escalate_build(o, ESCALATE_MODEL):
         continue
     escalations += datetime.date.fromtimestamp(t) == TODAY
-    m = STEP_UP.fullmatch(f[4])
+    m = STEP_UP.fullmatch(o)
     if t > escalated_at.get(f[2], (0,))[0]:
-        escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {f[4][len('ok (attempt '):-1]}")
+        escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {o[len('ok (attempt '):-1]}")
 recs, stalled = [], []
 # The panes of agents past stall_minutes that run a test suite or wait on a background task (dash.sh's
 # test_running and bg_running over dash_age's stalled_panes): working, not stalled.
@@ -670,7 +672,8 @@ for (day, pr), fs in found.items():
 run = None   # [index in events, PR, count] of the declined run still open
 same = None   # [index in events, line, count] of the run of the same line still open
 for f in read_tsv(E["DASH_EVENTS"], 5):
-    ok = f[4].startswith("ok")
+    o = outcome(f)
+    ok = o.startswith("ok")
     if f[1] == "log-finding" and ok:
         continue
     pr = pr_key((f[2].split() or [""])[-1])
@@ -679,13 +682,13 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
         events[run[0]] = (f[0], f[3], f"{run[2]} findings declined on #{pr.rsplit('#', 1)[-1]}", "action")
         continue
     run = [len(events), pr, 1] if f[1] == "log-finding:declined" and ok else None
-    text = f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}")
+    text = f"{f[1]} {f[2]}" + ("" if o == "ok" else f": {o}")
     kind = "failed" if not ok else "start" if f[1] in STARTS else "escalation" if f[1] in ESCALATION else "action"
-    if same and same[1] == f[1:3] + f[4:]:
+    if same and same[1] == f[1:3] + [o]:
         same[2] += 1
         events[same[0]] = (f[0], f[3], f"{text} ×{same[2]}", kind)
         continue
-    same = [len(events), f[1:3] + f[4:], 1]
+    same = [len(events), f[1:3] + [o], 1]
     events.append((f[0], f[3], text, kind))
 ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad"),
         "escalation": ("▲", "fable")}
@@ -814,11 +817,11 @@ no_agent_at = {s: epoch(t) for s, _, t in (l.partition("\t") for l in lines("DAS
 INTERVENE_KINDS = E.get("DASH_INTERVENE_KINDS", "").split()   # swarm.sh's INTERVENE_KINDS
 moved, done_at, stepped_in = {}, {}, 0   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):
-    t = epoch(f[0])
-    if t is not None and f[1] == "incident" and f[4].partition(":")[0].strip() in INTERVENE_KINDS:
+    t, o = epoch(f[0]), outcome(f)
+    if t is not None and f[1] == "incident" and o.partition(":")[0].strip() in INTERVENE_KINDS:
         stepped_in += (TODAY - datetime.date.fromtimestamp(t)).days in range(7)
     # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
-    if t is not None and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
+    if t is not None and ((f[1] == "finish" and o == "ok") or (f[1] == "reconcile" and o.startswith("ok (finished"))):
         done_at[f[2]] = max(t, done_at.get(f[2], t))
     t = t if f[1] in ("review", "kept", "escalated") or f[1].startswith("close:") else None
     if t is not None and t > moved.get(f[2], 0):
