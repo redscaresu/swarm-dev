@@ -697,7 +697,7 @@ hw_commit() {
   echo "$1" > "${HW}/work.txt"
   python3 -c 'import datetime, os, sys; a = int(sys.argv[2]); os.utime(sys.argv[1], (a, a)); print(datetime.datetime.fromtimestamp(a, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "${HW}/work.txt" "${at}"
 }
-signs() { cut -f2,3,5 "${H}/.swarm/events.tsv" | grep $'^incident\ts-hung\tsign-' | cut -f3 || true; }
+signs() { outcomes "${H}/.swarm/events.tsv" | grep -E $'^incident\ts-hung\t[^\t]*\tsign-' | cut -f4 || true; }
 t1="$(hw_commit 100)"
 gpgkey "${SG}:1:P"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
