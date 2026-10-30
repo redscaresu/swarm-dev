@@ -391,7 +391,8 @@ Repeat until a step below says stop:
      `build` exit once the story is there. With `read .swarm/lead/fix-main-<short sha>.log, as no run
      wrote fix-main-<short sha>, then fix <base> by hand`, two runs failed to write it: read the log, and
      tell the user which checks are red and why no story was written. With `fix <base> by hand, as no
-     fix-main story covers it yet`, the red's story has left the board: tell the user which checks are
+     fix-main story covers it yet`, either the red's story has left the board, or the head is red only on
+     checks the base does not require, so no run writes a story for it: tell the user which checks are
      red. Merge nothing into that base until it is green. The line goes once the base reads fixed. A
      `reported: <epic> (<n> stories still an agent's), exit: swarm.sh conduct <epic>` line means the
      epic's conductor wrote its report and stopped, but `<n>` of its stories are still an agent's:
