@@ -1,4 +1,5 @@
 import datetime, json, os, re, subprocess, sys
+from events_outcome import outcome
 from report import *
 from touches_rows import deps, entries, front_text
 board, agents, events, findings, projects, archive, out = sys.argv[1:8]
@@ -82,7 +83,7 @@ def escalations(slug):
     got = []
     for line in open(events, errors="ignore") if os.path.exists(events) else ():
         f = line.rstrip("\n").split("\t")
-        m = len(f) == 5 and f[1] == "escalate" and f[2] in (slug, agent_name(slug)) and re.fullmatch(r"ok \((.*)\)", f[4])
+        m = len(f) == 5 and f[1] == "escalate" and f[2] in (slug, agent_name(slug)) and re.fullmatch(r"ok \((.*)\)", outcome(f))
         if m:
             step = re.fullmatch(r"([^:]+): (\S+) -> (\S+)", m[1])
             got.append({"at": f[0], "trigger": step[1], "from": step[2], "to": step[3]} if step

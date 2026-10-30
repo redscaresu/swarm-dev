@@ -26,6 +26,7 @@
 # unknown. Per local day it entered: items, the median and maximum minutes waited, and open, the
 # kind:slug of each item open. --epic does not narrow it.
 import datetime, functools, os, re, statistics, subprocess, time
+from events_outcome import outcome
 
 ENTER = {"held": "held", "escalated": "escalated", "close:impossible": "escalated", "kept": "kept", "review": "merge"}
 LEAVE = {"finish", "reset", "reset:held", "drop", "reconcile"}
@@ -122,7 +123,8 @@ def leave(slug, end):
     dropped.pop(slug, None)
     done.append((start, end, f"{kind}:{slug}"))
 
-rows = [f for f in (l.rstrip("\n").split("\t") for l in open(events, errors="ignore")) if len(f) == 5] if os.path.exists(events) else []
+# Each line's outcome without its key=value tail.
+rows = [f[:4] + [outcome(f)] for f in (l.rstrip("\n").split("\t") for l in open(events, errors="ignore")) if len(f) == 5] if os.path.exists(events) else []
 # The current build's kept line: a slug's last ok kept line after its last ok story line (a build's start).
 # Only it can be the kept line of a child held now; an earlier one is an earlier build's.
 last = {}
