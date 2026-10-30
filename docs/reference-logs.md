@@ -671,13 +671,17 @@ replaces both. `--epic` does not narrow it.
 
 The `tell_refusals` section counts how often a tell was refused, by where it went and the state it
 read. It reads the `tell` and `tell:<kind>` lines in events.tsv whose local day is in the window. A
-refusal is a line whose outcome is not `ok` and is not a `queued:` or `replaced:` line. It prints TSV
-`pane state tells refused`. `pane` is `agent` when the line's target has a line in agents.tsv (on
-any day), and `other` when it has none. `state` is the line's `state=` field (§ Logs and outcomes). It
+refusal is a line whose outcome is not `ok` and is not a `queued:` or `replaced:` line. A `tell` or
+`tell:findings` line whose outcome holds `herdr sent it the brief` is no refusal either: the
+findings count as delivered, as `findings_told` counts them. It prints TSV `pane state tells
+refused`. `pane` is `agent` when the agent name of the line's target has a line in agents.tsv (on
+any day), and `other` when it has none. The target is the slug as it was typed, and its agent name
+is the one `agent_name` gives it: lowercased and cut to 32 characters, among other changes. `state` is the line's `state=` field (§ Logs and outcomes). It
 is `-` on a line with no `state=`: a tell that was sent, queued or replaced, a refusal before the
 state was read, or a line written before the field existed. `tells` counts the lines and `refused`
-the refusals among them. Each pane gets an `all` row first, then one row per state in name order.
-The share of an agent's tells that were refused is `refused` over `tells` on the `agent all` row.
+the refusals among them. A queued tell has two lines, its `queued:` line and the line its delivery
+logs, so it counts twice in `tells`. Each pane gets an `all` row first, then one row per state in
+name order.
 After a blank line, TSV `target could_not_reach` gives the refusals whose outcome starts `could not
 reach`, per target, most first. With no tell in the window, the line `no tell in the window` replaces
 both blocks. With tells but no `could not reach` refusal, the line `no could not reach refusal in the
