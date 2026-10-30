@@ -36,3 +36,5 @@ step_up_findings or top_rung_rounds (the ladder stands); a second reviewer or de
 **Your part:**
 - Confirm the deferred_proved_real bar (proposed under 10% of deferred findings) when /plan-epic reports it.
 - The user may set review_verify = full on this board at any time, one config line (HLD:529-531).
+
+**Lead decisions (2026-10-30, at planning):** plans have no round cap, so `deferred` is not a plan reason: commands/plan-epic.md, commands/plan-hld.md and tests/plan_epic_test.sh keep their reason lists, and the Done when's "every reason list" means the build-side lists. review_verify's choice is no story: the default is `ci`, and the user can set `full` later.

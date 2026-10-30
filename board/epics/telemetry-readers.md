@@ -33,3 +33,5 @@ Any writer passing fields (telemetry-writers); new flow sections; the hooks' wri
 
 **Your part:**
 - None. The hooks and the fields are telemetry-writers'.
+
+**Lead decisions (2026-10-30, at planning):** the fixture is cut at v0.29.1's tag (37 `=` outcomes) and named v0.29.1, not v0.29.0. URLs in it keep their shape on the fake repo `o/r`, so the URL-parsing reads still run; no real owner, repo or PR number stays.
