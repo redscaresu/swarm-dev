@@ -91,10 +91,11 @@ fields. For a command `main` logs, the fields come from two places, in this orde
 that the command's arm in `main` sets before it runs, then the ones the command keeps with
 `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`, beside `die`. Like a
 die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a value into `_`, and an
-empty value into `-`. It first takes every separator out of the outcome text: each
-one becomes a space, and trailing spaces are dropped. That way the first separator in the field is
-always where the tail starts, and an outcome that ends in one is written without it. Fields are
-separated by spaces. A key is lowercase letters and `_`. A value is not empty and holds no space or tab.
+empty value into `-`. `append_event` first takes every separator out of the outcome text: each
+one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
+then any trailing spaces. That way the first separator in the field is always where the tail starts,
+and an outcome that ends in one is written without it. Fields are separated by spaces. A key is
+lowercase letters and `_`. A value is not empty and holds no whitespace.
 A pair that breaks these rules is left out, with a warning on stderr, and the line is still written
 with the valid pairs. Readers strip the tail with `outcome(row)` in `bin/lib/events_outcome.py`
 (`fields(row)` there returns the fields as a dict) or with the awk function `outcome(s)` in
