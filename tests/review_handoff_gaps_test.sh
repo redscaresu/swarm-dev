@@ -8,7 +8,9 @@
 # 3. review-agent refuses a head its findings file passes;
 # 4. a held: stop note (review held a stacked story) waits for the parent's merge;
 # 5. a fix-main story's stop note goes to the conductor that started its build;
-# 6. wait --lead prints a stopped: line for a stop note no running conductor has.
+# 6. wait --lead prints a stopped: line for a stop note no running conductor has;
+# 7. review-agent starts again, up to 3 starts, when a start ran nothing;
+# 8. a round whose dropped-lines finding went to the builder wakes no no-review: line.
 # shellcheck disable=SC2016 # the backticks in the briefs' text are literal
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -376,6 +378,28 @@ check "7 not retried: an unclear start herdr cannot list makes one start and log
 review-agent: review-s1's start was unclear and herdr could not list its agents, so its state is unknown; the last review is kept aside in ${F}.prev; no head is on record. A conductor starts nothing; once herdr answers, the lead looks at it (herdr agent read review-s1) and, to review again, closes it and runs swarm.sh review-agent s1 <PR URL>" \
   "$(retry 1 "${unclear}" unlisted)"
 rm -f "${F}" "${F}.prev" "${F%.md}.head" "${STOP}" "${STOP}.prev" "${ROOT}/starts" "${ROOT}/naps" "${ROOT}/began" "${ROOT}/err"; : > "${P}/.swarm/events.tsv"
+
+# --- 8 (wait --lead). A round whose dropped-lines finding went to the builder is a review under way: an
+# ok review-agent start on HB (its .head on record, no pass), its log-finding dropped-lines row and an ok
+# findings tell wake no no-review:. A guard, not a mutation proof. The control fails that start instead,
+# as the newest line: a failed start before the tell would read as a round under way too.
+printf '#!/bin/sh\nexit 1\n' > "${ROOT}/bin/gh"; chmod +x "${ROOT}/bin/gh"
+printf '{"name":"s1","agent_status":"idle","pane_id":"w:p2"}' > "${ROOT}/agents"; echo "w:p2 s1" > "${P}/.swarm/state/tab"
+mkdir -p "${ROOT}/proj-wt/s1"; rm -f "${F}"; echo "${HB}" > "${F%.md}.head"
+dropped_round() { # <the review-agent start's outcome> — an ok one starts the round, a failed one ends the log
+  : > "${P}/.swarm/events.tsv"; ev 0 story ok
+  [[ "$1" != ok ]] || ev 1 review-agent ok
+  printf '2026-10-28T12:00:00Z\tlog-finding\tdropped-lines %s\tw:1\tok\n' "${URL}" >> "${P}/.swarm/events.tsv"
+  ev 3 tell:findings ok
+  [[ "$1" == ok ]] || ev 4 review-agent "$1"
+}
+dropped_round ok
+fresh_lead
+check "8 an ok start, a log-finding dropped-lines row and an ok findings tell: no no-review: for s1" no "$(has 'no-review: s1' "$(poll)")"
+dropped_round "review-agent: review-s1 did not start (its pane w:p9 is closed)"
+fresh_lead
+check "8 the same rows with the start failed: a no-review: line for s1 (the control)" yes "$(has 'no-review: s1' "$(poll)")"
+rm -f "${ROOT}/bin/gh" "${F%.md}.head"; rm -rf "${ROOT}/proj-wt"; : > "${P}/.swarm/events.tsv"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
