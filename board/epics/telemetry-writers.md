@@ -36,3 +36,5 @@ A sixth column; test-run start and end events; renaming outcome prefixes readers
 - Merge by hand the one story PR that edits hooks/ (protected-path hold).
 - Merge or close board PR #543 before this epic is planned.
 - From the day the cause list lands, give a cause on every `swarm.sh intervene`.
+
+**Lead decisions (2026-10-30, at planning):** "each of Goals 1 to 5 is read by one flow section" means one section per bar (Goals 1 and 5 have two bars each). Row 62 (lead-hand per 100 merged story PRs) and row 68 (reference split) are read by hand at the release. "flow test_runs resolves a run's slug" already holds (flow_test_runs.py reads the branch), so no story changes it. intervene keeps its old two-argument form, with cause=none and a warning, until telemetry-hooks merges.
