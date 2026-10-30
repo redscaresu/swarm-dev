@@ -29,7 +29,8 @@
 # ${ROOT}/live reads blocked, as herdr does before sending any input. A report-agent is logged to
 # ${ROOT}/reports.log and, as herdr does, taken only when its --seq is above the last one taken
 # (${ROOT}/lastseq); an idle one taken sets both to idle. With ${ROOT}/raise, the pane read also
-# takes a blocked report stamped as it ends. Every prompt or key herdr takes is logged to
+# takes a blocked report stamped as it ends. With ${ROOT}/name it lists that name in b1's place, and
+# with ${ROOT}/nolist no agents at all. Every prompt or key herdr takes is logged to
 # ${ROOT}/keys.log. Its pane text is ${ROOT}/screen, a screen from tests/fixtures/panes.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -55,7 +56,8 @@ check() { # <name> <want> <got>
 printf '#!/bin/sh\nF="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
-  "agent list") printf '{"result":{"agents":[{"name":"b1","agent_status":"%s","pane_id":"w:9"}]}}\n' "$(cat "$F/status")" ;;
+  "agent list") if [ -f "$F/nolist" ]; then echo '{"result":{"agents":[]}}'; exit 0; fi
+    printf '{"result":{"agents":[{"name":"%s","agent_status":"%s","pane_id":"w:9"}]}}\n' "$(cat "$F/name" 2>/dev/null || echo b1)" "$(cat "$F/status")" ;;
   "agent get") printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$(cat "$F/status")" ;;
   "agent read") cat "$F/screen"
     if [ -f "$F/raise" ]; then python3 -c 'import time; print(time.time_ns())' > "$F/lastseq"; echo blocked > "$F/live"; fi ;;
@@ -97,9 +99,9 @@ setup() {
     none) : > "${ROOT}/screen" ;;
     *) cp "${FX}/$4" "${ROOT}/screen" ;;
   esac
-  : > "${ROOT}/keys.log"; : > "${ROOT}/reports.log"; echo 0 > "${ROOT}/lastseq"; rm -f "${ROOT}/raise" "${p}/.swarm/events.tsv"
+  : > "${ROOT}/keys.log"; : > "${ROOT}/reports.log"; echo 0 > "${ROOT}/lastseq"; rm -f "${ROOT}/raise" "${ROOT}/name" "${ROOT}/nolist" "${p}/.swarm/events.tsv"
 }
-tell() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tell b1 nudge "${ROOT}/msg" 2>&1) || true; }
+tell() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${1:-${SWARM}}" tell b1 nudge "${ROOT}/msg" 2>&1) || true; }
 prompts() { grep -c '^agent prompt w:9 ' "${ROOT}/keys.log" || true; }
 keys() { wc -l < "${ROOT}/keys.log" | tr -d ' '; }
 reports() { wc -l < "${ROOT}/reports.log" | tr -d ' '; }
@@ -174,6 +176,66 @@ out="$(tell)"
 check "a permission prompt raised just after the pane read: its blocked outranks the idle report, and herdr refuses the tell" yes \
   "$(said "${REFUSED}; it was sent again after its pane read clear and it was reported idle to herdr" "${out}")"
 check "a permission prompt raised just after the pane read: no keys" 0 "$(keys)"
+
+# A refusal on the state tell read logs that state as state= on its one tell:nudge line (event_fields),
+# its outcome still the die's first line; a tell refused before it read one, sent, or queued has none.
+# logged — the tell:nudge lines' count, then the last one's state= and outcome (events_outcome's
+# fields() and outcome()), as "<count>|<state, or - with none>|<outcome>".
+logged() {
+  python3 -I - "${HERE}/../bin/lib" "${p}/.swarm/events.tsv" <<'PY'
+import os, sys
+sys.path.insert(0, sys.argv[1]); from events_outcome import fields, outcome
+rows = [l.split("\t") for l in open(sys.argv[2]).read().splitlines()] if os.path.exists(sys.argv[2]) else []
+rows = [r for r in rows if len(r) > 1 and r[1] == "tell:nudge"]
+print("%d|%s|%s" % (len(rows), fields(rows[-1]).get("state", "-") if rows else "-", outcome(rows[-1]) if rows else "-"))
+PY
+}
+# refused <case> <state> — the tell just run (its output in out) wrote one line, with state=<state>,
+# whose outcome is its die's first line.
+refused() { check "refused as $1: one tell:nudge line, state=$2, the die's first line its outcome" "1|$2|$(sed -n 's/^swarm: //p' <<< "${out}" | head -1)" "$(logged)"; }
+
+agent sb
+setup idle idle idle empty-box.txt; echo '[]' > "${ROOT}/claude.json"
+out="$(tell)"; refused "gone (its session has ended)" gone
+setup weird idle idle empty-box.txt
+out="$(tell)"; refused "unknown (Claude Code gives no state)" unknown
+setup waiting blocked blocked prompt.txt
+out="$(tell)"; refused "waiting on a dialog" waiting:dialog_open
+setup idle idle idle empty-box.txt; echo b2 > "${ROOT}/name"
+out="$(tell)"; refused "no agent holding the name" none
+agent -
+setup idle unknown unknown empty-box.txt
+out="$(tell)"; refused "herdr:unknown" herdr:unknown
+setup idle blocked idle prompt.txt
+out="$(tell)"; refused "herdr:blocked" herdr:blocked
+setup idle "half asleep" idle empty-box.txt
+out="$(tell)"; refused "an unknown status, its space made _" "herdr:half_asleep"
+setup idle idle idle empty-box.txt; touch "${ROOT}/nolist"
+out="$(tell)"
+check "refused because herdr could not list agents: one line, no state=" "1|-|tell: b1 was not told: herdr could not list its agents; tell it again" "$(logged)"
+agent sb
+setup waiting blocked blocked empty-box.txt
+out="$(tell)"
+check "a delivered tell: one ok line, no state=" "1|-|ok" "$(logged)"
+setup busy working working empty-box.txt
+out="$(tell)"
+check "a queued tell: one queued: line, no state=" "1|-|queued: b1 (busy); delivered when its turn ends, so do not tell it again" "$(logged)"
+# Empty its queue, so the check it started ends at its next look, and wait (20 s at most) for it to go.
+rm -f "${p}/.swarm/tells/b1.nudge"
+for ((i = 0; i < 100; i++)); do [[ -e "${p}/.swarm/tells/b1.later" ]] || break; sleep 0.2; done
+
+# main's channel, in a copy of the plugin: an arm's EV_FIELDS and an event_fields call both reach the
+# logged line, the arm's first; an event_fields call inside a nested $(...) (tell_state, here made to
+# keep a field and read gone) keeps nothing.
+COPY="${ROOT}/plugin"; mkdir -p "${COPY}"
+cp -R "${HERE}/../bin" "${HERE}/../.claude-plugin" "${COPY}/"
+perl -pi -e 's/^(\s+tell\) )EV_TARGET=/${1}EV_FIELDS="arm=set"; EV_TARGET=/' "${COPY}/bin/swarm.sh"
+grep -q 'tell) EV_FIELDS="arm=set"; EV_TARGET=' "${COPY}/bin/swarm.sh" || { echo "the copy's tell arm was not found" >&2; exit 1; }
+echo 'tell_state() { event_fields nested=yes; echo gone; }' >> "${COPY}/bin/lib/agents.sh"
+setup idle idle idle empty-box.txt
+out="$(tell "${COPY}/bin/swarm.sh")"
+check "an arm's EV_FIELDS, then event_fields', on the logged line; none from a nested \$(...)" "arm=set state=gone" \
+  "$(awk -F'\t' '$2 == "tell:nudge" { i = index($5, " ~~ "); print i ? substr($5, i + 4) : "-" }' "${p}/.swarm/events.tsv")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

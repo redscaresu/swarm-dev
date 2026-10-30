@@ -79,6 +79,22 @@ die() {
 DIE_FILE=""
 DIE_LEVEL=-1
 
+# event_fields <key=value>... — fields for the logged command's line, which main appends after its
+# outcome (append_event's tail). Like die's line, they are kept only at the command's own level, and
+# only while DIE_FILE is main's own: a nested $(...), or a subshell with a die file of its own
+# (upgrade_restart, ready_tell), keeps none. Each value's whitespace becomes _ and an empty value is -,
+# so append_event never leaves a pair out for its value.
+event_fields() {
+  local x v
+  [[ -n "${EV_FIELDS_FILE}" && "${EV_FIELDS_FILE}" == "${DIE_FILE}.fields" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]] || return 0
+  for x in "$@"; do
+    v="${x#*=}"; v="${v//[[:space:]]/_}"
+    { printf '%s=%s\n' "${x%%=*}" "${v:--}" >> "${EV_FIELDS_FILE}"; } 2>/dev/null || true
+  done
+}
+# Set only by main, beside DIE_FILE; never taken from the environment.
+EV_FIELDS_FILE=""
+
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
 # config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP and its .expected memo) go either way.
 WAIT_PR_RED=""; WAIT_PR_TMP=""
@@ -1019,7 +1035,7 @@ main_signal() {
     [[ "${EV_CMD}" != merge && "${EV_CMD}" != upgrade ]] || wait "${EV_CHILD}" || true
   fi
   record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
-  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}" "${EV_ERR}.fields"
   trap - "$1"
   kill -"$1" "$$"
 }
@@ -1037,11 +1053,13 @@ main_signal() {
 # epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
 # nothing, queued for a busy agent or replaced by a newer one (on its way, or sent or queued since it
 # read the agent's state), logs the queued: or replaced: line tell_outcome leaves in the die file, so
-# it counts as no round.
+# it counts as no round. Its closing line carries key=value fields after the outcome (append_event's
+# tail): first EV_FIELDS, space-separated, which an arm below may set before dispatch, then those the
+# command kept with event_fields while it ran.
 main() {
-  local rc why a
+  local rc why a f fields=()
   [[ "${1:-}" != init ]] || init_check
-  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""
+  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""; EV_FIELDS=""
   # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
   if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
      || [[ "${EV_CMD}" == upgrade && "${SWARM_UPGRADE_WORKER:-}" != 1 && " $* " != *" --foreground "* ]] \
@@ -1089,26 +1107,29 @@ main() {
   trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
   # In the background, with stdin kept, so `wait` returns the moment a signal lands.
   set +e
-  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; set -e; dispatch "$@") <&0 &
+  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; [[ "${EV_ERR}" == /dev/null ]] || EV_FIELDS_FILE="${EV_ERR}.fields"
+   set -e; dispatch "$@") <&0 &
   EV_CHILD=$!
   wait "${EV_CHILD}"; rc=$?
   set -e
   trap - INT TERM HUP
+  read -ra fields <<< "${EV_FIELDS}"
+  if [[ -f "${EV_ERR}.fields" ]]; then while IFS= read -r f; do fields+=("${f}"); done < "${EV_ERR}.fields"; fi
   if [[ "${EV_TARGET}" == '!' ]]; then
     :
   elif [[ ${rc} -ne 0 ]]; then
     why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
-    record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
+    record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}" ${fields[@]+"${fields[@]}"}
   elif [[ "${EV_CMD}" == close* ]] && stepped_up_since "${EV_TARGET}" "${EV_START}"; then
     :   # a step-up took the close's place (close_agent): its escalate line ends that build
   elif [[ "${EV_CMD}" == restart ]]; then
     :   # restart_build logged its own ok line, naming how it started the builder
   elif [[ "${EV_CMD}" == tell:* ]] && why="$(head -1 "${EV_ERR}" 2>/dev/null)" && [[ "${why}" == queued:* || "${why}" == replaced:* ]]; then
-    record_event "${EV_CMD}" "${EV_TARGET}" "${why}"   # tell_outcome's: nothing sent, so not ok
+    record_event "${EV_CMD}" "${EV_TARGET}" "${why}" ${fields[@]+"${fields[@]}"}   # tell_outcome's: nothing sent, so not ok
   elif [[ "${EV_TARGET}" != + ]]; then
-    record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
+    record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}" ${fields[@]+"${fields[@]}"}
   fi
-  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}" "${EV_ERR}.fields"
   return "${rc}"
 }
 
