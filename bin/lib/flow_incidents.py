@@ -7,6 +7,7 @@
 # (or its epic in the rows), under its own name or the ones retire_agent renames it to, `-` when none
 # does; --epic keeps that epic's rows.
 import collections, datetime, os
+from events_outcome import outcome
 from report import agent_name
 
 STOPS = ("api-error", "auto-denied")
@@ -27,7 +28,7 @@ for r in rows:
 counts, stops = collections.Counter(), collections.Counter()
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
-    if len(f) == 5 and f[1] == "conduct" and f[4] == "ok" and f[2] != "--backlog":
+    if len(f) == 5 and f[1] == "conduct" and outcome(f) == "ok" and f[2] != "--backlog":
         own("conduct-" + f[2], f[2])
     if len(f) != 5 or f[1] != "incident":
         continue
@@ -36,7 +37,7 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     except ValueError:
         continue
     if since <= day <= until:
-        kind = f[4].partition(":")[0].strip()
+        kind = outcome(f).partition(":")[0].strip()
         counts[(day, kind)] += 1
         if kind in STOPS:
             stops[(epic_of.get(f[2], "-"), kind)] += 1

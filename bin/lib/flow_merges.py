@@ -3,11 +3,13 @@
 # day of its newest such line (a drop or a rescope writes neither). dash's speedometer counts the same
 # lines its own way; dash --check compares the two. --epic does not narrow it.
 import collections, datetime, os
+from events_outcome import outcome
 
 last = {}
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
-    if len(f) != 5 or not ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
+    o = outcome(f)
+    if len(f) != 5 or not ((f[1] == "finish" and o == "ok") or (f[1] == "reconcile" and o.startswith("ok (finished"))):
         continue
     try:
         t = datetime.datetime.fromisoformat(f[0].replace("Z", "+00:00")).timestamp()

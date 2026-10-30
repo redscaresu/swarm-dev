@@ -2,6 +2,7 @@
 # default the 30 days up to --until, or up to today) to --until, its metric and baseline, and delete?
 # when unused or unmeasured (that verdict reads the last 30 days, whatever the window).
 import datetime, os, re, subprocess, sys
+from events_outcome import outcome
 from report import *
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
 if since == "0000-00-00":
@@ -18,7 +19,7 @@ def local_day(t):
     except ValueError:
         return None
 
-uses = [("event", f[1], local_day(f[0])) for f in rows(events) if len(f) == 5 and f[4].startswith("ok") and local_day(f[0])]
+uses = [("event", f[1], local_day(f[0])) for f in rows(events) if len(f) == 5 and outcome(f).startswith("ok") and local_day(f[0])]
 uses += [(k, f[i], f[0]) for f in rows(agents) if len(f) == 7 for k, i in (("role", 1), ("agent", 2))]
 uses += [("reviewer", f[5], f[0]) for f in finding_rows(findings)]
 
