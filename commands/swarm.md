@@ -115,13 +115,13 @@ Repeat until a step below says stop:
      `plan-epic` for it. Plan it with the exit, beside the step.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
-     `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
-     the last 30 days and not yet filed, newest first). File one as a one-off story (through
-     `swarm.sh board-pr`, or where the board is when it is outside the repo), then run
-     `swarm.sh log-finding --filed --reviewer lead <kind> <PR> '<text>'` with the line's kind, PR
-     and text, so `next` stops offering it; or tell the user why none fits. Later stories stay the
-     user's to start, as the gate lists them. Declined out-of-scope findings are the swarm's list of
-     follow-ups, so you need not keep them in memory.
+     `out-of-scope finding: <date> <kind> <PR>: <text>` or `deferred finding: ...` lines (findings
+     declined as out of scope or deferred in the last 30 days and not yet filed, newest first).
+     File one as a one-off story (through `swarm.sh board-pr`, or where the board is when it is
+     outside the repo), then run `swarm.sh log-finding --filed --reviewer lead <kind> <PR> '<text>'`
+     with the line's kind, PR and text, so `next` stops offering it; or tell the user why none
+     fits. Later stories stay the user's to start, as the gate lists them. Declined out-of-scope and
+     deferred findings are the swarm's list of follow-ups, so you need not keep them in memory.
 2. Do the step:
    - `fix-main <slug>`: `swarm.sh merge` found CI on the base red on a commit it merged, printed
      `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them. Or
@@ -719,10 +719,16 @@ Repeat until a step below says stop:
 Log every time a person had to step in, the moment it happens, so `swarm.sh flow` and `swarm.sh dash`
 count it:
 
-- `swarm.sh intervene lead-hand "<what you did>"` when you acted by hand where a command should
-  have (you typed into a stalled agent's pane, merged or edited something yourself).
-- `swarm.sh intervene user-caught "<what they found>"` when the user found a problem before the
-  swarm did (held stories or a slow CI run they found by asking).
+- `swarm.sh intervene lead-hand <cause> "<what you did>"` when you acted by hand where a command
+  should have (you typed into a stalled agent's pane, merged or edited something yourself).
+- `swarm.sh intervene user-caught <cause> "<what they found>"` when the user found a problem before
+  the swarm did (held stories or a slow CI run they found by asking).
+
+The cause says why, one of: `review-rounds`, `false-stall`, `start-failed`, `gpg-locked`,
+`panes-open`, `story-gone`, `pr-no-story`, `dropped-lines`, `pr-churn`, `load-or-logs`,
+`no-conductor`, `flaky-test`, `classifier`, `upgrade`, `stuck-builder`, `red-main`,
+`reported-early`, `missing-review`, `tell-lost`, or `other` when none fits. An unknown cause fails
+and lists them.
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
 is `human` unless `swarm.sh grants <PR URL>` lists `merge` for the PR, and then only with

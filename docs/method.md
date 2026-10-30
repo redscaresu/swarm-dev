@@ -35,7 +35,7 @@ awaiting merge, a `lead` story, or a `later` epic. On an empty board it explains
 `depends_on` story (one an agent builds, not in review) shares no part in `touches` with it and is not named in its `needs:` line
 (the lead drops the dependency or names it in the story's `needs:` line), and a ready story with no build, ready for `queue_minutes`, whose `touches` share no part with a running build
 (the lead sends its conductor a note, or starts it with `swarm.sh story --strict`). It also names a draft or later epic of the current stage with nothing left to wait on, and an active epic with no stories that was never built and has no plan running, each unless its own step already names it (the first is the user's to start, or planned unasked when it is a later epic with no stories; the lead plans the second with `/swarm-dev:plan-epic`). When the step leaves the builders idle and no
-story is buildable, it also prints the project with up to five candidates for a one-off: the findings declined as `out-of-scope` in the last 30 days that no story has filed yet (the lead records each one
+story is buildable, it also prints the project with up to five candidates for a one-off: the findings declined as `out-of-scope` or `deferred` in the last 30 days that no story has filed yet (the lead records each one
 it files as filed in the findings log). With nothing to offer it prints no project line. Those declined findings
 are the swarm's own list of follow-ups. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
