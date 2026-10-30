@@ -1102,8 +1102,8 @@ recheck_hunks() {
 # review_round_line <round> <PR URL> — what review round <round> runs, for review_brief and review_next:
 # codex and, when the PR changes code, /code-review on round 1; codex alone after it. Then whether the
 # round may run tests (review_verify): with full, round 1 may run the project's tests for the changed files
-# and check the builder's mutation proofs; any other round, and every round with ci, reads the diff and
-# trusts CI.
+# and check the builder's mutation proofs, leaving the worktree clean; any other round, and every round
+# with ci, reads the diff and trusts CI, its line naming which of the two it is.
 review_round_line() {
   if [[ "$1" == 1 ]]; then
     echo "This is review round 1 of the story. When the PR
@@ -1112,14 +1112,18 @@ above, then run \`/code-review $2\`."
   else
     echo "This is review round $1 of the story: run codex alone, not \`/code-review\`, which runs on round 1 only."
   fi
-  if [[ "${CFG_review_verify:-ci}" == full && "$1" == 1 ]]; then
+  local trust="read the diff and trust CI for the tests; run no local test suite and no mutation run."
+  if [[ "${CFG_review_verify:-ci}" != full ]]; then
+    echo "Tests (review_verify = ci): ${trust}"
+  elif [[ "$1" == 1 ]]; then
     echo "Tests (review_verify = full): on this round, round 1, you may run the project's tests for the
 files the PR changes, as its AGENTS.md or Makefile selects them, never its whole suite, and check the
 builder's mutation proofs: each FAIL line its PR body pastes names a test the diff adds or changes, and
-any proof you run again breaks the fix in a copy of this worktree, never here. Rounds 2 and later are
-ci: they run no tests of their own."
+any proof you run again breaks the fix in a copy of this worktree, never here. Leave this worktree as
+you found it: delete any file the tests wrote, so \`git status --porcelain\` prints nothing at the
+end-of-review check. Rounds 2 and later run no tests of their own."
   else
-    echo "Tests (review_verify = ci): read the diff and trust CI for the tests; run no local test suite and no mutation run."
+    echo "Tests (review_verify = full, round $1): from round 2 on, ${trust}"
   fi
 }
 
