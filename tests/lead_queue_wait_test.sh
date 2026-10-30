@@ -37,11 +37,15 @@ check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 mkdir -p "${ROOT}/bin"; printf '#!/bin/sh\nexit 1\n' > "${ROOT}/bin/gh"; chmod +x "${ROOT}/bin/gh"
-# flow <project> [flags] — flow's lead_queue section, its blank line dropped.
-flow() {
+# flow_out <project> [flags] — flow's whole output.
+flow_out() {
   (cd "$1" && env -u HERDR_ENV -u SWARM_PROJECT TZ=UTC HOME="${ROOT}/home" PATH="${ROOT}/bin:${PATH}" \
-    bash "${REPO}/bin/swarm.sh" flow "${@:2}") | sed -n '/^## lead_queue$/,/^$/p' | sed '/^$/d'
+    bash "${REPO}/bin/swarm.sh" flow "${@:2}")
 }
+# flow <project> [flags] — flow's lead_queue section up to its first blank line, which is dropped.
+flow() { flow_out "$@" | sed -n '/^## lead_queue$/,/^$/p' | sed '/^$/d'; }
+# totals <project> [flags] — the window totals at the end of flow's lead_queue section: header and row.
+totals() { flow_out "$@" | awk -F'\t' '/^## / { on = $0 == "## lead_queue" } on && h { print; exit } on && $1 == "items" { print; h = 1 }'; }
 # story <board> <slug> <front matter line>... — a story file.
 story() { mkdir -p "$1/stories"; printf -- '---\n%s\n---\n\n# %s\n' "$(printf '%s\n' "${@:3}")" "$2" > "$1/stories/$2.md"; }
 commit() { git -C "$1" add -A && git -C "$1" -c user.name=t -c user.email=t@t commit -qm "$2"; }
@@ -397,6 +401,22 @@ ev 2026-10-01T16:10:00Z reconcile u "ok (finished)"
 ev 2026-10-01T17:00:00Z review ep
 ev 2026-10-01T17:05:00Z reconcile ep "ok (finished)"
 check "with merge = agent only reviews that cost money count" "$(flow "${A}" --since 2026-10-01 | tail -1)" $'2026-10-01\t4\t25\t50\t-'
+
+# The window totals: ten items waiting 1 to 10 minutes on 2026-10-01 (p90 by nearest rank is the
+# 9th), one of 7 minutes on 2026-10-02 and none on 2026-10-03. The per-day table above them is as it was.
+Q="${ROOT}/totals"; mkdir -p "${Q}/.swarm"; git -C "${Q}" init -q; E="${Q}/.swarm/events.tsv"
+for n in 1 2 3 4 5 6 7 8 9 10; do
+  ev 2026-10-01T10:00:00Z review "t${n}"; ev "$(printf '2026-10-01T10:%02d:00Z' "${n}")" reconcile "t${n}" "ok (finished)"
+done
+ev 2026-10-02T10:00:00Z review one; ev 2026-10-02T10:07:00Z reconcile one "ok (finished)"
+check "ten items waiting 1 to 10 minutes: p90_min 9" "$(totals "${Q}" --since 2026-10-01 --until 2026-10-01)" \
+  $'items\tmedian_min\tp90_min\tmax_min\n10\t6\t9\t10'
+check "the per-day table over the ten items is unchanged" "$(flow "${Q}" --since 2026-10-01 --until 2026-10-01)" \
+  $'## lead_queue\nday\titems\tmedian_min\tmax_min\topen\n2026-10-01\t10\t6\t10\t-'
+check "one item: its own minutes in each column" "$(totals "${Q}" --since 2026-10-02 --until 2026-10-02)" \
+  $'items\tmedian_min\tp90_min\tmax_min\n1\t7\t7\t7'
+check "no item: - in each column" "$(totals "${Q}" --since 2026-10-03 --until 2026-10-03)" \
+  $'items\tmedian_min\tp90_min\tmax_min\n-\t-\t-\t-'
 
 # held_story, its board writes stubbed, logs the held line the section reads.
 held="$(
