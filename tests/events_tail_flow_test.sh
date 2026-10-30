@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # events_tail_flow_test.sh — flow's, outcomes' and dataset's events.tsv readers read the outcome
 # through events_outcome.outcome(), so a key=value tail (events_outcome.SEP, then k=v) on every row's
-# outcome changes nothing they print. Over the committed fixture (events_tail_helpers.sh) with a
-# synthetic agents.tsv, board, features.tsv and a gh stub, TZ=UTC: flow (every section
-# flow_report.py lists), outcomes and dataset print the same in the plain project and its tailed
-# copy, and each changed reader prints a data row there: cost's per-rung row, features' uses, holds,
-# idle_slots, incidents, lead_queue and its no-agent table, merges, review_loops' rounds,
-# throughput's builds, outcomes' escalation, review and close columns, dataset's escalations, and
-# touches_rows.ok_events, called alone. An inline `reconcile <slug> ok (reopened)` row (no live log
+# outcome changes nothing they print. Over the committed fixture (events_tail_helpers.sh), with
+# synthetic events rows for what it lacks and a synthetic agents.tsv, board, session logs,
+# findings.tsv, features.tsv and gh stub, TZ=UTC: flow (every section flow_report.py lists),
+# outcomes and dataset print the same in the plain project and its tailed copy, and each changed
+# reader prints a data row there: cost's per-rung row, features' uses, holds, idle_slots, incidents
+# (a kind with no detail, and its stop under the epic an ok conduct line names), lead_queue and its
+# no-agent table, merges, review_loops' rounds, throughput's builds, outcomes' findings, close cause,
+# ready wait and held columns, dataset's escalations, and touches_rows.ok_events, called alone. An inline `reconcile <slug> ok (reopened)` row (no live log
 # holds one) drops lead_queue's no-agent item, and does the same with a tail on it. None of
 # these readers is a predicate: each prints, or returns, what it read.
 set -euo pipefail
@@ -98,11 +99,18 @@ column() { # <outcomes output> <slug> <column> — that column of the slug's fir
   awk -F'\t' -v s="$2" -v c="$3" 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == c) n = i; next } $2 == s { print $n; exit }' <<< "$1"
 }
 
+# The fixture, with synthetic rows in time order for what it lacks: an ok conduct of epic zzsyn, then
+# an incident of its conductor whose outcome is a kind with no `: <detail>` (every fixture incident
+# has one, and the fixture's only ok conduct is the backlog's, which incidents skips).
+EVENTS="${ROOT}/events.tsv"
+printf '%s\n' $'2026-10-28T10:00:00Z\tconduct\tzzsyn\twa:pa\tok' $'2026-10-28T10:05:00Z\tincident\tconduct-zzsyn\t-\tapi-error' \
+  | sort -s -t $'\t' -k1,1 "${EVENTS_FIXTURE}" - > "${EVENTS}"
+
 P="${ROOT}/plain/proj"; Q="${ROOT}/tailed/proj"
-project "${P}" "${EVENTS_FIXTURE}"
-project "${Q}" "${EVENTS_FIXTURE}" "${TAIL}"
+project "${P}" "${EVENTS}"
+project "${Q}" "${EVENTS}" "${TAIL}"
 check "the tailed copy ends every row's outcome in ${SEP}k=v" \
-  test "$(grep -c "	[^	]*${SEP}k=v\$" "${Q}/.swarm/events.tsv")" = "$(wc -l < "${EVENTS_FIXTURE}" | tr -d ' ')"
+  test "$(grep -c "	[^	]*${SEP}k=v\$" "${Q}/.swarm/events.tsv")" = "$(wc -l < "${EVENTS}" | tr -d ' ')"
 check "flow prints the same over the fixture and its tailed copy" same_output "${P}" "${Q}" flow
 check "outcomes prints the same over the fixture and its tailed copy" same_output "${P}" "${Q}" swarm outcomes
 check "dataset writes the same over the fixture and its tailed copy" same_output "${P}" "${Q}" dataset
@@ -117,6 +125,9 @@ check "holds: zzan's hold, still open" has "$(section "${out}" holds)" \
 check "idle_slots: zze ready from its unblock, under the backlog conductor until its report" \
   has "$(section "${out}" idle_slots)" $'all\t144\t4988\t2'
 check "incidents: the stalled line" has "$(section "${out}" incidents)" $'2026-10-25\tstalled\t1'
+check "incidents: a kind with no detail" has "$(section "${out}" incidents)" $'2026-10-28\tapi-error\t1'
+check "incidents: that stop goes to the epic whose ok conduct line started its conductor" \
+  has "$(section "${out}" incidents)" $'zzsyn\tapi-error\t1'
 check "lead_queue: zzep's no-agent item, from its close to its wake" has "$(section "${out}" lead_queue)" $'2026-10-27\t1\t6\t6\t0\t-'
 check "merges: zzd's reconcile and zzai's finish" has "$(section "${out}" merges)" $'2026-10-25\t2'
 check "review_loops: zzau's two rounds" has "$(section "${out}" review_loops)" $'zzau\thttps://github.com/o/r/pull/14\t2\tpass'
@@ -136,7 +147,7 @@ check "ok_events: the hold and report lines, whose outcomes are ok (...)" \
 # hide the wake from a raw read, and drop the item the same way).
 reopened() { # [<tail>] — the fixture with the reconcile row, <tail> on it
   awk -F'\t' -v t="${1:-}" '{ print } $2 == "close" && $3 == "zzep" { print "2026-10-27T12:15:00Z\treconcile\tzzep\twa:pa\tok (reopened)" t }' \
-    "${EVENTS_FIXTURE}"
+    "${EVENTS}"
 }
 reopened > "${ROOT}/reopened.tsv"; reopened "${TAIL}" > "${ROOT}/reopened-tailed.tsv"
 R="${ROOT}/reopened/proj"; T="${ROOT}/reopened-tailed/proj"
