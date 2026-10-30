@@ -3,7 +3,8 @@
 # and stdin from /dev/null, its output and exit passed through. One that runs past the limit
 # (SWARM_CODEX_SECONDS here) is stopped, TERM then KILL, leaving nothing of it running, and the
 # command dies with "codex skipped: timed out", which events.tsv records, with a reap line naming
-# codex-<base or story>; one that finishes writes none. With SWARM_STORY, a prompt
+# codex-<base or story>, and for a story, its slug= and the role of the agent running it (SWARM_AGENT)
+# in the outcome's tail; one that finishes writes none. With SWARM_STORY, a prompt
 # holding the story's touches and Done when replaces --base. codex is a stub on PATH.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -43,15 +44,15 @@ stub() {
   printf '%s\n' '#!/usr/bin/env bash' 'd="$(dirname "$0")"' 'printf "[%s]" "$@" > "${d}/args"' 'cat > "${d}/stdin"' "$1" > "${BIN}/codex"
   chmod +x "${BIN}/codex"
 }
-# review — codex-review main from the project, with text on its stdin and SWARM_STORY=$STORY if STORY
-# is set (a caller's own SWARM_STORY is dropped), timed: sets out, rc and took
+# review — codex-review main from the project, with text on its stdin, SWARM_STORY=$STORY if STORY
+# is set and SWARM_AGENT=$AGENT if AGENT is (a caller's own of either is dropped), timed: sets out, rc and took
 # (seconds). Its output goes through a file, since a stub left running would hold a $(...) open for
 # good, and after REVIEW_CAP seconds the stubs are KILLed, so a codex-review that hangs fails the
 # timing checks instead of hanging the test.
 REVIEW_CAP=20
 review() {
   local t0=${SECONDS} spid
-  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY ${STORY:+"SWARM_STORY=${STORY}"} SWARM_CODEX_SECONDS="${LIMIT}" bash "${SWARM}" codex-review main \
+  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY -u SWARM_AGENT ${STORY:+"SWARM_STORY=${STORY}"} ${AGENT:+"SWARM_AGENT=${AGENT}"} SWARM_CODEX_SECONDS="${LIMIT}" bash "${SWARM}" codex-review main \
     <<< "typed at the prompt" > "${ROOT}/out" 2>&1) &
   spid=$!; finish "${spid}"
   took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
@@ -92,8 +93,17 @@ left() {
 }
 # markers — codex-review's markers left in the project's state dir, one per line.
 markers() { compgen -G "${P}/.swarm/state/codex-review.*" || true; }
-# reaps — the reap lines in the project's events.tsv, "target|outcome", one per line; nothing before any.
-reaps() { awk -F'\t' '$2 == "reap" { print $3 "|" $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
+# reaps [fields] — the reap lines in the project's events.tsv, "target|outcome" (events_outcome's,
+# without the tail), one per line, or with fields, each one's fields() as sorted k=v words; nothing
+# before any.
+reaps() {
+  python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields, outcome
+rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[2])] if os.path.exists(sys.argv[2]) else []
+for r in (r for r in rows if r[1] == "reap"):
+    print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())) if sys.argv[3] else r[2] + "|" + outcome(r))' \
+    "${SWARM%/*}/lib" "${P}/.swarm/events.tsv" "${1:-}"
+}
 last_event() { awk -F'\t' '$2 == "codex-review" { o = $3 "|" $5 } END { print o }' "${P}/.swarm/events.tsv"; }
 
 # --- A codex that sleeps past the limit is stopped, with its child, and named.
@@ -240,8 +250,11 @@ STORY=s1 review
 check "a codex that finishes writes no reap line" "${n0}" "$(nreaps)"
 # shellcheck disable=SC2016 # the stub's variable
 stub '"${d}/stubsleep" 60'
-STORY=s1 review
+mkdir -p "${P}/.swarm"; printf '2026-10-30\tcode\ts1\tclaude\topus\thigh\t-\n' >> "${P}/.swarm/agents.tsv"
+STORY=s1 AGENT=s1 review
 check "a story's codex past the limit adds one reap line, naming codex-<story>" "$((n0 + 1))|codex-s1|timed out after 10 min" "$(nreaps)|$(reaps | tail -n 1)"
+check "its reap line carries the story's slug and the role of the agent that ran it" "role=code slug=s1" "$(reaps fields | tail -n 1)"
+check "a base's reap line, with no story or agent, carries neither" "" "$(reaps fields | head -n 1)"
 left "the story timeout case"
 
 # --- A SWARM_STORY that names no story, names a story with no Done when item, or is no slug fails,

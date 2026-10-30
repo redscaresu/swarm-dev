@@ -29,11 +29,24 @@ stalled, with no sign of life for under 3 times `stall_minutes`, cannot sign its
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
 first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write.
+An incident on an agent (`api-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`,
+`sign-blocked`, `sign-clear`, `idle-no-pr`, `codex-limit`) ends in a `slug=<slug> role=<role>` tail. `role=` is
+the agent's role in `.swarm/agents.tsv`, and is absent when the agent has no line there. `slug=` is the story
+the command was working on. Where the command knows only the agent's name, the slug comes from the name. A
+builder's name (an agent with a building role, or a name a story on the board has) is the slug, and
+`review-<slug>` and `conduct-<epic>` give what follows the prefix. It is absent for any other agent, for the backlog's conductor, and for a name of 32 characters, which may have been cut short.
+An agent name gets an `s` in front when its slug starts with a digit, so a builder named `s<digit>…` gets
+`slug=` only when the board holds a story under exactly one of the two names, with or without the `s`. A
+`-done<N>` name reads as the name before it. `codex-limit` takes its slug from `SWARM_STORY` and its role from
+the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
+only when the line names one story file.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
 killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
 with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past
 `TEST_FILE_TIMEOUT`, with the file as target and the outcome `TIMEOUT after <n>s`, to the events.tsv beside the run's `test-runs.tsv`;
-a nested run, whose runs log is set empty, writes none. A command that finishes in time writes no `reap` line. Only those two write it. A fallback reviewer, or its agent when it writes no findings in time, is killed with no `reap` line, so the count is not every kill. When `status` or `wait` reads an agent's pane, herdr
+a nested run, whose runs log is set empty, writes none. Both take the incidents' tail. `codex-review`'s
+`slug=` is `SWARM_STORY` and its `role=` that of the agent running it. `make test` writes
+`slug=<slug> role=builder` when the run's branch is `story/<slug>`, and no tail on any other branch. A command that finishes in time writes no `reap` line. Only those two write it. A fallback reviewer, or its agent when it writes no findings in time, is killed with no `reap` line, so the count is not every kill. When `status` or `wait` reads an agent's pane, herdr
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
 mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API
@@ -81,7 +94,7 @@ and the first line of a failed command's error.
 The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
-fields, and no caller passes any yet. It first takes every separator out of the outcome text: each
+fields: the incident and reap lines above pass `slug=` and `role=`. It first takes every separator out of the outcome text: each
 one becomes a space, and trailing spaces are dropped. That way the first separator in the field is
 always where the tail starts, and an outcome that ends in one is written without it. Fields are
 separated by spaces. A key is lowercase letters and `_`. A value is not empty and holds no space or tab.

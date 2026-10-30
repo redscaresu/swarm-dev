@@ -4,7 +4,8 @@
 # with its last output, within seconds, and nothing it started is left running. A file that finishes
 # inside the limit still passes. Each file it stops adds a five-field "reap" line to the events.tsv
 # beside the run's test-runs.tsv (TEST_RUNS_LOG here), and a file that finishes, or a run with
-# TEST_RUNS_LOG set empty, adds none.
+# TEST_RUNS_LOG set empty, adds none. A run on branch story/<slug> ends the reap line's outcome in
+# slug=<slug> role=builder; a run on any other branch has no tail.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -61,6 +62,23 @@ check "a second timed-out file adds its own reap line" "$(reap_line "${ROOT}/ter
 mkdir -p "${ROOT}/cwd"
 (cd "${ROOT}/cwd" && TEST_RUNS_LOG='' TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/hang_test.sh" > /dev/null 2>&1) && rc=0 || rc=$?
 check "a nested run's timeout still fails and writes no reap line" "${rc}/$(wc -l < "${EVENTS}" | tr -d ' ')/$(find "${ROOT}/cwd" "${ROOT}/log" -name events.tsv | wc -l | tr -d ' ')" "1/2/1"
+
+# last_reap [n] — the n-th newest reap line's (1, the newest, by default) outcome() (TIMEOUT after <n>s read as <n>) and fields(), as
+# events_outcome reads them: "outcome|k=v ...", keys sorted.
+last_reap() {
+  python3 -c 'import re, sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields, outcome
+r = [l.rstrip("\n").split("\t") for l in open(sys.argv[2]) if l.split("\t")[1] == "reap"][-int(sys.argv[3])]
+print(re.sub(r"^TIMEOUT after [0-9]+s$", "TIMEOUT after <n>s", outcome(r)) + "|" + " ".join("%s=%s" % kv for kv in sorted(fields(r).items())))' \
+    "${REPO}/bin/lib" "${EVENTS}" "${1:-1}"
+}
+# A run from a checkout on branch story/abc writes slug=abc role=builder; one on another branch, neither.
+for b in story/abc feature/x; do
+  d="${ROOT}/branch-${b//\//-}"; git init -q "${d}" && git -C "${d}" symbolic-ref HEAD "refs/heads/${b}"
+  (cd "${d}" && TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/hang_test.sh" > /dev/null 2>&1) || true
+done
+check "a TIMEOUT on branch story/abc writes slug=abc role=builder, after its outcome" "$(last_reap 2)" "TIMEOUT after <n>s|role=builder slug=abc"
+check "a TIMEOUT on another branch has neither, and its outcome is still TIMEOUT after <n>s" "$(last_reap)" "TIMEOUT after <n>s|"
 
 # A file in SLOW gets three times the limit: 3 s of work passes at 2 s x 3, and times out at 2 s alone.
 printf '#!/usr/bin/env bash\nsleep 3\n' > "${ROOT}/two_test.sh"

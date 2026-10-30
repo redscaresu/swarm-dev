@@ -271,7 +271,14 @@ named='; longest-running: pid 400, 45 min: sleep \(under pid 310, 45 min: make >
 log "$(tool 46)" "${idle[@]}"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
 check "the stalled line names the leaf of the foreground tool shell's chain" grep -qE "${named}" <<< "${out}"
-check "the incident line names it too" grep -qE $'\tincident\ts-hung\tw:me\tstalled: working 4[6-8] min .*'"${named}" "${H}/.swarm/events.tsv"
+# The events.tsv lines' columns 2 to 4 and outcome (events_outcome's, without the key=value tail).
+outcomes() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import outcome
+for l in open(sys.argv[2]):
+    r = l.rstrip("\n").split("\t"); print("\t".join(r[1:4] + [outcome(r)]))' "${HERE}/../bin/lib" "$1"
+}
+check "the incident line names it too" grep -qE $'^incident\ts-hung\tw:me\tstalled: working 4[6-8] min .*'"${named}" <<< "$(outcomes "${H}/.swarm/events.tsv")"
 check "no argument (a token) reaches the stalled line or events.tsv" lacks 'SEKRIT|2700' "${out}$(cat "${H}/.swarm/events.tsv")"
 # With no own work in the log at all, the newest tool shell is the foreground one, not the older
 # background server.

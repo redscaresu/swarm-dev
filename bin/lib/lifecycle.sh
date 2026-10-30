@@ -366,6 +366,15 @@ put_back() {
   done
 }
 
+# board_story <path> — the slug when <path> (from the project's root) is one story file on the board;
+# nothing for any other path, or for more than one.
+board_story() {
+  local f="${PROJECT_DIR}/$1"
+  f="${f#"${BOARD}/stories/"}"
+  [[ "${f}" != "${PROJECT_DIR}/$1" && "${f}" == *.md && "${f}" != *[/[:space:]]* && "${f}" != README.md ]] || return 0
+  echo "${f%.md}"
+}
+
 # pull_board_repo — pull the main checkout fast-forward, touching no edit. Once it has fetched, it
 # succeeds, touching nothing, when there is nothing to pull (HEAD has every upstream commit). It
 # stops, touching nothing, when it cannot fetch, the pull cannot fast-forward (local commits), or a
@@ -375,7 +384,8 @@ put_back() {
 # merge it moves those keys into board state (keys_to_state), unless the incoming commits change its
 # depends_on or set those keys to other values (keys_meet_base), which stops it as a changed file
 # does. Once the pull is in, it names each status or prs of such a file that gave way to a different
-# incoming value, on stdout and in an incident, key-dropped: <file> <key>: <ours> -> <theirs>. It also
+# incoming value, on stdout and in an incident, key-dropped: <file> <key>: <ours> -> <theirs>, with slug=
+# when <file> is a story (board_story), as a pull-failed incident has when it names one story file and nothing else. It also
 # removes each untracked board file whose bytes are already the incoming one's, which the pull brings
 # back. If the merge then fails (git refuses it: another untracked file it would overwrite), it puts
 # each of those changes back (put_back), so a failed pull changes nothing. A changed file the incoming
@@ -408,7 +418,7 @@ pull_board_repo() {
   if [[ -n "${stop}${meet}" ]]; then
     o="pull-failed: $(paste -sd' ' - <<< "${stop}")${stop:+${meet:+ }}${meet}"
     if [[ "$(cat "${PULL_STOP}" 2>/dev/null)" != "${o}" ]]; then
-      record_event incident - "${o}"
+      record_incident - "${o}" "$(board_story "${o#pull-failed: }")"
       { printf '%s\n' "${o}" > "${PULL_STOP}"; } 2>/dev/null || true
     fi
     board=""; other=""
@@ -448,7 +458,7 @@ pull_board_repo() {
   while IFS=$'\t' read -r p k v u; do
     [[ -n "${p}" ]] || continue
     echo "reconcile: ${p}: the pull's ${k}: ${u} replaced your uncommitted ${k}: ${v}; set it again if you meant it"
-    record_event incident - "key-dropped: ${p} ${k}: ${v} -> ${u}"
+    record_incident - "key-dropped: ${p} ${k}: ${v} -> ${u}" "$(board_story "${p}")"
   done <<< "${given}"
 }
 
@@ -562,7 +572,7 @@ back_to_ready() {
 # (escalate_story). impossible, paused and cleared-on-error count nothing. impossible makes the story
 # the lead's (impossible_story) whether or not there was a build to clear; paused and cleared-on-error
 # hold it for the lead (held_story) when the close ends a build. A close that ends a build with no
-# open or merged PR on story/<name> logs an idle-no-pr incident, the one place it is logged, unless
+# open or merged PR on story/<name> logs an idle-no-pr incident (record_incident, its slug= <name>), the one place it is logged, unless
 # the builder did not stop of itself (stalled, paused or cleared-on-error) or handed it on (impossible);
 # with escalate_ladder set, that close then steps the build up (ladder_step no-pr) instead, if it can.
 close_agent() {
@@ -598,7 +608,7 @@ close_agent() {
   fi
   if [[ ${counted} == 1 ]]; then
     if [[ ! "${cause}" =~ ^(stalled|paused|cleared-on-error|impossible)$ && "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" != True ]]; then
-      record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1"
+      record_incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1" "$1"
       # With the ladder on, the next model takes the build over instead: no attempt, nothing cleared.
       # A step-up that failed partway closed the builder already: nothing more is done here.
       # main logs no close then (stepped_up_since): the escalate line ends the stepped-up build.

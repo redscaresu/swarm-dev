@@ -104,7 +104,18 @@ prompts() { grep -c '^agent prompt w:9 ' "${ROOT}/keys.log" || true; }
 keys() { wc -l < "${ROOT}/keys.log" | tr -d ' '; }
 reports() { wc -l < "${ROOT}/reports.log" | tr -d ' '; }
 said() { grep -qF -- "$1" <<< "$2" && echo yes || echo no; }
-stale() { grep -c $'\tincident\tb1\t.*\tstale-blocked: herdr listed it blocked with its pane clear; reported idle$' "${p}/.swarm/events.tsv" 2>/dev/null || true; }
+# stale — how many stale-blocked incidents on b1 events.tsv holds, its outcome read without the tail
+# (events_outcome); stale_fields — the newest one's fields(), sorted k=v words.
+stale_rows() {
+  python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields, outcome
+rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[2])] if os.path.exists(sys.argv[2]) else []
+for r in rows:
+    if r[1:3] == ["incident", "b1"] and outcome(r) == "stale-blocked: herdr listed it blocked with its pane clear; reported idle":
+        print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())))' "${SWARM%/*}/lib" "${p}/.swarm/events.tsv"
+}
+stale() { stale_rows | wc -l | tr -d ' '; }
+stale_fields() { stale_rows | tail -n 1; }
 REFUSED="b1: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read b1"
 
 agent sb
@@ -116,6 +127,7 @@ check "waiting, an empty input box: herdr is told it is idle, with its session a
   "$(said "report-agent w:9 --source swarm --agent claude --state idle --seq " "$(cat "${ROOT}/reports.log")")|$(said "--agent-session-id sb -- python3 -I ${RESUME}/sb.py claude --resume sb --model opus" "$(cat "${ROOT}/reports.log")")"
 check "waiting, an empty input box: tell says it reported it idle, and logs a stale-blocked incident" "yes 1" \
   "$(said "b1: herdr listed it blocked, but its pane reads clear, so it was reported idle to herdr; sending again" "${out}") $(stale)"
+check "the stale-blocked incident carries b1's slug and role" "role=code slug=b1" "$(stale_fields)"
 setup waiting blocked blocked nbsp
 out="$(tell)"
 check "waiting, an empty input box with a no-break space after its prompt: told" "yes 1" "$(said "told b1" "${out}") $(prompts)"
