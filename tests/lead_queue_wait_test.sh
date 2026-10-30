@@ -403,7 +403,8 @@ ev 2026-10-01T17:05:00Z reconcile ep "ok (finished)"
 check "with merge = agent only reviews that cost money count" "$(flow "${A}" --since 2026-10-01 | tail -1)" $'2026-10-01\t4\t25\t50\t-'
 
 # The window totals: ten items waiting 1 to 10 minutes on 2026-10-01 (p90 by nearest rank is the
-# 9th), one of 7 minutes on 2026-10-02 and none on 2026-10-03. The per-day table above them is as it was.
+# 9th), one of 7 minutes on 2026-10-02 (the 9th of the eleven over both days is still 9) and none on
+# 2026-10-03. The per-day table above them is as it was.
 Q="${ROOT}/totals"; mkdir -p "${Q}/.swarm"; git -C "${Q}" init -q; E="${Q}/.swarm/events.tsv"
 for n in 1 2 3 4 5 6 7 8 9 10; do
   ev 2026-10-01T10:00:00Z review "t${n}"; ev "$(printf '2026-10-01T10:%02d:00Z' "${n}")" reconcile "t${n}" "ok (finished)"
@@ -417,6 +418,12 @@ check "one item: its own minutes in each column" "$(totals "${Q}" --since 2026-1
   $'items\tmedian_min\tp90_min\tmax_min\n1\t7\t7\t7'
 check "no item: - in each column" "$(totals "${Q}" --since 2026-10-03 --until 2026-10-03)" \
   $'items\tmedian_min\tp90_min\tmax_min\n-\t-\t-\t-'
+check "a two-day window totals both days: 1 to 10 and 7 give p90_min 9" "$(totals "${Q}" --since 2026-10-01 --until 2026-10-02)" \
+  $'items\tmedian_min\tp90_min\tmax_min\n11\t6\t9\t10'
+# Over P, 2026-10-10 has one queue item of 30 minutes and 2026-10-11 only a no-agent item: the totals
+# count the per-day table's items, never the no-agent table's.
+check "the totals leave out no-agent items" "$(totals "${P}" --since 2026-10-10 --until 2026-10-11)" \
+  $'items\tmedian_min\tp90_min\tmax_min\n1\t30\t30\t30'
 
 # held_story, its board writes stubbed, logs the held line the section reads.
 held="$(
