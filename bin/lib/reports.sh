@@ -348,7 +348,11 @@ dataset_report() {
 #     ended with no build; else open), then the built holds' minutes per reason class (clash or other), or a line
 #     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
-#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
+#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
+#     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
+#     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
+#     (each stalled incident, - for an input it does not carry) and the false stalls line (stalled
+#     incidents with an input at 1, and lead-hand and user-caught lines with cause=false-stall).
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
 #     (an ok held, escalated, close:impossible, kept or review line in events.tsv; with merge = agent, a
 #     review only of a story whose costs: is not none, or that cannot be read; a kept line ends any item
