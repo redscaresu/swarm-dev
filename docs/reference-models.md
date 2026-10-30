@@ -317,3 +317,9 @@ attempt, and each replaced build has a close, with the cause `step-up:<trigger>`
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
 saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.
 Flow's `cost` section and `outcomes` read the copy once the original is gone.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `swarm.sh step-up <slug> <trigger>` | Close a struggling build and start the next model in `escalate_ladder` on the same branch, without counting an attempt. `<trigger>` is `findings-<step_up_findings>` (`findings-3` by default), `ci-red-2`, `stalled` or `no-pr`. `swarm.sh step-up --resume <slug>` starts a rung whose start failed. `close`, `tell`, `wait --stall`, `watch` and a review pane's `wait-pr` run it themselves. Refused while the ladder is empty ([§ The escalation ladder](reference-models.md#the-escalation-ladder)). |
