@@ -860,7 +860,8 @@ agent_work_left() {
 # (.swarm/state) as a conductor. Nothing when the lead or an unknown pane started it.
 fix_main_owner() {
   local pane name e
-  pane="$(awk -F'\t' -v s="$1" '$2 == "story" && $3 == s && index($5, "ok") == 1 { p = $4 } END { print p }' "${EVENTS_LOG}" 2>/dev/null)"
+  pane="$(awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$2 == "story" && $3 == s && index(outcome($5), "ok") == 1 { p = $4 } END { print p }' \
+    "${EVENTS_LOG}" 2>/dev/null)"
   [[ -n "${pane}" && "${pane}" != - ]] || return 0
   name="$(awk -v p="${pane}" 'NF == 2 && $1 == p { n = $2 } END { print n }' "${STATE_DIR}"/* 2>/dev/null)"
   [[ "${name}" == conduct-* ]] || return 0
@@ -917,9 +918,10 @@ review_agent_owns() {
 # merge left unconfirmed, the epic guard (with no ticket) or a PR that waits on the user's merge. Every
 # other outcome is still the review agent's: base-merged (merge waits on the new head's CI), one that
 # says to review the new head, the merge lock's run-again, a head not green yet. A new review clears it.
+# Outcomes are read without their key=value tail (EVENT_OUTCOME_AWK).
 merge_refused() {
-  awk -F'\t' -v s="$1" '$3 == s && $2 == "review" && index($5, "ok") == 1 { m = "" }
-    $3 == s && $2 == "merge" { m = $5 }
+  awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 == s && $2 == "review" && index(outcome($5), "ok") == 1 { m = "" }
+    $3 == s && $2 == "merge" { m = outcome($5) }
     END { exit !(m ~ /^(held:|unconfirmed)/ || m ~ /the user merges it|waits on the user.s merge|check it by hand|with no ticket/) }' "${EVENTS_LOG}" 2>/dev/null
 }
 
@@ -2242,8 +2244,9 @@ unblock_startable() {
   done < <(board_ready)
 }
 
-# last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated.
-last_event() { awk -F'\t' -v s="$1" '$3 == s { last = $2 "\t" $5 } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
+# last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated, the
+# outcome without its key=value tail (EVENT_OUTCOME_AWK), so `reconcile<tab>ok (reopened)` compares whole.
+last_event() { awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 == s { last = $2 "\t" outcome($5) } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
 
 # delete_item <file> — delete a story, epic or HLD file where it is, and its state file (state_drop), so
 # a later item with the slug starts with none: reconcile's, on a board outside the repo.
@@ -2340,7 +2343,7 @@ unstart() {
 
 # reset_at <slug> — when the slug was reset (its first ok reset line in events.tsv), or nothing. A story
 # is reset at most once.
-reset_at() { awk -F'\t' -v s="$1" '$2 == "reset" && $3 == s && index($5, "ok") == 1 { print $1; exit }' "${EVENTS_LOG}" 2>/dev/null || true; }
+reset_at() { awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$2 == "reset" && $3 == s && index(outcome($5), "ok") == 1 { print $1; exit }' "${EVENTS_LOG}" 2>/dev/null || true; }
 
 # reset <slug> <reason> — put a story the lead re-scoped back in the build queue: drop attempts:,
 # put kind back from escalated_from: (no kind: line for NO_KIND_LINE) while the story still says
