@@ -97,7 +97,7 @@ out_of_scope_findings() {
     [[ -z "${git}" || -z "$(git -C "${BOARD}" log --all -1 --since="${day} 00:00" -S"${text}" --format=%h -- stories 2>/dev/null)" ]] || continue
     printf '%s\t%s\n' "${reason}" "${line}"
   done < <(awk -F'\t' -v s="${since}" '{ t[NR] = $4; last[$4] = NR }
-    $5 == "declined" && ($7 == "out-of-scope" || $7 == "deferred") && $1 >= s { r[NR] = $1 " " $2 " " $3 ": " $4; d[NR] = $1; w[NR] = $7 }
+    $5 == "declined" && ($7 == "out-of-scope" || $7 == "deferred") && $1 >= s { r[NR] = $1 " " $2 " " $3 ": " $4; d[NR] = $1; w[NR] = $7 }   # outcome-scan: ok the outcome column of findings.tsv, not of events.tsv
     END { for (i = NR; i > 0; i--) if ((i in r) && last[t[i]] == i) print t[i] "\t" d[i] "\t" w[i] "\t" r[i] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true)
 }
 
