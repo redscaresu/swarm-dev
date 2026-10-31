@@ -37,8 +37,10 @@ stop_group() {
 # "TIMEOUT <file> after <n>s", n being the seconds it ran, and its log is cut to the file's last 20
 # lines; it also appends a "reap" line (append_event's five fields) to TEST_REAP_LOG, the events.tsv
 # beside the run's test-runs.tsv, which the run sets for its jobs and --one unsets before the test runs.
-# When the run's branch (TEST_REAP_BRANCH, unset the same way) is story/<slug>, its outcome ends in
-# append_event's tail, slug=<slug> role=builder after EVENT_SEP; on any other branch it has none.
+# Its outcome ends in append_event's tail after EVENT_SEP: slug=<slug> role=builder when the run's branch
+# (TEST_REAP_BRANCH, unset the same way) is story/<slug>, none on any other branch, then version=, the
+# version in this checkout's .claude-plugin/plugin.json (TEST_REAP_VERSION, read once by the run and
+# unset the same way), left out when that cannot be read.
 # SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
@@ -64,7 +66,9 @@ if [[ "${1:-}" == --one ]]; then
   # A story branch's slug, in a value append_event would keep: not empty, no space or tab.
   x="${TEST_REAP_BRANCH:-}"
   if [[ "${x}" == story/?* && "${x#story/}" =~ ^[^[:space:]]+$ ]]; then reap_tail="slug=${x#story/} role=builder"; fi
-  unset TEST_FILE_TIMEOUT TEST_REAP_LOG TEST_REAP_BRANCH JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH MAKEFLAGS MFLAGS MAKELEVEL
+  x="${TEST_REAP_VERSION:-}"   # the checkout's version, kept only as a value append_event would keep
+  if [[ "${x}" =~ ^[^[:space:]]+$ ]]; then reap_tail+="${reap_tail:+ }version=${x}"; fi
+  unset TEST_FILE_TIMEOUT TEST_REAP_LOG TEST_REAP_BRANCH TEST_REAP_VERSION JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH MAKEFLAGS MFLAGS MAKELEVEL
   # The checkout this runner belongs to (its main checkout, from a worktree), found from this script, not
   # the cwd (a test runs test.sh from its TMPDIR): swarm.sh refuses to act on it.
   if forbid="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then SWARM_FORBID_PROJECT="$(dirname "${forbid}")"; export SWARM_FORBID_PROJECT; fi
@@ -181,6 +185,11 @@ export TEST_RUNS_LOG=""
 # The jobs' reap log: the events.tsv beside the runs log, or empty for a nested run.
 export TEST_REAP_LOG=""
 [[ -z "${runs_log}" ]] || TEST_REAP_LOG="$(dirname "${runs_log}")/events.tsv"
+# The reap lines' version=: this checkout's plugin.json version, read once here; empty when it cannot be read.
+export TEST_REAP_VERSION=""
+[[ -z "${TEST_REAP_LOG}" ]] || TEST_REAP_VERSION="$(python3 -c 'import json, sys
+v = json.load(open(sys.argv[1], encoding="utf-8")).get("version")
+print(v if isinstance(v, str) else "")' "$(dirname "${BASH_SOURCE[0]}")/../.claude-plugin/plugin.json" 2>/dev/null)" || TEST_REAP_VERSION=""
 # ps_words <pid> <field>... — ps's fields for that process, one space between words, the same
 # whatever the caller's TZ; started <pid> — when it started.
 ps_words() {

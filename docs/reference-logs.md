@@ -87,7 +87,8 @@ with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` wr
 `TEST_FILE_TIMEOUT`, with the file as target and the outcome `TIMEOUT after <n>s`, to the events.tsv beside the run's `test-runs.tsv`;
 a nested run, whose runs log is set empty, writes none. Both take the incidents' tail. `codex-review`'s
 `slug=` is `SWARM_STORY`, absent when that is unset, and its `role=` that of the agent running it. `make test` writes
-`slug=<slug> role=builder` when the run's branch is `story/<slug>`, and no tail on any other branch. A command that finishes in time writes no `reap` line. Only those two write it. A fallback reviewer, or its agent when it writes no findings in time, is killed with no `reap` line, so the count is not every kill. When `status` or `wait` reads an agent's pane, herdr
+`slug=<slug> role=builder` when the run's branch is `story/<slug>`, and neither on any other branch. Its
+`version=` is the one in the checkout's `.claude-plugin/plugin.json`, left out when that cannot be read. A command that finishes in time writes no `reap` line. Only those two write it. A fallback reviewer, or its agent when it writes no findings in time, is killed with no `reap` line, so the count is not every kill. When `status` or `wait` reads an agent's pane, herdr
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
 mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API
@@ -155,8 +156,10 @@ and the first line of a failed command's error.
 
 The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
-`EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
-fields: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
+`EVENT_SEP` in `bin/lib/agents.sh`. Every line `append_event` writes has a tail that ends in
+`version=`, the installed plugin's version from its `.claude-plugin/plugin.json`, read once per
+process. When that file cannot be read, the line has no `version=` and the command still succeeds.
+Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
 `url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
 `verdict=`. For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
