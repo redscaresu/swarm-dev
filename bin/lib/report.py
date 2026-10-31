@@ -61,7 +61,7 @@ def finding_rows(path, outcomes=("fixed", "declined"), width=6):
         return []
     rows = (l.rstrip("\n").split("\t")[:8] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
     rows = ((f + ["fixed", "unknown"][len(f) - 4:] + ["", ""])[:width] for f in rows if len(f) >= 4)
-    return [f for f in rows if f[4] in outcomes and f[5] in reviewers]
+    return [f for f in rows if f[4] in outcomes and f[5] in reviewers]   # outcome-scan: ok findings.tsv's outcome, not events.tsv's
 
 def fixed_rows(path):
     return [f[:4] for f in finding_rows(path, ("fixed", "escaped"))]
@@ -163,7 +163,7 @@ def rework_of(merged, findings, judged=None):
                   for j, u in fixers)}
     for f in findings:
         k = pr_key(f[2])
-        if len(f) > 4 and f[4] == "escaped" and k in judge:
+        if len(f) > 4 and f[4] == "escaped" and k in judge:   # outcome-scan: ok findings.tsv's outcome, not events.tsv's
             try:
                 d = (datetime.date.fromisoformat(f[0]) - local_day(judge[k])).days
             except ValueError:

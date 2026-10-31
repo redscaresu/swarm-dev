@@ -5,7 +5,8 @@
 # it in codex's place, then closes the agent; with the key empty no agent starts and the output is
 # codex's own, as before. A fallback that cannot start, writes nothing in time or is interrupted is
 # closed, and codex-review says codex was skipped. Also the builder brief's codex rule, which names the
-# PR body's "reviewed by fallback" line. codex, herdr and claude are stubs on PATH: herdr's agent
+# PR body's "reviewed by fallback" line, and, with SWARM_PR, the PR's earlier declines in the
+# fallback's brief. codex, herdr and claude are stubs on PATH: herdr's agent
 # writes its findings file as its brief arrives, then goes idle, unless ${ROOT}/silent exists.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -97,7 +98,7 @@ git -c init.defaultBranch=main init -q "${p}"
 for s in s1 "${LONG}-one" "${LONG}-two"; do
   printf '%s\n' --- "status: ready" "kind: code" "touches: [x.sh]" --- "" "# ${s}" "" "**Done when:**" "- it holds" > "${p}/docs/stories/${s}.md"
 done
-# review [config line] — codex-review main for $STORY (s1) with that config, codex's time $SECS
+# review [config line] — codex-review main for $STORY (s1), and SWARM_PR=$PR if PR is set, with that config, codex's time $SECS
 # (60 s), a fallback's least time $MIN (1 s; "default" for the shipped one, which an empty override
 # keeps) and HERDR_ENV=1 unless
 # NOHERDR is set, in the background: sets out, rc and took. A run past 30 s is KILLed, failing the
@@ -107,7 +108,7 @@ review() {
   [[ -z "${NOHERDR:-}" ]] || herdr=(-u HERDR_ENV)
   [[ "${MIN:-}" != default ]] || min=(SWARM_FALLBACK_MIN_SECONDS=)
   printf '%s\n' "$@" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"
-  (cd "${p}" && exec env -u SWARM_PROJECT "${herdr[@]}" "${min[@]}" HERDR_WORKSPACE_ID=w \
+  (cd "${p}" && exec env -u SWARM_PROJECT -u SWARM_PR "${herdr[@]}" "${min[@]}" ${PR:+"SWARM_PR=${PR}"} HERDR_WORKSPACE_ID=w \
     SWARM_STORY="${STORY:-s1}" SWARM_CODEX_SECONDS="${SECS:-60}" PATH="${BIN}:${PATH}" bash "${SWARM}" codex-review main > "${ROOT}/out" 2>&1) &
   pid=$!
   for ((i = 0; i < 150; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
@@ -155,6 +156,23 @@ check "one incident per run" "2" "$(incidents | wc -l | tr -d ' ')"
 check "the incident's target is codex-<slug>, never the builder's own name" "codex-s1" "$(incidents | cut -d'|' -f1 | sort -u)"
 review "fallback_reviewer = sonnet"
 check "the next usage limit for the story starts its fallback again" "0|yes" "${rc}|$(logged '^agent start fallback-s1 ')"
+
+# --- With SWARM_PR set, the fallback's brief holds the PR's earlier declines, as codex's prompt does:
+# codex_fallback hands it that prompt.
+U=https://github.com/o/r/pull/12
+mkdir -p "${p}/.swarm"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  2026-10-01 retry-untested "${U}" "the retry is untested" declined codex nit 1 "covered by the retry test" \
+  2026-10-02 retry-untested o/r#12 "the retry is still untested" declined fallback wrong 2 "the retry test runs it twice" \
+  2026-10-02 retry-untested https://github.com/o/r/pull/123 "another PR's decline" declined codex nit 1 "not this PR" \
+  > "${p}/.swarm/findings.tsv"
+PR="${U}" review "fallback_reviewer = sonnet"
+fb="$(cat "${p}/.swarm/briefs/fallback/s1.md")"
+check "with SWARM_PR, the fallback's brief holds the builder's-claim line and both declines, and not another PR's" "0|yes|yes|yes|no" \
+  "${rc}|$(has "Each reason is the builder's claim, not a fact" "${fb}")|$(has "- round 1, declined as nit: the retry is untested (because: covered by the retry test)" "${fb}")|$(
+    has "- round 2, declined as wrong: the retry is still untested (because: the retry test runs it twice)" "${fb}")|$(
+    grep -qF "another PR's decline" <<< "${fb}" && echo yes || echo no)"
+rm "${p}/.swarm/findings.tsv"
 
 # --- A fallback still working when codex's time runs out is stopped then, and closed. Its 10 s leave
 # its start room to finish first.

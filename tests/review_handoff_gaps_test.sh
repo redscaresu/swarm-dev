@@ -11,7 +11,10 @@
 # 6. wait --lead prints a stopped: line for a stop note no running conductor has;
 # 7. review-agent starts again, up to 3 starts, when a start ran nothing;
 # 8. a round whose dropped-lines finding went to the builder wakes no no-review: line;
-# 9. review_verify: round 1 may run tests only under full, and later rounds (review-agent --next) trust CI.
+# 9. review_verify: round 1 may run tests only under full, and later rounds (review-agent --next) trust CI;
+# 10. codex-review runs with the PR (SWARM_PR), and a decline the builder gave a reason for is logged with --because;
+# 11. the round cap: from round 3 (CAP_ROUND) the brief and review-agent --next send only regressions and
+#     false lines and defer the rest, and finding_rule logs a deferred finding proved real as escaped.
 # shellcheck disable=SC2016 # the backticks in the briefs' text are literal
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -430,6 +433,46 @@ next2='CFG_review_verify=full; HERDR_PANE_ID=w:rv
 o="$(flat "$(lib "${next2}")")"
 check "9 review-agent --next's round 2 under review_verify = full trusts CI under its own label, with no ci-labelled or full line" "yes|yes|no|no" \
   "$(has "Review round 2 of story s1" "${o}")|$(has "${LATER_LINE}" "${o}")|$(has "${CI_LINE}" "${o}")|$(has "${FULL_LINE}" "${o}")"
+rm -f "${F}" "${F}.prev" "${F%.md}.head"
+
+# --- 10. codex sees the PR's earlier declines: review_brief's codex command names the PR, and each line
+# that logs a finding the builder declined passes the builder's reason with --because.
+b="$(vbrief "" 1)"
+check "10 review_brief's codex command carries SWARM_STORY and SWARM_PR=<the PR URL>" yes \
+  "$(has "SWARM_STORY=s1 SWARM_PR=${URL} SWARM_PROJECT=" "${b}")"
+check "10 both builder-decline logging lines carry --because with the builder's reason" "yes|yes" \
+  "$(has 'log each as declined, with `--because "<the builder'"'"'s reason, one line>"`' "${b}")|$(has 'as declined, with the reason that fits and `--because "<the builder'"'"'s reason, one line>"`, when the builder declined it' "${b}")"
+
+# --- 11. The round cap: from round 3 the round line, and so the brief and review-agent --next, sends the
+# builder only a regression or a false line and defers the rest; rounds 1 and 2 carry none of it.
+CAP='Round cap (from round 3): of the findings that are real and inside the story, send the builder only a regression this PR introduces or a line now false about the code; this replaces the rule that each of them is to fix. Decline the rest as deferred: rebut them in the PR with the other declined ones, and log each with `--declined deferred` and no `--because`, since holding it back is your call, not the builder'"'"'s.'
+FIX_ALL='One that is real and inside the story is to fix: the builder fixes it, never you.'
+FIX_CAP='Under the round cap above, only a regression this PR introduces or a line now false about the code is to fix: the builder fixes it, never you.'
+DEFER='deferred for a real one inside the story that the round cap holds back (from round 3),'
+for r in 1 2; do
+  b="$(vbrief "" "${r}")"
+  check "11 round ${r}'s brief has no cap line, no regression rule and no --declined deferred, fixes every real finding in the story, and names deferred among the reasons" \
+    "no|no|no|yes|yes" "$(has "${CAP}" "${b}")|$(has 'a regression this PR introduces' "${b}")|$(has '--declined deferred' "${b}")|$(has "${FIX_ALL}" "${b}")|$(has "${DEFER}" "${b}")"
+done
+for r in 3 4; do
+  b="$(vbrief "" "${r}")"
+  check "11 round ${r}'s brief carries the cap line and the capped fix rule, not the fix-every-finding line" "yes|yes|no" \
+    "$(has "${CAP}" "${b}")|$(has "${FIX_CAP}" "${b}")|$(has "${FIX_ALL}" "${b}")"
+done
+check "11 finding_rule has a deferred finding proved real logged as escaped against its PR, its line copied exactly from the deferred row" yes \
+  "$(has 'A finding declined as deferred that a later round or a fix finds real, and fixes, is logged as escaped too, against the PR it was deferred on, never as declined (an escaped row is always fixed), and its one line copied exactly from the deferred row'"'"'s text, so the two rows match:' "$(vbrief "" 1)")"
+# nextr <round> — review-agent --next's output on round <round>, from review-s1's own pane.
+nextr() {
+  flat "$(lib 'HERDR_PANE_ID=w:rv
+  agent_field() { echo w:rv; }; review_rounds() { echo "'"$1"' 1"; }; base_for() { echo main; }
+  review_at_head() { REVIEW_SRC="${SRC}"; REVIEW_WT="${WT}"; REVIEW_HEAD="${HB}"; }
+  review_next s1 '"${URL}")"
+}
+o="$(nextr 2)"
+check "11 review-agent --next's round 2 carries no cap line" "yes|no" "$(has 'Review round 2 of story s1' "${o}")|$(has "${CAP}" "${o}")"
+o="$(nextr 3)"
+check "11 review-agent --next's round 3 carries the cap line, exactly as review_round_line sets it" "yes|yes|yes" \
+  "$(has 'Review round 3 of story s1' "${o}")|$(has "${CAP}" "${o}")|$(has "$(flat "$(lib 'review_round_line 3 '"${URL}")")" "${o}")"
 rm -f "${F}" "${F}.prev" "${F%.md}.head"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
