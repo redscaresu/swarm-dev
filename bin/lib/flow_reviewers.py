@@ -111,7 +111,7 @@ print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\
 # build, whatever its date, plus one), since a final pass that finds nothing logs no row; never below
 # its last logged round. Printed only once a row in the window has a round; a row logged without one
 # is round unknown.
-REASONS = ("nit", "out-of-scope", "wrong")
+REASONS = ("nit", "out-of-scope", "wrong", "deferred")
 # A story PR is listed when the window has a row of it with a round; where it stopped is read from all
 # its rows, whatever their date, so the window never moves it.
 by_round, per_pr, seen = collections.defaultdict(collections.Counter), collections.defaultdict(collections.Counter), {}
