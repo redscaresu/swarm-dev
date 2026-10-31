@@ -24,7 +24,9 @@
 # no leaving line is open only while its story or epic is on the board in review (a kept one only with
 # kept: set), held or escalated (read with board-state as fm reads it); any other is dropped, its end
 # unknown. Per local day it entered: items, the median and maximum minutes waited, and open, the
-# kind:slug of each item open. --epic does not narrow it.
+# kind:slug of each item open. --epic does not narrow it. Last, after a blank line and any no-agent
+# table below: items, median_min, p90_min (nearest rank) and max_min over every item of this table in
+# the window (never a no-agent item), - in each column with none.
 import datetime, functools, os, re, statistics, subprocess, time
 from events_outcome import outcome
 
@@ -318,3 +320,8 @@ for day, (items, woke) in sorted(nd.items()):
     still = ",".join(sorted(s for _, s in items if s)) or "-"
     med, top = (f"{statistics.median(mins):.0f}", f"{max(mins):.0f}") if mins else ("-", "-")
     print(f"{day}\t{len(items)}\t{med}\t{top}\t{len(woke)}\t{still}")
+
+waits = sorted(m for items in days.values() for m, _ in items)
+p90 = waits[-(-9 * len(waits) // 10) - 1] if waits else None
+print("\nitems\tmedian_min\tp90_min\tmax_min")
+print("\t".join([str(len(waits)), f"{statistics.median(waits):.0f}", f"{p90:.0f}", f"{waits[-1]:.0f}"] if waits else ["-"] * 4))

@@ -162,8 +162,8 @@ check "last_event: zzr's reconcile reopen" both $'reconcile\tok (reopened)' last
 check "last_event: zzd's reconcile" both $'reconcile\tok (finished by its PR)' last_event zzd
 check "reset_at: when zzr was reset" both 2026-10-29T06:00:00Z reset_at zzr
 
-# swarm.sh hold: zzr's last row is reconcile's reopen, so hold refuses it, tailed as untailed. zzs,
-# ready with no row, is held in both: the refusal is zzr's own.
+# swarm.sh hold: zzr's last row is reconcile's reopen, so hold refuses it, tailed as untailed. zzs, a
+# ready story whose last row is not reconcile's reopen, is held in both: the refusal is zzr's own.
 hold() { # <project> <slug> — hold's status and the line it printed last
   local out r=0
   out="$(cd "$1" && env -u HERDR_ENV -u SWARM_PROJECT bash "${REPO}/bin/swarm.sh" hold "$2" 'touches x' 2>&1)" || r=$?
@@ -172,7 +172,7 @@ hold() { # <project> <slug> — hold's status and the line it printed last
 REFUSED="1 swarm: hold: zzr's PR was closed unmerged; it is the lead's: list it in your report"
 check "hold refuses zzr, its last row reconcile's reopen, untailed" [ "$(hold "${PLAIN}" zzr)" == "${REFUSED}" ]
 check "hold refuses zzr, its last row reconcile's reopen, tailed" [ "$(hold "${TAILED}" zzr)" == "${REFUSED}" ]
-check "hold holds zzs, a ready story with no row, untailed and tailed" \
+check "hold holds zzs, a ready story whose last row is not reconcile's reopen, untailed and tailed" \
   [ "$(hold "${PLAIN}" zzs)|$(hold "${TAILED}" zzs)" == "0 logged: hold zzs: touches x|0 logged: hold zzs: touches x" ]
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

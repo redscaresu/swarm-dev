@@ -362,7 +362,10 @@ dataset_report() {
 #     A finish or reconcile ends it at its own time. Waits stop at
 #     the local midnight after --until (or now), where an item still waiting is listed under open as
 #     kind:slug. One with no leaving line counts only while its story or epic is on the board in review
-#     (a kept one only with kept: set), held or escalated. --epic does not narrow it.
+#     (a kept one only with kept: set), held or escalated. Last, after a blank line: items median_min
+#     p90_min max_min over the per-day table's items in the window (never a no-agent item), p90 by
+#     nearest rank, - in each column with none.
+#     --epic does not narrow it.
 #   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their
 #     base in (without --since, the 30 days up to --until or today): each merge-in (a PR commit gh's
 #     REST API lists whose headline merges the base in, by outcomes' main_merges rule) re-merged from
