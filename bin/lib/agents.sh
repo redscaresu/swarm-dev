@@ -77,7 +77,8 @@
 #     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder. A `board-pr:<step>`
 #     line is the lead's board edit, whose name may be a story's slug, so it is never one either, and
-#     nor is a `usage-limit` line (wait's, about the agent) or an `incident` line, which wait and close write about the agent, not the agent itself.
+#     nor is a `usage-limit` line (wait's, about the agent) or an `incident` line, which wait and close write about the agent, not the agent itself,
+#     or a `pr-opened` or `first-green` line, which watch and wait-pr write when they see the PR open or go green.
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
