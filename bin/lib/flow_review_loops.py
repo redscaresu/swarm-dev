@@ -215,7 +215,7 @@ rate = lambda f, r: f"{round(f / r, 1):g}" if r else "-"
 # Over the same PRs: the findings declined deferred on them, those of them whose text an escaped row on
 # the same PR repeats exactly (a prefix is no match; a deferred finding that escaped twice counts once, so
 # the count never passes deferred), and the PRs with four or more rounds.
-deferred = [(pr_key(f[2]), f[3]) for f in finding_rows(findings, width=8) if f[4] == "declined" and f[6] == "deferred" and pr_key(f[2]) in pr_rounds]
+deferred = [(pr_key(f[2]), f[3]) for f in finding_rows(findings, width=8) if f[4] == "declined" and f[6] == "deferred" and pr_key(f[2]) in pr_rounds]   # outcome-scan: ok findings.tsv's outcome, not events.tsv's
 escaped = {(pr_key(f[2]), f[3]) for f in finding_rows(findings, ("escaped",))}
 real = sum(d in escaped for d in deferred)
 four = sum(n >= 4 for n in s)
