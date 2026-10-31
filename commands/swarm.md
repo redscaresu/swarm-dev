@@ -122,6 +122,7 @@ Repeat until a step below says stop:
      with the line's kind, PR and text, so `next` stops offering it; or tell the user why none
      fits. Later stories stay the user's to start, as the gate lists them. Declined out-of-scope and
      deferred findings are the swarm's list of follow-ups, so you need not keep them in memory.
+     A deferred finding that a later round or fix proves real, which a conductor's report may name, is logged `swarm.sh log-finding --reviewer escaped <kind> <the PR it was deferred on> "<the deferred row's text, copied exactly>"`, never as a new fixed row.
 2. Do the step:
    - `fix-main <slug>`: `swarm.sh merge` found CI on the base red on a commit it merged, printed
      `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them. Or

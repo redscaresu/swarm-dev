@@ -789,10 +789,17 @@ changed files and check the builder's mutation proofs, and later rounds still tr
 from the findings rounds since the story's last build started: each findings `tell` that went out,
 or that herdr sent without seeing it taken up, and each findings step-up, whose brief carries the
 findings in place of a tell. A `review-agent --recheck` refused with a full round due counts too, at
-most once per round. A step-up or a restarted builder does not start the count again.
+most once per round. A step-up or a restarted builder does not start the count again. Nor does a
+build started after a kept close (its `kept` event, then that close's own line; reference-models.md
+§ Model and effort), unless the slug has a later ok close, reset or drop: the kept PR is still the
+one under review.
 After each review the agent triages its own findings. It never edits the code: a finding that is
-real and inside the story goes to the builder to fix. It declines the rest, each with a reason (nit,
-wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in one PR comment. It logs each declined finding at once, with
+real and inside the story goes to the builder to fix. From round 3 the round cap narrows that: the
+round's line, in the brief or from `review-agent --next`, has the agent send only a regression the PR
+introduces or a line now false about the code, and decline the rest as `deferred`. A deferral
+carries no `--because`, since the builder gave no reason and the call is the agent's. Each declined
+finding gets a reason (nit, wrong, out-of-scope, deferred, or the reason an earlier round gave), and
+the agent rebuts them all in one PR comment. It logs each declined finding at once, with
 `log-finding --declined <reason> --reviewer <who> --round <n>`; a finding a fallback reviewer raised
 in codex's place is logged with `--reviewer fallback`. It logs the ones to fix once the
 builder has pushed and `wait-pr --head` has found the PR at that head, never from the worktree's
@@ -968,8 +975,9 @@ round is one review whose findings went to the builder; a review started again (
 findings section, a review agent that timed out or crashed) is not one. A review on the latest head
 whose findings are all declined is a pass, never sent to the builder. Each declined finding is
 rebutted in the PR with a reason and logged with `log-finding --declined <reason> --reviewer <who>`:
-`nit` for a nit, an edge case or a low-value point, `out-of-scope` or `wrong` where they apply, and a
-point already declined with the reason it was first declined with. Before a story goes to review or
+`nit` for a nit, an edge case or a low-value point, `out-of-scope` or `wrong` where they apply,
+`deferred` for one the round cap holds back from round 3, and a point already declined with the
+reason it was first declined with. Before a story goes to review or
 merges, `review --head` and `merge --head` check that the PR's head is still the one the agent
 reviewed. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
