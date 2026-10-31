@@ -33,6 +33,7 @@
 # ponytail: a story readied, never built and gone from the board (or set blocked) is not counted; read the board's history if those matter.
 import collections, datetime, functools, glob, os, re, subprocess, sys, time
 import touches_rows
+from events_outcome import outcome
 from report import AGENT_NAME_MAX, agent_name, cut_records
 from touches_rows import deps as front_deps, entries, front, front_text, overlap
 project_dir = os.path.dirname(os.path.dirname(findings))
@@ -95,12 +96,13 @@ def secs(t):
 lo = secs(since) or float("-inf")   # since's 0000-00-00 placeholder does not parse
 hi = min((datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).timestamp(), time.time())
 
-evs = []   # (time, fields) of each ok line
+evs = []   # (time, fields) of each ok line, its outcome without the key=value tail
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     e = line.rstrip("\n").split("\t")
-    t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
+    o = outcome(e)
+    t = secs(e[0]) if len(e) == 5 and (o == "ok" or o.startswith("ok (")) else None
     if t is not None:
-        evs.append((t, e))
+        evs.append((t, e[:4] + [o]))
 
 # Stories are keyed by their full slug, conductors by their exact name. A close may name an agent by
 # herdr's name, and a build with no session log has only agents.tsv's: agent_name's, which may be cut

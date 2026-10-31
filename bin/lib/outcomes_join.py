@@ -1,6 +1,6 @@
 import collections, datetime, os, re, subprocess, sys
+from events_outcome import outcome
 from report import *
-from events_outcome import outcome as event_outcome   # not outcome: findings rows bind that name
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
 NO_PR = ("", "", "", "", "", "", "", "")
@@ -132,10 +132,10 @@ for line in os.environ["SWARM_ROWS"].splitlines():
 # Each finding goes to the latest build on its PR that started on or before the finding (both are
 # local dates), so a PR two builds share counts each finding once.
 found = [collections.Counter() for _ in rows]
-for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
+for day, _, pr, _, verdict, reviewer in finding_rows(sys.argv[1]):
     on = [i for i, r in enumerate(rows) if r[6] and pr_key(r[6]) == pr_key(pr) and r[0][0] <= day]
     if on:
-        found[on[-1]][(outcome, reviewer)] += 1
+        found[on[-1]][(verdict, reviewer)] += 1
 def open_at(slug, t):
     # The URLs of the slug's PRs open at t: created by then, and not closed (or merged) by then.
     return [p[0] for p in parsed(meta.get(slug, ("", "", ""))[2])
@@ -147,13 +147,12 @@ def open_at(slug, t):
 named_reviews = collections.defaultdict(list)
 for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
     e = line.rstrip("\n").split("\t")
-    if len(e) == 5:
-        e[4] = event_outcome(e)   # without its key=value tail (a review's round= and verdict=)
-    t = secs(e[0]) if len(e) == 5 and e[1] == "review" and (e[4] == "ok" or e[4].startswith("ok (")) else None
+    o = outcome(e)
+    t = secs(e[0]) if len(e) == 5 and e[1] == "review" and (o == "ok" or o.startswith("ok (")) else None
     if t is None:
         continue
-    urls = re.findall(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", e[4])
-    if e[4] == "ok":
+    urls = re.findall(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", o)
+    if o == "ok":
         urls = open_at(e[2], t)
         urls = urls if len(urls) == 1 else []
     for u in urls:
@@ -211,20 +210,19 @@ for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-pre
             (ready_at if m.group(1) == "ready" else blocked_at)[os.path.splitext(os.path.basename(path))[0]].append(float(lines[0]))
 for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
     e = line.rstrip("\n").split("\t")
-    if len(e) == 5:
-        e[4] = event_outcome(e)   # without its key=value tail (a review-agent line's round=)
-    t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
+    o = outcome(e)
+    t = secs(e[0]) if len(e) == 5 and (o == "ok" or o.startswith("ok (")) else None
     if t is None:
         continue
     if e[1] == "unblock":
         ready_at[e[2]].append(t)
     elif e[1] == "conduct":
         conducting[e[2]].append(t)
-    elif e[1] == "report" and secs(e[4][len("ok ("):-1]) is not None:
-        reported["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
+    elif e[1] == "report" and secs(o[len("ok ("):-1]) is not None:
+        reported["--backlog" if e[2] == "backlog" else e[2]].append(secs(o[len("ok ("):-1]))
     elif e[1].split(":")[0] == "close":
         closed[agent_name(e[2])].append(t)
-    elif e[1] in ("review-agent", "review-agent:next") and (e[4] == "ok" or re.fullmatch(r"ok \(round \d+\)", e[4])):
+    elif e[1] in ("review-agent", "review-agent:next") and (o == "ok" or re.fullmatch(r"ok \(round \d+\)", o)):
         round_starts[e[2]].append(t)
 
 def run_ends(epic):

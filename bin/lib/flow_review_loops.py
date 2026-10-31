@@ -3,8 +3,8 @@
 # for tuning the stop and escalation rules. Built from events.tsv, findings.tsv and agents.tsv, with no
 # gh call. Each build of a story (a story start, or an escalate build) is its own loop.
 import collections, datetime, os, re, statistics
+from events_outcome import fields, outcome
 from report import *
-from events_outcome import fields, outcome as event_outcome   # not outcome: the findings loop below binds that name
 
 def when(t):
     try:
@@ -30,7 +30,7 @@ def handed(t, cmd, target, out):
 
 # A review-finished line is read for its verdict= alone, as its outcome.
 evs = [e for f in (l.rstrip("\n").split("\t") for l in log_lines(events)) if len(f) >= 5 and when(f[0])
-       for e in handed(when(f[0]), f[1], f[2], fields(f).get("verdict", "") if f[1] == "review-finished" else event_outcome(f))]
+       for e in handed(when(f[0]), f[1], f[2], fields(f).get("verdict", "") if f[1] == "review-finished" else outcome(f))]
 slug_of.update((pr_key(review_url(cmd, out)), target) for _, cmd, target, out in evs if review_url(cmd, out))
 # Each builder's models, one agents.tsv line in a builder role per build start or step-up rung, in order,
 # read as outcomes reads them (7 fields), so they line up with its rows.
@@ -157,10 +157,10 @@ on_pr = collections.defaultdict(list)
 for lp in sorted((lp for b in built.values() for lp in b if lp["pr"]), key=lambda lp: lp["t0"]):
     lp["off"] = sum(len(o["rounds"]) for o in on_pr[pr_key(lp["pr"])])
     on_pr[pr_key(lp["pr"])].append(lp)
-for _, _, pr, _, outcome, _, _, n in finding_rows(findings, width=8):
+for _, _, pr, _, verdict, _, _, n in finding_rows(findings, width=8):
     took = [lp for lp in on_pr[pr_key(pr)] if n.isdigit() and lp["off"] < int(n)]
     if took:
-        took[-1]["c"][(int(n), outcome)] += 1
+        took[-1]["c"][(int(n), verdict)] += 1
 shown = {s: [lp for lp in b if lp["in"]] for s, b in sorted(built.items()) if not epic or epic_of.get(s) == epic}
 shown = {s: b for s, b in shown.items() if b}
 if not shown:
@@ -199,8 +199,8 @@ for slug, builds in shown.items():
                            fixed_before=sum(c[(i, "fixed")] for i in range(off + 1, up + 1)),
                            fixed_after=sum(c[(i, "fixed")] for i in range(up + 1, n + 1)))
         # A review-finished verdict says how the loop ended; with none, the lines before it do.
-        verdict = {"held": "held-for-lead", "pass": "pass", "decline-only": "decline-only"}.get(lp["verdict"])
-        end = "held-for-lead" if lp["held"] else verdict or ("open" if not (lp["merged"] or pr_key(pr) in merged)
+        said = {"held": "held-for-lead", "pass": "pass", "decline-only": "decline-only"}.get(lp["verdict"])
+        end = "held-for-lead" if lp["held"] else said or ("open" if not (lp["merged"] or pr_key(pr) in merged)
             else "decline-only" if lp["last"] == "decline-only" else "merged-after-fixes" if c[(n, "fixed")] else "pass")
         ends.append(f"{slug}\t{pr}\t{n}\t{end}")
         if pr != "-":
