@@ -18,7 +18,7 @@
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day, then merge's holds per day by kind), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong; or, --filed, a declined out-of-scope one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
-#   swarm.sh intervene <kind> "<one line>"                  log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first)
+#   swarm.sh intervene <kind> <cause> "<one line>"          log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first), and why, one of INTERVENE_CAUSES
 #   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -81,18 +81,19 @@ DIE_LEVEL=-1
 
 # event_fields <key=value>... — fields for the logged command's line, which main appends after its
 # outcome (append_event's tail). Like die's line, they are kept only at the command's own level, and
-# only while DIE_FILE is main's own: a nested $(...), or a subshell with a die file of its own
-# (upgrade_restart, ready_tell), keeps none. Each value's whitespace becomes _ and an empty value is -,
+# only while DIE_FILE is main's own (EV_ERR): a nested $(...), or a subshell with a die file of its
+# own (upgrade_restart, ready_tell), keeps none. Each value's whitespace becomes _ and an empty value is -,
 # so append_event never leaves a pair out for its value.
 event_fields() {
   local x v
-  [[ -n "${EV_FIELDS_FILE}" && "${EV_FIELDS_FILE}" == "${DIE_FILE}.fields" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]] || return 0
+  [[ -n "${EV_FIELDS_FILE}" && "${DIE_FILE}" == "${EV_ERR}" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]] || return 0
   for x in "$@"; do
     v="${x#*=}"; v="${v//[[:space:]]/_}"
     { printf '%s=%s\n' "${x%%=*}" "${v:--}" >> "${EV_FIELDS_FILE}"; } 2>/dev/null || true
   done
 }
-# Set only by main, beside DIE_FILE; never taken from the environment.
+# Set only by main, in the subshell a logged command runs in, to a file main made with mktemp (EV_FLD),
+# as it makes DIE_FILE's; never taken from the environment.
 EV_FIELDS_FILE=""
 
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
@@ -555,15 +556,30 @@ done
 # counts (dash passes them as DASH_INTERVENE_KINDS).
 INTERVENE_KINDS="lead-hand user-caught"
 
-# intervene <kind> <line> — log one time a person had to step in: an incident line, target -, outcome
-# `<kind>: <line>`, which flow's incidents section counts per day and kind. Its only line: main logs
-# none for it (target !), so an unknown kind or an empty line logs nothing. A line that could not be
-# written (unwritable, disk full) fails here, not with a logged: that counts nothing.
+# INTERVENE_CAUSES: why a person stepped in, intervene's cause= field; other is for a cause not listed.
+INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost other"
+
+# intervene <kind> <cause> <line...> — log one time a person had to step in: an incident line, target
+# -, outcome `<kind>: <line>`, which flow's incidents section counts per day and kind, with the field
+# cause=<cause>. Its only line: main logs none for it (target !), so an unknown kind or cause or an
+# empty line logs nothing. The old form, `intervene <kind> "<line>"` (two arguments, the second no
+# cause), still logs, with cause=none and a warning listing the causes, until hooks/user-caught-reminder.sh
+# names the new form. A line that could not be written (unwritable, disk full) fails here, not with a
+# logged: that counts nothing.
 intervene() {
-  [[ "$1" =~ ^[a-z-]+$ && " ${INTERVENE_KINDS} " == *" $1 "* ]] || die "intervene: the kind must be one of ${INTERVENE_KINDS}, not '$1'"
-  [[ -n "${2//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene $1 \"<one line>\""
-  append_event incident - "$1: $2" || die "intervene: could not write ${EVENTS_LOG}; nothing was logged"
-  echo "logged: $1: $2"
+  local kind="${1:-}" cause="${2:-}" line known=0
+  [[ "${kind}" =~ ^[a-z-]+$ && " ${INTERVENE_KINDS} " == *" ${kind} "* ]] || die "intervene: the kind must be one of ${INTERVENE_KINDS}, not '${kind}'"
+  [[ "${cause}" =~ ^[a-z-]+$ && " ${INTERVENE_CAUSES} " == *" ${cause} "* ]] && known=1
+  if [[ $# -eq 2 && ${known} == 0 ]]; then
+    line="${cause}"; cause=none
+    echo "intervene: warning: name a cause, one of ${INTERVENE_CAUSES}: swarm.sh intervene ${kind} <cause> \"<one line>\". Logging it with cause=none." >&2
+  else
+    [[ ${known} == 1 ]] || die "intervene: the cause must be one of ${INTERVENE_CAUSES}, not '${cause}'"
+    line="${*:3}"
+  fi
+  [[ -n "${line//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene ${kind} ${cause/#none/<cause>} \"<one line>\""
+  append_event incident - "${kind}: ${line}" "cause=${cause}" || die "intervene: could not write ${EVENTS_LOG}; nothing was logged"
+  echo "logged: ${kind}: ${line} (cause=${cause})"
 }
 
 # hold <slug> <why> — log that a conductor held a ready story back: a hold line, target the slug, outcome
@@ -626,7 +642,7 @@ dispatch() {
     review-yield) moved review-yield "flow's reviewers section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
-    intervene) intervene "${1:-}" "${*:2}" ;;
+    intervene) intervene "$@" ;;
     hold)   hold "${1:-}" "${*:2}" ;;
     lessons) [[ $# -eq 0 || ( $# -eq 1 && "$1" == --all ) ]] || die "usage: swarm.sh lessons [--all]"
             moved lessons "outcomes' recurring block" "outcomes [--since YYYY-MM-DD]" ;;
@@ -687,7 +703,8 @@ dispatch() {
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
 # _fix-main writes a fix-main story, and logs its own main-red line (fix_main), as merge does.
-# The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends.
+# The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends,
+# a conductor's watch's `pr-opened <slug>` when it says a story PR opened, and wait-pr's `first-green <slug>`, once per story PR.
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
@@ -1038,7 +1055,8 @@ main_signal() {
     [[ "${EV_CMD}" != merge && "${EV_CMD}" != upgrade ]] || wait "${EV_CHILD}" || true
   fi
   record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
-  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}" "${EV_ERR}.fields"
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ -z "${EV_FLD}" ]] || rm -f "${EV_FLD}"
   trap - "$1"
   kill -"$1" "$$"
 }
@@ -1062,7 +1080,7 @@ main_signal() {
 main() {
   local rc why a f fields=()
   [[ "${1:-}" != init ]] || init_check
-  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""; EV_FIELDS=""
+  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""; EV_FIELDS=""; EV_FLD=""
   # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
   if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
      || [[ "${EV_CMD}" == upgrade && "${SWARM_UPGRADE_WORKER:-}" != 1 && " $* " != *" --foreground "* ]] \
@@ -1106,18 +1124,19 @@ main() {
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
+  # event_fields' file, made before dispatch as the die file is, never a name built from it.
+  [[ "${EV_ERR}" == /dev/null ]] || EV_FLD="$(mktemp "${TMPDIR:-/tmp}/swarm-fields.XXXXXX" 2>/dev/null)" || EV_FLD=""
   EV_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
   # In the background, with stdin kept, so `wait` returns the moment a signal lands.
   set +e
-  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; [[ "${EV_ERR}" == /dev/null ]] || EV_FIELDS_FILE="${EV_ERR}.fields"
-   set -e; dispatch "$@") <&0 &
+  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; EV_FIELDS_FILE="${EV_FLD}"; set -e; dispatch "$@") <&0 &
   EV_CHILD=$!
   wait "${EV_CHILD}"; rc=$?
   set -e
   trap - INT TERM HUP
   read -ra fields <<< "${EV_FIELDS}"
-  if [[ -f "${EV_ERR}.fields" ]]; then while IFS= read -r f; do fields+=("${f}"); done < "${EV_ERR}.fields"; fi
+  if [[ -n "${EV_FLD}" && -f "${EV_FLD}" ]]; then while IFS= read -r f; do fields+=("${f}"); done < "${EV_FLD}"; fi
   if [[ "${EV_TARGET}" == '!' ]]; then
     :
   elif [[ ${rc} -ne 0 ]]; then
@@ -1132,7 +1151,8 @@ main() {
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}" ${fields[@]+"${fields[@]}"}
   fi
-  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}" "${EV_ERR}.fields"
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ -z "${EV_FLD}" ]] || rm -f "${EV_FLD}"
   return "${rc}"
 }
 
