@@ -2,7 +2,9 @@
 # incidents_test.sh — the incident events, their helpers stubbed: wait_agent's timeout writes one
 # wait-timeout line (not for an agent still working: a busy session, or herdr's route timing out with
 # nothing printed and read_state saying herdr:working; nor for a conductor's hour slice, nor for
-# herdr's wait failing early); an expired
+# herdr's wait failing early), with activity= naming the stall_reads that are 1 (or none) only when the
+# agent made no commit and wrote no own work to its session log during the wait; stall_reads' own
+# cases follow. An expired
 # login one login line however often it is waited on, and one more after a resume (matched through
 # agent_name, so a long slug's counts) or a new start, but not after a note, a failed tell or a stalled,
 # sign-blocked or sign-clear incident; a close
@@ -29,7 +31,7 @@ check() { # <name> <output> <exact expected output>
 }
 
 # As swarm.sh sets them, for the libraries sourced alone below.
-export AGENT_NAME_MAX=32 BUILDER_ROLES="code code-risky code-sonnet docs chore escalate verify"
+export AGENT_NAME_MAX=32 BUILDER_ROLES="code code-risky code-sonnet docs chore escalate verify" CFG_stall_minutes=30
 # swarm.sh's agent_name, for the same.
 agent_name() { local n; n=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-'); [[ "${n}" =~ ^[a-z] ]] || n="s${n}"; printf '%s' "${n:0:32}"; }
 # sites <case> [status] — run one case in a fresh project, in a subshell with agents.sh and lifecycle.sh
@@ -62,11 +64,31 @@ sites() (
   failed_build() { echo "${stub_prs}"; }
   st="${2:-busy}"   # the status settle times out on
   slow_timeout() { sleep 1; echo "${st}"; return 1; }
+  # act-*: a blocked builder with session sess-a, whose last commit (story_work_time) and last own work
+  # in its session log (session_mtime, read for real) are 10 minutes old; no stall read is true.
+  if [[ "$1" == act-* ]]; then
+    st=blocked; CLAUDE_PROJECTS="${PROJECT_DIR}/projects"; mkdir -p "${CLAUDE_PROJECTS}/p"
+    printf '2026-10-30\tcode\ta\tclaude\topus\thigh\tsess-a\n' > "${PROJECT_DIR}/.swarm/agents.tsv"
+    say() { printf '{"type":"assistant","timestamp":"%s","message":{"model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t1","name":"Bash"}]}}\n' \
+      "$(python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(sys.argv[1]))))' "$1")" >> "${CLAUDE_PROJECTS}/p/sess-a.jsonl"; }
+    old=$(($(date +%s) - 600)); echo "${old}" > "${PROJECT_DIR}/ct"; say "${old}"
+    stall_py() { [[ "$1" != story ]] || echo a; }
+    story_work_time() { cat "${PROJECT_DIR}/ct"; }
+    bg_running() { return 1; }
+    test_running() { return 1; }
+    sign_held() { return 1; }
+  fi
   case "$1" in
     timeout) settle() { slow_timeout; }; wait_agent a 1000 ;;
     herdr-timeout) settle() { sleep 1; return 1; }; read_state() { echo "${st}"; }; wait_agent a 1000 ;;
     slice) settle() { slow_timeout; }; SWARM_WAIT_SLICE=1 wait_agent conduct-e 1000 ;;
     herdr-fails) settle() { echo "${st}"; return 1; }; wait_agent a 60000 ;;
+    act-none) settle() { slow_timeout; }; wait_agent a 1000 ;;
+    act-test) test_running() { [[ "$1" == w:1 ]]; }; settle() { slow_timeout; }; wait_agent a 1000 ;;
+    act-commit) settle() { sleep 1; date +%s > "${PROJECT_DIR}/ct"; slow_timeout; }; wait_agent a 1000 ;;
+    act-same) at="$(date +%s)"; settle() { echo "${at}" > "${PROJECT_DIR}/ct"; slow_timeout; }
+      SWARM_WAIT_STARTED="${at}" wait_agent a 1000 ;;
+    act-session) settle() { sleep 1; say "$(date +%s)"; slow_timeout; }; wait_agent a 1000 ;;
     login) settle() { echo idle; }; login_expired() { return 0; }
       wait_agent a 1000; wait_agent a 1000; record_event tell:resume a; wait_agent a 1000 ;;
     stuck) settle() { echo idle; }; wait_agent a 1000; wait_agent a 1000; close_agent a met ;;
@@ -110,6 +132,37 @@ check "herdr's wait timing out on an agent herdr says is blocked writes its stat
   $'incident\ta\twait-timeout: herdr:blocked'
 check "a conductor's hour slice running out (SWARM_WAIT_SLICE) writes none" "$(sites slice blocked)" ""
 check "herdr's wait failing before the timeout writes none" "$(sites herdr-fails blocked)" ""
+check "a timeout with no commit or session write in the wait and a test run going logs activity=test" "$(sites act-test >/dev/null; site_fields act-test)" \
+  "wait-timeout activity=test role=code slug=a"
+check "a timeout with no commit or session write in the wait and nothing running logs activity=none" "$(sites act-none >/dev/null; site_fields act-none)" \
+  "wait-timeout activity=none role=code slug=a"
+check "a timeout after a commit made during the wait logs no activity=" "$(sites act-commit >/dev/null; site_fields act-commit)" "wait-timeout role=code slug=a"
+check "a timeout after a commit in the second the wait began logs no activity=" "$(sites act-same >/dev/null; site_fields act-same)" \
+  "wait-timeout role=code slug=a"
+check "a timeout after an own-work line in the session log during the wait, with no commit, logs no activity=" \
+  "$(sites act-session >/dev/null; site_fields act-session)" "wait-timeout role=code slug=a"
+
+# reads <on> — stall_reads for builder a in pane w:1, in a fresh subshell with agents.sh sourced: of
+# bg_running, test_running and sign_held, the one named <on> is stubbed true (when called with the
+# agent's own arguments) and the others false.
+reads() (
+  PROJECT_DIR="${ROOT}/p-reads"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_goal=off
+  # shellcheck source=bin/lib/agents.sh
+  source "${REPO}/bin/lib/agents.sh"
+  on="$1"
+  stall_py() { [[ "$1" != story ]] || echo a; }
+  story_work_time() { :; }
+  session_mtime() { :; }
+  bg_running() { [[ "${on}" == bg && "$1 $2" == "a 30" ]]; }
+  test_running() { [[ "${on}" == test && "$1" == w:1 ]]; }
+  sign_held() { [[ "${on}" == sign && "$1 $2" == "a a" ]]; }
+  stall_reads a w:1
+)
+check "stall_reads with a background task running reads bg=1 only" "$(reads bg)" "bg=1 test=0 sign=0"
+check "stall_reads with a test suite running reads test=1 only" "$(reads test)" "bg=0 test=1 sign=0"
+check "stall_reads with work its signer cannot sign reads sign=1 only" "$(reads sign)" "bg=0 test=0 sign=1"
+check "stall_reads with nothing running reads all 0" "$(reads none)" "bg=0 test=0 sign=0"
+
 check "an expired login waited on twice writes one login line, and a resume then another" "$(sites login)" \
   "$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tlogin: Login expired')"
 check "a stuck builder, waited on twice (nudged) and closed, writes one idle-no-pr line, the close's" "$(sites stuck)" \
