@@ -124,12 +124,16 @@ call "${P}" "swarm.sh merge ${U}" >/dev/null
 check "a pass writes nothing" test "$(lines)" -eq $((was + 1))
 check "a worktree's block logs to its main checkout" test "$(call "${W}" "gh pr merge 7")/$(lines)" == "2/$((was + 2))"
 
-# An agent's call adds slug= (its name without review- or conduct-) and role= (agents.tsv's column 2
-# for the name). A name swarm.sh's agent_name cut gives no slug=: CUT is its own cut of a long review
-# name, so the hook's NAME_MAX cannot drift from AGENT_NAME_MAX unseen.
+# An agent's call adds slug= and role= (agents.tsv's column 2 for the name). The slug reads the role
+# first: a builder keeps its whole name, review- and conduct- come off only for a review or conduct
+# agent, and the backlog's conductor and any other agent get none. A name swarm.sh's agent_name cut
+# gives no slug=: CUT is its own cut of a long review name, so the hook's NAME_MAX cannot drift from
+# AGENT_NAME_MAX unseen, and BACKLOG is swarm.sh's own name for the backlog's conductor.
 CUT="$(SWARM_PROJECT="${P}" "${REPO}/bin/swarm.sh" _name "review-a-story-slug-well-past-thirty-two-characters")"
+BACKLOG="$(SWARM_PROJECT="${P}" "${REPO}/bin/swarm.sh" _conductor backlog)"
 mkdir -p "${P}/.swarm"
-printf '2026-10-31\t%s\t%s\tclaude\topus\thigh\ts\n' review review-abc review "${CUT}" > "${P}/.swarm/agents.tsv"
+printf '2026-10-31\t%s\t%s\tclaude\topus\thigh\ts\n' review review-abc review "${CUT}" code review-tuning \
+  conduct "${BACKLOG}" conduct conduct-e1 review-fallback fallback-abc code s1abc > "${P}/.swarm/agents.tsv"
 # logged <hook command> <command> — the call from ${P} through <hook command> (the hook itself when
 # empty): its exit code, the lines it added, and the last line's outcome() and fields(), slash-separated.
 logged() {
@@ -141,6 +145,16 @@ check "an agent's blocked merge logs slug=, role= and version=, plugin.json's" \
   test "$(SWARM_AGENT=review-abc logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=review slug=abc version=${VERSION}"
 check "  ... and one whose name is ${#CUT} characters logs role= and no slug=" \
   test "$(SWARM_AGENT="${CUT}" logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=review version=${VERSION}"
+check "  ... a builder named review-tuning (role code) logs its whole name as slug=" \
+  test "$(SWARM_AGENT=review-tuning logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=code slug=review-tuning version=${VERSION}"
+check "  ... a conductor logs its epic as slug=" \
+  test "$(SWARM_AGENT=conduct-e1 logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=conduct slug=e1 version=${VERSION}"
+check "  ... the backlog's conductor, ${BACKLOG} (role conduct), logs no slug=" \
+  test "$(SWARM_AGENT="${BACKLOG}" logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=conduct version=${VERSION}"
+check "  ... a fallback reviewer (role review-fallback) logs no slug=" \
+  test "$(SWARM_AGENT=fallback-abc logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=review-fallback version=${VERSION}"
+check "  ... a builder named s1abc, story s1abc or 1abc, logs no slug=" \
+  test "$(SWARM_AGENT=s1abc logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=code version=${VERSION}"
 # A field the hook cannot read is left out, and the block still exits 2 and logs: the reads run inside
 # the Blocked handler, where a raise would exit 1, and the wrapper then lets through a call that does not
 # say merge. plugin <dir> [<plugin.json text>] copies the hook into <dir>/hooks, beside a plugin.json

@@ -69,6 +69,7 @@ SHOWN = 5  # paths a refusal names before "and N more"
 SEP = " ~~ "  # what parts an events.tsv outcome from its key=value tail: agents.sh's EVENT_SEP
 FIELD = re.compile(r"[a-z_]+=\S+")  # a tail field append_event keeps: key [a-z_]+, value with no whitespace
 NAME_MAX = 32  # swarm.sh's AGENT_NAME_MAX: agent_name cuts an agent's name to this many characters
+BUILDER_ROLES = {"code", "code-risky", "code-sonnet", "docs", "chore", "escalate", "verify"}  # swarm.sh's BUILDER_ROLES
 PIPES = itertools.count()
 MESSAGE = """merge-guard: blocked ({}). In a swarm project only `swarm.sh merge <PR URL>`, run alone,
 merges a PR (docs/reference.md § Merging). Text that only mentions a merge, such as a PR body, can go
@@ -592,26 +593,45 @@ def forbidden(d):
     return bool(f) and os.path.isdir(f) and os.path.realpath(f) == os.path.realpath(d)
 
 
+def agent_slug(name, role):
+    """The story an agent's name stands for, by agents.sh's agent_fields rule as far as the hook can
+    follow it without the board; empty for none. role is the agent's agents.tsv role, "" with no line
+    and None with agents.tsv unread. A name that may have been cut (agent_name cuts at NAME_MAX
+    characters) gives none, and so does s<not a letter>..., which only the board can settle. A building
+    role keeps the whole name. Otherwise review-<slug> gives <slug> and conduct-<epic> <epic> when the
+    role is review or conduct or unknown, and the backlog's conductor (conduct-backlog-...) gives none.
+    With the role unknown any other name is the slug, as a builder's is; with any other role it is none."""
+    if len(name) >= NAME_MAX or re.match(r"s[^a-z]", name):
+        return ""
+    if role in BUILDER_ROLES:
+        return name
+    if name.startswith("conduct-backlog-"):
+        return ""
+    m = re.fullmatch(r"(review|conduct)-(.+)", name)
+    if m and role in (m.group(1), "", None):
+        return m.group(2)
+    return "" if role else name
+
+
 def agent_fields(d):
     """slug= and role= for a swarm agent's call (SWARM_AGENT names it); none from the lead's session.
-    The slug is the name without a review- or conduct- prefix, and none when the name may have been
-    cut (agent_name cuts at NAME_MAX characters). The role is column 2 of the name's newest line in
-    d's .swarm/agents.tsv, as tell_gone reads it. A field it cannot read is left out."""
+    The role is column 2 of the name's newest line in d's .swarm/agents.tsv, as tell_gone reads it,
+    and the slug is agent_slug's for the name and that role. A field it cannot read is left out."""
     name = os.environ.get("SWARM_AGENT") or ""
     if not name:
         return []
-    out = ["slug=" + re.sub(r"^(review|conduct)-", "", name)] if len(name) < NAME_MAX else []
+    role = None
     try:
-        role = ""
         with open(os.path.join(d, ".swarm", "agents.tsv"), encoding="utf-8") as f:
+            role = ""
             for line in f:
                 c = line.rstrip("\n").split("\t")
                 if len(c) > 2 and c[2] == name:
                     role = c[1]
-        out.append("role=" + role)
     except Exception:
-        pass
-    return out
+        role = None
+    slug = agent_slug(name, role)
+    return (["slug=" + slug] if slug else []) + ([] if role is None else ["role=" + role])
 
 
 def version_field():

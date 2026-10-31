@@ -111,9 +111,14 @@ queued, or a merge with no merge commit. A merge at a head other than the checke
 merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
-A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The slug is the agent's
-name without a `review-` or `conduct-` prefix, and there is none when the name may have been cut at 32
-characters. The role comes from `.swarm/agents.tsv`. Every line adds `version=`, the plugin's version
+A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The role comes from
+`.swarm/agents.tsv`. The slug follows the rule for incident lines above as far as the guard can without
+the board. An agent with a building role has its whole name as the slug. A `review-<slug>` or
+`conduct-<epic>` name gives what follows the prefix when its role is review or conduct, or unknown (no
+line in agents.tsv, or a file the guard cannot read). The backlog's conductor gets none, and so does an
+agent with any other role. With the role unknown, any other name is the slug, as a builder's is. A
+name of 32 characters, which may have been cut, and an `s<digit>…` name, which only the board can
+settle, get no `slug=`. Every line adds `version=`, the plugin's version
 from its `.claude-plugin/plugin.json`. A field the guard cannot read is left out, and a failed read
 or write never changes its verdict. The lead's Stop hook (`hooks/lead-stop.sh`) writes a `lead-stop`
 line for each verdict, target the step `next` named and outcome `blocked` or `allowed`, with
