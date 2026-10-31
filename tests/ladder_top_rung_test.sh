@@ -109,12 +109,12 @@ run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH
 fm_of() { sed -n "s/^$1: *//p" "${P}/.swarm/board-state/stories/s1" "${P}/docs/stories/s1.md" 2>/dev/null | head -1 || true; }
 kind() { fm_of kind; }
 # held — the held lines' outcomes; escalated — the escalated lines'; stepped — step-ups after 10:00.
-held() { awk -F'\t' '$2 == "held" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+held() { awk -F'\t' '$2 == "held" { print $5 }' "${P}/.swarm/events.tsv" | no_version | paste -sd, -; }
 escalated() { awk -F'\t' '$2 == "escalated" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
-stepped() { awk -F'\t' '$2 == "escalate" && $1 > "2026-10-18T10:00:00Z" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+stepped() { awk -F'\t' '$2 == "escalate" && $1 > "2026-10-18T10:00:00Z" { print $5 }' "${P}/.swarm/events.tsv" | no_version | paste -sd, -; }
 told() { grep -q 'told s1' <<< "$1" && echo yes || echo no; }
 # finished — the review-finished lines' outcomes, with their key=value tails
-finished() { awk -F'\t' '$2 == "review-finished" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+finished() { awk -F'\t' '$2 == "review-finished" { print $5 }' "${P}/.swarm/events.tsv" | no_version | paste -sd, -; }
 block="${P}/.swarm/escalated/s1"; kept="${P}/.swarm/briefs/s1.held-findings.md"
 HELD="ok (top-rung: findings round 2 on fable)"
 
@@ -213,12 +213,12 @@ check "fable above a sonnet,opus ladder: its 2nd findings round holds it" "no|${
 fresh opus 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "opus: the 2nd findings tell since the step-up is sent, as today" "yes|code|" "$(told "${out}")|$(kind)|$(held)"
 check "opus: the sent tell's line ends review round 4 with verdict=findings, and writes no review-finished" "ok ~~ round=4 verdict=findings|" \
-  "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$(finished)"
+  "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv" | no_version)|$(finished)"
 fresh opus 2; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "opus: the 3rd steps it up to fable, as today" "ok (findings-3: opus -> fable)|" "$(stepped)|$(held)"
 check "opus: the tell the step-up took the place of ends review round 5 with verdict=findings on its stepped-up line" \
   "stepped up, with them in its handover brief|round=5 verdict=findings" \
-  "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv" | sed -E 's/.*(stepped up, with them in its handover brief).* ~~ (.*)$/\1|\2/')"
+  "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv" | no_version | sed -E 's/.*(stepped up, with them in its handover brief).* ~~ (.*)$/\1|\2/')"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -94,7 +94,7 @@ build_on() {
   rm -f "${P}/.swarm/events.tsv" "${P}/.swarm/briefs/s1.step-up"; : > "${ROOT}/herdr.log"
 }
 marker() { if [[ -e "${P}/.swarm/briefs/s1.step-up" ]]; then echo kept; else echo gone; fi; }
-failed_lines() { awk -F'\t' '$2 == "step-up:failed" { print $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null | paste -sd, -; }
+failed_lines() { awk -F'\t' '$2 == "step-up:failed" { print $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null | no_version | paste -sd, -; }
 newest() { awk -F'\t' '$3 == "s1" { l = $2 " " $5 } END { print l }' "${P}/.swarm/agents.tsv"; }
 # reread_at — the clock when rung_late looked the new builder up (the first list after a prompt).
 reread_at() { awk '/^agent prompt/ { p = 1 } p && /^list at / { print $3; exit }' "${ROOT}/herdr.log"; }

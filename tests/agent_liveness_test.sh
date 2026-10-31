@@ -57,7 +57,7 @@ printf '%s\n' '⏺ Noted for the brief:' '  commands can be denied by the Claude
 printf '%s\n' '⏺ API Error: foreign' > "${ROOT}/pane-w:9"
 
 status() { (cd "${P}" && SWARM_PROJECT="${P}" HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > /dev/null 2>&1) || true; }
-incidents() { cut -f2,3,5 "${P}/.swarm/events.tsv" 2>/dev/null | grep '^incident' || true; }
+incidents() { cut -f2,3,5 "${P}/.swarm/events.tsv" 2>/dev/null | no_version | grep '^incident' || true; }
 status; status
 check "two status runs log one event per stopped pane" test "$(incidents)" = "$(printf '%s\n' \
   $'incident\ts-err\tapi-error: API Error: Connection error (ECONNRESET)' \

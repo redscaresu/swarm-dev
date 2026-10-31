@@ -216,7 +216,7 @@ check "a slow conductor start runs to its end, past the deadline" "start done,st
 check "a slow conductor start is printed" "started" \
   "$(grep -q '^started: conduct-backlog-.* (swarm.sh conduct --backlog)$' <<< "${OUT}" && echo started || echo "not started: ${OUT}")"
 check "a slow conductor start logs its conduct line ok" "--backlog ok" \
-  "$(awk -F'\t' '$2 == "conduct" { print $3 " " $5 }' "${p}/.swarm/events.tsv" 2>/dev/null)"
+  "$(awk -F'\t' '$2 == "conduct" { print $3 " " $5 }' "${p}/.swarm/events.tsv" 2>/dev/null | no_version)"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failure(s)"; exit 1; fi
 echo "all passed"

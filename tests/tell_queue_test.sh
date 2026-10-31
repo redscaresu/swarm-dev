@@ -418,7 +418,7 @@ fresh; state busy
 tell "fix round unreachable" >/dev/null
 touch "${ROOT}/childfail"; state idle; settle; rm -f "${ROOT}/childfail"
 check "a queued tell whose delivery fails before claiming it: three tries, then to the lead, never sent" "3|yes|0" \
-  "$(awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && $5 == "tell: b1 was not told: herdr could not list its agents; tell it again" { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv")|$([[ "$(lead)" == "tell undelivered: b1 findings at "*"; its delivery failed before sending it 3 times), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(prompts)"
+  "$(no_version < "${p}/.swarm/events.tsv" | awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && $5 == "tell: b1 was not told: herdr could not list its agents; tell it again" { n++ } END { print n + 0 }')|$([[ "$(lead)" == "tell undelivered: b1 findings at "*"; its delivery failed before sending it 3 times), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(prompts)"
 
 # A delivery that fails before claiming its tell while a newer tell replaces it on its way
 # (${ROOT}/childreplace): nothing goes to the lead, so the older findings are never offered again.

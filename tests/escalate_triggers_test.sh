@@ -177,7 +177,7 @@ waits() {
 }
 red_heads() { [[ -e "${P}/.swarm/red-heads.tsv" ]] && echo yes || echo no; }
 # failed_lines — the outcomes of s1's step-up:failed events.tsv lines, comma-separated.
-failed_lines() { awk -F'\t' '$2 == "step-up:failed" && $3 == "s1" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+failed_lines() { awk -F'\t' '$2 == "step-up:failed" && $3 == "s1" { print $5 }' "${P}/.swarm/events.tsv" | no_version | paste -sd, -; }
 
 for ladder in sonnet,opus,fable ""; do
   want="ok (no-pr: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""

@@ -242,7 +242,7 @@ start_retry() {
   n="$(wc -l < "${ROOT}/herdr.log")"
   SWARM_SLEEP_SCALE=0.01 run story "${slug}" > "${ROOT}/out-${slug}" || rc=$?
   echo "${rc}|$(tail -n +"$((n + 1))" "${ROOT}/herdr.log" | grep -cE '^(tab create|pane split) ')"
-  awk -F'\t' -v s="${slug}" '$2 == "story" && $3 == s { print $5 }' "${p}/.swarm/events.tsv"
+  awk -F'\t' -v s="${slug}" '$2 == "story" && $3 == s { print $5 }' "${p}/.swarm/events.tsv" | no_version
 }
 PNF="herdr could not open a pane in tab"
 NOENV="the pane's shell did not take the agent's environment"

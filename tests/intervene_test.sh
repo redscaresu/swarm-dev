@@ -37,7 +37,7 @@ check "swarm.sh names the two kinds" "${KINDS}" "lead-hand user-caught"
 CAUSES="$(sed -n 's/^INTERVENE_CAUSES="\(.*\)"$/\1/p' "${REPO}/bin/swarm.sh")"
 check "swarm.sh names the causes" "$(wc -w <<< "${CAUSES}" | tr -d ' ')" 20
 # outcome() and fields() of events.tsv's last line, read by bin/lib/events_outcome.py.
-last_line() { python3 -c 'import csv, sys; sys.path.insert(0, sys.argv[1]); import events_outcome as e; row = list(csv.reader(open(sys.argv[2]), delimiter="\t"))[-1]; print(e.outcome(row)); print(" ".join("%s=%s" % kv for kv in sorted(e.fields(row).items())))' "${REPO}/bin/lib" "${EV}"; }
+last_line() { python3 -c 'import csv, sys; sys.path.insert(0, sys.argv[1]); import events_outcome as e; row = list(csv.reader(open(sys.argv[2]), delimiter="\t"))[-1]; print(e.outcome(row)); print(" ".join("%s=%s" % kv for kv in sorted(e.fields(row).items())))' "${REPO}/bin/lib" "${EV}" | no_version; }
 
 check "with no intervention dash shows no interventions light" "$(COLUMNS=200 sw dash 2>&1 | grep -c intervention)" 0
 rc=0; sw intervene lead-typo flaky-test "typed into a pane" >/dev/null 2>&1 || rc=$?

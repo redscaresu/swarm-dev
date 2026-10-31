@@ -1398,7 +1398,7 @@ goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /
   [[ -z "${WORKED:-}" ]] || python3 -c 'import datetime, json
 t = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
 print(json.dumps({"type": "assistant", "timestamp": t.isoformat(timespec="milliseconds").replace("+00:00", "Z"), "message": {"model": "m", "content": []}}))' > "${dir}/projects/p/sess-s1.jsonl"
-  out="$(tellout idle "$@")"; ev="$(cut -f2,3,5 "${dir}/.swarm/events.tsv" | tr '\t\n' ' |')"; goal="$(sed -n '/^\/goal /,/^--$/p' "${dir}/sent" 2>/dev/null)"
+  out="$(tellout idle "$@")"; ev="$(cut -f2,3,5 "${dir}/.swarm/events.tsv" | no_version | tr '\t\n' ' |')"; goal="$(sed -n '/^\/goal /,/^--$/p' "${dir}/sent" 2>/dev/null)"
   if [[ ${rc} == 0 && "${out}" == *"exit 0" && "$(records)" == 2 && "$(head -1 "${dir}/sent")" == "From the conductor:" \
         && "${goal}" == *"the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied"*"${want}"*"or stop after 4 more turns"* && "${goal}" == *"state: busy"* \
         && -z "$(ls "${dir}/tmp")" && "${ev}" == "tell:findings s1 ok ~~ round=1 verdict=findings|" ]] \
@@ -1462,7 +1462,7 @@ noteout() { rm -f "${dir}/sent"; (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp"
 printf 'first note\n' > "${dir}/n1.md"; printf 'second note\n' > "${dir}/n2.md"
 out="$(noteout conduct-e note n1.md)"
 if [[ "${out}" == *"noted conduct-e"*"exit 0" && "$(cat "${inbox}" 2>/dev/null)" == *"first note"* && ! -f "${dir}/sent" \
-      && "$(tail -1 "${dir}/.swarm/events.tsv" | cut -f2,3,5)" == $'tell:note\tconduct-e\tok' ]]; then echo "ok   tell note leaves a busy conductor the file in its inbox, prompts nothing, and logs tell:note ok"; else
+      && "$(tail -1 "${dir}/.swarm/events.tsv" | cut -f2,3,5 | no_version)" == $'tell:note\tconduct-e\tok' ]]; then echo "ok   tell note leaves a busy conductor the file in its inbox, prompts nothing, and logs tell:note ok"; else
   echo "FAIL tell note leaves a busy conductor the file in its inbox: got '${out}', inbox '$(cat "${inbox}" 2>/dev/null)', sent '$(cat "${dir}/sent" 2>/dev/null)', events '$(tail -1 "${dir}/.swarm/events.tsv")'"; fails=$((fails + 1)); fi
 out="$(noteout conduct-e note n2.md)"
 if [[ "${out}" == *"exit 0" && "$(grep -v '^From the lead' "${inbox}" | grep .)" == $'first note\nsecond note' ]]; then echo "ok   a second note appends after the first"; else
@@ -1472,7 +1472,7 @@ for who in s1 conduct-zz; do
   out="$(noteout "${who}" note n1.md)"
   want="a note goes only to a conductor"; [[ ${who} == s1 ]] || want="could not reach conduct-zz"
   if [[ "${out}" == *"${want}"*"exit 1" && ! -e "${inbox%/*}/${who}.md" \
-        && "$(tail -1 "${dir}/.swarm/events.tsv" | cut -f2,3,5)" != *ok ]]; then echo "ok   tell note refuses ${who}, writes no inbox and logs no ok"; else
+        && "$(tail -1 "${dir}/.swarm/events.tsv" | cut -f2,3,5 | no_version)" != *ok ]]; then echo "ok   tell note refuses ${who}, writes no inbox and logs no ok"; else
     echo "FAIL tell note refuses ${who}: got '${out}', inbox '$(ls "${inbox%/*}" 2>/dev/null)'"; fails=$((fails + 1)); fi
 done
 out="$(noteout conduct-e bogus n1.md)"
@@ -1653,7 +1653,7 @@ if [[ "${out}" == *"started: conduct-backlog-"*"warning: swarm.sh conduct e4 fai
   echo "ok   next with one start failing keeps the started: lines of the others"; else
   echo "FAIL next with one start failing: '${out}'"; fails=$((fails + 1)); fi
 # Each start is logged as a dispatched swarm.sh conduct logs it: ok, or its die line.
-ev="$(awk -F'\t' '$2 == "conduct" { print $3 " " $5 }' "${dir}/.swarm/events.tsv" 2>/dev/null)"
+ev="$(awk -F'\t' '$2 == "conduct" { print $3 " " $5 }' "${dir}/.swarm/events.tsv" 2>/dev/null | no_version)"
 if grep -qx -- "--backlog ok" <<< "${ev}" && grep -qx "e4 e4: bad parent 'Not_A_Slug'" <<< "${ev}"; then
   echo "ok   next logs each conductor start, ok or its die line, in events.tsv"; else
   echo "FAIL next's conductor starts in events.tsv: '${ev}'"; fails=$((fails + 1)); fi

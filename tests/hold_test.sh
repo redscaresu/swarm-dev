@@ -40,7 +40,7 @@ check "hold on a blocked story fails and logs nothing" "${rc} $(lines)" "1 0"
 rc=0; sw hold r '  ' >/dev/null 2>&1 || rc=$?
 check "hold with no reason fails and logs nothing" "${rc} $(lines)" "1 0"
 sw hold r 'touches docs/x.md with #432' >/dev/null
-check "hold on a ready story adds one events.tsv line: hold, the slug, ok (the reason)" "$(lines) $(cut -f2,3,5 "${EV}")" \
+check "hold on a ready story adds one events.tsv line: hold, the slug, ok (the reason)" "$(lines) $(cut -f2,3,5 "${EV}" | no_version)" \
   $'1 hold\tr\tok (touches docs/x.md with #432)'
 
 # c's PR was closed unmerged: reconcile's reopen is its last event, which unblock --startable reads

@@ -135,7 +135,7 @@ run story child >/dev/null || true   # a start that fails shows as the FAIL, not
 check "story makes a worktree whose HEAD is origin/story/p's head" "$(head_of p)" \
   "$(git -C "${ROOT}/svc-wt/child" rev-parse HEAD 2>&1)"
 check "events.tsv gains stacked child, ok (on p)" "ok (on p)" \
-  "$(awk -F'\t' '$2 == "stacked" && $3 == "child" { print $5 }' "${p}/.swarm/events.tsv")"
+  "$(awk -F'\t' '$2 == "stacked" && $3 == "child" { print $5 }' "${p}/.swarm/events.tsv" | no_version)"
 brief="$(cat "${p}/.swarm/briefs/child.md" 2>&1 || true)"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "the child's brief says to open the PR against the base, with Merge after and the parent's PR URL" "yes" \

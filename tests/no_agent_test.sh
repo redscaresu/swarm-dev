@@ -108,7 +108,7 @@ silent() { [[ "$(out)|$(rc)" == "|1" ]]; }
 no_line() { ! grep -q '^no-agent:' "${ROOT}/out"; }
 # fires <slug> <exit> — the poll printed exactly that no-agent line and exited 0; else it says what it got.
 fires() { [[ "$(out)|$(rc)" == "no-agent: $1, exit: $2|0" ]] || { echo "  got: $(out)|$(rc)"; return 1; }; }
-last_event() { tail -1 "${P}/.swarm/events.tsv" 2>/dev/null | awk -F'\t' '{ print $2 " " $3 " " $5 }'; }
+last_event() { tail -1 "${P}/.swarm/events.tsv" 2>/dev/null | awk -F'\t' '{ print $2 " " $3 " " $5 }' | no_version; }
 events() { awk -F'\t' '{ print $2 " " $3 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 # never_woke <slug> [after] — no lead-woken or no-agent events line for <slug> (after the first line
 # matching [after]): a silent last poll alone does not show an earlier poll never fired.

@@ -1124,7 +1124,7 @@ check "dropped lines: a --board PR: no board state written" bash -c "! grep -rqs
 hold_fields() {
   awk -F'\t' '$2 == "merge"' "${P}/.swarm/events.tsv" | tail -1 | python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
 from events_outcome import fields
-print(" ".join(sorted(k + "=" + v for k, v in fields(sys.stdin.readline().rstrip("\n").split("\t")).items())))' "${SWARM%/*}/lib"
+print(" ".join(sorted(k + "=" + v for k, v in fields(sys.stdin.readline().rstrip("\n").split("\t")).items())))' "${SWARM%/*}/lib" | no_version
 }
 fresh; echo '[{"filename":"hooks/x.sh","status":"modified"}]' > "${FX}/files"; merge "${URL}"
 refused "hold field: a protected path" "held: s changes hooks/x.sh, which only the user merges"

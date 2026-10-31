@@ -412,7 +412,7 @@ check "the detached run moved every agent, b1 in a later round, and let the proj
   "$(grep -- ' -> ' "${ULOG}" | paste -sd'|' -)|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)"
 check "the log ends on its tally" "upgrade done: 3 moved, 0 left (exit 0)" "$(tail -1 "${ULOG}")"
 check "the run is one event, the worker's, its target the epic" "$((ev0 + 1))|e	ok" \
-  "$(awk -F'\t' '$2 == "upgrade"' "${EV}" | wc -l | tr -d ' ')|$(awk -F'\t' '$2 == "upgrade" { l = $3 "\t" $5 } END { print l }' "${EV}")"
+  "$(awk -F'\t' '$2 == "upgrade"' "${EV}" | wc -l | tr -d ' ')|$(awk -F'\t' '$2 == "upgrade" { l = $3 "\t" $5 } END { print l }' "${EV}" | no_version)"
 
 # --- Two upgrades started together run one, and both print its pid. A TERM mid-run names b1, still
 # waiting, as left, tells the conductor it paused which builders moved and to carry on, lets it go,

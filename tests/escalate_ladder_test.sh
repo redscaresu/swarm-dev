@@ -136,7 +136,7 @@ escalates() { grep -c $'\tescalate\t' "${P}/.swarm/events.tsv" 2>/dev/null || tr
 starts() { grep -c '^agent start' "${ROOT}/herdr.log" 2>/dev/null || true; }
 newest() { awk -F'\t' -v n="$1" '$3 == n { l = $2 " " $5 " " $6 } END { print l }' "${P}/.swarm/agents.tsv"; }
 # failed_lines <slug> — the outcomes of <slug>'s step-up:failed events.tsv lines, comma-separated.
-failed_lines() { awk -F'\t' -v s="$1" '$2 == "step-up:failed" && $3 == s { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+failed_lines() { awk -F'\t' -v s="$1" '$2 == "step-up:failed" && $3 == s { print $5 }' "${P}/.swarm/events.tsv" | no_version | paste -sd, -; }
 # attempts — s1's attempts: as swarm.sh reads it (board.sh's get_fm: its state file, then its file).
 # shellcheck source=/dev/null
 attempts() { (export BOARD="${P}/docs" PROJECT_DIR="${P}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${BOARD}/stories/s1.md" attempts) 2>/dev/null || true; }
@@ -179,7 +179,7 @@ check "it pastes the story as the board holds it, which the last builder may hav
 # shellcheck disable=SC2016 # the backticks are the brief's, not a command
 check "it names the PR body's models line, with every model in order" "yes" "$(has 'models line: `Models: sonnet, opus`' "${brief}")"
 check "it logs one escalate line naming the trigger and both models" "1|ok (findings-3: sonnet -> opus)" \
-  "$(escalates)|$(awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv")"
+  "$(escalates)|$(awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | no_version)"
 check "and says so" "yes" "$(has "stepped up: s1 from sonnet to opus (code)" "${out}")"
 
 # A start that fails at its first herdr step (the tab) stops there with that step's own message,
@@ -246,7 +246,7 @@ check "a line another conductor records while that drop runs is kept" "1|none" \
 rm "${ROOT}/promptfail"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume whose brief is taken up has started: the step-up stands, on record once" "0|escalate fable xhigh|1|2|ok (ci-red-2: opus -> fable)|gone" \
-  "${rc}|$(newest s1)|$(grep -c $'\ts1\tclaude\tfable\t' "${P}/.swarm/agents.tsv")|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
+  "${rc}|$(newest s1)|$(grep -c $'\ts1\tclaude\tfable\t' "${P}/.swarm/agents.tsv")|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv" | no_version)|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "with nothing to resume, --resume refuses" "1|yes" "${rc}|$(has "no step-up of 's1' waits to start" "${out}")"
 
@@ -473,7 +473,7 @@ rl_story() {
   echo "w:r${1#f} review-$1" > "${P}/.swarm/state/review-$1"
 }
 # notes_to_rl — conduct-rl's tell:note lines' outcomes; prompts_to_rl — the agent prompts herdr sent w:c1.
-notes_to_rl() { awk -F'\t' '$2 == "tell:note" && $3 == "conduct-rl" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+notes_to_rl() { awk -F'\t' '$2 == "tell:note" && $3 == "conduct-rl" { print $5 }' "${P}/.swarm/events.tsv" | no_version | paste -sd, -; }
 prompts_to_rl() { grep -c '^agent prompt w:c1 ' "${ROOT}/herdr.log" || true; }
 # settle_rl — wait (20 s at most) for the later check a note to conduct-rl left to end.
 settle_rl() { local i; for ((i = 0; i < 100; i++)); do [[ -e "${P}/.swarm/inbox/conduct-rl.later" ]] || return 0; sleep 0.2; done; }
@@ -513,7 +513,7 @@ f_story f14; echo "w:c2 ${bl}" > "${P}/.swarm/state/backlog"; printf '%s\n' "${b
 out="$(SWARM_NOTE_WAKE_SECS=1 run step-up f14 findings-3)" && rc=0 || rc=$?
 settle_bl() { local i; for ((i = 0; i < 100; i++)); do [[ -e "${P}/.swarm/inbox/${bl}.later" ]] || return 0; sleep 0.2; done; }; settle_bl
 check "f14, with no epic, has its failed step-up noted to the backlog's conductor" "1|ok|yes|${n}" \
-  "${rc}|$(awk -F'\t' -v c="${bl}" '$2 == "tell:note" && $3 == c { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -)|$(has "f14's step-up failed after its builder was closed" "$(cat "${P}/.swarm/inbox/${bl}.md" 2>/dev/null || true)")|$(notes_to_rl)"
+  "${rc}|$(awk -F'\t' -v c="${bl}" '$2 == "tell:note" && $3 == c { print $5 }' "${P}/.swarm/events.tsv" | no_version | paste -sd, -)|$(has "f14's step-up failed after its builder was closed" "$(cat "${P}/.swarm/inbox/${bl}.md" 2>/dev/null || true)")|$(notes_to_rl)"
 rm "${ROOT}/startfail"
 rl_story f12; echo "w:2 renamed" > "${P}/.swarm/state/f12"; printf '%s\n' "conduct-rl w:c1" > "${ROOT}/keep"; cat "${ROOT}/keep" >> "${ROOT}/agents"
 touch "${ROOT}/closefail"; out="$(HERDR_PANE_ID=w:r12 SWARM_NOTE_WAKE_SECS=1 run step-up f12 findings-3)" && rc=0 || rc=$?; rm "${ROOT}/closefail"

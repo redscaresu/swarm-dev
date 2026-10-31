@@ -49,7 +49,7 @@ from events_outcome import fields, outcome
 rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[2])] if os.path.exists(sys.argv[2]) else []
 for r in (r for r in rows if r[1] == "incident"):
     print(outcome(r) + "|" + " ".join("%s=%s" % kv for kv in sorted(fields(r).items())))' \
-    "${SWARM%/*}/lib" "${ROOT}/$1/.swarm/events.tsv"
+    "${SWARM%/*}/lib" "${ROOT}/$1/.swarm/events.tsv" | no_version
 }
 
 # gh answers pr view with the state ROOT/prs gives the URL; anything else fails.
@@ -322,7 +322,7 @@ pulled() {
 left() {
   echo "$([[ -e "${ROOT}/$1-wt/$2" ]] && echo worktree) $(git -C "${ROOT}/$1" show-ref -q --verify "refs/heads/story/$2" && echo branch) $(git -C "${ROOT}/$1.git" show-ref -q --verify "refs/heads/story/$2" && echo origin)"
 }
-finished() { awk -F'\t' '$2 == "reconcile" && $5 == "ok (finished)" { printf "%s ", $3 }' "${ROOT}/$1/.swarm/events.tsv" 2>/dev/null; }
+finished() { no_version < "${ROOT}/$1/.swarm/events.tsv" 2>/dev/null | awk -F'\t' '$2 == "reconcile" && $5 == "ok (finished)" { printf "%s ", $3 }'; }
 
 # --- The base pulled by hand after the PRs of a and b merged and deleted them, before reconcile saw
 # either: reconcile finishes both after the fact. a's builder is closed and its build cleared here and
