@@ -681,7 +681,7 @@ Goal 5's first bar, which the lead reads by hand:
 | Goal | Bar | Read by |
 |---|---|---|
 | 1. Review rounds end | review wait median under 60 minutes | `flow time_in_state: review_wait_median` |
-| 1. Review rounds end | PRs with four or more rounds under 15% | `flow review_loops: prs_4plus_rounds`, over `prs` |
+| 1. Review rounds end | PRs with four or more rounds under 15% | `flow review_loops: prs_4plus_rounds`, its percentage |
 | 2. Every agent's tell is delivered or explained | agent-pane tells refused under 10% | `flow tell_refusals: refused`, over `tells` on the `agent all` row |
 | 3. No false stall step-up | 0 false stall step-ups | `flow incidents: bg`, `test` and `sign`, and its `false stalls` line |
 | 4. A failed start is retried, then reaches the lead | 0 review agents not restarted within 10 minutes | `flow start_failures: not_restarted` |

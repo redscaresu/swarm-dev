@@ -150,15 +150,17 @@ headers() { # <section>... — `<section><TAB><word>` for each header word those
     awk -F'\t' '/^## /{s = substr($0, 4); next}
     NF > 1 {for (i = 1; i <= NF; i++) if ($i !~ /^[a-z][a-z0-9_]*$/) next; for (i = 1; i <= NF; i++) print s "\t" $i}'
 }
+# The whole word after `flow ` and after its colon, so a name that only starts like a real one fails.
+SECTION_RE='^flow ([^: ]+)' COLUMN_RE='^flow [^: ]+: ([^ ,;]+)'
 section_check() { # <features.tsv> [exempt feature names, one per line] — one line per row that fails
   local f="$1" exempt="${2-${EXEMPT}}" bad="" todo="" sections=() feature landed metric baseline uses section col
   while IFS=$'\t' read -r feature landed metric baseline uses; do
-    [[ "${metric}" =~ ^flow\ ([a-z_]+) ]] || continue
+    [[ "${metric}" =~ ${SECTION_RE} ]] || continue
     section="${BASH_REMATCH[1]}"
     [[ -f "${ROOT}/bin/lib/flow_${section}.py" ]] || { bad+="${feature}: no bin/lib/flow_${section}.py"$'\n'; continue; }
     [[ "${hld_epics}" == *" ${landed} "* ]] || continue
     ! grep -Fxq "${feature}" <<< "${exempt}" || continue
-    col=""; [[ "${metric}" =~ ^flow\ [a-z_]+:\ ([a-z0-9_-]+) ]] && col="${BASH_REMATCH[1]}"
+    col=""; [[ "${metric}" =~ ${COLUMN_RE} ]] && col="${BASH_REMATCH[1]}"
     [[ -n "${col}" ]] || { bad+="${feature}: flow ${section} names no column"$'\n'; continue; }
     todo+="${feature}"$'\t'"${section}"$'\t'"${col}"$'\n'; sections+=("${section}")
   done < <(tail -n +2 "${f}")
@@ -172,11 +174,12 @@ section_check() { # <features.tsv> [exempt feature names, one per line] — one 
 }
 printf '%s\n' $'feature\tlanded\tmetric\tbaseline\tuses' $'no-section\tlead-woken\tflow no_such_section: x\t0\tevent:story' \
   $'no-column\tlead-woken\tflow lead_queue: no_such_column\t0\tevent:story' $'bare\tlead-woken\tflow lead_queue\t0\tevent:story' \
-  $'old-gone\t2020-01-01\tflow no_such_section\t0\tevent:story' > "${dir}/bad.tsv"
-check "a missing flow section fails on any row; a column the section does not print, or none, fails on a row of the HLD's epics" \
+  $'old-gone\t2020-01-01\tflow no_such_section\t0\tevent:story' $'prefix\t2020-01-01\tflow lead_queue-v2: p90_min\t0\tevent:story' \
+  $'col-prefix\tlead-woken\tflow lead_queue: p90_minX\t0\tevent:story' > "${dir}/bad.tsv"
+check "a missing flow section fails on any row; a column the section does not print, or none, fails on a row of the HLD's epics; a name that only starts like a real one fails" \
   "$(section_check "${dir}/bad.tsv")" "$(printf '%s\n' 'no-section: no bin/lib/flow_no_such_section.py' \
-  'bare: flow lead_queue names no column' 'old-gone: no bin/lib/flow_no_such_section.py' \
-  'no-column: flow lead_queue prints no column no_such_column')"
+  'bare: flow lead_queue names no column' 'old-gone: no bin/lib/flow_no_such_section.py' 'prefix: no bin/lib/flow_lead_queue-v2.py' \
+  'no-column: flow lead_queue prints no column no_such_column' 'col-prefix: flow lead_queue prints no column p90_minX')"
 printf '%s\n' $'feature\tlanded\tmetric\tbaseline\tuses' $'flow-bare\tlead-woken\tflow: builders_mean\t0\tevent:story' \
   $'no-flow\tlead-woken\toutcomes: story_merged share\t0\tevent:story' $'column\tlead-woken\tflow lead_queue: p90_min\t0\tevent:story' \
   $'not-hld\t2020-01-01\tflow lead_queue: no_such_column\t0\tevent:story' > "${dir}/good.tsv"
