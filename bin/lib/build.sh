@@ -847,11 +847,12 @@ review_round() {
 # the findings round its wording nudge was not, once per round started (none counted since that start), so
 # the brief's --next after it runs.
 review_rounds() {
-  awk -F'\t' -v s="$1" '$3 != s { next } $2 == "story" && $5 ~ /^ok/ { n = 0; at = 0 }
-    ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
-    $2 == "escalate" && $5 ~ /^ok \(findings-[0-9]+:/ { n++ }
-    $2 == "review-agent:recheck" && $5 ~ /a full round is due/ && at == n + 1 { n++ }
-    ($2 == "review-agent" || $2 == "review-agent:next") && $5 ~ /^ok/ { at = n + 1 }
+  awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'
+    $3 != s { next } { o = outcome($5) } $2 == "story" && o ~ /^ok/ { n = 0; at = 0 }
+    ($2 == "tell" || $2 == "tell:findings") && (o == "ok" || o ~ /herdr sent it the brief/) { n++ }
+    $2 == "escalate" && o ~ /^ok \(findings-[0-9]+:/ { n++ }
+    $2 == "review-agent:recheck" && o ~ /a full round is due/ && at == n + 1 { n++ }
+    ($2 == "review-agent" || $2 == "review-agent:next") && o ~ /^ok/ { at = n + 1 }
     END { print n + 1, at + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo "1 0"
 }
 
