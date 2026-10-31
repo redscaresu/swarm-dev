@@ -900,6 +900,58 @@ append_event() {
   { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${cols[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null
 }
 
+# agent_fields <name> [slug] — the fields an incident or reap line on agent <name> carries, on one line
+# for append_event's tail: slug=<slug> role=<role>. A field it cannot know is left out, never empty.
+# role is agents.tsv's column 2 on <name>'s last line there (as tell_gone reads it), <name> read as
+# agent_name gives it (a slug that starts with a digit is s<slug> there). A name with none that ends in -done<N> (a retired agent, renamed with no line of its
+# own) and is under AGENT_NAME_MAX reads the name before the rename, when that has a line; a longer one
+# may hold a cut name and gives neither field. The slug is [slug], the one the call site
+# has; else it comes from the name, only when the name is whole: agent_name cuts at AGENT_NAME_MAX, so a
+# name that long may be cut and gives none rather than a wrong one. A builder's name (its role a
+# building one, or no role and a story on the board holding the name) is the slug, whatever it starts
+# with; but agent_name puts an s before a slug that starts with no letter, so a name s<not a letter>...
+# is the slug only when the board holds a story of that name and none without the s, the slug without
+# the s for the reverse, and gives none when the board does not say. Otherwise review-<slug> gives <slug> and conduct-<epic> <epic>, when the role is review or
+# conduct or unknown; the backlog's conductor (conductor_name backlog, exactly) gives none, and so does
+# any other agent. <name> - or empty is no agent: only [slug] is given.
+agent_fields() {
+  local n="${1:-}" s="${2:-}" role="" r b k st="${BOARD}/stories"
+  [[ "${n}" != - ]] || n=""
+  if [[ -n "${n}" ]]; then
+    # As cut_record: a name already in agent_name's form, the usual one, skips its forks.
+    if [[ "${n}" =~ ^[a-z][a-z0-9_-]*$ ]]; then k="${n:0:${AGENT_NAME_MAX}}"; else k="$(agent_name "${n}")"; n="${k}"; fi
+    role="$(awk -F'\t' -v n="${k}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || role=""
+    # retire_agent cuts the name it renames to 26 or 27 characters before -done<N>, so a retired name of
+    # AGENT_NAME_MAX characters or more may hold a cut that another agent's whole name equals: only a
+    # shorter one is read as the name before it.
+    if [[ -z "${role}" && "${n}" =~ -done[0-9]*$ && ${#n} -lt ${AGENT_NAME_MAX} ]]; then
+      r="$(awk -F'\t' -v n="${n%-done*}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || r=""
+      [[ -z "${r}" ]] || { role="${r}"; n="${n%-done*}"; }
+    fi
+    if [[ -z "${s}" && ${#n} -lt ${AGENT_NAME_MAX} ]]; then
+      if [[ "${n}" =~ ^s[^a-z] && ( ( -n "${role}" && " ${BUILDER_ROLES} " == *" ${role} "* ) || -z "${role}" ) ]]; then
+        if [[ -f "${st}/${n}.md" && ! -f "${st}/${n#s}.md" ]]; then s="${n}"
+        elif [[ -f "${st}/${n#s}.md" && ! -f "${st}/${n}.md" ]]; then s="${n#s}"; fi
+      elif [[ -n "${role}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] || [[ -z "${role}" && -f "${st}/${n}.md" ]]; then s="${n}"
+      elif [[ "${n}" == review-?* && "${role:-review}" == review ]]; then s="${n#review-}"
+      elif [[ "${n}" == conduct-?* && "${role:-conduct}" == conduct ]]; then
+        # Not the backlog's conductor; with conductor_name not loaded, no conduct-backlog- name either.
+        b="$(conductor_name backlog 2>/dev/null)" || b=""
+        [[ "${n}" == "${b}" || ( -z "${b}" && "${n}" == conduct-backlog-* ) ]] || s="${n#conduct-}"
+      fi
+    fi
+  fi
+  echo "${s:+slug=${s}}${s:+${role:+ }}${role:+role=${role}}"
+}
+
+# record_incident <name> <outcome> [slug] — record_event's incident line on agent <name>, with
+# agent_fields' slug= and role= in its tail.
+record_incident() {
+  local kv=()
+  read -r -a kv <<< "$(agent_fields "$1" "${3:-}")"
+  record_event incident "$1" "$2" "${kv[@]+"${kv[@]}"}"
+}
+
 # story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
 # the board's git history; nothing when neither has it.
 story_text() {
@@ -1201,6 +1253,7 @@ stop_id() {
 # pane_kind (the stop its turn ended on, pane_stop, once turn_ended; else empty). With <sum> (the pane's
 # checksum when wait last resumed it, pane_sum), a pane still that same text is no new stop: the resume
 # has not shown yet. A stop is logged as an api-error or auto-denied incident for <name> with its line
+# (record_incident, so with <name>'s slug= and role=)
 # unless the record holds it already: the record keeps the stop's id (stop_id) until a read finds no
 # stop. It is the same stop when its turn is, or, with no prompt above it left in the window (the
 # window scrolled), when its line is. So a stop after a new prompt (a resume) is logged even with no
@@ -1227,7 +1280,7 @@ pane_check() {
     fi
     if [[ -n "${lock}" ]]; then
       { t="$(mktemp "${f}.XXXXXX")" && printf '%s\t%s\t%s\n' "${sum}" "${pane_at}" "${now}" > "${t}" && mv -f "${t}" "${f}"; } 2>/dev/null || true
-      [[ -z "${new}" ]] || record_event incident "$1" "${pane_kind}: ${line}"
+      [[ -z "${new}" ]] || record_incident "$1" "${pane_kind}: ${line}"
     fi
   fi
   [[ -z "${lock}" ]] || rmdir "${lock}" 2>/dev/null || true
@@ -1430,7 +1483,7 @@ agent_stalled() {
 # actions on its story; never the wait's start), is under TEST_RUN_STALLS times stall_minutes: past
 # that, or with no sign at all (an empty <age>), the builder may be hung on something else, so the probe
 # is not asked and it stalls. Each change of
-# the probe's state is an incident for <name>, since both callers of agent_stalled run it in $(...) and
+# the probe's state is an incident for <name> (record_incident, its slug= <slug>), since both callers of agent_stalled run it in $(...) and
 # keep nothing between polls: on blocked, `sign-blocked: <slug> (unsigned work since <time>)`, <time> the
 # worktree's last commit in ISO UTC, unless the newest sign-blocked or sign-clear incident for <name> is
 # that same line; on clear, `sign-clear: <slug>` when the newest is a sign-blocked one. So blocked,
@@ -1463,7 +1516,7 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import TEST_RUN_STALLS; 
       $2 == "incident" && $3 == n && outcome($5) ~ /^sign-(blocked|clear):/ { l = outcome($5) } END { print l }' \
       "${EVENTS_LOG}" 2>/dev/null || true)"
     if [[ "${state}" == blocked && "${last}" != "${line}" ]] || [[ "${state}" == clear && "${last}" == sign-blocked:* ]]; then
-      record_event incident "$1" "${line}"
+      record_incident "$1" "${line}" "$2"
     fi
     rmdir "${lock}" 2>/dev/null || true
   fi
@@ -1619,7 +1672,8 @@ settle() {
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
-# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident
+# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident (record_incident,
+# its slug= the builder's story from the board, stall_py story)
 # and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
 # by the `longest-running: ...` line, which says the step-up closed the pane the PID was read in. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
@@ -1642,14 +1696,14 @@ settle() {
 # (usage_event), counts no nudge or resume, and waits on, a slice at a time, never past its timeout,
 # where it prints usage-limit and fails. A pane that already waits after that choice is the same,
 # with nothing sent; pane_quiet never sees it, so it is never stuck however long it sits.
-# A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again)
+# A wait that ran out logs a wait-timeout incident (record_incident), unless SWARM_WAIT_SLICE is set (the caller waits again)
 # or the agent is still working, which is no fault: settle's last read is busy, or it is empty (herdr_wait
 # times out printing nothing) and read_state says busy or herdr:working (tell's working values). The
 # line names that read. One that failed sooner is herdr's wait failing, and logs none. auth logs a
 # login incident (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at hung seen
+  local answered="" resumed_sum="" pane_kind pane_at hung seen story
   deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
@@ -1658,11 +1712,13 @@ wait_agent() {
     if [[ "${status}" == stalled:* ]]; then
       hung="$(longest_child "${name}" "${target}")"
       [[ -z "${hung}" ]] || status="${status}; ${hung}"
-      record_event incident "${name}" "${status}"
-      rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
+      # The builder's story from the board (stall_py story), which knows a name cut at 32 characters.
+      story="$(stall_py story "${name}")" || story=""
+      record_incident "${name}" "${status}" "${story}"
+      rc=0; out="$(ladder_step "${story}" stalled)" || rc=$?
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
       # Another step-up or a restart still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
-      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up or a restart of it is running; wait on its builder again"
+      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: ${story}: another step-up or a restart of it is running; wait on its builder again"
       if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
         echo "${out}"
         if [[ ${rc} != "${STEP_UP_BUSY}" && "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"
@@ -1676,7 +1732,7 @@ wait_agent() {
     if [[ ${rc} -ne 0 ]]; then
       if [[ -z "${SWARM_WAIT_SLICE:-}" && $(($(now_ms) - t0)) -ge ${timeout} ]]; then
         seen="${status:-$(read_state "${name}")}"
-        [[ "${seen}" == busy || "${seen}" == herdr:working ]] || record_event incident "${name}" "wait-timeout: ${seen}"
+        [[ "${seen}" == busy || "${seen}" == herdr:working ]] || record_incident "${name}" "wait-timeout: ${seen}"
       fi
       echo "${status}"; return "${rc}"
     fi
@@ -1733,7 +1789,7 @@ wait_agent() {
   echo "${status}"
 }
 
-# login_incident <name> — log a login incident for <name>, once per expired login: not when its last
+# login_incident <name> — log a login incident for <name> (record_incident), once per expired login: not when its last
 # incident in events.tsv (an api-error, auto-denied, stalled, sign-blocked or sign-clear one aside) is
 # one already and no ok tell that sends a prompt (findings, nudge, resume, or a bare tell from before
 # kinds) nor a start of <name> (story, agent, conduct, review-agent) came after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
@@ -1746,7 +1802,7 @@ login_incident() {
     o == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
     o == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
-    || record_event incident "$1" "login: Login expired"
+    || record_incident "$1" "login: Login expired"
 }
 
 # wait_conductor <agent> <timeout-ms> [report] — a conductor is idle whenever it waits on its own
@@ -2570,7 +2626,7 @@ herdr_idle() {
 # not have the brief" they are not to be sent again. After "not taken up" (read idle, no turn, twice)
 # herdr may have dropped both, so the pane says whether to send them again, as a nudge: a nudge is
 # not a round. When herdr refused it as blocked before sending anything (HERDR_BLOCKED_UNSENT), and
-# tell_unblock reported the agent idle, it says so, logs an incident `stale-blocked`, and delivers
+# tell_unblock reported the agent idle, it says so, logs an incident `stale-blocked` (record_incident), and delivers
 # once more; a refusal says what tell_unblock found. With TELL_PANE set (a delivery from the queue) it
 # goes to that pane, the one tell checked, and not to whatever pane holds the name by then.
 tell_deliver() {
@@ -2590,7 +2646,7 @@ tell_deliver() {
     [[ "${note}" == reported ]] || break
     note="it was sent again after its pane read clear and it was reported idle to herdr"
     echo "$1: herdr listed it blocked, but its pane reads clear, so it was reported idle to herdr; sending again" >&2
-    record_event incident "$1" "stale-blocked: herdr listed it blocked with its pane clear; reported idle"
+    record_incident "$1" "stale-blocked: herdr listed it blocked with its pane clear; reported idle"
   done
   [[ -z "${note}" ]] || why="${why}; ${note}"
   case "$3:${why}" in

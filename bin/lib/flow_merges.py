@@ -17,8 +17,9 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     if len(f) != 5:
         continue
-    finished = (f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))
-    hold = f[1] == "merge" and outcome(f).startswith("held:")
+    o = outcome(f)
+    finished = (f[1] == "finish" and o == "ok") or (f[1] == "reconcile" and o.startswith("ok (finished"))
+    hold = f[1] == "merge" and o.startswith("held:")
     if not (finished or hold):
         continue
     try:

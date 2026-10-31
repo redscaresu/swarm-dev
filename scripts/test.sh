@@ -37,6 +37,8 @@ stop_group() {
 # "TIMEOUT <file> after <n>s", n being the seconds it ran, and its log is cut to the file's last 20
 # lines; it also appends a "reap" line (append_event's five fields) to TEST_REAP_LOG, the events.tsv
 # beside the run's test-runs.tsv, which the run sets for its jobs and --one unsets before the test runs.
+# When the run's branch (TEST_REAP_BRANCH, unset the same way) is story/<slug>, its outcome ends in
+# append_event's tail, slug=<slug> role=builder after EVENT_SEP; on any other branch it has none.
 # SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
@@ -56,10 +58,13 @@ for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1
 limit="${TEST_FILE_TIMEOUT:-600}"
 if [[ "${1:-}" == --one ]]; then
-  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd="" fields=() x="" reap_log=""
+  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd="" fields=() x="" reap_log="" reap_tail=""
   case " ${SLOW:-} " in *" ${f} "*) limit=$((limit * 3)) ;; esac   # the files that take minutes alone
   reap_log="${TEST_REAP_LOG:-}"   # the run's events.tsv, or empty; the test never sees it
-  unset TEST_FILE_TIMEOUT TEST_REAP_LOG JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH MAKEFLAGS MFLAGS MAKELEVEL
+  # A story branch's slug, in a value append_event would keep: not empty, no space or tab.
+  x="${TEST_REAP_BRANCH:-}"
+  if [[ "${x}" == story/?* && "${x#story/}" =~ ^[^[:space:]]+$ ]]; then reap_tail="slug=${x#story/} role=builder"; fi
+  unset TEST_FILE_TIMEOUT TEST_REAP_LOG TEST_REAP_BRANCH JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH MAKEFLAGS MFLAGS MAKELEVEL
   # The checkout this runner belongs to (its main checkout, from a worktree), found from this script, not
   # the cwd (a test runs test.sh from its TMPDIR): swarm.sh refuses to act on it.
   if forbid="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then SWARM_FORBID_PROJECT="$(dirname "${forbid}")"; export SWARM_FORBID_PROJECT; fi
@@ -99,9 +104,10 @@ if [[ "${1:-}" == --one ]]; then
     : > "${log}.failed"
     { echo "TIMEOUT ${f} after ${elapsed}s (last 20 lines)"; tail -n 20 "${log}"; } > "${log}.tail"; mv "${log}.tail" "${log}"
     echo "TIMEOUT ${f} after ${elapsed}s"
-    # A reap line, in append_event's five fields; a log that cannot be written is skipped.
+    # A reap line, in append_event's five fields, the tail after its EVENT_SEP (" ~~ "); a log that
+    # cannot be written is skipped.
     if [[ -n "${reap_log}" ]]; then
-      for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" reap "${f}" "${HERDR_PANE_ID:--}" "TIMEOUT after ${elapsed}s"; do fields+=("${x//[$'\t\n\r']/ }"); done
+      for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" reap "${f}" "${HERDR_PANE_ID:--}" "TIMEOUT after ${elapsed}s${reap_tail:+ ~~ ${reap_tail}}"; do fields+=("${x//[$'\t\n\r']/ }"); done
       { mkdir -p "${reap_log%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${reap_log}"; } 2>/dev/null || true
     fi
     exit 1
@@ -203,6 +209,7 @@ else
 fi
 filter="${filter//$'\t'/ }${SHARD:+ shard ${SHARD}}"
 branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || echo -)"
+export TEST_REAP_BRANCH="${branch}"   # for the jobs' reap lines
 trap 'exit 130' INT
 trap 'exit 129' HUP
 trap 'exit 143' TERM

@@ -3,6 +3,7 @@
 # Then the per-rung block: each step-up in the window with its story's tokens per rung and how its build
 # ended, and per rung the builds that reached it.
 import collections, datetime, os
+from events_outcome import outcome
 from report import *
 log, agents, named, built = agents, [], set(), collections.defaultdict(list)   # built: builder lines by agent name
 if os.path.exists(log):
@@ -80,13 +81,14 @@ ups, to_lead, every = [], collections.defaultdict(list), collections.defaultdict
 starts = collections.defaultdict(list)   # each story's ok story lines: a build's start, which a step-up never logs
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     e = line.rstrip("\n").split("\t")
-    if len(e) != 5 or not e[4].startswith("ok") or not merge_time(e[0]):
+    o = outcome(e)
+    if len(e) != 5 or not o.startswith("ok") or not merge_time(e[0]):
         continue
     if e[1] in LEAD:
         to_lead[e[2]].append(e[0])
     if e[1] == "story":
         starts[e[2]].append(e[0])
-    m = STEP_UP.fullmatch(e[4]) if e[1] == "escalate" else None
+    m = STEP_UP.fullmatch(o) if e[1] == "escalate" else None
     if m:
         every[(e[2],) + m.groups()[:2]].append(e[0])
     if m and since <= local_day(merge_time(e[0])).isoformat() <= until:

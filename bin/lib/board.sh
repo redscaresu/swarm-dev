@@ -644,9 +644,10 @@ idle_warned() {
 
 # idle_lines <step line> — what next prints after its step, given the step's first line: capacity no
 # step uses. idle_now's lines, less the epic that line names. And when the step leaves the builders idle (gate, done, escalated, release: no planning
-# step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
-# finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
-# quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.
+# step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope or
+# deferred finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts
+# with a quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a
+# one-off, each labelled "<reason> finding:".
 # Later stories are the user's (waiting_on_user), never offered here.
 IDLE_CANDIDATES=5
 idle_lines() {
@@ -661,7 +662,7 @@ idle_lines() {
   found="$(out_of_scope_findings | sed -n "1,${IDLE_CANDIDATES}p")"
   [[ -n "${found}" ]] || return 0
   echo "idle: \"$(basename "${PROJECT_DIR}")\""
-  printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
+  printf '%s\n' "${found}" | awk '{ sub(/\t/, " finding: "); print "  " $0 }'
 }
 
 # next_reads on|off — on: herdr, gh and claude in this shell, and in the subshells it starts, become

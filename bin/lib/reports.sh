@@ -12,8 +12,9 @@ FINDINGS_LOG_NAME="findings.tsv"
 # A new reviewer a conductor logs also needs its line in finding_rule's mapping and in the story arm
 # of commands/swarm.md, which tell whoever logs a finding which value names which reviewer.
 FINDING_REVIEWERS="codex fallback code-review ci conductor lead skeptic critic split-critic escaped"
-# Why a finding was declined (log-finding --declined <reason>).
-FINDING_REASONS="out-of-scope nit wrong"
+# Why a finding was declined (log-finding --declined <reason>); deferred is one the round cap held back
+# from round 3.
+FINDING_REASONS="out-of-scope nit wrong deferred"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
 # FINDING_OUTCOME (fixed, declined with --declined, or filed with --filed), FINDING_REASON to --declined's reason (empty
@@ -45,7 +46,7 @@ finding_flags() {
 # fixed, rows from before the reviewer column have five, and rows from before the round column (or
 # logged without --round) are round unknown. An escaped defect's outcome is escaped, so outcomes and
 # flow's reviewers, which count what review raised, leave it out; outcomes' recurring block and dash count fixed and escaped rows, never declined ones. A
-# filed row (a declined out-of-scope finding the lead filed as a story) is counted by none of them: it
+# filed row (a declined out-of-scope or deferred finding the lead filed as a story) is counted by none of them: it
 # only stops out_of_scope_findings offering that text again.
 record_finding() {
   local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason="" round=""
@@ -78,8 +79,9 @@ record_finding() {
   echo "recorded ${kind} (${outcome})"
 }
 
-# out_of_scope_findings — the findings declined as out-of-scope in the last IDLE_FINDING_DAYS days,
-# newest first, as "<date> <kind> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers.
+# out_of_scope_findings — the findings declined as out-of-scope or deferred in the last
+# IDLE_FINDING_DAYS days, newest first, as "<reason> TAB <date> <kind> <pr>: <text>": the swarm's own
+# follow-ups, which idle_lines offers.
 # A text is listed once, and only while its newest row is that decline: the lead's log-finding
 # --filed once it files one as a story (commands/swarm.md), or a later fixed row, drops it. That
 # record works wherever the board is and whatever the story says. In case the lead did not log it,
@@ -90,13 +92,13 @@ out_of_scope_findings() {
   local since text day line git=""
   since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
   git -C "${BOARD}" rev-parse -q --git-dir >/dev/null 2>&1 && git=1
-  while IFS=$'\t' read -r text day line; do
+  while IFS=$'\t' read -r text day reason line; do
     grep -qsF -- "${text}" "${BOARD}"/stories/*.md && continue
     [[ -z "${git}" || -z "$(git -C "${BOARD}" log --all -1 --since="${day} 00:00" -S"${text}" --format=%h -- stories 2>/dev/null)" ]] || continue
-    printf '%s\n' "${line}"
+    printf '%s\t%s\n' "${reason}" "${line}"
   done < <(awk -F'\t' -v s="${since}" '{ t[NR] = $4; last[$4] = NR }
-    $5 == "declined" && $7 == "out-of-scope" && $1 >= s { r[NR] = $1 " " $2 " " $3 ": " $4; d[NR] = $1 }
-    END { for (i = NR; i > 0; i--) if ((i in r) && last[t[i]] == i) print t[i] "\t" d[i] "\t" r[i] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true)
+    $5 == "declined" && ($7 == "out-of-scope" || $7 == "deferred") && $1 >= s { r[NR] = $1 " " $2 " " $3 ": " $4; d[NR] = $1; w[NR] = $7 }
+    END { for (i = NR; i > 0; i--) if ((i in r) && last[t[i]] == i) print t[i] "\t" d[i] "\t" w[i] "\t" r[i] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true)
 }
 
 # bin/lib/report.py: what the reports share (each python imports it), so they agree.
@@ -348,7 +350,11 @@ dataset_report() {
 #     ended with no build; else open), then the built holds' minutes per reason class (clash or other), or a line
 #     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
-#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
+#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
+#     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
+#     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
+#     (each stalled incident, - for an input it does not carry) and the false stalls line (stalled
+#     incidents with an input at 1, and lead-hand and user-caught lines with cause=false-stall).
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
 #     (an ok held, escalated, close:impossible, kept or review line in events.tsv; with merge = agent, a
 #     review only of a story whose costs: is not none, or that cannot be read; a kept line ends any item
@@ -381,9 +387,12 @@ dataset_report() {
 #   review_loops: per build of a story (listed when a review-agent, tell:findings or escalate line of
 #     it is in the window), from events.tsv, findings.tsv and agents.tsv with no gh call: TSV story pr round
 #     model minutes fixed declined step_up, a row per review round of each build (a review-agent opens it; a findings
-#     tell or findings step-up, or the review or merge after the last tell, closes it; rounds count per
-#     PR, and each finding goes to the build whose rounds hold its round); TSV story pr
-#     rounds end (held-for-lead; pass or merged-after-fixes once merged; else open); then one totals row: its PRs, each
+#     tell or findings step-up, or the review or merge after the last tell, closes it, unless a
+#     decline-only line came after that tell, and a decline-only line closes a round still open and
+#     adds the rounds up to the one it names, counted from the story line; rounds count per PR, and each finding goes to the build
+#     whose rounds hold its round); TSV story pr rounds end (held-for-lead; once merged, decline-only
+#     when its last round ended on a decline-only line, else pass or merged-after-fixes; else open);
+#     then one totals row: its PRs, each
 #     once, their median and p90 rounds, minutes in round 3 on, the share of fixes by round and on escalate_ladder's top rung,
 #     fixes per round before and after a step-up, and failed step-ups.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
@@ -392,7 +401,7 @@ dataset_report() {
 #     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
 #     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
 #     rounds are not split by one. Once a row in the window has a round (log-finding --round), two
-#     more blocks: TSV round reviewer fixed declined nit out-of-scope wrong share_fixed, per round
+#     more blocks: TSV round reviewer fixed declined nit out-of-scope wrong deferred share_fixed, per round
 #     (0 a plan or board PR, unknown a row with none) each reviewer then all; and TSV story pr
 #     stopped_round why, per story PR with a round from 1 on, its last logged round and why it stopped
 #     there: on a merged PR pass (that round fixed nothing) or merged-after-fixes, else unmerged. --epic keeps only
@@ -407,6 +416,15 @@ dataset_report() {
 #     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
 #     then TSV slug failed_at for each one not restarted, or a line when there is none in the window.
 #     --epic does not narrow it.
+#   tell_refusals: TSV pane state tells refused, over the tell and tell:<kind> lines in events.tsv whose
+#     local day is in the window. A refusal's outcome is neither ok nor queued: or replaced:, nor, on a
+#     tell or tell:findings line, holds `herdr sent it the brief` (delivered, as findings_told counts
+#     it). Pane is agent when agent_name of the target has an agents.tsv line, else other; state is the
+#     line's state= field, or - with none (a sent, queued or replaced tell, a refusal before the state
+#     was read, an older line). tells counts lines, so a queued tell, with its queued: line and its
+#     delivery's, counts twice. Per pane an all row, then a row per state. Then TSV target could_not_reach, the `could not reach`
+#     refusals per target, most first. A line in place of a block with nothing to count. --epic does
+#     not narrow it.
 #   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its runs whose start's local day is in the
 #     window, less the interrupted (status 128 or more) and torn. Over the full runs (filter all): TSV
 #     at_once runs median_s p90_s median_load, per runs going at once (the larger of start's and end's,
