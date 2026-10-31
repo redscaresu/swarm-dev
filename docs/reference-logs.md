@@ -668,6 +668,27 @@ file deleted. The installed plugin carries its board but is not a git checkout, 
 Without `--since`, the window is the 30 days up to `--until` (or up to today). The section ignores
 `--epic`.
 
+`tests/features_test.sh` checks swarm-dev's own `docs/features.tsv`. A metric that names
+`flow <section>` must name a `bin/lib/flow_<section>.py` that exists. A metric written `flow:` with
+no section, or with no `flow` at all, passes. A row whose `landed` is an epic of the 0.30 and 0.31 HLD
+(dated 2026-10-28) must also name a column after the colon,
+`flow <section>: <column>`, and that section must print the column as a header. The test keeps its own
+list of that HLD's epics, so the check still holds after `swarm.sh finish` deletes the HLD. The lead reads two
+such rows by hand at the release, so the test exempts them by name: `lead-woken incidents`, whose reading
+needs a count of merged story PRs that no section prints, and `reference split`, which reads each
+conflict merge-in's files. Each bar of that HLD's Goals 1 to 5 has one section that reads it, except
+Goal 5's first bar, which the lead reads by hand:
+
+| Goal | Bar | Read by |
+|---|---|---|
+| 1. Review rounds end | review wait median under 60 minutes | `flow time_in_state: review_wait_median` |
+| 1. Review rounds end | PRs with four or more rounds under 15% | `flow review_loops: prs_4plus_rounds`, its percentage |
+| 2. Every agent's tell is delivered or explained | agent-pane tells refused under 10% | `flow tell_refusals: refused`, over `tells` on the `agent all` row |
+| 3. No false stall step-up | 0 false stall step-ups | `flow incidents: bg`, `test` and `sign`, and its `false stalls` line |
+| 4. A failed start is retried, then reaches the lead | 0 review agents not restarted within 10 minutes | `flow start_failures: not_restarted` |
+| 5. Nothing waits for the lead unseen | lead-hand incidents under 15 per 100 merged story PRs | by hand: `flow incidents`' lead-hand lines over a hand count of merged story PRs (`flow epic_totals: merged_prs` leaves out any PR whose `main_merges` is unknown) |
+| 5. Nothing waits for the lead unseen | lead queue p90 under 30 minutes | `flow lead_queue: p90_min` |
+
 The `reviewers` section shows what review yields, so the
 reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework`,
 counted from `findings.tsv` rows dated in the window. Each reviewer gets an `all` row and then
