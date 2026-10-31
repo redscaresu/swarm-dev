@@ -154,7 +154,8 @@ print(",".join(out))' "${SWARM%/*}/lib" "${P}/.swarm/events.tsv" "$1"
 bg_live() {
   mkdir -p "${ROOT}/projects/p"
   printf '{"type":"user","timestamp":"%s","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"Command running in background with ID: b2"}]},"toolUseResult":{"backgroundTaskId":"b2"}}\n' \
-    "$(date -u -r $(($(date +%s) - 3600)) +%Y-%m-%dT%H:%M:%SZ)" > "${ROOT}/projects/p/sess-1.jsonl"
+    "$(python3 -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) - d.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))')" \
+    > "${ROOT}/projects/p/sess-1.jsonl"
 }
 # wait-pr's PR (#5, s1's) and its heads, full SHAs as wait-pr reads them.
 URL=https://github.com/o/proj/pull/5
