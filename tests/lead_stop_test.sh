@@ -4,20 +4,24 @@
 # $STUB_BOARD for config (_step sleeps $STUB_SLEEP first, or exits 1 after with STUB_FAIL; config sleeps $STUB_CONFIG_SLEEP, or fails with STUB_CONFIG_FAIL), and a
 # herdr stub (HERDR_BIN_PATH) whose agent list is $STUB_AGENTS. `agents` writes the project's
 # .swarm/state panes and STUB_AGENTS together. Each stub records the command it ran; every case
-# checks the hook's stdout and, in run, the events.tsv line it left.
+# checks the hook's stdout and, in run, the events.tsv line it left, read through outcome() (its
+# role= and version= tail aside). The copy's plugin.json is the repo's.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/hooks/lead-stop.sh"
+LIB="$(dirname "${HOOK}")/../bin/lib" PLUGIN_JSON="$(dirname "${HOOK}")/../.claude-plugin/plugin.json"
+VERSION="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "${PLUGIN_JSON}")"
 root="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${root}"' EXIT
 root="$(cd "${root}" && pwd -P)"   # as git prints it, so paths compare
 export CLAUDE_CONFIG_DIR="${root}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 project="${root}/project"
-mkdir -p "${root}/plugin/hooks" "${root}/plugin/bin" "${project}/.claude/swarm" "${project}/docs/stories" "${project}/docs/epics"
+mkdir -p "${root}/plugin/hooks" "${root}/plugin/bin" "${root}/plugin/.claude-plugin" "${project}/.claude/swarm" "${project}/docs/stories" "${project}/docs/epics"
 : > "${project}/.claude/swarm/config"
 cp "${HOOK}" "$(dirname "${HOOK}")/lead-session.sh" "${root}/plugin/hooks/"
+cp "${PLUGIN_JSON}" "${root}/plugin/.claude-plugin/"
 cat > "${root}/plugin/bin/swarm.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "$1" >> "${STUB_RAN}"; echo "${SWARM_PROJECT}" > "${STUB_RAN}.project"
@@ -60,15 +64,26 @@ agents() {
   export STUB_AGENTS="[${json}]"
 }
 
+# read_events <file> <outcome|fields> — each line's command, target and outcome() (bin/lib/events_outcome.py),
+# space-separated, or its fields() as sorted key=value pairs; nothing when <file> is missing.
+read_events() {
+  python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1]); import events_outcome as e
+for l in open(sys.argv[2]).read().splitlines() if os.path.exists(sys.argv[2]) else ():
+    r = l.split("\t")
+    print(" ".join(r[1:3] + [e.outcome(r)]) if sys.argv[3] == "outcome" else " ".join("%s=%s" % kv for kv in sorted(e.fields(r).items())))' \
+    "${LIB}" "$1" "$2"
+}
+
 # run <events line, or nothing> [<stop_hook_active>] — the hook on a Stop input from $CWD (the
-# project by default); stdout in out, the stubs' commands in ran. It checks the one events.tsv line
-# the run left in the project, or that it left none, then clears the agents.
+# project by default); stdout in out, the stubs' commands in ran, the line's fields() in fields. It
+# checks the one events.tsv line the run left in the project, read through outcome(), or that it left
+# none, then clears the agents.
 run() {
   local events="${project}/.swarm/events.tsv" ev
   rm -f "${events}" "${STUB_RAN}"
   out="$(printf '{"hook_event_name":"Stop","cwd":"%s","stop_hook_active":%s}' "${CWD:-${project}}" "${2:-false}" \
     | "${root}/plugin/hooks/lead-stop.sh")"
-  ev="$(cut -f2,3,5 "${events}" 2>/dev/null | tr '\t' ' ')" || ev=""
+  ev="$(read_events "${events}" outcome)"; fields="$(read_events "${events}" fields)"
   ran="$(cat "${STUB_RAN}" 2>/dev/null | tr '\n' ' ')" || ran=""
   cases=$((cases + 1))
   check "case ${cases} (${STUB_NEXT:-}) logs: ${1:-nothing}" [ "${ev}" = "$1" ]
@@ -83,6 +98,11 @@ blocked() {
 
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
 check "plan-epic with no agent blocks, naming the line" blocked "plan-epic X"
+check "its line's fields() are role=lead and version=, plugin.json's" [ "${fields}" = "role=lead version=${VERSION}" ]
+mv "${root}/plugin/.claude-plugin/plugin.json" "${root}/plugin.json.off"
+STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
+check "with no plugin.json the line still carries role=lead, and no version=" [ "${fields}" = "role=lead" ]
+mv "${root}/plugin.json.off" "${root}/plugin/.claude-plugin/plugin.json"
 
 agents survey scope-X working
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic allowed"
@@ -378,7 +398,7 @@ check "a SWARM_PROJECT that is not one changes nothing" [ -z "${out}${ran}" ]
 mkdir -p "${root}/other/.claude/swarm"; : > "${root}/other/.claude/swarm/config"
 STUB_NEXT="plan-epic X" SWARM_PROJECT="${root}/other" run ""
 check "a SWARM_PROJECT that is one runs the hook there" blocked "plan-epic X"
-check "it logs to that project" [ "$(cut -f2,3,5 "${root}/other/.swarm/events.tsv" | tr '\t' ' ')" = "lead-stop plan-epic blocked" ]
+check "it logs to that project" [ "$(read_events "${root}/other/.swarm/events.tsv" outcome)" = "lead-stop plan-epic blocked" ]
 mv "${project}/.claude-off" "${project}/.claude"
 
 # The hook's name is swarm.sh's agent_name copied: a drift would let a builder run unseen, and the lead

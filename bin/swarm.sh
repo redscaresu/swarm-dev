@@ -180,8 +180,8 @@ fi
 # A test names the checkout it runs from in SWARM_FORBID_PROJECT (scripts/test.sh and tests/test_helpers.sh
 # set it to the main checkout): swarm.sh refuses to act on that project, named directly (a cd into it,
 # SWARM_PROJECT) or through a worktree of it (SWARM_PROJECT naming the worktree, which find_project
-# takes as given, so its main checkout is compared too). That covers swarm.sh calls; the hooks' own
-# event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log) are not swarm.sh calls and are not.
+# takes as given, so its main checkout is compared too). The hooks' own event lines (hooks/merge-guard.sh
+# record, hooks/lead-stop.sh log) are not swarm.sh calls; each hook checks it itself and writes no line there.
 if [[ -n "${SWARM_FORBID_PROJECT:-}" ]]; then
   forbid_dir="$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" || forbid_dir=""
   forbid_main="$(main_checkout "${PROJECT_DIR}" 2>/dev/null)" || forbid_main=""
@@ -545,22 +545,15 @@ INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open s
 # intervene <kind> <cause> <line...> — log one time a person had to step in: an incident line, target
 # -, outcome `<kind>: <line>`, which flow's incidents section counts per day and kind, with the field
 # cause=<cause>. Its only line: main logs none for it (target !), so an unknown kind or cause or an
-# empty line logs nothing. The old form, `intervene <kind> "<line>"` (two arguments, the second no
-# cause), still logs, with cause=none and a warning listing the causes, until hooks/user-caught-reminder.sh
-# names the new form. A line that could not be written (unwritable, disk full) fails here, not with a
-# logged: that counts nothing.
+# empty line logs nothing. The old form, `intervene <kind> "<line>"`, is an unknown cause. A line that
+# could not be written (unwritable, disk full) fails here, not with a logged: that counts nothing.
 intervene() {
-  local kind="${1:-}" cause="${2:-}" line known=0
+  local kind="${1:-}" cause="${2:-}" line
   [[ "${kind}" =~ ^[a-z-]+$ && " ${INTERVENE_KINDS} " == *" ${kind} "* ]] || die "intervene: the kind must be one of ${INTERVENE_KINDS}, not '${kind}'"
-  [[ "${cause}" =~ ^[a-z-]+$ && " ${INTERVENE_CAUSES} " == *" ${cause} "* ]] && known=1
-  if [[ $# -eq 2 && ${known} == 0 ]]; then
-    line="${cause}"; cause=none
-    echo "intervene: warning: name a cause, one of ${INTERVENE_CAUSES}: swarm.sh intervene ${kind} <cause> \"<one line>\". Logging it with cause=none." >&2
-  else
-    [[ ${known} == 1 ]] || die "intervene: the cause must be one of ${INTERVENE_CAUSES}, not '${cause}'"
-    line="${*:3}"
-  fi
-  [[ -n "${line//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene ${kind} ${cause/#none/<cause>} \"<one line>\""
+  [[ "${cause}" =~ ^[a-z-]+$ && " ${INTERVENE_CAUSES} " == *" ${cause} "* ]] \
+    || die "intervene: the cause must be one of ${INTERVENE_CAUSES}, not '${cause}': swarm.sh intervene ${kind} <cause> \"<one line>\""
+  line="${*:3}"
+  [[ -n "${line//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene ${kind} ${cause} \"<one line>\""
   append_event incident - "${kind}: ${line}" "cause=${cause}" || die "intervene: could not write ${EVENTS_LOG}; nothing was logged"
   echo "logged: ${kind}: ${line} (cause=${cause})"
 }

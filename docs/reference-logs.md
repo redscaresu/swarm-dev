@@ -30,9 +30,8 @@ target `-` and the outcome `<kind>: <line>`, for each time a person had to step 
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
 first. The cause says why they stepped in. It is one of `INTERVENE_CAUSES` in `bin/swarm.sh` and goes
 in the field `cause=<cause>`. Any other kind or cause, an empty line, or an events.tsv it cannot write
-fails and writes nothing, and an unknown cause's error lists the causes. The old form,
-`swarm.sh intervene <kind> "<one line>"`, still writes the line with `cause=none` and prints the causes
-as a warning.
+fails and writes nothing, and an unknown cause's error lists the causes. So does the old form with no
+cause, `swarm.sh intervene <kind> "<one line>"`.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
 killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
 with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past
@@ -76,6 +75,14 @@ queued, or a merge with no merge commit. A merge at a head other than the checke
 merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
+A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The slug is the agent's
+name without a `review-` or `conduct-` prefix, and there is none when the name may have been cut at 32
+characters. The role comes from `.swarm/agents.tsv`. Every line adds `version=`, the plugin's version
+from its `.claude-plugin/plugin.json`. A field the guard cannot read is left out, and a failed read
+or write never changes its verdict. The lead's Stop hook (`hooks/lead-stop.sh`) writes a `lead-stop`
+line for each verdict, target the step `next` named and outcome `blocked` or `allowed`, with
+`role=lead` and `version=`. Neither hook writes to the checkout the tests run from
+(`SWARM_FORBID_PROJECT`).
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
 its pull (§ Merging), once while the same stop lasts, and one with outcome
 `key-dropped: <file> <key>: <yours> -> <theirs>` for each uncommitted `status` or `prs` its pull replaced. The log is local to the machine and append-only,
@@ -87,7 +94,8 @@ and the first line of a failed command's error.
 The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
-fields; `merge` passes `hold=` on its held lines, and `intervene` passes `cause=`. It first takes every separator out of the outcome text: each
+fields; `merge` passes `hold=` on its held lines, and `intervene` passes `cause=`. The two hooks that
+write events.tsv themselves, the merge guard and the lead's Stop hook, write the same tail. It first takes every separator out of the outcome text: each
 one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
 then any trailing spaces. That way the first separator in the field is always where the tail starts,
 and an outcome that ends in one is written without it. Fields are separated by spaces. A key is

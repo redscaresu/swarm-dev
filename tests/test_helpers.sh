@@ -17,7 +17,7 @@
 # checkout these tests run from (the main checkout, from a worktree) in SWARM_FORBID_PROJECT, which
 # swarm.sh refuses to act on, named directly or through a worktree of it: such a swarm.sh call stops
 # before it writes. The hooks' own event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log)
-# are not swarm.sh calls and are not covered. tests/live_logs_test.sh checks that every test sources
+# are not swarm.sh calls; each hook checks it itself and writes no line there. tests/live_logs_test.sh checks that every test sources
 # this first. It also defines signer_stubs and isolate_signer, below, for a test of what signs a commit.
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE|SWARM_NO_CI_REFRESH) ;; SWARM_*) unset "${v}" ;; esac; done
 unset HERDR_SOCKET_PATH HERDR_WORKSPACE_ID

@@ -18,7 +18,8 @@
 # process, or a group): either can hit another session's process. So is its gh pr checks --watch, or a
 # gh pr checks in a while/until loop's condition or body (not a while read loop): swarm.sh wait-pr exits on red, a conflict and a deadline.
 # Those rules fail open on an error of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
-# <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
+# <form>`, to the project's .swarm/events.tsv, with slug= and role= for an agent's call and version= the plugin's, unless the
+# project is the checkout the tests run from (SWARM_FORBID_PROJECT). Outside a swarm project it allows all.
 set -uo pipefail
 
 input="$(cat)"
@@ -65,6 +66,9 @@ BY_NAME = re.compile(r"(\$\(|`)\s*(pgrep|pidof)\b")  # kill $(pgrep ...): PIDs f
 UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}  # git status codes of a conflict, which --ours/--theirs resolves
 DROPS = {"restore", "clean"}  # git subcommands that, with reset --hard, can drop work in the main checkout
 SHOWN = 5  # paths a refusal names before "and N more"
+SEP = " ~~ "  # what parts an events.tsv outcome from its key=value tail: agents.sh's EVENT_SEP
+FIELD = re.compile(r"[a-z_]+=\S+")  # a tail field append_event keeps: key [a-z_]+, value with no whitespace
+NAME_MAX = 32  # agent_name cuts an agent's name to this many characters
 PIPES = itertools.count()
 MESSAGE = """merge-guard: blocked ({}). In a swarm project only `swarm.sh merge <PR URL>`, run alone,
 merges a PR (docs/reference.md § Merging). Text that only mentions a merge, such as a PR body, can go
@@ -581,18 +585,63 @@ def project(cwd):
     return swarm_dir(d) or swarm_dir(main_checkout(d))
 
 
+def forbidden(d):
+    """d, a main checkout, is the checkout the tests run from (SWARM_FORBID_PROJECT, which
+    tests/test_helpers.sh and scripts/test.sh set), compared by physical path as swarm.sh compares it."""
+    f = os.environ.get("SWARM_FORBID_PROJECT")
+    return bool(f) and os.path.isdir(f) and os.path.realpath(f) == os.path.realpath(d)
+
+
+def agent_fields(d):
+    """slug= and role= for a swarm agent's call (SWARM_AGENT names it); none from the lead's session.
+    The slug is the name without a review- or conduct- prefix, and none when the name may have been
+    cut (agent_name cuts at NAME_MAX characters). The role is column 2 of the name's newest line in
+    d's .swarm/agents.tsv, as tell_gone reads it. A field it cannot read is left out."""
+    name = os.environ.get("SWARM_AGENT") or ""
+    if not name:
+        return []
+    out = ["slug=" + re.sub(r"^(review|conduct)-", "", name)] if len(name) < NAME_MAX else []
+    try:
+        role = ""
+        with open(os.path.join(d, ".swarm", "agents.tsv"), encoding="utf-8") as f:
+            for line in f:
+                c = line.rstrip("\n").split("\t")
+                if len(c) > 2 and c[2] == name:
+                    role = c[1]
+        out.append("role=" + role)
+    except Exception:
+        pass
+    return out
+
+
+def version_field():
+    """version= from the plugin's .claude-plugin/plugin.json, whose path the shell passes as the
+    second argument; nothing when it cannot be read or holds no version."""
+    try:
+        with open(sys.argv[2], encoding="utf-8") as f:
+            v = json.load(f).get("version")
+        return ["version=" + v] if isinstance(v, str) else []
+    except Exception:
+        return []
+
+
 def record(d, outcome):
     """Append the incident to events.tsv in record_event's five fields: time, command, target, the
-    actor's pane, outcome. A worktree logs to its main checkout, as swarm.sh does; a log that cannot
-    be written never changes the verdict."""
-    d = main_checkout(d) or d
-    fields = [time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "incident", "-",
-              os.environ.get("HERDR_PANE_ID") or "-", outcome]
+    actor's pane, outcome. The outcome, one of the guard's own forms, which never hold SEP, ends in
+    append_event's tail: SEP, then agent_fields' and version_field's fields, each FIELD-shaped.
+    A worktree logs to its main checkout, as swarm.sh does, and the checkout the tests run from gets
+    nothing. Any failure here, of a read or of the write, is caught: it never changes the verdict."""
     try:
+        d = main_checkout(d) or d
+        if forbidden(d):
+            return
+        tail = " ".join(x for x in agent_fields(d) + version_field() if FIELD.fullmatch(x))
+        fields = [time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "incident", "-",
+                  os.environ.get("HERDR_PANE_ID") or "-", outcome + (SEP + tail if tail else "")]
         os.makedirs(os.path.join(d, ".swarm"), exist_ok=True)
         with open(os.path.join(d, ".swarm", "events.tsv"), "a") as f:
             f.write("\t".join(re.sub(r"[\t\n\r]", " ", x) for x in fields) + "\n")
-    except OSError:
+    except Exception:
         pass
 
 
@@ -616,7 +665,7 @@ def main():
         print(b.message(), file=sys.stderr)
         return 2
     except Exception as e:  # fail closed when the call says merge: nothing here vouches for it
-        if sys.argv[1:] != ["merge"]:
+        if sys.argv[1:2] != ["merge"]:
             return 0
         print("merge-guard: the check failed (%s), so a call that says merge is refused" % type(e).__name__,
               file=sys.stderr)
@@ -627,7 +676,7 @@ def main():
 sys.exit(main())
 PY
 
-python3 -I -c "${prog}" "${says}" <<< "${input}"
+python3 -I -c "${prog}" "${says}" "$(dirname "$0")/../.claude-plugin/plugin.json" <<< "${input}"
 rc=$?
 [[ ${rc} -ne 0 && ${rc} -ne 2 ]] || exit "${rc}"
 [[ ${says} == merge ]] || exit 0

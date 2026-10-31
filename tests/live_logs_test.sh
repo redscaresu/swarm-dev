@@ -9,8 +9,10 @@
 # before it writes, under make test and run on its own. And events_test.sh, whose fixtures once landed in the
 # real findings.tsv and events.tsv, run under make test from a copy of this repo, leaves the copy's
 # findings.tsv, events.tsv and .swarm/lead/pid (which wait_lead_test.sh's wait --lead once took on
-# the real checkout) as they were. A copy, not the main checkout: a conductor appends to the real
-# logs while the suite runs, and a failing guard would itself write fixtures into the log it guards.
+# the real checkout) as they were. So do the two hooks that write events.tsv themselves
+# (hooks/merge-guard.sh, hooks/lead-stop.sh), run from a worktree of the copy with the prelude. A copy,
+# not the main checkout: a conductor appends to the real logs while the suite runs, and a failing guard
+# would itself write fixtures into the log it guards.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -92,6 +94,23 @@ o="$(cd "${COPY}" && TEST_RUNS_LOG="" JOBS=1 bash scripts/test.sh "${FX}/worktre
 check "a test naming a worktree of the checkout in SWARM_PROJECT fails: swarm.sh refuses it through its main checkout" \
   "$(grep -cE "^FAIL .*/worktree_test\.sh [0-9]+s$|^swarm: SWARM_FORBID_PROJECT: " <<< "${o}")" "2"
 check "and the worktree's .swarm gained nothing" "$(ls -A "${ROOT}/wt/.swarm" 2>/dev/null)" ""
+# The hooks, run as a test in that worktree would run them: merge-guard.sh on a raw merge from the
+# worktree, which it logs to the main checkout, and lead-stop.sh on a Stop naming the main checkout,
+# where swarm.sh refuses next and the hook allows the stop. Both skip the copy, which the prelude names
+# in SWARM_FORBID_PROJECT, so the guard still blocks and the copy's events.tsv gains no line.
+cat > "${FX}/hooks_test.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$1/tests/test_helpers.sh"
+rc=0; printf '{"cwd": "%s", "tool_input": {"command": "gh pr merge 7"}}' "${PWD}" | bash "$1/hooks/merge-guard.sh" 2>/dev/null || rc=$?
+echo "merge-guard exit ${rc}"
+rc=0; out="$(printf '{"hook_event_name": "Stop", "cwd": "%s"}' "$1" | bash "$1/hooks/lead-stop.sh")" || rc=$?
+echo "lead-stop exit ${rc}${out:+: ${out}}"
+FIXTURE
+o="$(cd "${ROOT}/wt" && bash "${FX}/hooks_test.sh" "${COPY}" 2>&1)" || true
+check "from a worktree of the copy, under the prelude, the guard blocks a raw merge and lead-stop allows the stop" \
+  "${o}" $'merge-guard exit 2\nlead-stop exit 0'
+check "and neither hook added a line to the copy's events.tsv" "$(lines "${COPY}/.swarm/events.tsv")" 1
 check "the copy's .swarm/findings.tsv and events.tsv gained no line, and its lead/pid is as it was" "$(state)" "findings 1|events 1|lead/pid 99999999"
 [[ ${rc} -eq 0 ]] || { echo "---- make test in the copy: each file's line, then its first FAIL lines"; grep -E "^(ok|FAIL|TIMEOUT) +tests/" "${ROOT}/make.out"; grep "^FAIL" "${ROOT}/make.out" | grep -v " tests/" | head -n 10 || tail -n 20 "${ROOT}/make.out"; }
 [[ "$(state)" == "findings 1|events 1|lead/pid 99999999" ]] \

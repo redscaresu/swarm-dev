@@ -14,7 +14,7 @@ trap 'rm -rf "${root}"' EXIT
 root="$(cd "${root}" && pwd -P)"
 export CLAUDE_CONFIG_DIR="${root}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 unset SWARM_AGENT SWARM_GH_CALLER SWARM_PROJECT   # a builder running make test has them
-REMINDER='If this message points out a problem the swarm or the lead missed, log it first: swarm.sh intervene user-caught "<what they found>".'
+REMINDER='If this message points out a problem the swarm or the lead missed, log it first: swarm.sh intervene user-caught <cause> "<what they found>". The cause is one word from the list in /swarm-dev:swarm; an unknown one fails and lists them.'
 fails=0
 
 check() { # <name> <test...>
