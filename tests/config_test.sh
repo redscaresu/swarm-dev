@@ -163,6 +163,12 @@ check "merge_admin = on is read" "on" "$(run "${p}" config merge_admin)"
 project "${p}" "merge_admin = yes"
 check "merge_admin = yes is refused, naming file and line" "yes" \
   "$(fails_with "${p}/.claude/swarm/config:1: merge_admin must be off or on, not 'yes'" run "${p}" config)"
+check "review_verify ships ci" "ci" "$(project "${p}"; run "${p}" config review_verify)"
+project "${p}" "review_verify = full"
+check "review_verify = full is read" "full" "$(run "${p}" config review_verify)"
+project "${p}" "review_verify = maybe"
+check "review_verify = maybe is refused, naming file, line, key and value" "yes" \
+  "$(fails_with "${p}/.claude/swarm/config:1: review_verify must be ci or full, not 'maybe'" run "${p}" config)"
 check "lead_epics ships off" "off" "$(project "${p}"; run "${p}" config lead_epics)"
 project "${p}" "lead_epics = on"
 check "lead_epics = on is read" "on" "$(run "${p}" config lead_epics)"
