@@ -129,8 +129,11 @@ tell() {
 }
 prompts() { grep -c '^agent prompt ' "${ROOT}/keys.log" || true; }
 sent() { grep -qF -- "$1" "${ROOT}/keys.log" && echo yes || echo no; }
+# EVENT_AWK: agents.sh's EVENT_OUTCOME_AWK, read by sourcing it as swarm.sh does: outcome($5) is the
+# outcome without its key=value tail (a refusal's state=).
+EVENT_AWK="$(PROJECT_DIR="${ROOT}/src" bash -c 'source "$1/agents.sh"; printf %s "${EVENT_OUTCOME_AWK}"' _ "${HERE}/../bin/lib")"
 # outcomes — the outcome of each tell:findings line for b1 in events.tsv, in order, joined by |.
-outcomes() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { printf "%s%s", (n++ ? "|" : ""), $5 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
+outcomes() { awk -F'\t' "${EVENT_AWK}"' $2 == "tell:findings" && $3 == "b1" { printf "%s%s", (n++ ? "|" : ""), outcome($5) }' "${p}/.swarm/events.tsv" 2>/dev/null; }
 # rounds — b1's findings rounds as findings_told counts them: its tell:findings lines logged ok, or
 # whose outcome says herdr sent them.
 rounds() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
@@ -456,8 +459,8 @@ tell_to() {
   out="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tell "$1" "$2" "${m}" 2>&1)" || rc=$?
   printf '%s rc=%s' "${out}" "${rc}"
 }
-# told <name> <kind> — each tell:<kind> outcome events.tsv logged for <name>, joined by |.
-told() { awk -F'\t' -v c="tell:$2" -v n="$1" '$2 == c && $3 == n { printf "%s%s", (k++ ? "|" : ""), $5 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
+# told <name> <kind> — each tell:<kind> outcome events.tsv logged for <name>, without its tail, joined by |.
+told() { awk -F'\t' -v c="tell:$2" -v n="$1" "${EVENT_AWK}"' $2 == c && $3 == n { printf "%s%s", (k++ ? "|" : ""), outcome($5) }' "${p}/.swarm/events.tsv" 2>/dev/null; }
 FINAL="this refusal is final, so do not tell it again"
 NOAGENT="swarm.sh wait --lead's no-agent: line names its exit"
 NOREVIEW="swarm.sh wait --lead's no-review: line names its exit"
