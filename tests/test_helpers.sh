@@ -18,7 +18,8 @@
 # swarm.sh refuses to act on, named directly or through a worktree of it: such a swarm.sh call stops
 # before it writes. The hooks' own event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log)
 # are not swarm.sh calls; each hook checks it itself and writes no line there. tests/live_logs_test.sh checks that every test sources
-# this first. It also defines signer_stubs and isolate_signer, below, for a test of what signs a commit.
+# this first. It also defines signer_stubs and isolate_signer, below, for a test of what signs a commit,
+# and no_version, for a test that compares whole events.tsv lines.
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE|SWARM_NO_CI_REFRESH) ;; SWARM_*) unset "${v}" ;; esac; done
 unset HERDR_SOCKET_PATH HERDR_WORKSPACE_ID
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"
@@ -55,3 +56,9 @@ isolate_signer() {
     SSH_AUTH_SOCK="$1/no-agent.sock" PATH="$1/bin:${PATH}"
   unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 }
+
+# no_version — events.tsv lines (or column 5s) on stdin, each with the version= field that append_event
+# ends every tail with cut, and the tail's " ~~ " too when version= was its only field. Also cuts a
+# fields() line ("k=v ...", keys sorted, so version= is last, or "outcome|k=v ...") down the same way. For a test that compares
+# whole lines and is not about version=; tests/events_test.sh checks version= itself.
+no_version() { sed -E 's/ ~~ version=[^[:space:]]+$//; s/ version=[^[:space:]]+$//; s/(^|[|])version=[^[:space:]]+$/\1/'; }

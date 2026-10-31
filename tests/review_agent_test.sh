@@ -325,7 +325,7 @@ check "the brief sends all-wording findings as a nudge, rechecks the pushed head
 check "a started review agent records the head it reviews, so watch and next do not call the PR queued" "${HEAD_SHA}" \
   "$(cat "${p}/.swarm/reviews/s1.head")"
 check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusals'), with round=1, the round it starts" "s1	ok ~~ round=1" \
-  "$(awk -F'\t' '$2 == "review-agent" { l = $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
+  "$(awk -F'\t' '$2 == "review-agent" { l = $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)"
 
 # --- A refused second start leaves the findings file and the brief as they were.
 echo "head: ${HEAD_SHA} FINDINGS-KEPT" > "${p}/.swarm/reviews/s1.md"; echo BRIEF-KEPT >> "${p}/.swarm/briefs/review-s1.md"
@@ -567,7 +567,7 @@ check "after one ok findings tell, --next from review-n1's pane prints round 2 a
 check "and it writes the PR's head, moves n1.md to n1.md.prev, and starts no agent" "${HEAD_SHA}|no|head: ${HEAD_SHA} ROUND-ONE|0" \
   "$(cat "${p}/.swarm/reviews/n1.head")|$([[ -e "${p}/.swarm/reviews/n1.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/n1.md.prev")|$(started)"
 check "events.tsv gets review-agent:next n1 ok (round 2), with round=2 to match, and no review-agent line for it" "review-agent:next	n1	ok (round 2) ~~ round=2|1" \
-  "$(awk -F'\t' '$3 == "n1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(awk -F'\t' '$2 == "review-agent" && $3 == "n1"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
+  "$(awk -F'\t' '$3 == "n1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)|$(awk -F'\t' '$2 == "review-agent" && $3 == "n1"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
 check "with review-n1 live and no findings file, a plain review-agent n1 still refuses, starting nothing" "1|yes|0" \
   "$(set +e; o="$(run review-agent n1 "${PR}")"; echo "$?|$(has "review-n1 is still reviewing" "${o}")")|$(started)"
 # Round 2's review is written; a second --next with no findings tell since would put it aside unread.
@@ -620,7 +620,7 @@ QF="queued: f1 (busy); delivered when its turn ends, so do not tell it again"
 # The round file the agent wrote, after its triage: findings to fix go there, never to f1.md.
 printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "- codex: bin/f1.sh:3 F1-FIX-ME" "## Handled by the review agent" "none" > "${p}/.swarm/reviews/f1.round.md"
 check "with f1's builder busy, the brief's tell is queued: exit 0, the queued: line, nothing sent, logged as queued and no round yet" "0|yes|no|${QF}|0" \
-  "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "${QF}" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" { l = $5 } END { print l }' "${p}/.swarm/events.tsv")|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" { o = $5; sub(/ ~~ .*/, "", o); if (o == "ok") n++ } END { print n + 0 }' "${p}/.swarm/events.tsv")"
+  "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "${QF}" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" { l = $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" { o = $5; sub(/ ~~ .*/, "", o); if (o == "ok") n++ } END { print n + 0 }' "${p}/.swarm/events.tsv")"
 # The brief's wait returns once the builder goes idle, not before (60 s at most, for a loaded machine).
 in_review_pane "${wait_cmd} 60000" > "${ROOT}/wait-f1.out" & wpid=$!
 sleep 1; check "the brief's wait on f1 holds while f1's builder works" "yes" "$(kill -0 "${wpid}" 2>/dev/null && echo yes || echo no)"
@@ -638,7 +638,7 @@ rc=0; for _ in $(seq 300); do kill -0 "${dpid}" 2>/dev/null || break; sleep 0.1;
 check "the brief's delivery wait ends within 30 s of the delivery, exit 0, listing the sent mark and no mark still on its way" "0|yes|no" \
   "${rc}|$(has "f1.findings.sent" "$(cat "${ROOT}/delivery-f1.out")")|$(grep -qE 'f1\.findings(\.sending|\.claimed|$)' "${ROOT}/delivery-f1.out" && echo yes || echo no)"
 check "once f1's builder is idle, its queue's check delivers the tell: logged tell:findings f1 ok, round=1 verdict=findings, from the review agent, the queue left with its sent mark" "tell:findings	f1	ok ~~ round=1 verdict=findings|yes|f1.findings.sent" \
-  "$(awk -F'\t' '$2 ~ /^tell/ && $3 == "f1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(has "From the review agent:" "$(cat "${ROOT}/prompted-w-900" 2>/dev/null)")|$(compgen -G "${p}/.swarm/tells/f1.findings*" | sed 's#.*/##' | tr '\n' ' ' | sed 's/ $//')"
+  "$(awk -F'\t' '$2 ~ /^tell/ && $3 == "f1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)|$(has "From the review agent:" "$(cat "${ROOT}/prompted-w-900" 2>/dev/null)")|$(compgen -G "${p}/.swarm/tells/f1.findings*" | sed 's#.*/##' | tr '\n' ' ' | sed 's/ $//')"
 check "and f1's builder receives the round file" "yes" \
   "$(diff <(tail -n +3 "${ROOT}/prompted-w-900") "${p}/.swarm/reviews/f1.round.md" >/dev/null 2>&1 && echo yes || echo no)"
 o="$(in_review_pane "${next_cmd}")" || echo "FAIL the brief's --next for f1 exited non-zero: ${o}"
@@ -746,7 +746,7 @@ check "a green head whose diff changes only doc.md:3, named at the start of its 
   "head: ${NARROW}|yes|yes|${NARROW}|head: ${OLD}" \
   "$(head -1 "${p}/.swarm/reviews/r1.md")|$(grep -qx '## Findings' "${p}/.swarm/reviews/r1.md" && echo yes || echo no)|$(has "the wording recheck passed" "$(cat "${p}/.swarm/reviews/r1.md")")|$(cat "${p}/.swarm/reviews/r1.head")|$(head -1 "${p}/.swarm/reviews/r1.round.md")"
 check "events.tsv gets review-agent:recheck r1 ok" "review-agent:recheck	r1	ok" \
-  "$(awk -F'\t' '$3 == "r1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
+  "$(awk -F'\t' '$3 == "r1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)"
 # A round on NARROW names doc.md:10, the last line; its fix leaves it with no newline, which git marks after it.
 printf '%s\n' "head: ${NARROW}" "## Findings" "codex, ${RW}/doc.md:10, misstates it" > "${p}/.swarm/reviews/r1.round.md"
 sed '$d' "${RW}/doc.md" > "${RW}/doc.new" && printf 'line ten' >> "${RW}/doc.new" && mv "${RW}/doc.new" "${RW}/doc.md"
@@ -802,12 +802,12 @@ nudge_cmd="$(wording_cmd " tell w1 nudge ")"
 check "review-w1's brief has one nudge and one --recheck command, each naming the project" "SWARM_PROJECT=${p} ${SWARM} tell w1 nudge ${p}/.swarm/reviews/w1.nudge.md|SWARM_PROJECT=${p} ${SWARM} review-agent --recheck w1 ${PR} <the head you reviewed> <each file:line ${p}/.swarm/reviews/w1.round.md cites>" \
   "${nudge_cmd}|$(wording_cmd " review-agent --recheck w1 ")"
 check "the brief's nudge to w1's idle builder exits 0 and is logged tell:nudge w1 ok, with no findings tell, so no round is counted" "0|tell:nudge	w1	ok|0|yes" \
-  "$(set +e; in_pane w1 "${nudge_cmd}" >/dev/null; echo "$?")|$(awk -F'\t' '$2 ~ /^tell/ && $3 == "w1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")|$(awk -F'\t' '$2 == "tell:findings" && $3 == "w1"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')|$(has "doc.md:3 misstates what the code does" "$(cat "${ROOT}/prompted-w-901" 2>/dev/null)")"
+  "$(set +e; in_pane w1 "${nudge_cmd}" >/dev/null; echo "$?")|$(awk -F'\t' '$2 ~ /^tell/ && $3 == "w1" { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "w1"' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')|$(has "doc.md:3 misstates what the code does" "$(cat "${ROOT}/prompted-w-901" 2>/dev/null)")"
 check "and counts no review round: the brief's --next from review-w1's pane still refuses, as round 1 is a plain review-agent start" "1|yes" \
   "$(set +e; o="$(in_pane w1 "$(wording_cmd " review-agent --next w1 ")")"; echo "$?|$(has "there is no next round" "${o}")")"
 push w1 's/^line 3$/line three/'; WNEW="$(cat "${ROOT}/head")"
 check "the brief's --recheck on w1's wording-only fix passes, writing the pass on the new head, logged review-agent:recheck w1 ok" "0|yes|head: ${WNEW}|review-agent:recheck	w1	ok" \
-  "$(set +e; o="$(in_pane w1 "$(recheck_of w1)")"; echo "$?|$(has "wording recheck passed" "${o}")")|$(head -1 "${p}/.swarm/reviews/w1.md")|$(awk -F'\t' '$3 == "w1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
+  "$(set +e; o="$(in_pane w1 "$(recheck_of w1)")"; echo "$?|$(has "wording recheck passed" "${o}")")|$(head -1 "${p}/.swarm/reviews/w1.md")|$(awk -F'\t' '$3 == "w1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)"
 # The conductor reads the pass: the round's declined point goes under the agent's own heading, logged and
 # rebutted already, and no ## Out of scope heading, which the conductor's rules would log and rebut again.
 check "the pass carries the round's declined point under ## Handled by the review agent, marked logged and rebutted, with no ## Out of scope heading" "yes|yes|0" \
@@ -898,7 +898,7 @@ check "review --head while story/h2 has another open PR refuses, naming it, and 
 rm "${FXH}/prlist.h2"
 o="$(from_pane h2 "${h_review}")" || echo "FAIL the brief's review --head for h2 exited non-zero: ${o}"
 check "with the head the review passed, h2 goes to review with its PR, logged as review h2 ok (<PR URL>) with round=1 verdict=pass" "review|${PRB}|ok (${PRB}) ~~ round=1 verdict=pass" \
-  "$(fm_of h2 status)|$(fm_of h2 prs)|$(awk -F'\t' '$2 == "review" && $3 == "h2" { l = $5 } END { print l }' "${p}/.swarm/events.tsv")"
+  "$(fm_of h2 status)|$(fm_of h2 prs)|$(awk -F'\t' '$2 == "review" && $3 == "h2" { l = $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)"
 # One review agent passes one PR: a review --head that does not name every PR on prs: would replace the
 # line and drop the others, so the story could finish without them.
 check "review --head naming one PR while prs: lists another refuses, naming it, and leaves prs: as it was" "1|yes|${PRB}" \

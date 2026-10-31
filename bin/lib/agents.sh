@@ -878,6 +878,10 @@ EVENT_SEP=" ~~ "
 # index and substr only, so macOS's awk and Linux's agree.
 # shellcheck disable=SC2034 # for the awk readers of events.tsv; tests/events_test.sh reads it
 EVENT_OUTCOME_AWK="function outcome(s,  i) { i = index(s, \"${EVENT_SEP}\"); return i ? substr(s, 1, i - 1) : s }"
+# EVENT_VERSION: the plugin's version for append_event's version= field, read from
+# ${SWARM_HOME}/.claude-plugin/plugin.json with plugin_version (bin/swarm.sh) at the first append, once per
+# process (EVENT_VERSION_READ says it was); empty when that read failed or gave no version without whitespace.
+EVENT_VERSION=""; EVENT_VERSION_READ=""
 
 # append_event <command> <target> [outcome] [key=value...] — record_event's append, failing when the
 # line was not written, for a command whose only output is that line (intervene). The outcome loses
@@ -885,14 +889,20 @@ EVENT_OUTCOME_AWK="function outcome(s,  i) { i = index(s, \"${EVENT_SEP}\"); ret
 # which the tail's EVENT_SEP would complete, and then its trailing spaces; so the tail's EVENT_SEP
 # is the first. Fields follow it, space-separated. A pair whose key is not [a-z_]+, or whose value is
 # empty or holds whitespace, is left out with a warning on stderr; the line is still written, with the
-# valid pairs.
+# valid pairs. Every line ends its tail in version=, the installed plugin's version (EVENT_VERSION),
+# after the caller's pairs; a plugin.json that cannot be read gives no version=, never an empty one.
 append_event() {
   local x o="${3:-ok}" tail="" cols=() cut="${EVENT_SEP% }"
+  if [[ -z "${EVENT_VERSION_READ}" ]]; then
+    EVENT_VERSION_READ=1
+    EVENT_VERSION="$({ plugin_version < "${SWARM_HOME:-}/.claude-plugin/plugin.json"; } 2>/dev/null)" || EVENT_VERSION=""
+    [[ "${EVENT_VERSION}" =~ ^[^[:space:]]+$ ]] || EVENT_VERSION=""
+  fi
   o="${o//[$'\t\n\r']/ }"
   while [[ "${o}" == *"${EVENT_SEP}"* || "${o}" == *"${cut}" ]]; do   # loose-match: ok the separator anywhere in the outcome, or at its end
     o="${o//"${EVENT_SEP}"/ }"; o="${o%"${cut}"}"; o="${o%"${o##*[! ]}"}"
   done
-  for x in "${@:4}"; do
+  for x in "${@:4}" ${EVENT_VERSION:+"version=${EVENT_VERSION}"}; do
     if [[ "${x}" =~ ^[a-z_]+=[^[:space:]]+$ ]]; then tail+="${tail:+ }${x}"
     else echo "append_event: left out ${x%%[$'\t\n\r']*}: a field is key=value, the key [a-z_]+, the value not empty and with no whitespace" >&2; fi
   done

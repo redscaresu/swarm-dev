@@ -124,7 +124,7 @@ from events_outcome import fields, outcome
 for r in (l.rstrip("\n").split("\t") for l in open(sys.argv[2])):
     if r[1] == "incident":
         print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())) if sys.argv[3] else r[2] + "|" + outcome(r))' \
-    "${SWARM%/*}/lib" "${p}/.swarm/events.tsv" "${1:-}"
+    "${SWARM%/*}/lib" "${p}/.swarm/events.tsv" "${1:-}" | no_version
 }
 closed() { if grep -qE '^(pane|tab) close' "${ROOT}/herdr.log"; then echo yes; else echo no; fi; }
 live() { awk '{ print $1 }' "${ROOT}/agents" | tr '\n' ' '; }
@@ -211,7 +211,7 @@ sleep 1; t0=${SECONDS}
 check "an interrupted codex-review closes its fallback within 5 s" "yes|yes|" \
   "$([[ $((SECONDS - t0)) -le 5 ]] && echo yes || echo "no, $((SECONDS - t0))s")|$(closed)|$(live)"
 check "events.tsv's codex-review line says it was interrupted" "interrupted" \
-  "$(awk -F'\t' '$2 == "codex-review" { o = $5 } END { print o }' "${p}/.swarm/events.tsv")"
+  "$(awk -F'\t' '$2 == "codex-review" { o = $5 } END { print o }' "${p}/.swarm/events.tsv" | no_version)"
 rm "${ROOT}/silent"
 
 # --- A fallback that cannot start: codex was skipped, exiting as codex did, and no pane is left.

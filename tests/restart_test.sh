@@ -96,7 +96,7 @@ echo '{"type":"summary","summary":"none"}' > "${CLAUDE_PROJECTS_DIR}/p/sess-w1.j
 
 run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID=w:lead PATH="${STUB_BIN}:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 starts() { grep -c '^agent start' "${ROOT}/herdr.log" 2>/dev/null || true; }
-last_event() { tail -1 "${P}/.swarm/events.tsv" | awk -F'\t' '{ print $2 " " $3 " " $5 }'; }
+last_event() { tail -1 "${P}/.swarm/events.tsv" | awk -F'\t' '{ print $2 " " $3 " " $5 }' | no_version; }
 restarts() { grep -c $'\trestart\t'"$1"$'\tw:lead\tok' "${P}/.swarm/events.tsv" || true; }
 # lifecycle <slug> — build_started and review_round for <slug>, as swarm.sh's libraries compute them.
 lifecycle() {

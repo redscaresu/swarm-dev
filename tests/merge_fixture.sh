@@ -287,7 +287,9 @@ merge() {
   (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
     SWARM_MERGE_CI_SECONDS="${MERGE_CI:-5}" SWARM_RELEASE_WAIT=0 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
-events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
+# events — each events.tsv line's command, target and outcome(), the outcome without its key=value tail
+EVENT_AWK="$(PROJECT_DIR="${ROOT}" bash -c 'source "$1/agents.sh"; printf %s "${EVENT_OUTCOME_AWK}"' _ "${REPO}/bin/lib")"
+events() { awk -F'\t' "${EVENT_AWK}"'{ print $2 " " $3 " " outcome($5) }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 merge_lines() { events | grep -c '^merge ' || true; }
 logged() { events | grep -q -- "$1"; }
 # and_logged <pattern> <command>... — the command succeeds and events.tsv has a line matching

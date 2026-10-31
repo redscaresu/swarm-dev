@@ -141,7 +141,7 @@ is "close o1, its PR open: its pane closes, no PR is closed, attempts: unset, it
   "closed|0||worktree branch origin|1" \
   "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept (checks not read, not reviewed): o1 is in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
 is "and o1 is in review with prs: its PR and a dated kept: line, logged as kept, not review" "review|${U}/1|yes|1|0" \
-  "$(fmv o1 status)|$(fmv o1 prs)|$([[ "$(fmv o1 kept)" == "$(date +%F) close (checks not read, not reviewed)" ]] && echo yes)|$(grep -c $'\tkept\to1\tw:me\tok ('"${U}"'/1; checks not read, not reviewed)$' "${P}/.swarm/events.tsv")|$(grep -c $'\treview\to1\t' "${P}/.swarm/events.tsv")"
+  "$(fmv o1 status)|$(fmv o1 prs)|$([[ "$(fmv o1 kept)" == "$(date +%F) close (checks not read, not reviewed)" ]] && echo yes)|$(no_version < "${P}/.swarm/events.tsv" | grep -c $'\tkept\to1\tw:me\tok ('"${U}"'/1; checks not read, not reviewed)$')|$(grep -c $'\treview\to1\t' "${P}/.swarm/events.tsv")"
 out="$(st)"
 is "status lists o1 as kept, not reviewed, and never as awaiting your merge" "1|0" \
   "$(grep -cx "  kept: o1 ${U}/1 (not reviewed)" <<< "${out}")|$(grep -c "awaiting your merge.*: o1 " <<< "${out}")"
@@ -191,7 +191,7 @@ rc=0; (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" ba
 is "close o3 paused with its PR open is refused, naming --drop; its pane, build and story stay" "1|1|open|worktree branch origin|code|ready" \
   "${rc}|$(grep -c 'run swarm.sh close o3 paused --drop for that' "${ROOT}/close.out")|$([[ -e "${P}/.swarm/state/o3" ]] && echo open || echo closed)|$(left o3)|$(fmv o3 kind)|$(fmv o3 status)"
 is "and main logs the refusal, not close:paused ok" "0|1" \
-  "$(grep -c $'\tclose:paused\to3\tw:me\tok$' "${P}/.swarm/events.tsv")|$(grep -c $'\tclose:paused\to3\tw:me\tclose: o3\'s PR ' "${P}/.swarm/events.tsv")"
+  "$(no_version < "${P}/.swarm/events.tsv" | grep -c $'\tclose:paused\to3\tw:me\tok$')|$(grep -c $'\tclose:paused\to3\tw:me\tclose: o3\'s PR ' "${P}/.swarm/events.tsv")"
 # A pane that cannot be closed keeps the story as it was, and says so.
 touch "${ROOT}/paneclosefail"; close o3; rm "${ROOT}/paneclosefail"
 is "with its pane not closing, close o3 prints not closed: and leaves o3 ready, with no prs: or kept:" "1|ready||" \
@@ -310,11 +310,11 @@ is "its block names the lead's choices, reset and drop, at most one reset, and b
   "$(grep -qF 'swarm.sh reset e1 <reason>' <<< "${b}" && echo yes)|$(grep -qF 'swarm.sh drop e1 <reason>' <<< "${b}" && echo yes)|$(grep -qF 'At most one reset per story' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/7" <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/8" <<< "${b}" && echo yes)"
 is "the escalated story has no **You:** step" "0" "$(grep -c '\*\*You:\*\*' "${P}/docs/stories/e1.md")"
 is "the escalation is logged with the attempts and the PR count" "1" \
-  "$(grep -c $'\tescalated\te1\tw:me\tok (attempts 3, 2 PRs)$' "${P}/.swarm/events.tsv")"
+  "$(no_version < "${P}/.swarm/events.tsv" | grep -c $'\tescalated\te1\tw:me\tok (attempts 3, 2 PRs)$')"
 sw reset e1 re-scoped to the parser alone >/dev/null
 is "reset returns the story to what it was before its first counted close" "" "$(diff "${ROOT}/e1.orig" "${P}/docs/stories/e1.md")"
 is "after reset, the story is built as code" "code" "$(sw _role e1)"
-is "reset is logged with its reason" "1" "$(grep -c $'\treset\te1\tw:me\tok (re-scoped to the parser alone)$' "${P}/.swarm/events.tsv")"
+is "reset is logged with its reason" "1" "$(no_version < "${P}/.swarm/events.tsv" | grep -c $'\treset\te1\tw:me\tok (re-scoped to the parser alone)$')"
 item e1 "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"; rc=0; out="$(sw reset e1 again)" || rc=$?
 is "a second reset of e1 fails, naming the first, and leaves it kind: lead" "1|yes|lead" \
   "${rc}|$(grep -qF 'reset: e1 was reset already, at ' <<< "${out}" && echo yes)|$(fmv e1 kind)"

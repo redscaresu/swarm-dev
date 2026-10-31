@@ -253,7 +253,7 @@ poll
 check "an Enter herdr fails to send logs the failure as the resend's outcome" \
   test "$(enters)|$(count $'\tresend\tubr-s1\tw:lead\therdr could not send Enter' "${P}/.swarm/events.tsv")" == "1|1"
 poll
-check "the next poll sends it again" test "$(enters)|$(count $'\tresend\tubr-s1\tw:lead\tok$' "${P}/.swarm/events.tsv")" == "2|1"
+check "the next poll sends it again" test "$(enters)|$(count $'\tresend\tubr-s1\tw:lead\tok$' <(no_version < "${P}/.swarm/events.tsv"))" == "2|1"
 
 fresh; listed ubr-s1:idle; pane w:p1 unsent; ev story ubr-s1; session ubr-s1; touch "${FX}/py.crash"
 poll

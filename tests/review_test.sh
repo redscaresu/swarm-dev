@@ -812,7 +812,7 @@ printf '%s\n' '#!/bin/sh' 'case "$1 $2" in' "  'pr list') echo '[]' ;;" "  'pr v
 chmod +x "${VB}/gh"
 vrun() { (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${VB}:${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 # lines_of <slug> — <command>|<outcome> of each events.tsv line for <slug>
-lines_of() { awk -F'\t' -v s="$1" '$3 == s { print $2 "|" $5 }' "${p}/.swarm/events.tsv"; }
+lines_of() { awk -F'\t' -v s="$1" '$3 == s { print $2 "|" $5 }' "${p}/.swarm/events.tsv" | no_version; }
 item "${b}" stories/v.md "status: ready" "kind: code"
 vrun review v --head "${VH}" "${U}/9" >/dev/null
 check "review --head: one review-finished line, then the review line, each round=1 verdict=pass" \

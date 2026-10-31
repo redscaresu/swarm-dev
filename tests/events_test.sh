@@ -146,7 +146,7 @@ term_pid() {
 was="$(lines)"
 read -r code took <<< "$(term_pid tell s1 findings findings.md)"
 check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
-check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted\$'"
+check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -qE \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted( ~~ .*)?\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
 sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 37[.]$$\$' >/dev/null"
 read -r code took <<< "$(term_pid wait s1)"
@@ -212,7 +212,7 @@ was="$(lines)"
   PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait s1 >/dev/null 2>&1) || true
 new="$(tail -n +"$((was + 1))" "${LOG}")"
 check "a nudging wait appends a line per nudge" test "$(grep -c . <<< "${new}")" -eq 3
-check "a nudging wait appends only nudge lines" test "$(grep -cv $'^[^\t]*\tnudge\ts1\tw:me\tok$' <<< "${new}")" -eq 0
+check "a nudging wait appends only nudge lines" test "$(grep -cvE $'^[^\t]*\tnudge\ts1\tw:me\tok( ~~ .*)?$' <<< "${new}")" -eq 0
 
 # --- Each escalation step writes its own line with its UTC time, for the training data: escalate
 # when build_story starts an escalate build, escalated when that build's close makes the story the
@@ -249,7 +249,7 @@ run story x1 || true
 check "an escalate build's start logs escalate x1, ok (attempt 3)" logged escalate x1 "ok (attempt 3)"
 check "and the build itself, story x1 ok" logged story x1 ok
 run story y1 || true
-check "a code build's start logs no escalate line" bash -c "grep -q \$'\tstory\ty1\tw:me\tok\$' '${LOG}' && ! grep -q \$'\tescalate\ty1\t' '${LOG}'"
+check "a code build's start logs no escalate line" bash -c "grep -qE \$'\tstory\ty1\tw:me\tok( ~~ .*)?\$' '${LOG}' && ! grep -q \$'\tescalate\ty1\t' '${LOG}'"
 run close x1 --drop || true
 check "its failed close --drop logs escalated x1, ok (attempts 3, 2 PRs)" logged escalated x1 "ok (attempts 3, 2 PRs)"
 appends "reset with no reason fails, naming it" 1 reset x1 "reset: <reason> is missing" reset x1
@@ -321,6 +321,31 @@ WANT
 check "the awk outcome() returns the Python outcome() for each row" same \
   "$(awk -F'\t' "${EVENT_AWK}"'{ print outcome($5) }' "${LOG}")" "$(read_py | cut -f1)"
 
+# --- version cases: every append_event line ends its tail in version=, the plugin's version from
+# ${SWARM_HOME}/.claude-plugin/plugin.json read once per process, after the caller's fields; a plugin.json
+# that cannot be read gives no version= and the command still succeeds.
+HOME_SRC="${SWARM%/bin/swarm.sh}"
+V="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "${HOME_SRC}/.claude-plugin/plugin.json")"
+VH="${ROOT}/vhome"; mkdir -p "${VH}/.claude-plugin"; echo '{"version": "1.2.3"}' > "${VH}/.claude-plugin/plugin.json"
+P="${ROOT}/version"; LOG="${P}/.swarm/events.tsv"
+# evv <args...> — append_event in one process with SWARM_HOME at VH, with swarm.sh's own plugin_version;
+# between the two appends plugin.json changes, which the second must not read.
+evv() { PROJECT_DIR="${P}" SWARM_HOME="${VH}" HERDR_PANE_ID=w:me bash -c 'eval "$(grep "^plugin_version()" "$1")"; source "$2/agents.sh"; shift 2
+  append_event "$@"; echo "{\"version\": \"9.9.9\"}" > "${SWARM_HOME}/.claude-plugin/plugin.json"; append_event "$@"' _ "${SWARM}" "${LIB}" "$@" 2>> "${ERR}"; }
+evv x t 'ok (round 2)' round=2
+check "version cases: append_event with a field writes that field, then version=, after the outcome; version= is read once per process" \
+  same "$(cut -f5 "${LOG}")" "$(printf 'ok (round 2)%sround=2 version=1.2.3\n' "${SEP}" "${SEP}")"
+check "version cases: outcome() is unchanged" same "$(read_py | cut -f1 | sort -u)/$(awk -F'\t' "${EVENT_AWK}"'{ print outcome($5) }' "${LOG}" | sort -u)" "ok (round 2)/ok (round 2)"
+mkdir -p "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"; git init -q "${P}"
+# intervene <swarm.sh> — log an intervention with that swarm.sh, printing its exit status and its line's outcome column
+intervene() { local rc=0; (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me bash "$1" intervene lead-hand other "a line" >/dev/null 2>&1) || rc=$?; echo "${rc} $(tail -1 "${LOG}" | cut -f5)"; }
+check "version cases: a logged command's line has version= equal to plugin.json's" \
+  same "$(intervene "${SWARM}")" "0 lead-hand: a line${SEP}cause=other version=${V}"
+# A copy of the plugin whose plugin.json is a directory, which no read can parse.
+mkdir -p "${ROOT}/badhome/.claude-plugin/plugin.json"; cp -R "${HOME_SRC}/bin" "${ROOT}/badhome/bin"
+check "version cases: with plugin.json unreadable the line has no version= and the command still succeeds" \
+  same "$(intervene "${ROOT}/badhome/bin/swarm.sh")" "0 lead-hand: a line${SEP}cause=other"
+
 # --- decline-only cases: a review --head that passes a findings round whose builder pushed nothing (the
 # head is still the one .swarm/reviews/<slug>.head says the round started on) writes decline-only <slug>
 # ok (round N), N the started round, then review-finished, then its own ok line, each with round=N and
@@ -349,8 +374,8 @@ reviewed() {
   was="$(lines)"; run review "${slug}" "$@" || true
   tail -n +"$((was + 1))" "${LOG}" | cut -f2,3,5
 }
-# ln <command> <slug> <outcome> <round> <verdict> — one line as reviewed prints it
-ln() { printf '%s\t%s\t%s%sround=%s verdict=%s\n' "$1" "$2" "$3" "${SEP}" "$4" "$5"; }
+# ln <command> <slug> <outcome> <round> <verdict> — one line as reviewed prints it, version= the plugin's
+ln() { printf '%s\t%s\t%s%sround=%s verdict=%s version=%s\n' "$1" "$2" "$3" "${SEP}" "$4" "$5" "${V}"; }
 # passed <slug> <round> — a --head pass's two lines
 passed() { ln review-finished "$1" ok "$2" pass; ln review "$1" "ok (${U}/7)" "$2" pass; }
 # declined <slug> — a decline-only end of round 1's three lines

@@ -103,9 +103,9 @@ from events_outcome import fields, outcome
 rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[2])] if os.path.exists(sys.argv[2]) else []
 for r in (r for r in rows if r[1] == "reap"):
     print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())) if sys.argv[3] else r[2] + "|" + outcome(r))' \
-    "${SWARM%/*}/lib" "${P}/.swarm/events.tsv" "${1:-}"
+    "${SWARM%/*}/lib" "${P}/.swarm/events.tsv" "${1:-}" | no_version
 }
-last_event() { awk -F'\t' '$2 == "codex-review" { o = $3 "|" $5 } END { print o }' "${P}/.swarm/events.tsv"; }
+last_event() { awk -F'\t' '$2 == "codex-review" { o = $3 "|" $5 } END { print o }' "${P}/.swarm/events.tsv" | no_version; }
 
 # --- A codex that sleeps past the limit is stopped, with its child, and named.
 # shellcheck disable=SC2016 # the stub's variable

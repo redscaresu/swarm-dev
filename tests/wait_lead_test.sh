@@ -959,7 +959,7 @@ check "a second red head on a base with a logged red adds no line of its own" \
   test "$(out)|$(rc)|$(grep -c '^main-red: ' "${P}/.swarm/lead/seen")" == "|1|1"
 again; echo "${B3}" > "${FX}/base.main"; checks success "${B3}"; lead 0
 check "once the base's head reads green, the read logs main-green for that red" \
-  grep -qx "main-green ${B3} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv")"
+  grep -qx "main-green ${B3} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv" | no_version)"
 check "and the line is gone from the queue" no_red_line
 check "the red's unstarted fix-main story is retired" test ! -e "${B}/fix-main-${B1:0:7}.md"
 
@@ -985,7 +985,7 @@ lead 0
 # check, as ci_gate fixed reads it, so it writes no story, and no run starts for it again.
 again; echo "${B2}" > "${FX}/base.main"; test_and_opt "${B2}"; rm -f "${FX:?}/ps"; lead 0
 check "a head red only on a check the base does not require clears the logged red, as reconcile does" \
-  grep -qx "main-green ${B2} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv")"
+  grep -qx "main-green ${B2} o/r main ${B1}" <<< "$(awk -F'\t' '{ print $2, $3, $5 }' "${P}/.swarm/events.tsv" | no_version)"
 check "and the red's unstarted fix-main story is retired by that pass" test ! -e "${B}/fix-main-${B1:0:7}.md"
 check "the fix-main run for the optional check's red ends" fix_done "${B2}"
 check "having written no story" test ! -e "${B}/fix-main-${B2:0:7}.md"
@@ -1115,7 +1115,7 @@ lead 0
 check "with a check still running, the run ends" fix_done "${B1}"
 check "its story's red: line names only the failed check" grep -qx 'red: test (failure)' "${F}"
 check "and so does its main-red" \
-  test "$(awk -F'\t' -v s="${B1}" '$2 == "main-red" && $3 == s { print $5 }' "${P}/.swarm/events.tsv")" == "o/r main test (failure)"
+  test "$(awk -F'\t' -v s="${B1}" '$2 == "main-red" && $3 == s { print $5 }' "${P}/.swarm/events.tsv" | no_version)" == "o/r main test (failure)"
 
 based; echo "${B1}" > "${FX}/base.main"; red_run "${B1}"
 lead 0

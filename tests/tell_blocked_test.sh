@@ -117,7 +117,7 @@ for r in rows:
         print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())))' "${SWARM%/*}/lib" "${p}/.swarm/events.tsv"
 }
 stale() { stale_rows | wc -l | tr -d ' '; }
-stale_fields() { stale_rows | tail -n 1; }
+stale_fields() { stale_rows | tail -n 1 | no_version; }
 REFUSED="b1: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read b1"
 
 agent sb
@@ -247,7 +247,7 @@ echo 'tell_state() { event_fields nested=yes; echo gone; }' >> "${COPY}/bin/lib/
 setup idle idle idle empty-box.txt
 out="$(tell "${COPY}/bin/swarm.sh")"
 check "an arm's EV_FIELDS, then event_fields', on the logged line; none from a nested \$(...)" "arm=set state=gone" \
-  "$(awk -F'\t' '$2 == "tell:nudge" { i = index($5, " ~~ "); print i ? substr($5, i + 4) : "-" }' "${p}/.swarm/events.tsv")"
+  "$(no_version < "${p}/.swarm/events.tsv" | awk -F'\t' '$2 == "tell:nudge" { i = index($5, " ~~ "); print i ? substr($5, i + 4) : "-" }')"
 
 # main makes event_fields' file with mktemp in TMPDIR, as it makes its die file, and removes both.
 mkdir -p "${ROOT}/ftmp"

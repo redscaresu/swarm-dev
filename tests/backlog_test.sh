@@ -183,7 +183,7 @@ run close conduct-e >/dev/null
 echo "merge = agent" > "${p}/.claude/swarm/config"
 run conduct --backlog >/dev/null
 check "a conduct that removes an earlier run's report logs the report's time first, for outcomes' held_min" "ok (2026-10-01T08:00:00Z)|gone" \
-  "$(awk -F'\t' '$2 == "report" && $3 == "backlog" { print $5 }' "${p}/.swarm/events.tsv")|$([[ -e "${p}/.swarm/conduct-backlog.report.md" ]] && echo there || echo gone)"
+  "$(awk -F'\t' '$2 == "report" && $3 == "backlog" { print $5 }' "${p}/.swarm/events.tsv" | no_version)|$([[ -e "${p}/.swarm/conduct-backlog.report.md" ]] && echo there || echo gone)"
 bl="$(cat "${brief}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does, unless it costs money" "yes" \

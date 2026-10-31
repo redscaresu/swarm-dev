@@ -171,7 +171,7 @@ nudge() {
   printf '%s|exit %s' "$(head -1 <<< "${out}" | cut -c1-8)" "${rc}"
 }
 # tells <builder> — the outcome of each tell:nudge row for <builder>, joined by |.
-tells() { awk -F'\t' -v b="$1" '$2 == "tell:nudge" && $3 == b { printf "%s%s", (n++ ? "|" : ""), $5 }' "${p}/.swarm/events.tsv"; }
+tells() { no_version < "${p}/.swarm/events.tsv" | awk -F'\t' -v b="$1" '$2 == "tell:nudge" && $3 == b { printf "%s%s", (n++ ? "|" : ""), $5 }'; }
 # prompts <builder> — herdr prompts that carried <builder>'s nudge.
 prompts() { grep -c "(${1})" "${ROOT}/keys.log" || true; }
 # fresh — each case's own rows: no events, prompts or queued nudges, the config as set up.
