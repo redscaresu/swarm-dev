@@ -8,6 +8,9 @@
 # never stale; a #PR merged in 2020 (a later body naming it does not count), an epic deleted in
 # 2020, one it never had, and an impossible date (with a warning) are judged by their uses. Then docs/features.tsv itself: every row
 # has a metric, a uses entry and a baseline (a value, or unavailable:), and every role: is one policy accepts.
+# Then the section check over a fixture and docs/features.tsv: a metric naming `flow <section>` names a
+# flow_<section>.py that exists, a row landed by an epic of the 0.30 and 0.31 HLD names a column that section
+# prints, the two rows read by hand are exempt by name and fail without it, and Goal 6's events have rows.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -118,6 +121,75 @@ while IFS=$'\t' read -r feature landed metric baseline uses; do
 done < <(tail -n +2 "$(dirname "${SWARM}")/../docs/features.tsv")
 check "docs/features.tsv: a landed date or epic, a metric, uses and a baseline on every row, and roles policy accepts" "${bad}" ""
 check "docs/features.tsv has its rows" "$(( $(wc -l < "$(dirname "${SWARM}")/../docs/features.tsv") > 40 ))" 1
+
+# The section check. A metric naming `flow <section>` (not `flow:`, and not a metric without flow) names a
+# bin/lib/flow_<section>.py that exists. A row landed by an epic of the 0.30 and 0.31 HLD also names,
+# after the colon, a column that section prints as a header (a tab-separated line of lowercase names)
+# over the fixture logs below, which give each section the rows its headers need.
+ROOT="$(cd "$(dirname "${SWARM}")/.." && pwd)"
+HLD="${ROOT}/board/hld/2026-10-28-swarm-dev-0-30-and-0-31.md"
+hld_epics=" $(sed -n '/^## Epics$/,/^## /s|^- \[\([a-z0-9-]*\)\](\.\./epics/.*|\1|p' "${HLD}" | tr '\n' ' ')"
+check "the HLD's § Epics names its epics" "$([[ "${hld_epics}" == *" lead-woken "*" telemetry-writers "* ]] && echo yes)" yes
+# Read by hand at the release (lead decision 2026-10-30), so no one flow column holds them:
+# - lead-woken incidents: lead-hand incidents per 100 merged story PRs takes incidents' lead-hand lines
+#   over a count of merged story PRs that no section prints (epic_totals' merged_prs leaves some out).
+# - reference split: conflict merge-ins touching a docs/reference*.md file reads each merge-in's
+#   files, which merge_ins lists only for its top three files.
+EXEMPT=$'lead-woken incidents\nreference split'
+Q="${dir}/sections"; mkdir -p "${Q}/.swarm"; git -C "${Q}" init -q
+printf '%s\n' $'2026-10-01\tcode\ts-a\tclaude\topus\thigh\tk1' > "${Q}/.swarm/agents.tsv"; : > "${Q}/.swarm/findings.tsv"
+printf '%s\n' $'2026-10-01T07:00:00Z\tstory\ts-a\t-\tok' $'2026-10-01T07:10:00Z\treview-agent\ts-a\t-\tok' \
+  $'2026-10-01T07:20:00Z\treview\ts-a\t-\tok (https://github.com/o/r/pull/1)' $'2026-10-01T07:21:00Z\tmerge\ts-a\t-\tok' \
+  $'2026-10-01T09:00:00Z\ttell:nudge\tghost\t-\tcould not reach ghost: no agent this project started holds the name ~~ state=none' \
+  $'2026-10-01T10:00:00Z\treview-agent\ts-b\t-\treview-agent: review-s-b did not start (its pane w1-3 is closed)' > "${Q}/.swarm/events.tsv"
+headers() { # <section>... — `<section><TAB><word>` for each header word those sections print over the fixture,
+  # run as flow runs them (flow_report.py), without the outcomes rows flow builds first, which no header needs.
+  local q="${Q}/.swarm"
+  { (cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FINDING_REVIEWERS=codex PATH="${dir}/bin:${PATH}" python3 "${ROOT}/bin/lib/flow_report.py" \
+    0000-00-00 9999-12-30 "" "${q}/agents.tsv" "${q}/events.tsv" "${q}/findings.tsv" x code x x "" x "$@" 2>/dev/null) || true; } |
+    awk -F'\t' '/^## /{s = substr($0, 4); next}
+    NF > 1 {for (i = 1; i <= NF; i++) if ($i !~ /^[a-z][a-z0-9_]*$/) next; for (i = 1; i <= NF; i++) print s "\t" $i}'
+}
+section_check() { # <features.tsv> [exempt feature names, one per line] — one line per row that fails
+  local f="$1" exempt="${2-${EXEMPT}}" bad="" todo="" sections=() feature landed metric baseline uses section col
+  while IFS=$'\t' read -r feature landed metric baseline uses; do
+    [[ "${metric}" =~ ^flow\ ([a-z_]+) ]] || continue
+    section="${BASH_REMATCH[1]}"
+    [[ -f "${ROOT}/bin/lib/flow_${section}.py" ]] || { bad+="${feature}: no bin/lib/flow_${section}.py"$'\n'; continue; }
+    [[ "${hld_epics}" == *" ${landed} "* ]] || continue
+    ! grep -Fxq "${feature}" <<< "${exempt}" || continue
+    col=""; [[ "${metric}" =~ ^flow\ [a-z_]+:\ ([a-z0-9_-]+) ]] && col="${BASH_REMATCH[1]}"
+    [[ -n "${col}" ]] || { bad+="${feature}: flow ${section} names no column"$'\n'; continue; }
+    todo+="${feature}"$'\t'"${section}"$'\t'"${col}"$'\n'; sections+=("${section}")
+  done < <(tail -n +2 "${f}")
+  if [[ -n "${todo}" ]]; then
+    local seen; seen="$(headers "${sections[@]}")"
+    while IFS=$'\t' read -r feature section col; do
+      grep -Fxq "${section}"$'\t'"${col}" <<< "${seen}" || bad+="${feature}: flow ${section} prints no column ${col}"$'\n'
+    done <<< "${todo%$'\n'}"
+  fi
+  printf '%s' "${bad}"
+}
+printf '%s\n' $'feature\tlanded\tmetric\tbaseline\tuses' $'no-section\tlead-woken\tflow no_such_section: x\t0\tevent:story' \
+  $'no-column\tlead-woken\tflow lead_queue: no_such_column\t0\tevent:story' $'bare\tlead-woken\tflow lead_queue\t0\tevent:story' \
+  $'old-gone\t2020-01-01\tflow no_such_section\t0\tevent:story' > "${dir}/bad.tsv"
+check "a missing flow section fails on any row; a column the section does not print, or none, fails on a row of the HLD's epics" \
+  "$(section_check "${dir}/bad.tsv")" "$(printf '%s\n' 'no-section: no bin/lib/flow_no_such_section.py' \
+  'bare: flow lead_queue names no column' 'old-gone: no bin/lib/flow_no_such_section.py' \
+  'no-column: flow lead_queue prints no column no_such_column')"
+printf '%s\n' $'feature\tlanded\tmetric\tbaseline\tuses' $'flow-bare\tlead-woken\tflow: builders_mean\t0\tevent:story' \
+  $'no-flow\tlead-woken\toutcomes: story_merged share\t0\tevent:story' $'column\tlead-woken\tflow lead_queue: p90_min\t0\tevent:story' \
+  $'not-hld\t2020-01-01\tflow lead_queue: no_such_column\t0\tevent:story' > "${dir}/good.tsv"
+check "flow: and a metric without flow pass; a column the section prints passes; outside the HLD's epics no column is read" \
+  "$(section_check "${dir}/good.tsv")" ""
+check "docs/features.tsv passes the section check" "$(section_check "${ROOT}/docs/features.tsv")" ""
+check "without its exemption, lead-woken incidents fails" "$(section_check "${ROOT}/docs/features.tsv" 'reference split')" \
+  "lead-woken incidents: flow incidents prints no column lead-hand"
+check "without its exemption, reference split fails" "$(section_check "${ROOT}/docs/features.tsv" 'lead-woken incidents')" \
+  "reference split: flow merge_ins prints no column conflict"
+check "Goal 6's rows: a use of each new event" \
+  "$(cut -f5 "${ROOT}/docs/features.tsv" | tr ' ' '\n' | grep -E '^event:(pr-opened|first-green|review-finished)$' | sort)" \
+  "$(printf '%s\n' event:first-green event:pr-opened event:review-finished)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
