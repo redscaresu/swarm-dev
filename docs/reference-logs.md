@@ -681,7 +681,7 @@ shows its step-ups on a row whose round is `-`. A PR whose findings name a later
 events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round, `rounds` its PR's last
 round in that loop:
 `held-for-lead` after an `escalated` line; once the PR merged (a `merge` line, or merged in
-`outcomes`), `decline-only` when a `decline-only` line came after its last round, `pass` when its
+`outcomes`), `decline-only` when its last round ended on a `decline-only` line, `pass` when its
 last round fixed nothing and `merged-after-fixes` when it fixed something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
 row over the loops with a round: the PRs (each once, loops with PR `-` left out), the median and p90
 (nearest rank) of their rounds, the minutes spent in round 3 and later (a round with unknown minutes
