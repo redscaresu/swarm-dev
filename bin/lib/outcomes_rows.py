@@ -163,7 +163,7 @@ for b in builds:
 after = collections.Counter()   # per target: the index in of(target) its next step-up's search starts at
 for t, target, trigger, frm, to in step_ups:
     mine = of(target)
-    i = min((i for i in range(after[target], len(mine) - 1) if mine[i]["f"][4] == frm and mine[i + 1]["f"][4] == to),
+    i = min((i for i in range(after[target], len(mine) - 1) if mine[i]["f"][4] == frm and mine[i + 1]["f"][4] == to),   # outcome-scan: ok agents.tsv's model column, not events.tsv's outcome
             key=lambda i: (abs(mine[i + 1]["t"] - t), i), default=None)
     if i is None:
         continue

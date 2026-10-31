@@ -42,7 +42,7 @@ lines() { printf '%s\n' "$@" | LC_ALL=C sort -u; }
 DOC_FLOOR=(); for t in doc_check features llms config epic_codex board_pr merge skill removed flow_sections command_names epic_briefs plan_epic upgrade; do DOC_FLOOR+=("tests/${t}_test.sh"); done
 CMD_FLOOR=(); for t in doc_check roles epic_codex skill removed command_names; do CMD_FLOOR+=("tests/${t}_test.sh"); done
 SHELL_FLOOR=(tests/loose_match_test.sh tests/timeouts_test.sh)
-BIN_FLOOR=(); for t in agent_state command_names doc_check events lib_path loose_match removed roles skill timeouts; do BIN_FLOOR+=("tests/${t}_test.sh"); done
+BIN_FLOOR=(); for t in agent_state command_names doc_check events_fixture events_tail_agents events_tail_dash events_tail_flow events_tail_lead events_tail_merge events lib_path loose_match outcome_scan removed roles skill timeouts; do BIN_FLOOR+=("tests/${t}_test.sh"); done
 SHIM_FLOOR=("${SHELL_FLOOR[@]}" tests/removed_test.sh)
 RULES_FLOOR=(tests/epic_briefs_test.sh tests/review_test.sh tests/llms_test.sh tests/doc_check_test.sh)
 TEST_FLOOR=(tests/sleep_scale_test.sh tests/test_cap_test.sh tests/removed_test.sh tests/test_shard_test.sh)

@@ -664,6 +664,18 @@ if tail -1 "${dir}/.swarm/findings.tsv" | grep -q $'\tlogged as filed\tfiled\tle
 else echo "FAIL log-finding --filed wrote: $(tail -1 "${dir}/.swarm/findings.tsv")"; fails=$((fails + 1)); fi
 idle_project "with no git, a finding logged as filed is not offered" "idle: \"$(basename "${dir}")\""$'\n'"  out-of-scope finding: $(date +%F) k o/r#1: still open"
 rm -rf "${dir}"
+# A deferred decline (one the round cap held back) is offered as well, labelled by its reason, newest
+# first beside an out-of-scope one; log-finding --filed drops it as it drops an out-of-scope one.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && mkdir -p .claude/swarm .swarm docs/stories && : > .claude/swarm/config && item stories/l1.md 'status: later' 'kind: code' \
+  && printf '%s\tk\to/r#1\tstill open\tdeclined\tcodex\tout-of-scope\n' "$(date +%F)" > .swarm/findings.tsv \
+  && bash "${SWARM}" log-finding --declined deferred --reviewer codex --round 3 k o/r#2 "held back" >/dev/null \
+  && bash "${SWARM}" log-finding --declined deferred --reviewer codex --round 3 k o/r#3 "deferred and filed" >/dev/null \
+  && bash "${SWARM}" log-finding --filed --reviewer lead k o/r#3 "deferred and filed" >/dev/null)
+out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; record_step "${out}"
+idle_project "a deferred finding is offered as a deferred finding, and one logged as filed is not" \
+  "idle: \"$(basename "${dir}")\""$'\n'"  deferred finding: $(date +%F) k o/r#2: held back"$'\n'"  out-of-scope finding: $(date +%F) k o/r#1: still open"
+rm -rf "${dir}"
 # A reader that has stopped reading (a closed stdout, as after head -1 or grep -q) leaves next
 # exiting 0 with no warning: it writes its step and idle lines in one go and ignores the broken pipe.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
