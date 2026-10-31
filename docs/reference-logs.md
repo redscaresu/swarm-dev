@@ -87,7 +87,7 @@ and the first line of a failed command's error.
 The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
-fields; `merge` passes `hold=` on its held lines, and `intervene` `cause=` on its incident lines. It first takes every separator out of the outcome text: each
+fields; `merge` passes `hold=` on its held lines, and `intervene` passes `cause=`. It first takes every separator out of the outcome text: each
 one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
 then any trailing spaces. That way the first separator in the field is always where the tail starts,
 and an outcome that ends in one is written without it. Fields are separated by spaces. A key is
