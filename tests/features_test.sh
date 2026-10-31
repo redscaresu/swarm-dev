@@ -127,9 +127,14 @@ check "docs/features.tsv has its rows" "$(( $(wc -l < "$(dirname "${SWARM}")/../
 # after the colon, a column that section prints as a header (a tab-separated line of lowercase names)
 # over the fixture logs below, which give each section the rows its headers need.
 ROOT="$(cd "$(dirname "${SWARM}")/.." && pwd)"
+# The HLD's § Epics, listed here: `swarm.sh finish` deletes the HLD once its epics are built, in a board-only
+# PR that runs no tests, and its rows must still have their columns checked after that.
 HLD="${ROOT}/board/hld/2026-10-28-swarm-dev-0-30-and-0-31.md"
-hld_epics=" $(sed -n '/^## Epics$/,/^## /s|^- \[\([a-z0-9-]*\)\](\.\./epics/.*|\1|p' "${HLD}" | tr '\n' ' ')"
-check "the HLD's § Epics names its epics" "$([[ "${hld_epics}" == *" lead-woken "*" telemetry-writers "* ]] && echo yes)" yes
+HLD_EPICS=" delivery-liveness lead-woken merge-safety telemetry-readers telemetry-writers review-rounds-end reference-split machine-usable merge-mechanics flaky-tests deferred-700 board-loose-ends "
+if [[ -f "${HLD}" ]]; then
+  check "HLD_EPICS is the HLD's § Epics, while the HLD is on the board" \
+    " $(sed -n '/^## Epics$/,/^## /s|^- \[\([a-z0-9-]*\)\](\.\./epics/.*|\1|p' "${HLD}" | tr '\n' ' ')" "${HLD_EPICS}"
+fi
 # Read by hand at the release (lead decision 2026-10-30), so no one flow column holds them:
 # - lead-woken incidents: lead-hand incidents per 100 merged story PRs takes incidents' lead-hand lines
 #   over a count of merged story PRs that no section prints (epic_totals' merged_prs leaves some out).
@@ -158,7 +163,7 @@ section_check() { # <features.tsv> [exempt feature names, one per line] — one 
     [[ "${metric}" =~ ${SECTION_RE} ]] || continue
     section="${BASH_REMATCH[1]}"
     [[ -f "${ROOT}/bin/lib/flow_${section}.py" ]] || { bad+="${feature}: no bin/lib/flow_${section}.py"$'\n'; continue; }
-    [[ "${hld_epics}" == *" ${landed} "* ]] || continue
+    [[ "${HLD_EPICS}" == *" ${landed} "* ]] || continue
     ! grep -Fxq "${feature}" <<< "${exempt}" || continue
     col=""; [[ "${metric}" =~ ${COLUMN_RE} ]] && col="${BASH_REMATCH[1]}"
     [[ -n "${col}" ]] || { bad+="${feature}: flow ${section} names no column"$'\n'; continue; }
@@ -183,6 +188,8 @@ check "a missing flow section fails on any row; a column the section does not pr
 printf '%s\n' $'feature\tlanded\tmetric\tbaseline\tuses' $'flow-bare\tlead-woken\tflow: builders_mean\t0\tevent:story' \
   $'no-flow\tlead-woken\toutcomes: story_merged share\t0\tevent:story' $'column\tlead-woken\tflow lead_queue: p90_min\t0\tevent:story' \
   $'not-hld\t2020-01-01\tflow lead_queue: no_such_column\t0\tevent:story' > "${dir}/good.tsv"
+check "with the HLD deleted from the board, a row of its epics still has its column checked" \
+  "$(HLD="${dir}/no-such-hld.md" section_check "${dir}/bad.tsv" | grep '^no-column')" 'no-column: flow lead_queue prints no column no_such_column'
 check "flow: and a metric without flow pass; a column the section prints passes; outside the HLD's epics no column is read" \
   "$(section_check "${dir}/good.tsv")" ""
 check "docs/features.tsv passes the section check" "$(section_check "${ROOT}/docs/features.tsv")" ""
