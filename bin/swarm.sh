@@ -828,7 +828,7 @@ import os, sys; sys.path.insert(0, os.environ["SWARM_LIB"]); from report import 
 key = pr_key(sys.argv[2])
 rows = open(sys.argv[1], encoding="utf-8", errors="replace", newline="\n").read().split("\n") if os.path.exists(sys.argv[1]) else []
 for f in (r.split("\t") + [""] * 9 for r in rows):
-    if f[4] == "declined" and pr_key(f[2]) == key:
+    if f[4] == "declined" and pr_key(f[2]) == key:   # outcome-scan: ok findings.tsv, not events.tsv
         print("- round %s, declined as %s: %s%s" % (f[7] or "unknown", f[6] or "(no reason)", f[3], f[8] and " (because: %s)" % f[8]))' \
     "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${SWARM_PR}")"
   [[ -z "${declines}" ]] || declines=$'\n\n'"${DECLINES_LINE}"$'\n'"${declines}"
