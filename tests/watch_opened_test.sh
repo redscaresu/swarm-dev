@@ -64,7 +64,18 @@ prs() {
   echo "[${rows}]" > "${ROOT}/prlist.json"
 }
 prs
-seen="${p}/.swarm/state/watch-seen"
+seen="${p}/.swarm/state/watch-seen"; EV="${p}/.swarm/events.tsv"
+# ev_rows <command> <key> — each events.tsv line for <command>: its target, outcome() and the field <key>,
+# |-separated, read with bin/lib/events_outcome.py.
+ev_rows() {
+  python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); from events_outcome import fields, outcome
+for l in open(sys.argv[2], encoding="utf-8"):
+    r = l.rstrip("\n").split("\t")
+    if len(r) == 5 and r[1] == sys.argv[3]: print("|".join([r[2], outcome(r), fields(r).get(sys.argv[4], "")]))' \
+    "${SWARM%/*}/lib" "${EV}" "$1" "$2" 2>/dev/null || true
+}
+opened_events() { ev_rows pr-opened url; }
 # unsee <n> — drop watch-seen's opened line for PR #<n>, which only a wrong earlier watch wrote, so the
 # check after it stands alone.
 unsee() { { grep -vx "opened o/svc#$1" "${seen}" || true; } > "${ROOT}/seen"; cp "${ROOT}/seen" "${seen}"; }
@@ -97,7 +108,13 @@ watch_for() {
 check "watch --epic says its own story's PR opened, skipping another epic's, and exits 0" "o/svc #2 story/a opened|0" "$(watch_for --epic e)"
 check "watch --epic reads nothing of the PR it says opened past the list" "0" "$(grep -cE 'pulls/2|commits/head2' "${ROOT}/calls" || true)"
 check "watch --epic records the PR as opened in watch-seen" "opened o/svc#2" "$(grep '^opened ' "${seen}")"
+check "watch --epic logs one pr-opened line: the slug, outcome ok, the PR's URL in url=" "a|ok|https://github.com/o/svc/pull/2" "$(opened_events)"
+check "the stall rule's sign_time skips the pr-opened line" "None" "$(SWARM_LIB="${SWARM%/*}/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from stall import sign_time
+print(sign_time(sys.argv[1].split("\t")))' "$(tail -1 "${EV}")")"
 check "a second watch --epic polls on, saying nothing: not its own PR again, nor another epic's" "|polling" "$(watch_for --epic e)"
+check "a second watch --epic logs no second pr-opened line" "a|ok|https://github.com/o/svc/pull/2" "$(opened_events)"
 check "watch --backlog says a no-epic story's PR opened, and exits 0" "o/svc #3 story/c opened|0" "$(watch_for --backlog)"
 check "a second watch --backlog polls on, not saying it again" "|polling" "$(watch_for --backlog)"
 
@@ -122,10 +139,17 @@ check "watch --epic does not say a PR opened whose head a review agent started o
 printf 'head: head5old\n## Findings\nNone.\n' > "${p}/.swarm/reviews/r.md"; echo head5old > "${p}/.swarm/reviews/r.head"; unsee 6
 check "watch --epic says a rebuilt story's new PR opened, its old PR's review left in place" "o/svc #6 story/r opened|0" "$(watch_for --epic e)"
 
-# The lead's bare watch leaves the review starts to the conductors: no opened line, none recorded.
-rm -f "${seen}"
+# The lead's bare watch leaves the review starts to the conductors: no opened line, none recorded,
+# none logged.
+rm -f "${seen}"; logged="$(opened_events)"
 check "the bare watch polls on, saying no PR opened and recording none" "|polling|0" \
   "$(watch_for)|$(grep -c '^opened ' "${seen}" || true)"
+check "the bare watch logs no pr-opened line" "${logged}" "$(opened_events)"
+
+# An events.tsv watch cannot write (a directory in its place): it says the PR opened and exits 0 as before.
+mv "${EV}" "${ROOT}/events.keep"; mkdir "${EV}"
+check "watch --epic with events.tsv unwritable says the PR opened and exits 0" "o/svc #2 story/a opened|0" "$(watch_for --epic e)"
+rmdir "${EV}"; mv "${ROOT}/events.keep" "${EV}"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} check(s) failed"; exit 1; fi
 echo "all passed"
