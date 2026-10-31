@@ -72,6 +72,7 @@ item stories/rl-docs.md "Document the limits" 'kind: docs' 'epic: rate-limiting'
 for s in audit-events audit-schema; do item "stories/${s}.md" "${s}" 'kind: code' 'epic: audit-log' 'status: ready'; done
 item stories/audit-export.md "Export the audit log as CSV" 'kind: code' 'epic: audit-log' 'status: ready'
 item stories/rotate-staging-key.md "Rotate the staging API key" 'kind: lead' 'status: ready'
+echo "# Stories" > "${P}/docs/stories/README.md"; echo "# Epics" > "${P}/docs/epics/README.md"   # init's board marker: dash needs it
 "${G[@]}" add docs && "${G[@]}" commit -qm board
 merge 190 37 rl-config; merge 140 38 rl-middleware; merge 95 39 audit-events
 

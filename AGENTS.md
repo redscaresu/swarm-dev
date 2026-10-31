@@ -7,7 +7,7 @@ its own herdr pane and git worktree.
 Check these first. If any fails, stop and tell the user which one:
 
 ```bash
-[ "$HERDR_ENV" = 1 ]            # you are inside a herdr pane; agents open in herdr workspaces (README: Workspace labels)
+[ "$HERDR_ENV" = 1 ]            # you are inside a herdr pane; agents open in herdr workspaces (docs/running.md: Workspace labels)
 command -v swarm.sh             # the plugin is installed and this session started after it
 gh auth status                  # PRs, checks and merges go through gh
 git remote get-url origin       # a GitHub origin; swarm.sh resolves the owner from it
