@@ -27,8 +27,10 @@ every agent run inside herdr (`HERDR_ENV=1`). `init`, `next`, `status`, `config`
 It stops only when the user must act: a draft HLD or epic, plans to approve, a `lead` story, a PR
 held for them (a protected path, money, or a merge of the base that dropped base lines), an expired
 login, an agent waiting on a prompt, a proposed rule, or a `blocked` or `later` item.
-Only the user agrees a draft; the lead sets a draft active itself only when it has a `parent:`, an
-agreed HLD grants `epics`, or `lead_epics = on`. After the user acts, run `/swarm-dev:swarm` again.
+Only the user agrees a draft epic, through /epic, which writes `agreed:` as it sets `status: active`.
+The lead sets a new or draft epic `active` itself only when no agreement is needed: it has a
+`parent:`, an agreed HLD grants `epics`, or `lead_epics = on`. An `agreed:` already on a draft is
+stale and does not count. After the user acts, run `/swarm-dev:swarm` again.
 An `escalated <slug>` story (failed on the top model, called impossible, or held) is the lead's: it
 re-scopes it and runs `swarm.sh reset`, or `swarm.sh drop`, and tells the user why. README's
 § When `/swarm-dev:swarm` stops for you has the full table.
@@ -50,7 +52,6 @@ false statements; the rest is logged as deferred. Each time a person steps in, l
 | `/swarm-dev:swarm` | do the next step and loop until the user must decide |
 | `swarm.sh next` / `status` | the next step / agents that need a look and what waits on the user |
 | `swarm.sh wait --lead` | block until something needs the lead, then print it with its exit |
-| `swarm.sh conduct <epic>` | start a conductor that builds one epic |
 | `swarm.sh flow` | the project's numbers, one section per question (cost, start failures, holds, ...) |
 | `swarm.sh reset <slug> <reason>` | requeue an escalated story, or lift a held one's hold |
 | `swarm.sh version` / `update` | the installed version / fetch the newest (restart after) |
