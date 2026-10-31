@@ -1,5 +1,6 @@
 # Throughput, a flow section (flow_report.py gives its globals): one TSV row per epic, then `all`.
 import collections, datetime, json, os, subprocess
+from events_outcome import outcome
 from report import *
 log = agents
 
@@ -23,7 +24,7 @@ def last_entry(path):
 oks = []
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
-    t = secs(f[0]) if len(f) == 5 and f[4].startswith("ok") else None
+    t = secs(f[0]) if len(f) == 5 and outcome(f).startswith("ok") else None
     if t is not None:
         oks.append((t, f[1], f[2], datetime.date.fromtimestamp(t).isoformat()))
 # A close after --until still ends its build (at the cutoff); every other event counts in the window
