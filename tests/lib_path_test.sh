@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# lib_path_test.sh — swarm.sh's python imports bin/lib's panes, stall, report and dash_legend, never a
-# file of that name in the directory it runs from (a project root). archive_session (`_archive`) runs
+# lib_path_test.sh — swarm.sh's python imports bin/lib's panes, stall, report, dash_legend and
+# events_outcome, never a file of that name in the directory it runs from (a project root). archive_session (`_archive`) runs
 # from a project root holding shadow modules, each of which records its import in shadowed. The other
 # python3 -c sites run only under herdr, so each is checked by its text: a site that imports from
 # bin/lib runs under -I (no cwd on sys.path), sets SWARM_LIB, and puts it first on sys.path before its
@@ -37,7 +37,7 @@ check "no module in the project root was imported" "" "$(cat "${R}/shadowed" 2>/
 sites() {
   python3 -I - "${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh <<'PY'
 import os, re, sys
-LIB = re.compile(r"(?m)(^|; )from (panes|stall|report|dash_legend) import")
+LIB = re.compile(r"(?m)(^|; )from (panes|stall|report|dash_legend|events_outcome) import")
 GUARD = 'sys.path.insert(0, os.environ["SWARM_LIB"]); '
 for path in sys.argv[1:]:
     text = open(path).read()
