@@ -719,10 +719,16 @@ Repeat until a step below says stop:
 Log every time a person had to step in, the moment it happens, so `swarm.sh flow` and `swarm.sh dash`
 count it:
 
-- `swarm.sh intervene lead-hand "<what you did>"` when you acted by hand where a command should
-  have (you typed into a stalled agent's pane, merged or edited something yourself).
-- `swarm.sh intervene user-caught "<what they found>"` when the user found a problem before the
-  swarm did (held stories or a slow CI run they found by asking).
+- `swarm.sh intervene lead-hand <cause> "<what you did>"` when you acted by hand where a command
+  should have (you typed into a stalled agent's pane, merged or edited something yourself).
+- `swarm.sh intervene user-caught <cause> "<what they found>"` when the user found a problem before
+  the swarm did (held stories or a slow CI run they found by asking).
+
+The cause says why, one of: `review-rounds`, `false-stall`, `start-failed`, `gpg-locked`,
+`panes-open`, `story-gone`, `pr-no-story`, `dropped-lines`, `pr-churn`, `load-or-logs`,
+`no-conductor`, `flaky-test`, `classifier`, `upgrade`, `stuck-builder`, `red-main`,
+`reported-early`, `missing-review`, `tell-lost`, or `other` when none fits. An unknown cause fails
+and lists them.
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
 is `human` unless `swarm.sh grants <PR URL>` lists `merge` for the PR, and then only with
