@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # dash_projects_test.sh — `swarm.sh dash --project <dir> --project <dir>` against two throwaway
 # projects, alpha and bravo, each with an active epic of its own, run from a git repo with no board
-# and from a dir in no git repo at all.
+# and from a dir in no git repo at all; and against a project whose events.tsv predates the outcome's
+# key=value tail and its tailed copy (events_tail_helpers.sh), which draw the same panel.
 # Stub claude, herdr and gh on PATH; stty and tput fail, so nothing here is a terminal.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -148,6 +149,22 @@ out="$(DASH_COLOR=1 dash --project "${A}" --project "${B}")"
 check "with DASH_COLOR set, the frames carry colour codes" has "${esc}" "${out}"
 out="$(dash --project "${A}" --project "${B}")"
 check "without DASH_COLOR, no colour codes" lacks "${esc}" "${out}"
+
+# A project whose events.tsv predates the outcome's key=value tail (the v0.29.1 fixture as written) and its
+# copy with a tail on every row, drawn by one dash at the fixture's day: each frame shows the same panel
+# but for its name, which is as long in both. The tailed frame ends where the legend starts.
+# shellcheck source=tests/events_tail_helpers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/events_tail_helpers.sh"
+OLD="${ROOT}/before"; NEW="${ROOT}/tailed"
+events_project "${OLD}" "${EVENTS_FIXTURE}" && touch "${OLD}/docs/stories/README.md"
+events_project "${NEW}" "${EVENTS_FIXTURE}" ' ~~ k=v' && touch "${NEW}/docs/stories/README.md"
+now="$(python3 -c 'import datetime; print(int(datetime.datetime(2026, 10, 29, 12, tzinfo=datetime.timezone.utc).timestamp()))')"
+out="$(SWARM_DASH_NOW="${now}" dash --project "${OLD}" --project "${NEW}")"
+fo="$(awk '/^before  swarm-dev / { on = 1 } /^tailed  swarm-dev / { on = 0 } on' <<< "${out}" | sed 's/^before  /<project>  /')"
+fn="$(awk '/^tailed  swarm-dev / { on = 1 } /● working/ { on = 0 } on' <<< "${out}" | sed 's/^tailed  /<project>  /')"
+check "a project that predates the tail and its tailed copy draw the same panel" test "${fo}" == "${fn}"
+check "the predating project's recent box shows the fixture's conduct zzgs row" \
+  bash -c "awk '/^╭─ recent/ { on = 1; next } on && /^╰/ { exit } on' <<< \"\$1\" | grep -qF '✗ conduct zzgs: conduct-zzgs: the pane'" _ "${fo}"
 
 # --watch off a terminal: a change to bravo's board prints both projects' frames on that tick.
 (cd "${G}" && exec env -u HERDR_ENV "${SWARM}" dash --watch 1 --project "${A}" --project "${B}" > "${ROOT}/watch.out" 2>&1) &

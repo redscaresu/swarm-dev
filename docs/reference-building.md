@@ -780,7 +780,8 @@ on the pass then names the drop and the answer, so whoever merges sees it. An ex
 check) is run once more, since a GitHub or fetch error can clear. On a second, the agent nudges the
 builder with the line and stops with no pass: its review file holds `head:`,
 `dropped-lines unchecked: <the line>` and a `stopped:` line, and the stop note goes to the conductor. It
-runs `codex-review` with `SWARM_STORY=<slug>` and, on the story's first round when the PR changes
+runs `codex-review` with `SWARM_STORY=<slug>` and `SWARM_PR=<PR URL>`, so codex also sees the
+findings declined on this PR in earlier rounds, and, on the story's first round when the PR changes
 code, `/code-review <PR URL>`. From round 2 on it runs codex alone. It runs no tests of its own
 and trusts CI, unless `review_verify = full`: then round 1 may also run the project's tests for the
 changed files and check the builder's mutation proofs, and later rounds still trust CI (reference-models.md
@@ -788,15 +789,23 @@ changed files and check the builder's mutation proofs, and later rounds still tr
 from the findings rounds since the story's last build started: each findings `tell` that went out,
 or that herdr sent without seeing it taken up, and each findings step-up, whose brief carries the
 findings in place of a tell. A `review-agent --recheck` refused with a full round due counts too, at
-most once per round. A step-up or a restarted builder does not start the count again.
+most once per round. A step-up or a restarted builder does not start the count again. Nor does a
+build started after a kept close (its `kept` event, then that close's own line; reference-models.md
+§ Model and effort), unless the slug has a later ok close, reset or drop, or reconcile reopened it
+because the kept PR closed unmerged: until then the kept PR is still the one under review.
 After each review the agent triages its own findings. It never edits the code: a finding that is
-real and inside the story goes to the builder to fix. It declines the rest, each with a reason (nit,
-wrong, out-of-scope, or the reason an earlier round gave), and rebuts them in one PR comment. It logs each declined finding at once, with
+real and inside the story goes to the builder to fix. From round 3 the round cap narrows that: the
+round's line, in the brief or from `review-agent --next`, has the agent send only a regression the PR
+introduces or a line now false about the code, and decline the rest as `deferred`. A deferral
+carries no `--because`, since the builder gave no reason and the call is the agent's. Each declined
+finding gets a reason (nit, wrong, out-of-scope, deferred, or the reason an earlier round gave), and
+the agent rebuts them all in one PR comment. It logs each declined finding at once, with
 `log-finding --declined <reason> --reviewer <who> --round <n>`; a finding a fallback reviewer raised
 in codex's place is logged with `--reviewer fallback`. It logs the ones to fix once the
 builder has pushed and `wait-pr --head` has found the PR at that head, never from the worktree's
 commit alone: from the builder's reply and the new diff, each one fixed as fixed, and each one
-the builder declined with a reason the agent accepts as declined, rebutted in the PR; one declined
+the builder declined with a reason the agent accepts as declined, with the builder's reason in
+`--because "<one line>"`, rebutted in the PR; one declined
 with a reason it rejects is not logged and comes up again next round. Then it writes the review. A round with nothing
 to fix is a pass, and the agent writes its review file, `.swarm/reviews/<slug>.md`, first: a
 `wait review-<slug>` (the lead's, for a kept story) ends on that file, and once the PR merges, the merge's reconcile retires the agent and
@@ -966,8 +975,9 @@ round is one review whose findings went to the builder; a review started again (
 findings section, a review agent that timed out or crashed) is not one. A review on the latest head
 whose findings are all declined is a pass, never sent to the builder. Each declined finding is
 rebutted in the PR with a reason and logged with `log-finding --declined <reason> --reviewer <who>`:
-`nit` for a nit, an edge case or a low-value point, `out-of-scope` or `wrong` where they apply, and a
-point already declined with the reason it was first declined with. Before a story goes to review or
+`nit` for a nit, an edge case or a low-value point, `out-of-scope` or `wrong` where they apply,
+`deferred` for one the round cap holds back from round 3, and a point already declined with the
+reason it was first declined with. Before a story goes to review or
 merges, `review --head` and `merge --head` check that the PR's head is still the one the agent
 reviewed. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
@@ -1024,8 +1034,14 @@ beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`.
 `SWARM_STORY=<slug>` it passes a prompt in place of `--base`. The prompt asks codex to review the diff
 against `origin/<base>`, uncommitted changes and untracked files included, so a builder's review
 before its first commit sees its work. It lists the story's touches with its **Done when** and **From review** items,
-and holds out of scope only a point that a change to a file outside the touches alone can fix. If `SWARM_STORY` is not a slug, names no story file,
-or names a story with no **Done when** item, codex-review fails before codex starts. An interrupted
+and holds out of scope only a point that a change to a file outside the touches alone can fix. With
+`SWARM_PR=<PR URL>` too, as the review agent runs it, the prompt ends with the findings declined on
+that PR before: each `.swarm/findings.tsv` declined row whose PR is the same PR (a URL or `owner/repo#N`,
+never one whose number only starts the same), with its round, its reason and its `--because`. A line
+over them says each reason is the builder's claim, not a fact, and that codex ignores none of them.
+With no such row, or with no `SWARM_PR` (a builder's own run, which never passes it, before or after its PR opens), the prompt is
+unchanged. On a usage limit the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
+or names a story with no **Done when** item, or `SWARM_PR` is set and is not a PR URL, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
 row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's

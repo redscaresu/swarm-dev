@@ -109,6 +109,8 @@ appends "log-finding --reviewer then --declined" 1 log-finding:declined "k ${U}/
 appends "log-finding --declined then --reviewer" 1 log-finding:declined "k ${U}/9" ok log-finding --declined wrong --reviewer lead k "${U}/9" t
 appends "log-finding --declined out-of-scope --reviewer" 1 log-finding:declined "k ${U}/9" ok log-finding --declined out-of-scope --reviewer codex k "${U}/9" t
 appends "log-finding --reviewer" 1 log-finding "k ${U}/9" ok log-finding --reviewer conductor k "${U}/9" t
+# --because's value is one word with its spaces, so the target is still <kind> <pr>.
+appends "log-finding --declined --because" 1 log-finding:declined "k ${U}/9" ok log-finding --declined nit --because "the builder's reason, in words" --reviewer codex k "${U}/9" t
 appends "a failed story" 1 story nope "no story" story nope
 appends "a failed conduct" 1 conduct nope "no epic" conduct nope
 appends "a failed agent, logged by its agent name" 1 agent n1-x "no prompt file" agent t "N1 x" "${P}" code "${P}/missing.md"

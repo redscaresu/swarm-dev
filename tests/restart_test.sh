@@ -5,7 +5,7 @@
 # none it starts a fresh builder on the last model with a handover brief. It refuses, starting nothing
 # and saying why, while the builder is listed, with no worktree, with a .step-up marker, for kind:
 # lead, once its PR merged, off its branch, and when herdr refuses its resume command. Its restart line moves neither build_started nor review_round, and the lead's next poll after
-# it is silent. herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH: herdr logs each call,
+# it is silent. review_round also keeps its count across a build started after a kept close. herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH: herdr logs each call,
 # lists the agents in ${ROOT}/agents ("<name> <pane>" lines, all idle) and adds one on agent start.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -220,6 +220,26 @@ pane="$(sed -n 's/^agent start r1 .*--pane \([^ ]*\).*/\1/p' "${ROOT}/herdr.log"
 check "a resume command herdr refuses: it fails, closes the pane it opened, logs no restart ok line" "1|yes|0" \
   "${rc}|$(has "pane close ${pane:-none}" "$(cat "${ROOT}/herdr.log")" | cut -c1-3)|$(restarts r1)"
 check "a resume command herdr refuses: it says why" "yes" "$(has "so a herdr restart would drop its guards; its pane is closed" "${out}")"
+
+# --- review_round across a kept close: a build started after one (keep_build's kept line, then that
+# close's own line) keeps the kept PR's count; a later close or reset line, a reconcile that reopened the
+# story, or no kept line, starts it again.
+FOUR=("story ok" "tell:findings ok" "tell:findings ok" "escalate ok (findings-3: sonnet -> opus)")
+KEPT=("kept ok (https://github.com/o/proj/pull/9)" "close:stalled ok")
+round_after() { # <slug> <event>... — <slug>'s review_round once events.tsv gains these "<command> <outcome>" lines
+  local e
+  for e in "${@:2}"; do printf '2026-10-02T09:00:00Z\t%s\t%s\tw:lead\t%s\n' "${e%% *}" "$1" "${e#* }"; done >> "${P}/.swarm/events.tsv"
+  lifecycle "$1" | cut -d' ' -f2
+}
+check "after a story ok line, two ok findings tells and a findings-3 escalate, review_round is 4" 4 "$(round_after rk1 "${FOUR[@]}")"
+check "it stays 4 across a story ok line that follows a kept line and its close" 4 "$(round_after rk1 "${KEPT[@]}" "story ok")"
+check "a story ok line after a kept line, its close and a later close resets it to 1" 1 \
+  "$(round_after rk2 "${FOUR[@]}" "${KEPT[@]}" "close ok" "story ok")"
+check "a story ok line after a kept line, its close and a later reset resets it to 1" 1 \
+  "$(round_after rk3 "${FOUR[@]}" "${KEPT[@]}" "reset ok (re-scoped)" "story ok")"
+check "a story ok line after a kept line, its close and a reconcile that reopened it (its PR closed unmerged) resets it to 1" 1 \
+  "$(round_after rk5 "${FOUR[@]}" "${KEPT[@]}" "reconcile ok (reopened)" "story ok")"
+check "a story ok line with no kept line resets it to 1" 1 "$(round_after rk4 "${FOUR[@]}" "story ok")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

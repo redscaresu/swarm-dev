@@ -150,11 +150,13 @@ tell or a failed step-up goes in your report for the lead.
 EOF
 }
 
-# codex_review_cmd <base> [slug] — how a brief runs codex: through codex-review, which stops it after
+# codex_review_cmd <base> [slug] [pr-url] — how a brief runs codex: through codex-review, which stops it after
 # codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config;
-# SWARM_STORY, given a slug, so codex reviews against that story.
+# SWARM_STORY, given a slug, so codex reviews against that story; SWARM_PR, given the story's PR, so
+# codex also sees the findings declined on it before (codex_story_prompt).
 codex_review_cmd() {
   [[ -z "${2:-}" ]] || printf 'SWARM_STORY=%q ' "$2"
+  [[ -z "${3:-}" ]] || printf 'SWARM_PR=%q ' "$3"
   printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"
 }
 # codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
@@ -167,7 +169,8 @@ codex_rule() {
   printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit", a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" in place of codex skipped.'
 }
 # finding_rule — every fixed finding feeds the outer loop (outcomes' recurring block); declined ones
-# are logged too, with their reason, and never count toward it.
+# are logged too, with their reason, and never count toward it. A deferred one (the round cap's) that
+# proves real is logged escaped, its text copied from the deferred row, so the two rows match.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
@@ -183,13 +186,19 @@ own round. A review started again (head moved, no \`## Findings\` section, timed
 no new round. <n> is 0 for a finding on a plan or a board PR.
 
 <reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
-it is real but not worth the change, and wrong when it is mistaken.
+it is real but not worth the change, wrong when it is mistaken, and deferred when the round cap held
+it back (from review round ${CAP_ROUND}).
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
 \`swarm.sh codex-review\` (fallback when it printed "reviewed by fallback"), code-review for /code-review's, ci for the PR review bot's or a
 \`swarm.sh findings\` note's, conductor for one from your own reading of the diff (a review agent's
 own reading keeps the conductor's old value), and lead only for one from the lead's own reading.
 When a fix finds a defect in work that already merged, log it as \`--reviewer escaped\` against the
 PR that merged it, not the PR that fixes it.
+A finding declined as deferred that a later round or a fix finds real, and fixes, is logged as
+escaped too, against the PR it was deferred on, never as declined (an escaped row is always fixed),
+and its one line copied exactly from the deferred row's text, so the two rows match:
+\`awk -F'\\t' '\$3 == "<PR URL>" && \$7 == "deferred" { print \$4 }' ${proj}/.swarm/${FINDINGS_LOG_NAME}\`
+prints that text.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
 \`awk -F'\\t' 'NF < 5 || \$5 == "fixed" || \$5 == "escaped" { print \$2 }' ${proj}/.swarm/${FINDINGS_LOG_NAME} 2>/dev/null | sort -u\`
@@ -836,7 +845,8 @@ start_retryable() {
 # findings tell that is ok or that herdr sent (findings_told), and a findings step-up (escalate's
 # `ok (findings-N: ...)`), whose brief carried the findings in place of a tell, and, which the ladder does
 # not count, a wording recheck refused with a full round due (review_rounds). A step-up or a
-# restarted builder (escalate, agent) keeps the same PR, so neither starts the count again.
+# restarted builder (escalate, agent) keeps the same PR, so neither starts the count again, and nor
+# does a build started after a kept close (review_rounds).
 review_round() {
   review_rounds "$1" | cut -d' ' -f1
 }
@@ -845,10 +855,18 @@ review_round() {
 # since the story's last build start began (an ok review-agent or review-agent:next line, each on the round
 # review_round gave then), or 0 with none. A review-agent:recheck refused with a full round due counts as
 # the findings round its wording nudge was not, once per round started (none counted since that start), so
-# the brief's --next after it runs.
+# the brief's --next after it runs. A story start that follows a kept close (keep_build's kept line, then
+# that close's own line), with no later ok close, reset or drop line of the slug and no reconcile that
+# reopened it (its PR closed unmerged), keeps both: the kept PR is still the one under review, so the
+# round cap still counts its rounds.
 review_rounds() {
   awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'
-    $3 != s { next } { o = outcome($5) } $2 == "story" && o ~ /^ok/ { n = 0; at = 0 }
+    $3 != s { next } { o = outcome($5) }
+    $2 == "kept" && o ~ /^ok/ { kept = 2; next }   # 2: its own close line is still to come
+    ($2 == "close" || $2 ~ /^close:/) && kept == 2 { kept = 1; next }
+    ($2 == "close" || $2 ~ /^close:/ || $2 == "reset" || $2 == "drop") && o ~ /^ok/ { kept = 0 }
+    $2 == "reconcile" && o == "ok (reopened)" { kept = 0 }   # the kept PR closed unmerged
+    $2 == "story" && o ~ /^ok/ && !kept { n = 0; at = 0 }
     ($2 == "tell" || $2 == "tell:findings") && (o == "ok" || o ~ /herdr sent it the brief/) { n++ }
     $2 == "escalate" && o ~ /^ok \(findings-[0-9]+:/ { n++ }
     $2 == "review-agent:recheck" && o ~ /a full round is due/ && at == n + 1 { n++ }
@@ -1117,11 +1135,15 @@ recheck_hunks() {
       }'
 }
 
+CAP_ROUND=3   # the review round from which the round cap holds findings back (review_round_line)
+
 # review_round_line <round> <PR URL> — what review round <round> runs, for review_brief and review_next:
 # codex and, when the PR changes code, /code-review on round 1; codex alone after it. Then whether the
 # round may run tests (review_verify): with full, round 1 may run the project's tests for the changed files
 # and check the builder's mutation proofs, leaving the worktree clean; any other round, and every round
-# with ci, reads the diff and trusts CI, its line naming which of the two it is.
+# with ci, reads the diff and trusts CI, its line naming which of the two it is. From round CAP_ROUND on,
+# the round cap: only a regression the PR introduces or a line now false about the code goes to the
+# builder, and the rest is declined as deferred, with no --because (the call is the review agent's).
 review_round_line() {
   if [[ "$1" == 1 ]]; then
     echo "This is review round 1 of the story. When the PR
@@ -1143,6 +1165,11 @@ end-of-review check. Rounds 2 and later run no tests of their own."
   else
     echo "Tests (review_verify = full, round $1): from round 2 on, ${trust}"
   fi
+  [[ "$1" -lt "${CAP_ROUND}" ]] || echo "Round cap (from round ${CAP_ROUND}): of the findings that are real and inside the story,
+send the builder only a regression this PR introduces or a line now false about the code; this
+replaces the rule that each of them is to fix. Decline the rest as deferred: rebut them in the PR with
+the other declined ones, and log each with \`--declined deferred\` and no \`--because\`, since holding
+it back is your call, not the builder's."
 }
 
 # tab_pane <tab> <pane-name> — the last pane <tab>'s records (next_pane's, <tab> and <tab>-<n>) hold
@@ -1397,8 +1424,9 @@ EOF
 # and code-scanning alerts, each real one, red check or conflict sent to the builder as a
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
-# sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug, /code-review on round 1 when the PR
-# changes code, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding, logs each
+# sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug and the PR (which shows codex the findings declined on it before), /code-review on round 1 when the PR
+# changes code, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding
+# (from round CAP_ROUND, the round cap: only a regression or a line now false is to fix, the rest deferred), logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
 # before review_handoff hands the PR on (review --head, then merge --head where it may) and ends it,
@@ -1415,7 +1443,11 @@ EOF
 # Its swarm.sh calls name the project (SWARM_PROJECT), as codex_review_cmd's.
 review_brief() {
   local story="${BOARD}/stories/$1.md" rules cr sw nudge="${4%.md}.nudge.md" round="${4%.md}.round.md" stop="${4%.md}.stop.md" repo ladder="" stepped="" stepnote="" agent cond
+  local fix="One that is real and inside the story is to fix: the builder fixes it, never you."
   cr="$(review_round_line "$6" "$2")"
+  # From the round cap on, the round line above narrows what is to fix (review_round_line).
+  [[ "$6" -lt "${CAP_ROUND}" ]] || fix="Under the round cap above, only a regression this PR introduces or a line now false about the
+code is to fix: the builder fixes it, never you."
   sw="$(printf 'SWARM_PROJECT=%q %q' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh")"
   # findings takes the story's repo by name; a story with no repo: is in the project's own.
   repo="$(fm "${story}" repo)"; [[ -n "${repo}" ]] || repo="$(basename "${PROJECT_DIR}")"
@@ -1538,7 +1570,7 @@ first, as below.
 
 $(dropped_lines_rule "$2" "$5" "$3" "$4")
 
-Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
+Run \`$(codex_review_cmd "$3" "$1" "$2")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
 Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
 a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
@@ -1554,10 +1586,10 @@ When the review is done, check that \`git rev-parse HEAD\` still prints $5 and \
 prints nothing. If not, the worktree moved under you: write ${4} with the Write tool holding two
 lines, \`head: $5\` and \`head moved: <what changed>\`, then stop.
 
-Otherwise, fix or decline each finding. One that is real and inside the story is to fix: the builder
-fixes it, never you. Decline the rest, each with its reason: nit for a nit, an edge case or a
+Otherwise, fix or decline each finding. ${fix} Decline the rest, each with its reason: nit for a nit, an edge case or a
 low-value point, wrong for a mistaken one, out-of-scope for a point only a change to a file outside
-the touches can fix, and, for a point declined in an earlier round, the reason it was declined with
+the touches can fix, deferred for a real one inside the story that the round cap holds back (from
+round ${CAP_ROUND}), and, for a point declined in an earlier round, the reason it was declined with
 then. Rebut the declined ones in the PR, in one comment:
 \`gh pr comment $2 --body '<each declined finding and its reason>'\`. Log each declined one now, as
 below; log each one to fix only once the builder has pushed, as below. A finding's round is $6 on
@@ -1596,7 +1628,7 @@ printed, as above. Once the findings are sent, wait for the builder as above. Th
 builder's reply (\`herdr agent read ${agent} --source recent-unwrapped\`). When \`git rev-parse HEAD\`
 is still the head you reviewed (no fix was committed), and the builder declined each finding you
 sent with a reason you accept, the round passes on that head, as one with nothing to fix does: log
-each as declined, rebut them in the PR as above, in one comment with each finding and the builder's
+each as declined, with \`--because "<the builder's reason, one line>"\`, rebut them in the PR as above, in one comment with each finding and the builder's
 reason, and do the pass step above on that head, its review listing them under
 \`## Handled by the review agent\` with those reasons. When HEAD is still the same otherwise, stop with
 \`no fix pushed: <the builder's reply, in one line>\`, as above. When HEAD moved, run the green step
@@ -1605,7 +1637,8 @@ has run on that head the PR has it (a push that did not land ends it with \`the 
 not <sha>\`, as there). Log nothing before then: a fix in this worktree is not on the PR until the
 push lands. With the PR at that head, read the new diff (\`git diff <the head you reviewed>
 HEAD\`) and log each finding you sent: as fixed when the diff fixes it, and as declined, with the
-reason that fits, when the builder declined it with a reason you accept; rebut those in the PR as
+reason that fits and \`--because "<the builder's reason, one line>"\`, when the builder declined it
+with a reason you accept; rebut those in the PR as
 above, in one comment with each finding and the builder's reason. One it did neither to, or
 declined with a reason you do not accept, is not logged; the next round raises it again if it still
 holds. Once that head is green and triaged with nothing to nudge, after a wording nudge run
@@ -1774,6 +1807,10 @@ warns and starts it as the epic says.
 A \`could not reach <name>:\` refusal from \`swarm.sh tell\` is final: the agent has no pane, or its
 session has ended, and the refusal names who acts on it. List the story under no agent in your report
 and never tell it again.
+
+A finding a review agent declined as \`deferred\` (the round cap, from review round ${CAP_ROUND}) that a
+later fix proves real is logged as escaped by the lead, against the PR it was deferred on, its text
+copied exactly from the deferred row: name both in your report, and log nothing yourself.
 
 The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read

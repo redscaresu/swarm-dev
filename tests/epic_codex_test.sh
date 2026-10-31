@@ -35,8 +35,10 @@ bare_declined() {
     | grep -oE -- '--declined( +[^ `]+)?' | grep -vE -- '--declined +(out-of-scope|nit|wrong|deferred|<reason>)$' || echo none
 }
 check "every --declined in finding_rule and the outer-loop paragraph is followed by a reason" "none" "$(bare_declined)"
-check "finding_rule names out-of-scope, nit, wrong and --reviewer escaped" "yes|yes|yes|yes" \
-  "$(f="$(sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}")"; for w in out-of-scope nit wrong '--reviewer escaped'; do has "${w}" "${f}"; done | paste -sd'|' -)"
+check "finding_rule names out-of-scope, nit, wrong, deferred and --reviewer escaped" "yes|yes|yes|yes|yes" \
+  "$(f="$(sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}")"; for w in out-of-scope nit wrong 'deferred when the round cap held' '--reviewer escaped'; do has "${w}" "${f}"; done | paste -sd'|' -)"
+check "finding_rule logs a deferred finding proved real as escaped, its line copied exactly from the deferred row" "yes|yes" \
+  "$(f="$(sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}")"; for w in 'A finding declined as deferred that a later round or a fix finds real' "copied exactly from the deferred row's text"; do has "${w}" "${f}"; done | paste -sd'|' -)"
 check "the conductors' reviewer mapping is written once, in finding_rule" "1" "$(cat "${SH[@]}" | grep -c "<who> is the reviewer that first raised it, whoever passed it on")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
