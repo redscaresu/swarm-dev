@@ -15,7 +15,7 @@ every agent run inside herdr (`HERDR_ENV=1`). `init`, `next`, `status`, `config`
 `outcomes`, `wait-pr`, `version` and `update` also work outside it.
 
 1. `swarm.sh init` creates the board, `.claude/swarm/`, a CI workflow and a pre-commit hook, and
-   names the `Bash(swarm.sh merge *)` allow rule if it is missing. It never overwrites a file.
+   names the `Bash(swarm.sh merge *)` allow rule if it is missing. It overwrites no file but an unedited old `Board.base`.
 2. The user runs `claude` in that folder once and accepts the trust prompt. Only the user can.
 3. `/swarm-dev:hld <title>` (a design that becomes several epics) or `/epic <title>` (one epic)
    opens a co-author pane; the user writes the draft there and agrees it.
@@ -26,7 +26,7 @@ every agent run inside herdr (`HERDR_ENV=1`). `init`, `next`, `status`, `config`
 
 It stops only when the user must act: a draft HLD or epic, plans to approve, a `lead` story, a PR
 held for them (a protected path, money, or a merge of the base that dropped base lines), an expired
-login, an agent waiting on a prompt, a proposed rule, a staged epic, or a `blocked` or `later` item.
+login, an agent waiting on a prompt, a proposed rule, or a `blocked` or `later` item.
 Only the user agrees a draft; the lead sets a draft active itself only when it has a `parent:`, an
 agreed HLD grants `epics`, or `lead_epics = on`. After the user acts, run `/swarm-dev:swarm` again.
 An `escalated <slug>` story (failed on the top model, called impossible, or held) is the lead's: it
