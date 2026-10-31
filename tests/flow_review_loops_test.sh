@@ -264,6 +264,43 @@ check "decline-only cases: a round still open when a restart starts the next loo
 check "decline-only cases: the round a decline-only line adds counts in the offset of the next build on the PR" \
   "$(row s-pad "${dout}" | cut -f3,5 | tr '\n' ' ')|$(end "${dout}" s-pad | tr '\n' ' ')" $'1\t10 2\t- 3\t4 4\t- |s-pad\t'"${P26}"$'\t2\topen s-pad\t'"${P26}"$'\t4\tpass '
 
+# verdict cases, in logs of their own: review lines that carry round= and verdict= in their tails, and
+# review-finished lines, whose verdict is how the loop ended. s-vheld's only end signal is a
+# review-finished verdict=held line (a top-rung hold writes no escalated line): held-for-lead, where
+# s-vnone, the same lines without it, is open. s-vpass and s-vdec end on a pass and a decline-only, every
+# round-end line with its tail, and count their rounds as untailed lines do. s-vagain passed, then a
+# review agent started again: that round is open, so its verdict no longer stands.
+V="${dir}/verdict"; mkdir -p "${V}"; : > "${V}/findings.tsv"
+printf '%s\n' $'2026-10-01\tcode\ts-vheld\tclaude\topus\thigh\tv1' $'2026-10-01\tcode\ts-vnone\tclaude\topus\thigh\tv2' \
+  $'2026-10-01\tcode\ts-vpass\tclaude\topus\thigh\tv3' $'2026-10-01\tcode\ts-vdec\tclaude\topus\thigh\tv4' \
+  $'2026-10-01\tcode\ts-vagain\tclaude\topus\thigh\tv5' > "${V}/agents.tsv"
+P31=https://github.com/o/r/pull/31 P32=https://github.com/o/r/pull/32 P33=https://github.com/o/r/pull/33
+vev() { printf '2026-10-01T08:%s:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${V}/events.tsv"; }
+for s in s-vheld s-vnone; do
+  vev 00 story "${s}" ok; vev 10 review-agent "${s}" "ok ~~ round=1"
+  vev 20 tell:findings "${s}" "ok ~~ round=1 verdict=findings"; vev 22 review-agent:next "${s}" "ok (round 2) ~~ round=2"
+  vev 30 held "${s}" "ok (top-rung: findings round 2 on opus)"
+  [[ "${s}" == s-vnone ]] || vev 30 review-finished "${s}" "ok ~~ round=2 verdict=held"
+done
+vev 00 story s-vpass ok; vev 10 review-agent s-vpass "ok ~~ round=1"; vev 20 tell:findings s-vpass "ok ~~ round=1 verdict=findings"
+vev 22 review-agent:next s-vpass "ok (round 2) ~~ round=2"; vev 30 review-finished s-vpass "ok ~~ round=2 verdict=pass"
+vev 30 review s-vpass "ok (${P31}) ~~ round=2 verdict=pass"; vev 31 merge s-vpass ok
+vev 00 story s-vdec ok; vev 10 review-agent s-vdec "ok ~~ round=1"; vev 20 tell:findings s-vdec "ok ~~ round=1 verdict=findings"
+vev 30 decline-only s-vdec "ok (round 1) ~~ round=1 verdict=decline-only"; vev 30 review-finished s-vdec "ok ~~ round=1 verdict=decline-only"
+vev 30 review s-vdec "ok (${P32}) ~~ round=1 verdict=decline-only"; vev 31 merge s-vdec ok
+vev 00 story s-vagain ok; vev 10 review-agent s-vagain "ok ~~ round=1"; vev 20 review-finished s-vagain "ok ~~ round=1 verdict=pass"
+vev 20 review s-vagain "ok (${P33}) ~~ round=1 verdict=pass"; vev 40 review-agent s-vagain "ok ~~ round=2"
+vout="$(SWARM_FINDING_REVIEWERS="codex" SWARM_ROWS="" python3 "${ROOT}/bin/lib/flow_report.py" \
+  0000-00-00 9999-12-30 "" "${V}/agents.tsv" "${V}/events.tsv" "${V}/findings.tsv" x "code" x x "" x review_loops)"
+check "verdict cases: a loop whose only end signal is a review-finished verdict=held line ends held-for-lead" \
+  "$(end "${vout}" s-vheld)" $'s-vheld\t-\t1\theld-for-lead'
+check "verdict cases: the same lines with no review-finished line end as before, open" "$(end "${vout}" s-vnone)" $'s-vnone\t-\t1\topen'
+check "verdict cases: tailed findings, review and merge lines count two rounds and end pass" \
+  "$(row s-vpass "${vout}" | cut -f3,5 | tr '\n' ' ')|$(end "${vout}" s-vpass)" $'1\t10 2\t- |s-vpass\t'"${P31}"$'\t2\tpass'
+check "verdict cases: a tailed decline-only line closes no round 2, and the loop ends decline-only" \
+  "$(row s-vdec "${vout}" | cut -f3,5 | tr '\n' ' ')|$(end "${vout}" s-vdec)" $'1\t10 |s-vdec\t'"${P32}"$'\t1\tdecline-only'
+check "verdict cases: a review agent started after a pass reopens the loop, so it ends open" "$(end "${vout}" s-vagain)" $'s-vagain\t'"${P33}"$'\t2\topen'
+
 # flow passes escalate_ladder: with none, top_rung is -.
 P="${dir}/repo"
 mkdir -p "${P}/.swarm" "${P}/.claude/swarm"

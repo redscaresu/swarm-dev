@@ -253,7 +253,8 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   the builder reached that rung, or from the build's start when it began there (an `escalate_after`
   Fable build, or the top of a two-rung ladder), or from the lead's last `reset` of the story,
   whichever is latest. The findings are not sent and the tell fails, saying so. The story turns
-  `kind: lead` with `held_for: top-rung`, logged as `held`, and its block holds the findings, which
+  `kind: lead` with `held_for: top-rung`, logged as `held` and as `review-finished` with
+  `verdict=held` (the review ends there), and its block holds the findings, which
   are also kept in `.swarm/briefs/<slug>.held-findings.md`. The builder and its PR are kept. The lead
   narrows the scope, splits the story or accepts the PR with follow-ups, then lifts the hold with
   `reset` (which keeps `attempts:` and is not the story's one reset) and sends that file with

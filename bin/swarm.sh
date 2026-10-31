@@ -1071,7 +1071,8 @@ main_signal() {
 # review-agent:recheck, so the target
 # stays the slug (a board-pr's name). A reset or drop
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
-# epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
+# epic's review handed over (mark_review writes a review's decline-only and review-finished lines); a
+# reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
 # nothing, queued for a busy agent or replaced by a newer one (on its way, or sent or queued since it
 # read the agent's state), logs the queued: or replaced: line tell_outcome leaves in the die file, so
 # it counts as no round. Its closing line carries key=value fields after the outcome (append_event's
@@ -1115,11 +1116,13 @@ main() {
     step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     # A --next round or a --recheck is no review start, so flow's review-agent starts and review_wait never
     # read it; a recheck that passes counts no round, and one refused with a full round due counts the
-    # round its wording nudge did not (review_rounds).
+    # round its wording nudge did not (review_rounds). A start's and a --next's line carry round=, the
+    # round review_round gives before it runs: the round it starts.
     review-agent) EV_TARGET="${2:-}"
             case "${EV_TARGET}" in
-              --next) EV_CMD="review-agent:next"; EV_TARGET="${3:-}"; EV_OK="ok (round $(review_round "${3:-}"))" ;;
+              --next) EV_CMD="review-agent:next"; EV_TARGET="${3:-}"; n="$(review_round "${3:-}")"; EV_OK="ok (round ${n})"; EV_FIELDS="round=${n}" ;;
               --recheck) EV_CMD="review-agent:recheck"; EV_TARGET="${3:-}" ;;
+              *) EV_FIELDS="round=$(review_round "${EV_TARGET}")" ;;
             esac ;;
     *) EV_TARGET="${2:-}" ;;
   esac
@@ -1149,12 +1152,6 @@ main() {
   elif [[ "${EV_CMD}" == tell:* ]] && why="$(head -1 "${EV_ERR}" 2>/dev/null)" && [[ "${why}" == queued:* || "${why}" == replaced:* ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${why}" ${fields[@]+"${fields[@]}"}   # tell_outcome's: nothing sent, so not ok
   elif [[ "${EV_TARGET}" != + ]]; then
-    # A review --head that passes a findings round whose builder pushed nothing (it declined them all)
-    # is a decline-only end: its line goes first, so a reader meets it before the review's. A failed
-    # read of it skips the line, never the review's.
-    if [[ "${EV_CMD}" == review && "${3:-}" == --head ]] && n="$(decline_only_round "${EV_TARGET}" "${4:-}")" && [[ -n "${n}" ]]; then
-      record_event decline-only "${EV_TARGET}" "ok (round ${n})"
-    fi
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}" ${fields[@]+"${fields[@]}"}
   fi
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"

@@ -1918,6 +1918,8 @@ tell_gone() {
 # Each refusal on the state it read logs it as state= (event_fields): gone, unknown, herdr:unknown,
 # waiting:<what> (waiting_for's), herdr:blocked, or herdr:<status> for any other status; none and gone
 # come from tell_gone. A refusal before the state is read, or on the queue's lock, logs no state=.
+# Findings past the ladder's checks below end a review round: their line logs round= (review_round's)
+# and verdict=findings.
 # With goal on, findings get a fresh goal (findings_goal).
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
@@ -2018,6 +2020,9 @@ tell_agent() {
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
     [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
   fi
+  # Findings end a review round: the tell's line carries round= (review_round's, read before this tell
+  # counts) and verdict=findings, as the goal step's ok line below does.
+  if [[ "${kind}" == findings ]]; then n="$(review_round "$1")"; event_fields "round=${n}" verdict=findings; fi
   from="${qfrom:-$(tell_from "$1")}"; who="the conductor"; [[ "${from}" != review ]] || who="the review agent"
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
@@ -2031,7 +2036,7 @@ tell_agent() {
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
-  trap "rc=\$?; rm -f '${msg}' '${msg}.goal' ${inflight_q}; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
+  trap "rc=\$?; rm -f '${msg}' '${msg}.goal' ${inflight_q}; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1' ok round=${n} verdict=findings" EXIT
   TELL_PANE="${qpane}" findings_goal "$1" "${since}" "${msg}.goal" "${from}"   # its /goal to the same pane
   echo "told ${name}"
 }

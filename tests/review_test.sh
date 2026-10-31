@@ -803,5 +803,25 @@ check "tidy --yes refuses to run without HERDR_PANE_ID" "yes" \
 rm -f "${p}/.swarm/state/t" "${ROOT}/panes.json" "${ROOT}/agents.json"
 for f in agents.json panes.json; do [[ -f "${ROOT}/${f}.keep" ]] && mv "${ROOT}/${f}.keep" "${ROOT}/${f}"; done
 
+# --- review's verdict: a --head pass logs round= and verdict=pass on its review line and writes one
+# review-finished line with the same; a review held for an open parent logs verdict=held and writes no
+# review-finished. A gh of its own: every PR's head is VH, and no other PR is open (review_heads).
+VH=cccccccccccccccccccccccccccccccccccccccc; VB="${ROOT}/verdict-bin"; mkdir -p "${VB}"
+# shellcheck disable=SC2016 # the stub's own shell expands $1 and $2
+printf '%s\n' '#!/bin/sh' 'case "$1 $2" in' "  'pr list') echo '[]' ;;" "  'pr view') echo '{\"headRefOid\":\"${VH}\"}' ;;" '  *) exit 1 ;;' 'esac' > "${VB}/gh"
+chmod +x "${VB}/gh"
+vrun() { (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${VB}:${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+# lines_of <slug> — <command>|<outcome> of each events.tsv line for <slug>
+lines_of() { awk -F'\t' -v s="$1" '$3 == s { print $2 "|" $5 }' "${p}/.swarm/events.tsv"; }
+item "${b}" stories/v.md "status: ready" "kind: code"
+vrun review v --head "${VH}" "${U}/9" >/dev/null
+check "review --head: one review-finished line, then the review line, each round=1 verdict=pass" \
+  "review-finished|ok ~~ round=1 verdict=pass"$'\n'"review|ok (${U}/9) ~~ round=1 verdict=pass" "$(lines_of v)"
+item "${b}" stories/vp.md "status: ready" "kind: code"
+item "${b}" stories/vh.md "status: ready" "kind: code" "depends_on: [vp]"
+vrun review vh --head "${VH}" "${U}/10" >/dev/null || true
+check "review --head held for an open parent: its one line is the held: refusal with round=1 verdict=held, and no review-finished" \
+  "review|held: vh waits for vp to merge ~~ round=1 verdict=held" "$(lines_of vh | sed 's/ to merge;.* ~~ / to merge ~~ /')"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
