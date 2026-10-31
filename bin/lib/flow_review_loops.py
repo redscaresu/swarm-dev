@@ -5,6 +5,7 @@
 import collections, datetime, os, re, statistics
 from events_outcome import fields, outcome
 from report import *
+from events_outcome import outcome
 
 def when(t):
     try:
