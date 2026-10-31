@@ -21,6 +21,7 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 pids=()
 cleanup() { for p in "${pids[@]+"${pids[@]}"}"; do kill "${p}" 2>/dev/null || true; done; rm -rf "${ROOT}"; }
 trap cleanup EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # shellcheck source=tests/events_tail_helpers.sh
 . "${HERE}/events_tail_helpers.sh"
 fails=0
@@ -46,7 +47,7 @@ chmod +x "${STUB_BIN}"/*
 echo '[]' > "${ROOT}/claude.json"
 unset COLUMNS LINES DASH_COLOR DASH_W DASH_H NO_COLOR
 export PATH="${STUB_BIN}:${PATH}" CLAUDE_STUB_AGENTS="${ROOT}/claude.json" CLAUDE_PROJECTS_DIR="${ROOT}/projects" \
-  CLAUDE_CONFIG_DIR="${ROOT}/claude-config" TMPDIR="${ROOT}/tmp"
+  TMPDIR="${ROOT}/tmp"
 
 # The fixture, then two builders at work whose review agents' starts failed after their briefs: zzlqa's
 # review is owed (a no-review: line), and zzlqb's is under way again, a findings tell having followed.
