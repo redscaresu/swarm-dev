@@ -791,8 +791,8 @@ or that herdr sent without seeing it taken up, and each findings step-up, whose 
 findings in place of a tell. A `review-agent --recheck` refused with a full round due counts too, at
 most once per round. A step-up or a restarted builder does not start the count again. Nor does a
 build started after a kept close (its `kept` event, then that close's own line; reference-models.md
-§ Model and effort), unless the slug has a later ok close, reset or drop: the kept PR is still the
-one under review.
+§ Model and effort), unless the slug has a later ok close, reset or drop, or reconcile reopened it
+because the kept PR closed unmerged: until then the kept PR is still the one under review.
 After each review the agent triages its own findings. It never edits the code: a finding that is
 real and inside the story goes to the builder to fix. From round 3 the round cap narrows that: the
 round's line, in the brief or from `review-agent --next`, has the agent send only a regression the PR

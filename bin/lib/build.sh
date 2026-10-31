@@ -856,14 +856,16 @@ review_round() {
 # review_round gave then), or 0 with none. A review-agent:recheck refused with a full round due counts as
 # the findings round its wording nudge was not, once per round started (none counted since that start), so
 # the brief's --next after it runs. A story start that follows a kept close (keep_build's kept line, then
-# that close's own line), with no later ok close, reset or drop line of the slug, keeps both: the kept
-# PR is still the one under review, so the round cap still counts its rounds.
+# that close's own line), with no later ok close, reset or drop line of the slug and no reconcile that
+# reopened it (its PR closed unmerged), keeps both: the kept PR is still the one under review, so the
+# round cap still counts its rounds.
 review_rounds() {
   awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'
     $3 != s { next } { o = outcome($5) }
     $2 == "kept" && o ~ /^ok/ { kept = 2; next }   # 2: its own close line is still to come
     ($2 == "close" || $2 ~ /^close:/) && kept == 2 { kept = 1; next }
     ($2 == "close" || $2 ~ /^close:/ || $2 == "reset" || $2 == "drop") && o ~ /^ok/ { kept = 0 }
+    $2 == "reconcile" && o == "ok (reopened)" { kept = 0 }   # the kept PR closed unmerged
     $2 == "story" && o ~ /^ok/ && !kept { n = 0; at = 0 }
     ($2 == "tell" || $2 == "tell:findings") && (o == "ok" || o ~ /herdr sent it the brief/) { n++ }
     $2 == "escalate" && o ~ /^ok \(findings-[0-9]+:/ { n++ }

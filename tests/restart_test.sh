@@ -222,7 +222,8 @@ check "a resume command herdr refuses: it fails, closes the pane it opened, logs
 check "a resume command herdr refuses: it says why" "yes" "$(has "so a herdr restart would drop its guards; its pane is closed" "${out}")"
 
 # --- review_round across a kept close: a build started after one (keep_build's kept line, then that
-# close's own line) keeps the kept PR's count; a later close or reset line, or no kept line, starts it again.
+# close's own line) keeps the kept PR's count; a later close or reset line, a reconcile that reopened the
+# story, or no kept line, starts it again.
 FOUR=("story ok" "tell:findings ok" "tell:findings ok" "escalate ok (findings-3: sonnet -> opus)")
 KEPT=("kept ok (https://github.com/o/proj/pull/9)" "close:stalled ok")
 round_after() { # <slug> <event>... — <slug>'s review_round once events.tsv gains these "<command> <outcome>" lines
@@ -236,6 +237,8 @@ check "a story ok line after a kept line, its close and a later close resets it 
   "$(round_after rk2 "${FOUR[@]}" "${KEPT[@]}" "close ok" "story ok")"
 check "a story ok line after a kept line, its close and a later reset resets it to 1" 1 \
   "$(round_after rk3 "${FOUR[@]}" "${KEPT[@]}" "reset ok (re-scoped)" "story ok")"
+check "a story ok line after a kept line, its close and a reconcile that reopened it (its PR closed unmerged) resets it to 1" 1 \
+  "$(round_after rk5 "${FOUR[@]}" "${KEPT[@]}" "reconcile ok (reopened)" "story ok")"
 check "a story ok line with no kept line resets it to 1" 1 "$(round_after rk4 "${FOUR[@]}" "story ok")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
