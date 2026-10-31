@@ -692,12 +692,13 @@ cannot be read or `ps` fails, so an empty section always means every started sto
 the lead's stop on it.
 
 **The lead is reminded to log what the user caught.** `/swarm-dev:swarm` tells the lead to run
-`swarm.sh intervene user-caught "<what they found>"` as soon as the user finds a problem the swarm
-missed. That rule lives only in the lead's prompt, and the lead forgot it: on 2026-10-25 the user
+`swarm.sh intervene user-caught <cause> "<what they found>"` as soon as the user finds a problem the
+swarm missed. That rule lives only in the lead's prompt, and the lead forgot it: on 2026-10-25 the user
 caught three problems and none was logged until they asked how such things reach the retro. So a
 UserPromptSubmit hook (`hooks/user-caught-reminder.sh`) adds this line of context to each of your
 messages to the lead: `If this message points out a problem the swarm or the lead missed, log it
-first: swarm.sh intervene user-caught "<what they found>".` It runs only in the lead's session,
+first: swarm.sh intervene user-caught <cause> "<what they found>". The cause is one word from the
+list in /swarm-dev:swarm; an unknown one fails and lists them.` It runs only in the lead's session,
 found as the lead's Stop hook finds it (`hooks/lead-session.sh`): no `SWARM_AGENT` or
 `SWARM_GH_CALLER` in its environment (every agent has one), a cwd outside any worktree, and a swarm
 project. Anywhere else it prints nothing. It never blocks a message.

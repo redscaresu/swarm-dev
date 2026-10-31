@@ -1533,6 +1533,8 @@ top_rung_hold() {
 # as it is, and is not the story's one reset), with <findings> in its block and kept in
 # .swarm/briefs/<slug>.held-findings.md (unless they are that file), which reset leaves, for the lead to
 # send after it. The builder, its worktree and PR are kept, so the block says to close them before a drop.
+# The review ends there: it writes review-finished <slug> ok with verdict=held and round=, review_round's,
+# the round whose findings were held.
 top_rung_story() {
   local kept="${PROJECT_DIR}/.swarm/briefs/$1.held-findings.md" wt m
   m="$(builder_model "$1")"; wt="$(worktree_for "${STEP_SRC}" "$1")"
@@ -1541,6 +1543,7 @@ top_rung_story() {
   lead_block "$1" "**Held (top-rung).** Its builder on ${m}, on or above the ladder's top rung, drew review findings round $3 there, so they were not sent and no step-up is left. The builder and its PR are kept, and no attempt was counted. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Narrow the scope to something that fails closed, split the story, or accept the PR with the findings filed as follow-up stories. Then lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is (lifting a hold is not the story's one reset), and send the kept builder the findings it still needs: \`swarm.sh tell $1 findings ${kept}\` (reset leaves that file)."$'\n'"- Or drop it. A drop leaves what this hold kept, so close that first: the builder with \`swarm.sh close $1\` (a held story counts nothing; with goal on, give a cause such as \`stalled\`), ${STEP_PR:+its open PR with \`gh pr close ${STEP_PR} --delete-branch\`, }and its worktree and branch with \`git -C ${STEP_SRC} worktree remove ${wt} && git -C ${STEP_SRC} branch -D story/$1\`. Then run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."$'\n\n'"The findings that were not sent (kept in ${kept}):"$'\n\n'"$(cat "$2")" "${STEP_PRS}" >/dev/null
   set_fm "${BOARD}/stories/$1.md" held_for top-rung
   record_event held "$1" "ok (top-rung: findings round $3 on ${m})"
+  record_event review-finished "$1" ok "round=$(review_round "$1")" verdict=held
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its

@@ -237,7 +237,7 @@ for ladder in sonnet,opus,fable ""; do
     for _ in 1 2; do HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md" >/dev/null || true; done
     check "ladder '${ladder}': review pane: findings tells 1 and 2 are sent from the review agent and logged ok" \
       "tell:findings s1 w:2 ok|tell:findings s1 w:2 ok|2" \
-      "$(awk -F'\t' '$2 ~ /^tell/ { printf "%s %s %s %s|", $2, $3, $4, $5 }' "${P}/.swarm/events.tsv")$(grep -c '^agent prompt w:1 From the review agent:$' "${ROOT}/herdr.log")"
+      "$(awk -F'\t' '$2 ~ /^tell/ { o = $5; sub(/ ~~ .*/, "", o); printf "%s %s %s %s|", $2, $3, $4, o }' "${P}/.swarm/events.tsv")$(grep -c '^agent prompt w:1 From the review agent:$' "${ROOT}/herdr.log")"
     out="$(HERDR_PANE_ID=w:2 run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
     check "ladder '${ladder}': review pane: the third findings tell steps the build up and fails, saying so" \
       "ok (findings-3: sonnet -> opus)|1|yes" \

@@ -7,7 +7,8 @@
 # ;, git checkout over uncommitted changes, git reset --hard, restore or clean dropping work in a swarm
 # project's main checkout and, for a swarm agent, git moving the main checkout and a
 # kill by pattern or of every process. A block writes one incident line to the project's
-# .swarm/events.tsv, and hooks.json runs the script on Bash calls.
+# .swarm/events.tsv, with slug= and role= for an agent's call and version= plugin.json's, each left out
+# when it cannot be read, and hooks.json runs the script on Bash calls.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -55,6 +56,15 @@ call() {
   echo "${rc}"
 }
 lines() { if [[ -f "${LOG}" ]]; then wc -l < "${LOG}" | tr -d ' '; else echo 0; fi; }
+# last <log> <outcome|fields> — outcome() of <log>'s last line, or its fields() as sorted key=value
+# pairs, read by bin/lib/events_outcome.py.
+last() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import events_outcome as e
+row = open(sys.argv[2]).read().splitlines()[-1].split("\t")
+print(e.outcome(row) if sys.argv[3] == "outcome" else " ".join("%s=%s" % kv for kv in sorted(e.fields(row).items())))' \
+    "${REPO}/bin/lib" "$1" "$2"
+}
+VERSION="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "${REPO}/.claude-plugin/plugin.json")"
 exits() { [[ "$(call "$1" "$3")" == "$2" ]]; } # <cwd> <code> <command>
 
 blocks() { # <name> <command>: 2 in the project, 0 outside it
@@ -107,10 +117,68 @@ was="$(lines)"
 call "${P}" "gh pr merge 7" >/dev/null
 check "a block writes one incident line" test "$(lines)" -eq $((was + 1))
 # shellcheck disable=SC2016 # awk's fields
-check "the line has record_event's five fields" awk -F'\t' 'END { exit !(NF == 5 && $1 ~ /^20..-..-..T..:..:..Z$/ && $2 == "incident" && $5 == "merge-blocked: gh pr merge") }' "${LOG}"
+check "the line has record_event's five fields" awk -F'\t' 'END { exit !(NF == 5 && $1 ~ /^20..-..-..T..:..:..Z$/ && $2 == "incident") }' "${LOG}"
+check "  ... its outcome() is merge-blocked: gh pr merge" test "$(last "${LOG}" outcome)" == "merge-blocked: gh pr merge"
+check "  ... and from the lead's session its fields() are version= alone, plugin.json's" test "$(last "${LOG}" fields)" == "version=${VERSION}"
 call "${P}" "swarm.sh merge ${U}" >/dev/null
 check "a pass writes nothing" test "$(lines)" -eq $((was + 1))
 check "a worktree's block logs to its main checkout" test "$(call "${W}" "gh pr merge 7")/$(lines)" == "2/$((was + 2))"
+
+# An agent's call adds slug= and role= (agents.tsv's column 2 for the name). The slug reads the role
+# first: a builder keeps its whole name, review- and conduct- come off only for a review or conduct
+# agent, and the backlog's conductor and any other agent get none. A name swarm.sh's agent_name cut
+# gives no slug=: CUT is its own cut of a long review name, so the hook's NAME_MAX cannot drift from
+# AGENT_NAME_MAX unseen, and BACKLOG is swarm.sh's own name for the backlog's conductor.
+CUT="$(SWARM_PROJECT="${P}" "${REPO}/bin/swarm.sh" _name "review-a-story-slug-well-past-thirty-two-characters")"
+BACKLOG="$(SWARM_PROJECT="${P}" "${REPO}/bin/swarm.sh" _conductor backlog)"
+mkdir -p "${P}/.swarm"
+printf '2026-10-31\t%s\t%s\tclaude\topus\thigh\ts\n' review review-abc review "${CUT}" code review-tuning \
+  conduct "${BACKLOG}" conduct conduct-e1 review-fallback fallback-abc code s1abc > "${P}/.swarm/agents.tsv"
+# logged <hook command> <command> — the call from ${P} through <hook command> (the hook itself when
+# empty): its exit code, the lines it added, and the last line's outcome() and fields(), slash-separated.
+logged() {
+  local was rc
+  was="$(lines)"; rc="$(call "${P}" "$2" "$1")"
+  echo "${rc}/$(($(lines) - was))/$(last "${LOG}" outcome)/$(last "${LOG}" fields)"
+}
+check "an agent's blocked merge logs slug=, role= and version=, plugin.json's" \
+  test "$(SWARM_AGENT=review-abc logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=review slug=abc version=${VERSION}"
+check "  ... and one whose name is ${#CUT} characters logs role= and no slug=" \
+  test "$(SWARM_AGENT="${CUT}" logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=review version=${VERSION}"
+check "  ... a builder named review-tuning (role code) logs its whole name as slug=" \
+  test "$(SWARM_AGENT=review-tuning logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=code slug=review-tuning version=${VERSION}"
+check "  ... a conductor logs its epic as slug=" \
+  test "$(SWARM_AGENT=conduct-e1 logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=conduct slug=e1 version=${VERSION}"
+check "  ... the backlog's conductor, ${BACKLOG} (role conduct), logs no slug=" \
+  test "$(SWARM_AGENT="${BACKLOG}" logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=conduct version=${VERSION}"
+check "  ... a fallback reviewer (role review-fallback) logs no slug=" \
+  test "$(SWARM_AGENT=fallback-abc logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=review-fallback version=${VERSION}"
+check "  ... a builder named s1abc, story s1abc or 1abc, logs no slug=" \
+  test "$(SWARM_AGENT=s1abc logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/role=code version=${VERSION}"
+# A field the hook cannot read is left out, and the block still exits 2 and logs: the reads run inside
+# the Blocked handler, where a raise would exit 1, and the wrapper then lets through a call that does not
+# say merge. plugin <dir> [<plugin.json text>] copies the hook into <dir>/hooks, beside a plugin.json
+# holding the text, or none, and prints the command that runs it.
+plugin() {
+  mkdir -p "$1/hooks" "$1/.claude-plugin" && cp "${HOOK}" "$1/hooks/"
+  [[ $# -lt 2 ]] || printf '%s' "$2" > "$1/.claude-plugin/plugin.json"
+  echo "bash '$1/hooks/merge-guard.sh'"
+}
+chmod 000 "${P}/.swarm/agents.tsv"
+none="$(plugin "${ROOT}/plug-none")"
+check "with agents.tsv unreadable and no plugin.json, an agent's merge still blocks and logs, with slug= alone" \
+  test "$(SWARM_AGENT=review-abc logged "${none}" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/slug=abc"
+check "  ... and so does its git clean in the main checkout" \
+  test "$(SWARM_AGENT=review-abc logged "${none}" "git clean -fd")" == "2/1/guard-blocked: git clean in the main checkout/slug=abc"
+chmod 644 "${P}/.swarm/agents.tsv"
+check "with plugin.json not JSON, a merge still blocks and logs, with no version=" \
+  test "$(logged "$(plugin "${ROOT}/plug-bad" '{"version": ')" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/" # vacuous-test: ok, a plugin.json that is not JSON on purpose
+check "with plugin.json holding no version, a merge still blocks and logs, with no version=" \
+  test "$(logged "$(plugin "${ROOT}/plug-nover" '{"name": "swarm-dev"}')" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/"
+printf 'x\t\377\376\treview-abc\n' >> "${P}/.swarm/agents.tsv"
+check "with agents.tsv holding bytes that are not UTF-8, an agent's merge still blocks and logs, with no role=" \
+  test "$(SWARM_AGENT=review-abc logged "" "gh pr merge 7")" == "2/1/merge-blocked: gh pr merge/slug=abc version=${VERSION}"
+rm "${P}/.swarm/agents.tsv"
 
 # swarm.sh init makes a .claude/swarm/ and no config. Left untracked, a story worktree beside the
 # repo has no .claude at all, so the guard looks from its main checkout too.
@@ -186,7 +254,7 @@ check "an agent's until cd /nope; do git reset --hard; done in the main checkout
 check "an agent's if cd /nope; then :; fi; git reset --hard in the main checkout blocks" as agent "${P}" 2 "if cd /nope; then :; fi; git reset --hard"
 check "  ... but a cd before ; in its body still blocks" as lead "${W}" 2 "while true; do cd /nope; cp a b; done"
 check "read x; cd /nope; cp a b blocks" as lead "${W}" 2 "read x; cd /nope; cp a b"
-check "  ... and logs guard-blocked to the main checkout" test "$(tail -1 "${LOG}" | cut -f5)" == "guard-blocked: cd before ;"
+check "  ... and logs guard-blocked to the main checkout" test "$(last "${LOG}" outcome)" == "guard-blocked: cd before ;"
 check "an agent's git checkout main in a story worktree passes" as agent "${W}" 0 "git checkout main"
 check "an agent's git -C <story worktree> restore x passes" as agent "${P}" 0 "git -C ${W} restore x"
 for c in "stash list" "stash show" "clean -n" "clean --dry-run" "clean -nd"; do
@@ -237,7 +305,7 @@ check "an agent's git reset --hard in a clean main checkout still blocks" as age
 check "git clean -fdx with only an ignored .swarm/ file blocks, naming it" names "${M}" ".swarm/" "git clean -fdx"
 echo new > "${M}/${N}"   # untracked only
 check "git clean -fd with an untracked story file blocks, naming it" names "${M}" "${N}" "git clean -fd"
-check "  ... and logs guard-blocked: git clean" test "$(tail -1 "${M}/.swarm/events.tsv" | cut -f5)" == "guard-blocked: git clean would drop work in the main checkout"
+check "  ... and logs guard-blocked: git clean" test "$(last "${M}/.swarm/events.tsv" outcome)" == "guard-blocked: git clean would drop work in the main checkout"
 check "  ... git clean -n passes" as lead "${M}" 0 "git clean -n"
 check "  ... git reset --hard, which keeps untracked files, passes" as lead "${M}" 0 "git reset --hard"
 check "  ... git reset --hard story/n, which has it with other content, blocks, naming it" names "${M}" "${N}" "git reset --hard story/n"
@@ -285,7 +353,7 @@ done
 for c in "pkill -f sleep" "killall sleep" 'kill $(pgrep sleep)' "kill -9 -1" "kill -- -1" "kill 0"; do
   was="$(lines)"
   check "an agent's ${c} blocks" as agent "${W}" 2 "${c}"
-  check "  ... and logs guard-blocked: pattern-kill" test "$(lines)/$(tail -1 "${LOG}" | cut -f5)" == "$((was + 1))/guard-blocked: pattern-kill"
+  check "  ... and logs guard-blocked: pattern-kill" test "$(lines)/$(last "${LOG}" outcome)" == "$((was + 1))/guard-blocked: pattern-kill"
   check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
 done
 # shellcheck disable=SC2016 # $! is the hook's to see
@@ -297,7 +365,7 @@ done
 for c in "gh pr checks 271 --watch" "until gh pr checks 271; do sleep 30; done" "while ! gh -R o/r pr checks 271; do sleep 30; done"; do
   was="$(lines)"
   check "an agent's ${c} blocks" as agent "${W}" 2 "${c}"
-  check "  ... and logs guard-blocked: gh pr checks loop" test "$(lines)/$(tail -1 "${LOG}" | cut -f5)" == "$((was + 1))/guard-blocked: gh pr checks loop"
+  check "  ... and logs guard-blocked: gh pr checks loop" test "$(lines)/$(last "${LOG}" outcome)" == "$((was + 1))/guard-blocked: gh pr checks loop"
   check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
 done
 check "an agent's gh pr checks 271 passes" as agent "${W}" 0 "gh pr checks 271"

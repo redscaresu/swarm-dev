@@ -19,12 +19,24 @@ once per PR, even when two waits on it go green at once (the lead's bare `watch`
 branch log none). Each has the outcome `ok`, with the PR's URL in the field `url=` or the head SHA in
 `sha=`. Builders open their PRs with `gh pr create`, so no `swarm.sh` command runs at that moment to log it.
 A line `watch` or `wait-pr` cannot write changes nothing they print or exit with.
-The stall rule skips those lines, because none is a sign of life. A `review --head` that succeeds
-can write a line before its own: `decline-only <slug> ok (round N)`. It writes one when review round
-N sent the builder findings and the PR's head is still the one that round started on, as
-`.swarm/reviews/<slug>.head` and the round's findings file record it. A head a wording recheck passed
-is not that one. The line means the builder declined every finding and pushed nothing. `decline-only`
-is not a command of its own. `status`, `next` and `dash` log
+The stall rule skips those lines, because none is a sign of life. Review lines carry the round in
+their tail (below). A `review-agent` start and a `review-agent:next` line (outcome `ok (round N)`)
+have `round=`, the round each starts. A round ends with one of four verdicts in `verdict=`, beside
+its `round=`. A findings `tell` that counts as a round has `verdict=findings`: its `ok` line, a
+failure that says herdr sent it the brief, and the refusal that says it was stepped up with the
+findings in its handover brief. With `goal` on, a findings tell whose goal step fails after the send
+has it on its `ok` line, not on its failure line. A tell that was never sent, or that a top-rung hold
+stopped, has none. A `review` has `verdict=pass` when
+it succeeds and `verdict=held` when it is refused `held:`; a story's also has `round=`. A
+`review --head` that succeeds can write a line before its own: `decline-only <slug> ok (round N)`. It
+writes one when review round N sent the builder findings and the PR's head is still the one that
+round started on, as `.swarm/reviews/<slug>.head` and the round's findings file record it. A head a
+wording recheck passed is not that one. The line means the builder declined every finding and pushed
+nothing. It has `round=N verdict=decline-only`, and so does the `review` line after it. A
+`review --head` that succeeds also writes `review-finished <slug>`, outcome `ok`, just before its own
+line and with the same fields; a review refused `held:` writes none. A hold on the ladder's top rung
+writes `review-finished` with `verdict=held` and the round whose findings it held. Neither
+`decline-only` nor `review-finished` is a command of its own. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
 `wait-timeout` when its wait runs out (not when herdr's wait fails sooner, not for a
@@ -55,9 +67,8 @@ incident with target `-` and the outcome `<kind>: <line>`, for each time a perso
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
 first. The cause says why they stepped in. It is one of `INTERVENE_CAUSES` in `bin/swarm.sh` and goes
 in the field `cause=<cause>`. Any other kind or cause, an empty line, or an events.tsv it cannot write
-fails and writes nothing, and an unknown cause's error lists the causes. The old form,
-`swarm.sh intervene <kind> "<one line>"`, still writes the line with `cause=none` and prints the causes
-as a warning.
+fails and writes nothing, and an unknown cause's error lists the causes. So does the old form with no
+cause, `swarm.sh intervene <kind> "<one line>"`.
 An incident on an agent (`api-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`,
 `sign-blocked`, `sign-clear`, `idle-no-pr`, `codex-limit`) ends in a `slug=<slug> role=<role>` tail. `role=` is
 the agent's role in `.swarm/agents.tsv`, and is absent when the agent has no line there. `slug=` is the story
@@ -121,6 +132,19 @@ queued, or a merge with no merge commit. A merge at a head other than the checke
 merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
+A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The role comes from
+`.swarm/agents.tsv`. The slug follows the rule for incident lines above as far as the guard can without
+the board. An agent with a building role has its whole name as the slug. A `review-<slug>` or
+`conduct-<epic>` name gives what follows the prefix when its role is review or conduct, or unknown (no
+line in agents.tsv, or a file the guard cannot read). The backlog's conductor gets none, and so does an
+agent with any other role. With the role unknown, any other name is the slug, as a builder's is. A
+name of 32 characters, which may have been cut, and an `s<digit>…` name, which only the board can
+settle, get no `slug=`. Every line adds `version=`, the plugin's version
+from its `.claude-plugin/plugin.json`. A field the guard cannot read is left out, and a failed read
+or write never changes its verdict. The lead's Stop hook (`hooks/lead-stop.sh`) writes a `lead-stop`
+line for each verdict, target the step `next` named and outcome `blocked` or `allowed`, with
+`role=lead` and `version=`. Neither hook writes to the checkout the tests run from
+(`SWARM_FORBID_PROJECT`).
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
 its pull (§ Merging), once while the same stop lasts, and one with outcome
 `key-dropped: <file> <key>: <yours> -> <theirs>` for each uncommitted `status` or `prs` its pull replaced. The log is local to the machine and append-only,
@@ -133,11 +157,13 @@ The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
 fields: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
-`url=` and `first-green` passes `sha=`. For a command `main` logs, the fields come from two places, in
+`url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
+`verdict=`. For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
 command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
 beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a
-value into `_`, and an empty value into `-`. `append_event` first takes every separator out of the
+value into `_`, and an empty value into `-`. The two hooks that write events.tsv themselves, the merge
+guard and the lead's Stop hook, write the same tail. `append_event` first takes every separator out of the
 outcome text: each
 one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
 then any trailing spaces. That way the first separator in the field is always where the tail starts,
@@ -718,9 +744,12 @@ one. A step-up before the first round shows on round 1, ending `before review`; 
 shows its step-ups on a row whose round is `-`. A PR whose findings name a later round than its
 events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round, `rounds` its PR's last
 round in that loop:
-`held-for-lead` after an `escalated` line; once the PR merged (a `merge` line, or merged in
-`outcomes`), `decline-only` when its last round ended on a `decline-only` line, `pass` when its
-last round fixed nothing and `merged-after-fixes` when it fixed something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
+`held-for-lead` after an `escalated` line, or after a `review-finished` line with `verdict=held`
+(and no `review-agent` start since) while the PR has not merged. Otherwise, once the PR merged (a
+`merge` line, or merged in `outcomes`), `decline-only` when its last round ended on a `decline-only`
+line or a `review-finished` line since the last `review-agent` start says `verdict=decline-only`,
+`pass` when its last round fixed nothing and `merged-after-fixes` when it fixed something; else
+`open`, which includes a PR that `review` handed over, with `verdict=pass` or none, and that has not merged. The last is one TSV
 row over the loops with a round: the PRs (each once, loops with PR `-` left out), the median and p90
 (nearest rank) of their rounds, the minutes spent in round 3 and later (a round with unknown minutes
 adds none), the fixes, the share of them found in round 1, round 2, round 3

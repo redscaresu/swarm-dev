@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # intervene_test.sh — `swarm.sh intervene <kind> <cause> "<one line>"`: an unknown kind or cause or an
 # empty line fails and logs nothing, a valid one adds one events.tsv incident line with its cause= field,
-# and the old form `intervene <kind> "<one line>"` logs cause=none with a warning. Then flow's incidents section and
+# and the old form `intervene <kind> "<one line>"`, with no cause, fails too. Then flow's incidents section and
 # dash's interventions light agree on the 7-day count over a fixture events.tsv, and commands/swarm.md
 # tells the lead to log both kinds.
 set -euo pipefail
@@ -55,13 +55,14 @@ check "a valid intervene adds one events.tsv line" "$(lines)" 1
 check "the line is an incident, target -" "$(cut -f2,3 "${EV}")" $'incident\t-'
 check "its outcome() is <kind>: <line> and its fields() cause=<cause>" "$(last_line)" \
   "lead-hand: typed into a stalled conductor's pane"$'\n'"cause=flaky-test"
-# The old form, until hooks/user-caught-reminder.sh names the new one: logged, with cause=none, and a
-# warning that lists the causes.
+# The old form, now that hooks/user-caught-reminder.sh names the new one: its line is no cause, so it
+# fails, logs nothing, and its error lists the causes and the form.
 rc=0; out="$(sw intervene user-caught "held stories found by asking" 2>&1 >/dev/null)" || rc=$?
-check "the old two-argument form still logs one line" "${rc} $(lines)" "0 2"
-check "its outcome() is <kind>: <line> and its fields() cause=none" "$(last_line)" \
-  "user-caught: held stories found by asking"$'\n'"cause=none"
-check "its warning lists every cause" "$(grep -c 'warning' <<< "${out}") $(grep -cF -- "${CAUSES}" <<< "${out}")" "1 1"
+check "the old two-argument form fails and logs nothing" "${rc} $(lines)" "1 1"
+check "its error lists every cause and names the form with one" \
+  "$(grep -cF -- "${CAUSES}" <<< "${out}") $(grep -cF 'swarm.sh intervene user-caught <cause> "<one line>"' <<< "${out}")" "1 1"
+sw intervene user-caught other "held stories found by asking" >/dev/null
+check "the same line with a cause logs" "$(lines) $(last_line)" "2 user-caught: held stories found by asking"$'\n'"cause=other"
 # An unwritable log: intervene fails, says so, and does not say logged:.
 chmod a-w "${EV}" "${P}/.swarm"
 rc=0; out="$(sw intervene user-caught other "found by asking" 2>&1)" || rc=$?

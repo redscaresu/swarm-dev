@@ -51,8 +51,8 @@ stop_group() {
 # reaches the stand-in fails, naming what it left there; a call a test leaves unpinned (no cd into
 # its project, no SWARM_PROJECT) stops at "not in a swarm project" instead of reaching this
 # checkout's .swarm, and one that names this checkout, or a worktree of it, stops too: SWARM_FORBID_PROJECT
-# names it and swarm.sh refuses it (tests/live_logs_test.sh); the hooks' own event lines are not swarm.sh
-# calls and are not covered. MAKEFLAGS, MFLAGS and MAKELEVEL are unset too, so a
+# names it and swarm.sh refuses it (tests/live_logs_test.sh); the hooks that write event lines skip it
+# themselves. MAKEFLAGS, MFLAGS and MAKELEVEL are unset too, so a
 # make a test runs starts clean, whatever make test was given (SHARD, TESTS).
 for v in $(compgen -e); do case ${v} in SWARM_SLEEP_SCALE) ;; SWARM_*) unset "${v}" ;; esac; done
 export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}" SWARM_NO_CI_REFRESH=1

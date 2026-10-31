@@ -197,8 +197,8 @@ fi
 # A test names the checkout it runs from in SWARM_FORBID_PROJECT (scripts/test.sh and tests/test_helpers.sh
 # set it to the main checkout): swarm.sh refuses to act on that project, named directly (a cd into it,
 # SWARM_PROJECT) or through a worktree of it (SWARM_PROJECT naming the worktree, which find_project
-# takes as given, so its main checkout is compared too). That covers swarm.sh calls; the hooks' own
-# event lines (hooks/merge-guard.sh record, hooks/lead-stop.sh log) are not swarm.sh calls and are not.
+# takes as given, so its main checkout is compared too). The hooks' own event lines (hooks/merge-guard.sh
+# record, hooks/lead-stop.sh log) are not swarm.sh calls; each hook checks it itself and writes no line there.
 if [[ -n "${SWARM_FORBID_PROJECT:-}" ]]; then
   forbid_dir="$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" || forbid_dir=""
   forbid_main="$(main_checkout "${PROJECT_DIR}" 2>/dev/null)" || forbid_main=""
@@ -562,22 +562,15 @@ INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open s
 # intervene <kind> <cause> <line...> — log one time a person had to step in: an incident line, target
 # -, outcome `<kind>: <line>`, which flow's incidents section counts per day and kind, with the field
 # cause=<cause>. Its only line: main logs none for it (target !), so an unknown kind or cause or an
-# empty line logs nothing. The old form, `intervene <kind> "<line>"` (two arguments, the second no
-# cause), still logs, with cause=none and a warning listing the causes, until hooks/user-caught-reminder.sh
-# names the new form. A line that could not be written (unwritable, disk full) fails here, not with a
-# logged: that counts nothing.
+# empty line logs nothing. The old form, `intervene <kind> "<line>"`, is an unknown cause. A line that
+# could not be written (unwritable, disk full) fails here, not with a logged: that counts nothing.
 intervene() {
-  local kind="${1:-}" cause="${2:-}" line known=0
+  local kind="${1:-}" cause="${2:-}" line
   [[ "${kind}" =~ ^[a-z-]+$ && " ${INTERVENE_KINDS} " == *" ${kind} "* ]] || die "intervene: the kind must be one of ${INTERVENE_KINDS}, not '${kind}'"
-  [[ "${cause}" =~ ^[a-z-]+$ && " ${INTERVENE_CAUSES} " == *" ${cause} "* ]] && known=1
-  if [[ $# -eq 2 && ${known} == 0 ]]; then
-    line="${cause}"; cause=none
-    echo "intervene: warning: name a cause, one of ${INTERVENE_CAUSES}: swarm.sh intervene ${kind} <cause> \"<one line>\". Logging it with cause=none." >&2
-  else
-    [[ ${known} == 1 ]] || die "intervene: the cause must be one of ${INTERVENE_CAUSES}, not '${cause}'"
-    line="${*:3}"
-  fi
-  [[ -n "${line//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene ${kind} ${cause/#none/<cause>} \"<one line>\""
+  [[ "${cause}" =~ ^[a-z-]+$ && " ${INTERVENE_CAUSES} " == *" ${cause} "* ]] \
+    || die "intervene: the cause must be one of ${INTERVENE_CAUSES}, not '${cause}': swarm.sh intervene ${kind} <cause> \"<one line>\""
+  line="${*:3}"
+  [[ -n "${line//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene ${kind} ${cause} \"<one line>\""
   append_event incident - "${kind}: ${line}" "cause=${cause}" || die "intervene: could not write ${EVENTS_LOG}; nothing was logged"
   echo "logged: ${kind}: ${line} (cause=${cause})"
 }
@@ -1091,7 +1084,8 @@ main_signal() {
 # review-agent:recheck, so the target
 # stays the slug (a board-pr's name). A reset or drop
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
-# epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
+# epic's review handed over (mark_review writes a review's decline-only and review-finished lines); a
+# reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
 # nothing, queued for a busy agent or replaced by a newer one (on its way, or sent or queued since it
 # read the agent's state), logs the queued: or replaced: line tell_outcome leaves in the die file, so
 # it counts as no round. Its closing line carries key=value fields after the outcome (append_event's
@@ -1135,11 +1129,13 @@ main() {
     step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     # A --next round or a --recheck is no review start, so flow's review-agent starts and review_wait never
     # read it; a recheck that passes counts no round, and one refused with a full round due counts the
-    # round its wording nudge did not (review_rounds).
+    # round its wording nudge did not (review_rounds). A start's and a --next's line carry round=, the
+    # round review_round gives before it runs: the round it starts.
     review-agent) EV_TARGET="${2:-}"
             case "${EV_TARGET}" in
-              --next) EV_CMD="review-agent:next"; EV_TARGET="${3:-}"; EV_OK="ok (round $(review_round "${3:-}"))" ;;
+              --next) EV_CMD="review-agent:next"; EV_TARGET="${3:-}"; n="$(review_round "${3:-}")"; EV_OK="ok (round ${n})"; EV_FIELDS="round=${n}" ;;
               --recheck) EV_CMD="review-agent:recheck"; EV_TARGET="${3:-}" ;;
+              *) EV_FIELDS="round=$(review_round "${EV_TARGET}")" ;;
             esac ;;
     *) EV_TARGET="${2:-}" ;;
   esac
@@ -1169,12 +1165,6 @@ main() {
   elif [[ "${EV_CMD}" == tell:* ]] && why="$(head -1 "${EV_ERR}" 2>/dev/null)" && [[ "${why}" == queued:* || "${why}" == replaced:* ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${why}" ${fields[@]+"${fields[@]}"}   # tell_outcome's: nothing sent, so not ok
   elif [[ "${EV_TARGET}" != + ]]; then
-    # A review --head that passes a findings round whose builder pushed nothing (it declined them all)
-    # is a decline-only end: its line goes first, so a reader meets it before the review's. A failed
-    # read of it skips the line, never the review's.
-    if [[ "${EV_CMD}" == review && "${3:-}" == --head ]] && n="$(decline_only_round "${EV_TARGET}" "${4:-}")" && [[ -n "${n}" ]]; then
-      record_event decline-only "${EV_TARGET}" "ok (round ${n})"
-    fi
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}" ${fields[@]+"${fields[@]}"}
   fi
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
