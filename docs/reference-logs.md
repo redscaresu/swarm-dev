@@ -47,7 +47,8 @@ builder's name (an agent with a building role, or a name a story on the board ha
 `review-<slug>` and `conduct-<epic>` give what follows the prefix. It is absent for any other agent, for the backlog's conductor, and for a name of 32 characters, which may have been cut short.
 An agent name gets an `s` in front when its slug starts with a digit, so a builder named `s<digit>…` gets
 `slug=` only when the board holds a story under exactly one of the two names, with or without the `s`. A
-`-done<N>` name reads as the name before it. `codex-limit` takes its slug from `SWARM_STORY` and its role from
+`-done<N>` name reads as the name before it when it is under 32 characters. A longer one may hold a cut
+name, so it gets neither `slug=` nor `role=`. `codex-limit` takes its slug from `SWARM_STORY` and its role from
 the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
 only when the line names one story file.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
