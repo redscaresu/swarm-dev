@@ -19,16 +19,18 @@ FINDING_REASONS="out-of-scope nit wrong deferred"
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
 # FINDING_OUTCOME (fixed, declined with --declined, or filed with --filed), FINDING_REASON to --declined's reason (empty
 # when the next word is a flag or missing), FINDING_REVIEWER to --reviewer's value (unset without
-# one), FINDING_ROUND to --round's value (unset without one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
+# one), FINDING_ROUND to --round's value (unset without one), FINDING_BECAUSE to --because's value
+# (unset without one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
 # reads the events target with it before the command runs.
 finding_flags() {
   local n
-  FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER FINDING_ROUND; FINDING_SKIP=0
-  while [[ "${1:-}" == --declined || "${1:-}" == --reviewer || "${1:-}" == --filed || "${1:-}" == --round ]]; do
+  FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER FINDING_ROUND FINDING_BECAUSE; FINDING_SKIP=0
+  while [[ "${1:-}" == --declined || "${1:-}" == --reviewer || "${1:-}" == --filed || "${1:-}" == --round || "${1:-}" == --because ]]; do
     n=1
     # shellcheck disable=SC2034 # read in another file
     if [[ "$1" == --filed ]]; then FINDING_OUTCOME=filed
     elif [[ "$1" == --round ]]; then FINDING_ROUND="${2-}"; [[ $# -lt 2 ]] || n=2
+    elif [[ "$1" == --because ]]; then FINDING_BECAUSE="${2-}"; [[ $# -lt 2 ]] || n=2
     elif [[ "$1" == --declined ]]; then
       FINDING_OUTCOME=declined
       [[ $# -lt 2 || "$2" == --* ]] || { FINDING_REASON="$2"; n=2; }
@@ -42,16 +44,19 @@ finding_flags() {
 # reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
 # text, outcome, reviewer, and a declined row adds the reason; with --round (finding_flags'
 # FINDING_ROUND: the review round, 0 for a plan or board PR) an eighth field holds it, after an empty
-# reason on a row that has none. Rows from before the outcome column have four fields and were all
+# reason on a row that has none. A declined row's --because (FINDING_BECAUSE: the builder's own reason,
+# which codex_story_prompt shows codex as the builder's claim) is a ninth field, after an empty round
+# when it has none, flattened and cut to 200 characters as the text is; --because without --declined
+# is refused. Rows from before the outcome column have four fields and were all
 # fixed, rows from before the reviewer column have five, and rows from before the round column (or
 # logged without --round) are round unknown. An escaped defect's outcome is escaped, so outcomes and
 # flow's reviewers, which count what review raised, leave it out; outcomes' recurring block and dash count fixed and escaped rows, never declined ones. A
 # filed row (a declined out-of-scope or deferred finding the lead filed as a story) is counted by none of them: it
 # only stops out_of_scope_findings offering that text again.
 record_finding() {
-  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason="" round=""
+  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason="" round="" because=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
-    || die "usage: swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <one line>"
+    || die "usage: swarm.sh log-finding [--declined <reason> [--because <why>] | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <one line>"
   # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
   if [[ "${reviewer}" == escaped ]]; then
     [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined or filed: drop --${outcome}"
@@ -66,6 +71,12 @@ record_finding() {
     [[ "${FINDING_ROUND}" =~ ^[0-9]{1,3}$ ]] || die "--round needs the review round, a number (0 for a plan or board PR)"
     round=$'\t'"${FINDING_ROUND}"; [[ -n "${reason}" ]] || reason=$'\t'
   fi
+  if [[ -n "${FINDING_BECAUSE+set}" ]]; then
+    [[ "${outcome}" == declined ]] || die "--because is the builder's reason for a decline: it needs --declined <reason>"
+    [[ -n "${FINDING_BECAUSE//[[:space:]]/}" ]] || die "--because needs the builder's reason, one line"
+    because="${FINDING_BECAUSE:0:200}"; because=$'\t'"${because//[$'\t\n\r']/ }"
+    [[ -n "${round}" ]] || round=$'\t'
+  fi
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
@@ -74,7 +85,7 @@ record_finding() {
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}${round}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}${round}${because}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
 }
