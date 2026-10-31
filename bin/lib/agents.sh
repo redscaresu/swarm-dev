@@ -1452,7 +1452,7 @@ longest_child() {
 # start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits on a person, so no stall.
 agent_stalled() {
   local slug url age own ct sl prs=()
-  slug="$(stall_py story "$1")" || slug=""
+  slug="$(stall_py story "$1")"
   [[ -n "${slug}" ]] || return 1
   ct="$(story_work_time "${slug}")"; sl="$(session_mtime "$1")"
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}")"
