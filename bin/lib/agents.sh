@@ -880,20 +880,20 @@ EVENT_OUTCOME_AWK="function outcome(s,  i) { i = index(s, \"${EVENT_SEP}\"); ret
 
 # append_event <command> <target> [outcome] [key=value...] — record_event's append, failing when the
 # line was not written, for a command whose only output is that line (intervene). The outcome loses
-# every EVENT_SEP it holds (each becomes a space, and trailing spaces go), so the tail is the only
-# one. Fields follow it after EVENT_SEP, space-separated. A pair whose key is not [a-z_]+, or whose
-# value is empty or holds a space, tab or newline, is left out with a warning on stderr; the line is
-# still written, with the valid pairs.
+# every EVENT_SEP it holds (each becomes a space) and a trailing EVENT_SEP without its last space,
+# which the tail's EVENT_SEP would complete, and then its trailing spaces; so the tail's EVENT_SEP
+# is the first. Fields follow it, space-separated. A pair whose key is not [a-z_]+, or whose value is
+# empty or holds whitespace, is left out with a warning on stderr; the line is still written, with the
+# valid pairs.
 append_event() {
-  local x o="${3:-ok}" tail="" cols=()
+  local x o="${3:-ok}" tail="" cols=() cut="${EVENT_SEP% }"
   o="${o//[$'\t\n\r']/ }"
-  if [[ "${o}" == *"${EVENT_SEP}"* ]]; then   # loose-match: ok the separator anywhere in the outcome
-    while [[ "${o}" == *"${EVENT_SEP}"* ]]; do o="${o//"${EVENT_SEP}"/ }"; done   # loose-match: ok the separator anywhere in it
-    o="${o%"${o##*[! ]}"}"
-  fi
+  while [[ "${o}" == *"${EVENT_SEP}"* || "${o}" == *"${cut}" ]]; do   # loose-match: ok the separator anywhere in the outcome, or at its end
+    o="${o//"${EVENT_SEP}"/ }"; o="${o%"${cut}"}"; o="${o%"${o##*[! ]}"}"
+  done
   for x in "${@:4}"; do
     if [[ "${x}" =~ ^[a-z_]+=[^[:space:]]+$ ]]; then tail+="${tail:+ }${x}"
-    else echo "append_event: left out ${x%%[$'\t\n\r']*}: a field is key=value, the key [a-z_]+, the value not empty and with no space or tab" >&2; fi
+    else echo "append_event: left out ${x%%[$'\t\n\r']*}: a field is key=value, the key [a-z_]+, the value not empty and with no whitespace" >&2; fi
   done
   for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:--}" "${HERDR_PANE_ID:--}" "${o}${tail:+${EVENT_SEP}${tail}}"; do cols+=("${x//[$'\t\n\r']/ }"); done
   { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${cols[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null
@@ -1452,7 +1452,7 @@ longest_child() {
 # start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits on a person, so no stall.
 agent_stalled() {
   local slug url age own ct sl prs=()
-  slug="$(stall_py story "$1")"
+  slug="$(stall_py story "$1")" || slug=""
   [[ -n "${slug}" ]] || return 1
   ct="$(story_work_time "${slug}")"; sl="$(session_mtime "$1")"
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}")"
@@ -1484,7 +1484,7 @@ stall_reads() {
   # shellcheck disable=SC2154 # assigned in another file
   ! bg_running "$1" "${CFG_stall_minutes}" || bg=1
   ! test_running "$2" || test=1
-  slug="$(stall_py story "$1")"
+  slug="$(stall_py story "$1")" || slug=""
   if [[ -n "${slug}" ]]; then
     own="$(stall_py age "${slug}" "$1" "$(story_work_time "${slug}")" "$(session_mtime "$1")")"
     ! sign_held "$1" "${slug}" "${own}" || sign=1
@@ -1498,7 +1498,7 @@ stall_reads() {
 # that are 1, comma-joined, or none. Print nothing when it made progress.
 wait_activity() {
   local slug t on="" r
-  slug="$(stall_py story "$1")"
+  slug="$(stall_py story "$1")" || slug=""
   for t in "$([[ -z "${slug}" ]] || story_work_time "${slug}")" "$(session_mtime "$1")"; do
     [[ ! "${t}" =~ ^[0-9]+$ || "${t}" -le "$3" ]] || return 0
   done
@@ -1703,7 +1703,8 @@ settle() {
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
-# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident (record_incident)
+# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident (record_incident,
+# its slug= the builder's story from the board, stall_py story)
 # and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
 # by the `longest-running: ...` line, which says the step-up closed the pane the PID was read in. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
@@ -1734,7 +1735,7 @@ settle() {
 # login incident (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at hung seen began act
+  local answered="" resumed_sum="" pane_kind pane_at hung seen story began act
   deadline=$(($(now_ms) + timeout)); began="${SWARM_WAIT_STARTED:-$(date +%s)}"
   [[ -z "${stall}" ]] || since="${began}"
   target="$(own_target "${name}")" || return 1
@@ -1743,11 +1744,13 @@ wait_agent() {
     if [[ "${status}" == stalled:* ]]; then
       hung="$(longest_child "${name}" "${target}")"
       [[ -z "${hung}" ]] || status="${status}; ${hung}"
-      record_incident "${name}" "${status}"
-      rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
+      # The builder's story from the board (stall_py story), which knows a name cut at 32 characters.
+      story="$(stall_py story "${name}")" || story=""
+      record_incident "${name}" "${status}" "${story}"
+      rc=0; out="$(ladder_step "${story}" stalled)" || rc=$?
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
       # Another step-up or a restart still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
-      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up or a restart of it is running; wait on its builder again"
+      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: ${story}: another step-up or a restart of it is running; wait on its builder again"
       if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
         echo "${out}"
         if [[ ${rc} != "${STEP_UP_BUSY}" && "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"

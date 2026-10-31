@@ -99,6 +99,11 @@ sites() (
     login-signing) settle() { echo idle; }; login_expired() { return 0; }
       wait_agent a 1000; record_event incident a "sign-blocked: a (unsigned work since 2026-10-29T10:00:00Z)"
       record_event incident a "sign-clear: a"; wait_agent a 1000 ;;
+    stalled-cut) long="story-with-a-name-longer-than-32-chars"; n="$(agent_name "${long}")"
+      printf '2026-10-30\tcode\t%s\tclaude\topus\thigh\t-\n' "${n}" >> "${AGENTS_LOG}"
+      story_rows() { printf '%s\t%s\tready\t-\n' "${long}" "${n}"; }   # the board's row, as board.sh reads it
+      settle() { echo "stalled: working 40 min with no commit"; }; longest_child() { :; }; ladder_step() { return 1; }
+      wait_agent "${n}" 1000 --stall ;;
     stalled|paused|cleared-on-error|impossible) close_agent a "$1" ;;
     open-pr) stub_prs='[{"state":"OPEN"}]'; close_agent a ;;
   esac >/dev/null 2>&1 || true
@@ -157,6 +162,8 @@ check "an expired login waited on twice writes one login line, and a resume then
 check "a stuck builder, waited on twice (nudged) and closed, writes one idle-no-pr line, the close's" "$(sites stuck)" \
   $'incident\ta\tidle-no-pr: closed (met) with no open or merged PR on story/a'
 check "the close's idle-no-pr line carries the story's slug and the builder's role" "$(site_fields stuck)" "idle-no-pr role=code slug=a"
+check "a stalled incident on a builder's name cut at 32 characters carries its story's whole slug, from the board" \
+  "$(sites stalled-cut >/dev/null; site_fields stalled-cut)" "stalled role=code slug=story-with-a-name-longer-than-32-chars"
 check "each login line carries the builder's slug and role" "$(site_fields login)" "$(printf '%s\n' 'login role=code slug=a' 'login role=code slug=a')"
 login2="$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tlogin: Login expired')"
 check "a resume for a slug over 32 characters ends its agent's login episode" "$(sites login-long)" \

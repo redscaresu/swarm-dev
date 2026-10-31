@@ -370,6 +370,11 @@ dataset_report() {
 #     does not list, a commit git cannot find, a merge-in whose git log, merge-tree, diff or merge-base
 #     fails, or a one-parent "merge", each named on a `merge ins: left out` line. Then, after a blank
 #     line, TSV file conflicts: the top three files, or `none conflicted`.
+#   merges: TSV day finished, the stories finished per local day (a finish ok line, or reconcile's ok
+#     (finished, each slug once on its newest such day), which dash's speedometer shows. Then, after a
+#     blank line, TSV day dropped_lines protected money unmarked: merge's held: lines per local day by
+#     their hold= field, unmarked for one with no field (written before merge passed it). --epic does
+#     not narrow it.
 #   review_loops: per build of a story (listed when a review-agent, tell:findings or escalate line of
 #     it is in the window), from events.tsv, findings.tsv and agents.tsv with no gh call: TSV story pr round
 #     model minutes fixed declined step_up, a row per review round of each build (a review-agent opens it; a findings
@@ -394,6 +399,11 @@ dataset_report() {
 #     start's local day is in the window: TSV command runs median_s p90_s over_60s, per command, with
 #     the median and p90 (nearest rank) seconds and the share over 60 s. A line with no log, another
 #     with no row in the window. --epic does not narrow it.
+#   start_failures: TSV day failed restarted_10m not_restarted, per local day in the window, the review-agent
+#     lines in events.tsv whose outcome no_review_events reads as a failed start (`did not start`, `start
+#     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
+#     then TSV slug failed_at for each one not restarted, or a line when there is none in the window.
+#     --epic does not narrow it.
 #   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its runs whose start's local day is in the
 #     window, less the interrupted (status 128 or more) and torn. Over the full runs (filter all): TSV
 #     at_once runs median_s p90_s median_load, per runs going at once (the larger of start's and end's,
