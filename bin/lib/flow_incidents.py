@@ -11,7 +11,7 @@
 # for Goal 3's bar: the stalled incidents with any of the three at 1, and the lead-hand and user-caught lines
 # with cause=false-stall.
 import collections, datetime, os
-from events_outcome import fields
+from events_outcome import fields, outcome
 from report import agent_name
 
 STOPS = ("api-error", "auto-denied")
@@ -35,7 +35,7 @@ counts, stops, causes = collections.Counter(), collections.Counter(), collection
 stalls, stalled_input_1, false_stall = [], 0, 0
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
-    if len(f) == 5 and f[1] == "conduct" and f[4] == "ok" and f[2] != "--backlog":
+    if len(f) == 5 and f[1] == "conduct" and outcome(f) == "ok" and f[2] != "--backlog":
         own("conduct-" + f[2], f[2])
     if len(f) != 5 or f[1] != "incident":
         continue
@@ -44,7 +44,7 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     except ValueError:
         continue
     if since <= day <= until:
-        kind = f[4].partition(":")[0].strip()
+        kind = outcome(f).partition(":")[0].strip()
         counts[(day, kind)] += 1
         if kind in STOPS:
             stops[(epic_of.get(f[2], "-"), kind)] += 1
