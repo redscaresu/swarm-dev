@@ -11,7 +11,8 @@
 # 6. wait --lead prints a stopped: line for a stop note no running conductor has;
 # 7. review-agent starts again, up to 3 starts, when a start ran nothing;
 # 8. a round whose dropped-lines finding went to the builder wakes no no-review: line;
-# 9. review_verify: round 1 may run tests only under full, and later rounds (review-agent --next) trust CI.
+# 9. review_verify: round 1 may run tests only under full, and later rounds (review-agent --next) trust CI;
+# 10. codex-review runs with the PR (SWARM_PR), and a decline the builder gave a reason for is logged with --because.
 # shellcheck disable=SC2016 # the backticks in the briefs' text are literal
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -430,6 +431,14 @@ o="$(flat "$(lib "${next2}")")"
 check "9 review-agent --next's round 2 under review_verify = full trusts CI under its own label, with no ci-labelled or full line" "yes|yes|no|no" \
   "$(has "Review round 2 of story s1" "${o}")|$(has "${LATER_LINE}" "${o}")|$(has "${CI_LINE}" "${o}")|$(has "${FULL_LINE}" "${o}")"
 rm -f "${F}" "${F}.prev" "${F%.md}.head"
+
+# --- 10. codex sees the PR's earlier declines: review_brief's codex command names the PR, and each line
+# that logs a finding the builder declined passes the builder's reason with --because.
+b="$(vbrief "" 1)"
+check "10 review_brief's codex command carries SWARM_STORY and SWARM_PR=<the PR URL>" yes \
+  "$(has "SWARM_STORY=s1 SWARM_PR=${URL} SWARM_PROJECT=" "${b}")"
+check "10 both builder-decline logging lines carry --because with the builder's reason" "yes|yes" \
+  "$(has 'log each as declined, with `--because "<the builder'"'"'s reason, one line>"`' "${b}")|$(has 'as declined, with the reason that fits and `--because "<the builder'"'"'s reason, one line>"`, when the builder declined it' "${b}")"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

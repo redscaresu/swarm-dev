@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # log_finding_test.sh — `swarm.sh log-finding`: the row it appends (kind, PR, text, outcome, reviewer,
-# and a declined row's reason), and every argument it refuses. Moved here from lessons_test.sh when
+# a declined row's reason, the round and a declined row's --because), and every argument it refuses. Moved here from lessons_test.sh when
 # lessons went; outcomes' recurring block is in recurring_kinds_test.sh.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -76,6 +76,42 @@ done
 check "the refusal says what a round is" "yes" "$(has "--round needs the review round" "$(sw log-finding --round x k o/r#94 t || true)")"
 check "--declined deferred --round 3 keeps deferred in field 7 and 3 in field 8" "deferred|3" \
   "$(sw log-finding --declined deferred --reviewer codex --round 3 k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print $7 "|" $8}')"
+# --because "<the builder's reason>" is a 9th field on a declined row, after an empty round when there
+# is none; without --declined it is refused.
+check "--because on a declined row with --round appends 9 fields, the 9th its text" "9|covered by the retry test" \
+  "$(sw log-finding --declined nit --because 'covered by the retry test' --reviewer codex --round 2 k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF "|" $9}')"
+check "--because with --declined and no --round keeps the 9th field the 9th, after an empty round" "9|nit||the builder says so" \
+  "$(sw log-finding --because 'the builder says so' --declined nit k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF "|" $7 "|" $8 "|" $9}')"
+check "--because without --declined is refused" "refused" "$(refused --because 'a reason' --reviewer codex k o/r#94 t)"
+check "--because with --filed is refused" "refused" "$(refused --filed --because 'a reason' k o/r#94 t)"
+check "the refusal says --because needs --declined" "yes" "$(has "it needs --declined" "$(sw log-finding --because x k o/r#94 t || true)")"
+check "a blank --because is refused" "refused" "$(refused --declined nit --because '  ' k o/r#94 t)"
+# Tabs and newlines in --because are flattened and it is cut at 200, so the row stays 9 parseable fields.
+long="$(printf 'b%.0s' {1..250})"
+sw log-finding --declined wrong --because "$(printf 'one\ttwo\nthree\r')${long}" --round 1 k o/r#94 t >/dev/null
+check "a --because with tabs, newlines and 250 more characters stores 9 fields, flattened and cut at 200" \
+  "9|$(printf 'one two three %s' "${long:0:186}")" "$(tail -1 "${F}" | awk -F'\t' '{print NF "|" $9}')"
+# A 9-field row reads exactly as its 8-field twin: finding_rows and out_of_scope_findings stop at 8.
+check "finding_rows reads a 9-field row as its 8-field twin" "True|('fixed', 'declined')" \
+  "$(SWARM_FINDING_REVIEWERS=codex python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from report import finding_rows
+a = sys.argv[2].split("\t"); b = a + ["the builder says so"]
+open(sys.argv[3] + "/8.tsv", "w").write("\t".join(a) + "\n"); open(sys.argv[3] + "/9.tsv", "w").write("\t".join(b) + "\n")
+r8, r9 = (finding_rows(sys.argv[3] + p, width=w) for p, w in (("/8.tsv", 8), ("/9.tsv", 8)))
+print(str(len(a) == 8 and r8 == r9 and len(r8) == 1 and finding_rows(sys.argv[3] + "/8.tsv") == finding_rows(sys.argv[3] + "/9.tsv")) + "|" + str(("fixed", r9[0][4])))' \
+    "$(dirname "${SWARM}")/lib" "$(date +%F)"$'\tk\to/r#96\tt\tdeclined\tcodex\tnit\t2' "${dir}")"
+# oosf <dir> — out_of_scope_findings for a project at <dir>, with an empty board.
+oosf() {
+  # shellcheck disable=SC1090,SC1091 # the library, from the repo under test
+  PROJECT_DIR="$1" BOARD="$1/board" bash -c '. "$1/reports.sh"; out_of_scope_findings' _ "$(dirname "${SWARM}")/lib"
+}
+for w in 8 9; do
+  mkdir -p "${dir}/p${w}/.swarm" "${dir}/p${w}/board/stories"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$(date +%F)" k o/r#97 "an edge case" declined codex out-of-scope 2 > "${dir}/p${w}/.swarm/findings.tsv"
+  [[ "${w}" == 8 ]] || printf '\tthe builder says so' >> "${dir}/p${w}/.swarm/findings.tsv"
+  echo >> "${dir}/p${w}/.swarm/findings.tsv"
+done
+check "out_of_scope_findings reads a 9-field row as its 8-field twin" "out-of-scope	$(date +%F) k o/r#97: an edge case|same" \
+  "$(oosf "${dir}/p9")|$([[ "$(oosf "${dir}/p9")" == "$(oosf "${dir}/p8")" ]] && echo same || echo differ)"
 REASONS="--declined needs a reason, one of: out-of-scope nit wrong deferred"
 check "--declined with no reason is refused, naming the reasons" "refused|yes" \
   "$(refused --declined --reviewer codex k o/r#94 t)|$(has "${REASONS}" "$(sw log-finding --declined --reviewer codex k o/r#94 t || true)")"

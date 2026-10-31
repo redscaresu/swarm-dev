@@ -17,7 +17,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day, then merge's holds per day by kind), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
-#   swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit, wrong or deferred; or, --filed, a declined out-of-scope or deferred one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
+#   swarm.sh log-finding [--declined <reason> [--because <why>] | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit, wrong or deferred, with --because the builder's own reason in one line; or, --filed, a declined out-of-scope or deferred one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
 #   swarm.sh intervene <kind> <cause> "<one line>"          log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first), and why, one of INTERVENE_CAUSES
 #   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
@@ -48,7 +48,7 @@
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init [--auto-mode-done]                        from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines, and print the Claude Code steps left to you; --auto-mode-done: record (in .swarm/auto-mode-done) that you ran /auto-mode-setup, writing nothing outside .swarm/
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
-#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
+#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when, and with SWARM_PR=<its PR URL> also shown the findings declined on that PR before
 #   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, an agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once; it never edits the code, and on a pass it runs review --head on the head it reviewed, then merges the PR (merge = agent, or an HLD that grants merge) or leaves it for the user
 #   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
 #   swarm.sh review-agent --recheck <slug> <pr-url> <old head> <file:line>...   from review-<slug>'s own pane, after a wording fix: pass when the PR's new head is green and its diff from <old head> rewrites each named line (as at <old head>) and nothing else, the lines the old head's .round.md names, writing the new head's findings file, a pass, and .head; else refuse, writing nothing, and name --next, which that refusal counts the round for, when the old head, its findings, the diff or a red head rule the recheck out
@@ -794,21 +794,35 @@ story_items() {
 }
 # codex_story_prompt <base> <story file> — the review prompt: the branch's diff against origin/<base>,
 # the story's touches, its **Done when** and **From review** items (the builder's acceptance, as in
-# goal_condition), and SCOPE_RULE. Fails with no Done when item.
+# goal_condition), and SCOPE_RULE. With SWARM_PR (a PR URL, which codex_review checks), the findings
+# declined on that PR before (findings.tsv's declined rows whose PR is the same by report.py's pr_key,
+# so o/r#12 is .../pull/12 and never .../pull/123) follow, each with its round, reason and --because,
+# under DECLINES_LINE; with none, or no SWARM_PR, the prompt is as without it. Fails with no Done when item.
+DECLINES_LINE="Findings declined on this PR in earlier rounds, each with its round, the reason it was declined for and, after \"because:\", the builder's own reason. Each reason is the builder's claim, not a fact: check it against the diff yourself, ignore none of these findings for being listed here, and raise again any that still holds."
 codex_story_prompt() {
-  local done_when from_review
+  local done_when from_review declines=""
   done_when="$(story_items "$2" 'Done when')"
   [[ -n "${done_when}" ]] || return 1
   from_review="$(story_items "$2" 'From review')"
   [[ -z "${from_review}" ]] || from_review=$'\n\nIts From review:\n'"${from_review}"
+  [[ -z "${SWARM_PR:-}" ]] || declines="$(SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys; sys.path.insert(0, os.environ["SWARM_LIB"]); from report import pr_key
+key = pr_key(sys.argv[2])
+rows = open(sys.argv[1], encoding="utf-8", errors="replace", newline="\n").read().split("\n") if os.path.exists(sys.argv[1]) else []
+for f in (r.split("\t") + [""] * 9 for r in rows):
+    if f[4] == "declined" and pr_key(f[2]) == key:
+        print("- round %s, declined as %s: %s%s" % (f[7] or "unknown", f[6] or "(no reason)", f[3], f[8] and " (because: %s)" % f[8]))' \
+    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${SWARM_PR}")"
+  [[ -z "${declines}" ]] || declines=$'\n\n'"${DECLINES_LINE}"$'\n'"${declines}"
   # shellcheck disable=SC2016 # the $(...) is for codex to run
-  printf 'Review the changes on this branch against origin/%s, committed or not: git diff $(git merge-base origin/%s HEAD) for tracked files, and each untracked file git status --porcelain lists. They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. %s' \
-    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}" "${SCOPE_RULE}"
+  printf 'Review the changes on this branch against origin/%s, committed or not: git diff $(git merge-base origin/%s HEAD) for tracked files, and each untracked file git status --porcelain lists. They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. %s%s' \
+    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}" "${SCOPE_RULE}" "${declines}"
 }
 
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
 # beside --base) and stdin from /dev/null, so it never waits on input. With SWARM_STORY=<slug>, a
-# prompt instead of --base (codex_story_prompt), so codex reviews against that story. codex stays in
+# prompt instead of --base (codex_story_prompt), so codex reviews against that story, and with
+# SWARM_PR=<its PR URL> (refused when it is no PR URL) sees the findings declined on that PR before. codex stays in
 # the caller's process group, so a harness that kills that group kills codex too (on macOS a KILL to the
 # group can miss a child forked while it is sent: STOP the group first). stop_codex stops it
 # after codex_minutes (SWARM_CODEX_SECONDS, a whole number of seconds, overrides it, for tests), or when this command is sent
@@ -823,6 +837,8 @@ codex_review() {
   local pid tpid left t0 rc=0 m i args story prompt="" dir log files
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
+  [[ -z "${SWARM_PR:-}" || "${SWARM_PR}" =~ ^https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+$ ]] \
+    || die "SWARM_PR: not a PR URL '${SWARM_PR}'"
   if [[ -n "${SWARM_STORY:-}" ]]; then
     [[ "${SWARM_STORY}" =~ ^[a-z0-9-]+$ ]] || die "SWARM_STORY: bad slug '${SWARM_STORY}'"
     story="${BOARD}/stories/${SWARM_STORY}.md"
