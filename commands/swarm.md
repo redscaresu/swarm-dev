@@ -115,13 +115,13 @@ Repeat until a step below says stop:
      `plan-epic` for it. Plan it with the exit, beside the step.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
      `release`), no story is one an agent can build, and there are findings to offer: up to five
-     `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
-     the last 30 days and not yet filed, newest first). File one as a one-off story (through
-     `swarm.sh board-pr`, or where the board is when it is outside the repo), then run
-     `swarm.sh log-finding --filed --reviewer lead <kind> <PR> '<text>'` with the line's kind, PR
-     and text, so `next` stops offering it; or tell the user why none fits. Later stories stay the
-     user's to start, as the gate lists them. Declined out-of-scope findings are the swarm's list of
-     follow-ups, so you need not keep them in memory.
+     `out-of-scope finding: <date> <kind> <PR>: <text>` or `deferred finding: ...` lines (findings
+     declined as out of scope or deferred in the last 30 days and not yet filed, newest first).
+     File one as a one-off story (through `swarm.sh board-pr`, or where the board is when it is
+     outside the repo), then run `swarm.sh log-finding --filed --reviewer lead <kind> <PR> '<text>'`
+     with the line's kind, PR and text, so `next` stops offering it; or tell the user why none
+     fits. Later stories stay the user's to start, as the gate lists them. Declined out-of-scope and
+     deferred findings are the swarm's list of follow-ups, so you need not keep them in memory.
 2. Do the step:
    - `fix-main <slug>`: `swarm.sh merge` found CI on the base red on a commit it merged, printed
      `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them. Or
