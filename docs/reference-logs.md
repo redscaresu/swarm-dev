@@ -74,7 +74,13 @@ agent of the name starts with none. The stall rule skips incident lines as it sk
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about
-whether the conductor is working. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
+whether the conductor is working. A tell refused because of the state it read has `state=` in its
+outcome's tail. The value is `none` when no agent this project started holds the name, or one of
+`gone`, `unknown`, `herdr:unknown`, `waiting:<what>` (what the agent waits on, with its spaces made
+`_`) and `herdr:blocked`. Any other status herdr gives is logged as `herdr:<status>`, the status a
+`could not reach` refusal names. A tell refused before it read a state (a bad kind, a missing file,
+herdr could not list its agents) or on its queue's lock has no `state=`. Neither has a tell that was
+sent, queued or replaced. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
 no cause as plain `close`. A close with an unknown cause is refused and logged as plain `close`,
 and the word that was given never reaches the log. `reconcile` and `unblock` write a line
 per item they move. `merge` writes all its own lines, under the story's or epic's slug (the PR URL
@@ -106,9 +112,13 @@ and the first line of a failed command's error.
 The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
-fields: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held
-lines, `intervene` passes `cause=`, `pr-opened` passes `url=` and `first-green` passes `sha=`. It first
-takes every separator out of the outcome text: each
+fields: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
+`url=` and `first-green` passes `sha=`. For a command `main` logs, the fields come from two places, in
+this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
+command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
+beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a
+value into `_`, and an empty value into `-`. `append_event` first takes every separator out of the
+outcome text: each
 one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
 then any trailing spaces. That way the first separator in the field is always where the tail starts,
 and an outcome that ends in one is written without it. Fields are separated by spaces. A key is
