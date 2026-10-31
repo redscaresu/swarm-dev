@@ -38,7 +38,7 @@ SHELL = [(re.compile(COL + r"\s*" + CMP + "|" + CMP + r"\s*" + COL), "exact comp
          (re.compile(COL + r"\s+in\b"), "membership"),
          (re.compile(r"\w\[\s*" + COL + r"\s*\]|\{\s*\$F\[4\]\s*\}"), "dict lookup")]
 HEREDOC = re.compile(r"""(?<!<)<<-?[ \t]*\\?(["']?)([A-Za-z_]\w*)\1""")   # not <<<, a here-string
-PY_C = re.compile(r"""\bpython3\b[^|;&]*?\s-c\s*(['"])""")
+PY_C = re.compile(r"""\bpython3\b[^|;&]*?\s-c(?:\s|\\)*(['"])""")   # its program may follow a \ line break
 SQ_QUOTE = re.compile(r"""'(?:\\'|"'")'""")   # '\'' and '"'"': a ' in a '...' program
 EXPANSION = re.compile(r"\$(?:\{[^}]*\}|\([^)]*\)|\w+|[@*#?!$-])")
 OUT = []
@@ -128,6 +128,10 @@ class Scan(ast.NodeVisitor):
             return self.in_comp(node, self.stripped)
         return False
 
+    def listed(self, node):   # a list that holds rows already: [(0, f)], or a comprehension
+        return isinstance(node, (ast.List, ast.Set)) and bool(node.elts) \
+            or isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp))
+
     def split_row(self, node):   # one raw row: x.split(...) or a name bound from one
         return calls(node, "split") or self.has("rows", node)
 
@@ -144,7 +148,8 @@ class Scan(ast.NodeVisitor):
             return
         name = isinstance(target, ast.Name)
         on = {"clean": self.stripped(value), "told": not each and self.outcome(value),
-              "alias": not each and name and self.raw(value), "mixed": False,
+              "alias": not each and name and self.raw(value),
+              "mixed": not each and self.listed(value) and not self.stripped(value),
               "rows": self.split_rows(value) if each else self.split_row(value),
               "rowlists": not each and self.split_rows(value),
               "anchored": not each and calls(value, "compile") and bool(value.args) and anchored(value.args[0])}
@@ -380,6 +385,8 @@ awk -F'\t' 'match($5, /ok$/)' "${f}"
 awk -F'\t' '($5 in seen) { n++ }' "${f}"
 awk -F'\t' '{ seen[$5]++ }' "${f}"
 perl -F'\t' -lane '$h{$F[4]}++' "${f}"
+python3 -c \
+  'import sys; f = sys.argv[1].split("\t"); print(f[4] == "ok")' "${x}"
 FIXTURE
 cat > "${tmp}/loose.py" <<'FIXTURE'
 import re, sys
@@ -450,6 +457,9 @@ st = by_story[g[0]]
 am = st[4] == "ok"
 rows = [f[:4] + [outcome(f)], f]
 an = [r for r in rows if r[4] == "ok"]
+evs = [(0, f)]
+evs.append((1, f[:4] + [outcome(f)]))
+ao = [e for _, e in evs if e[4] == "ok"]
 FIXTURE
 cat > "${tmp}/tight.sh" <<'FIXTURE'
 awk -F'\t' "${EVENT_OUTCOME_AWK}"'$2 == "story" && outcome($5) == "ok"' "${f}"
@@ -509,14 +519,15 @@ want="$(printf '%s\n' "loose.sh:1 ${x}" "loose.sh:2 ${x}" "loose.sh:3 slice" "lo
   "loose.sh:21 end-anchored match" "loose.sh:25 ${x}" "loose.sh:28 ${x}" "loose.sh:30 ${x}" \
   "loose.sh:32 slice" "loose.sh:33 ${x}" "loose.sh:34 slice" "loose.sh:35 ${x}" "loose.sh:36 ${x}" \
   "loose.sh:38 ${x}" "loose.sh:40 ${x}" "loose.sh:41 end-anchored match" "loose.sh:42 membership" \
-  "loose.sh:43 dict lookup" "loose.sh:44 dict lookup" \
+  "loose.sh:43 dict lookup" "loose.sh:44 dict lookup" "loose.sh:46 ${x}" \
   "loose.py:3 ${x}" "loose.py:4 slice" "loose.py:5 fullmatch" "loose.py:6 endswith" "loose.py:7 dict lookup" \
   "loose.py:8 membership" "loose.py:10 ${x}" "loose.py:13 ${x}" "loose.py:16 ${x}" "loose.py:18 ${x}" "loose.py:20 ${x}" \
   "loose.py:23 ${x}" "loose.py:25 ${x}" "loose.py:27 fullmatch" "loose.py:28 fullmatch" "loose.py:29 ${x}" "loose.py:34 ${x}" \
   "loose.py:37 ${x}" "loose.py:38 ${x}" "loose.py:43 ${x}" "loose.py:44 ${x}" \
   "loose.py:47 ${x}" "loose.py:49 ${x}" "loose.py:52 ${x}" "loose.py:53 end-anchored match" \
   "loose.py:54 end-anchored match" "loose.py:56 end-anchored match" "loose.py:57 ${x}" "loose.py:58 ${x}" \
-  "loose.py:59 ${x}" "loose.py:60 membership" "loose.py:64 ${x}" "loose.py:66 ${x}" "loose.py:68 ${x}")"
+  "loose.py:59 ${x}" "loose.py:60 membership" "loose.py:64 ${x}" "loose.py:66 ${x}" "loose.py:68 ${x}" \
+  "loose.py:71 ${x}")"
 if [[ "${got}" == "${want}" ]]; then
   echo "ok   a fixture with each raw read fails, naming its file:line"
 else
