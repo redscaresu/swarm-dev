@@ -2,9 +2,9 @@
 kind: code
 status: blocked
 epic: telemetry-writers
-depends_on: [intervene-cause, hooks-pr-543-decision]
+depends_on: [intervene-cause]
 needs: [intervene-cause: the three-argument intervene form and INTERVENE_CAUSES (bin/swarm.sh:intervene), hooks-pr-543-decision: its You: step, #543 merged or closed]
-touches: [hooks/merge-guard.sh:record, hooks/lead-stop.sh:log, hooks/user-caught-reminder.sh:reminder line, tests/merge_guard_test.sh:incident field cases, tests/lead_stop_test.sh:field cases, tests/user_caught_reminder_test.sh:REMINDER, docs/reference-logs.md:guard incident sentence (Logs and outcomes), docs/reference-lead.md:user-caught paragraph (quotes the reminder), tests/lead_stop_test.sh:run() compares]
+touches: [hooks/merge-guard.sh:record, hooks/lead-stop.sh:log, hooks/user-caught-reminder.sh:reminder line, tests/merge_guard_test.sh:incident field cases, tests/lead_stop_test.sh:field cases, tests/user_caught_reminder_test.sh:REMINDER, docs/reference-logs.md:guard incident sentence (Logs and outcomes), docs/reference-lead.md:user-caught paragraph (quotes the reminder), tests/lead_stop_test.sh:run() compares, tests/live_logs_test.sh:hook cases]
 estimate_lines: 160
 easy: false
 risk: high
@@ -16,6 +16,8 @@ From intervene-cause it uses the `intervene <kind> <cause> "<line>"` form; from 
 
 Skeptic fixes: any failure in record() never changes the guard's verdict: catch Exception around the field read and the write, not only OSError. The plugin.json path reaches the `python3 -I -c` program as an argument from the shell (it has no __file__). This PR also makes intervene's old two-argument form exit 1, and moves docs/reference-lead.md's user-caught paragraph to the new reminder text.
 
+
+Folded in from board PR #543 (closed 2026-10-31, the lead's hooks-pr-543-decision): hooks/merge-guard.sh record() and hooks/lead-stop.sh log() must never append to the main checkout's live .swarm/events.tsv when run from a test in a story worktree, which the swarm.sh guard from tests-keep-live-logs-clean (#529) does not cover. One hook PR for the user instead of two.
 **Done when:**
 - tests/merge_guard_test.sh: a merge blocked in an agent's pane (SWARM_AGENT=review-abc, agents.tsv role review) writes an incident whose fields() give slug=abc role=review and version= equal to plugin.json's; from the lead's session, no slug= or role=.
 - The exact $5 compares at merge_guard_test.sh:110, 189, 240, 288 and 300 read outcome() and pass.
@@ -25,3 +27,4 @@ Skeptic fixes: any failure in record() never changes the guard's verdict: catch 
 - Copy-aside proof: moving the plugin.json read outside its try turns the unreadable case red.
 - With plugin.json not JSON, plugin.json without a version, and agents.tsv holding non-UTF-8 bytes, a blocked merge still exits 2 and writes its incident; a test covers each.
 - Every tests/lead_stop_test.sh run() compare reads outcome() and passes with role= and version= on the line.
+- tests/live_logs_test.sh runs each hook from a story worktree under the guard and shows the main checkout's .swarm/events.tsv is unchanged; with the guard removed, the same test fails.
