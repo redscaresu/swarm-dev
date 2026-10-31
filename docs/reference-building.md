@@ -1039,7 +1039,7 @@ and holds out of scope only a point that a change to a file outside the touches 
 that PR before: each `.swarm/findings.tsv` declined row whose PR is the same PR (a URL or `owner/repo#N`,
 never one whose number only starts the same), with its round, its reason and its `--because`. A line
 over them says each reason is the builder's claim, not a fact, and that codex ignores none of them.
-With no such row, or with no `SWARM_PR` (a builder's own run before its PR opens), the prompt is
+With no such row, or with no `SWARM_PR` (a builder's own run, which never passes it, before or after its PR opens), the prompt is
 unchanged. On a usage limit the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, or `SWARM_PR` is set and is not a PR URL, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,

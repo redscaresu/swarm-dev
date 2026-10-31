@@ -46,7 +46,7 @@ stub() {
   chmod +x "${BIN}/codex"
 }
 # review — codex-review main from the project, with text on its stdin, SWARM_STORY=$STORY if STORY
-# is set, SWARM_AGENT=$AGENT if AGENT is and SWARM_PR=$PR if PR is (a caller's own of any of them is dropped), timed: sets out, rc and took
+# is set, SWARM_AGENT=$AGENT if AGENT is and SWARM_PR=$PR if PR is (a caller's own of any is dropped), timed: sets out, rc and took
 # (seconds). Its output goes through a file, since a stub left running would hold a $(...) open for
 # good, and after REVIEW_CAP seconds the stubs are KILLed, so a codex-review that hangs fails the
 # timing checks instead of hanging the test.
