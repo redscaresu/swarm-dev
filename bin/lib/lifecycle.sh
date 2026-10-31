@@ -1215,7 +1215,8 @@ builder_model() {
 # build_started <slug> — when <slug>'s current build started: its newest ok story or escalate line,
 # or ok agent line (a builder started by hand, whose target is the agent name); empty with none.
 build_started() {
-  awk -F'\t' -v s="$1" -v n="$(agent_name "$1")" '$5 ~ /^ok/ && ((($2 == "story" || $2 == "escalate") && $3 == s) || ($2 == "agent" && $3 == n)) { t = $1 }
+  awk -F'\t' -v s="$1" -v n="$(agent_name "$1")" "${EVENT_OUTCOME_AWK}"'
+    outcome($5) ~ /^ok/ && ((($2 == "story" || $2 == "escalate") && $3 == s) || ($2 == "agent" && $3 == n)) { t = $1 }
     END { print t }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
@@ -1277,7 +1278,8 @@ step_lock() {
 
 # stepped_up_since <slug> <time> — <slug> has an ok escalate line at or after <time>.
 stepped_up_since() {
-  awk -F'\t' -v s="$1" -v t="$2" '$2 == "escalate" && $3 == s && $1 >= t && $5 ~ /^ok/ { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+  awk -F'\t' -v s="$1" -v t="$2" "${EVENT_OUTCOME_AWK}"'
+    $2 == "escalate" && $3 == s && $1 >= t && outcome($5) ~ /^ok/ { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
 # handover_brief <slug> <src> <base> <trigger> <from> <to> [findings] — the next rung's brief, or with
@@ -1482,7 +1484,8 @@ top_rung() {
 # top_rung_since <slug> — when top-rung findings rounds count from: the newer of build_started and an
 # ok reset of <slug>, so a builder kept through the lead's reset gets fresh rounds.
 top_rung_since() {
-  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" '$2 ~ /^reset/ && $3 == s && index($5, "ok") == 1 && $1 > t { t = $1 }
+  awk -F'\t' -v s="$1" -v t="$(build_started "$1")" "${EVENT_OUTCOME_AWK}"'
+    $2 ~ /^reset/ && $3 == s && index(outcome($5), "ok") == 1 && $1 > t { t = $1 }
     END { print t }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
@@ -2922,8 +2925,9 @@ user_merges() {
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
   if [[ "${CFG_merge}" != agent ]] && ! no_agent_granted "${slug}"; then return 0; fi
   [[ -z "$(costs_tag "$1")" ]] || return 0
-  awk -F'\t' -v s="${slug}" '$3 == s && $2 == "review" && index($5, "ok") == 1 { m = "" }
-    $3 == s && $2 == "merge" { m = $5 }
+  awk -F'\t' -v s="${slug}" "${EVENT_OUTCOME_AWK}"'
+    $3 == s && $2 == "review" && index(outcome($5), "ok") == 1 { m = "" }
+    $3 == s && $2 == "merge" { m = outcome($5) }
     END { exit !(m ~ /^held:/ || m ~ /the user merges it|waits on the user.s merge/) }' "${EVENTS_LOG}" 2>/dev/null
 }
 
@@ -3055,11 +3059,13 @@ stuck_lines() {
   rows="$(story_pr_rows)"
   old="$(cat "${LEAD_PR_HEADS}" 2>/dev/null)" || old=""
   # One read of events.tsv for every PR, as epochs: `T <target> <newest findings tell>`, and the newest ok build
-  # start, as build_started reads it: `S <slug>` for a story or escalate line, `A <name>` for an agent line.
-  told="$(perl -MTime::Local=timegm -F'\t' -lane 'next unless $F[0] =~ /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)Z$/; $e = timegm($6, $5, $4, $3, $2 - 1, $1);
-    if (($F[1] eq "tell" || $F[1] eq "tell:findings") && ($F[4] eq "ok" || $F[4] =~ /herdr sent it the brief/)) { $t{"T $F[2]"} = $e }
-    elsif ($F[4] =~ /^ok/ && ($F[1] eq "story" || $F[1] eq "escalate")) { $t{"S $F[2]"} = $e }
-    elsif ($F[4] =~ /^ok/ && $F[1] eq "agent") { $t{"A $F[2]"} = $e }
+  # start, as build_started reads it: `S <slug>` for a story or escalate line, `A <name>` for an agent line. $o is
+  # the outcome without its key=value tail: the text before the first EVENT_SEP (EVENT_OUTCOME_AWK's outcome).
+  told="$(EVENT_SEP="${EVENT_SEP}" perl -MTime::Local=timegm -F'\t' -lane 'next unless $F[0] =~ /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)Z$/; $e = timegm($6, $5, $4, $3, $2 - 1, $1);
+    $o = $F[4]; $i = index($o, $ENV{EVENT_SEP}); $o = substr($o, 0, $i) if $i >= 0;
+    if (($F[1] eq "tell" || $F[1] eq "tell:findings") && ($o eq "ok" || $o =~ /herdr sent it the brief/)) { $t{"T $F[2]"} = $e }
+    elsif ($o =~ /^ok/ && ($F[1] eq "story" || $F[1] eq "escalate")) { $t{"S $F[2]"} = $e }
+    elsif ($o =~ /^ok/ && $F[1] eq "agent") { $t{"A $F[2]"} = $e }
     END { print "$_ $t{$_}" for sort keys %t }' "${EVENTS_LOG}" 2>/dev/null)" || told=""
   while read -r slug url head mg ck opened kept; do
     [[ -n "${slug}" ]] || continue
@@ -3389,7 +3395,8 @@ sign_blocked_lines() {
     fi
     [[ "${at}" == "${since}" ]] || continue
     slugs+="${slug}"$'\n'
-  done < <(awk -F'\t' '$2 == "incident" && $5 ~ /^sign-(blocked|clear): / { l[$3] = $5 }
+  done < <(awk -F'\t' "${EVENT_OUTCOME_AWK}"'
+    $2 == "incident" && (o = outcome($5)) ~ /^sign-(blocked|clear): / { l[$3] = o }
     END {
       for (n in l) if (l[n] ~ /^sign-blocked: /) {
         s = substr(l[n], 15); sub(/ .*/, "", s)
@@ -3648,7 +3655,7 @@ no_agent_name() {
 no_agent_events() {
   local log="${EVENTS_LOG}"
   [[ -f "${log}" ]] || log=/dev/null   # BSD awk stops at a missing file before its END
-  awk -F'\t' -v rows="$*" -v starts=" ${NO_AGENT_STARTS} " '
+  awk -F'\t' -v rows="$*" -v starts=" ${NO_AGENT_STARTS} " "${EVENT_OUTCOME_AWK}"'
     BEGIN {
       n = split(rows, w, " ")
       # A close names the review agent in full (review-<slug>), herdr and agent lines by its cut name.
@@ -3658,12 +3665,13 @@ no_agent_events() {
         epic[w[i]] = w[i + 3]
       }
     }
-    NF == 5 && $2 == "upgrade" && $5 ~ /^ok/ {
+    { o = outcome($5) }
+    NF == 5 && $2 == "upgrade" && o ~ /^ok/ {
       for (x in epic) if ($3 == "-" || $3 == epic[x] || ($3 == "backlog" && epic[x] == "-")) ev[x] = ""
       next
     }
     NF == 5 && ($3 in own) {
-      s = own[$3]; c = $2; sub(/:.*/, "", c); ok = $5 ~ /^ok/
+      s = own[$3]; c = $2; sub(/:.*/, "", c); ok = o ~ /^ok/
       if ($2 == "step-up:failed") ev[s] = $1
       else if (index(starts, " " c " ")) {
         if (!($3 in rev)) tried[s] = 1
@@ -3671,7 +3679,7 @@ no_agent_events() {
         else { ev[s] = ""; reo[s] = 0; if (c != "review-agent" && !($3 in rev)) build[s] = 1 }
       } else if (c == "close") {
         if (ok) { ev[s] = $1; if (!($3 in rev)) build[s] = 0 }
-      } else if ($2 == "reconcile" && $5 == "ok (reopened)") reo[s] = 1
+      } else if ($2 == "reconcile" && o == "ok (reopened)") reo[s] = 1
       else if ($2 == "no-agent") ev[s] = $1
       else if ((c == "tell" && ok) || $2 == "hold") ev[s] = ""
     }
@@ -3715,38 +3723,39 @@ no_agent_busy() {
 no_review_events() {
   local log="${EVENTS_LOG}"
   [[ -f "${log}" ]] || log=/dev/null   # BSD awk stops at a missing file before its END
-  awk -F'\t' -v rows="$*" -v q="'" '
+  awk -F'\t' -v rows="$*" -v q="'" "${EVENT_OUTCOME_AWK}"'
     BEGIN {
       n = split(rows, w, " "); pr = "https://[^ " q "]*/pull/[0-9]+"
       for (i = 1; i + 1 <= n; i += 2) { me[w[i]] = 1; rn[w[i]] = w[i + 1]; rv[w[i + 1]] = rv["review-" w[i]] = w[i]; order[++k] = w[i] }
     }
     NF != 5 { next }
-    ($3 in me) && (($2 == "story" && $5 ~ /^ok/) || ($2 == "reconcile" && $5 == "ok (reopened)")) {
+    { o = outcome($5) }
+    ($3 in me) && (($2 == "story" && o ~ /^ok/) || ($2 == "reconcile" && o == "ok (reopened)")) {
       s = $3; on[s] = 0; told[s] = 0; next
     }
-    ($3 in me) && ($2 == "review-agent" || ($2 == "review-agent:next" && $5 ~ /^ok/)) {
-      s = $3; ok1 = $5 ~ /^ok/
-      if (!ok1 && on[s] && ok[s] && !shut[s] && (index($5, " is still reviewing ") || index($5, rn[s] ": ") == 1 || index($5, "review-" s ": ") == 1)) next
+    ($3 in me) && ($2 == "review-agent" || ($2 == "review-agent:next" && o ~ /^ok/)) {
+      s = $3; ok1 = o ~ /^ok/
+      if (!ok1 && on[s] && ok[s] && !shut[s] && (index(o, " is still reviewing ") || index(o, rn[s] ": ") == 1 || index(o, "review-" s ": ") == 1)) next
       # A refusal of a head that passed its review starts nothing and leaves that review in place.
-      if (!ok1 && index($5, "review-agent: ") == 1 && index($5, " is a pass of ")) next
+      if (!ok1 && index(o, "review-agent: ") == 1 && index(o, " is a pass of ")) next
       on[s] = 1; ok[s] = ok1; shut[s] = 0; url[s] = "-"; after[s] = 0
-      wrote[s] = ok1 || $5 == "review-agent: mktemp failed; nothing was started" ||
-        index($5, "review-agent: review-" s " did not start") == 1 || index($5, "review-agent: review-" s q "s start was unclear") == 1 ||
-        index($5, "review-agent: review-" s " took its brief") == 1
-      atwork[s] = !ok1 && ($5 ~ /worktree is at .*, not the PR.s head/ || $5 ~ /worktree has uncommitted changes/)
+      wrote[s] = ok1 || o == "review-agent: mktemp failed; nothing was started" ||
+        index(o, "review-agent: review-" s " did not start") == 1 || index(o, "review-agent: review-" s q "s start was unclear") == 1 ||
+        index(o, "review-agent: review-" s " took its brief") == 1
+      atwork[s] = !ok1 && (o ~ /worktree is at .*, not the PR.s head/ || o ~ /worktree has uncommitted changes/)
       # Only a URL review_agent took as one: every message but its "is not a PR URL" refusal names
       # a URL that passed its check.
-      if (!ok1 && !index($5, " is not a PR URL") && match($5, pr))
-        url[s] = substr($5, RSTART, RLENGTH)
+      if (!ok1 && !index(o, " is not a PR URL") && match(o, pr))
+        url[s] = substr(o, RSTART, RLENGTH)
       next
     }
     # A findings round, counted as review_rounds counts it: a tell that is ok or that herdr sent, or a
     # findings step-up, whose brief carried the findings in place of a tell. A --recheck refused with a
     # full round due, which review_rounds counts too, is left out: the builder has nothing to fix, and
     # the review agent runs that round itself (--next), so with it gone no review is under way.
-    ($3 in me) && ((($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/)) ||
-      ($2 == "escalate" && $5 ~ /^ok \(findings-[0-9]+:/)) { told[$3] = 1; after[$3] = 1; next }
-    ($3 in rv) && $2 ~ /^close(:|$)/ && $5 ~ /^ok/ { shut[rv[$3]] = 1 }
+    ($3 in me) && ((($2 == "tell" || $2 == "tell:findings") && (o == "ok" || o ~ /herdr sent it the brief/)) ||
+      ($2 == "escalate" && o ~ /^ok \(findings-[0-9]+:/)) { told[$3] = 1; after[$3] = 1; next }
+    ($3 in rv) && $2 ~ /^close(:|$)/ && o ~ /^ok/ { shut[rv[$3]] = 1 }
     END {
       for (i = 1; i <= k; i++) {
         s = order[i]
@@ -3783,16 +3792,17 @@ no_review_pr() {
 review_restart_try() {
   local log="${EVENTS_LOG}"
   [[ -f "${log}" ]] || return 0
-  awk -F'\t' -v s="$1" -v max="${STARTS_PER_REVIEW}" '
+  awk -F'\t' -v s="$1" -v max="${STARTS_PER_REVIEW}" "${EVENT_OUTCOME_AWK}"'
     function num(t) { sub(/.*\(try /, "", t); sub(/ of .*/, "", t); return t + 0 }
     NF != 5 || $3 != s { next }
-    ($2 == "story" && $5 ~ /^ok/) || ($2 == "reconcile" && $5 == "ok (reopened)") || ($2 == "review-agent" && $5 ~ /^ok/) {
+    { o = outcome($5) }
+    ($2 == "story" && o ~ /^ok/) || ($2 == "reconcile" && o == "ok (reopened)") || ($2 == "review-agent" && o ~ /^ok/) {
       hi = 0; go = 0; open = 0; next
     }
-    $2 == "review-agent:try" && $5 ~ /^\(try [0-9]+ of [0-9]+\) started$/ { n = num($5); if (n > hi) hi = n; open = n; next }
-    $2 == "review-agent:restart" && $5 ~ /^started \(try [0-9]+ of [0-9]+\)$/ { n = num($5); if (n > hi) hi = n; go = 1; open = 0; next }
-    $2 != "review-agent" || $5 == "interrupted" { next }
-    $5 ~ / \(try [0-9]+ of [0-9]+\)$/ { n = num($5); if (n > hi) hi = n; go = 1; open = 0; next }
+    $2 == "review-agent:try" && o ~ /^\(try [0-9]+ of [0-9]+\) started$/ { n = num(o); if (n > hi) hi = n; open = n; next }
+    $2 == "review-agent:restart" && o ~ /^started \(try [0-9]+ of [0-9]+\)$/ { n = num(o); if (n > hi) hi = n; go = 1; open = 0; next }
+    $2 != "review-agent" || o == "interrupted" { next }
+    o ~ / \(try [0-9]+ of [0-9]+\)$/ { n = num(o); if (n > hi) hi = n; go = 1; open = 0; next }
     { go = 0; open = 0 }
     END { if (open) print "unclear", open; else if (go && hi < max) print "restart", hi + 1 }' "${log}" 2>/dev/null || true
 }
@@ -4230,8 +4240,9 @@ resend_pass() {
   backlog="$(conductor_name backlog)"
   # events.tsv's size as rows reads it: a line added before an Enter may be a newer delivery.
   size=$(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) ))
-  rows="$(SWARM_PANES="$(own_panes)" SWARM_BACKLOG="${backlog}" SWARM_NAME_MAX="${AGENT_NAME_MAX}" SWARM_BRIEFS="${PROJECT_DIR}/.swarm/briefs" python3 -I -c '
+  rows="$(SWARM_PANES="$(own_panes)" SWARM_BACKLOG="${backlog}" SWARM_NAME_MAX="${AGENT_NAME_MAX}" SWARM_BRIEFS="${PROJECT_DIR}/.swarm/briefs" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import glob, json, os, re, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from events_outcome import outcome
 e = os.environ
 own = set(e["SWARM_PANES"].split())
 # agent_name: lower case, any other byte a dash, s before a name that does not start with a letter, the cut.
@@ -4288,7 +4299,8 @@ try:
         else:
             sr = started[n] = stem(c, t)
         # ok (an escalate line reads ok (<trigger>: ...)), or a deliver_prompt failure once herdr may have sent it.
-        if f[4] == "ok" or f[4].startswith("ok (") or any(w in f[4] for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
+        o = outcome(f)
+        if o == "ok" or o.startswith("ok (") or any(w in o for w in ("herdr sent it the brief", "may or may not have the brief", "could not be read")):
             k = (n, f[0], c)
             alike[k] = alike.get(k, 0) + 1
             newest[n] = (f[0], c, alike[k]) + sr

@@ -1,4 +1,5 @@
 import datetime, re, time
+from events_outcome import outcome
 def story_for(name, stories):
     base = re.sub(r"-done\d*$", "", name)
     hits = [s for s in stories if s[1] == base]
@@ -14,7 +15,7 @@ def epoch(x):
             return None
 def sign_time(f):
     t = epoch(f[0]) if len(f) == 5 else None
-    if t is None or f[1] in ("nudge", "resume", "resend", "incident", "usage-limit", "tell:nudge", "tell:note") or f[1].split(":")[0] == "board-pr" or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
+    if t is None or f[1] in ("nudge", "resume", "resend", "incident", "usage-limit", "pr-opened", "first-green", "tell:nudge", "tell:note") or f[1].split(":")[0] == "board-pr" or (f[1].split(":")[0] == "tell" and outcome(f) != "ok"):
         return None
     return t
 def last_seen(events):

@@ -10,7 +10,8 @@
 # 5. a fix-main story's stop note goes to the conductor that started its build;
 # 6. wait --lead prints a stopped: line for a stop note no running conductor has;
 # 7. review-agent starts again, up to 3 starts, when a start ran nothing;
-# 8. a round whose dropped-lines finding went to the builder wakes no no-review: line.
+# 8. a round whose dropped-lines finding went to the builder wakes no no-review: line;
+# 9. review_verify: round 1 may run tests only under full, and later rounds (review-agent --next) trust CI.
 # shellcheck disable=SC2016 # the backticks in the briefs' text are literal
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
@@ -400,6 +401,35 @@ dropped_round "review-agent: review-s1 did not start (its pane w:p9 is closed)"
 fresh_lead
 check "8 the same rows with the start failed: a no-review: line for s1 (the control)" yes "$(has 'no-review: s1' "$(poll)")"
 rm -f "${ROOT}/bin/gh" "${F%.md}.head"; rm -rf "${ROOT}/proj-wt"; : > "${P}/.swarm/events.tsv"; : > "${ROOT}/agents"; : > "${P}/.swarm/state/tab"
+
+# --- 9. review_verify: only round 1 under full may run tests; every other round trusts CI.
+TRUST='read the diff and trust CI for the tests; run no local test suite and no mutation run.'
+CI_LINE="Tests (review_verify = ci): ${TRUST}"
+LATER_LINE="Tests (review_verify = full, round 2): from round 2 on, ${TRUST}"
+FULL_LINE='Tests (review_verify = full): on this round, round 1, you may run the project'"'"'s tests for the files the PR changes'
+LATER_CI='Rounds 2 and later run no tests of their own.'
+CLEAN='Leave this worktree as you found it: delete any file the tests wrote, so `git status --porcelain` prints nothing at the end-of-review check.'
+vbrief() { flat "$(lib "${1:+CFG_review_verify=$1; }"'review_brief s1 '"${URL}"' main '"${F}"' '"${HB}"' '"$2")"; }
+b="$(vbrief "" 1)"
+check "9 round 1's brief with no review_verify set carries the ci line, not the full one" "yes|no" "$(has "${CI_LINE}" "${b}")|$(has "${FULL_LINE}" "${b}")"
+b="$(vbrief ci 1)"
+check "9 round 1's brief with review_verify = ci carries the ci line, not the full one" "yes|no" "$(has "${CI_LINE}" "${b}")|$(has "${FULL_LINE}" "${b}")"
+b="$(vbrief full 1)"
+check "9 round 1's brief with review_verify = full carries the full line, says later rounds run no tests, and has no ci line" "yes|yes|no" \
+  "$(has "${FULL_LINE}" "${b}")|$(has "${LATER_CI}" "${b}")|$(has "${CI_LINE}" "${b}")"
+check "9 round 1's full line has the agent leave the worktree clean for the end-of-review check" yes "$(has "${CLEAN}" "${b}")"
+b="$(vbrief full 2)"
+check "9 a brief started on round 2 under review_verify = full trusts CI under its own label, with no ci-labelled or full line" "yes|no|no" \
+  "$(has "${LATER_LINE}" "${b}")|$(has "${CI_LINE}" "${b}")|$(has "${FULL_LINE}" "${b}")"
+# review-agent --next's round 2 under full, from review-s1's own pane, with the worktree at the PR's head.
+next2='CFG_review_verify=full; HERDR_PANE_ID=w:rv
+  agent_field() { echo w:rv; }; review_rounds() { echo "2 1"; }; base_for() { echo main; }
+  review_at_head() { REVIEW_SRC="${SRC}"; REVIEW_WT="${WT}"; REVIEW_HEAD="${HB}"; }
+  review_next s1 '"${URL}"
+o="$(flat "$(lib "${next2}")")"
+check "9 review-agent --next's round 2 under review_verify = full trusts CI under its own label, with no ci-labelled or full line" "yes|yes|no|no" \
+  "$(has "Review round 2 of story s1" "${o}")|$(has "${LATER_LINE}" "${o}")|$(has "${CI_LINE}" "${o}")|$(has "${FULL_LINE}" "${o}")"
+rm -f "${F}" "${F}.prev" "${F%.md}.head"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
