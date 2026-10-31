@@ -1,6 +1,6 @@
 import collections, datetime, glob, json, os, sys
 from report import *
-from events_outcome import outcome
+from events_outcome import outcome as event_outcome   # named as in outcomes_join.py, where outcome is a findings column
 log, events, since, projects, roles, archive = sys.argv[1:7]
 
 def slug_of(path, name):
@@ -94,7 +94,7 @@ oks, escalates, step_ups = [], collections.defaultdict(list), []
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     if len(f) == 5:
-        f[4] = outcome(f)   # without its key=value tail (a findings tell's round= and verdict=)
+        f[4] = event_outcome(f)   # without its key=value tail (a findings tell's round= and verdict=)
     # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
     # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
     # line whose time does not parse goes to no build.

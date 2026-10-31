@@ -1,6 +1,6 @@
 import collections, datetime, os, re, subprocess, sys
 from report import *
-from events_outcome import outcome
+from events_outcome import outcome as event_outcome   # not outcome: findings rows bind that name
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
 NO_PR = ("", "", "", "", "", "", "", "")
@@ -148,7 +148,7 @@ named_reviews = collections.defaultdict(list)
 for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
     e = line.rstrip("\n").split("\t")
     if len(e) == 5:
-        e[4] = outcome(e)   # without its key=value tail (a review's round= and verdict=)
+        e[4] = event_outcome(e)   # without its key=value tail (a review's round= and verdict=)
     t = secs(e[0]) if len(e) == 5 and e[1] == "review" and (e[4] == "ok" or e[4].startswith("ok (")) else None
     if t is None:
         continue
@@ -212,7 +212,7 @@ for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-pre
 for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
     e = line.rstrip("\n").split("\t")
     if len(e) == 5:
-        e[4] = outcome(e)   # without its key=value tail (a review-agent line's round=)
+        e[4] = event_outcome(e)   # without its key=value tail (a review-agent line's round=)
     t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
     if t is None:
         continue
