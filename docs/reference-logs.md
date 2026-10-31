@@ -19,12 +19,24 @@ once per PR, even when two waits on it go green at once (the lead's bare `watch`
 branch log none). Each has the outcome `ok`, with the PR's URL in the field `url=` or the head SHA in
 `sha=`. Builders open their PRs with `gh pr create`, so no `swarm.sh` command runs at that moment to log it.
 A line `watch` or `wait-pr` cannot write changes nothing they print or exit with.
-The stall rule skips those lines, because none is a sign of life. A `review --head` that succeeds
-can write a line before its own: `decline-only <slug> ok (round N)`. It writes one when review round
-N sent the builder findings and the PR's head is still the one that round started on, as
-`.swarm/reviews/<slug>.head` and the round's findings file record it. A head a wording recheck passed
-is not that one. The line means the builder declined every finding and pushed nothing. `decline-only`
-is not a command of its own. `status`, `next` and `dash` log
+The stall rule skips those lines, because none is a sign of life. Review lines carry the round in
+their tail (below). A `review-agent` start and a `review-agent:next` line (outcome `ok (round N)`)
+have `round=`, the round each starts. A round ends with one of four verdicts in `verdict=`, beside
+its `round=`. A findings `tell` that counts as a round has `verdict=findings`: its `ok` line, a
+failure that says herdr sent it the brief, and the refusal that says it was stepped up with the
+findings in its handover brief. With `goal` on, a findings tell whose goal step fails after the send
+has it on its `ok` line, not on its failure line. A tell that was never sent, or that a top-rung hold
+stopped, has none. A `review` has `verdict=pass` when
+it succeeds and `verdict=held` when it is refused `held:`; a story's also has `round=`. A
+`review --head` that succeeds can write a line before its own: `decline-only <slug> ok (round N)`. It
+writes one when review round N sent the builder findings and the PR's head is still the one that
+round started on, as `.swarm/reviews/<slug>.head` and the round's findings file record it. A head a
+wording recheck passed is not that one. The line means the builder declined every finding and pushed
+nothing. It has `round=N verdict=decline-only`, and so does the `review` line after it. A
+`review --head` that succeeds also writes `review-finished <slug>`, outcome `ok`, just before its own
+line and with the same fields; a review refused `held:` writes none. A hold on the ladder's top rung
+writes `review-finished` with `verdict=held` and the round whose findings it held. Neither
+`decline-only` nor `review-finished` is a command of its own. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
 `wait-timeout` when its wait runs out (not when herdr's wait fails sooner, not for a
@@ -124,7 +136,8 @@ The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
 fields: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
-`url=` and `first-green` passes `sha=`. For a command `main` logs, the fields come from two places, in
+`url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
+`verdict=`. For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
 command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
 beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a
@@ -706,9 +719,12 @@ one. A step-up before the first round shows on round 1, ending `before review`; 
 shows its step-ups on a row whose round is `-`. A PR whose findings name a later round than its
 events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round, `rounds` its PR's last
 round in that loop:
-`held-for-lead` after an `escalated` line; once the PR merged (a `merge` line, or merged in
-`outcomes`), `decline-only` when its last round ended on a `decline-only` line, `pass` when its
-last round fixed nothing and `merged-after-fixes` when it fixed something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
+`held-for-lead` after an `escalated` line, or after a `review-finished` line with `verdict=held`
+(and no `review-agent` start since) while the PR has not merged. Otherwise, once the PR merged (a
+`merge` line, or merged in `outcomes`), `decline-only` when its last round ended on a `decline-only`
+line or a `review-finished` line since the last `review-agent` start says `verdict=decline-only`,
+`pass` when its last round fixed nothing and `merged-after-fixes` when it fixed something; else
+`open`, which includes a PR that `review` handed over, with `verdict=pass` or none, and that has not merged. The last is one TSV
 row over the loops with a round: the PRs (each once, loops with PR `-` left out), the median and p90
 (nearest rank) of their rounds, the minutes spent in round 3 and later (a round with unknown minutes
 adds none), the fixes, the share of them found in round 1, round 2, round 3

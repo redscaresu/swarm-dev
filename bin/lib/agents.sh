@@ -2014,6 +2014,11 @@ tell_gone() {
 # Each refusal on the state it read logs it as state= (event_fields): gone, unknown, herdr:unknown,
 # waiting:<what> (waiting_for's), herdr:blocked, or herdr:<status> for any other status; none and gone
 # come from tell_gone. A refusal before the state is read, or on the queue's lock, logs no state=.
+# A findings tell that counts as a review round logs round= (review_round's, read before it counts) and
+# verdict=findings (tell_round_fields): one that went (its ok line, or a failure that says herdr sent it
+# the brief) and one whose findings went in a step-up's handover brief instead. One that was never sent,
+# held at the top rung (top_rung_story writes its round end), or whose goal step failed after it went (the
+# trap's ok line carries them) logs none on its own line.
 # With goal on, findings get a fresh goal (findings_goal).
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
@@ -2100,6 +2105,7 @@ tell_agent() {
       return
     fi
   fi
+  TELL_ROUND=""; [[ "${kind}" != findings ]] || TELL_ROUND="$(review_round "$1")"
   if [[ "${kind}" == findings ]] && top_rung "$1"; then
     n=$(( $(findings_told "$1" "$(top_rung_since "$1")") + 1 ))
     if (( n >= TOP_RUNG_FINDINGS )); then
@@ -2110,7 +2116,7 @@ tell_agent() {
   fi
   if [[ "${kind}" == findings ]] && (( $(findings_told "$1") >= STEP_UP_FINDINGS - 1 )); then
     rc=0; ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}" || rc=$?
-    [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
+    [[ ${rc} != 0 ]] || { tell_round_fields; die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"; }
     [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; wait --lead tells the lead, so leave it alone"
     [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "tell: ${name} was not told: another step-up or a restart of it is running; wait on it, then tell it"
   fi
@@ -2121,15 +2127,24 @@ tell_agent() {
   { echo "From ${who}:"; echo; cat "${f}"; } > "${msg}"
   # The file's own first line is what its session log is read for: every tell starts with the header.
   line="$(awk 'NF { print; exit }' "${f}")"
-  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" TELL_PANE="${qpane}" tell_deliver "${name}" "${msg}" "${kind}" "${pane}"; echo "told ${name}"; return; fi
+  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then DELIVER_LINE="${line}" TELL_PANE="${qpane}" tell_deliver "${name}" "${msg}" "${kind}" "${pane}"; tell_round_fields; echo "told ${name}"; return; fi
   since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
   DELIVER_LINE="${line}" TELL_PANE="${qpane}" tell_deliver "${name}" "${msg}" "${kind}" "${pane}"
   # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
   # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
   # shellcheck disable=SC2064 # expand now, as above
-  trap "rc=\$?; rm -f '${msg}' '${msg}.goal' ${inflight_q}; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
+  trap "rc=\$?; rm -f '${msg}' '${msg}.goal' ${inflight_q}; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1' ok round=${TELL_ROUND} verdict=findings" EXIT
   TELL_PANE="${qpane}" findings_goal "$1" "${since}" "${msg}.goal" "${from}"   # its /goal to the same pane
+  tell_round_fields
   echo "told ${name}"
+}
+
+# TELL_ROUND: the review round a findings tell ends (review_round's, read before the tell counts), set
+# by tell_agent, empty for any other kind. tell_round_fields keeps round= and verdict=findings for main's
+# line (event_fields) when it is set: only on the exits where the tell counts as a round.
+TELL_ROUND=""
+tell_round_fields() {
+  [[ -z "${TELL_ROUND}" ]] || event_fields "round=${TELL_ROUND}" verdict=findings
 }
 
 # TELL_QUEUE: tells queued for busy agents (tell_queue). <name>.<kind> holds one: a line `<slug> <pane>
@@ -2691,8 +2706,9 @@ tell_deliver() {
   [[ -z "${note}" ]] || why="${why}; ${note}"
   case "$3:${why}" in
     findings:*"the brief was not taken up: herdr sent it the brief"*)
+      tell_round_fields
       die "${why}; the findings count as a round: read its pane (herdr agent read $1) and, if it shows they never arrived, send them again as a nudge (swarm.sh tell $1 nudge <file>), which is not a round" ;;
-    findings:*"herdr sent it the brief"*) die "${why}; the findings count as delivered, a findings round of its build, so do not send them again" ;;
+    findings:*"herdr sent it the brief"*) tell_round_fields; die "${why}; the findings count as delivered, a findings round of its build, so do not send them again" ;;
   esac
   die "${why}"
 }

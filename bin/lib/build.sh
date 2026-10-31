@@ -874,7 +874,7 @@ review_rounds() {
     END { print n + 1, at + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo "1 0"
 }
 
-# decline_only_round <slug> <sha> — the round a decline-only reply ended, for main's decline-only line:
+# decline_only_round <slug> <sha> — the round a decline-only reply ended, for mark_review's decline-only line:
 # review_rounds' <started>, printed when a review started (started > 0), a findings round came after it
 # (round > started) and the head that round started on is still <sha>, so the builder pushed nothing in
 # reply to the findings: .swarm/reviews/<slug>.head holds <sha>, and so does the head: line of

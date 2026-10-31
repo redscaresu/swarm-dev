@@ -2510,8 +2510,14 @@ get_fm_or_gone() {
 # reaches a child before its parents.
 # A story put in review under merge = human, or one that costs money, is then noted to its conductor
 # (review_note). An epic's review sends no note.
+# main's review line carries verdict= (event_fields), and for a story round=, review_round's: verdict=held
+# when it is held, else pass. A --head pass of a findings round whose builder pushed nothing
+# (decline_only_round, read once) is a decline-only end instead: it writes decline-only <slug> ok (round N)
+# with round=N and verdict=decline-only, and its review line has the same. A --head that passes writes
+# review-finished <slug> ok with the review line's fields; a review held writes none. A failed read of
+# decline_only_round is a pass, never a failed review.
 mark_review() {
-  local f url held want=""
+  local f url held want="" slug round="" verdict=pass n=""
   f="$(item_file "${1:?slug}")"; shift
   if [[ "${1:-}" == --head ]]; then
     want="${2:-}"; shift; [[ $# -eq 0 ]] || shift
@@ -2523,12 +2529,21 @@ mark_review() {
   done
   [[ -z "${want}" ]] || review_heads "${f}" "${want}" "$@"
   review_state "${f}" "" "$@"; held="${REVIEW_HELD}"
+  slug="$(basename "${f}" .md)"
+  [[ "${f}" != "${BOARD}/stories/"* ]] || round="$(review_round "${slug}")"
   if [[ -n "${held}" ]]; then
     # A parent that costs money waits on the user's merge (money_walk), maybe for days.
     [[ -z "$(money_walk "${held}")" ]] || held+=" (costs money)"
-    die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
+    event_fields ${round:+"round=${round}"} verdict=held
+    die "held: ${slug} waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
-  echo "review: $(basename "${f}" .md) $*"
+  if [[ -n "${want}" ]] && n="$(decline_only_round "${slug}" "${want}")" && [[ -n "${n}" ]]; then
+    round="${n}"; verdict=decline-only
+    record_event decline-only "${slug}" "ok (round ${n})" "round=${n}" verdict=decline-only
+  fi
+  event_fields ${round:+"round=${round}"} "verdict=${verdict}"
+  [[ -z "${want}" ]] || record_event review-finished "${slug}" ok ${round:+"round=${round}"} "verdict=${verdict}"
+  echo "review: ${slug} $*"
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
   if [[ "${f}" == "${BOARD}/stories/"* ]] && { [[ "${CFG_merge}" == human ]] || costs_money "${f}"; }; then
     review_note "$(basename "${f}" .md)" "$(fm "${f}" epic)" "$*"

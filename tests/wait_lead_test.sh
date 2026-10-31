@@ -644,7 +644,8 @@ restarts() { awk -F'\t' '$2 == "review-agent:restart"' "${P}/.swarm/events.tsv" 
 said() { grep "^no-review: $1[ ,]" "${ROOT}/out" || true; }
 today() { echo "no-review: $1 $(rurl "$1"), exit: swarm.sh review-agent $1 $(rurl "$1"), or the fallback reviewer"; }
 again_at() { echo "no-review: $1 $(rurl "$1") (started $2 of 3), exit: swarm.sh review-agent $1 $(rurl "$1"), or the fallback reviewer"; }
-revents() { awk -F'\t' -v s="$1" '$3 == s && $2 ~ /^review-agent/ { print $2 " " $5 }' "${P}/.swarm/events.tsv"; }
+# revents <slug> — its review-agent lines' commands and outcomes, without the round= tail
+revents() { awk -F'\t' -v s="$1" '$3 == s && $2 ~ /^review-agent/ { o = $5; sub(/ ~~ .*/, "", o); print $2 " " o }' "${P}/.swarm/events.tsv"; }
 # restarted <slug> — the output file of the review-agent the poll started detached for <slug>, once that
 # command has logged its outcome (main logs it as it exits) after the poll's restart line; at most 60 s.
 # A command still running then is killed, by its pid, and it fails.

@@ -113,6 +113,8 @@ held() { awk -F'\t' '$2 == "held" { print $5 }' "${P}/.swarm/events.tsv" | paste
 escalated() { awk -F'\t' '$2 == "escalated" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 stepped() { awk -F'\t' '$2 == "escalate" && $1 > "2026-10-18T10:00:00Z" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 told() { grep -q 'told s1' <<< "$1" && echo yes || echo no; }
+# finished — the review-finished lines' outcomes, with their key=value tails
+finished() { awk -F'\t' '$2 == "review-finished" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 block="${P}/.swarm/escalated/s1"; kept="${P}/.swarm/briefs/s1.held-findings.md"
 HELD="ok (top-rung: findings round 2 on fable)"
 
@@ -122,6 +124,9 @@ check "fable: the 2nd findings tell since the step-up is not sent" "yes|no" \
   "$(grep -q 'was not told: these were findings round 2 on or above the ladder' <<< "${out}" && echo yes)|$(told "${out}")"
 check "fable: the story is escalated to the lead, logged, with no step-up" "lead|code|top-rung|${HELD}||" \
   "$(kind)|$(fm_of escalated_from)|$(fm_of held_for)|$(held)|$(escalated)|$(stepped)"
+# Its review round is 4: the tell, the findings-3 step-up and the tell since it each closed one.
+check "fable: the hold writes one review-finished line, verdict=held, on the round whose findings it held" \
+  "ok ~~ round=4 verdict=held" "$(finished)"
 check "fable: its block holds the findings and the PR" "yes|yes|yes|yes" \
   "$(grep -qx 'add the missing guard' "${block}" && echo yes)|$(grep -qx -- '- https://github.com/o/proj/pull/5' "${block}" && echo yes)|$(grep -qF "swarm.sh tell s1 findings ${kept}" "${block}" && echo yes)|$(cmp -s "${ROOT}/f.md" "${kept}" && echo yes)"
 check "fable: its block says to close the builder, PR and worktree before a drop" "yes|yes|yes" \
@@ -129,8 +134,8 @@ check "fable: its block says to close the builder, PR and worktree before a drop
 check "fable: the builder is kept" "s1 w:1" "$(cat "${ROOT}/agents")"
 check "fable: next names it escalated" "yes|yes" "$(run next > "${ROOT}/next.out"; grep -qx 'escalated s1' "${ROOT}/next.out" && echo yes)|$(grep -q 'held (top-rung)' "${ROOT}/next.out" && echo yes)"
 out="$(run tell s1 findings "${ROOT}/f.md")" || true
-check "fable: a retried tell is refused, and the block stays" "yes|${HELD}|code|yes" \
-  "$(grep -q 'held for the lead already' <<< "${out}" && echo yes)|$(held)|$(fm_of escalated_from)|$(grep -qx 'add the missing guard' "${block}" && echo yes)"
+check "fable: a retried tell is refused, the block stays, and no second review-finished is written" "yes|${HELD}|code|yes|ok ~~ round=4 verdict=held" \
+  "$(grep -q 'held for the lead already' <<< "${out}" && echo yes)|$(held)|$(fm_of escalated_from)|$(grep -qx 'add the missing guard' "${block}" && echo yes)|$(finished)"
 # Held, then moved to review by hand: escalated_from: still refuses the retry, whatever the status.
 cp "${P}/.swarm/board-state/stories/s1" "${ROOT}/state.bak"
 sed -i.x '/^status:/d' "${P}/.swarm/board-state/stories/s1"; echo "status: review" >> "${P}/.swarm/board-state/stories/s1"
@@ -207,8 +212,13 @@ check "fable above a sonnet,opus ladder: its 2nd findings round holds it" "no|${
 
 fresh opus 1; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "opus: the 2nd findings tell since the step-up is sent, as today" "yes|code|" "$(told "${out}")|$(kind)|$(held)"
+check "opus: the sent tell's line ends review round 4 with verdict=findings, and writes no review-finished" "ok ~~ round=4 verdict=findings|" \
+  "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$(finished)"
 fresh opus 2; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "opus: the 3rd steps it up to fable, as today" "ok (findings-3: opus -> fable)|" "$(stepped)|$(held)"
+check "opus: the tell the step-up took the place of ends review round 5 with verdict=findings on its stepped-up line" \
+  "stepped up, with them in its handover brief|round=5 verdict=findings" \
+  "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv" | sed -E 's/.*(stepped up, with them in its handover brief).* ~~ (.*)$/\1|\2/')"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

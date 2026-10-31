@@ -401,8 +401,10 @@ dataset_report() {
 #     tell or findings step-up, or the review or merge after the last tell, closes it, unless a
 #     decline-only line came after that tell, and a decline-only line closes a round still open and
 #     adds the rounds up to the one it names, counted from the story line; rounds count per PR, and each finding goes to the build
-#     whose rounds hold its round); TSV story pr rounds end (held-for-lead; once merged, decline-only
-#     when its last round ended on a decline-only line, else pass or merged-after-fixes; else open);
+#     whose rounds hold its round); TSV story pr rounds end (held-for-lead after an escalated line, or
+#     after a review-finished verdict=held since the last review-agent start while unmerged; once merged,
+#     decline-only when its last round ended on a decline-only line or such a review-finished line says
+#     decline-only, else pass or merged-after-fixes; else open);
 #     then one totals row: its PRs, each
 #     once, their median and p90 rounds, minutes in round 3 on, the share of fixes by round and on escalate_ladder's top rung,
 #     fixes per round before and after a step-up, and failed step-ups.
