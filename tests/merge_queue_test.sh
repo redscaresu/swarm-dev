@@ -281,7 +281,10 @@ qrc() { (PROJECT_DIR="${P}"; . "${REPO}/bin/lib/merge.sh"; queue_rc "$@"); }
 # in the caller's subshell).
 # shellcheck disable=SC2034 # merge.sh's functions read these
 unit() {
-  PROJECT_DIR="$1"; BOARD="$1/board"; EVENTS_LOG="$1/events.tsv"; BOARD_IN_REPO=0; SWARM_HOME="${REPO}"; MERGE_TARGET=s
+  PROJECT_DIR="$1"
+  # shellcheck source=/dev/null
+  . "${REPO}/bin/lib/agents.sh"   # first, as swarm.sh loads it: EVENT_OUTCOME_AWK, which merge.sh's readers use
+  BOARD="$1/board"; EVENTS_LOG="$1/events.tsv"; BOARD_IN_REPO=0; SWARM_HOME="${REPO}"; MERGE_TARGET=s
   rm -rf "$1"; mkdir -p "${BOARD}/stories"
 }
 red_at() { printf '2026-10-18T10:00:00Z\tmain-red\t%s\t-\to/r main test (failure)\n' "$1" >> "${EVENTS_LOG}"; : > "${BOARD}/stories/fix-main-${1:0:7}.md"; }

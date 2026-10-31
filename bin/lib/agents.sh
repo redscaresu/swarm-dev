@@ -1459,7 +1459,8 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import TEST_RUN_STALLS; 
   mkdir -p "${PANE_DIR}" 2>/dev/null || true
   if perl -e 'mkdir shift or exit 1' "${lock}" \
     || { find "${lock}" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null; perl -e 'mkdir shift or exit 1' "${lock}"; }; then
-    last="$(awk -F'\t' -v n="$1" '$2 == "incident" && $3 == n && $5 ~ /^sign-(blocked|clear):/ { l = $5 } END { print l }' \
+    last="$(awk -F'\t' -v n="$1" "${EVENT_OUTCOME_AWK}"'
+      $2 == "incident" && $3 == n && outcome($5) ~ /^sign-(blocked|clear):/ { l = outcome($5) } END { print l }' \
       "${EVENTS_LOG}" 2>/dev/null || true)"
     if [[ "${state}" == blocked && "${last}" != "${line}" ]] || [[ "${state}" == clear && "${last}" == sign-blocked:* ]]; then
       record_event incident "$1" "${line}"
@@ -1738,11 +1739,12 @@ wait_agent() {
 # kinds) nor a start of <name> (story, agent, conduct, review-agent) came after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
 # --backlog through conductor_name (b).
 login_incident() {
-  awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
+  awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" "${EVENT_OUTCOME_AWK}"'
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
-    $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied|stalled|sign-blocked|sign-clear):/ { login = $5 ~ /^login:/ }
-    $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
-    $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
+    { o = outcome($5) }
+    $2 == "incident" && $3 == n && o !~ /^(api-error|auto-denied|stalled|sign-blocked|sign-clear):/ { login = o ~ /^login:/ }
+    o == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
+    o == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
     || record_event incident "$1" "login: Login expired"
 }
@@ -2595,7 +2597,8 @@ tell_deliver() {
 # did not see taken up ("herdr sent it the brief"); not one herdr never sent. Nor one whose reply
 # "could not be read" with none sent: whether it went out is unknown, so it is not counted.
 findings_told() {
-  awk -F'\t' -v s="$1" -v t="${2:-$(build_started "$1")}" '$3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ }
+  awk -F'\t' -v s="$1" -v t="${2:-$(build_started "$1")}" "${EVENT_OUTCOME_AWK}"'
+    $3 == s && $1 >= t && ($2 == "tell" || $2 == "tell:findings") && (outcome($5) == "ok" || outcome($5) ~ /herdr sent it the brief/) { n++ }
     END { print n + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
 }
 
