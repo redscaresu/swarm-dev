@@ -348,7 +348,11 @@ dataset_report() {
 #     ended with no build; else open), then the built holds' minutes per reason class (clash or other), or a line
 #     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
-#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
+#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
+#     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
+#     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
+#     (each stalled incident, - for an input it does not carry) and the false stalls line (stalled
+#     incidents with an input at 1, and lead-hand and user-caught lines with cause=false-stall).
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
 #     (an ok held, escalated, close:impossible, kept or review line in events.tsv; with merge = agent, a
 #     review only of a story whose costs: is not none, or that cannot be read; a kept line ends any item
@@ -410,6 +414,15 @@ dataset_report() {
 #     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
 #     then TSV slug failed_at for each one not restarted, or a line when there is none in the window.
 #     --epic does not narrow it.
+#   tell_refusals: TSV pane state tells refused, over the tell and tell:<kind> lines in events.tsv whose
+#     local day is in the window. A refusal's outcome is neither ok nor queued: or replaced:, nor, on a
+#     tell or tell:findings line, holds `herdr sent it the brief` (delivered, as findings_told counts
+#     it). Pane is agent when agent_name of the target has an agents.tsv line, else other; state is the
+#     line's state= field, or - with none (a sent, queued or replaced tell, a refusal before the state
+#     was read, an older line). tells counts lines, so a queued tell, with its queued: line and its
+#     delivery's, counts twice. Per pane an all row, then a row per state. Then TSV target could_not_reach, the `could not reach`
+#     refusals per target, most first. A line in place of a block with nothing to count. --epic does
+#     not narrow it.
 #   test_runs: scripts/test.sh's .swarm/test-runs.tsv, its runs whose start's local day is in the
 #     window, less the interrupted (status 128 or more) and torn. Over the full runs (filter all): TSV
 #     at_once runs median_s p90_s median_load, per runs going at once (the larger of start's and end's,
