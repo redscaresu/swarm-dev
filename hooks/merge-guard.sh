@@ -68,7 +68,7 @@ DROPS = {"restore", "clean"}  # git subcommands that, with reset --hard, can dro
 SHOWN = 5  # paths a refusal names before "and N more"
 SEP = " ~~ "  # what parts an events.tsv outcome from its key=value tail: agents.sh's EVENT_SEP
 FIELD = re.compile(r"[a-z_]+=\S+")  # a tail field append_event keeps: key [a-z_]+, value with no whitespace
-NAME_MAX = 32  # agent_name cuts an agent's name to this many characters
+NAME_MAX = 32  # swarm.sh's AGENT_NAME_MAX: agent_name cuts an agent's name to this many characters
 PIPES = itertools.count()
 MESSAGE = """merge-guard: blocked ({}). In a swarm project only `swarm.sh merge <PR URL>`, run alone,
 merges a PR (docs/reference.md § Merging). Text that only mentions a merge, such as a PR body, can go

@@ -125,8 +125,10 @@ check "a pass writes nothing" test "$(lines)" -eq $((was + 1))
 check "a worktree's block logs to its main checkout" test "$(call "${W}" "gh pr merge 7")/$(lines)" == "2/$((was + 2))"
 
 # An agent's call adds slug= (its name without review- or conduct-) and role= (agents.tsv's column 2
-# for the name). agent_name cuts a name at 32 characters, so a name that long gives no slug=.
-CUT="review-a-story-slug-cut-at-32-ch"; mkdir -p "${P}/.swarm"
+# for the name). A name swarm.sh's agent_name cut gives no slug=: CUT is its own cut of a long review
+# name, so the hook's NAME_MAX cannot drift from AGENT_NAME_MAX unseen.
+CUT="$(SWARM_PROJECT="${P}" "${REPO}/bin/swarm.sh" _name "review-a-story-slug-well-past-thirty-two-characters")"
+mkdir -p "${P}/.swarm"
 printf '2026-10-31\t%s\t%s\tclaude\topus\thigh\ts\n' review review-abc review "${CUT}" > "${P}/.swarm/agents.tsv"
 # logged <hook command> <command> — the call from ${P} through <hook command> (the hook itself when
 # empty): its exit code, the lines it added, and the last line's outcome() and fields(), slash-separated.
