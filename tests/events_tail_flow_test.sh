@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # events_tail_flow_test.sh — flow's, outcomes' and dataset's events.tsv readers read the outcome
 # through events_outcome.outcome(), so a key=value tail (events_outcome.SEP, then k=v) on every row's
-# outcome changes nothing they print. Over the committed fixture (events_tail_helpers.sh) with a
-# synthetic agents.tsv, board, features.tsv and a gh stub, TZ=UTC: flow (every section
-# flow_report.py lists), outcomes and dataset print the same in the plain project and its tailed
-# copy, and each changed reader prints a data row there: cost's per-rung row, features' uses, holds,
-# idle_slots, incidents, lead_queue and its no-agent table, merges, review_loops' rounds,
-# throughput's builds, outcomes' escalation, review and close columns, dataset's escalations, and
-# touches_rows.ok_events, called alone. An inline `reconcile <slug> ok (reopened)` row (no live log
+# outcome changes nothing they print. Over the committed fixture (events_tail_helpers.sh), with
+# synthetic events rows for what it lacks and a synthetic agents.tsv, board, session logs,
+# findings.tsv, features.tsv and gh stub, TZ=UTC: flow (every section flow_report.py lists),
+# outcomes and dataset print the same in the plain project and its tailed copy, and each changed
+# reader prints a data row there: cost's per-rung row, features' uses, holds, idle_slots, incidents
+# (a kind with no detail, and its stop under the epic an ok conduct line names), lead_queue and its
+# no-agent table, merges, review_loops' rounds, throughput's builds, outcomes' findings, close cause,
+# ready wait and held columns, dataset's escalations, and touches_rows.ok_events, called alone. An inline `reconcile <slug> ok (reopened)` row (no live log
 # holds one) drops lead_queue's no-agent item, and does the same with a tail on it. None of
 # these readers is a predicate: each prints, or returns, what it read.
 set -euo pipefail
@@ -43,16 +44,16 @@ U=https://github.com/o/r/pull
 mkdir -p "${ROOT}/bin"
 cat > "${ROOT}/bin/gh" <<EOF
 #!/bin/sh
-case "\$4" in   # the PR: url, mergedAt, createdAt
+case "\$4" in   # the PR: url, mergedAt, createdAt and, for zzcl, its head's one green check
   story/zzd) pr="${U}/2 2026-10-25T11:40:00Z 2026-10-25T10:40:00Z" ;;
   story/zzak) pr="${U}/9 2026-10-26T01:00:00Z 2026-10-25T23:00:00Z" ;;
   story/zzau) pr="${U}/14 2026-10-26T07:28:00Z 2026-10-26T05:00:00Z" ;;
-  story/zzcl) pr="${U}/19 2026-10-27T04:47:00Z 2026-10-27T02:00:00Z" ;;
+  story/zzcl) pr="${U}/19 2026-10-27T04:47:00Z 2026-10-27T02:00:00Z 2026-10-27T02:00:00Z/2026-10-27T02:05:00Z/SUCCESS" ;;
   *) pr="" ;;
 esac
 case "\$1 \$2 \$3 \$5 \$6" in
   "auth status"*) exit 0 ;;
-  "pr list --head --state all") [ -n "\${pr}" ] || exit 1; set -- \${pr}; printf '%s\tMERGED\t%s\t%s\t0\n' "\$1" "\$2" "\$3" ;;
+  "pr list --head --state all") [ -n "\${pr}" ] || exit 1; set -- \${pr}; printf '%s\tMERGED\t%s\t%s\t0\t%s\t\t\t0\n' "\$1" "\$2" "\$3" "\${4:-}" ;;
   "pr list --head --state merged") [ -n "\${pr}" ] || exit 1; set -- \${pr}; printf '%s\t%s\t\tmerged\n' "\$1" "\$2" ;;
   *) exit 1 ;;
 esac
@@ -98,11 +99,21 @@ column() { # <outcomes output> <slug> <column> — that column of the slug's fir
   awk -F'\t' -v s="$2" -v c="$3" 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == c) n = i; next } $2 == s { print $n; exit }' <<< "$1"
 }
 
+# The fixture, with synthetic rows in time order for what it lacks: zzan's ok story line an hour after
+# its hold (which ends the hold); a bare ok review of zzau before its review that names the PR (a
+# review from before reviews named PRs, which goes to the one PR open then); an ok conduct of epic
+# zzsyn, then an incident of its conductor whose outcome is a kind with no `: <detail>` (every fixture
+# incident has one, and the fixture's only ok conduct is the backlog's, which incidents skips).
+EVENTS="${ROOT}/events.tsv"
+printf '%s\n' $'2026-10-26T01:08:11Z\tstory\tzzan\twa:pa\tok' $'2026-10-26T05:30:00Z\treview\tzzau\twa:pa\tok' \
+  $'2026-10-28T10:00:00Z\tconduct\tzzsyn\twa:pa\tok' $'2026-10-28T10:05:00Z\tincident\tconduct-zzsyn\t-\tapi-error' \
+  | sort -s -t $'\t' -k1,1 "${EVENTS_FIXTURE}" - > "${EVENTS}"
+
 P="${ROOT}/plain/proj"; Q="${ROOT}/tailed/proj"
-project "${P}" "${EVENTS_FIXTURE}"
-project "${Q}" "${EVENTS_FIXTURE}" "${TAIL}"
+project "${P}" "${EVENTS}"
+project "${Q}" "${EVENTS}" "${TAIL}"
 check "the tailed copy ends every row's outcome in ${SEP}k=v" \
-  test "$(grep -c "	[^	]*${SEP}k=v\$" "${Q}/.swarm/events.tsv")" = "$(wc -l < "${EVENTS_FIXTURE}" | tr -d ' ')"
+  test "$(grep -c "	[^	]*${SEP}k=v\$" "${Q}/.swarm/events.tsv")" = "$(wc -l < "${EVENTS}" | tr -d ' ')"
 check "flow prints the same over the fixture and its tailed copy" same_output "${P}" "${Q}" flow
 check "outcomes prints the same over the fixture and its tailed copy" same_output "${P}" "${Q}" swarm outcomes
 check "dataset writes the same over the fixture and its tailed copy" same_output "${P}" "${Q}" dataset
@@ -111,17 +122,23 @@ check "touches_rows.ok_events reads the same over the fixture and its tailed cop
 # Each reader prints a row the plain fixture's outcomes make (so the same above is no two empty runs).
 out="$(cd "${P}" && flow)"; rows="$(cd "${P}" && swarm outcomes 2>/dev/null)"
 check "cost: zzak's step-up rung" has "$(section "${out}" cost)" "| zzak | stalled | opus -> fable | opus -, fable - | merged |"
-check "features: the hold and story ok lines" has "$(section "${out}" features | cut -f1-4)" $'holds\t5\tflow: holds\t0'
-check "holds: zzan's hold, still open" has "$(section "${out}" holds)" \
-  $'zzan\t-\tclashes with zzao (epic zzap), open, on .github/workflows/ci.yml:shellcheck step\topen'
+check "features: the hold and story ok lines" has "$(section "${out}" features | cut -f1-4)" $'holds\t6\tflow: holds\t0'
+check "holds: zzan's hold, ended by its ok story line" has "$(section "${out}" holds)" \
+  $'zzan\t-\tclashes with zzao (epic zzap), open, on .github/workflows/ci.yml:shellcheck step\t60'
 check "idle_slots: zze ready from its unblock, under the backlog conductor until its report" \
   has "$(section "${out}" idle_slots)" $'all\t144\t4988\t2'
 check "incidents: the stalled line" has "$(section "${out}" incidents)" $'2026-10-25\tstalled\t1'
+check "incidents: a kind with no detail" has "$(section "${out}" incidents)" $'2026-10-28\tapi-error\t1'
+check "incidents: that stop goes to the epic whose ok conduct line started its conductor" \
+  has "$(section "${out}" incidents)" $'zzsyn\tapi-error\t1'
 check "lead_queue: zzep's no-agent item, from its close to its wake" has "$(section "${out}" lead_queue)" $'2026-10-27\t1\t6\t6\t0\t-'
 check "merges: zzd's reconcile and zzai's finish" has "$(section "${out}" merges)" $'2026-10-25\t2'
-check "review_loops: zzau's two rounds" has "$(section "${out}" review_loops)" $'zzau\thttps://github.com/o/r/pull/14\t2\tpass'
+check "review_loops: zzau's three rounds, its bare ok review one" has "$(section "${out}" review_loops)" $'zzau\thttps://github.com/o/r/pull/14\t3\tpass'
 check "throughput: the builds, closed by their ok closes" has "$(section "${out}" throughput)" $'all\t5\t0.55\t1\t4\t1\t4.0\t\t\t1'
 check "outcomes: zzau's finding, read beside the events" test "$(column "${rows}" zzau findings_fixed)" = 1
+check "outcomes: zzau's PR is handed over at its bare ok review, the one PR open then (fixing ends there)" \
+  test "$(column "${rows}" zzau review_wait_min)/$(column "${rows}" zzau fixing_min)/$(column "${rows}" zzau merge_wait_min)" = 23/7/118
+check "outcomes: zzcl's green to its first ok review-agent round" test "$(column "${rows}" zzcl green_to_review_min)" = 1
 check "outcomes: zzak's close by its step-up" test "$(column "${rows}" zzak close_cause)" = step-up:stalled
 check "outcomes: zzau's ready wait from its unblock, held 0 after the backlog's report" \
   test "$(column "${rows}" zzau ready_wait_min)/$(column "${rows}" zzau held_min)" = 101/0
@@ -136,7 +153,7 @@ check "ok_events: the hold and report lines, whose outcomes are ok (...)" \
 # hide the wake from a raw read, and drop the item the same way).
 reopened() { # [<tail>] — the fixture with the reconcile row, <tail> on it
   awk -F'\t' -v t="${1:-}" '{ print } $2 == "close" && $3 == "zzep" { print "2026-10-27T12:15:00Z\treconcile\tzzep\twa:pa\tok (reopened)" t }' \
-    "${EVENTS_FIXTURE}"
+    "${EVENTS}"
 }
 reopened > "${ROOT}/reopened.tsv"; reopened "${TAIL}" > "${ROOT}/reopened-tailed.tsv"
 R="${ROOT}/reopened/proj"; T="${ROOT}/reopened-tailed/proj"
