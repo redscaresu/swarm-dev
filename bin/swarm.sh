@@ -18,7 +18,7 @@
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day, then merge's holds per day by kind), reviewers (findings raised, fixed and declined per reviewer and kind, the split critic's fixes beside its escaped split-gaps per split, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] [--round <n>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong; or, --filed, a declined out-of-scope one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped for a defect found after its PR merged, and with --round the review round it came from, 0 for a plan or board PR (the outer loop)
-#   swarm.sh intervene <kind> "<one line>"                  log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first)
+#   swarm.sh intervene <kind> <cause> "<one line>"          log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first), and why, one of INTERVENE_CAUSES
 #   swarm.sh hold <slug> <why>                              log that a conductor held a ready story back this wave, and why (what it clashes with and the shared files, or the other reason), as a hold line with outcome ok (<why>); refused for a story whose PR was closed unmerged, which is the lead's
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -539,15 +539,30 @@ done
 # counts (dash passes them as DASH_INTERVENE_KINDS).
 INTERVENE_KINDS="lead-hand user-caught"
 
-# intervene <kind> <line> — log one time a person had to step in: an incident line, target -, outcome
-# `<kind>: <line>`, which flow's incidents section counts per day and kind. Its only line: main logs
-# none for it (target !), so an unknown kind or an empty line logs nothing. A line that could not be
-# written (unwritable, disk full) fails here, not with a logged: that counts nothing.
+# INTERVENE_CAUSES: why a person stepped in, intervene's cause= field; other is for a cause not listed.
+INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost other"
+
+# intervene <kind> <cause> <line...> — log one time a person had to step in: an incident line, target
+# -, outcome `<kind>: <line>`, which flow's incidents section counts per day and kind, with the field
+# cause=<cause>. Its only line: main logs none for it (target !), so an unknown kind or cause or an
+# empty line logs nothing. The old form, `intervene <kind> "<line>"` (two arguments, the second no
+# cause), still logs, with cause=none and a warning listing the causes, until hooks/user-caught-reminder.sh
+# names the new form. A line that could not be written (unwritable, disk full) fails here, not with a
+# logged: that counts nothing.
 intervene() {
-  [[ "$1" =~ ^[a-z-]+$ && " ${INTERVENE_KINDS} " == *" $1 "* ]] || die "intervene: the kind must be one of ${INTERVENE_KINDS}, not '$1'"
-  [[ -n "${2//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene $1 \"<one line>\""
-  append_event incident - "$1: $2" || die "intervene: could not write ${EVENTS_LOG}; nothing was logged"
-  echo "logged: $1: $2"
+  local kind="${1:-}" cause="${2:-}" line known=0
+  [[ "${kind}" =~ ^[a-z-]+$ && " ${INTERVENE_KINDS} " == *" ${kind} "* ]] || die "intervene: the kind must be one of ${INTERVENE_KINDS}, not '${kind}'"
+  [[ "${cause}" =~ ^[a-z-]+$ && " ${INTERVENE_CAUSES} " == *" ${cause} "* ]] && known=1
+  if [[ $# -eq 2 && ${known} == 0 ]]; then
+    line="${cause}"; cause=none
+    echo "intervene: warning: name a cause, one of ${INTERVENE_CAUSES}: swarm.sh intervene ${kind} <cause> \"<one line>\". Logging it with cause=none." >&2
+  else
+    [[ ${known} == 1 ]] || die "intervene: the cause must be one of ${INTERVENE_CAUSES}, not '${cause}'"
+    line="${*:3}"
+  fi
+  [[ -n "${line//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene ${kind} ${cause/#none/<cause>} \"<one line>\""
+  append_event incident - "${kind}: ${line}" "cause=${cause}" || die "intervene: could not write ${EVENTS_LOG}; nothing was logged"
+  echo "logged: ${kind}: ${line} (cause=${cause})"
 }
 
 # hold <slug> <why> — log that a conductor held a ready story back: a hold line, target the slug, outcome
@@ -610,7 +625,7 @@ dispatch() {
     review-yield) moved review-yield "flow's reviewers section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
-    intervene) intervene "${1:-}" "${*:2}" ;;
+    intervene) intervene "$@" ;;
     hold)   hold "${1:-}" "${*:2}" ;;
     lessons) [[ $# -eq 0 || ( $# -eq 1 && "$1" == --all ) ]] || die "usage: swarm.sh lessons [--all]"
             moved lessons "outcomes' recurring block" "outcomes [--since YYYY-MM-DD]" ;;
