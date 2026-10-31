@@ -67,7 +67,9 @@ bpr() {
 }
 # snap — a hash of every file in the main checkout but .git and .swarm (events.tsv lives there).
 snap() { (cd "${P}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | LC_ALL=C sort | xargs shasum); }
-events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
+# events — each events.tsv line's command, target and outcome(), the outcome without its key=value tail
+EVENT_AWK="$(PROJECT_DIR="${ROOT}" bash -c 'source "$1/agents.sh"; printf %s "${EVENT_OUTCOME_AWK}"' _ "${REPO}/bin/lib")"
+events() { awk -F'\t' "${EVENT_AWK}"'{ print $2 " " $3 " " outcome($5) }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 lines() { events | grep -c . || true; }
 logged() { grep -qF -- "board-pr:" <<< "$(events)" && grep -qF -- "$1" <<< "$(events)"; }
 reset_log() { rm -f "${P}/.swarm/events.tsv" "${ROOT}/gh.log"; : > "${ROOT}/gh.log"; }

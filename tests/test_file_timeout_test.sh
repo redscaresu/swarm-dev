@@ -5,7 +5,8 @@
 # inside the limit still passes. Each file it stops adds a five-field "reap" line to the events.tsv
 # beside the run's test-runs.tsv (TEST_RUNS_LOG here), and a file that finishes, or a run with
 # TEST_RUNS_LOG set empty, adds none. A run on branch story/<slug> ends the reap line's outcome in
-# slug=<slug> role=builder; a run on any other branch has no tail.
+# slug=<slug> role=builder; a run on any other branch has neither. Both end in version=, the checkout's
+# .claude-plugin/plugin.json version.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -45,9 +46,11 @@ check "it ends within 10 seconds" "$([[ ${secs} -lt 10 ]] && echo yes)" yes
 pgrep -f "^${marker}\$" > /dev/null && left=found || left=$?   # 1: no match; 2 or more: pgrep itself failed
 check "nothing it started is left running" "${left}" 1
 
-# One reap line: UTC time, reap, the file, the pane (HERDR_PANE_ID, or - when unset), TIMEOUT after <n>s.
+# One reap line: UTC time, reap, the file, the pane (HERDR_PANE_ID, or - when unset), TIMEOUT after <n>s
+# as its outcome(), the outcome column without its key=value tail.
+EVENT_AWK="$(PROJECT_DIR="${ROOT}" bash -c 'source "$1/bin/lib/agents.sh"; printf %s "${EVENT_OUTCOME_AWK}"' _ "${REPO}")"
 reap_line() { # <file> <pane>
-  awk -F'\t' -v f="$1" -v pane="$2" '$2 == "reap" && $3 == f { print (NF == 5 && $1 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$/ && $4 == pane && $5 ~ /^TIMEOUT after [0-9]+s$/) ? "ok" : "bad: " $0 }' "${EVENTS}"
+  awk -F'\t' -v f="$1" -v pane="$2" "${EVENT_AWK}"'$2 == "reap" && $3 == f { print (NF == 5 && $1 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$/ && $4 == pane && outcome($5) ~ /^TIMEOUT after [0-9]+s$/) ? "ok" : "bad: " $0 }' "${EVENTS}"
 }
 check "the file past the limit wrote one five-field reap line naming it" "$(reap_line "${ROOT}/hang_test.sh" w1:p7)" ok
 check "and nothing else is in events.tsv" "$(wc -l < "${EVENTS}" | tr -d ' ')" 1
@@ -73,12 +76,14 @@ print(re.sub(r"^TIMEOUT after [0-9]+s$", "TIMEOUT after <n>s", outcome(r)) + "|"
     "${REPO}/bin/lib" "${EVENTS}" "${1:-1}"
 }
 # A run from a checkout on branch story/abc writes slug=abc role=builder; one on another branch, neither.
+# Both write version=, the version in this checkout's plugin.json.
+V="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "${REPO}/.claude-plugin/plugin.json")"
 for b in story/abc feature/x; do
   d="${ROOT}/branch-${b//\//-}"; git init -q "${d}" && git -C "${d}" symbolic-ref HEAD "refs/heads/${b}"
   (cd "${d}" && TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/hang_test.sh" > /dev/null 2>&1) || true
 done
-check "a TIMEOUT on branch story/abc writes slug=abc role=builder, after its outcome" "$(last_reap 2)" "TIMEOUT after <n>s|role=builder slug=abc"
-check "a TIMEOUT on another branch has neither, and its outcome is still TIMEOUT after <n>s" "$(last_reap)" "TIMEOUT after <n>s|"
+check "a TIMEOUT on branch story/abc writes version= beside slug=abc role=builder, after its outcome" "$(last_reap 2)" "TIMEOUT after <n>s|role=builder slug=abc version=${V}"
+check "a TIMEOUT on another branch has neither slug= nor role=, only version=, and its outcome is still TIMEOUT after <n>s" "$(last_reap)" "TIMEOUT after <n>s|version=${V}"
 
 # A file in SLOW gets three times the limit: 3 s of work passes at 2 s x 3, and times out at 2 s alone.
 printf '#!/usr/bin/env bash\nsleep 3\n' > "${ROOT}/two_test.sh"
