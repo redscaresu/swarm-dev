@@ -1,4 +1,5 @@
 import calendar, collections, glob, os, re, subprocess, sys, time
+from events_outcome import outcome
 
 # pairs(lines, out, stop) — each key's first value, as board.sh's awk reads it: leading spaces dropped.
 def pairs(lines, out, stop=None):
@@ -93,7 +94,8 @@ def ok_events(path):
     except FileNotFoundError:
         return out
     for i, e in enumerate(l.split("\t") for l in lines):
-        if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")):
+        o = outcome(e)
+        if len(e) == 5 and (o == "ok" or o.startswith("ok (")):
             try:
                 out[e[1], e[2]].append(calendar.timegm(time.strptime(e[0], "%Y-%m-%dT%H:%M:%SZ")) + i / len(lines))
             except ValueError:

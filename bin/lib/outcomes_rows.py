@@ -1,4 +1,5 @@
 import collections, datetime, glob, json, os, sys
+from events_outcome import outcome
 from report import *
 log, events, since, projects, roles, archive = sys.argv[1:7]
 
@@ -96,6 +97,8 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
     # line whose time does not parse goes to no build.
     # An escalate line pairs with an escalate build only when it started one (escalate_build).
+    # The outcome is read without its key=value tail, and the line is kept with it so.
+    f = f[:4] + [outcome(f)] if len(f) == 5 else f
     t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
     s = STEP_UP.fullmatch(f[4]) if t is not None and f[1] == "escalate" else None
     if s:
