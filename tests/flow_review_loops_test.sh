@@ -213,14 +213,17 @@ check "--since past the loops leaves them out, in one line" "$(loops 2026-10-06)
 # names round 2 and the build gets a second round with no minutes. s-restart's builder was restarted (an
 # agent line, no story line), which starts a loop while review_rounds counts on, so its decline-only line
 # names round 2 for the loop's one round. s-pad's first loop gets a round from its decline-only line, and
-# the build after it on the same PR starts its rounds past that one.
+# the build after it on the same PR starts its rounds past that one. s-open's first loop ends with its
+# round still open (its tell failed after herdr sent it) when the restart comes: that round counts
+# toward the next loop's base too, so its decline-only line naming round 2 adds none.
 D="${dir}/decline"; mkdir -p "${D}"; : > "${D}/findings.tsv"
 printf '%s\n' $'2026-10-01\tcode\ts-dec\tclaude\topus\thigh\tk1' $'2026-10-01\tcode\ts-nodec\tclaude\topus\thigh\tk2' \
   $'2026-10-01\tcode\ts-sent\tclaude\topus\thigh\tk3' $'2026-10-01\tcode\ts-dec2\tclaude\topus\thigh\tk4' \
   $'2026-10-01\tcode\ts-restart\tclaude\topus\thigh\tk5' $'2026-10-01\tcode\ts-restart\tclaude\topus\thigh\tk6' \
-  $'2026-10-01\tcode\ts-pad\tclaude\topus\thigh\tk7' $'2026-10-01\tcode\ts-pad\tclaude\topus\thigh\tk8' > "${D}/agents.tsv"
+  $'2026-10-01\tcode\ts-pad\tclaude\topus\thigh\tk7' $'2026-10-01\tcode\ts-pad\tclaude\topus\thigh\tk8' \
+  $'2026-10-01\tcode\ts-open\tclaude\topus\thigh\tk9' $'2026-10-01\tcode\ts-open\tclaude\topus\thigh\tk10' > "${D}/agents.tsv"
 P21=https://github.com/o/r/pull/21 P22=https://github.com/o/r/pull/22 P23=https://github.com/o/r/pull/23 P24=https://github.com/o/r/pull/24
-P25=https://github.com/o/r/pull/25 P26=https://github.com/o/r/pull/26
+P25=https://github.com/o/r/pull/25 P26=https://github.com/o/r/pull/26 P27=https://github.com/o/r/pull/27
 sent='may or may not have the brief: herdr sent it the brief, but no turn started; the findings count as delivered, a findings round of its build, so do not send them again'
 dev() { printf '2026-10-01T07:%s:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${D}/events.tsv"; }
 for s in s-dec s-nodec s-sent s-dec2; do
@@ -238,8 +241,12 @@ dev 00 story s-pad ok; dev 10 review-agent s-pad ok; dev 20 tell:findings s-pad 
 dev 22 review-agent:next s-pad "ok (round 2)"; dev 25 tell:findings s-pad "${sent}"
 dev 30 decline-only s-pad "ok (round 2)"; dev 30 review s-pad "ok (${P26})"
 dev 40 agent s-pad ok; dev 41 review-agent s-pad ok; dev 45 tell:findings s-pad ok; dev 50 review s-pad "ok (${P26})"; dev 51 merge s-pad ok
-# s-restart's first loop has no review line, so its PR comes from its outcomes row, one per builder line.
-drows="$(printf '%s\n' $'date\tslug\tepic\tpr\tpr_state' $'2026-10-01\ts-restart\te1\t'"${P25}"$'\topen' $'2026-10-01\ts-restart\te1\t'"${P25}"$'\topen')"
+dev 00 story s-open ok; dev 10 review-agent s-open ok; dev 20 tell:findings s-open "${sent}"
+dev 40 agent s-open ok; dev 41 review-agent s-open ok; dev 45 tell:findings s-open ok
+dev 50 decline-only s-open "ok (round 2)"; dev 50 review s-open "ok (${P27})"; dev 51 merge s-open ok
+# s-restart's and s-open's first loops have no review line, so their PRs come from their outcomes rows, one per builder line.
+drows="$(printf '%s\n' $'date\tslug\tepic\tpr\tpr_state' $'2026-10-01\ts-restart\te1\t'"${P25}"$'\topen' $'2026-10-01\ts-restart\te1\t'"${P25}"$'\topen' \
+  $'2026-10-01\ts-open\te1\t'"${P27}"$'\topen' $'2026-10-01\ts-open\te1\t'"${P27}"$'\topen')"
 dout="$(SWARM_FINDING_REVIEWERS="codex" SWARM_ROWS="${drows}" python3 "${ROOT}/bin/lib/flow_report.py" \
   0000-00-00 9999-12-30 "" "${D}/agents.tsv" "${D}/events.tsv" "${D}/findings.tsv" x "code" x x "" x review_loops)"
 check "decline-only cases: a review after a decline-only line closes no round, and the loop ends decline-only" \
@@ -252,6 +259,8 @@ check "decline-only cases: a decline-only line naming round 2 after a round this
   "$(row s-dec2 "${dout}")|$(end "${dout}" s-dec2)" $'s-dec2\t'"${P24}"$'\t1\topus\t10\t0\t0\t-\ns-dec2\t'"${P24}"$'\t2\topus\t-\t0\t0\t-|s-dec2\t'"${P24}"$'\t2\tdecline-only'
 check "decline-only cases: a restarted builder's loop takes the line's round less the rounds before it since the story line, so round 2 is its one round, not a third" \
   "$(row s-restart "${dout}")|$(end "${dout}" s-restart | tr '\n' ' ')" $'s-restart\t'"${P25}"$'\t1\topus\t10\t0\t0\t-\ns-restart\t'"${P25}"$'\t2\topus\t9\t0\t0\t-|'$'s-restart\t'"${P25}"$'\t1\topen s-restart\t'"${P25}"$'\t2\tdecline-only '
+check "decline-only cases: a round still open when a restart starts the next loop counts toward that loop's base, so its decline-only line naming round 2 adds none" \
+  "$(row s-open "${dout}" | cut -f3,5 | tr '\n' ' ')|$(end "${dout}" s-open | tr '\n' ' ')" $'1\t- 2\t4 |s-open\t'"${P27}"$'\t1\topen s-open\t'"${P27}"$'\t2\tdecline-only '
 check "decline-only cases: the round a decline-only line adds counts in the offset of the next build on the PR" \
   "$(row s-pad "${dout}" | cut -f3,5 | tr '\n' ' ')|$(end "${dout}" s-pad | tr '\n' ' ')" $'1\t10 2\t- 3\t4 4\t- |s-pad\t'"${P26}"$'\t2\topen s-pad\t'"${P26}"$'\t4\tpass '
 

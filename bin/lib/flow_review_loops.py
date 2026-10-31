@@ -92,6 +92,7 @@ def loops(slug, lines):
             if not (cmd == "story" and paired):
                 if shown_(lp, cur):
                     out_.append(done(lp, cur))
+                counted[0] += 1 if cur else 0   # done keeps a round still open as one of the loop's
                 lp, cur, ended = new(t), None, False
                 model = lp["model"] = take(model)
             if cmd == "story":
