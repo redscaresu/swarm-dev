@@ -944,12 +944,12 @@ agent_fields() {
   echo "${s:+slug=${s}}${s:+${role:+ }}${role:+role=${role}}"
 }
 
-# record_incident <name> <outcome> [slug] — record_event's incident line on agent <name>, with
-# agent_fields' slug= and role= in its tail.
+# record_incident <name> <outcome> [slug] [key=value...] — record_event's incident line on agent <name>,
+# with agent_fields' slug= and role= in its tail, then any key=value fields given.
 record_incident() {
   local kv=()
   read -r -a kv <<< "$(agent_fields "$1" "${3:-}")"
-  record_event incident "$1" "$2" "${kv[@]+"${kv[@]}"}"
+  record_event incident "$1" "$2" "${kv[@]+"${kv[@]}"}" "${@:4}"
 }
 
 # story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
@@ -1477,6 +1477,42 @@ agent_stalled() {
   echo "${age}"
 }
 
+# stall_reads <name> <target> — print `bg=0|1 test=0|1 sign=0|1`, read fresh with the checks
+# agent_stalled makes once the rest looks stalled: <name>'s session waits on a background task
+# (bg_running, within TEST_RUN_STALLS times stall_minutes), pane <target> runs a test suite
+# (test_running), and its story's worktree holds work its signer cannot sign (sign_held, which logs a
+# change of state as agent_stalled's read does). sign is read only for an agent with a story
+# (stall_py story), at the builder's own age from its worktree and session log; its PRs are not asked,
+# so no gh call.
+stall_reads() {
+  local slug own bg=0 test=0 sign=0
+  # shellcheck disable=SC2154 # assigned in another file
+  ! bg_running "$1" "${CFG_stall_minutes}" || bg=1
+  ! test_running "$2" || test=1
+  slug="$(stall_py story "$1")" || slug=""
+  if [[ -n "${slug}" ]]; then
+    own="$(stall_py age "${slug}" "$1" "$(story_work_time "${slug}")" "$(session_mtime "$1")")"
+    ! sign_held "$1" "${slug}" "${own}" || sign=1
+  fi
+  echo "bg=${bg} test=${test} sign=${sign}"
+}
+
+# wait_activity <name> <target> <since> — when <name> made no progress since <since> (epoch: when the
+# wait began; a sign in that same second counts as progress), neither a commit or edit in its story's worktree (story_work_time) nor its own work in
+# its session log (session_mtime), as agent_stalled reads them, print `activity=<x>`: the stall_reads
+# that are 1, comma-joined, or none. Print nothing when it made progress.
+wait_activity() {
+  local slug t on="" r
+  slug="$(stall_py story "$1")" || slug=""
+  for t in "$([[ -z "${slug}" ]] || story_work_time "${slug}")" "$(session_mtime "$1")"; do
+    [[ ! "${t}" =~ ^[0-9]+$ || "${t}" -lt "$3" ]] || return 0   # the wait's own second counts: a sign then is progress
+  done
+  for r in $(stall_reads "$1" "$2"); do
+    [[ "${r#*=}" == 0 ]] || on+="${on:+,}${r%%=*}"
+  done
+  echo "activity=${on:-none}"
+}
+
 # sign_held <name> <slug> <age> — succeed when <slug>'s worktree (found as story_work_time finds it)
 # holds uncommitted work its signer cannot sign unprompted (sign_blocked says blocked) and <age>, the
 # minutes since the builder's own last sign of life (its worktree, session log, PRs and the swarm's
@@ -1699,13 +1735,14 @@ settle() {
 # A wait that ran out logs a wait-timeout incident (record_incident), unless SWARM_WAIT_SLICE is set (the caller waits again)
 # or the agent is still working, which is no fault: settle's last read is busy, or it is empty (herdr_wait
 # times out printing nothing) and read_state says busy or herdr:working (tell's working values). The
-# line names that read. One that failed sooner is herdr's wait failing, and logs none. auth logs a
+# line names that read, and carries activity= (wait_activity, read then and never per poll) when the
+# agent made no progress since the wait began. One that failed sooner is herdr's wait failing, and logs none. auth logs a
 # login incident (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at hung seen story
-  deadline=$(($(now_ms) + timeout))
-  [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
+  local answered="" resumed_sum="" pane_kind pane_at hung seen story began act
+  deadline=$(($(now_ms) + timeout)); began="${SWARM_WAIT_STARTED:-$(date +%s)}"
+  [[ -z "${stall}" ]] || since="${began}"
   target="$(own_target "${name}")" || return 1
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
@@ -1732,7 +1769,10 @@ wait_agent() {
     if [[ ${rc} -ne 0 ]]; then
       if [[ -z "${SWARM_WAIT_SLICE:-}" && $(($(now_ms) - t0)) -ge ${timeout} ]]; then
         seen="${status:-$(read_state "${name}")}"
-        [[ "${seen}" == busy || "${seen}" == herdr:working ]] || record_incident "${name}" "wait-timeout: ${seen}"
+        if [[ "${seen}" != busy && "${seen}" != herdr:working ]]; then
+          act="$(wait_activity "${name}" "${target}" "${began}")"
+          record_incident "${name}" "wait-timeout: ${seen}" "" ${act:+"${act}"}
+        fi
       fi
       echo "${status}"; return "${rc}"
     fi
