@@ -1,10 +1,11 @@
 # swarm-dev
 
-> A Claude Code plugin that turns an agreed epic into merged PRs: agents split it into one-PR stories, then build them in parallel, each in its own visible herdr pane. The user approves each plan and, with `merge = human`, each merge, except a PR whose agreed HLD grants `merge`, which the lead merges (never a `costs: money` one).
+> A Claude Code plugin that turns an agreed design or epic into merged PRs: agents split it into one-PR stories, then build them in parallel, each in its own visible herdr pane. The user approves each plan and, with `merge = human`, each merge, except a PR whose agreed HLD grants `merge`, which the lead merges (never a `costs: money` one).
 
 First steps: install the plugin (`claude plugin marketplace add redscaresu/swarm-dev`, `claude plugin install swarm-dev@swarm-dev`, then restart Claude Code); run `claude` once in the project folder and have the user accept the trust prompt; run `swarm.sh init` from the git repo's root to create the board; then run `/swarm-dev:swarm` to drive the chain.
 
-- [README.md](README.md): requirements, getting started, and when `/swarm-dev:swarm` stops for you
+- [README.md](README.md): a new user's introduction: what it is, how it works, requirements, getting started, and when `/swarm-dev:swarm` stops for you
+- [docs/running.md](docs/running.md): running a swarm in detail: each step, every stop, watching, safety, updating and the test tooling
 - [AGENTS.md](AGENTS.md): how an agent uses swarm-dev in a project and works on this repo
 - [docs/method.md](docs/method.md): the method and why it is shaped this way
 - [docs/lead-by-hand.md](docs/lead-by-hand.md): the steps a lead still takes by hand, each with its open issue

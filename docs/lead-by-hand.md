@@ -39,9 +39,13 @@ copy of HEAD.
 
 ## A builder that loads the machine or reads session logs
 
-**Symptom.** A builder runs a long, heavy load test on the machine running the swarm, or searches
-`~/.claude/projects`.
-**Step.** Stop it and tell it the rule: no load generation on this machine, no session logs.
+**Symptom.** A builder runs a long, heavy load test or many test files at once on the machine
+running the swarm, or searches `~/.claude/projects`. The load average climbs past the CPU count.
+**Check.** `ps -eo command | grep 'swarm-dev-wt/<slug>/tests'` counts the builder's test processes.
+**Step.** Tell it (a nudge) to stop that run, run only the test files its change touches with
+`JOBS` at 1 or 2, push, and let CI run the rest. Since v0.30.0, rules.md carries the no-load and
+no-session-log rules, but builders still started broad local runs in the v0.30.0 build; a
+machine-wide cap on test runs is planned for v0.31.0.
 **Issue.** [#696](https://github.com/redscaresu/swarm-dev/issues/696).
 
 ## A new epic with no conductor
