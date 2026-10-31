@@ -1377,6 +1377,7 @@ reply() {
 }
 goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /goal or the refusal> <tell args...>
   # A refusal leaves $NREC records (2: the /goal was sent) and says the findings must not be sent again.
+  # Each events line ends in round=1 verdict=findings: the trap's ok line for the delivery, and main's for a refusal.
   local name="$1" rc="$2" want="$3" out goal ev; shift 3
   : > "${dir}/projects/p/sess-s1.jsonl"; rm -f "${dir}/screen" "${dir}/.swarm/events.tsv"; tsession idle
   # WORKED: an assistant entry dated after the tell. A findings /goal goes only mid-turn, so an idle
@@ -1387,9 +1388,9 @@ print(json.dumps({"type": "assistant", "timestamp": t.isoformat(timespec="millis
   out="$(tellout idle "$@")"; ev="$(cut -f2,3,5 "${dir}/.swarm/events.tsv" | tr '\t\n' ' |')"; goal="$(sed -n '/^\/goal /,/^--$/p' "${dir}/sent" 2>/dev/null)"
   if [[ ${rc} == 0 && "${out}" == *"exit 0" && "$(records)" == 2 && "$(head -1 "${dir}/sent")" == "From the conductor:" \
         && "${goal}" == *"the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied"*"${want}"*"or stop after 4 more turns"* && "${goal}" == *"state: busy"* \
-        && -z "$(ls "${dir}/tmp")" && "${ev}" == "tell:findings s1 ok|" ]] \
+        && -z "$(ls "${dir}/tmp")" && "${ev}" == "tell:findings s1 ok ~~ round=1 verdict=findings|" ]] \
      || [[ ${rc} == 1 && "${out}" == *"s1: ${want}"*"do not send them again"*"exit 1" && "$(records)" == "${NREC:-2}" \
-           && "${ev}" == "tell:findings s1 ok|tell:findings s1 s1: ${want}"* ]]; then echo "ok   ${name}"; else
+           && "${ev}" == "tell:findings s1 ok ~~ round=1 verdict=findings|tell:findings s1 s1: ${want}"*" ~~ round=1 verdict=findings|" ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: got '${out}', events '${ev}', sent '$(cat "${dir}/sent" 2>/dev/null)'"; fails=$((fails + 1)); fi
 }
 onerecord() { # <name> <tell args...> — the tell sends one record, no goal

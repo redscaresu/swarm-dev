@@ -57,6 +57,7 @@ lib() {
   PROJECT_DIR="${P}" BOARD="${B}" SWARM_HOME="${REPO}" STATE_DIR="${P}/.swarm/state" HB="${HB}" SRC="${SRC}" WT="${WT}" bash -c '
     CFG_merge=agent; CFG_goal=off; CFG_codex_minutes=10
     die() { echo "swarm: $*" >&2; exit 1; }
+    event_fields() { :; }   # bin/swarm.sh'"'"'s, which this harness does not source
     agent_name() { printf "%s" "$1"; }
     story_items() { sed -n "/^\*\*$2:\*\*/,/^\$/p" "$1"; }
     for f in agents reports build board merge lifecycle dash; do . "${SWARM_HOME}/bin/lib/${f}.sh"; done

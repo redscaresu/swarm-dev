@@ -4,7 +4,7 @@
 # gh call. Each build of a story (a story start, or an escalate build) is its own loop.
 import collections, datetime, os, re, statistics
 from report import *
-from events_outcome import fields, outcome
+from events_outcome import fields, outcome as event_outcome   # not outcome: the findings loop below binds that name
 
 def when(t):
     try:
@@ -30,7 +30,7 @@ def handed(t, cmd, target, out):
 
 # A review-finished line is read for its verdict= alone, as its outcome.
 evs = [e for f in (l.rstrip("\n").split("\t") for l in log_lines(events)) if len(f) >= 5 and when(f[0])
-       for e in handed(when(f[0]), f[1], f[2], fields(f).get("verdict", "") if f[1] == "review-finished" else outcome(f))]
+       for e in handed(when(f[0]), f[1], f[2], fields(f).get("verdict", "") if f[1] == "review-finished" else event_outcome(f))]
 slug_of.update((pr_key(review_url(cmd, out)), target) for _, cmd, target, out in evs if review_url(cmd, out))
 # Each builder's models, one agents.tsv line in a builder role per build start or step-up rung, in order,
 # read as outcomes reads them (7 fields), so they line up with its rows.
