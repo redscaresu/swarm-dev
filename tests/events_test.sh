@@ -170,7 +170,7 @@ for arm in ${RO_EXPECTED}; do
 done
 for arm in ${arms}; do
   [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init ]] && continue
-  args=(); [[ "${arm}" == tidy ]] && args=(--yes); [[ "${arm}" == intervene ]] && args=(lead-hand x)
+  args=(); [[ "${arm}" == tidy ]] && args=(--yes); [[ "${arm}" == intervene ]] && args=(lead-hand other x)
   # hold logs only for a ready story on the board.
   [[ "${arm}" == hold ]] && { printf -- '---\nstatus: ready\n---\n' > "${Q}/docs/stories/h.md"; args=(h x); }
   [[ "${arm}" == upgrade ]] && args=(--foreground)   # its starter only detaches the worker, which logs the run
