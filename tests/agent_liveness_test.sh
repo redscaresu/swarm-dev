@@ -271,7 +271,14 @@ named='; longest-running: pid 400, 45 min: sleep \(under pid 310, 45 min: make >
 log "$(tool 46)" "${idle[@]}"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
 check "the stalled line names the leaf of the foreground tool shell's chain" grep -qE "${named}" <<< "${out}"
-check "the incident line names it too" grep -qE $'\tincident\ts-hung\tw:me\tstalled: working 4[6-8] min .*'"${named}" "${H}/.swarm/events.tsv"
+# The events.tsv lines' columns 2 to 4 and outcome (events_outcome's, without the key=value tail).
+outcomes() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import outcome
+for l in open(sys.argv[2]):
+    r = l.rstrip("\n").split("\t"); print("\t".join(r[1:4] + [outcome(r)]))' "${HERE}/../bin/lib" "$1"
+}
+check "the incident line names it too" grep -qE $'^incident\ts-hung\tw:me\tstalled: working 4[6-8] min .*'"${named}" <<< "$(outcomes "${H}/.swarm/events.tsv")"
 check "no argument (a token) reaches the stalled line or events.tsv" lacks 'SEKRIT|2700' "${out}$(cat "${H}/.swarm/events.tsv")"
 # With no own work in the log at all, the newest tool shell is the foreground one, not the older
 # background server.
@@ -690,7 +697,7 @@ hw_commit() {
   echo "$1" > "${HW}/work.txt"
   python3 -c 'import datetime, os, sys; a = int(sys.argv[2]); os.utime(sys.argv[1], (a, a)); print(datetime.datetime.fromtimestamp(a, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "${HW}/work.txt" "${at}"
 }
-signs() { cut -f2,3,5 "${H}/.swarm/events.tsv" | grep $'^incident\ts-hung\tsign-' | cut -f3 || true; }
+signs() { outcomes "${H}/.swarm/events.tsv" | grep -E $'^incident\ts-hung\t[^\t]*\tsign-' | cut -f4 || true; }
 t1="$(hw_commit 100)"
 gpgkey "${SG}:1:P"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
