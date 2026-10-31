@@ -16,6 +16,10 @@ HLD Goal 12 (v0.31.0): merge mechanics hold. #692 a lead PR outside a story has 
 - #694: upgrade_one (lifecycle.sh:4545-4592) reads the session id from agents.tsv through recorded_session (agents.sh:775-780) when herdr has none instead of dying at 4556, skips agents whose pane is closed and says so, and release_upgrade (merge.sh:2090-2119, called at 1045-1048) asks before running; a non-interactive session defaults to not running it and says so; tests/upgrade_test.sh cases for each.
 - #699: a kind: lead story with a You: step records what the permission classifier refused in a conductor's swarm.sh merge and why, or that it did not recur in the v0.31.0 build, and files a fix story or closes.
 - docs/features.tsv row: lead-hand incidents of these kinds per build, read from `flow incidents` rows with cause in story-gone, pr-no-story, no-conductor, classifier, upgrade (telemetry-writers' list; 12 in v0.29.0; bar 0); docs/lead-by-hand.md entries for #692 (66-71), #694 (119-124), #697 (98-103), #699 (113-117) removed.
+- `swarm.sh merge` checks every merge of the base in a PR's head, its own or a builder's, by replaying it (as `git show --remerge-diff`), and accepts the new head when no line of the base was removed, without a new review; a test covers a clean merge, one that drops a line, and a conflicted one.
+- Where the base has a merge queue, merge sends the PR through it (no branch update), and docs say how to turn one on.
+- A story whose two parents conflict starts stacked on one and merges the other in when it lands, instead of being held (6 of 11 holds in the v0.30.0 build).
+- The base is merged into a PR only on a conflict or at merge time, not each time it moves (220 behind merge-ins over 63 PRs in the v0.30.0 build).
 
 **Out of scope:**
 #691 (lead-woken, v0.30.0); merge queue or merge_admin settings; a herdr change to hold session ids (HLD Non-goals); conductor lanes.
