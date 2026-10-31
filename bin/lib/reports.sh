@@ -348,7 +348,11 @@ dataset_report() {
 #     ended with no build; else open), then the built holds' minutes per reason class (clash or other), or a line
 #     when there is no hold in the window.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
-#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
+#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
+#     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
+#     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
+#     (each stalled incident, - for an input it does not carry) and the false stalls line (stalled
+#     incidents with an input at 1, and lead-hand and user-caught lines with cause=false-stall).
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
 #     (an ok held, escalated, close:impossible, kept or review line in events.tsv; with merge = agent, a
 #     review only of a story whose costs: is not none, or that cannot be read; a kept line ends any item
@@ -360,7 +364,10 @@ dataset_report() {
 #     A finish or reconcile ends it at its own time. Waits stop at
 #     the local midnight after --until (or now), where an item still waiting is listed under open as
 #     kind:slug. One with no leaving line counts only while its story or epic is on the board in review
-#     (a kept one only with kept: set), held or escalated. --epic does not narrow it.
+#     (a kept one only with kept: set), held or escalated. Last, after a blank line: items median_min
+#     p90_min max_min over the per-day table's items in the window (never a no-agent item), p90 by
+#     nearest rank, - in each column with none.
+#     --epic does not narrow it.
 #   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their
 #     base in (without --since, the 30 days up to --until or today): each merge-in (a PR commit gh's
 #     REST API lists whose headline merges the base in, by outcomes' main_merges rule) re-merged from

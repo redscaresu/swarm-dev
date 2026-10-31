@@ -738,17 +738,22 @@ base_ci() {
 }
 
 # base_merged <slug> <sha> — succeed when events.tsv records <sha> as a head merge made by merging the
-# base into <slug>'s PR (merge_base_update's `merge <slug> base-merged <sha> from <head>`; `base-merged
-# <sha>` alone before it named the head): merge waits for its CI and merges it itself, and its only new
-# content is the base's, so it is no new work for a review.
+# base into <slug>'s PR, or any story's PR when <slug> is empty (dropped_lines) (merge_base_update's
+# `merge <slug> base-merged <sha> from <head>`; `base-merged <sha>` alone before it named the head):
+# merge waits for its CI and merges it itself, and its only new content is the base's, so it is no new
+# work for a review. It reads the outcome without its key=value tail (EVENT_OUTCOME_AWK).
 base_merged() {
-  awk -F'\t' -v t="$1" -v o="base-merged $2" '$2 == "merge" && $3 == t && ($5 == o || index($5, o " from ") == 1) { f = 1; exit } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+  awk -F'\t' -v t="$1" -v o="base-merged $2" "${EVENT_OUTCOME_AWK}"'
+    $2 == "merge" && (t == "" || $3 == t) { oc = outcome($5); if (oc == o || index(oc, o " from ") == 1) { f = 1; exit } }
+    END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
 # base_merged_from <slug> <sha> — the head events.tsv records <sha> as made from by merging the base
-# into <slug>'s PR (`base-merged <sha> from <head>`), or nothing.
+# into <slug>'s PR (`base-merged <sha> from <head>`, read without its key=value tail), or nothing.
 base_merged_from() {
-  awk -F'\t' -v t="$1" -v o="base-merged $2 from " '$2 == "merge" && $3 == t && index($5, o) == 1 { h = substr($5, length(o) + 1) } END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
+  awk -F'\t' -v t="$1" -v o="base-merged $2 from " "${EVENT_OUTCOME_AWK}"'
+    $2 == "merge" && $3 == t { oc = outcome($5); if (index(oc, o) == 1) h = substr(oc, length(o) + 1) }
+    END { if (h ~ /^[[:alnum:]]+$/) print h }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # dropped_lines <owner/repo> <n> <head> <base> — the base lines PR <n>'s own merge commits dropped, read
@@ -761,8 +766,9 @@ base_merged_from() {
 # --refmap, no origin/<base>: two runs share neither, and another fetch cannot move the base it scans
 # against. The fetched head must be <head>, else it stops naming both. The merges on <head>'s
 # first-parent chain since that base commit are scanned, except those events.tsv records as
-# GitHub's merge of the base (merge_base_update's `base-merged <sha>`, shown to bring only the base's
-# content); any other merge is scanned, web-flow's too (a conflict resolved in GitHub's web editor).
+# GitHub's merge of the base for any story (base_merged; merge_base_update's `base-merged <sha>`, shown
+# to bring only the base's content); any other merge is scanned, web-flow's too (a conflict resolved in
+# GitHub's web editor).
 # With none left it exits 0 with no scan; else, with git at DROPPED_GIT_MIN or newer, it prints
 # dropped_lines.py's lines and exits with its code: 0 none, 1 lines dropped (only with a
 # `<sha7> <file>: <text>` line printed), 2 cannot check. Every other stop, a die or a set -e one, exits
@@ -796,8 +802,7 @@ dropped_lines() {
   merges="$(git -C "${src}" rev-list --first-parent --merges --reverse "${tip}..${head}" --)" \
     || die "dropped-lines: git cannot list the merges in ${base} (${tip:0:7})..${head:0:7}"
   for m in ${merges}; do
-    awk -F'\t' -v o="base-merged ${m}" '$2 == "merge" && ($5 == o || index($5, o " from ") == 1) { f = 1; exit } END { exit !f }' \
-      "${EVENTS_LOG}" 2>/dev/null || keep+=("${m}")
+    base_merged "" "${m}" || keep+=("${m}")
   done
   [[ ${#keep[@]} -gt 0 ]] || return 0
   ver="$(git version 2>/dev/null)" || ver=""; ver="${ver#git version }"; ver="${ver%% *}"
@@ -1346,11 +1351,13 @@ conduct_ready() {
 }
 
 # report_collected <conductor> <report> — the lead collected <report>: events.tsv has an ok close of
-# <conductor> (swarm.sh close, collect's last step) at or after the report's time.
+# <conductor> (swarm.sh close, collect's last step; ok without its key=value tail) at or after the
+# report's time.
 report_collected() {
   local t
   t="$(date -u -r "$2" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
-  awk -F'\t' -v n="$1" -v t="${t}" '$2 ~ /^close/ && $3 == n && $5 == "ok" && $1 >= t { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+  awk -F'\t' -v n="$1" -v t="${t}" "${EVENT_OUTCOME_AWK}"'$2 ~ /^close/ && $3 == n && outcome($5) == "ok" && $1 >= t { f = 1 } END { exit !f }' \
+    "${EVENTS_LOG}" 2>/dev/null
 }
 
 # merge_rule_stop — prints why no conductor may start and returns 0 under merge = agent when Claude
@@ -1802,10 +1809,12 @@ retire_fixes() {
 
 # key_reds <key> [live] — the shas of <key>'s main-red lines, each once; with live, only those no
 # main-green has cleared since their last main-red: one that names the red, or one naming no red (an
-# older record), which clears every red logged before it.
+# older record), which clears every red logged before it. Outcomes are read without their key=value
+# tail (EVENT_OUTCOME_AWK).
 key_reds() {
-  awk -F'\t' -v k="$1 " -v live="${2:-}" 'index($5, k) == 1 && $2 == "main-red" { red[$3] = 1; delete green[$3] }
-    index($5 " ", k) == 1 && $2 == "main-green" { split($5, g, " "); if (g[3] != "") green[g[3]] = 1; else for (s in red) green[s] = 1 }
+  awk -F'\t' -v k="$1 " -v live="${2:-}" "${EVENT_OUTCOME_AWK}"'{ oc = outcome($5) }
+    index(oc, k) == 1 && $2 == "main-red" { red[$3] = 1; delete green[$3] }
+    index(oc " ", k) == 1 && $2 == "main-green" { split(oc, g, " "); if (g[3] != "") green[g[3]] = 1; else for (s in red) green[s] = 1 }
     END { for (s in red) if (live == "" || !(s in green)) print s }' "${EVENTS_LOG}" 2>/dev/null | sort -u
 }
 
@@ -1865,13 +1874,14 @@ fix_superseded() {
 # events.tsv has no main-green after it that clears that red (one naming its sha, or naming none, as
 # records from before main-green named it did), oldest first. A last red whose fix-main story then
 # retired, superseded by a red that descends from it (retire_fixes), gives way to that red, whose fix
-# covers the base, unless a main-green has cleared that red already.
+# covers the base, unless a main-green has cleared that red already. Outcomes are read, and printed,
+# without their key=value tail (EVENT_OUTCOME_AWK).
 red_mains() {
-  awk -F'\t' -v sup="retired: superseded by fix-main-" '
-    $2 == "main-red" { split($5, w, " "); k = w[1] " " w[2]; red[k] = $3 " " $5; ord[k] = NR; at[k, substr($3, 1, 7)] = red[k]; delete cleared[k, substr($3, 1, 7)] }
-    $2 == "fix-main" && index($5, sup) == 1 { x = substr($3, 10); y = substr($5, length(sup) + 1)
+  awk -F'\t' -v sup="retired: superseded by fix-main-" "${EVENT_OUTCOME_AWK}"'{ oc = outcome($5) }
+    $2 == "main-red" { split(oc, w, " "); k = w[1] " " w[2]; red[k] = $3 " " oc; ord[k] = NR; at[k, substr($3, 1, 7)] = red[k]; delete cleared[k, substr($3, 1, 7)] }
+    $2 == "fix-main" && index(oc, sup) == 1 { x = substr($3, 10); y = substr(oc, length(sup) + 1)
       for (k in red) if (substr(red[k], 1, 7) == x && ((k, y) in at) && !((k, y) in cleared)) { red[k] = at[k, y]; ord[k] = NR } }
-    $2 == "main-green" { split($5, g, " "); k = g[1] " " g[2]
+    $2 == "main-green" { split(oc, g, " "); k = g[1] " " g[2]
       if (g[3] != "") cleared[k, substr(g[3], 1, 7)] = 1; else for (i in at) { split(i, p, SUBSEP); if (p[1] == k) cleared[i] = 1 }
       if ((k in red) && (g[3] == "" || index(red[k], g[3] " ") == 1)) delete red[k] }
     END { for (k in red) print ord[k] "\t" red[k] }' "${EVENTS_LOG}" 2>/dev/null | sort -n | cut -f2- || true
@@ -2102,12 +2112,25 @@ rate_reset() {
     </dev/null 2>/dev/null || true
 }
 
+# first_green <owner/repo> <n> <branch> <sha> — log `first-green <slug>`, outcome ok and the field
+# sha=<sha>, for a PR on story/<slug>, once per PR: wait-pr runs again and again, the builder's and the
+# review agent's at once, so the wait whose mkdir makes the PR's marker (.swarm/first-green/<owner>+<repo>#<n>)
+# logs it and no other does. A PR on no story branch logs none. A line it cannot write removes the marker,
+# so the next green wait tries again, and changes nothing wait-pr prints or exits with.
+first_green() {
+  local mark="${PROJECT_DIR}/.swarm/first-green/${1/\//+}#$2"
+  [[ "$3" == story/?* ]] || return 0
+  { mkdir -p "${mark%/*}" && mkdir "${mark}"; } 2>/dev/null || return 0
+  append_event first-green "${3#story/}" ok "sha=$4" || rmdir "${mark}" 2>/dev/null || true
+}
+
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
 # wait-pr [--timeout <seconds>] [--head <sha>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
 # MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
-# that changes. Exits 0 when all are green, printing each check; 1 on red; 2 on anything else, since a
+# that changes. Exits 0 when all are green, printing each check, the first green on a story PR logged
+# as first-green (first_green); 1 on red; 2 on anything else, since a
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
 # WAIT_PR_TRIES in a row at most, any other ends it at once. A new head has no check runs for a few
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
@@ -2196,7 +2219,7 @@ wait_pr() {
       [[ ${rc} -ne 2 || -z "${unknown}" ]] || why="${why}; mergeable state UNKNOWN"
     fi
     case ${rc} in
-      0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; return 0 ;;
+      0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; first_green "${repo}" "${n}" "${branch}" "${head}"; return 0 ;;
       1) echo "red: ${why}"
          # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
          WAIT_PR_RED=1
@@ -2726,8 +2749,8 @@ queued_sent() {
 
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
 # needs the lead, print one line saying which and why, and exit 0. With --epic or --backlog, a story PR
-# first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>), before
-# anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
+# first seen open is said once (`<repo> #<n> <branch> opened`, watch-seen's opened <repo>#<n>, and an
+# events.tsv line `pr-opened <slug>`, outcome ok and the field url=<the PR's URL>), before anything else about it, unless opened_due leaves it out (a lead story's, a fix-main story's, or one
 # whose head already has a review). Watches that run at once share watch-seen, and the lead's rewrite
 # of its waiting lines can drop an opened line written meanwhile, so a PR can be said opened twice, as
 # a done or conflict line can be said twice (review-agent refuses a second start while the first still
@@ -2776,7 +2799,8 @@ watch_prs() {
         # agent; from the list and the board alone, before any read of the PR. The lead's bare watch
         # leaves that to it.
         if [[ -n "${heads}" ]] && ! grep -qxF "opened ${repo}#${n}" "${seen}" && opened_due "${br#story/}" "${sha}"; then
-          echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"; return 0
+          echo "opened ${repo}#${n}" >> "${seen}"; echo "${repo} #${n} ${br} opened"
+          record_event pr-opened "${br#story/}" ok "url=https://github.com/${repo}/pull/${n}"; return 0
         fi
         mergeable=""
         # No conflict read on a head already reported conflicting, or finished and queued: nothing
@@ -3012,11 +3036,13 @@ fetch_branch() {
 # event just before its last ok `story <child>` (main logs story once the build is done), or one
 # with no story after it yet (a build still starting). A later ok build with no stacked event
 # (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset
-# follows belongs to no build: a failed or abandoned start.
+# follows belongs to no build: a failed or abandoned start. Outcomes are read without their key=value
+# tail (EVENT_OUTCOME_AWK).
 stacked_parents() {
-  awk -F'\t' -v s="$1" '$3 != s { next }
-    $2 == "stacked" && index($5, "ok (on ") == 1 { pend = substr($5, 8, length($5) - 8) }
-    $2 == "story" && index($5, "ok") == 1 { cur = pend; pend = ""; next }
+  awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
+    { oc = outcome($5) }
+    $2 == "stacked" && index(oc, "ok (on ") == 1 { pend = substr(oc, 8, length(oc) - 8) }
+    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; next }
     $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = "" }
     END { print (pend != "" ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
 }

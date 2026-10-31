@@ -5,12 +5,18 @@
 # the agent stops (api-error and auto-denied) per epic and kind: the agent's epic is the one outcomes'
 # rows give its story (a builder, or review-<slug>), or for conduct-<epic> its `conduct <epic>` start
 # (or its epic in the rows), under its own name or the ones retire_agent renames it to, `-` when none
-# does; --epic keeps that epic's rows.
+# does; --epic keeps that epic's rows. Then, each after a blank line and over every epic: the incidents per kind
+# and cause (its cause= field, which `swarm.sh intervene` writes; `-` for a line with none); one row per stalled
+# incident with its bg, test and sign fields as written (`-` when absent: not measured, never 0); and one line
+# for Goal 3's bar: the stalled incidents with any of the three at 1, and the lead-hand and user-caught lines
+# with cause=false-stall.
 import collections, datetime, os
-from events_outcome import outcome
+from events_outcome import fields, outcome
 from report import agent_name
 
 STOPS = ("api-error", "auto-denied")
+STALL_INPUTS = ("bg", "test", "sign")
+INTERVENE_KINDS = ("lead-hand", "user-caught")   # bin/swarm.sh's INTERVENE_KINDS
 
 epic_of = {}
 
@@ -25,7 +31,8 @@ for r in rows:
         for n in (r["slug"], "review-" + r["slug"], "conduct-" + r["epic"]):
             own(n, r["epic"])
 
-counts, stops = collections.Counter(), collections.Counter()
+counts, stops, causes = collections.Counter(), collections.Counter(), collections.Counter()
+stalls, stalled_input_1, false_stall = [], 0, 0
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     if len(f) == 5 and f[1] == "conduct" and outcome(f) == "ok" and f[2] != "--backlog":
@@ -41,6 +48,15 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
         counts[(day, kind)] += 1
         if kind in STOPS:
             stops[(epic_of.get(f[2], "-"), kind)] += 1
+        kv = fields(f)
+        cause = kv.get("cause", "-")
+        causes[(kind, cause)] += 1
+        if kind == "stalled":
+            inputs = [kv.get(k, "-") for k in STALL_INPUTS]
+            stalls.append((f[0], f[2], *inputs))
+            stalled_input_1 += "1" in inputs
+        if kind in INTERVENE_KINDS and cause == "false-stall":
+            false_stall += 1
 
 print("day\tkind\tincidents")
 for (day, kind), n in sorted(counts.items()):
@@ -49,3 +65,11 @@ print("\nepic\tkind\tstops")
 for (e, kind), n in sorted(stops.items()):
     if not epic or e == epic:
         print(f"{e}\t{kind}\t{n}")
+print("\nkind\tcause\tincidents")
+for (kind, cause), n in sorted(causes.items()):
+    print(f"{kind}\t{cause}\t{n}")
+print("\ntime\tagent\t" + "\t".join(STALL_INPUTS))
+for row in stalls:
+    print("\t".join(row))
+print(f"\nfalse stalls: {stalled_input_1 + false_stall} ({stalled_input_1} stalled with an input at 1, "
+      f"{false_stall} lead-hand or user-caught with cause=false-stall)")

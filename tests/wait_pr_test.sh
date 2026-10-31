@@ -6,8 +6,8 @@
 # a stub on PATH: it logs every call to gh.log, answers pr view with ${H} and the nth check-runs
 # read from ${FX}/checks.<n> (else ${FX}/checks); the nth read of either fails with ${FX}/head.<n>.err
 # or ${FX}/checks.<n>.err as its stderr. With ${FX}/notice, pr view also prints a notice on stderr;
-# pr view's nth answer has the mergeable state in ${FX}/mergeable.<n>, else MERGEABLE, and the PR's
-# state in ${FX}/state, else OPEN;
+# pr view's nth answer has the mergeable state in ${FX}/mergeable.<n>, else MERGEABLE, the PR's
+# state in ${FX}/state, else OPEN, no changed file count, and its head branch in ${FX}/ref, else feature;
 # with ${FX}/head.hang or ${FX}/checks.hang, that read hangs ${HANG}s before it answers, ignoring SIGALRM
 # as gh (a Go program) does with ${FX}/ignore-alrm;
 # commit statuses come from ${FX}/status, else none; api rate_limit answers ${FX}/reset.<core|graphql>, for
@@ -49,7 +49,7 @@ fail() {
 case "$*" in
   "pr view"*) fail head; [ ! -e "${FX}/ignore-alrm" ] || trap '' ALRM; [ ! -e "${FX}/head.hang" ] || sleep "${HANG}"
               [ ! -e "${FX}/notice" ] || cat "${FX}/notice" >&2
-              echo "${H} $(cat "${FX}/mergeable.${n}" 2>/dev/null || echo MERGEABLE) main $(cat "${FX}/state" 2>/dev/null || echo OPEN)" ;;
+              echo "${H} $(cat "${FX}/mergeable.${n}" 2>/dev/null || echo MERGEABLE) main $(cat "${FX}/state" 2>/dev/null || echo OPEN) - $(cat "${FX}/ref" 2>/dev/null || echo feature)" ;;
   *check-runs*)
     fail checks; [ ! -e "${FX}/checks.hang" ] || sleep "${HANG}"
     if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
@@ -368,7 +368,45 @@ fresh; echo "bogus = 1" > "${P}/.claude/swarm/config"; wait_pr
 is "a die inside wait-pr: exits 2" 2 "${rc}"
 : > "${P}/.claude/swarm/config"
 
-# --- Read-only: no events.tsv line.
+# --- Read-only: no events.tsv line, though many waits above were green, all on a PR on no story branch.
 check "wait-pr logs nothing" test ! -s "${P}/.swarm/events.tsv"
+
+# --- first-green: the first green wait on a story PR logs `first-green <slug>` with the head SHA, once per PR.
+EV="${P}/.swarm/events.tsv"
+# ev_rows <command> <key> — each events.tsv line for <command>: its target, outcome() and the field <key>,
+# |-separated, read with bin/lib/events_outcome.py.
+ev_rows() {
+  python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); from events_outcome import fields, outcome
+for l in open(sys.argv[2], encoding="utf-8"):
+    r = l.rstrip("\n").split("\t")
+    if len(r) == 5 and r[1] == sys.argv[3]: print("|".join([r[2], outcome(r), fields(r).get(sys.argv[4], "")]))' \
+    "${SWARM%/*}/lib" "${EV}" "$1" "$2" 2>/dev/null || true
+}
+greens() { ev_rows first-green sha; }
+fresh; echo story/s1 > "${FX}/ref"; checks "${FX}/checks" "$(run test completed failure)"; wait_pr
+is "a red wait on a story PR: exits 1" 1 "${rc}"
+is "a red wait on a story PR: logs no first-green" "" "$(greens)"
+fresh; echo story/s1 > "${FX}/ref"; wait_pr
+is "a green wait on a story PR: exits 0" 0 "${rc}"
+is "a green wait on a story PR: logs first-green: the slug, outcome ok, the head SHA in sha=" "s1|ok|${H}" "$(greens)"
+cp "${ROOT}/out" "${ROOT}/green.out"
+check "the stall rule's sign_time skips the first-green line" test "$(SWARM_LIB="${SWARM%/*}/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from stall import sign_time
+print(sign_time(sys.argv[1].split("\t")))' "$(tail -1 "${EV}")")" == None
+fresh; echo story/s1 > "${FX}/ref"; wait_pr
+is "a second green wait on that PR: exits 0" 0 "${rc}"
+is "a second green wait on that PR: logs no second first-green" "s1|ok|${H}" "$(greens)"
+# An events.tsv it cannot write (a directory in its place): another story PR's green wait prints and
+# exits as the first did.
+mv "${EV}" "${ROOT}/events.keep"; mkdir "${EV}"
+fresh; echo story/s1 > "${FX}/ref"; URL=https://github.com/o/r/pull/8 wait_pr
+is "a green wait with events.tsv unwritable: exits 0" 0 "${rc}"
+is "a green wait with events.tsv unwritable: prints as before" "$(cat "${ROOT}/green.out")" "$(cat "${ROOT}/out")"
+rmdir "${EV}"; mv "${ROOT}/events.keep" "${EV}"
+fresh; echo story/s1 > "${FX}/ref"; URL=https://github.com/o/r/pull/8 wait_pr
+is "the next green wait, events.tsv writable again, logs that PR's first-green" "s1|ok|${H}
+s1|ok|${H}" "$(greens)"
 
 if [[ ${fails} -eq 0 ]]; then echo "all wait-pr tests passed"; else echo "${fails} wait-pr test(s) failed"; exit 1; fi
