@@ -5,8 +5,8 @@
 
 swarm-dev is a Claude Code plugin that turns a piece of work you describe into reviewed, merged
 pull requests. You agree what to build with one agent. Other agents split it into small stories,
-build them in parallel and review each other's PRs. You watch, and you decide whenever a decision
-is yours.
+build them in parallel and review each other's PRs. You watch, and you make the decisions
+that are yours to make.
 
 ![The swarm's dashboard on a demo project: what needs you and the epics on the left, recent work on the right](docs/assets/dash.gif)
 
@@ -15,7 +15,7 @@ is yours.
 You have a GitHub repository, a piece of work bigger than one PR (a feature, a release, a
 clean-up), and Claude Code. You want it built the way a careful team would build it: planned,
 split into PRs that can each be reviewed, tested in CI, and merged only when someone has checked
-it. swarm-dev runs that team for you. Every agent runs in its own terminal pane, so you can watch
+it. swarm-dev runs that team. Every agent runs in its own terminal pane, so you can watch
 any of them at work.
 
 ## How it works
@@ -25,18 +25,18 @@ any of them at work.
   <img alt="How the swarm turns a design into merged PRs. You write a design with /swarm-dev:hld; /swarm-dev:swarm plans it into epics and stories; you agree each epic and approve the stories; the board holds them; a conductor starts builders, each PR gets a review agent with codex, and green, reviewed PRs merge. The lead watches with swarm.sh wait --lead." src="docs/assets/swarm-flow-light.png">
 </picture>
 
-1. **You describe the work.** `/swarm-dev:hld` opens a co-author agent. Together you write a short
+1. You describe the work. `/swarm-dev:hld` opens a co-author agent. Together you write a short
    design: the problem, the goals you can check, and what is out of scope. You can start from one
    epic instead with `/swarm-dev:epic`.
-2. **Agents plan it.** Your agreed design is split into epics, and each epic into stories of one PR
+2. Agents plan it. Your agreed design is split into epics, and each epic into stories of one PR
    each. Other agents read your code and try to break the plan before you see it. You agree each
    epic and approve its stories. Nothing is built until you do.
-3. **Agents build it.** A conductor starts one builder per story, each in its own git worktree.
+3. Agents build it. A conductor starts one builder per story, each in its own git worktree.
    Stories that do not touch the same code are built at the same time.
-4. **Agents review it.** Every PR gets a review agent, plus codex, a second reviewer from a
+4. Agents review it. Every PR gets a review agent, plus codex, a second reviewer from a
    different model family. The builder fixes what they find. From the third round, only
    regressions and false statements go back, so a review does not loop for ever.
-5. **It merges.** By default you merge each green, reviewed PR. You can let the agents merge too.
+5. It merges. By default you merge each green, reviewed PR. You can let the agents merge too.
    A PR that touches CI, hooks or the build always waits for you.
 
 Your own Claude session is the **lead**. It runs `/swarm-dev:swarm`, watches the agents, and does
