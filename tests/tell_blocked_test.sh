@@ -237,5 +237,11 @@ out="$(tell "${COPY}/bin/swarm.sh")"
 check "an arm's EV_FIELDS, then event_fields', on the logged line; none from a nested \$(...)" "arm=set state=gone" \
   "$(awk -F'\t' '$2 == "tell:nudge" { i = index($5, " ~~ "); print i ? substr($5, i + 4) : "-" }' "${p}/.swarm/events.tsv")"
 
+# main makes event_fields' file with mktemp in TMPDIR, as it makes its die file, and removes both.
+mkdir -p "${ROOT}/ftmp"
+setup idle idle idle empty-box.txt
+out="$(TMPDIR="${ROOT}/ftmp" tell "${COPY}/bin/swarm.sh")"
+check "a refused tell leaves no temp file in TMPDIR, its state= still logged" "|1|gone" "$(ls "${ROOT}/ftmp")|$(logged | cut -d'|' -f1-2)"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

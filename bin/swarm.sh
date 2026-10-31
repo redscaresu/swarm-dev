@@ -81,18 +81,19 @@ DIE_LEVEL=-1
 
 # event_fields <key=value>... — fields for the logged command's line, which main appends after its
 # outcome (append_event's tail). Like die's line, they are kept only at the command's own level, and
-# only while DIE_FILE is main's own: a nested $(...), or a subshell with a die file of its own
-# (upgrade_restart, ready_tell), keeps none. Each value's whitespace becomes _ and an empty value is -,
+# only while DIE_FILE is main's own (EV_ERR): a nested $(...), or a subshell with a die file of its
+# own (upgrade_restart, ready_tell), keeps none. Each value's whitespace becomes _ and an empty value is -,
 # so append_event never leaves a pair out for its value.
 event_fields() {
   local x v
-  [[ -n "${EV_FIELDS_FILE}" && "${EV_FIELDS_FILE}" == "${DIE_FILE}.fields" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]] || return 0
+  [[ -n "${EV_FIELDS_FILE}" && "${DIE_FILE}" == "${EV_ERR}" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]] || return 0
   for x in "$@"; do
     v="${x#*=}"; v="${v//[[:space:]]/_}"
     { printf '%s=%s\n' "${x%%=*}" "${v:--}" >> "${EV_FIELDS_FILE}"; } 2>/dev/null || true
   done
 }
-# Set only by main, beside DIE_FILE; never taken from the environment.
+# Set only by main, in the subshell a logged command runs in, to a file main made with mktemp (EV_FLD),
+# as it makes DIE_FILE's; never taken from the environment.
 EV_FIELDS_FILE=""
 
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
@@ -1038,7 +1039,8 @@ main_signal() {
     [[ "${EV_CMD}" != merge && "${EV_CMD}" != upgrade ]] || wait "${EV_CHILD}" || true
   fi
   record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
-  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}" "${EV_ERR}.fields"
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ -z "${EV_FLD}" ]] || rm -f "${EV_FLD}"
   trap - "$1"
   kill -"$1" "$$"
 }
@@ -1062,7 +1064,7 @@ main_signal() {
 main() {
   local rc why a f fields=()
   [[ "${1:-}" != init ]] || init_check
-  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""; EV_FIELDS=""
+  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""; EV_FIELDS=""; EV_FLD=""
   # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
   if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
      || [[ "${EV_CMD}" == upgrade && "${SWARM_UPGRADE_WORKER:-}" != 1 && " $* " != *" --foreground "* ]] \
@@ -1106,18 +1108,19 @@ main() {
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
+  # event_fields' file, made before dispatch as the die file is, never a name built from it.
+  [[ "${EV_ERR}" == /dev/null ]] || EV_FLD="$(mktemp "${TMPDIR:-/tmp}/swarm-fields.XXXXXX" 2>/dev/null)" || EV_FLD=""
   EV_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
   # In the background, with stdin kept, so `wait` returns the moment a signal lands.
   set +e
-  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; [[ "${EV_ERR}" == /dev/null ]] || EV_FIELDS_FILE="${EV_ERR}.fields"
-   set -e; dispatch "$@") <&0 &
+  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; EV_FIELDS_FILE="${EV_FLD}"; set -e; dispatch "$@") <&0 &
   EV_CHILD=$!
   wait "${EV_CHILD}"; rc=$?
   set -e
   trap - INT TERM HUP
   read -ra fields <<< "${EV_FIELDS}"
-  if [[ -f "${EV_ERR}.fields" ]]; then while IFS= read -r f; do fields+=("${f}"); done < "${EV_ERR}.fields"; fi
+  if [[ -n "${EV_FLD}" && -f "${EV_FLD}" ]]; then while IFS= read -r f; do fields+=("${f}"); done < "${EV_FLD}"; fi
   if [[ "${EV_TARGET}" == '!' ]]; then
     :
   elif [[ ${rc} -ne 0 ]]; then
@@ -1132,7 +1135,8 @@ main() {
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}" ${fields[@]+"${fields[@]}"}
   fi
-  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}" "${EV_ERR}.fields"
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ -z "${EV_FLD}" ]] || rm -f "${EV_FLD}"
   return "${rc}"
 }
 
