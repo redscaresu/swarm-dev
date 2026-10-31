@@ -7,12 +7,13 @@
 # (or its epic in the rows), under its own name or the ones retire_agent renames it to, `-` when none
 # does; --epic keeps that epic's rows. Then, each after a blank line and over every epic: the incidents per kind
 # and cause (its cause= field, which `swarm.sh intervene` writes; `-` for a line with none); one row per stalled
-# incident with its bg, test and sign fields as written (`-` when absent: not measured, never 0); and one line
-# for Goal 3's bar: the stalled incidents with any of the three at 1, and the lead-hand and user-caught lines
-# with cause=false-stall.
+# incident and per stalled step-up (an ok escalate line `ok (stalled: <from> -> <to>)`, its agent the slug) with
+# its bg, test and sign fields as written (`-` when absent: not measured, never 0) and its event (incident or escalate); and one
+# line for Goal 3's bar: the stalled incidents and step-ups with any of the three at 1, and the lead-hand and
+# user-caught lines with cause=false-stall.
 import collections, datetime, os
 from events_outcome import fields, outcome
-from report import agent_name
+from report import STEP_UP, agent_name
 
 STOPS = ("api-error", "auto-denied")
 STALL_INPUTS = ("bg", "test", "sign")
@@ -37,26 +38,31 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     if len(f) == 5 and f[1] == "conduct" and outcome(f) == "ok" and f[2] != "--backlog":
         own("conduct-" + f[2], f[2])
-    if len(f) != 5 or f[1] != "incident":
+    if len(f) != 5 or f[1] not in ("incident", "escalate"):
+        continue
+    step_up = STEP_UP.fullmatch(outcome(f)) if f[1] == "escalate" else None
+    if f[1] == "escalate" and not (step_up and step_up[1] == "stalled"):
         continue
     try:
         day = datetime.datetime.fromisoformat(f[0].replace("Z", "+00:00")).astimezone().date().isoformat()
     except ValueError:
         continue
-    if since <= day <= until:
-        kind = outcome(f).partition(":")[0].strip()
+    if not since <= day <= until:
+        continue
+    kv = fields(f)
+    kind = "stalled" if step_up else outcome(f).partition(":")[0].strip()
+    if not step_up:
         counts[(day, kind)] += 1
         if kind in STOPS:
             stops[(epic_of.get(f[2], "-"), kind)] += 1
-        kv = fields(f)
         cause = kv.get("cause", "-")
         causes[(kind, cause)] += 1
-        if kind == "stalled":
-            inputs = [kv.get(k, "-") for k in STALL_INPUTS]
-            stalls.append((f[0], f[2], *inputs))
-            stalled_input_1 += "1" in inputs
         if kind in INTERVENE_KINDS and cause == "false-stall":
             false_stall += 1
+    if kind == "stalled":
+        inputs = [kv.get(k, "-") for k in STALL_INPUTS]
+        stalls.append((f[0], f[2], *inputs, f[1]))
+        stalled_input_1 += "1" in inputs
 
 print("day\tkind\tincidents")
 for (day, kind), n in sorted(counts.items()):
@@ -68,8 +74,8 @@ for (e, kind), n in sorted(stops.items()):
 print("\nkind\tcause\tincidents")
 for (kind, cause), n in sorted(causes.items()):
     print(f"{kind}\t{cause}\t{n}")
-print("\ntime\tagent\t" + "\t".join(STALL_INPUTS))
+print("\ntime\tagent\t" + "\t".join(STALL_INPUTS) + "\tevent")
 for row in stalls:
     print("\t".join(row))
-print(f"\nfalse stalls: {stalled_input_1 + false_stall} ({stalled_input_1} stalled with an input at 1, "
+print(f"\nfalse stalls: {stalled_input_1 + false_stall} ({stalled_input_1} stalled incidents or step-ups with an input at 1, "
       f"{false_stall} lead-hand or user-caught with cause=false-stall)")

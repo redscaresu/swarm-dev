@@ -3,8 +3,11 @@
 # triggers: a close of a builder with no PR (no-pr), a wait --stall that finds it stalled (stalled), a
 # third findings tell (findings-3), and checks finishing red on a second head of its PR (ci-red-2),
 # seen by a conductor's watch or by wait-pr run from the story's review pane. With the ladder empty
-# none does. conduct_brief names the step-ups only with the ladder on. herdr, gh and claude
-# (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
+# none does. conduct_brief names the step-ups only with the ladder on. A stall the wait finds writes its
+# incident, and its escalate line with the ladder on, with bg=0 test=0 sign=0 as agent_stalled read them; a
+# live background task stops that wait from stepping up, but a step-up run by hand reads it fresh (bg=1),
+# and flow incidents lists that line and counts it as a false stall, beside a lead-hand line marking one.
+# herdr, gh and claude (tests/claude_stub.sh) are stubs on PATH; gh's answers come from files under the root.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -119,7 +122,7 @@ echo '[]' > "${ROOT}/prs.json"
 run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWARM_STALL_POLL_MS=1000 PATH="${STUB_BIN}:${PATH}" bash "${SWARM}" "$@" 2>&1) | tee -a "${ROOT}/run.log"; }
 # stepped — the escalate lines' results, then each step-up that was tried and refused (said in a
 # run's output, as a refused automatic step-up is not logged), comma-separated.
-stepped() { { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv"; sed -n 's/^swarm: step-up: /refused: step-up: /p' "${ROOT}/run.log"; } | paste -sd, -; }
+stepped() { { awk -F'\t' '$2 == "escalate" { sub(/ ~~ .*/, "", $5); print $5 }' "${P}/.swarm/events.tsv"; sed -n 's/^swarm: step-up: /refused: step-up: /p' "${ROOT}/run.log"; } | paste -sd, -; }
 closes() { grep -c $'\tclose\t' "${P}/.swarm/events.tsv" || true; }
 findings_tells() { printf '2026-10-18T10:0%s:00Z\ttell:findings\ts1\tw:1\tok\n' 1 2 >> "${P}/.swarm/events.tsv"; echo "fix it" > "${ROOT}/f.md"; }
 # review_open — s1's review agent (review-s1) open in pane w:2, as review-agent leaves it: its tab record,
@@ -130,7 +133,30 @@ review_open() {
 }
 heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
 attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
-escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+escalates() { awk -F'\t' '$2 == "escalate" { sub(/ ~~ .*/, "", $5); print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+# inputs <command> — the bg, test and sign fields (events_outcome's fields()) of each <command> line in
+# events.tsv, for incident only the stalled ones, as `bg=<x> test=<y> sign=<z>`, comma-separated.
+inputs() {
+  python3 -I -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from events_outcome import fields, outcome
+out = []
+for l in open(sys.argv[2]):
+    f = l.rstrip("\n").split("\t")
+    if len(f) == 5 and f[1] == sys.argv[3] and (f[1] != "incident" or outcome(f).startswith("stalled:")):
+        kv = fields(f)
+        out.append(" ".join(k + "=" + kv.get(k, "-") for k in ("bg", "test", "sign")))
+print(",".join(out))' "${SWARM%/*}/lib" "${P}/.swarm/events.tsv" "$1"
+}
+# bg_live — s1's session log holds a background task launched an hour ago and not ended: older than
+# stall_minutes (30), so no sign of life, but under 3 times it, so bg_running reads it live.
+bg_live() {
+  mkdir -p "${ROOT}/projects/p"
+  printf '{"type":"user","timestamp":"%s","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"Command running in background with ID: b2"}]},"toolUseResult":{"backgroundTaskId":"b2"}}\n' \
+    "$(python3 -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) - d.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))')" \
+    > "${ROOT}/projects/p/sess-1.jsonl"
+}
 # wait-pr's PR (#5, s1's) and its heads, full SHAs as wait-pr reads them.
 URL=https://github.com/o/proj/pull/5
 RA="$(printf '%040d' 0 | tr 0 a)"; RB="$(printf '%040d' 0 | tr 0 b)"; RC="$(printf '%040d' 0 | tr 0 c)"
@@ -164,6 +190,25 @@ for ladder in sonnet,opus,fable ""; do
   if [[ -n "${ladder}" ]]; then
     check "ladder '${ladder}': a stall found by wait --stall steps up, and wait says stepped up, not stalled" "yes|no|${want}" \
       "$(grep -q '^stepped up: s1' <<< "${out}" && echo yes)|$(grep -q '^stalled:' <<< "${out}" && echo yes || echo no)|$(stepped)"
+    check "ladder '${ladder}': the stall's incident and escalate line each carry bg=0 test=0 sign=0, as agent_stalled read them" \
+      "bg=0 test=0 sign=0|bg=0 test=0 sign=0" "$(inputs incident)|$(inputs escalate)"
+    # A background task launched an hour ago and still running is work: the wait neither stalls nor steps up.
+    fresh "${ladder}" busy; bg_live
+    out="$(SWARM_WAIT_STARTED="${OLD}" run wait --stall s1 3000)" || true
+    check "ladder '${ladder}': a builder with a live background task past stall_minutes is neither stalled nor stepped up" \
+      "busy||" "${out}|$(stepped)|$(inputs incident)"
+    # Run by hand, step-up reads the three fresh while the builder still runs: the live task shows as bg=1.
+    fresh "${ladder}" busy; bg_live
+    run step-up s1 stalled >/dev/null || true
+    check "ladder '${ladder}': a step-up s1 stalled run by hand logs its escalate line with bg=1 read fresh" \
+      "ok (stalled: sonnet -> opus)|bg=1 test=0 sign=0" "$(stepped)|$(inputs escalate)"
+    # End to end: flow incidents lists that line under s1 and counts it as a false stall, and a lead-hand
+    # line with cause=false-stall (a pane a person flagged) counts beside it.
+    run intervene lead-hand false-stall "s1 was stepped up while its background task ran" >/dev/null
+    out="$(run flow --since "$(date -u +%Y-%m-%d)" --no-cache)" || true
+    check "ladder '${ladder}': flow incidents lists the bg=1 step-up under s1 and counts it, and the flagged one, as false stalls" \
+      "yes|false stalls: 2 (1 stalled incidents or step-ups with an input at 1, 1 lead-hand or user-caught with cause=false-stall)" \
+      "$(grep -qE $'^[0-9TZ:-]+\ts1\t1\t0\t0\tescalate$' <<< "${out}" && echo yes)|$(grep '^false stalls:' <<< "${out}")"
     # The same builder running make test in its pane is working: no stall, so no step-up.
     fresh "${ladder}" busy; echo '{"result":{"process_info":{"pane_id":"w:1","shell_pid":100}}}' > "${ROOT}/pi"
     out="$(SWARM_WAIT_STARTED="${OLD}" PATH="${PS_BIN}:${PATH}" run wait --stall s1 3000)" || true
@@ -172,6 +217,8 @@ for ladder in sonnet,opus,fable ""; do
   else
     check "ladder '${ladder}': a stall found by wait --stall is stalled, and steps nothing up" "yes|${want}" \
       "$(grep -q '^stalled:' <<< "${out}" && echo yes)|$(stepped)"
+    check "ladder '${ladder}': the stall's incident carries bg=0 test=0 sign=0, as agent_stalled read them" \
+      "bg=0 test=0 sign=0" "$(inputs incident)"
   fi
 
   fresh "${ladder}" idle; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true

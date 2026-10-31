@@ -83,7 +83,7 @@ printf '%s\n' --- "status: ready" "kind: code" --- "" "# s1" "" "**Done when:**"
 "${GIT[@]}" -C "${P}" worktree add -q -b story/s1 "${WT}" origin/main
 echo "escalate_ladder = sonnet,opus,fable" > "${P}/.claude/swarm/config"
 run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${STUB_BIN}:${PATH}" bash "${SWARM}" "$@" 2>&1); }
-escalate() { awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv" 2>/dev/null; }
+escalate() { awk -F'\t' '$2 == "escalate" { sub(/ ~~ .*/, "", $5); l = $5 } END { print l }' "${P}/.swarm/events.tsv" 2>/dev/null; }
 timeouts() { grep -o -- '--until blocked --timeout [0-9]*' "${ROOT}/herdr.log" | sed 's/.* //' | paste -sd, -; }
 closes() { grep -c '^tab close\|^pane close' "${ROOT}/herdr.log" || true; }
 # build_on <model> <late> [mode] — s1's builder is <model> in pane w:1, with no step-up waiting, and
