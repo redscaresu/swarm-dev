@@ -1493,14 +1493,14 @@ stall_reads() {
 }
 
 # wait_activity <name> <target> <since> — when <name> made no progress since <since> (epoch: when the
-# wait began), neither a commit or edit in its story's worktree (story_work_time) nor its own work in
+# wait began; a sign in that same second counts as progress), neither a commit or edit in its story's worktree (story_work_time) nor its own work in
 # its session log (session_mtime), as agent_stalled reads them, print `activity=<x>`: the stall_reads
 # that are 1, comma-joined, or none. Print nothing when it made progress.
 wait_activity() {
   local slug t on="" r
   slug="$(stall_py story "$1")" || slug=""
   for t in "$([[ -z "${slug}" ]] || story_work_time "${slug}")" "$(session_mtime "$1")"; do
-    [[ ! "${t}" =~ ^[0-9]+$ || "${t}" -le "$3" ]] || return 0
+    [[ ! "${t}" =~ ^[0-9]+$ || "${t}" -lt "$3" ]] || return 0   # the wait's own second counts: a sign then is progress
   done
   for r in $(stall_reads "$1" "$2"); do
     [[ "${r#*=}" == 0 ]] || on+="${on:+,}${r%%=*}"

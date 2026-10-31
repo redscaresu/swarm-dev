@@ -84,6 +84,8 @@ sites() (
     act-none) settle() { slow_timeout; }; wait_agent a 1000 ;;
     act-test) test_running() { [[ "$1" == w:1 ]]; }; settle() { slow_timeout; }; wait_agent a 1000 ;;
     act-commit) settle() { sleep 1; date +%s > "${PROJECT_DIR}/ct"; slow_timeout; }; wait_agent a 1000 ;;
+    act-same) at="$(date +%s)"; settle() { echo "${at}" > "${PROJECT_DIR}/ct"; slow_timeout; }
+      SWARM_WAIT_STARTED="${at}" wait_agent a 1000 ;;
     act-session) settle() { sleep 1; say "$(date +%s)"; slow_timeout; }; wait_agent a 1000 ;;
     login) settle() { echo idle; }; login_expired() { return 0; }
       wait_agent a 1000; wait_agent a 1000; record_event tell:resume a; wait_agent a 1000 ;;
@@ -133,6 +135,8 @@ check "a timeout with no commit or session write in the wait and a test run goin
 check "a timeout with no commit or session write in the wait and nothing running logs activity=none" "$(sites act-none >/dev/null; site_fields act-none)" \
   "wait-timeout activity=none role=code slug=a"
 check "a timeout after a commit made during the wait logs no activity=" "$(sites act-commit >/dev/null; site_fields act-commit)" "wait-timeout role=code slug=a"
+check "a timeout after a commit in the second the wait began logs no activity=" "$(sites act-same >/dev/null; site_fields act-same)" \
+  "wait-timeout role=code slug=a"
 check "a timeout after an own-work line in the session log during the wait, with no commit, logs no activity=" \
   "$(sites act-session >/dev/null; site_fields act-session)" "wait-timeout role=code slug=a"
 
