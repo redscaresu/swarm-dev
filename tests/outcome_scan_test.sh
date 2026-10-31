@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 # outcome_scan_test.sh — no reader under bin/ reads events.tsv's outcome column raw. The column may end
 # in a key=value tail (append_event), so an exact compare of it ($5 == "ok", e[4] == "ok"), a slice of
-# it (substr($5, ...), e[4][3:]) or an end-anchored match on it ($5 ~ /x$/) turns false once a writer
-# adds fields. The Python forms that break the same way are flagged too: fullmatch, endswith, a dict
-# .get and membership (in). A reader goes through the helper instead: outcome($5) (EVENT_OUTCOME_AWK in
-# bin/lib/agents.sh) or events_outcome.outcome(row) (bin/lib/events_outcome.py, which the scan skips).
+# it (substr($5, ...), e[4][3:]) or an end-anchored match on it ($5 ~ /x$/, match($5, /x$/),
+# re.search(r"x$", e[4])) turns false once a writer adds fields. The forms that break the same way are
+# flagged too: fullmatch, endswith, a key lookup (.get, seen[$5], $h{$F[4]}) and membership (in), on
+# the column itself or wrapped in .strip() or .lower(). A reader goes through the helper instead:
+# outcome($5) (EVENT_OUTCOME_AWK in bin/lib/agents.sh) or events_outcome.outcome(row)
+# (bin/lib/events_outcome.py, which the scan skips).
 # It scans bin/swarm.sh, bin/lib/*.sh and bin/lib/*.py: the awk and perl programs in the shell by line,
 # the Python (the .py files, and python3 heredocs and -c strings in the shell) by its syntax tree.
-# Heredoc text that is no Python, awk or perl program is data (a brief), and is skipped. A Python row
-# rebuilt as f[:4] + [outcome(f)] (or + [o], o bound from outcome()), and a name bound from one (or
-# from a list one was added to, and no other row), holds the outcome without its tail, so its [4] is
-# not raw; a name bound to a raw [4] (o = f[4]) is raw itself. An awk variable set from $5 is not
-# followed. A read of another file's fifth column (findings.tsv, test-runs.tsv) ends its line with
-# `# outcome-scan: ok <reason>`, the reason naming the file it reads.
+# Heredoc text that is no Python, awk or perl program is data (a brief), and is skipped; a heredoc that
+# never ends fails. A Python row rebuilt as f[:4] + [outcome(f)] (or + [o], o bound from outcome()),
+# and a name bound from one (or from a list of only such rows), holds the outcome without its tail, so
+# its [4] is not raw. A row is a name or an item of one (rows[-1], b["f"]) or x.split(...); a name bound
+# to its raw [4] is raw itself (o = f[4]; c, o = f[1], f[4]; the fifth name of an unpacked row). An awk
+# variable set from $5 is not followed. A read of another file's fifth column (findings.tsv,
+# test-runs.tsv, agents.tsv) ends its line with `# outcome-scan: ok <reason>`, the reason naming the
+# file it reads.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -26,9 +30,13 @@ import ast, re, sys
 OK = re.compile(r"#\s*outcome-scan:\s*ok\s+\S")
 COL = r"(?:\\?\$5(?!\d)|\$F\[4\])"   # awk's fifth field (\$5 in a "..." program), perl's -a fifth
 CMP = r"(?:==|!=|\beq\b|\bne\b)"
+ANCHORED = r"""(?:/(?:[^/\\]|\\.)*?\\?\$/|\\?"(?:[^"\\]|\\.)*?\\?\$\\?")"""   # /x$/ or "x$"
 SHELL = [(re.compile(COL + r"\s*" + CMP + "|" + CMP + r"\s*" + COL), "exact compare"),
          (re.compile(r"substr\s*\(\s*" + COL), "slice"),
-         (re.compile(COL + r"""\s*!?=?~\s*(?:/(?:[^/\\]|\\.)*?\\?\$/|\\?"(?:[^"\\]|\\.)*?\\?\$\\?")"""), "end-anchored match")]
+         (re.compile(COL + r"\s*!?=?~\s*" + ANCHORED), "end-anchored match"),
+         (re.compile(r"\bmatch\s*\(\s*" + COL + r"\s*,\s*" + ANCHORED), "end-anchored match"),
+         (re.compile(COL + r"\s+in\b"), "membership"),
+         (re.compile(r"\w\[\s*" + COL + r"\s*\]|\{\s*\$F\[4\]\s*\}"), "dict lookup")]
 HEREDOC = re.compile(r"""(?<!<)<<-?[ \t]*\\?(["']?)([A-Za-z_]\w*)\1""")   # not <<<, a here-string
 PY_C = re.compile(r"""\bpython3\b[^|;&]*?\s-c\s*(['"])""")
 SQ_QUOTE = re.compile(r"""'(?:\\'|"'")'""")   # '\'' and '"'"': a ' in a '...' program
@@ -48,48 +56,105 @@ def four(node):
     s = getattr(s, "value", s) if type(s).__name__ == "Index" else s   # Python 3.8's ast
     return isinstance(s, ast.Constant) and s.value == 4
 
+def calls(node, *names):   # a call of one of <names>, as a function or a method
+    return isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) in names
+
+def anchored(node):   # a string pattern that ends in $ or \Z
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.endswith(("$", "\\Z"))
+
+def rebuilt(node):   # x[:4] + [<one item>]
+    return isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and isinstance(node.left, ast.Subscript) \
+        and isinstance(node.left.slice, ast.Slice) and node.left.slice.lower is None \
+        and isinstance(node.left.slice.upper, ast.Constant) and node.left.slice.upper.value == 4 \
+        and isinstance(node.right, ast.List) and len(node.right.elts) == 1
+
+KINDS = ("clean", "told", "alias", "mixed", "rows", "rowlists", "anchored")
+
 class Scan(ast.NodeVisitor):
-    # Visits in source order, so what a name holds counts from where it is bound: clean, a row whose
-    # [4] has no tail; told, a value from outcome(); alias, a raw [4] itself (o = f[4]); mixed, a list
-    # given a row that is not clean, which no clean row added later makes clean.
+    # Visits in source order, so what a name holds counts from where it is bound: clean, rows whose [4]
+    # has no tail; told, a value from outcome(); alias, a raw [4] itself (o = f[4]); mixed, a list given
+    # a row that is not clean, which no clean row added later makes clean; rows, one row from a split;
+    # rowlists, a list of those; anchored, a re.compile() of a pattern that ends in $ or \Z.
     def __init__(self, path, lines, at):
         self.path, self.lines, self.at = path, lines, at
-        self.clean, self.told, self.alias, self.mixed = set(), set(), set(), set()
+        self.names = {k: set() for k in KINDS}
 
-    def raw(self, node):   # <name>[4] of a name not known to be clean, x.split(...)[4], or an alias
+    def has(self, kind, node):
+        return isinstance(node, ast.Name) and node.id in self.names[kind]
+
+    def raw(self, node):   # a raw [4]: of a row not known to be clean, an alias, or one in .strip() or .lower()
         if isinstance(node, ast.Name):
-            return node.id in self.alias
-        return isinstance(node, ast.Subscript) and four(node) and (
-            isinstance(node.value, ast.Name) and node.value.id not in self.clean
-            or isinstance(node.value, ast.Call) and getattr(node.value.func, "attr", "") == "split")
+            return self.has("alias", node)
+        if calls(node, "strip", "lstrip", "rstrip", "lower", "upper", "casefold") and not node.args:
+            return isinstance(node.func, ast.Attribute) and self.raw(node.func.value)
+        if not (isinstance(node, ast.Subscript) and four(node)):
+            return False
+        root = node.value   # a row: a name, an item of one (rows[-1], b["f"]) or x.split(...)
+        while isinstance(root, ast.Subscript): root = root.value
+        return (isinstance(root, ast.Name) or calls(root, "split")) and not self.stripped(node.value)
 
     def outcome(self, node):   # calls outcome(), or reads a name bound from it
         return any(self.told_value(n) for n in ast.walk(node))
 
     def told_value(self, node):   # is outcome(...) itself, or a name bound from it
-        return isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "outcome" \
-            or isinstance(node, ast.Name) and node.id in self.told
+        return calls(node, "outcome") or self.has("told", node)
 
-    def stripped(self, node):   # holds a row rebuilt as x[:4] + [outcome(x)] or + [o], or a clean name
-        for n in ast.walk(node):
-            if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add) and isinstance(n.left, ast.Subscript) \
-                    and isinstance(n.left.slice, ast.Slice) and n.left.slice.lower is None \
-                    and isinstance(n.left.slice.upper, ast.Constant) and n.left.slice.upper.value == 4 \
-                    and isinstance(n.right, ast.List) and len(n.right.elts) == 1 and self.told_value(n.right.elts[0]):
-                return True
-            if isinstance(n, ast.Name) and n.id in self.clean:
-                return True
+    def in_comp(self, node, test):   # <test> of a comprehension's item, its targets bound as it binds them
+        got = []
+        def inside():
+            for g in node.generators: self.bind(g.target, g.iter, True)
+            got.append(test(node.elt))
+        self.scoped(inside)
+        return got[0]
+
+    def stripped(self, node):   # holds clean rows only, by its shape: a clean name used as a key is not enough
+        if isinstance(node, ast.Name):
+            return self.has("clean", node)
+        if isinstance(node, ast.Subscript):   # an item or a slice of clean rows
+            return self.stripped(node.value)
+        if rebuilt(node):
+            return self.told_value(node.right.elts[0])
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self.stripped(node.left) and self.stripped(node.right)
+        if isinstance(node, ast.IfExp):   # f[:4] + [outcome(f)] if len(f) == 5 else f: a short row has no [4]
+            return self.stripped(node.body)
+        if isinstance(node, (ast.List, ast.Set)):
+            return bool(node.elts) and all(self.stripped(e) for e in node.elts)
+        if isinstance(node, ast.Tuple):   # a record such as (time, row)
+            return any(self.stripped(e) for e in node.elts)
+        if calls(node, "enumerate", "reversed", "sorted", "list", "tuple", "iter") and node.args:
+            return self.stripped(node.args[0])
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            return self.in_comp(node, self.stripped)
         return False
+
+    def split_row(self, node):   # one raw row: x.split(...) or a name bound from one
+        return calls(node, "split") or self.has("rows", node)
+
+    def split_rows(self, node):   # a list of raw rows: a name bound from one, or a comprehension of them
+        if isinstance(node, (ast.ListComp, ast.GeneratorExp)):
+            return self.in_comp(node, self.split_row)
+        return self.has("rowlists", node)
 
     # bind <target> <value> [each] — the names in <target> now hold <value>, or each of its items.
     def bind(self, target, value, each=False):
-        on = (self.stripped(value), not each and self.outcome(value),
-              not each and isinstance(target, ast.Name) and self.raw(value))
+        if isinstance(target, (ast.Tuple, ast.List)) and not each and isinstance(value, (ast.Tuple, ast.List)) \
+                and len(value.elts) == len(target.elts):
+            for t, v in zip(target.elts, value.elts): self.bind(t, v)   # c, o = f[1], f[4]
+            return
+        name = isinstance(target, ast.Name)
+        on = {"clean": self.stripped(value), "told": not each and self.outcome(value),
+              "alias": not each and name and self.raw(value), "mixed": False,
+              "rows": self.split_rows(value) if each else self.split_row(value),
+              "rowlists": not each and self.split_rows(value),
+              "anchored": not each and calls(value, "compile") and bool(value.args) and anchored(value.args[0])}
         for n in ast.walk(target):
             if isinstance(n, ast.Name):
-                self.mixed.discard(n.id)
-                for names, add in zip((self.clean, self.told, self.alias), on):
-                    (names.add if add else names.discard)(n.id)
+                for k in KINDS: (self.names[k].add if on[k] else self.names[k].discard)(n.id)
+        if not name and len(getattr(target, "elts", ())) >= 5 and isinstance(target.elts[4], ast.Name) \
+                and not any(isinstance(e, ast.Starred) for e in target.elts[:5]) and on["rows"]:
+            self.names["alias"].add(target.elts[4].id)   # a row unpacked: its fifth name is the raw outcome
+            self.names["rows"].discard(target.elts[4].id)
 
     def flag(self, node, shape):
         report(self.path, self.lines, self.at + node.lineno, shape)
@@ -111,18 +176,18 @@ class Scan(ast.NodeVisitor):
         if isinstance(node.target, ast.Name): self.added(node.target.id, [node.value])
 
     def added(self, name, values):   # <name>, a list, was given <values>: clean while each row was
-        if any(self.stripped(v) for v in values) and name not in self.mixed:
-            self.clean.add(name)
+        if any(self.stripped(v) for v in values) and name not in self.names["mixed"]:
+            self.names["clean"].add(name)
         elif not any(self.stripped(v) for v in values):
-            self.clean.discard(name); self.mixed.add(name)
+            self.names["clean"].discard(name); self.names["mixed"].add(name)
 
     def visit_NamedExpr(self, node):
         self.visit(node.value); self.bind(node.target, node.value)
 
     def scoped(self, visit):   # what a comprehension or function binds is its own: the names outside keep theirs
-        held = [set(names) for names in (self.clean, self.told, self.alias, self.mixed)]
+        held = {k: set(v) for k, v in self.names.items()}
         visit()
-        self.clean, self.told, self.alias, self.mixed = held
+        self.names = held
 
     def visit_comp(self, node):
         def inside():
@@ -159,19 +224,20 @@ class Scan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node):
-        f = node.func
-        args = node.args + [k.value for k in node.keywords]
-        if isinstance(f, ast.Name) and f.id == "fullmatch" and any(self.raw(a) for a in args):
+        f, args = node.func, node.args + [k.value for k in node.keywords]
+        if calls(node, "fullmatch") and any(self.raw(a) for a in args):
             self.flag(node, "fullmatch")
-        if isinstance(f, ast.Attribute):
-            if f.attr == "endswith" and self.raw(f.value):
-                self.flag(node, "endswith")
-            elif f.attr == "fullmatch" and any(self.raw(a) for a in args):
-                self.flag(node, "fullmatch")
-            elif f.attr == "get" and node.args and self.raw(node.args[0]):
-                self.flag(node, "dict lookup")
-            elif f.attr in ("append", "add", "extend", "insert") and isinstance(f.value, ast.Name):
-                self.added(f.value.id, node.args)
+        elif calls(node, "search", "match") and any(self.raw(a) for a in args) and (
+                node.args and anchored(node.args[0])
+                or isinstance(f, ast.Attribute) and self.has("anchored", f.value)):
+            self.flag(node, "end-anchored match")
+        elif calls(node, "endswith") and isinstance(f, ast.Attribute) and self.raw(f.value):
+            self.flag(node, "endswith")
+        elif calls(node, "get") and node.args and self.raw(node.args[0]):
+            self.flag(node, "dict lookup")
+        elif calls(node, "append", "add", "extend", "insert") and isinstance(f, ast.Attribute) \
+                and isinstance(f.value, ast.Name):
+            self.added(f.value.id, node.args)
         self.generic_visit(node)
 
 def scan_python(path, lines, code, at=0):
@@ -217,9 +283,14 @@ def scan_shell(path, lines):
                 text += "\n" + lines[j]; j += 1
             if code is not None:
                 scan_python(path, lines, code, n - 1)
-        for d in [h.group(2) for h in HEREDOC.finditer(line)]:
-            body = i
+        for h in HEREDOC.finditer(line):
+            before = line[:h.start()]
+            if before.count("((") > before.count("))") or before.count('"') % 2 or before.count("'") % 2:
+                continue   # a shift in $(( )), or << in a string
+            d, body = h.group(2), i
             while i < len(lines) and lines[i].strip() != d: i += 1
+            if i == len(lines):
+                OUT.append(f"{path}:{n}: heredoc {d} never ends, so the rest of the file goes unread")
             if re.search(r"\bpython3\b", cmd):
                 scan_python(path, lines, "\n".join(lines[body:i]), body)
             elif re.search(r"\b(?:awk|perl)\b", cmd):   # a program on stdin: awk -f -, perl -
@@ -301,6 +372,14 @@ awk -F'\t' '$5 == "ok" { print "# outcome-scan: ok findings.tsv" }' "${f}"
 awk -F'\t' "{ print substr(\$5, 8) }" "${f}"
 awk -F'\t' "\"ok\" == \$5" "${f}"
 python3 -c 'print(1)'; python3 -c 'import sys; f = sys.argv[1].split("\t"); print(f[4] == "ok")' "${x}"
+n=$(( 1 << shift ))
+awk -F'\t' '$5 == "ok"' "${f}"
+echo "a << b"
+awk -F'\t' '$5 != "ok"' "${f}"
+awk -F'\t' 'match($5, /ok$/)' "${f}"
+awk -F'\t' '($5 in seen) { n++ }' "${f}"
+awk -F'\t' '{ seen[$5]++ }' "${f}"
+perl -F'\t' -lane '$h{$F[4]}++' "${f}"
 FIXTURE
 cat > "${tmp}/loose.py" <<'FIXTURE'
 import re, sys
@@ -348,6 +427,29 @@ def local(f):
 aa = f[4] == "ok"
 def done(ok=f[4] == "ok"):
     return ok
+cmd, o = f[1], f[4]
+ab = o == "ok"
+t, cmd, slug, who, out = line.split("\t")
+ac = out == "ok"
+rows = [l.split("\t") for l in sys.stdin]
+for _, c, s, w, out in rows:
+    ad = out == "ok"
+ae = re.search(r"done$", f[4])
+af = re.match(r"ok \(\d+\)$", f[4])
+PAT = re.compile(r"ok\Z")
+ag = PAT.search(f[4])
+ah = rows[-1][4] == "ok"
+ai = b["f"][4] == "ok"
+aj = f[4].strip() == "ok"
+ak = f[4].lower() in ("ok",)
+g = f[:4] + [outcome(f)]
+by_story = {l.split("\t")[0]: l.split("\t") for l in sys.stdin}
+e = by_story.get(g[0], [])
+al = e[4] == "ok"
+st = by_story[g[0]]
+am = st[4] == "ok"
+rows = [f[:4] + [outcome(f)], f]
+an = [r for r in rows if r[4] == "ok"]
 FIXTURE
 cat > "${tmp}/tight.sh" <<'FIXTURE'
 awk -F'\t' "${EVENT_OUTCOME_AWK}"'$2 == "story" && outcome($5) == "ok"' "${f}"
@@ -375,7 +477,7 @@ f = line.split("\t")
 f = f[:4] + [outcome(f)] if len(f) == 5 else f
 print(f[4] == "ok", re.fullmatch("x", f[4]), f[4] in ("ok",))
 g = line.split("\t")
-print(g[4].startswith("ok"), "ok" in g[4], g[4] + "x", b["f"][4] == "x", sys.argv[4] == "x")
+print(g[4].startswith("ok"), "ok" in g[4], g[4] + "x", sys.argv[4] == "x")
 print(g[4] == "all")   # outcome-scan: ok test-runs.tsv's filter
 o = outcome(g)
 evs.append((0, g[:4] + [o]))
@@ -384,6 +486,17 @@ for t, e in evs:
 o = g[4]
 o = outcome(g)
 print(o == "ok", o.endswith("x"))
+PY
+n=$(( 1 << 2 ))
+echo "a << b"
+python3 - <<'PY'
+import re, sys
+from events_outcome import outcome
+g = sys.stdin.readline().split("\t")
+print(re.match("ok", g[4]), re.search("^ok", g[4]), g[4].strip().startswith("ok"))
+evs = [(0, g[:4] + [outcome(g)])]
+for r in [e for _, e in evs]:
+    print(r[4] == "ok", r[4].strip() == "ok")
 PY
 FIXTURE
 got="$(outcome_scan "${tmp}/loose.sh" "${tmp}/loose.py")" || got="the scanner failed"
@@ -395,10 +508,15 @@ want="$(printf '%s\n' "loose.sh:1 ${x}" "loose.sh:2 ${x}" "loose.sh:3 slice" "lo
   "loose.sh:10 ${x}" "loose.sh:13 endswith" "loose.sh:15 ${x}" "loose.sh:16 ${x}" "loose.sh:19 ${x}" \
   "loose.sh:21 end-anchored match" "loose.sh:25 ${x}" "loose.sh:28 ${x}" "loose.sh:30 ${x}" \
   "loose.sh:32 slice" "loose.sh:33 ${x}" "loose.sh:34 slice" "loose.sh:35 ${x}" "loose.sh:36 ${x}" \
+  "loose.sh:38 ${x}" "loose.sh:40 ${x}" "loose.sh:41 end-anchored match" "loose.sh:42 membership" \
+  "loose.sh:43 dict lookup" "loose.sh:44 dict lookup" \
   "loose.py:3 ${x}" "loose.py:4 slice" "loose.py:5 fullmatch" "loose.py:6 endswith" "loose.py:7 dict lookup" \
   "loose.py:8 membership" "loose.py:10 ${x}" "loose.py:13 ${x}" "loose.py:16 ${x}" "loose.py:18 ${x}" "loose.py:20 ${x}" \
   "loose.py:23 ${x}" "loose.py:25 ${x}" "loose.py:27 fullmatch" "loose.py:28 fullmatch" "loose.py:29 ${x}" "loose.py:34 ${x}" \
-  "loose.py:37 ${x}" "loose.py:38 ${x}" "loose.py:43 ${x}" "loose.py:44 ${x}")"
+  "loose.py:37 ${x}" "loose.py:38 ${x}" "loose.py:43 ${x}" "loose.py:44 ${x}" \
+  "loose.py:47 ${x}" "loose.py:49 ${x}" "loose.py:52 ${x}" "loose.py:53 end-anchored match" \
+  "loose.py:54 end-anchored match" "loose.py:56 end-anchored match" "loose.py:57 ${x}" "loose.py:58 ${x}" \
+  "loose.py:59 ${x}" "loose.py:60 membership" "loose.py:64 ${x}" "loose.py:66 ${x}" "loose.py:68 ${x}")"
 if [[ "${got}" == "${want}" ]]; then
   echo "ok   a fixture with each raw read fails, naming its file:line"
 else
@@ -408,6 +526,15 @@ if got="$(outcome_scan "${tmp}/tight.sh")" && [[ -z "${got}" ]]; then
   echo "ok   outcome(), a prefix match, a rebuilt row, heredoc text and the opt-out pass"
 else
   echo "FAIL the tight fixture still reports:"; echo "${got}"; fails=$((fails + 1))
+fi
+cat > "${tmp}/open.sh" <<'FIXTURE'
+cat <<BRIEF
+awk -F'\t' '$5 == "ok"' "${f}"
+FIXTURE
+if got="$(outcome_scan "${tmp}/open.sh")" && [[ "${got}" == *"open.sh:1: heredoc BRIEF never ends, so the rest of the file goes unread" ]]; then
+  echo "ok   a heredoc that never ends fails rather than leaving the rest of the file unread"
+else
+  echo "FAIL a heredoc that never ends: got"; echo "${got}"; fails=$((fails + 1))
 fi
 printf 'f = (\n' > "${tmp}/broken.py"
 if got="$(outcome_scan "${tmp}/broken.py")" && [[ "${got}" == *"broken.py:"*": Python that does not parse:"* ]]; then
