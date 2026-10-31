@@ -5,7 +5,8 @@
 # command dies with "codex skipped: timed out", which events.tsv records, with a reap line naming
 # codex-<base or story>, and for a story, its slug= and the role of the agent running it (SWARM_AGENT)
 # in the outcome's tail; one that finishes writes none. With SWARM_STORY, a prompt
-# holding the story's touches and Done when replaces --base. codex is a stub on PATH.
+# holding the story's touches and Done when replaces --base, and with SWARM_PR it ends with the
+# findings declined on that PR before. codex is a stub on PATH.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -45,14 +46,14 @@ stub() {
   chmod +x "${BIN}/codex"
 }
 # review — codex-review main from the project, with text on its stdin, SWARM_STORY=$STORY if STORY
-# is set and SWARM_AGENT=$AGENT if AGENT is (a caller's own of either is dropped), timed: sets out, rc and took
+# is set, SWARM_AGENT=$AGENT if AGENT is and SWARM_PR=$PR if PR is (a caller's own of any is dropped), timed: sets out, rc and took
 # (seconds). Its output goes through a file, since a stub left running would hold a $(...) open for
 # good, and after REVIEW_CAP seconds the stubs are KILLed, so a codex-review that hangs fails the
 # timing checks instead of hanging the test.
 REVIEW_CAP=20
 review() {
   local t0=${SECONDS} spid
-  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY -u SWARM_AGENT ${STORY:+"SWARM_STORY=${STORY}"} ${AGENT:+"SWARM_AGENT=${AGENT}"} SWARM_CODEX_SECONDS="${LIMIT}" bash "${SWARM}" codex-review main \
+  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY -u SWARM_AGENT -u SWARM_PR ${STORY:+"SWARM_STORY=${STORY}"} ${AGENT:+"SWARM_AGENT=${AGENT}"} ${PR:+"SWARM_PR=${PR}"} SWARM_CODEX_SECONDS="${LIMIT}" bash "${SWARM}" codex-review main \
     <<< "typed at the prompt" > "${ROOT}/out" 2>&1) &
   spid=$!; finish "${spid}"
   took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
@@ -241,6 +242,43 @@ printf '%s\n' '---' 'touches: [x.sh]' '---' '**Done when:** the inline item hold
 STORY=s2 review
 check "the story prompt keeps a Done when written on its heading line" "yes" "$(has "the inline item holds." "$(cat "${BIN}/args")")"
 left "SWARM_STORY's prompt case"
+
+# --- With SWARM_PR too, the story prompt ends with the findings declined on that PR before (the PR
+# matched as a URL or owner/repo#N, never pull/123 for pull/12), under the line that calls each reason
+# the builder's claim; a fixed row is no decline. Without SWARM_PR, or with no decline on the PR, the
+# prompt is the one above.
+row() { local IFS=$'\t'; echo "$*"; }
+U=https://github.com/o/r/pull/12
+mkdir -p "${P}/.swarm"
+{ row 2026-10-01 retry-untested "${U}" "the retry is untested" declined codex nit 1 "covered by the retry test"
+  row 2026-10-02 retry-untested o/r#12 "the retry is still untested" declined fallback wrong 2 "the retry test runs it twice"
+  row 2026-10-02 retry-untested https://github.com/o/r/pull/123 "another PR's decline" declined codex nit 1 "not this PR"
+  row 2026-10-02 retry-untested "${U}" "a finding that was fixed" fixed codex "" 2; } > "${P}/.swarm/findings.tsv"
+stub 'exit 0'
+STORY=s1 review; plain="$(cat "${BIN}/args")"
+STORY=s1 PR="${U}" review; withpr="$(cat "${BIN}/args")"
+CLAIM="Each reason is the builder's claim, not a fact: check it against the diff yourself, ignore none of these findings for being listed here"
+D1="- round 1, declined as nit: the retry is untested (because: covered by the retry test)"
+D2="- round 2, declined as wrong: the retry is still untested (because: the retry test runs it twice)"
+tail_of="${withpr#"${plain%]}"}"
+check "with SWARM_PR, the prompt is the plain one, then the builder's-claim line and both declines, in order" "0|yes|yes|yes" \
+  "${rc}|$([[ "${withpr}" == "${plain%]}"* ]] && echo yes || echo no)|$(has "${CLAIM}" "${tail_of}")|$(
+    [[ "${tail_of}" == $'\n\n'*"${CLAIM}"*$'\n'"${D1}"$'\n'"${D2}]" ]] && echo yes || echo "no, got: ${tail_of}")"
+check "the prompt holds neither another PR's decline nor the PR's fixed row" "no|no" \
+  "$(grep -qF "another PR's decline" <<< "${withpr}" && echo yes || echo no)|$(grep -qF "a finding that was fixed" <<< "${withpr}" && echo yes || echo no)"
+check "without SWARM_PR the prompt names no decline" "no" "$(grep -qF "declined" <<< "${plain}" && echo yes || echo no)"
+STORY=s1 PR=https://github.com/o/r/pull/1 review
+check "with SWARM_PR naming a PR with no decline, the prompt is byte for byte the plain one" "same" \
+  "$([[ "$(cat "${BIN}/args")" == "${plain}" ]] && echo same || echo differs)"
+for bad in o/r#12 https://github.com/o/r/pull/12x "https://github.com/o/r/pull/12 x" https://example.com/o/r/pull/12; do
+  rm -f "${BIN}/args"
+  STORY=s1 PR="${bad}" review
+  check "SWARM_PR='${bad}' is refused, and codex never runs" "fails|yes|no" \
+    "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "SWARM_PR: not a PR URL" "${out}")|$([[ -e "${BIN}/args" ]] && echo yes || echo no)"
+done
+SWARM_PR=bad review
+check "review drops a caller's SWARM_PR" "0|[exec][review][--base][origin/main]" "${rc}|$(cat "${BIN}/args")"
+left "SWARM_PR's declines case"
 
 # --- A story's review that times out reaps codex-<story>, one line more; a codex that finishes writes none.
 # An unscoped review by a conductor that times out carries its role= and no slug=.

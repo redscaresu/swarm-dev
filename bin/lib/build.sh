@@ -150,11 +150,13 @@ tell or a failed step-up goes in your report for the lead.
 EOF
 }
 
-# codex_review_cmd <base> [slug] — how a brief runs codex: through codex-review, which stops it after
+# codex_review_cmd <base> [slug] [pr-url] — how a brief runs codex: through codex-review, which stops it after
 # codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config;
-# SWARM_STORY, given a slug, so codex reviews against that story.
+# SWARM_STORY, given a slug, so codex reviews against that story; SWARM_PR, given the story's PR, so
+# codex also sees the findings declined on it before (codex_story_prompt).
 codex_review_cmd() {
   [[ -z "${2:-}" ]] || printf 'SWARM_STORY=%q ' "$2"
+  [[ -z "${3:-}" ]] || printf 'SWARM_PR=%q ' "$3"
   printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"
 }
 # codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
@@ -1397,7 +1399,7 @@ EOF
 # and code-scanning alerts, each real one, red check or conflict sent to the builder as a
 # nudge, and wait-pr again on the head it pushes; bounded at two nudges and two red heads, past which,
 # or when the builder stops pushing, it writes a findings file with the red check as its one finding,
-# sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug, /code-review on round 1 when the PR
+# sent to the builder as any finding), the dropped-lines check on the round's head (dropped_lines_rule), codex-review with the slug and the PR (which shows codex the findings declined on it before), /code-review on round 1 when the PR
 # changes code, whether round 1 may run tests (review_verify, review_round_line), the guard's forms (guard_rule), and swarm-dev's rules (rules.md) then the project's. After each review it fixes or declines each finding, logs each
 # with log-finding --round (finding_rule), and writes the absolute <findings file> (the agent's cwd is
 # the worktree) under its head: line, with the declined and out-of-scope points apart: on a pass, just
@@ -1538,7 +1540,7 @@ first, as below.
 
 $(dropped_lines_rule "$2" "$5" "$3" "$4")
 
-Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
+Run \`$(codex_review_cmd "$3" "$1" "$2")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
 Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
 a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
@@ -1596,7 +1598,7 @@ printed, as above. Once the findings are sent, wait for the builder as above. Th
 builder's reply (\`herdr agent read ${agent} --source recent-unwrapped\`). When \`git rev-parse HEAD\`
 is still the head you reviewed (no fix was committed), and the builder declined each finding you
 sent with a reason you accept, the round passes on that head, as one with nothing to fix does: log
-each as declined, rebut them in the PR as above, in one comment with each finding and the builder's
+each as declined, with \`--because "<the builder's reason, one line>"\`, rebut them in the PR as above, in one comment with each finding and the builder's
 reason, and do the pass step above on that head, its review listing them under
 \`## Handled by the review agent\` with those reasons. When HEAD is still the same otherwise, stop with
 \`no fix pushed: <the builder's reply, in one line>\`, as above. When HEAD moved, run the green step
@@ -1605,7 +1607,8 @@ has run on that head the PR has it (a push that did not land ends it with \`the 
 not <sha>\`, as there). Log nothing before then: a fix in this worktree is not on the PR until the
 push lands. With the PR at that head, read the new diff (\`git diff <the head you reviewed>
 HEAD\`) and log each finding you sent: as fixed when the diff fixes it, and as declined, with the
-reason that fits, when the builder declined it with a reason you accept; rebut those in the PR as
+reason that fits and \`--because "<the builder's reason, one line>"\`, when the builder declined it
+with a reason you accept; rebut those in the PR as
 above, in one comment with each finding and the builder's reason. One it did neither to, or
 declined with a reason you do not accept, is not logged; the next round raises it again if it still
 holds. Once that head is green and triaged with nothing to nudge, after a wording nudge run
