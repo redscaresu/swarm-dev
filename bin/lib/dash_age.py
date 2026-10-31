@@ -4,6 +4,7 @@
 import json, os, re
 from report import STEP_UP, session_log
 from stall import *
+from events_outcome import outcome
 from panes import agent_state, pane_records, session_state
 
 STARTS = ("agent", "conduct", "story")
@@ -35,7 +36,8 @@ class Signs:
             t = sign_time(f)
             if t is not None and t > self.ran.get(f[3], 0):
                 self.ran[f[3]] = t
-            t = epoch(f[0]) if (f[1] in STARTS and f[4] == "ok") or (f[1] == "escalate" and STEP_UP.fullmatch(f[4])) else None
+            o = outcome(f)
+            t = epoch(f[0]) if (f[1] in STARTS and o == "ok") or (f[1] == "escalate" and STEP_UP.fullmatch(o)) else None
             if t is not None and t > self.started.get(f[2], 0):
                 self.started[f[2]] = t
 
