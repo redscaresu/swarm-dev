@@ -204,6 +204,66 @@ check "a fixed finding on a top-rung round gives top_rung its share" "$(tail -1 
 check "--epic keeps that epic's stories" "$(loops "" e2 | cut -f1 | sort -u | tr '\n' ' ')" " 1 prs s-held story "
 check "--since past the loops leaves them out, in one line" "$(loops 2026-10-06)" "no review loop in the window"
 
+# decline-only cases, in logs of their own so the totals above keep their fixtures: s-dec's builder
+# declined round 1's findings and pushed nothing, so its review --head wrote a decline-only line, and
+# the review and merge after it close no round 2; s-nodec has the same lines without it; s-sent's
+# findings tell failed after herdr sent it (review_rounds counts it as a round, this reader does not), so
+# its round is still open when its decline-only line comes, and that line closes it; s-dec2's round 2
+# findings went that way too, after a review-agent:next this reader skips, so its decline-only line
+# names round 2 and the build gets a second round with no minutes. s-restart's builder was restarted (an
+# agent line, no story line), which starts a loop while review_rounds counts on, so its decline-only line
+# names round 2 for the loop's one round. s-pad's first loop gets a round from its decline-only line, and
+# the build after it on the same PR starts its rounds past that one. s-open's first loop ends with its
+# round still open (its tell failed after herdr sent it) when the restart comes: that round counts
+# toward the next loop's base too, so its decline-only line naming round 2 adds none.
+D="${dir}/decline"; mkdir -p "${D}"; : > "${D}/findings.tsv"
+printf '%s\n' $'2026-10-01\tcode\ts-dec\tclaude\topus\thigh\tk1' $'2026-10-01\tcode\ts-nodec\tclaude\topus\thigh\tk2' \
+  $'2026-10-01\tcode\ts-sent\tclaude\topus\thigh\tk3' $'2026-10-01\tcode\ts-dec2\tclaude\topus\thigh\tk4' \
+  $'2026-10-01\tcode\ts-restart\tclaude\topus\thigh\tk5' $'2026-10-01\tcode\ts-restart\tclaude\topus\thigh\tk6' \
+  $'2026-10-01\tcode\ts-pad\tclaude\topus\thigh\tk7' $'2026-10-01\tcode\ts-pad\tclaude\topus\thigh\tk8' \
+  $'2026-10-01\tcode\ts-open\tclaude\topus\thigh\tk9' $'2026-10-01\tcode\ts-open\tclaude\topus\thigh\tk10' > "${D}/agents.tsv"
+P21=https://github.com/o/r/pull/21 P22=https://github.com/o/r/pull/22 P23=https://github.com/o/r/pull/23 P24=https://github.com/o/r/pull/24
+P25=https://github.com/o/r/pull/25 P26=https://github.com/o/r/pull/26 P27=https://github.com/o/r/pull/27
+sent='may or may not have the brief: herdr sent it the brief, but no turn started; the findings count as delivered, a findings round of its build, so do not send them again'
+dev() { printf '2026-10-01T07:%s:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${D}/events.tsv"; }
+for s in s-dec s-nodec s-sent s-dec2; do
+  case "${s}" in s-dec) dpr="${P21}" ;; s-nodec) dpr="${P22}" ;; s-sent) dpr="${P23}" ;; *) dpr="${P24}" ;; esac
+  dev 00 story "${s}" ok; dev 10 review-agent "${s}" ok
+  if [[ "${s}" == s-sent ]]; then dev 20 tell:findings "${s}" "${sent}"; else dev 20 tell:findings "${s}" ok; fi
+  if [[ "${s}" == s-dec2 ]]; then dev 22 review-agent:next "${s}" "ok (round 2)"; dev 25 tell:findings "${s}" "${sent}"; fi
+  case "${s}" in s-nodec) ;; s-dec2) dev 30 decline-only "${s}" "ok (round 2)" ;; *) dev 30 decline-only "${s}" "ok (round 1)" ;; esac
+  dev 30 review "${s}" "ok (${dpr})"; dev 31 merge "${s}" ok
+done
+dev 00 story s-restart ok; dev 10 review-agent s-restart ok; dev 20 tell:findings s-restart ok
+dev 40 agent s-restart ok; dev 41 review-agent s-restart ok; dev 45 tell:findings s-restart "${sent}"
+dev 50 decline-only s-restart "ok (round 2)"; dev 50 review s-restart "ok (${P25})"; dev 51 merge s-restart ok
+dev 00 story s-pad ok; dev 10 review-agent s-pad ok; dev 20 tell:findings s-pad ok
+dev 22 review-agent:next s-pad "ok (round 2)"; dev 25 tell:findings s-pad "${sent}"
+dev 30 decline-only s-pad "ok (round 2)"; dev 30 review s-pad "ok (${P26})"
+dev 40 agent s-pad ok; dev 41 review-agent s-pad ok; dev 45 tell:findings s-pad ok; dev 50 review s-pad "ok (${P26})"; dev 51 merge s-pad ok
+dev 00 story s-open ok; dev 10 review-agent s-open ok; dev 20 tell:findings s-open "${sent}"
+dev 40 agent s-open ok; dev 41 review-agent s-open ok; dev 45 tell:findings s-open ok
+dev 50 decline-only s-open "ok (round 2)"; dev 50 review s-open "ok (${P27})"; dev 51 merge s-open ok
+# s-restart's and s-open's first loops have no review line, so their PRs come from their outcomes rows, one per builder line.
+drows="$(printf '%s\n' $'date\tslug\tepic\tpr\tpr_state' $'2026-10-01\ts-restart\te1\t'"${P25}"$'\topen' $'2026-10-01\ts-restart\te1\t'"${P25}"$'\topen' \
+  $'2026-10-01\ts-open\te1\t'"${P27}"$'\topen' $'2026-10-01\ts-open\te1\t'"${P27}"$'\topen')"
+dout="$(SWARM_FINDING_REVIEWERS="codex" SWARM_ROWS="${drows}" python3 "${ROOT}/bin/lib/flow_report.py" \
+  0000-00-00 9999-12-30 "" "${D}/agents.tsv" "${D}/events.tsv" "${D}/findings.tsv" x "code" x x "" x review_loops)"
+check "decline-only cases: a review after a decline-only line closes no round, and the loop ends decline-only" \
+  "$(row s-dec "${dout}")|$(end "${dout}" s-dec)" $'s-dec\t'"${P21}"$'\t1\topus\t10\t0\t0\t-|s-dec\t'"${P21}"$'\t1\tdecline-only'
+check "decline-only cases: the same lines with no decline-only line close round 2 and end pass" \
+  "$(end "${dout}" s-nodec)" $'s-nodec\t'"${P22}"$'\t2\tpass'
+check "decline-only cases: a decline-only line closes a round still open (its tell failed after herdr sent it), and the loop ends decline-only" \
+  "$(row s-sent "${dout}")|$(end "${dout}" s-sent)" $'s-sent\t'"${P23}"$'\t1\topus\t20\t0\t0\t-|s-sent\t'"${P23}"$'\t1\tdecline-only'
+check "decline-only cases: a decline-only line naming round 2 after a round this reader did not see gives the build two rounds, the second with no minutes, and end decline-only" \
+  "$(row s-dec2 "${dout}")|$(end "${dout}" s-dec2)" $'s-dec2\t'"${P24}"$'\t1\topus\t10\t0\t0\t-\ns-dec2\t'"${P24}"$'\t2\topus\t-\t0\t0\t-|s-dec2\t'"${P24}"$'\t2\tdecline-only'
+check "decline-only cases: a restarted builder's loop takes the line's round less the rounds before it since the story line, so round 2 is its one round, not a third" \
+  "$(row s-restart "${dout}")|$(end "${dout}" s-restart | tr '\n' ' ')" $'s-restart\t'"${P25}"$'\t1\topus\t10\t0\t0\t-\ns-restart\t'"${P25}"$'\t2\topus\t9\t0\t0\t-|'$'s-restart\t'"${P25}"$'\t1\topen s-restart\t'"${P25}"$'\t2\tdecline-only '
+check "decline-only cases: a round still open when a restart starts the next loop counts toward that loop's base, so its decline-only line naming round 2 adds none" \
+  "$(row s-open "${dout}" | cut -f3,5 | tr '\n' ' ')|$(end "${dout}" s-open | tr '\n' ' ')" $'1\t- 2\t4 |s-open\t'"${P27}"$'\t1\topen s-open\t'"${P27}"$'\t2\tdecline-only '
+check "decline-only cases: the round a decline-only line adds counts in the offset of the next build on the PR" \
+  "$(row s-pad "${dout}" | cut -f3,5 | tr '\n' ' ')|$(end "${dout}" s-pad | tr '\n' ' ')" $'1\t10 2\t- 3\t4 4\t- |s-pad\t'"${P26}"$'\t2\topen s-pad\t'"${P26}"$'\t4\tpass '
+
 # flow passes escalate_ladder: with none, top_rung is -.
 P="${dir}/repo"
 mkdir -p "${P}/.swarm" "${P}/.claude/swarm"
