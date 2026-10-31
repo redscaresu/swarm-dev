@@ -686,7 +686,8 @@ dispatch() {
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
 # _fix-main writes a fix-main story, and logs its own main-red line (fix_main), as merge does.
-# The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends.
+# The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends,
+# a conductor's watch's `pr-opened <slug>` when it says a story PR opened, and wait-pr's `first-green <slug>`, once per story PR.
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
