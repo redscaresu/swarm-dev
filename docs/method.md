@@ -24,7 +24,7 @@ each step is in the reference files that [`reference.md`](reference.md) lists.
    file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once. A builder whose PR conflicts with its base merges its base in, resolves it, reruns
    the tests and pushes; a conflict never sends a story back to `ready`. Codex reviews every round
    (one review whose findings went back to the builder), `/code-review` only round 1, when it changes
-   code. A review on the latest head whose findings are all declined is a pass: the review agent
+   code. From round 3 (the round cap) the review agent sends the builder only a regression the PR introduces or a line now false about the code, and declines the rest as `deferred`. A review on the latest head whose findings are all declined is a pass: the review agent
    rebuts each in the PR and logs it as declined (reference-logs.md § The outer loop). It then marks the story in review on the head it reviewed
    and merges the PR under `merge = agent` or a `merge` grant, or hands it to you. An epic is done when its last story's PR deletes the epic file. The conductor starts the builds and review agents and never reviews or merges a PR. It ends the epic with its report, the lead's only sign it has finished, written only once no agent work is left: no story of the epic is ready, building, blocked on an agent's work, or in review with its review agent still to act on it. A merge or handover note says so with a `finish:` line; the conductor then closes its idle review agents and reports. A story blocked on a `lead` story waits on you and holds nothing up: the report lists it for you.
 
