@@ -212,8 +212,17 @@ s = sorted(pr_rounds.values())
 total = sum(fixed_in[k] for k in ("round1", "round2", "round3_on"))
 share = lambda k: f"{int(100 * fixed_in[k] / total + 0.5)}%" if total else "-"
 rate = lambda f, r: f"{round(f / r, 1):g}" if r else "-"
-print("\nprs\trounds_median\trounds_p90\tmin_round3_on\tfixes\tround1\tround2\tround3_on\ttop_rung\tstepped_up\tfixes_per_round_before\tfixes_per_round_after\tfailed_step_ups")
+# Over the same PRs: the findings declined deferred on them, those of them whose text an escaped row on
+# the same PR repeats exactly (a prefix is no match; a deferred finding that escaped twice counts once, so
+# the count never passes deferred), and the PRs with four or more rounds.
+deferred = [(pr_key(f[2]), f[3]) for f in finding_rows(findings, width=8) if f[4] == "declined" and f[6] == "deferred" and pr_key(f[2]) in pr_rounds]   # outcome-scan: ok findings.tsv's outcome, not events.tsv's
+escaped = {(pr_key(f[2]), f[3]) for f in finding_rows(findings, ("escaped",))}
+real = sum(d in escaped for d in deferred)
+four = sum(n >= 4 for n in s)
+print("\nprs\trounds_median\trounds_p90\tmin_round3_on\tfixes\tround1\tround2\tround3_on\ttop_rung\tstepped_up\tfixes_per_round_before\tfixes_per_round_after\tfailed_step_ups"
+      "\tdeferred\tdeferred_proved_real\tprs_4plus_rounds")
 print("\t".join([str(len(s)), f"{statistics.median(s):g}" if s else "-", str(s[-(-9 * len(s) // 10) - 1]) if s else "-", str(round3_min), str(total),
                  share("round1"), share("round2"), share("round3_on"), share("top_rung") if top else "-",
                  str(stepped["builds"]), rate(stepped["fixed_before"], stepped["rounds_before"]),
-                 rate(stepped["fixed_after"], stepped["rounds_after"]), str(failed)]))
+                 rate(stepped["fixed_after"], stepped["rounds_after"]), str(failed), str(len(deferred)),
+                 f"{real} of {len(deferred)}" if deferred else "-", f"{int(100 * four / len(s) + 0.5)}% ({four} of {len(s)})" if s else "-"]))
