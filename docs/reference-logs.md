@@ -671,8 +671,9 @@ Without `--since`, the window is the 30 days up to `--until` (or up to today). T
 `tests/features_test.sh` checks swarm-dev's own `docs/features.tsv`. A metric that names
 `flow <section>` must name a `bin/lib/flow_<section>.py` that exists. A metric written `flow:` with
 no section, or with no `flow` at all, passes. A row whose `landed` is an epic of the 0.30 and 0.31 HLD
-(`board/hld/2026-10-28-swarm-dev-0-30-and-0-31.md`) must also name a column after the colon,
-`flow <section>: <column>`, and that section must print the column as a header. The lead reads two
+(dated 2026-10-28) must also name a column after the colon,
+`flow <section>: <column>`, and that section must print the column as a header. The test keeps its own
+list of that HLD's epics, so the check still holds after `swarm.sh finish` deletes the HLD. The lead reads two
 such rows by hand at the release, so the test exempts them by name: `lead-woken incidents`, whose reading
 needs a count of merged story PRs that no section prints, and `reference split`, which reads each
 conflict merge-in's files. Each bar of that HLD's Goals 1 to 5 has one section that reads it, except
