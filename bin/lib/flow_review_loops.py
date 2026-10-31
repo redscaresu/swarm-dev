@@ -3,6 +3,7 @@
 # for tuning the stop and escalation rules. Built from events.tsv, findings.tsv and agents.tsv, with no
 # gh call. Each build of a story (a story start, or an escalate build) is its own loop.
 import collections, datetime, os, re, statistics
+from events_outcome import outcome
 from report import *
 
 def when(t):
@@ -28,7 +29,7 @@ def handed(t, cmd, target, out):
     return [(t, cmd, slug_of.get(pr_key(u), target), f"ok ({u})") for u in urls] or [(t, cmd, target, out)]
 
 evs = [e for f in (l.rstrip("\n").split("\t") for l in log_lines(events)) if len(f) >= 5 and when(f[0])
-       for e in handed(when(f[0]), f[1], f[2], f[4])]
+       for e in handed(when(f[0]), f[1], f[2], outcome(f))]
 slug_of.update((pr_key(review_url(cmd, out)), target) for _, cmd, target, out in evs if review_url(cmd, out))
 # Each builder's models, one agents.tsv line in a builder role per build start or step-up rung, in order,
 # read as outcomes reads them (7 fields), so they line up with its rows.
@@ -129,10 +130,10 @@ on_pr = collections.defaultdict(list)
 for lp in sorted((lp for b in built.values() for lp in b if lp["pr"]), key=lambda lp: lp["t0"]):
     lp["off"] = sum(len(o["rounds"]) for o in on_pr[pr_key(lp["pr"])])
     on_pr[pr_key(lp["pr"])].append(lp)
-for _, _, pr, _, outcome, _, _, n in finding_rows(findings, width=8):
+for _, _, pr, _, verdict, _, _, n in finding_rows(findings, width=8):
     took = [lp for lp in on_pr[pr_key(pr)] if n.isdigit() and lp["off"] < int(n)]
     if took:
-        took[-1]["c"][(int(n), outcome)] += 1
+        took[-1]["c"][(int(n), verdict)] += 1
 shown = {s: [lp for lp in b if lp["in"]] for s, b in sorted(built.items()) if not epic or epic_of.get(s) == epic}
 shown = {s: b for s, b in shown.items() if b}
 if not shown:
