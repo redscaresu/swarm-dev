@@ -20,5 +20,5 @@ except ValueError:
 c = d.get("cwd") if isinstance(d, dict) else None
 print(c if isinstance(c, str) and "\n" not in c else "")' 2>/dev/null)" || cwd=""
 lead_project "${cwd:-${PWD}}" > /dev/null || exit 0
-echo 'If this message points out a problem the swarm or the lead missed, log it first: swarm.sh intervene user-caught "<what they found>".'
+echo 'If this message points out a problem the swarm or the lead missed, log it first: swarm.sh intervene user-caught <cause> "<what they found>". The cause is one word from the list in /swarm-dev:swarm; an unknown one fails and lists them.'
 exit 0

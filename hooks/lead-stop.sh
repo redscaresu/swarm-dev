@@ -21,7 +21,8 @@
 # allows the stop, so a lead with a reason not to act says so and stops. The whole hook runs within
 # LEAD_STOP_SECONDS (times SWARM_SLEEP_SCALE, as make test sets it; 1 at least), under hooks.json's
 # 60: next_step alone takes up to half a minute on a busy board, so nothing here runs it twice.
-# Every verdict after the step was read is one events.tsv line, `lead-stop <step> blocked|allowed`.
+# Every verdict after the step was read is one events.tsv line, `lead-stop <step> blocked|allowed`, its
+# outcome's tail role=lead and version= the plugin's; the checkout the tests run from (SWARM_FORBID_PROJECT) gets none.
 # Any error (no swarm.sh or python3, no herdr, a lookup that fails, the deadline) allows the stop,
 # with nothing on stdout.
 set -uo pipefail
@@ -65,10 +66,37 @@ within() {
 
 swarm() { SWARM_PROJECT="${project}" within "${sw}" "$@"; }
 
-# log <step> <verdict> — append record_event's five fields; a log that cannot be written changes nothing.
+# EVENT_SEP: what parts an events.tsv outcome from its key=value tail, as bin/lib/agents.sh's EVENT_SEP.
+EVENT_SEP=" ~~ "
+
+# forbidden — the project is the checkout the tests run from (SWARM_FORBID_PROJECT), compared by
+# physical path as swarm.sh compares it. A worktree of it (SWARM_PROJECT can name one) logs to its own
+# .swarm, never that checkout's.
+forbidden() {
+  local f
+  [[ -n "${SWARM_FORBID_PROJECT:-}" ]] && f="$(cd "${SWARM_FORBID_PROJECT}" 2>/dev/null && pwd -P)" \
+    && [[ "$(cd "${project}" 2>/dev/null && pwd -P)" == "${f}" ]]
+}
+
+# version — the plugin's version, from its .claude-plugin/plugin.json; fails when that cannot be read
+# or holds no version without whitespace, so a line gets no version= rather than an empty one.
+version() {
+  python3 -I -c 'import json, re, sys
+v = json.load(open(sys.argv[1], encoding="utf-8")).get("version")
+if not (isinstance(v, str) and re.fullmatch(r"\S+", v)):
+    sys.exit(1)
+print(v)' "$(dirname "$0")/../.claude-plugin/plugin.json" 2>/dev/null
+}
+
+# log <step> <verdict> — append record_event's five fields, the outcome with append_event's tail:
+# role=lead, and version= when version gives one. A log that cannot be written changes nothing, and
+# the checkout the tests run from gets none.
 log() {
+  local tail=role=lead v
+  forbidden && return 0
+  v="$(version)" && tail+=" version=${v}"
   { mkdir -p "${project}/.swarm" \
-    && printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" lead-stop "$1" "${HERDR_PANE_ID:--}" "$2" \
+    && printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" lead-stop "$1" "${HERDR_PANE_ID:--}" "$2${EVENT_SEP}${tail}" \
       >> "${project}/.swarm/events.tsv"; } 2>/dev/null || true
 }
 

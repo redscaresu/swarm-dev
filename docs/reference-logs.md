@@ -58,9 +58,8 @@ target `-` and the outcome `<kind>: <line>`, for each time a person had to step 
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
 first. The cause says why they stepped in. It is one of `INTERVENE_CAUSES` in `bin/swarm.sh` and goes
 in the field `cause=<cause>`. Any other kind or cause, an empty line, or an events.tsv it cannot write
-fails and writes nothing, and an unknown cause's error lists the causes. The old form,
-`swarm.sh intervene <kind> "<one line>"`, still writes the line with `cause=none` and prints the causes
-as a warning.
+fails and writes nothing, and an unknown cause's error lists the causes. So does the old form with no
+cause, `swarm.sh intervene <kind> "<one line>"`.
 An incident on an agent (`api-error`, `auto-denied`, `stalled`, `wait-timeout`, `login`, `stale-blocked`,
 `sign-blocked`, `sign-clear`, `idle-no-pr`, `codex-limit`) ends in a `slug=<slug> role=<role>` tail. `role=` is
 the agent's role in `.swarm/agents.tsv`, and is absent when the agent has no line there. `slug=` is the story
@@ -124,6 +123,19 @@ queued, or a merge with no merge commit. A merge at a head other than the checke
 merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
+A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The role comes from
+`.swarm/agents.tsv`. The slug follows the rule for incident lines above as far as the guard can without
+the board. An agent with a building role has its whole name as the slug. A `review-<slug>` or
+`conduct-<epic>` name gives what follows the prefix when its role is review or conduct, or unknown (no
+line in agents.tsv, or a file the guard cannot read). The backlog's conductor gets none, and so does an
+agent with any other role. With the role unknown, any other name is the slug, as a builder's is. A
+name of 32 characters, which may have been cut, and an `s<digit>…` name, which only the board can
+settle, get no `slug=`. Every line adds `version=`, the plugin's version
+from its `.claude-plugin/plugin.json`. A field the guard cannot read is left out, and a failed read
+or write never changes its verdict. The lead's Stop hook (`hooks/lead-stop.sh`) writes a `lead-stop`
+line for each verdict, target the step `next` named and outcome `blocked` or `allowed`, with
+`role=lead` and `version=`. Neither hook writes to the checkout the tests run from
+(`SWARM_FORBID_PROJECT`).
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
 its pull (§ Merging), once while the same stop lasts, and one with outcome
 `key-dropped: <file> <key>: <yours> -> <theirs>` for each uncommitted `status` or `prs` its pull replaced. The log is local to the machine and append-only,
@@ -141,7 +153,8 @@ fields: the incident and reap lines above pass `slug=` and `role=`, `merge` pass
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
 command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
 beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a
-value into `_`, and an empty value into `-`. `append_event` first takes every separator out of the
+value into `_`, and an empty value into `-`. The two hooks that write events.tsv themselves, the merge
+guard and the lead's Stop hook, write the same tail. `append_event` first takes every separator out of the
 outcome text: each
 one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
 then any trailing spaces. That way the first separator in the field is always where the tail starts,
