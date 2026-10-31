@@ -20,6 +20,9 @@ HLD Goal 16 and Rollout § Readings (v0.31.0): every later, parked or orphaned l
 - docs/lead-by-hand.md has no #696 entry (lines 91-96 today): release-v0-30-0's docs step removes it once rules-file-briefs has merged (lead_now); if it is still there when this epic plans, a docs story here removes it (critic: the entry had no owner).
 - codex-agent-name is recorded as absorbed by lead-woken's #691 story (its file deleted there); the seven kind: lead standing steps (config-switch-ons, flow-after-the-epic, merge-agent-on, merge-queue-on, merge-admin-on-for-infrafactory, merge-agent-for-infrafactory, review-yield-tuning) are named as retro-v0.31.0's to close or re-date, not this epic's.
 - The retro reading of Goals 1 to 14 is written inside the retro-v0.31.0 lead story (its own step), not by a story that depends on it, since that story leaves the board when it is done.
+- `wait --lead` re-reads the board after each merge, never exits without printing a line, and checks a line still holds before printing it; a test drives each failure the v0.30.0 build saw (silent exit, a stale line, a removed story file). Built first in v0.31.0 (HLD § v0.31.0 additions).
+- `wait --lead` prints a line when an epic's plan swarm has finished or one of its agents never wrote its output (#762).
+- `flow`'s predictions section scores the planner: `flow` builds `.swarm/dataset.jsonl` itself, or prints the command that does.
 
 **Out of scope:**
 The retro itself (retro-report); the seven standing lead steps; new features; release-v0-30-0 (the lead edits it now, lead_now).
