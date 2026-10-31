@@ -1969,7 +1969,9 @@ note_lock() {
 # line, and a story's builder's (a story on the board holds its name) is wait --lead's no-agent: line.
 # Any other agent (an epic or HLD writer, a planner, a skeptic) has no such line: it is started again
 # by the command that started it. Each of those lines waits while herdr lists the name, so with
-# [pane], still open, the refusal says to read and close it first.
+# [pane], still open, the refusal says to read and close it first. main logs the refusal with state=gone
+# when [pane] is given (its session has ended), else state=none (no agent this project started holds
+# the name).
 tell_gone() {
   local role where
   role="$(awk -F'\t' -v n="$1" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || role=""
@@ -1981,6 +1983,7 @@ tell_gone() {
        else where="it is no story's builder, review agent or conductor, so no swarm.sh line names its exit: start it again with the command that started it, or tell the user"; fi ;;
   esac
   [[ -z "${3:-}" ]] || where="its pane $3 is still open: read it (herdr agent read $1) and close it; after that, ${where}"
+  if [[ -n "${3:-}" ]]; then event_fields state=gone; else event_fields state=none; fi
   die "could not reach $1: $2; this refusal is final, so do not tell it again: ${where}"
 }
 
@@ -2004,6 +2007,9 @@ tell_gone() {
 # (tell_claim). A dialog the user cleared can leave an agent listed as waiting or blocked, so for
 # those it reads the pane once (pane_clear) and refuses only when the pane is not clear, saying what
 # the read found. herdr refusing the tell itself as blocked is tell_deliver's to clear (tell_unblock).
+# Each refusal on the state it read logs it as state= (event_fields): gone, unknown, herdr:unknown,
+# waiting:<what> (waiting_for's), herdr:blocked, or herdr:<status> for any other status; none and gone
+# come from tell_gone. A refusal before the state is read, or on the queue's lock, logs no state=.
 # With goal on, findings get a fresh goal (findings_goal).
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
@@ -2061,11 +2067,14 @@ tell_agent() {
     idle|herdr:idle|herdr:done) ;;
     busy|herdr:working) tell_queue "$1" "${name}" "${kind}" "${f}" "${pane} ${qfrom:-$(tell_from "$1")}" "${born}" "${qpane}"; return ;;
     waiting*|herdr:blocked) rc=0; found="$(pane_clear "${pane}")" || rc=$?
-      [[ ${rc} -eq 0 ]] || die "${name} is waiting on $(waiting_for "${state}"), and ${found}; answer it (herdr agent read ${name}), then tell it" ;;
+      if [[ ${rc} -ne 0 ]]; then
+        if [[ "${state}" == herdr:blocked ]]; then event_fields "state=${state}"; else event_fields "state=waiting:$(waiting_for "${state}")"; fi
+        die "${name} is waiting on $(waiting_for "${state}"), and ${found}; answer it (herdr agent read ${name}), then tell it"
+      fi ;;
     gone) tell_gone "${name}" "its Claude session has ended (gone)" "${pane}" ;;
-    unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
-    herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
-    *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
+    unknown) event_fields state=unknown; die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
+    herdr:unknown) event_fields state=herdr:unknown; die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
+    *) event_fields "state=${state}"; die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
   if [[ -z "${qpane}" ]]; then
     rc=0; tell_unqueue "${name}" "${kind}" "${born}" || rc=$?
