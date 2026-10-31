@@ -1667,7 +1667,8 @@ settle() {
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
-# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident (record_incident)
+# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident (record_incident,
+# its slug= the builder's story from the board, stall_py story)
 # and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
 # by the `longest-running: ...` line, which says the step-up closed the pane the PID was read in. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
@@ -1697,7 +1698,7 @@ settle() {
 # login incident (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at hung seen
+  local answered="" resumed_sum="" pane_kind pane_at hung seen story
   deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
@@ -1706,11 +1707,13 @@ wait_agent() {
     if [[ "${status}" == stalled:* ]]; then
       hung="$(longest_child "${name}" "${target}")"
       [[ -z "${hung}" ]] || status="${status}; ${hung}"
-      record_incident "${name}" "${status}"
-      rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
+      # The builder's story from the board (stall_py story), which knows a name cut at 32 characters.
+      story="$(stall_py story "${name}")" || story=""
+      record_incident "${name}" "${status}" "${story}"
+      rc=0; out="$(ladder_step "${story}" stalled)" || rc=$?
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
       # Another step-up or a restart still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
-      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up or a restart of it is running; wait on its builder again"
+      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: ${story}: another step-up or a restart of it is running; wait on its builder again"
       if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
         echo "${out}"
         if [[ ${rc} != "${STEP_UP_BUSY}" && "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"

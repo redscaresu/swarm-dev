@@ -243,6 +243,7 @@ check "the story prompt keeps a Done when written on its heading line" "yes" "$(
 left "SWARM_STORY's prompt case"
 
 # --- A story's review that times out reaps codex-<story>, one line more; a codex that finishes writes none.
+# An unscoped review by a conductor that times out carries its role= and no slug=.
 nreaps() { reaps | wc -l | tr -d ' '; }
 n0="$(nreaps)"
 stub 'exit 0'
@@ -255,6 +256,9 @@ STORY=s1 AGENT=s1 review
 check "a story's codex past the limit adds one reap line, naming codex-<story>" "$((n0 + 1))|codex-s1|timed out after 10 min" "$(nreaps)|$(reaps | tail -n 1)"
 check "its reap line carries the story's slug and the role of the agent that ran it" "role=code slug=s1" "$(reaps fields | tail -n 1)"
 check "a base's reap line, with no story or agent, carries neither" "" "$(reaps fields | head -n 1)"
+printf '2026-10-30\tconduct\tconduct-e1\tclaude\topus\thigh\t-\n' >> "${P}/.swarm/agents.tsv"
+AGENT=conduct-e1 review
+check "with no SWARM_STORY, a reap line carries the agent's role and no slug read from its name" "role=conduct" "$(reaps fields | tail -n 1)"
 left "the story timeout case"
 
 # --- A SWARM_STORY that names no story, names a story with no Done when item, or is no slug fails,

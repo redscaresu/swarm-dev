@@ -45,7 +45,7 @@ killed and its outcome says why. `codex-review` writes one when `codex_minutes` 
 with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past
 `TEST_FILE_TIMEOUT`, with the file as target and the outcome `TIMEOUT after <n>s`, to the events.tsv beside the run's `test-runs.tsv`;
 a nested run, whose runs log is set empty, writes none. Both take the incidents' tail. `codex-review`'s
-`slug=` is `SWARM_STORY` and its `role=` that of the agent running it. `make test` writes
+`slug=` is `SWARM_STORY`, absent when that is unset, and its `role=` that of the agent running it. `make test` writes
 `slug=<slug> role=builder` when the run's branch is `story/<slug>`, and no tail on any other branch. A command that finishes in time writes no `reap` line. Only those two write it. A fallback reviewer, or its agent when it writes no findings in time, is killed with no `reap` line, so the count is not every kill. When `status` or `wait` reads an agent's pane, herdr
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
