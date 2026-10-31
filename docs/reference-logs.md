@@ -19,7 +19,12 @@ once per PR, even when two waits on it go green at once (the lead's bare `watch`
 branch log none). Each has the outcome `ok`, with the PR's URL in the field `url=` or the head SHA in
 `sha=`. Builders open their PRs with `gh pr create`, so no `swarm.sh` command runs at that moment to log it.
 A line `watch` or `wait-pr` cannot write changes nothing they print or exit with.
-The stall rule skips those lines, because none is a sign of life. `status`, `next` and `dash` log
+The stall rule skips those lines, because none is a sign of life. A `review --head` that succeeds
+can write a line before its own: `decline-only <slug> ok (round N)`. It writes one when review round
+N sent the builder findings and the PR's head is still the one that round started on, as
+`.swarm/reviews/<slug>.head` and the round's findings file record it. A head a wording recheck passed
+is not that one. The line means the builder declined every finding and pushed nothing. `decline-only`
+is not a command of its own. `status`, `next` and `dash` log
 their run times to a file of their own (the run-times log, below). Something that went wrong is an `incident` line,
 its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
 `wait-timeout` when its wait runs out (not when herdr's wait fails sooner, not for a
@@ -52,7 +57,8 @@ builder's name (an agent with a building role, or a name a story on the board ha
 `review-<slug>` and `conduct-<epic>` give what follows the prefix. It is absent for any other agent, for the backlog's conductor, and for a name of 32 characters, which may have been cut short.
 An agent name gets an `s` in front when its slug starts with a digit, so a builder named `s<digit>…` gets
 `slug=` only when the board holds a story under exactly one of the two names, with or without the `s`. A
-`-done<N>` name reads as the name before it. `codex-limit` takes its slug from `SWARM_STORY` and its role from
+`-done<N>` name reads as the name before it when it is under 32 characters. A longer one may hold a cut
+name, so it gets neither `slug=` nor `role=`. `codex-limit` takes its slug from `SWARM_STORY` and its role from
 the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-` and no `role=`. They get `slug=`
 only when the line names one story file.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
@@ -117,13 +123,13 @@ and the first line of a failed command's error.
 The outcome field can end in a tail of `key=value` fields, for example
 `ok (round 2) ~~ round=2 verdict=pass`. The separator is ` ~~ ` (a space, two tildes, a space),
 `EVENT_SEP` in `bin/lib/agents.sh`. `append_event` writes the tail only for a caller that passes
-fields: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held
-lines, `intervene` passes `cause=`, `pr-opened` passes `url=` and `first-green` passes `sha=`. For a
-command `main` logs, the fields come from two places, in this order: the `EV_FIELDS` that the command's
-arm in `main` sets before it runs, then the ones the command keeps with `event_fields <key=value>...`
-while it runs. `event_fields` is in `bin/swarm.sh`, beside `die`. Like a die's line, it keeps nothing
-from a nested `$(...)`. It turns whitespace in a value into `_`, and an empty value into `-`.
-`append_event` first takes every separator out of the outcome text: each
+fields: the incident and reap lines above pass `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
+`url=` and `first-green` passes `sha=`. For a command `main` logs, the fields come from two places, in
+this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
+command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
+beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a
+value into `_`, and an empty value into `-`. `append_event` first takes every separator out of the
+outcome text: each
 one becomes a space. It also drops a trailing ` ~~`, which the tail's separator would complete, and
 then any trailing spaces. That way the first separator in the field is always where the tail starts,
 and an outcome that ends in one is written without it. Fields are separated by spaces. A key is
@@ -650,7 +656,7 @@ split's epic; for one with no record `gh` reads the PR's branch (`board/scope-<e
 fails a note says how many splits it could not place. The split critic's tokens have their own `split-critic` row in `cost`.
 
 Once a row in the window has a review round (`--round` on its findings), two more blocks follow the
-rounds. The first is TSV `round reviewer fixed declined nit out-of-scope wrong share_fixed`: per
+rounds. The first is TSV `round reviewer fixed declined nit out-of-scope wrong deferred share_fixed`: per
 round, each reviewer and then `all`, the findings fixed, declined in all and by reason, and fixed
 over raised as a whole percent. Round `0` is a plan or board PR, and `unknown` holds the rows logged
 without a round. The second is TSV `story pr stopped_round why`, one row per story PR with a round
@@ -679,8 +685,13 @@ loop, the one whose rounds hold its round (the last on its PR takes any later ro
 on one PR never count a finding twice. A finding with no `--round`, or on a PR no loop has, counts
 nowhere. Its rounds go in log order: an `ok` `review-agent` opens one, and a review agent started again
 before the round closed moves its start; an `ok` `tell:findings`, a `findings-*` step-up (which takes
-the tell's place), or the `ok` `review` or `merge` after the last tell closes it. A round no review
-agent opened has no minutes.
+the tell's place), or the `ok` `review` or `merge` after the last tell closes it. A `decline-only`
+line after that tell means the builder declined the findings and pushed nothing, so the `review` or
+`merge` after it closes no new round. A `decline-only` line that comes while a round is still open
+closes that round: its findings went by a line `flow` does not close a round on, such as a tell that
+failed after herdr had sent it. The line names the round it ended, counted from the story's last
+`story` line; when the builds since that line have fewer rounds, the build it ends gets rows up to it,
+as a build does for a finding on a later round. A round no review agent opened has no minutes.
 
 The first block is TSV `story pr round model minutes fixed declined step_up`, a row per round: the
 builder's model (each build start and each step-up takes the next of the builder's `agents.tsv`
@@ -696,8 +707,8 @@ shows its step-ups on a row whose round is `-`. A PR whose findings name a later
 events gets rows up to it. The second block is TSV `story pr rounds end`, for each loop with a round, `rounds` its PR's last
 round in that loop:
 `held-for-lead` after an `escalated` line; once the PR merged (a `merge` line, or merged in
-`outcomes`), `pass` when its last round fixed nothing and `merged-after-fixes` when it fixed
-something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
+`outcomes`), `decline-only` when its last round ended on a `decline-only` line, `pass` when its
+last round fixed nothing and `merged-after-fixes` when it fixed something; else `open`, a PR handed over by `review` and not merged among them. The last is one TSV
 row over the loops with a round: the PRs (each once, loops with PR `-` left out), the median and p90
 (nearest rank) of their rounds, the minutes spent in round 3 and later (a round with unknown minutes
 adds none), the fixes, the share of them found in round 1, round 2, round 3
@@ -778,7 +789,7 @@ Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage limit), `code-review`, `ci` (a
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR, and `split-critic` for the check on a large epic's split (commands/plan-epic.md step 0). A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
-reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
+reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 3), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
 review round a finding came from: the n-th review of a story PR is round n, the passing one included,
 and a plan or board PR is round 0. The review agent and the conductor pass it on each finding they log, and flow's `reviewers` counts each round's yield from it. When a conductor finishes,
@@ -815,7 +826,7 @@ still needs its FAIL line.
 |---|---|
 | `swarm.sh where <agent>` | Print where one of this project's agents is: its pane id, its workspace's label and its tab's label, as `<agent>: pane <pane>, workspace <label>, tab <label>`. The workspace label is `-` when herdr gives none: the workspace has no label, or herdr could not list them. A tab herdr gives no label for, or whose list herdr could not give, shows the name swarm-dev gave the tab (its tab record's), as `status` and `dash` do. `<agent>` is a story's slug, `review-<slug>`, `conduct-<epic>` or a herdr agent name. herdr lists every project's agents, and two can share a name, so only an agent in a pane this project opened counts. When herdr lists no such agent there, it says so and exits 1. |
 | `swarm.sh swarms` | Print every swarm herdr runs on the machine. For each workspace labelled `swarm-lead · <label>` it prints `<label>  <dir>`, then a line per workspace of that project, the lead's first: `<workspace label>: <agent>, ...`, or `no agents`. An agent herdr gives no name shows as `<pane id> (no name)`. An agent's state is left out: herdr's word for it is not its session's, and the sessions are other projects'. The lead's dir is its first pane's. Each pane counts as in the nearest folder at or above its own that has `.claude/swarm/config`. A pane in a story worktree (`<dir>-wt/<slug>`, or a folder in it) counts as in `<dir>` when `<dir>` has that config. A pane in another repo's worktree (a `-wt` folder with no swarm config) is skipped. A workspace's dir is its first pane's, as conductors find their own workspace. Another workspace is the project's when its dir is the lead's, or is a project whose last `board_dir` holds the lead's dir (a board kept outside the repo), or when the project's `.swarm/lead/agents-workspace` record holds the workspace's id and label, as for a lead-agents workspace whose panes are all in other repos' worktrees. That record is read from each project some pane is in. A lead that runs in a board outside the repo, with no pane open in the project itself, leaves nothing that names the project, so its lead-agents workspace is left out until a pane opens there. Its label must also start `<part> · `, where `<part>` is the lead's label, the folder's name, or the folder's name with that folder's own path hash. So `app-2 · e1` never lands under `app`, and two folders called `app` keep their own workspaces. A workspace no lead owns is left out, and so is one an older swarm.sh labelled without ` · ` (a bare `backlog` or `<epic>`). With no lead workspace it says so. It reads herdr's workspace, pane and agent lists once each, each cut after 30 s (`SWARM_REPORT_SECONDS`), and exits 1 naming the list when herdr cannot give one in time. |
-| `swarm.sh log-finding [--declined <reason> \| --filed] [--reviewer <who>] [--round <n>] <kind> <PR URL> <text>` | Log a review finding by kind. `--round <n>` records the review round it came from (0 for a plan or board PR). `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). `--filed` records that the lead filed a declined out-of-scope finding as a story, so `swarm.sh next` stops offering it; no report counts a filed row. The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic (the check on a large epic's split), or escaped for a defect found after its PR merged; a gap in a split that a later plan or build finds is logged `--reviewer escaped split-gap` against the split's board PR. |
+| `swarm.sh log-finding [--declined <reason> \| --filed] [--reviewer <who>] [--round <n>] <kind> <PR URL> <text>` | Log a review finding by kind. `--round <n>` records the review round it came from (0 for a plan or board PR). `--declined <reason>` records one that was declined (`out-of-scope`, `nit`, `wrong` or `deferred`). `--filed` records that the lead filed a declined out-of-scope or deferred finding as a story, so `swarm.sh next` stops offering it; no report counts a filed row. The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic (the check on a large epic's split), or escaped for a defect found after its PR merged; a gap in a split that a later plan or build finds is logged `--reviewer escaped split-gap` against the split's board PR. |
 | `swarm.sh intervene <kind> <cause> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first), and why, a cause from `INTERVENE_CAUSES` in `bin/swarm.sh`. It writes one `incident` line with the field `cause=<cause>`, which `flow`'s `incidents` section and dash's interventions light count. An unknown cause fails and lists the causes. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |

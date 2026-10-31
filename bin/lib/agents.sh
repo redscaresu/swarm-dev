@@ -904,7 +904,8 @@ append_event() {
 # for append_event's tail: slug=<slug> role=<role>. A field it cannot know is left out, never empty.
 # role is agents.tsv's column 2 on <name>'s last line there (as tell_gone reads it), <name> read as
 # agent_name gives it (a slug that starts with a digit is s<slug> there). A name with none that ends in -done<N> (a retired agent, renamed with no line of its
-# own) reads the name before the rename, when that has a line. The slug is [slug], the one the call site
+# own) and is under AGENT_NAME_MAX reads the name before the rename, when that has a line; a longer one
+# may hold a cut name and gives neither field. The slug is [slug], the one the call site
 # has; else it comes from the name, only when the name is whole: agent_name cuts at AGENT_NAME_MAX, so a
 # name that long may be cut and gives none rather than a wrong one. A builder's name (its role a
 # building one, or no role and a story on the board holding the name) is the slug, whatever it starts
@@ -920,7 +921,10 @@ agent_fields() {
     # As cut_record: a name already in agent_name's form, the usual one, skips its forks.
     if [[ "${n}" =~ ^[a-z][a-z0-9_-]*$ ]]; then k="${n:0:${AGENT_NAME_MAX}}"; else k="$(agent_name "${n}")"; n="${k}"; fi
     role="$(awk -F'\t' -v n="${k}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || role=""
-    if [[ -z "${role}" && "${n}" =~ -done[0-9]*$ ]]; then
+    # retire_agent cuts the name it renames to 26 or 27 characters before -done<N>, so a retired name of
+    # AGENT_NAME_MAX characters or more may hold a cut that another agent's whole name equals: only a
+    # shorter one is read as the name before it.
+    if [[ -z "${role}" && "${n}" =~ -done[0-9]*$ && ${#n} -lt ${AGENT_NAME_MAX} ]]; then
       r="$(awk -F'\t' -v n="${n%-done*}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || r=""
       [[ -z "${r}" ]] || { role="${r}"; n="${n%-done*}"; }
     fi

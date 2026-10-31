@@ -195,12 +195,14 @@ mkdir -p "${ROOT}/p-fields/.swarm" "${ROOT}/p-fields/board/stories"; : > "${ROOT
 cut32="a-story-slug-that-is-cut-at-32ch"  # 32 characters: agent_name's cut of a longer slug
 backlog="$(fields_for --backlog)"
 for l in "review review-s1" "conduct conduct-e1" "code b2" "code s7-fix" "code s123-fix" "code ${cut32}" "critic critic-e1" "conduct ${backlog}" "code mark-done" \
-    "code review-event-fields" "conduct conduct-backlog-cleanup"; do
+    "code review-event-fields" "conduct conduct-backlog-cleanup" "code add-retry-to-the-github-pager" "docs add-retry-to-the-github-pag"; do
   printf '2026-10-30\t%s\t%s\tclaude\topus\thigh\t-\n' "${l% *}" "${l#* }" >> "${ROOT}/p-fields/.swarm/agents.tsv"
 done
 check "a review agent gives its story's slug and role review" "$(fields_for review-s1)" "slug=s1 role=review"
 check "a conductor gives its epic's slug and role conduct" "$(fields_for conduct-e1)" "slug=e1 role=conduct"
 check "a retired -done2 name reads as the name before it" "$(fields_for b2-done2)" "slug=b2 role=code"
+check "a retired name of 32 characters, its stem a cut that another agent's whole name equals, gives neither field" \
+  "$(fields_for add-retry-to-the-github-pag-done)" ""
 check "a builder whose slug ends in -done is not taken for a retired name" "$(fields_for mark-done)" "slug=mark-done role=code"
 check "a name with no agents.tsv line gives no role=" "$(fields_for review-s7)" "slug=s7"
 check "a bare name with no line gives its slug only when a story on the board holds it" "$(fields_for b9)|$(fields_for b8)" "slug=b9|"

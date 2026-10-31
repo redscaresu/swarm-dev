@@ -28,11 +28,11 @@ check "every log-finding line of method.md names --reviewer" "none" "$(notreview
 check "every log-finding line of docs/reference*.md names --reviewer" "0" "$(notreviewed "${REPO}"/docs/reference*.md)"
 # bare_declined — each --declined in finding_rule's text or the outer-loop section (from its heading to
 # the next ## or the end of whichever docs/reference*.md holds it) that is not followed by a reason
-# (out-of-scope, nit, wrong or the <reason> placeholder), or none.
+# (out-of-scope, nit, wrong, deferred or the <reason> placeholder), or none.
 bare_declined() {
   { sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}"
     awk 'FNR == 1 { on = 0 } /^## / { on = ($0 == "## The outer loop") } on' "${REPO}"/docs/reference*.md; } \
-    | grep -oE -- '--declined( +[^ `]+)?' | grep -vE -- '--declined +(out-of-scope|nit|wrong|<reason>)$' || echo none
+    | grep -oE -- '--declined( +[^ `]+)?' | grep -vE -- '--declined +(out-of-scope|nit|wrong|deferred|<reason>)$' || echo none
 }
 check "every --declined in finding_rule and the outer-loop paragraph is followed by a reason" "none" "$(bare_declined)"
 check "finding_rule names out-of-scope, nit, wrong and --reviewer escaped" "yes|yes|yes|yes" \
