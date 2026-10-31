@@ -11,7 +11,9 @@
 # close's and the login's lines carry the builder's slug= and role= (agent_fields, whose cases come
 # next: a review agent, a conductor, a retired -done2 name, a name with no agents.tsv line and one cut
 # at 32 characters). Then flow's incidents section over a fixture events.tsv holding six kinds on two
-# days prints the per-day count of each.
+# days prints the per-day count of each. Over the same fixture, with intervene lines of two causes and
+# stalled incidents added, it counts per kind and cause, lists each stalled incident's bg, test and sign
+# (- when not measured) and counts the false stalls.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -207,6 +209,29 @@ check "flow counts every kind's incidents per day" "$(sed -n '/^## incidents$/,/
   $'2026-10-02\tcodex-limit\t1' $'2026-10-02\tidle-no-pr\t1' $'2026-10-02\tlogin\t1' $'2026-10-02\twait-timeout\t2' \
   $'2026-10-03\tcodex-limit\t2' $'2026-10-03\tidle-no-pr\t1' $'2026-10-03\tlogin\t1' $'2026-10-03\tmerge-blocked\t1' \
   $'2026-10-03\tpull-failed\t1')"
+
+# The same fixture, then intervene lines that `swarm.sh intervene` writes (today) with two causes, an
+# incident of another kind with cause=false-stall, and three stalled incidents: one input at 1, all 0,
+# and none of the fields. part <n> prints the incidents section's n-th blank-line-separated part.
+sw() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT TZ=UTC PATH="${ROOT}/bin:${PATH}" bash "${REPO}/bin/swarm.sh" "$@"); }
+sw intervene lead-hand false-stall "a builder was stepped up while its tests ran" >/dev/null
+sw intervene user-caught false-stall "the user saw the stalled builder was working" >/dev/null
+sw intervene user-caught review-rounds "the user stopped a fifth review round" >/dev/null
+ev 2026-10-02 "wait-timeout: busy ~~ cause=false-stall"
+ev 2026-10-02 "stalled: working 40 min with no commit ~~ bg=1 test=0 sign=0"
+ev 2026-10-03 "stalled: working 40 min with no commit ~~ bg=0 test=0 sign=0"
+ev 2026-10-03 "stalled: working 40 min with no commit"
+out="$(sw flow --since 2026-10-02)"
+part() { sed -n '/^## incidents$/,/^## /p' <<< "${out}" | sed '1d;/^## /d' | awk -v RS= -v n="$1" 'NR == n'; }
+check "flow counts incidents per kind and cause, - for a line with no cause" "$(part 3)" "$(printf '%s\n' \
+  $'kind\tcause\tincidents' $'codex-limit\t-\t3' $'idle-no-pr\t-\t2' $'lead-hand\tfalse-stall\t1' $'login\t-\t2' \
+  $'merge-blocked\t-\t1' $'pull-failed\t-\t1' $'stalled\t-\t3' $'user-caught\tfalse-stall\t1' \
+  $'user-caught\treview-rounds\t1' $'wait-timeout\t-\t2' $'wait-timeout\tfalse-stall\t1')"
+check "flow lists each stalled incident with its inputs as written, - for one not measured" "$(part 4)" "$(printf '%s\n' \
+  $'time\tagent\tbg\ttest\tsign' $'2026-10-02T12:00:00Z\ts\t1\t0\t0' $'2026-10-03T12:00:00Z\ts\t0\t0\t0' \
+  $'2026-10-03T12:00:00Z\ts\t-\t-\t-')"
+check "false stalls count stalled incidents with an input at 1 and lead-hand or user-caught lines with cause=false-stall" \
+  "$(part 5)" "false stalls: 3 (1 stalled with an input at 1, 2 lead-hand or user-caught with cause=false-stall)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
