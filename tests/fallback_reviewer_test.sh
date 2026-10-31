@@ -116,7 +116,16 @@ review() {
   rc=0; wait "${pid}" || rc=$?
   took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
 }
-incidents() { awk -F'\t' '$2 == "incident" { print $3 "|" $5 }' "${p}/.swarm/events.tsv"; }
+# incidents [fields] — the incident lines as "target|outcome" (events_outcome's, without the tail), or
+# with fields, each one's fields() as sorted k=v words.
+incidents() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields, outcome
+for r in (l.rstrip("\n").split("\t") for l in open(sys.argv[2])):
+    if r[1] == "incident":
+        print(" ".join("%s=%s" % kv for kv in sorted(fields(r).items())) if sys.argv[3] else r[2] + "|" + outcome(r))' \
+    "${SWARM%/*}/lib" "${p}/.swarm/events.tsv" "${1:-}"
+}
 closed() { if grep -qE '^(pane|tab) close' "${ROOT}/herdr.log"; then echo yes; else echo no; fi; }
 live() { awk '{ print $1 }' "${ROOT}/agents" | tr '\n' ' '; }
 
@@ -125,6 +134,7 @@ review
 check "with fallback_reviewer empty, codex-review exits as codex did, with codex's output alone" "1|${LIMIT_MSG}" "${rc}|${out}"
 check "with fallback_reviewer empty, no agent starts" "no" "$(logged '^agent start')"
 check "with fallback_reviewer empty, the codex-limit incident is logged" "codex-s1|codex-limit: usage limit" "$(incidents)"
+check "its tail has the story's slug, and no role= with no agent running it" "slug=s1" "$(incidents fields)"
 
 # --- fallback_reviewer = sonnet: the fallback agent starts on sonnet, its findings are printed, and
 # it is closed.

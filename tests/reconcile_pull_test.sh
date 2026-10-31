@@ -9,7 +9,8 @@
 # file the pull gives a new dependency, or changes the same keys in, stops the pull, except a status
 # write, which gives way to the incoming status. With no upstream, a merged item is marked done. A hand edit
 # to a tracked story the pull also changes stops the pull, before any key is moved, names the file,
-# changes nothing, and logs one pull-failed incident; with nothing to pull it stops nothing. A merge
+# changes nothing, and logs one pull-failed incident, with slug= when it names one story file and none
+# for a file off the board; with nothing to pull it stops nothing. A merge
 # git refuses puts back every change made for it. After a pull by hand, reconcile still drops the
 # state of the stories the pulled commits deleted, and of an epic whose deletion took docs/epics, and
 # finishes a story in review whose PR merged: its builder closed, its build cleared (in its own repo
@@ -40,6 +41,16 @@ check() { # <name> <want> <got>
 }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 gone() { if [[ -e "$1" ]]; then echo there; else echo gone; fi; }
+# incidents <name> — the incident lines in <name>'s events.tsv as events_outcome reads them,
+# "outcome|k=v ..." (keys sorted), one per line.
+incidents() {
+  python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1])
+from events_outcome import fields, outcome
+rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[2])] if os.path.exists(sys.argv[2]) else []
+for r in (r for r in rows if r[1] == "incident"):
+    print(outcome(r) + "|" + " ".join("%s=%s" % kv for kv in sorted(fields(r).items())))' \
+    "${SWARM%/*}/lib" "${ROOT}/$1/.swarm/events.tsv"
+}
 
 # gh answers pr view with the state ROOT/prs gives the URL; anything else fails.
 mkdir -p "${ROOT}/bin"
@@ -190,8 +201,8 @@ perl -pi -e 's|^status: blocked$|status: ready|' "${ROOT}/kd/docs/stories/h.md";
 perl -pi -e 's|^depends_on: \[old\]$|depends_on: [old, new]|' "${ROOT}/kd-up/docs/stories/h.md"
 "${GIT[@]}" -C "${ROOT}/kd-up" commit -q -am "h waits on new too" && "${GIT[@]}" -C "${ROOT}/kd-up" push -q origin main
 rc=0; out="$(at kd reconcile)" || rc=$?
-check "an old ready flip under a new dependency stops the pull, naming h, and moves nothing" "1|yes|same|gone|pull-failed: docs/stories/h.md" \
-  "${rc}|$(has "swarm.sh's keys are changed here in docs/stories/h.md, and the incoming commits change its depends_on or the same keys" "${out}")|$(cmp -s "${ROOT}/kd-h" "${ROOT}/kd/docs/stories/h.md" && echo same)|$(state kd h)|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/kd/.swarm/events.tsv")"
+check "an old ready flip under a new dependency stops the pull, naming h, and moves nothing" "1|yes|same|gone|pull-failed: docs/stories/h.md|slug=h" \
+  "${rc}|$(has "swarm.sh's keys are changed here in docs/stories/h.md, and the incoming commits change its depends_on or the same keys" "${out}")|$(cmp -s "${ROOT}/kd-h" "${ROOT}/kd/docs/stories/h.md" && echo same)|$(state kd h)|$(incidents kd)"
 
 # --- e in review as an older swarm.sh wrote it (status: review and prs: uncommitted, no state), and
 # its merged PR sets status: done: the old status write gives way, and the pull goes, e done.
@@ -210,8 +221,8 @@ perl -pi -e 's|^status: ready$|status: blocked|' "${ROOT}/kh-up/docs/stories/e.m
 "${GIT[@]}" -C "${ROOT}/kh-up" commit -q -am "block e" && "${GIT[@]}" -C "${ROOT}/kh-up" push -q origin main
 perl -pi -e 's|^status: ready$|status: later|' "${ROOT}/kh/docs/stories/e.md"
 rc=0; out="$(at kh reconcile)" || rc=$?
-check "a hand edit the pull's status replaces is named, with both values, on stdout and in an incident" "0|blocked|yes|key-dropped: docs/stories/e.md status: later -> blocked" \
-  "${rc}|$(val "${ROOT}/kh/docs/stories/e.md" status)|$(has "reconcile: docs/stories/e.md: the pull's status: blocked replaced your uncommitted status: later; set it again if you meant it" "${out}")|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/kh/.swarm/events.tsv")"
+check "a hand edit the pull's status replaces is named, with both values, on stdout and in an incident" "0|blocked|yes|key-dropped: docs/stories/e.md status: later -> blocked|slug=e" \
+  "${rc}|$(val "${ROOT}/kh/docs/stories/e.md" status)|$(has "reconcile: docs/stories/e.md: the pull's status: blocked replaced your uncommitted status: later; set it again if you meant it" "${out}")|$(incidents kh)"
 
 # --- A leftover kind: lead in e (uncommitted, no state), and a board PR that commits the same kind:
 # lead: the same value on both sides goes through, and e reads lead.
@@ -266,8 +277,8 @@ check "a hand edit to a tracked story stops the pull, named" "1|yes" \
   "${rc}|$(has "reconcile: cannot pull ${ROOT}/he: board files are changed here: docs/stories/e.md; land each edit through swarm.sh board-pr, or check the file out to drop it, then run reconcile again" "${out}")"
 check "and changes nothing: HEAD, e's edit, a in review, and no stash" "${before}| M docs/stories/e.md|same|there|" \
   "$(git -C "${ROOT}/he" rev-parse HEAD)|$(git -C "${ROOT}/he" status --porcelain)|$(cmp -s "${ROOT}/he-e" "${ROOT}/he/docs/stories/e.md" && echo same)|$(state he a)|$(git -C "${ROOT}/he" stash list)"
-check "one incident line: pull-failed, naming e" "1|pull-failed: docs/stories/e.md" \
-  "$(awk -F'\t' '$2 == "incident"' "${ROOT}/he/.swarm/events.tsv" | wc -l | tr -d ' ')|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/he/.swarm/events.tsv")"
+check "one incident line: pull-failed, naming e, with e's slug" "1|pull-failed: docs/stories/e.md|slug=e" \
+  "$(awk -F'\t' '$2 == "incident"' "${ROOT}/he/.swarm/events.tsv" | wc -l | tr -d ' ')|$(incidents he)"
 rc=0; at he reconcile >/dev/null || rc=$?
 check "the same stop on the next reconcile logs no second incident" "1|1" \
   "${rc}|$(awk -F'\t' '$2 == "incident"' "${ROOT}/he/.swarm/events.tsv" | wc -l | tr -d ' ')"
@@ -443,6 +454,7 @@ echo "local/" >> "${ROOT}/ro/.gitignore"
 rc=0; out="$(at ro reconcile)" || rc=$?
 check "a root board: a hand edit off its own paths is named as outside the board" "1|yes|no" \
   "${rc}|$(has "files outside the board are changed here: .gitignore; commit or move each change" "${out}")|$(grep -qF "board files are changed here" <<< "${out}" && echo yes || echo no)"
+check "its pull-failed line, naming no story, has neither slug= nor role=" "pull-failed: .gitignore|" "$(incidents ro)"
 
 # herdr_stub <dir> — a herdr and a claude in <dir>/bin, herdr's state in <dir>/h: tabs ("<tab>
 # <label>"), panes ("<pane> <tab>") and agents ("<name> <pane> <status>"). A pane close takes its
