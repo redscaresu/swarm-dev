@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 hld: 2026-10-28-swarm-dev-0-30-and-0-31
 stage: v0.31.0
 depends_on: [reference-split]
