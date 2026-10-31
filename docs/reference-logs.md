@@ -20,7 +20,11 @@ its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait
 `wait --until-report` hour that it waits again, and not while the agent is still working: its
 session `busy`, or, for an agent herdr answers for, herdr's `working`), and `login` when it returns `auth`, once per
 expired login: a second wait adds none, and a `tell` (the resume after the `/login`) starts a new
-one. `tell` writes `stale-blocked` when herdr refused a tell as blocked though the agent's pane read clear,
+one. A `wait-timeout` carries `activity=` when the agent made no progress during the wait: no commit or
+edit in its story's worktree and no assistant message or tool line in its session log since the wait
+began. Its value names what was still running when the wait ran out, comma-joined: `bg` (a background
+task of the session), `test` (a test suite in its pane), `sign` (work its signer cannot sign), or
+`none`. With progress, the line has no `activity=`. `tell` writes `stale-blocked` when herdr refused a tell as blocked though the agent's pane read clear,
 so `tell` reported the agent idle to herdr. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
 unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the waits on that builder write
 none, so one stuck builder is one incident. `wait --stall` writes `sign-blocked` when a builder it would otherwise call
