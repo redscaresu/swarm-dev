@@ -137,6 +137,8 @@ outcomes() { awk -F'\t' "${EVENT_AWK}"' $2 == "tell:findings" && $3 == "b1" { pr
 # rounds — b1's findings rounds as findings_told counts them: its tell:findings lines logged ok, or
 # whose outcome says herdr sent them, read without the round= verdict= tail.
 rounds() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5; sub(/ ~~ .*/, "", o); if (o == "ok" || o ~ /herdr sent it the brief/) n++ } END { print n + 0 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
+# verdicts — b1's tell:findings lines whose tail carries verdict=findings
+verdicts() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && $5 ~ / ~~ .*verdict=findings/ { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
 LOG="${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # b1's session log
 lead() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 TQ_CALLER=lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait --lead 0 2>&1) || true; }
 QUEUED="queued: b1 (busy); delivered when its turn ends, so do not tell it again"
@@ -343,6 +345,7 @@ fresh; state busy
 tell "fix round one" >/dev/null
 touch "${ROOT}/nosend"; state idle; settle; rm -f "${ROOT}/nosend"   # herdr sends it, and no turn ever shows
 check "a queued findings tell herdr sent and never showed taken up: sent twice, as any tell, and one round" "2 1" "$(prompts) $(rounds)"
+check "a queued findings tell herdr sent and never showed taken up: its one round's line carries verdict=findings" 1 "$(verdicts)"
 check "a queued findings tell herdr sent and never showed taken up: wait --lead says it may have arrived, never to send it as findings again" yes \
   "$(grep -qF "herdr sent it the brief twice" <<< "$(lead)" && grep -qF "exit: it may have arrived, so do as that says and never send it again as findings; then rm ${U} ${U}.md" "${U}" && echo yes || echo no)"
 
@@ -354,6 +357,7 @@ tell "fix round blocked" >/dev/null
 touch "${ROOT}/blocked"; state idle; settle; rm -f "${ROOT}/blocked"
 check "a queued tell herdr refused as blocked before sending it, its pane unreadable: to the lead as never sent, to send again" "yes|fix round blocked|0" \
   "$([[ "$(lead)" == "tell undelivered: b1 findings at "*"(b1: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read b1; its pane could not be read), exit: if it still applies, swarm.sh tell b1 findings ${U}.md; then rm ${U} ${U}.md" ]] && echo yes || echo no)|$(cat "${U}.md" 2>/dev/null)|$(rounds)"
+check "a queued findings tell herdr never sent counts no round: no line carries verdict=findings" 0 "$(verdicts)"
 
 # A builder at its prompt with a test running in the background: Claude Code lists it busy, its session
 # log ends on the reply that ended its turn. Mid-turn (its log ends on a prompt) the tell waits.

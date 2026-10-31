@@ -65,8 +65,8 @@ def loops(slug, lines):
     # line, so rounds it counted that this reader did not see, less those of the loops before this one
     # since that line (a restarted builder's), are the loop's too, with no minutes. A step-up goes on the round open or last
     # closed, or before the first, and the rounds after it run on its model; a findings step-up resumed after one that failed partway
-    # goes on the round that failure closed. A review-finished line keeps its verdict as the loop's, until
-    # a review agent starts again. Each loop: its rounds, step-ups before them, whether the
+    # goes on the round that failure closed. A review-finished line keeps its verdict (held, pass or
+    # decline-only) as the loop's, until a review agent starts again. Each loop: its rounds, step-ups before them, whether the
     # lead holds it, whether a merge line ended it, how its last round closed, its verdict, its model at the end, its
     # PR, when it started and whether a review-agent, tell:findings or escalate line of it is in the
     # window. A build starts at an ok story line, an ok agent line (a builder a conductor started) or an
@@ -199,10 +199,11 @@ for slug, builds in shown.items():
             stepped.update(builds=1, rounds_before=up - off, rounds_after=n - up,
                            fixed_before=sum(c[(i, "fixed")] for i in range(off + 1, up + 1)),
                            fixed_after=sum(c[(i, "fixed")] for i in range(up + 1, n + 1)))
-        # A review-finished verdict says how the loop ended; with none, the lines before it do.
-        said = {"held": "held-for-lead", "pass": "pass", "decline-only": "decline-only"}.get(lp["verdict"])
-        end = "held-for-lead" if lp["held"] else said or ("open" if not (lp["merged"] or pr_key(pr) in merged)
-            else "decline-only" if lp["last"] == "decline-only" else "merged-after-fixes" if c[(n, "fixed")] else "pass")
+        # A review-finished verdict adds what the lines alone may miss: held until the PR merges, and
+        # decline-only once it has. A pass goes by the lines, so open stays open and fixes still show.
+        landed = lp["merged"] or pr_key(pr) in merged
+        end = "held-for-lead" if lp["held"] or lp["verdict"] == "held" and not landed else "open" if not landed \
+            else "decline-only" if "decline-only" in (lp["last"], lp["verdict"]) else "merged-after-fixes" if c[(n, "fixed")] else "pass"
         ends.append(f"{slug}\t{pr}\t{n}\t{end}")
         if pr != "-":
             pr_rounds[pr_key(pr)] = max(pr_rounds.get(pr_key(pr), 0), n)

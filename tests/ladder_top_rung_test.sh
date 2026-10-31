@@ -216,6 +216,9 @@ check "opus: the sent tell's line ends review round 4 with verdict=findings, and
   "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$(finished)"
 fresh opus 2; out="$(run tell s1 findings "${ROOT}/f.md")" || true
 check "opus: the 3rd steps it up to fable, as today" "ok (findings-3: opus -> fable)|" "$(stepped)|$(held)"
+check "opus: the tell the step-up took the place of ends review round 5 with verdict=findings on its stepped-up line" \
+  "stepped up, with them in its handover brief|round=5 verdict=findings" \
+  "$(awk -F'\t' '$2 == "tell:findings" { l = $5 } END { print l }' "${P}/.swarm/events.tsv" | sed -E 's/.*(stepped up, with them in its handover brief).* ~~ (.*)$/\1|\2/')"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

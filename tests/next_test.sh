@@ -1389,7 +1389,8 @@ reply() {
 }
 goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /goal or the refusal> <tell args...>
   # A refusal leaves $NREC records (2: the /goal was sent) and says the findings must not be sent again.
-  # Each events line ends in round=1 verdict=findings: the trap's ok line for the delivery, and main's for a refusal.
+  # The line that counts the round ends in round=1 verdict=findings: main's ok line, or for a goal step
+  # that failed, the trap's ok line for the delivery; main's failure line then has no tail.
   local name="$1" rc="$2" want="$3" out goal ev; shift 3
   : > "${dir}/projects/p/sess-s1.jsonl"; rm -f "${dir}/screen" "${dir}/.swarm/events.tsv"; tsession idle
   # WORKED: an assistant entry dated after the tell. A findings /goal goes only mid-turn, so an idle
@@ -1402,7 +1403,7 @@ print(json.dumps({"type": "assistant", "timestamp": t.isoformat(timespec="millis
         && "${goal}" == *"the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied"*"${want}"*"or stop after 4 more turns"* && "${goal}" == *"state: busy"* \
         && -z "$(ls "${dir}/tmp")" && "${ev}" == "tell:findings s1 ok ~~ round=1 verdict=findings|" ]] \
      || [[ ${rc} == 1 && "${out}" == *"s1: ${want}"*"do not send them again"*"exit 1" && "$(records)" == "${NREC:-2}" \
-           && "${ev}" == "tell:findings s1 ok ~~ round=1 verdict=findings|tell:findings s1 s1: ${want}"*" ~~ round=1 verdict=findings|" ]]; then echo "ok   ${name}"; else
+           && "${ev}" == "tell:findings s1 ok ~~ round=1 verdict=findings|tell:findings s1 s1: ${want}"* && "${ev#*|}" != *" ~~ "* ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: got '${out}', events '${ev}', sent '$(cat "${dir}/sent" 2>/dev/null)'"; fails=$((fails + 1)); fi
 }
 onerecord() { # <name> <tell args...> — the tell sends one record, no goal
