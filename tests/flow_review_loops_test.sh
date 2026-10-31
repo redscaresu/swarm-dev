@@ -22,7 +22,9 @@
 # a 10-04 window. Rounds count per PR: s-same's second build's review is its PR's round 2. s-agent's
 # conductor-started builder (an agent line) is a build on sonnet, its own agents.tsv line, so the escalate
 # build after it runs on fable with its own outcomes row's PR. s-mm merges, then is built again: the
-# rebuild is its own loop. s-retry's fable round fixes one: the top rung's share. TZ is UTC.
+# rebuild is its own loop. s-retry's fable round fixes one: the top rung's share. The totals count the
+# findings declined deferred, those an escaped row on the same PR later repeats, and the PRs with four or
+# more rounds, in fixtures of their own. TZ is UTC.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -195,10 +197,11 @@ check "a loop with no round shows its step-ups on a row with no round, and no en
 # 14 PRs (each once, loops with no PR left out): rounds 1 (ten), 2 (three) and 4; round 3 on: 30 + 15
 # minutes; 12 fixes: 8, 3 and 1 by round, one on fable (s-retry's); 6 fixes over 4 rounds up to a step-up (s-loop's rounds 1-3,
 # s-rb's round 1), none over the 2 after (s-loop's round 4, s-retry's first build's round); s-held's,
-# s-part's and s-rb's failed step-ups, s-ref's refused one not among them.
+# s-part's and s-rb's failed step-ups, s-ref's refused one not among them; no finding declined deferred,
+# so deferred_proved_real is -; one PR of 14 (s-loop's) with four rounds.
 check "the totals match the fixtures" "$(tail -2 <<< "${out}")" \
-  "$(printf '%s\n' $'prs\trounds_median\trounds_p90\tmin_round3_on\tfixes\tround1\tround2\tround3_on\ttop_rung\tstepped_up\tfixes_per_round_before\tfixes_per_round_after\tfailed_step_ups' \
-    $'14\t1\t2\t45\t12\t67%\t25%\t8%\t8%\t3\t1.5\t0\t3')"
+  "$(printf '%s\n' $'prs\trounds_median\trounds_p90\tmin_round3_on\tfixes\tround1\tround2\tround3_on\ttop_rung\tstepped_up\tfixes_per_round_before\tfixes_per_round_after\tfailed_step_ups\tdeferred\tdeferred_proved_real\tprs_4plus_rounds' \
+    $'14\t1\t2\t45\t12\t67%\t25%\t8%\t8%\t3\t1.5\t0\t3\t0\t-\t7% (1 of 14)')"
 check "prs, rounds_median and rounds_p90 count each PR once, and no loop with no PR" "$(tail -1 <<< "${out}" | cut -f1-3)" $'14\t1\t2'
 check "a fixed finding on a top-rung round gives top_rung its share" "$(tail -1 <<< "${out}" | cut -f9)" "8%"
 check "--epic keeps that epic's stories" "$(loops "" e2 | cut -f1 | sort -u | tr '\n' ' ')" " 1 prs s-held story "
@@ -317,6 +320,35 @@ check "verdict cases: a review agent started after a held verdict reopens the lo
 check "verdict cases: a pass whose PR is not merged ends open" "$(end "${vout}" s-vopen)" $'s-vopen\t'"${P34}"$'\t1\topen'
 check "verdict cases: a merged pass whose last round fixed a finding ends merged-after-fixes" "$(end "${vout}" s-vfix)" $'s-vfix\t'"${P35}"$'\t1\tmerged-after-fixes'
 check "verdict cases: a held verdict on a PR merged since ends pass, not held-for-lead" "$(end "${vout}" s-vheldm)" $'s-vheldm\t-\t2\tpass'
+
+# deferred and four-plus cases, in logs of their own: s-r1, s-r3, s-r4 and s-r5 are merged after 1, 3, 4
+# and 5 rounds (each round but the last closed by a findings tell, the last by the review). On s-r3's PR
+# A, two findings were declined deferred; escaped rows on A repeat the first's text exactly and a prefix
+# of the second's, and one on s-r1's PR B repeats the first's text: only the first proved real.
+G="${dir}/goal1"; mkdir -p "${G}"
+PA=https://github.com/o/r/pull/41 PB=https://github.com/o/r/pull/42 PC=https://github.com/o/r/pull/43 PD=https://github.com/o/r/pull/44
+gev() { printf '2026-10-01T09:%02d:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${G}/events.tsv"; }
+: > "${G}/agents.tsv"
+for spec in "s-r1 1 ${PB}" "s-r3 3 ${PA}" "s-r4 4 ${PC}" "s-r5 5 ${PD}"; do
+  read -r s n gpr <<< "${spec}"
+  printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\tg-%s\n' "${s}" "${s}" >> "${G}/agents.tsv"
+  gev 0 story "${s}" ok
+  for ((i = 1; i < n; i++)); do gev $((2 * i)) review-agent "${s}" ok; gev $((2 * i + 1)) tell:findings "${s}" ok; done
+  gev 20 review-agent "${s}" ok; gev 21 review "${s}" "ok (${gpr})"; gev 22 merge "${s}" ok
+done
+gf() { printf '2026-10-01\tbug\t%s\t%s\t%s\t%s\t%s\t1\n' "$1" "$2" "$3" "$4" "$5" >> "${G}/findings.tsv"; }
+gf "${PA}" "the cap is never read" declined codex deferred
+gf "${PA}" "the round count resets on a kept close" declined codex deferred
+gf "${PA}" "the cap is never read" escaped escaped ""
+gf "${PA}" "the round count resets" escaped escaped ""
+gf "${PB}" "the cap is never read" escaped escaped ""
+gloops() { SWARM_FINDING_REVIEWERS="codex escaped" SWARM_ROWS="" python3 "${ROOT}/bin/lib/flow_report.py" \
+  0000-00-00 9999-12-30 "" "${G}/agents.tsv" "${G}/events.tsv" "${G}/findings.tsv" x "code" x x "" x review_loops; }
+gout="$(gloops)"
+check "deferred and four-plus cases: each PR's rounds" "$(end "${gout}" 's-r[0-9]' | cut -f1,3 | tr '\n' ' ')" $'s-r1\t1 s-r3\t3 s-r4\t4 s-r5\t5 '
+check "deferred and four-plus cases: deferred counts the declined-deferred rows, and only an escaped row on the same PR with the exact text proves one real" \
+  "$(tail -1 <<< "${gout}" | cut -f14,15)" $'2\t1 of 2'
+check "deferred and four-plus cases: of four PRs with 1, 3, 4 and 5 rounds, two have four or more" "$(tail -1 <<< "${gout}" | cut -f16)" "50% (2 of 4)"
 
 # flow passes escalate_ladder: with none, top_rung is -.
 P="${dir}/repo"

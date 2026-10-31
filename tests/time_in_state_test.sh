@@ -237,23 +237,30 @@ flow() { # [epic [since]] — the time_in_state section alone, as flow runs it, 
   SWARM_ROWS="${out}" python3 "${ROOT}/bin/lib/flow_report.py" "${2:-0000-00-00}" 9999-12-30 "${1:-}" x x x x x x x "" x time_in_state
 }
 check "flow's epic line counts the PR once and the story's held time, in hours and shares, largest first, a tie in column order" "$(flow)" "$(printf '%s\n' \
-  "## time_in_state" $'epic\tprs\thours\tlargest_first\tready_wait_median\tready_wait_p90\tgreen_to_review_median\tgreen_to_review_p90' $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t' $'all\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t')"
+  "## time_in_state" $'epic\tprs\thours\tlargest_first\tready_wait_median\tready_wait_p90\tgreen_to_review_median\tgreen_to_review_p90\treview_wait_median\treview_wait_p90' $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t\t35\t35' $'all\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t\t35\t35')"
 # The rebuild, dated 10-01, is the PR's first build: --since 2026-10-02 leaves the PR out, rather
 # than counting the retry's 55 minutes for it.
-check "a PR counts by its first build, in the window only when that build is" "$(flow "" 2026-10-02 | tail -1)" \
-  $'all\t0\t0\tbuilding:0h/0% ci:0h/0% review_wait:0h/0% fixing:0h/0% merge_wait:0h/0% held:0h/0%\t\t\t\t'
+# That all row has no merged PR, so its review_wait median and p90 are empty, as green_to_review's are.
+check "a PR counts by its first build, in the window only when that build is, and a row with no review_wait_min leaves review_wait empty" "$(flow "" 2026-10-02 | tail -1)" \
+  $'all\t0\t0\tbuilding:0h/0% ci:0h/0% review_wait:0h/0% fixing:0h/0% merge_wait:0h/0% held:0h/0%\t\t\t\t\t\t'
 # Another story of e1 that waited 3 h too but whose PR never merged: its held is not the merged PRs'.
 other="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["slug"] = "other"; print }' <<< "${out}")"
-check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t'
+check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t\t35\t35'
 # A step-up rung of tis at 13:00 keeps attempts 1 and its own held_min (60) and ready_wait_min (480):
 # held and ready_wait both still come from tis's earliest build.
 rung="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["started"] = "'"${D}"'13:00:00Z"; $at["held_min"] = 60; $at["ready_wait_min"] = 480; print }' <<< "${out}")"
-check "held and ready_wait count a stepped-up story by its earliest build, not its rung" "$(out="${out}"$'\n'"${rung}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t'
-check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t'
+check "held and ready_wait count a stepped-up story by its earliest build, not its rung" "$(out="${out}"$'\n'"${rung}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t\t35\t35'
+check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240\t\t\t35\t35'
 
 # Three merged PRs of e1, 2, 12 and 30 minutes from green to their review: median 12, p90 (nearest rank) 30.
 g2r_rows="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next }
   $at["started"] ~ /T10:50/ { split("2 12 30", m, " "); for (i = 1; i <= 3; i++) { $at["pr"] = "https://github.com/o/r/pull/2" i; $at["green_to_review_min"] = m[i]; print } }' <<< "${out}")"
 check "time_in_state gives each epic's green_to_review median and p90 over its PRs" "$(out="${out}"$'\n'"${g2r_rows}" flow e1 | tail -1 | cut -f2,7,8)" $'4\t12\t30'
+
+# Five merged PRs of e1, with review_wait_min 10, 20, 30, 40 and 200 (tis's own rows left out): median 30,
+# p90 (nearest rank, the 5th of 5) 200.
+rw_rows="$(awk -F'\t' -v OFS='\t' 'NR == 1 { print; for (i = 1; i <= NF; i++) at[$i] = i; next }
+  $at["started"] ~ /T10:50/ { split("10 20 30 40 200", m, " "); for (i = 1; i <= 5; i++) { $at["pr"] = "https://github.com/o/r/pull/3" i; $at["review_wait_min"] = m[i]; print } }' <<< "${out}")"
+check "time_in_state gives the all row's review_wait median and p90 over its merged PRs" "$(out="${rw_rows}" flow | tail -1 | cut -f1,2,9,10)" $'all\t5\t30\t200'
 
 if [[ "${fails}" -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi

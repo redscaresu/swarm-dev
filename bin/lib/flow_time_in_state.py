@@ -10,7 +10,8 @@
 # own ready_wait_min) is dated in the window and has a ready_wait_min, merged or not (empty with none);
 # an epic with those alone still gets a row. Then green_to_review's median and p90 (nearest rank) in
 # minutes, over the row's merged PRs (the ones the phases count) that have a green_to_review_min
-# (empty with none).
+# (empty with none). Last, review_wait's median and p90 (nearest rank) in minutes over the same merged
+# PRs, from outcomes' review_wait_min phase (empty with none).
 import statistics
 from report import PHASES, pr_key
 STATES = PHASES + ("held",)
@@ -39,7 +40,7 @@ groups = {r["epic"]: [] for r in waits if r["epic"]}
 for r in window:
     if r["epic"]:
         groups.setdefault(r["epic"], []).append(r)
-print("epic\tprs\thours\tlargest_first\tready_wait_median\tready_wait_p90\tgreen_to_review_median\tgreen_to_review_p90")
+print("epic\tprs\thours\tlargest_first\tready_wait_median\tready_wait_p90\tgreen_to_review_median\tgreen_to_review_p90\treview_wait_median\treview_wait_p90")
 for g, rs in [(epic, groups.get(epic, []))] if epic else sorted(groups.items()) + [("all", window)]:
     # `rs is window` on the all row alone, so an epic named all keeps its own waits.
     wait = median_p90(int(r["ready_wait_min"]) for r in waits if rs is window or r["epic"] == g)
@@ -49,4 +50,5 @@ for g, rs in [(epic, groups.get(epic, []))] if epic else sorted(groups.items()) 
     print("\t".join([g, str(len(rs)), hours(whole),
                      " ".join(f"{p}:{hours(sums[p])}h/{100 * sums[p] / whole if whole else 0:.0f}%"
                               for p in sorted(STATES, key=lambda p: -sums[p]))] + wait
-                    + median_p90(int(r["green_to_review_min"]) for r in rs if r.get("green_to_review_min"))))
+                    + median_p90(int(r["green_to_review_min"]) for r in rs if r.get("green_to_review_min"))
+                    + median_p90(int(r["review_wait_min"]) for r in rs if r.get("review_wait_min"))))

@@ -408,7 +408,9 @@ dataset_report() {
 #     decline-only, else pass or merged-after-fixes; else open);
 #     then one totals row: its PRs, each
 #     once, their median and p90 rounds, minutes in round 3 on, the share of fixes by round and on escalate_ladder's top rung,
-#     fixes per round before and after a step-up, and failed step-ups.
+#     fixes per round before and after a step-up, failed step-ups, the findings on those PRs declined
+#     deferred, `<n> of <deferred>` of them whose text an escaped row on the same PR repeats exactly (-
+#     with none deferred), and `<pct>% (<n> of <prs>)` of the PRs with four or more rounds (- with none).
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
@@ -465,7 +467,8 @@ dataset_report() {
 #     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%; then
 #     ready_wait's median and p90 minutes over the first builds dated in the window, merged or not;
-#     then green_to_review's median and p90 minutes over the row's merged PRs that have one.
+#     then green_to_review's median and p90 minutes over the row's merged PRs that have one; then
+#     review_wait's median and p90 minutes over the same merged PRs, from their review_wait_min phase.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing but
 # its gh calls' lines in .swarm/gh-calls.tsv (bin/gh-shim's log), its cache of finished GitHub records
 # (GH_CACHE, bin/lib/gh_cache.py; --no-cache reads them all from gh again and rewrites them), the PR heads merge_ins
