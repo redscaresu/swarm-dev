@@ -278,7 +278,7 @@ printf '%s\n' $'2026-10-01\tcode\ts-vheld\tclaude\topus\thigh\tv1' $'2026-10-01\
   $'2026-10-01\tcode\ts-vpass\tclaude\topus\thigh\tv3' $'2026-10-01\tcode\ts-vdec\tclaude\topus\thigh\tv4' \
   $'2026-10-01\tcode\ts-vagain\tclaude\topus\thigh\tv5' $'2026-10-01\tcode\ts-vopen\tclaude\topus\thigh\tv6' \
   $'2026-10-01\tcode\ts-vfix\tclaude\topus\thigh\tv7' $'2026-10-01\tcode\ts-vheldm\tclaude\topus\thigh\tv8' > "${V}/agents.tsv"
-P31=https://github.com/o/r/pull/31 P32=https://github.com/o/r/pull/32 P33=https://github.com/o/r/pull/33
+P31=https://github.com/o/r/pull/31 P32=https://github.com/o/r/pull/32
 P34=https://github.com/o/r/pull/34 P35=https://github.com/o/r/pull/35
 printf '2026-10-01\tbug\t%s\tx\tfixed\tcodex\t\t1\n' "${P35}" >> "${V}/findings.tsv"
 vev() { printf '2026-10-01T08:%s:00Z\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" "$4" >> "${V}/events.tsv"; }
