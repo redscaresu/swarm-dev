@@ -620,7 +620,7 @@ QF="queued: f1 (busy); delivered when its turn ends, so do not tell it again"
 # The round file the agent wrote, after its triage: findings to fix go there, never to f1.md.
 printf '%s\n' "head: ${HEAD_SHA}" "## Findings" "- codex: bin/f1.sh:3 F1-FIX-ME" "## Handled by the review agent" "none" > "${p}/.swarm/reviews/f1.round.md"
 check "with f1's builder busy, the brief's tell is queued: exit 0, the queued: line, nothing sent, logged as queued and no round yet" "0|yes|no|${QF}|0" \
-  "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "${QF}" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" { l = $5 } END { print l }' "${p}/.swarm/events.tsv")|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" && $5 == "ok" { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv")"
+  "$(set +e; o="$(in_review_pane "${tell_cmd}")"; echo "$?|$(has "${QF}" "${o}")")|$([[ -e "${ROOT}/prompted-w-900" ]] && echo yes || echo no)|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" { l = $5 } END { print l }' "${p}/.swarm/events.tsv")|$(awk -F'\t' '$2 == "tell:findings" && $3 == "f1" { o = $5; sub(/ ~~ .*/, "", o); if (o == "ok") n++ } END { print n + 0 }' "${p}/.swarm/events.tsv")"
 # The brief's wait returns once the builder goes idle, not before (60 s at most, for a loaded machine).
 in_review_pane "${wait_cmd} 60000" > "${ROOT}/wait-f1.out" & wpid=$!
 sleep 1; check "the brief's wait on f1 holds while f1's builder works" "yes" "$(kill -0 "${wpid}" 2>/dev/null && echo yes || echo no)"

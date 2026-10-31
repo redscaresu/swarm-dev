@@ -135,8 +135,8 @@ EVENT_AWK="$(PROJECT_DIR="${ROOT}/src" bash -c 'source "$1/agents.sh"; printf %s
 # outcomes — the outcome of each tell:findings line for b1 in events.tsv, in order, joined by |.
 outcomes() { awk -F'\t' "${EVENT_AWK}"' $2 == "tell:findings" && $3 == "b1" { printf "%s%s", (n++ ? "|" : ""), outcome($5) }' "${p}/.swarm/events.tsv" 2>/dev/null; }
 # rounds — b1's findings rounds as findings_told counts them: its tell:findings lines logged ok, or
-# whose outcome says herdr sent them.
-rounds() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" && ($5 == "ok" || $5 ~ /herdr sent it the brief/) { n++ } END { print n + 0 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
+# whose outcome says herdr sent them, read without the round= verdict= tail.
+rounds() { awk -F'\t' '$2 == "tell:findings" && $3 == "b1" { o = $5; sub(/ ~~ .*/, "", o); if (o == "ok" || o ~ /herdr sent it the brief/) n++ } END { print n + 0 }' "${p}/.swarm/events.tsv" 2>/dev/null; }
 LOG="${CLAUDE_PROJECTS_DIR}/p/sb.jsonl"   # b1's session log
 lead() { (cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 TQ_CALLER=lead PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait --lead 0 2>&1) || true; }
 QUEUED="queued: b1 (busy); delivered when its turn ends, so do not tell it again"
