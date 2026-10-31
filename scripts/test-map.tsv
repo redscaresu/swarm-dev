@@ -14,11 +14,14 @@
 # fails on a tracked file under bin/, scripts/, commands/, hooks/ or docs/ that no row matches.
 
 # A test that runs swarm.sh sources every bin/lib/*.sh, so bin/ goes by function, not by file; select_tests.py
-# selects every test when it cannot follow the calls. The floor reads bin's code as text (a scan of every
-# file, the dispatch arms, the settings), so it names no function a change reaches.
-bin/swarm.sh bin/lib/*.sh bin/lib/*.py	reach tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh
-# loose_match_test.sh and timeouts_test.sh scan every tracked shell file under bin/ and hooks/, and
-# removed_test.sh greps all of bin/ for a removed name.
+# selects every test when it cannot follow the calls. The floor is the tests that read bin's code as text (a
+# scan of every file, the dispatch arms, the settings), which name no function a change reaches, and the
+# events_tail_* and events_fixture suites, which run the events.tsv readers whatever function changed.
+bin/swarm.sh bin/lib/*.sh bin/lib/*.py	reach tests/agent_state_test.sh tests/command_names_test.sh tests/doc_check_test.sh tests/events_fixture_test.sh tests/events_tail_agents_test.sh tests/events_tail_dash_test.sh tests/events_tail_flow_test.sh tests/events_tail_lead_test.sh tests/events_tail_merge_test.sh tests/events_test.sh tests/lib_path_test.sh tests/loose_match_test.sh tests/outcome_scan_test.sh tests/removed_test.sh tests/roles_test.sh tests/skill_test.sh tests/timeouts_test.sh
+# loose_match_test.sh and timeouts_test.sh scan every tracked shell file under bin/ and hooks/,
+# outcome_scan_test.sh every bin/lib/*.sh and *.py and bin/swarm.sh, and removed_test.sh greps all of
+# bin/ for a removed name. Every bin change runs the events_tail_* and events_fixture suites, a change to
+# bin/lib/events_outcome.py among them.
 bin/gh-shim/gh	named tests/loose_match_test.sh tests/timeouts_test.sh tests/removed_test.sh
 # test.sh sets every test's environment, and the Makefile runs it.
 scripts/test.sh Makefile	all

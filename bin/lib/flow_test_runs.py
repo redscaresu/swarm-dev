@@ -38,7 +38,7 @@ for f in lines:
         continue
     if f[5].startswith("story/") and " shard " not in f[4]:
         builders.append(int(f[2]))
-    if f[4] == "all":
+    if f[4] == "all":   # outcome-scan: ok test-runs.tsv's filter, not events.tsv's outcome
         st = starts.get((f[0], f[10]), f)
         runs.append({"start": f[0], "seconds": int(f[2]), "branch": f[5], "load": num(st[6]),
                      "at_once": max(int(st[8]), int(f[8])) + 1, "status": f[9]})
