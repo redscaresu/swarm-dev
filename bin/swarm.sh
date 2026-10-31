@@ -79,6 +79,23 @@ die() {
 DIE_FILE=""
 DIE_LEVEL=-1
 
+# event_fields <key=value>... — fields for the logged command's line, which main appends after its
+# outcome (append_event's tail). Like die's line, they are kept only at the command's own level, and
+# only while DIE_FILE is main's own (EV_ERR): a nested $(...), or a subshell with a die file of its
+# own (upgrade_restart, ready_tell), keeps none. Each value's whitespace becomes _ and an empty value is -,
+# so append_event never leaves a pair out for its value.
+event_fields() {
+  local x v
+  [[ -n "${EV_FIELDS_FILE}" && "${DIE_FILE}" == "${EV_ERR}" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]] || return 0
+  for x in "$@"; do
+    v="${x#*=}"; v="${v//[[:space:]]/_}"
+    { printf '%s=%s\n' "${x%%=*}" "${v:--}" >> "${EV_FIELDS_FILE}"; } 2>/dev/null || true
+  done
+}
+# Set only by main, in the subshell a logged command runs in, to a file main made with mktemp (EV_FLD),
+# as it makes DIE_FILE's; never taken from the environment.
+EV_FIELDS_FILE=""
+
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
 # config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP and its .expected memo) go either way.
 WAIT_PR_RED=""; WAIT_PR_TMP=""
@@ -686,7 +703,8 @@ dispatch() {
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
 # _fix-main writes a fix-main story, and logs its own main-red line (fix_main), as merge does.
-# The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends.
+# The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends,
+# a conductor's watch's `pr-opened <slug>` when it says a story PR opened, and wait-pr's `first-green <slug>`, once per story PR.
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
 # status, next and dash each append one row to .swarm/run-times.tsv (timed), which flow's run_times section reads.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
@@ -827,14 +845,14 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # group can miss a child forked while it is sent: STOP the group first). stop_codex stops it
 # after codex_minutes (SWARM_CODEX_SECONDS, a whole number of seconds, overrides it, for tests), or when this command is sent
 # TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
-# events.tsv's line says so, and it writes a reap line, target codex-<story or base>; otherwise it exits as codex did. codex's output, stderr merged into
+# events.tsv's line says so, and it writes a reap line, target codex-<story or base>, its tail agent_fields' slug= (SWARM_STORY, none without it) and role= (SWARM_AGENT's); otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
 # child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex whose last lines hold its own
 # limit message (CODEX_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a
-# codex-limit incident, and with fallback_reviewer set, codex_fallback reviews in its place, in what
+# codex-limit incident with the same tail, and with fallback_reviewer set, codex_fallback reviews in its place, in what
 # is left of codex_minutes.
 codex_review() {
-  local pid tpid left t0 rc=0 m i args story prompt="" dir log files
+  local pid tpid left t0 rc=0 m i args story prompt="" dir log files fields=() kv=() f
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   [[ -z "${SWARM_PR:-}" || "${SWARM_PR}" =~ ^https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+$ ]] \
@@ -847,6 +865,10 @@ codex_review() {
       || die "SWARM_STORY=${SWARM_STORY}: ${story} has no **Done when** with an item under it"
     args=("${prompt}")
   fi
+  # The incident and reap lines' slug= and role=: the story, and the role of the agent running it; with
+  # no SWARM_STORY, role= alone, never a slug read from the agent's name.
+  read -r -a kv <<< "$(agent_fields "${SWARM_AGENT:-}" "${SWARM_STORY:-}")"
+  for f in "${kv[@]+"${kv[@]}"}"; do [[ -z "${SWARM_STORY:-}" && "${f}" == slug=* ]] || fields+=("${f}"); done
   left=$((CFG_codex_minutes * 60))
   [[ ! "${SWARM_CODEX_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] || left="${SWARM_CODEX_SECONDS}"
   # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
@@ -893,7 +915,7 @@ codex_review() {
     if [[ ${rc} -ne 0 ]] && tail -n 5 "${log}" | grep -Eq "${CODEX_LIMIT_RE}"; then   # loose-match: ok CODEX_LIMIT_RE is a regex
       # Not the slug alone, which is also its builder's agent name: login_incident would take this
       # line for the end of that builder's login episode.
-      record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: usage limit"
+      record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: usage limit" "${fields[@]+"${fields[@]}"}"
       # Last in its list, never a condition, so errexit stays on in codex_fallback; a fallback that
       # does not review exits there, as codex did.
       [[ -z "${CFG_fallback_reviewer}" ]] || { codex_fallback "$1" "${prompt}" "${left}" "${log}" "${rc}"; return 0; }
@@ -901,7 +923,7 @@ codex_review() {
     return "${rc}"
   fi
   stop_codex "${pid}"
-  record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min"
+  record_event reap "codex-${SWARM_STORY:-$1}" "timed out after ${CFG_codex_minutes} min" "${fields[@]+"${fields[@]}"}"
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
 }
 
@@ -1054,6 +1076,7 @@ main_signal() {
   fi
   record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ -z "${EV_FLD}" ]] || rm -f "${EV_FLD}"
   trap - "$1"
   kill -"$1" "$$"
 }
@@ -1071,11 +1094,13 @@ main_signal() {
 # epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held. A tell that sent
 # nothing, queued for a busy agent or replaced by a newer one (on its way, or sent or queued since it
 # read the agent's state), logs the queued: or replaced: line tell_outcome leaves in the die file, so
-# it counts as no round.
+# it counts as no round. Its closing line carries key=value fields after the outcome (append_event's
+# tail): first EV_FIELDS, space-separated, which an arm below may set before dispatch, then those the
+# command kept with event_fields while it ran.
 main() {
-  local rc why a
+  local rc why a n f fields=()
   [[ "${1:-}" != init ]] || init_check
-  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""
+  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""; EV_FIELDS=""; EV_FLD=""
   # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
   if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
      || [[ "${EV_CMD}" == upgrade && "${SWARM_UPGRADE_WORKER:-}" != 1 && " $* " != *" --foreground "* ]] \
@@ -1119,30 +1144,41 @@ main() {
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
+  # event_fields' file, made before dispatch as the die file is, never a name built from it.
+  [[ "${EV_ERR}" == /dev/null ]] || EV_FLD="$(mktemp "${TMPDIR:-/tmp}/swarm-fields.XXXXXX" 2>/dev/null)" || EV_FLD=""
   EV_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
   # In the background, with stdin kept, so `wait` returns the moment a signal lands.
   set +e
-  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; set -e; dispatch "$@") <&0 &
+  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; EV_FIELDS_FILE="${EV_FLD}"; set -e; dispatch "$@") <&0 &
   EV_CHILD=$!
   wait "${EV_CHILD}"; rc=$?
   set -e
   trap - INT TERM HUP
+  read -ra fields <<< "${EV_FIELDS}"
+  if [[ -n "${EV_FLD}" && -f "${EV_FLD}" ]]; then while IFS= read -r f; do fields+=("${f}"); done < "${EV_FLD}"; fi
   if [[ "${EV_TARGET}" == '!' ]]; then
     :
   elif [[ ${rc} -ne 0 ]]; then
     why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
-    record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
+    record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}" ${fields[@]+"${fields[@]}"}
   elif [[ "${EV_CMD}" == close* ]] && stepped_up_since "${EV_TARGET}" "${EV_START}"; then
     :   # a step-up took the close's place (close_agent): its escalate line ends that build
   elif [[ "${EV_CMD}" == restart ]]; then
     :   # restart_build logged its own ok line, naming how it started the builder
   elif [[ "${EV_CMD}" == tell:* ]] && why="$(head -1 "${EV_ERR}" 2>/dev/null)" && [[ "${why}" == queued:* || "${why}" == replaced:* ]]; then
-    record_event "${EV_CMD}" "${EV_TARGET}" "${why}"   # tell_outcome's: nothing sent, so not ok
+    record_event "${EV_CMD}" "${EV_TARGET}" "${why}" ${fields[@]+"${fields[@]}"}   # tell_outcome's: nothing sent, so not ok
   elif [[ "${EV_TARGET}" != + ]]; then
-    record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
+    # A review --head that passes a findings round whose builder pushed nothing (it declined them all)
+    # is a decline-only end: its line goes first, so a reader meets it before the review's. A failed
+    # read of it skips the line, never the review's.
+    if [[ "${EV_CMD}" == review && "${3:-}" == --head ]] && n="$(decline_only_round "${EV_TARGET}" "${4:-}")" && [[ -n "${n}" ]]; then
+      record_event decline-only "${EV_TARGET}" "ok (round ${n})"
+    fi
+    record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}" ${fields[@]+"${fields[@]}"}
   fi
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  [[ -z "${EV_FLD}" ]] || rm -f "${EV_FLD}"
   return "${rc}"
 }
 

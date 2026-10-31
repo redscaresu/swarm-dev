@@ -858,6 +858,23 @@ review_rounds() {
     END { print n + 1, at + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo "1 0"
 }
 
+# decline_only_round <slug> <sha> — the round a decline-only reply ended, for main's decline-only line:
+# review_rounds' <started>, printed when a review started (started > 0), a findings round came after it
+# (round > started) and the head that round started on is still <sha>, so the builder pushed nothing in
+# reply to the findings: .swarm/reviews/<slug>.head holds <sha>, and so does the head: line of
+# <slug>.round.md, the round's findings to fix, when that file has one (a wording recheck that passed
+# moved .head to the fixed head and left .round.md at the head the findings were on); else nothing.
+# Fails, printing nothing, when the head file is there and cannot be read.
+decline_only_round() {
+  local round started head f="${PROJECT_DIR}/.swarm/reviews/$1.head" r="${PROJECT_DIR}/.swarm/reviews/$1.round.md"
+  read -r round started <<< "$(review_rounds "$1")"
+  [[ "${started}" -gt 0 && "${round}" -gt "${started}" && -e "${f}" ]] || return 0
+  head="$(cat "${f}" 2>/dev/null)" || return 1
+  [[ "${head}" == "$2" ]] || return 0
+  if grep -q '^head: ' "${r}" 2>/dev/null && ! grep -qx "head: $2" "${r}"; then return 0; fi
+  echo "${started}"
+}
+
 # review_words <slug> [next|recheck] — for review-agent's refusals (its start, --next's or --recheck's):
 # the command, what the refusal left undone and how to try again, in REVIEW_CMD, REVIEW_UNDONE and REVIEW_AGAIN.
 review_words() {

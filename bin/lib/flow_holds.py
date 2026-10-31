@@ -12,6 +12,7 @@
 # hyphenated token, a story an ok story line in events.tsv started before the hold; else other.
 # ponytail: a one-word slug never counts as named (it would match ordinary words); name its PR if that matters.
 import datetime, functools, os, re, subprocess, sys
+from events_outcome import outcome
 from touches_rows import front_text
 
 PR = re.compile(r"#\d+|/pull/\d+")
@@ -60,14 +61,15 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     cmd = f[1].partition(":")[0] if len(f) == 5 else ""
     if not cmd or (t := when(f[0])) is None:
         continue
-    if cmd == "hold" and f[4].startswith("ok (") and f[4].endswith(")") and f[2] not in held:
-        held[f[2]] = [f[2], t, f[4][4:-1], reason_class(f[4][4:-1], started - {f[2]}), None, None]
+    o = outcome(f)
+    if cmd == "hold" and o.startswith("ok (") and o.endswith(")") and f[2] not in held:
+        held[f[2]] = [f[2], t, o[4:-1], reason_class(o[4:-1], started - {f[2]}), None, None]
         holds.append(held[f[2]])
-    elif cmd == "story" and f[4] == "ok":
+    elif cmd == "story" and o == "ok":
         started.add(f[2])
         if f[2] in held:
             held.pop(f[2])[4] = t
-    elif cmd == "drop" and f[4].startswith("ok") and f[2] in held:
+    elif cmd == "drop" and o.startswith("ok") and f[2] in held:
         held.pop(f[2])[4:] = [t, "dropped"]
 for h in held.values():
     gone = deleted(h[0])[1]
