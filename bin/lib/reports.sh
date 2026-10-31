@@ -353,8 +353,9 @@ dataset_report() {
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it. Then,
 #     each after a blank line: TSV epic kind stops (api-error and auto-denied per epic; --epic keeps
 #     that epic's rows), TSV kind cause incidents (cause=, - when absent), TSV time agent bg test sign
-#     (each stalled incident, - for an input it does not carry) and the false stalls line (stalled
-#     incidents with an input at 1, and lead-hand and user-caught lines with cause=false-stall).
+#     event (each stalled incident and stalled step-up's escalate line, - for an input it does not carry)
+#     and the false stalls line (those rows with an input at 1, and lead-hand and user-caught lines with
+#     cause=false-stall).
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
 #     (an ok held, escalated, close:impossible, kept or review line in events.tsv; with merge = agent, a
 #     review only of a story whose costs: is not none, or that cannot be read; a kept line ends any item

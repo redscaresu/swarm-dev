@@ -701,9 +701,12 @@ HANDOVER_DIFF_LINES=400
 # it, run as step_role picks. Refused, with nothing closed, with escalate_ladder empty, at or above its
 # top rung, and for a story that is not ready, not an agent's kind, or has no worktree; refused too,
 # with no rung started, when the old builder's pane could not be closed. [findings] is a file the brief pastes
-# too (tell_agent's).
+# too (tell_agent's). A stalled step-up keeps bg= test= sign= on its marker for its escalate line: as
+# wait_agent's agent_stalled read them, passed in SWARM_STALL_READS, when it runs as _step-up (STEP_UP_AUTO);
+# else read fresh with stall_reads before the builder is closed, so a 1 can show.
 step_up() {
-  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to rank role names src wt b
+  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to rank role names src wt b reads="" n
+  local form='^bg=[01] test=[01] sign=[01]$'
   [[ "${trigger}" =~ ^[a-z0-9-]+$ && " ${STEP_UP_TRIGGERS} " == *" ${trigger} "* ]] \
     || die "step-up: the trigger must be one of ${STEP_UP_TRIGGERS// /, } (swarm.sh step-up <slug> <trigger>)"
   [[ -n "${CFG_escalate_ladder}" ]] || die "step-up: escalate_ladder is empty (off), so there is no next model; nothing was closed"
@@ -725,8 +728,14 @@ step_up() {
   # [findings] kept beside the marker, so start_rung's brief (and a resume's) pastes them. Copied
   # first: a marker is left only by a step-up that got as far as closing the builder.
   rm -f "${b}.findings.md"; [[ -z "${3:-}" ]] || cp "$3" "${b}.findings.md"
+  if [[ "${trigger}" == stalled ]]; then
+    if [[ -n "${STEP_UP_AUTO:-}" && "${SWARM_STALL_READS:-}" =~ ${form} ]]; then reads="${SWARM_STALL_READS}"
+    else n="$(agent_name "${slug}")"; reads="$(stall_reads "${n}" "$(agent_field "${n}" pane_id)")"; fi
+  fi
+  # Not passed on to the rung: SWARM_* reaches every agent.
+  unset SWARM_STALL_READS
   # The marker (step_up_marker): while this swarm.sh runs, the lead's poll reads it as a step-up under way.
-  step_up_marker "${b}.step-up" "${trigger} ${from} ${to} ${role}"
+  step_up_marker "${b}.step-up" "${trigger} ${from} ${to} ${role}${reads:+ ${reads}}"
   # From here a failure is not a refusal: the old builder is closed. step_up_failed logs it, and
   # ladder_step's _step-up (STEP_UP_AUTO) says so and exits STEP_UP_PARTWAY.
   # shellcheck disable=SC2064 # expand now: the slug is local
@@ -747,7 +756,7 @@ step_up() {
   STEP_UP_CLOSED=1
   # The old builder is gone: the marker says so, and a pane herdr lists under its name from here is
   # the new rung's (step_up_closed).
-  step_up_marker "${b}.step-up" "${trigger} ${from} ${to} ${role}" closed
+  step_up_marker "${b}.step-up" "${trigger} ${from} ${to} ${role}${reads:+ ${reads}}" closed
   start_rung "${slug}"
 }
 
@@ -808,10 +817,11 @@ step_up_resume() {
 }
 
 # step_up_marker <file> <first line> [closed] — write a .step-up marker: <first line> (<trigger> <from>
-# <to> <role>, which start_rung reads), then `pid <n>`, this swarm.sh's pid, then `closed` once the old
-# builder is closed. While that process runs, the step-up is under way; once it is gone and the marker
-# is still there, the step-up failed (no_agent_lines prints `step-up failed:`), and with `closed` a
-# pane herdr lists under the builder's name is the new rung's, not the old builder (step_up_closed).
+# <to> <role>, then a stalled one's bg= test= sign=, which start_rung reads), then `pid <n>`, this
+# swarm.sh's pid, then `closed` once the old builder is closed. While that process runs, the step-up
+# is under way; once it is gone and the marker is still there, the step-up failed (no_agent_lines
+# prints `step-up failed:`), and with `closed` a pane herdr lists under the builder's name is the new
+# rung's, not the old builder (step_up_closed).
 step_up_marker() {
   { printf '%s\npid %s\n' "$2" "$$"; [[ -z "${3:-}" ]] || echo closed; } > "$1.tmp" && mv "$1.tmp" "$1"
 }
@@ -828,18 +838,21 @@ step_up_die() {
   die "$3"
 }
 
-# start_rung <slug> — start the rung <slug>'s .step-up marker names (<trigger> <from> <to> <role>),
+# start_rung <slug> — start the rung <slug>'s .step-up marker names (<trigger> <from> <to> <role>, and a
+# stalled one's bg= test= sign=),
 # once the old builder is closed: refuse while the worktree holds a git step it left unfinished (an
 # index.lock, a merge, rebase, cherry-pick or revert) or with origin's default branch unread, write
 # handover_brief beside the marker (with the step-up's findings.md, when it has one), start <role> on <to> in the worktree with it, then log escalate
-# `ok (<trigger>: <from> -> <to>)`, drop the marker and send the /goal its caller's goal_preflight made. start_agent runs with errexit on, so a
+# `ok (<trigger>: <from> -> <to>)`, with the marker's bg= test= sign= in its tail, drop the marker and send the /goal its caller's goal_preflight made. start_agent runs with errexit on, so a
 # step that fails stops it with that step's own message; then the marker stays and the message says
 # to run step-up --resume. The rung has started only once its brief is taken up: an agent start_agent
 # recorded before deliver_prompt failed is closed and loses its agents.tsv line, so a resume starts it
 # afresh and the rung is on record once.
 start_rung() {
   local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base since errf err late goal="${PREFLIGHT_GOAL}"
-  read -r trigger from to role < "${prompt%.md}.step-up"
+  local reads=() rest
+  read -r trigger from to role rest < "${prompt%.md}.step-up"
+  read -r -a reads <<< "${rest}"
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   names="$(story_env "${f}")" || die "${names}"
   epic="$(fm "${f}" epic)"
@@ -895,7 +908,7 @@ start_rung() {
   # The rung runs: from here nothing is a failed step-up (step_up_failed's trap).
   trap - EXIT
   rm -f "${prompt%.md}.step-up" "${prompt%.md}.findings.md"
-  record_event escalate "${slug}" "ok (${trigger}: ${from} -> ${to})"
+  record_event escalate "${slug}" "ok (${trigger}: ${from} -> ${to})" "${reads[@]+"${reads[@]}"}"
   echo "stepped up: ${slug} from ${from} to ${to} (${role}), in ${wt}"
   [[ -n "${goal}" ]] || return 0
   printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
@@ -1227,6 +1240,8 @@ build_started() {
 # or a failure before the close), and the caller carries on as before. One step-up of a story at a
 # time, under its lock (step_lock); inside it step_due reads the build again, and with nothing due
 # (another step-up came first, no rung above, a partway failure this build) it runs nothing and returns 1.
+# The _step-up it runs inherits its environment, so a stalled one gets its caller's SWARM_STALL_READS
+# (wait_agent's).
 ladder_step() {
   local since lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" rc=1
   # With the ladder off nothing is due, and no lock is taken: a step-up never runs.

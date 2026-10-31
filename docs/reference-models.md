@@ -306,7 +306,8 @@ refused inside the close, or when a `step-up --resume` fails, since the lead ran
 herdr's list and sending the note get 120 seconds between them. Past that, or when the list cannot
 be read, the step-up prints a warning and ends as it would have.
 
-A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the
+A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`; a `stalled` one also carries
+`bg=`, `test=` and `sign=` ([§ Logs and outcomes](reference-logs.md#logs-and-outcomes)). Only a step to the
 escalate role's model starts an escalate build, so `outcomes` pairs only those (and build_story's
 `ok (attempt N)`) with an escalate build, and `dash` counts only those among today's escalations. A
 Fable builder that got there by a step-up shows `from <model> · <time>` in `dash` where a third

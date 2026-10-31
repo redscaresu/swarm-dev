@@ -283,10 +283,10 @@ check "flow counts incidents per kind and cause, - for a line with no cause" "$(
   $'merge-blocked\t-\t1' $'pull-failed\t-\t1' $'stalled\t-\t3' $'user-caught\tfalse-stall\t1' \
   $'user-caught\treview-rounds\t1' $'wait-timeout\t-\t2' $'wait-timeout\tfalse-stall\t1')"
 check "flow lists each stalled incident with its inputs as written, - for one not measured" "$(part 4)" "$(printf '%s\n' \
-  $'time\tagent\tbg\ttest\tsign' $'2026-10-02T12:00:00Z\ts\t1\t0\t0' $'2026-10-03T12:00:00Z\ts\t0\t0\t0' \
-  $'2026-10-03T12:00:00Z\ts\t-\t-\t-')"
+  $'time\tagent\tbg\ttest\tsign\tevent' $'2026-10-02T12:00:00Z\ts\t1\t0\t0\tincident' $'2026-10-03T12:00:00Z\ts\t0\t0\t0\tincident' \
+  $'2026-10-03T12:00:00Z\ts\t-\t-\t-\tincident')"
 check "false stalls count stalled incidents with an input at 1 and lead-hand or user-caught lines with cause=false-stall" \
-  "$(part 5)" "false stalls: 3 (1 stalled with an input at 1, 2 lead-hand or user-caught with cause=false-stall)"
+  "$(part 5)" "false stalls: 3 (1 stalled incidents or step-ups with an input at 1, 2 lead-hand or user-caught with cause=false-stall)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

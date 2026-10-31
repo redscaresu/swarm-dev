@@ -1455,6 +1455,8 @@ longest_child() {
 # so gh is rarely called. Last, with no PR update either, its worktree is asked whether its signer can
 # sign its uncommitted work (sign_held): a builder that cannot, whose own last sign of life (the wait's
 # start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits on a person, so no stall.
+# After the minutes it prints those three reads as stall_reads words them, `bg=0 test=0 sign=0`: each
+# read 0 to get there, and none is read again after the verdict.
 agent_stalled() {
   local slug url age own ct sl prs=()
   slug="$(stall_py story "$1")"
@@ -1474,7 +1476,7 @@ agent_stalled() {
   # length, and a 60-minute wait would hold a builder quiet for a day.
   own="$(stall_py age "${slug}" "$1" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
   ! sign_held "$1" "${slug}" "${own}" || return 1
-  echo "${age}"
+  echo "${age} bg=0 test=0 sign=0"
 }
 
 # stall_reads <name> <target> — print `bg=0|1 test=0|1 sign=0|1`, read fresh with the checks
@@ -1603,10 +1605,18 @@ herdr_step() {
   return 2
 }
 
+# stalled_state <agent_stalled's output> — the state a wait ends on when its agent stalled: the line
+# `stalled: working <min> min ...`, then a second line with agent_stalled's three reads, which only
+# wait_agent reads.
+stalled_state() {
+  echo "stalled: working ${1%% *} min with no commit, edit, own work in the session log or PR update"
+  [[ "$1" != *" "* ]] || echo "${1#* }"
+}
+
 # herdr_wait <target> <name> <timeout-ms> [<since>] — the wait for an agent with no Claude session to
 # read (codex, or no session recorded), and the one place a wait takes herdr's own status: herdr_step
 # in STALL_POLL_MS steps. With <since>, between steps an agent stalled since then (agent_stalled)
-# ends the wait with "stalled: ...", and so does a pane quiet for stall_minutes (pane_check, then
+# ends the wait with "stalled: ..." (stalled_state), and so does a pane quiet for stall_minutes (pane_check, then
 # pane_quiet). A step that fails other than by timing out ends the stepping, and the last step, for
 # what is left of <timeout-ms>, then fails as one unbroken wait does: 1, with herdr's stderr from the
 # step that failed (why) and the last.
@@ -1620,7 +1630,7 @@ herdr_wait() {
     [[ ${rc} -eq 1 ]] || { why="$(cat "${err}")"; left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
-      rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; return
+      rm -f "${err}"; stalled_state "${min}"; return
     fi
     pane_check "${name}" "${target}"
     if pane_quiet "${name}" "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
@@ -1661,7 +1671,8 @@ poll_while() {
 # before any other pane check. Each other busy read also reads the pane once (pane_check, past the
 # caller's resumed_sum): a turn that stopped on an API error ends it with "api error", and a pane that
 # has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
-# With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
+# With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ..."
+# (stalled_state). Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
 # deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
 # wake (after a nudge), an idle read ends the wait only once a whole slice has passed, unless the
@@ -1689,7 +1700,7 @@ settle() {
     [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
     if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}" "${target}")"; then
-      state="stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; break
+      state="$(stalled_state "${min}")"; break
     fi
     if [[ "${state}" == busy ]] && pane_quiet "${name}" "${target}"; then break; fi
     t0="$(now_ms)"
@@ -1709,8 +1720,9 @@ settle() {
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
 # `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident (record_incident,
-# its slug= the builder's story from the board, stall_py story)
-# and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
+# its slug= the builder's story from the board, stall_py story, and bg= test= sign= as agent_stalled read them)
+# and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled, passing
+# the same three reads in SWARM_STALL_READS for its escalate line) and prints
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
 # by the `longest-running: ...` line, which says the step-up closed the pane the PID was read in. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
 # for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
@@ -1740,19 +1752,21 @@ settle() {
 # login incident (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at hung seen story began act
+  local answered="" resumed_sum="" pane_kind pane_at hung seen story began act reads=()
   deadline=$(($(now_ms) + timeout)); began="${SWARM_WAIT_STARTED:-$(date +%s)}"
   [[ -z "${stall}" ]] || since="${began}"
   target="$(own_target "${name}")" || return 1
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then
+      # stalled_state's second line: agent_stalled's reads, passed on as read.
+      [[ "${status}" != *$'\n'* ]] || { read -r -a reads <<< "${status#*$'\n'}"; status="${status%%$'\n'*}"; }
       hung="$(longest_child "${name}" "${target}")"
       [[ -z "${hung}" ]] || status="${status}; ${hung}"
       # The builder's story from the board (stall_py story), which knows a name cut at 32 characters.
       story="$(stall_py story "${name}")" || story=""
-      record_incident "${name}" "${status}" "${story}"
-      rc=0; out="$(ladder_step "${story}" stalled)" || rc=$?
+      record_incident "${name}" "${status}" "${story}" "${reads[@]+"${reads[@]}"}"
+      rc=0; out="$(SWARM_STALL_READS="${reads[*]+"${reads[*]}"}" ladder_step "${story}" stalled)" || rc=$?
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
       # Another step-up or a restart still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
       [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: ${story}: another step-up or a restart of it is running; wait on its builder again"
