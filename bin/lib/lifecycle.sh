@@ -706,7 +706,6 @@ HANDOVER_DIFF_LINES=400
 # else read fresh with stall_reads before the builder is closed, so a 1 can show.
 step_up() {
   local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to rank role names src wt b reads="" n
-  local form='^bg=[01] test=[01] sign=[01]$'
   [[ "${trigger}" =~ ^[a-z0-9-]+$ && " ${STEP_UP_TRIGGERS} " == *" ${trigger} "* ]] \
     || die "step-up: the trigger must be one of ${STEP_UP_TRIGGERS// /, } (swarm.sh step-up <slug> <trigger>)"
   [[ -n "${CFG_escalate_ladder}" ]] || die "step-up: escalate_ladder is empty (off), so there is no next model; nothing was closed"
@@ -729,7 +728,7 @@ step_up() {
   # first: a marker is left only by a step-up that got as far as closing the builder.
   rm -f "${b}.findings.md"; [[ -z "${3:-}" ]] || cp "$3" "${b}.findings.md"
   if [[ "${trigger}" == stalled ]]; then
-    if [[ -n "${STEP_UP_AUTO:-}" && "${SWARM_STALL_READS:-}" =~ ${form} ]]; then reads="${SWARM_STALL_READS}"
+    if [[ -n "${STEP_UP_AUTO:-}" && "${SWARM_STALL_READS:-}" =~ ^bg=[01]\ test=[01]\ sign=[01]$ ]]; then reads="${SWARM_STALL_READS}"
     else n="$(agent_name "${slug}")"; reads="$(stall_reads "${n}" "$(agent_field "${n}" pane_id)")"; fi
   fi
   # Not passed on to the rung: SWARM_* reaches every agent.
