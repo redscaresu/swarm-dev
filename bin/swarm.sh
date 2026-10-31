@@ -1078,7 +1078,7 @@ main_signal() {
 # tail): first EV_FIELDS, space-separated, which an arm below may set before dispatch, then those the
 # command kept with event_fields while it ran.
 main() {
-  local rc why a f fields=()
+  local rc why a n f fields=()
   [[ "${1:-}" != init ]] || init_check
   EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""; EV_FIELDS=""; EV_FLD=""
   # upgrade's starter only detaches its worker (SWARM_UPGRADE_WORKER), which logs the run's one event.
@@ -1149,6 +1149,12 @@ main() {
   elif [[ "${EV_CMD}" == tell:* ]] && why="$(head -1 "${EV_ERR}" 2>/dev/null)" && [[ "${why}" == queued:* || "${why}" == replaced:* ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${why}" ${fields[@]+"${fields[@]}"}   # tell_outcome's: nothing sent, so not ok
   elif [[ "${EV_TARGET}" != + ]]; then
+    # A review --head that passes a findings round whose builder pushed nothing (it declined them all)
+    # is a decline-only end: its line goes first, so a reader meets it before the review's. A failed
+    # read of it skips the line, never the review's.
+    if [[ "${EV_CMD}" == review && "${3:-}" == --head ]] && n="$(decline_only_round "${EV_TARGET}" "${4:-}")" && [[ -n "${n}" ]]; then
+      record_event decline-only "${EV_TARGET}" "ok (round ${n})"
+    fi
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}" ${fields[@]+"${fields[@]}"}
   fi
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
