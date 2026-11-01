@@ -139,6 +139,10 @@ printf '#!/bin/sh\ncase "$1 $2" in "agent prompt") : > "%s"; exec sleep 37.%s ;;
 chmod +x "${ROOT}/slow/herdr"; mkdir -p "${ROOT}/sigtmp"; echo "w:1 s1" > "${P}/.swarm/state/t1"
 # until_ok <test...> — wait (30 s at most) until <test> succeeds.
 until_ok() { local i; for ((i = 0; i < 300; i++)); do "$@" && return 0; sleep 0.1; done; return 1; }
+# AT_ONCE: the most seconds from the TERM to the exit that still count as at once. A trapped TERM
+# runs main_signal first, which took 3 to 6 s on a loaded machine; a command that ran its hang out
+# takes 37 s or more.
+AT_ONCE=10
 # term_pid <swarm args...> — start it, TERM its pid once it is under way (its stubbed herdr hangs), and
 # print "<exit> <seconds>".
 term_pid() {
@@ -153,14 +157,14 @@ term_pid() {
 }
 was="$(lines)"
 read -r code took <<< "$(term_pid tell s1 findings findings.md)"
-check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
+check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le "${AT_ONCE}"
 check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -qE \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted( ~~ .*)?\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
 gone() { ! pgrep -f "sleep 37[.]$$\$" >/dev/null; }
 until_ok gone || true
 check "a TERM leaves nothing of the command running" gone
 read -r code took <<< "$(term_pid wait s1)"
-check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
+check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le "${AT_ONCE}"
 
 # The read-only commands, written out here: READ_ONLY_COMMANDS must be exactly this, so a command
 # that changes state (story, say) cannot be declared read-only without this test changing too.
