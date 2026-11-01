@@ -730,10 +730,10 @@ for a in agents:
   fi
   # The working agents past stall_minutes (dash_age's stalled_panes, the rows' own rule), each its pane
   # and name: a test suite running under one's pane (test_running: herdr's process info, read here and
-  # never in the render, and one ps read) or a background task its session waits on (bg_running, over
-  # its transcript), each younger than 3 times stall_minutes, is work, as for wait --stall, and the
-  # render shows it working (DASH_TESTING). An agent under stall_minutes is never read; a read that
-  # fails leaves the agent stalled.
+  # never in the render, and one ps read), however long it has run, or a background task its session
+  # waits on (bg_running, over its transcript) launched less than 3 times stall_minutes ago, is work, as
+  # for wait --stall, and the render shows it working (DASH_TESTING). An agent under stall_minutes is
+  # never read; a read that fails leaves the agent stalled.
   # shellcheck disable=SC2154 # assigned in another file
   while IFS=$'\t' read -r p n; do
     [[ -n "${p}" ]] || continue

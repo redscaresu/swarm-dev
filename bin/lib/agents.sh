@@ -31,8 +31,9 @@
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none. With
 #     stall_minutes, only a task whose launch entry is logged less than TEST_RUN_STALLS times that
-#     before <now> (epoch; default the clock) counts, as test_running's runs: a server left running
-#     in the background is no work. A launch entry with no UTC timestamp is too old to count.
+#     before <now> (epoch; default the clock) counts: a server left running in the background is no
+#     work. A launch entry with no UTC timestamp is too old to count. A test run has no such limit
+#     (test_running).
 #   sign_blocked(worktree) -> blocked, clear or unknown: whether the signer git is set to use in
 #     <worktree> can sign its uncommitted work unprompted. blocked only when the worktree's effective git
 #     config has commit.gpgsign true, git status --porcelain is not empty and that signer cannot sign:
@@ -47,12 +48,12 @@
 #     (never opened; nor is the one beside a .pub, only checked to exist), an agent ssh-add cannot reach,
 #     anything else it cannot read, and a call past SIGN_SECONDS (killed).
 #     It never signs or prompts, never runs gpg.ssh.program, and prints no key.
-#   test_running(info, stall_minutes) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read,
-#     a process under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk)
-#     runs a test suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh,
-#     or the script itself) and started less than TEST_RUN_STALLS times stall_minutes ago: the agent
-#     is working, however quiet. An older run may be hung, and is none. Never prints a command. Info
-#     or ps that cannot be read is no run.
+#   test_running(info) -> True when, in one `ps -A -o pid=,ppid=,etime=,command=` read, a process
+#     under the pane's shell (herdr pane process-info's shell_pid in <info>; a ppid walk) runs a test
+#     suite (TEST_RUN: make with a test or check argument, a shell running scripts/test.sh, or the
+#     script itself): the agent is working, however quiet, and however long ago the run started (no
+#     TEST_RUN_STALLS limit: a builder's own full suite can run for hours). Never prints a command.
+#     Info or ps that cannot be read is no run.
 #   usage_limit(text) -> ("dialog", <option>) when the pane text, after its last reply (⏺ or ●), ends on
 #     Claude Code's live usage-limit dialog: its option lines ("Stop and wait for limit to reset" /
 #     "<option>. Wait here, then continue automatically") among the last USAGE_TAIL non-empty lines,
@@ -381,6 +382,16 @@ HERDR_PANE_ENV="HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH 
 # ponytail: zsh as the spike ran it; a Linux pane with no /bin/zsh needs another shell here.
 AGENT_SHELL="${SWARM_AGENT_SHELL:-/bin/zsh -f}"
 ENV_READY="swarm: agent environment ready"
+# ENV_READY_MS: how long clean_env waits for a pane's shell to print ENV_READY. A cold shell took 14 s
+# when measured (#688); what saves a start whose shell never prints it is start_agent's one retry in a
+# fresh pane, not a longer wait.
+ENV_READY_MS=60000
+# OUTER_START_RETRY: set by a caller that starts the agent again itself when a start runs nothing
+# (build_story and review_agent, up to STARTS_PER_REVIEW starts, each in a fresh pane), so
+# start_agent's own fresh-pane retry stays off and the two never nest. Never from the environment.
+OUTER_START_RETRY=""
+# CLEAN_ENV_ERR: why clean_env's try mode found the pane's shell had not taken the environment, or empty.
+CLEAN_ENV_ERR=""
 
 # story_env <story> — the names under its env:, a one-line [A, B] list (quotes, commas and a trailing
 # # comment gone). A story holds names, never values. Refused, with the reason printed and 1
@@ -484,13 +495,17 @@ launch_file() {
 # shellcheck disable=SC2016 # the agent's zsh expands them
 ZDOT_ENV='__swarm_path="${PATH}"' ZDOT_PROFILE='[[ -z "${__swarm_path}" ]] || export PATH="${__swarm_path}"'
 
-# clean_env <pane> <name> <names> [keep] — before an agent starts in <pane>, its shell swaps itself through
+# clean_env <pane> <name> <names> [keep|try] — before an agent starts in <pane>, its shell swaps itself through
 # env -i for launch_file's wrapper. herdr passes no env and the agent inherits the pane's shell, which
 # holds the user's whole environment. The wrapper is a 0600 file under .swarm/launch, so no value
 # reaches argv, herdr's typed line or the scrollback. story_env has checked <names>. A shell that
-# never takes it closes the pane, unless keep: upgrade's restart, where the pane is the agent's own.
+# never takes it (no ENV_READY marker within ENV_READY_MS, or herdr refused both runs) closes the
+# pane and dies; keep (upgrade's restart, where the pane is the agent's own) leaves the pane. try
+# (start_agent's retry) neither closes it nor dies: it sets CLEAN_ENV_ERR to why and returns 0, so
+# its caller decides, with errexit still on inside it (a condition would turn it off).
 clean_env() {
   local pane="$1" base="${PROJECT_DIR}/.swarm/launch/$2" zdot="${PROJECT_DIR}/.swarm/zdotdir/$2" n line out try marker typed=""
+  CLEAN_ENV_ERR=""
   # The agent's own ZDOTDIR, made afresh and 0700, so nothing an earlier agent wrote there runs. A
   # login shell runs /etc/zprofile between .zshenv and .zprofile, and its path_helper (macOS) puts
   # /usr/bin and /bin ahead of the lead's own git, python3 and bash: .zshenv keeps the PATH the shell
@@ -510,10 +525,12 @@ clean_env() {
     if out="$(herdr pane run "${pane}" "${line}" 2>&1)"; then typed=1; break; fi
     [[ ${try} -eq 2 ]] || nap 3
   done
-  if [[ -z "${typed}" ]] || ! out="$(herdr pane wait-output "${pane}" --match "${marker}" --timeout 30000 2>&1)"; then
+  if [[ -z "${typed}" ]] || ! out="$(herdr pane wait-output "${pane}" --match "${marker}" --timeout "${ENV_READY_MS}" 2>&1)"; then
     rm -f "${base}.1" "${base}.2"
-    [[ -n "${4:-}" ]] || herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
-    die "$2: the pane's shell did not take the agent's environment: ${out}"
+    out="$2: the pane's shell did not take the agent's environment: ${out}"
+    [[ "${4:-}" != try ]] || { CLEAN_ENV_ERR="${out}"; return 0; }
+    [[ "${4:-}" == keep ]] || herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+    die "${out}"
   fi
   rm -f "${base}.1" "${base}.2"   # gone already, unless a shell never ran one
 }
@@ -672,7 +689,34 @@ start_agent() {
   # Once the name is free, so a start refused there leaves no resume files behind.
   [[ "${kind}" != claude ]] || resume_file "${name}" "${session}" "${names}" "${resume[@]}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
-  clean_env "${pane}" "${name}" "${names}"
+  if [[ -n "${OUTER_START_RETRY}" ]]; then
+    clean_env "${pane}" "${name}" "${names}"
+  else
+    # Nothing starts this agent again (swarm.sh agent, conduct, step-up, restart's fresh builder,
+    # the fallback reviewer), so a pane whose shell did not take the environment (a cold shell, runs
+    # herdr refused; #688) is closed and the start tried once more in a fresh pane. A pane that cannot
+    # be closed may still be open: no second pane then. herdr agent start never runs in a pane whose
+    # marker was not seen. One start-retry event says whether the fresh pane saved the start, and
+    # one whose fresh pane herdr would not open is logged as not saved.
+    local first
+    clean_env "${pane}" "${name}" "${names}" try
+    if [[ -n "${CLEAN_ENV_ERR}" ]]; then
+      first="${CLEAN_ENV_ERR//$'\n'/ }"
+      herdr pane close "${pane}" >/dev/null 2>&1 || die "${first} (and pane ${pane} could not be closed: close it by hand)"
+      echo "swarm: ${first}; pane ${pane} is closed, and the start is tried once more in a fresh pane" >&2
+      if ! pane=$(next_pane "${tab}" "${cwd}" "${pane_name}"); then   # next_pane said why
+        record_event start-retry "${name}" "${first}; herdr could not open a fresh pane"
+        die "${name}: the start was tried once more, but herdr could not open a fresh pane (see above)"
+      fi
+      clean_env "${pane}" "${name}" "${names}" try
+      if [[ -n "${CLEAN_ENV_ERR}" ]]; then
+        herdr pane close "${pane}" >/dev/null 2>&1 || CLEAN_ENV_ERR+=" (and pane ${pane} could not be closed: close it by hand)"
+        record_event start-retry "${name}" "${CLEAN_ENV_ERR}"
+        die "${CLEAN_ENV_ERR}"
+      fi
+      record_event start-retry "${name}" "ok (${first})"
+    fi
+  fi
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
   local try out
   for try in 1 2; do
@@ -1333,15 +1377,13 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import sign_blocked
 s = sign_blocked(sys.argv[1]); print(s); sys.exit(0 if s == "blocked" else 1)' "$1"
 }
 
-# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite started
-# less than TEST_RUN_STALLS times stall_minutes ago (panes.py's test_running, over herdr's process
-# info for the pane and one ps read).
+# test_running <target> — succeed when a process under pane <target>'s shell runs a test suite, however
+# long ago it started (panes.py's test_running, over herdr's process info for the pane and one ps read).
 test_running() {
-  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
-sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)" "${CFG_stall_minutes}"
+sys.exit(0 if test_running(sys.argv[1]) else 1)' "$(herdr pane process-info --pane "$1" 2>/dev/null || true)"
 }
 
 # usage_state <target> — print `dialog <option>` or `waiting` and succeed when the agent's pane is on
@@ -1370,8 +1412,9 @@ is_builder() {
 }
 
 # pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
-# old, the agent runs no background task (bg_running) and its pane runs no test suite (test_running),
-# setting the caller's state to `stuck: no output for <N>m (<target>)`. An empty read says nothing.
+# old, the agent runs no background task (bg_running) and its pane runs no test suite (test_running, at
+# any age), setting the caller's state to `stuck: no output for <N>m (<target>)`. An empty read says
+# nothing.
 pane_quiet() {
   local min
   [[ -n "${pane_at}" ]] || return 1
@@ -1459,12 +1502,13 @@ longest_child() {
 # life for stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last
 # commit or edit (story_work_time) and its newest own work across its session log and its subagents'
 # logs (session_mtime) as signs, print how many minutes and succeed. Only once the rest already
-# looks stalled is pane <target> asked whether it runs a test suite (test_running), and its transcript
-# whether it waits on a background task of its own (bg_running), each younger than TEST_RUN_STALLS
-# times stall_minutes: either is work, so no stall. Only then are its PRs asked for their updatedAt,
-# so gh is rarely called. Last, with no PR update either, its worktree is asked whether its signer can
-# sign its uncommitted work (sign_held): a builder that cannot, whose own last sign of life (the wait's
-# start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits on a person, so no stall.
+# looks stalled is pane <target> asked whether it runs a test suite (test_running, at any age), and its
+# transcript whether it waits on a background task of its own (bg_running, one launched less than
+# TEST_RUN_STALLS times stall_minutes ago): either is work, so no stall. Only then are its PRs asked
+# for their updatedAt, so gh is rarely called. Last, with no PR update either, its worktree is asked
+# whether its signer can sign its uncommitted work (sign_held): a builder that cannot, whose own last
+# sign of life (the wait's start left out) is less than TEST_RUN_STALLS times stall_minutes old, waits
+# on a person, so no stall.
 # After the minutes it prints those three reads as stall_reads words them, `bg=0 test=0 sign=0`: each
 # read 0 to get there, and none is read again after the verdict.
 agent_stalled() {
@@ -1492,8 +1536,8 @@ agent_stalled() {
 # stall_reads <name> <target> — print `bg=0|1 test=0|1 sign=0|1`, read fresh with the checks
 # agent_stalled makes once the rest looks stalled: <name>'s session waits on a background task
 # (bg_running, within TEST_RUN_STALLS times stall_minutes), pane <target> runs a test suite
-# (test_running), and its story's worktree holds work its signer cannot sign (sign_held, which logs a
-# change of state as agent_stalled's read does). sign is read only for an agent with a story
+# (test_running, at any age), and its story's worktree holds work its signer cannot sign (sign_held,
+# which logs a change of state as agent_stalled's read does). sign is read only for an agent with a story
 # (stall_py story), at the builder's own age from its worktree and session log; its PRs are not asked,
 # so no gh call.
 stall_reads() {

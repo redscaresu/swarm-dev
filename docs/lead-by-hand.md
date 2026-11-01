@@ -37,25 +37,6 @@ checks in place.
 copy of HEAD.
 **Issue.** [#695](https://github.com/redscaresu/swarm-dev/issues/695).
 
-## A builder that loads the machine or reads session logs
-
-**Symptom.** A builder runs a long, heavy load test or many test files at once on the machine
-running the swarm, or searches `~/.claude/projects`. The load average climbs past the CPU count.
-**Check.** `ps -eo command | grep 'swarm-dev-wt/<slug>/tests'` counts the builder's test processes.
-**Step.** Tell it (a nudge) to stop that run, run only the test files its change touches with
-`JOBS` at 1 or 2, push, and let CI run the rest. To stop it happening, cap the `make test` runs going
-at once on the machine: write a whole number to `~/.swarm/test-cap` (there is no cap by default;
-docs/running.md § Test tooling). rules.md also carries the no-load and no-session-log rules, but
-builders still started broad local runs in the v0.30.0 build, which ran with no cap.
-**Issue.** [#696](https://github.com/redscaresu/swarm-dev/issues/696).
-
-## A new epic with no conductor
-
-**Symptom.** A plan PR merged with `swarm.sh merge --board` set an epic active, and no conductor
-started for it.
-**Step.** `swarm.sh conduct <epic>`.
-**Issue.** [#697](https://github.com/redscaresu/swarm-dev/issues/697).
-
 ## A flaky test
 
 **Symptom.** `tests/watch_opened_test.sh` passes every case, then fails with
