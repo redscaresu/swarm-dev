@@ -15,7 +15,7 @@
 # in ${ROOT}/agents ("<name> <pane> [status]", idle by default) and the panes in ${ROOT}/panes ("<pane>
 # <tab>"), and records each tab close in ${ROOT}/tabs-closed and each pane close in
 # ${ROOT}/panes-closed. gh is a stub too: pr list gives the heads of ${ROOT}/prs.json's open PRs, or
-# none. The project has an empty bare origin.
+# none, and for a Finish PR's branch (board/finish-<epic>) an empty JSON list: no Finish PR is open. The project has an empty bare origin.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -33,8 +33,10 @@ git -C "${P}" init -q
 git init -q --bare "${ROOT}/origin.git" && git -C "${P}" remote add origin "${ROOT}/origin.git"
 cat > "${ROOT}/bin/gh" <<STUB
 #!/bin/sh
-case "\$1 \$2" in
-  "pr list") python3 -c 'import json, sys; [print(p["headRefName"]) for p in json.load(open(sys.argv[1])) if p["state"] == "OPEN"]' "${ROOT}/prs.json" 2>/dev/null || true ;;
+case "\$1 \$2 \$*" in
+  # A Finish PR's list (close's conductor guard, gh pr list --head board/finish-<epic> --json ...): none.
+  "pr list "*"--head board/finish-"*) echo '[]' ;;
+  "pr list "*) python3 -c 'import json, sys; [print(p["headRefName"]) for p in json.load(open(sys.argv[1])) if p["state"] == "OPEN"]' "${ROOT}/prs.json" 2>/dev/null || true ;;
 esac
 STUB
 chmod +x "${ROOT}/bin/gh"

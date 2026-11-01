@@ -5,7 +5,8 @@
 # lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default, a name of - for
 # none; agent list fails while ${ROOT}/agentfail exists) and the panes in ${ROOT}/panes ("<pane> <tab>"
 # lines; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does, tab
-# close while ${ROOT}/tabclosefail does and pane close while ${ROOT}/paneclosefail does); gh answers pr list from ${ROOT}/prs.json, with
+# close while ${ROOT}/tabclosefail does and pane close while ${ROOT}/paneclosefail does); gh fails while ${ROOT}/ghfail exists,
+# except for a Finish PR's list (board/finish-<epic>), and answers pr list from ${ROOT}/prs.json, with
 # --state open the heads of its open PRs that name one, as close_heads' --jq asks, and pr view <url>
 # from ${ROOT}/pr-states ("<url> <state>" lines).
 set -euo pipefail
@@ -45,7 +46,9 @@ esac
 STUB
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "$H/gh.log"
-[ -e "$H/ghfail" ] && exit 1
+# ghfail fails every call but a Finish PR's list (close's conductor guard, --head board/finish-<epic>),
+# which conductor_close_test.sh fails on its own: here a conductor's close must get past its guard.
+case "$*" in *"--head board/finish-"*) ;; *) [ -e "$H/ghfail" ] && exit 1 ;; esac
 case "$1 $2 $*" in
   "pr list "*"--state open"*) python3 -c 'import json, sys; [print(p["headRefName"]) for p in json.load(open(sys.argv[1])) if p["state"] == "OPEN" and p.get("headRefName")]' "$H/prs.json" ;;
   "pr list "*) cat "$H/prs.json" ;;
