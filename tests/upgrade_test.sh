@@ -21,12 +21,14 @@
 # its background commands were stopped; unreadable process-info leaves an agent alone; a claude
 # that ignores ctrl+c gets the resume hint; a conductor whose restart fails before its claude exits
 # is told to carry on; one whose session goes after the request is named at once; the conductor
-# hears which builders were restarted and which left. Rounds: a busy conductor asked in its inbox is
+# hears which builders were restarted, which left and which were skipped as closed. Rounds: a busy conductor asked in its inbox is
 # asked again by prompt once idle, and its late handover still moves it and its builders. Without
 # --foreground upgrade runs detached, outlives the shell that started it, is named by a second
 # upgrade (which starts nothing) and by status, and moves a builder busy at first once it is idle;
-# every run ends on one line per agent. A builder whose Claude review agent is busy waits for it; one
-# still busy at the end is named, and so is its builder, for it. docs/reference*.md and
+# every run ends on one line per agent. A conductor skipped as closed after its handover stays skipped
+# on a TERM, told nothing. A builder whose Claude review agent is busy waits for it; one
+# still busy at the end is named, and so is its builder, for it; one skipped as closed holds nothing,
+# whatever Claude Code's list reads at the hold. docs/reference*.md and
 # commands/swarm.md describe it. An empty version record reads as unknown, and no message file is
 # left behind. claude agents --json is a stub printing ${H}/claude.json; with
 # ${H}/flip ("<n> <sed expression>"), its calls after the n-th print it through the expression, and
@@ -286,6 +288,7 @@ check "a gone session is skipped as closed, named once, and the other two restar
   "${rc}|$(grep -cx 'skipped (closed): b1' "${H}/out")|$(grep -c 'skipped (closed)' "${H}/out")|$(order | tr '|' '\n' | grep '^start' | paste -sd'|' -)"
 check "b1 is sent no key and no wait, has no line of its own, and counts neither moved nor left" "|0|upgrade done: 2 moved, 0 left (exit 0)" \
   "$(calls 'pane send-keys w:b1'; calls 'agent wait w:b1')|$(grep -c '^b1: ' "${H}/out")|$(tail -1 "${H}/out")"
+check "its conductor is told b1 was skipped as closed" "1" "$(calls 'agent prompt w:c' | grep -c 'Skipped as closed: b1\. Carry on')"
 # One whose session goes after the check, before its round reaches it, is skipped too, not left.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 claude_list idle idle idle; echo '1 s/{"sessionId":"s1","status":"idle"},//' > "${H}/flip"
@@ -317,13 +320,14 @@ claude_list idle idle idle; cp "${H}/agents" "${H}/agents.keep"; sed -i.bak '/^b
 upgrade e
 check "a closed pane is named, never touched, and the run succeeds" "0|1|||upgrade done: 2 moved, 0 left (exit 0)" \
   "${rc}|$(grep -cx 'skipped (closed): b2' "${H}/out")|$(calls 'pane send-keys w:b2'; calls 'agent wait w:b2'; calls 'agent start b2')|$(grep '^b2: ' "${H}/out" || true)|$(tail -1 "${H}/out")"
+check "its conductor is told b2 was skipped as closed" "1" "$(calls 'agent prompt w:c' | grep -c 'Skipped as closed: b2\. Carry on')"
 # A herdr list that cannot be read before the first round names nobody as closed, and says so.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 touch "${H}/listfail1"
 upgrade e
 rm -f "${H}/listfail1"; cp "${H}/agents.keep" "${H}/agents"
 check "an unread list skips nobody and says it was not read" "0|0|1|yes" \
-  "${rc}|$(grep -c 'skipped (closed)' "${H}/out")|$(grep -cx "herdr's agent list could not be read before the first round, so no agent was skipped as closed" "${H}/out")|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
+  "${rc}|$(grep -c 'skipped (closed)' "${H}/out")|$(grep -cx "herdr's agent list could not be read before the first round, so the closed check did not run" "${H}/out")|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
 
 # --- A builder the conductor starts before it writes its handover is restarted too.
 printf -- '---\nkind: code\nstatus: ready\nepic: e\n---\n\n# b4\n' > "${P}/docs/stories/b4.md"
@@ -492,6 +496,29 @@ check "the stopped run named b1, told the conductor which builders moved, let it
   "yes|1|no|upgrade stopped: 1 moved, 2 left (exit 143)|no" \
   "$(has 'b1: left on 0.21.0: the upgrade was stopped' "$(cat "${ULOG}")")|$(calls 'agent prompt w:c' | grep -c "was stopped before it moved you. Builders restarted on swarm-dev ${NEW}: b2. Left on their old version: b1.")|$([[ -e "${P}/.swarm/inbox/conduct-e.upgrade" ]] && echo yes || echo no)|$(tail -1 "${ULOG}")|$([[ -e "${P}/.swarm/upgrade.pid" ]] && echo yes || echo no)"
 
+# --- A conductor whose handover is in and whose session goes by its restart's own idle check (b2's
+# start takes it) is skipped as closed, and stays skipped on a TERM: told nothing, named only on the
+# skipped (closed) line, not counted as left. Every agent is in scope, so x1, busy, keeps the run
+# going until the TERM.
+for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
+echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s1","status":"idle"},{"sessionId":"s2","status":"idle"},{"sessionId":"s4","status":"idle"},{"sessionId":"sx","status":"busy"}]' > "${H}/claude.json"
+ULOG="${P}/.swarm/upgrade-${NEW}.log"; rm -f "${H}/flip" "${H}/flip2" "${P}/.swarm/inbox/conduct-e.md" "${ULOG}"; : > "${LOG}"
+cat > "${H}/onstart-b2" <<EOF
+#!/bin/sh
+sed -i.bak 's/{"sessionId":"sc","status":"idle"},//' "${H}/claude.json"
+EOF
+chmod +x "${H}/onstart-b2"
+(cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_WAIT_MS=120000 bash "${SWARM}" upgrade) > "${H}/out" 2>&1
+UPID="$(sed -n 's/.*: pid \([0-9]*\), log .*/\1/p' "${H}/out")"
+for _ in $(seq 600); do ls "${H}"/tmp/swarm-upgrade-run.*/closed-conduct-e >/dev/null 2>&1 && break; sleep 0.2; done
+closed_seen="$(ls "${H}"/tmp/swarm-upgrade-run.*/closed-conduct-e >/dev/null 2>&1 && echo yes || echo no)"
+kill -TERM "${UPID:-0}" 2>/dev/null || true
+for _ in $(seq 300); do kill -0 "${UPID:-0}" 2>/dev/null || break; sleep 0.2; done
+kill -0 "${UPID:-0}" 2>/dev/null && { echo "the stopped upgrade never ended" >&2; kill -9 "${UPID}" 2>/dev/null || true; }
+rm -f "${H}/onstart-b2"
+check "a conductor skipped as closed after its handover stays skipped on a TERM: told nothing, named once, not left" "yes|1|0|no|upgrade stopped: 2 moved, 1 left (exit 143)" \
+  "${closed_seen}|$(grep -cx 'skipped (closed): conduct-e' "${ULOG}")|$(grep -c '^conduct-e: ' "${ULOG}")|$(grep -qs 'was stopped before it moved you' "${P}/.swarm/inbox/conduct-e.md" && echo yes || echo no)|$(tail -1 "${ULOG}")"
+
 # --- A TERM while a restart is under way names that builder as left, with how to resume it.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 claude_list idle idle idle; : > "${LOG}"; rm -f "${ULOG}"; touch "${H}/slowstart"
@@ -574,7 +601,7 @@ for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
 claude_list idle idle idle; echo '0 s/^\[/X[/' > "${H}/flip"; echo '1 s/^X\[/[/' > "${H}/flip2"
 upgrade e
 check "an unreadable Claude Code list at the check skips nobody, says so, and every agent moves" "0|0|1|3" \
-  "${rc}|$(grep -c '^skipped (closed)' "${H}/out")|$(grep -cx "Claude Code's list of its sessions could not be read before the first round, so no agent was skipped for a gone session" "${H}/out")|$(grep -c -- ' -> ' "${H}/out")"
+  "${rc}|$(grep -c '^skipped (closed)' "${H}/out")|$(grep -cx "Claude Code's list of its sessions could not be read before the first round, so the closed check skipped no agent for a gone session" "${H}/out")|$(grep -c -- ' -> ' "${H}/out")"
 
 # --- A run whose herdr list never reads fails, saying no agent was moved.
 for n in conduct-e b1 b2; do echo 0.21.0 > "${P}/.swarm/versions/${n}"; done
@@ -679,6 +706,13 @@ review_b1 busy; sed -i.bak 's/{"sessionId":"s1","status":"idle"},//' "${H}/claud
 WAIT_MS=300 upgrade e
 check "a gone builder is skipped as closed, not held by its busy review agent" "1|1|0|" \
   "${rc}|$(grep -cE '^skipped \(closed\):( [a-z0-9-]+)* b1( |$)' "${H}/out")|$(grep -c '^b1: ' "${H}/out")|$(calls 'agent start')"
+# A review agent skipped as closed (its session gone at the check) holds its builder no more, and its
+# state is not read at the hold: a bad read there (the 6th, right after b1's own 5th) cannot hold b1.
+review_b1 idle; sed -i.bak 's/,{"sessionId":"sr","status":"idle"}//' "${H}/claude.json"
+echo '5 s/^\[/X[/' > "${H}/flip"; echo '6 s/^X\[/[/' > "${H}/flip2"
+WAIT_MS=300 upgrade e
+check "a review agent skipped as closed holds its builder no more, whatever Claude Code's list reads at the hold" "0|1|1|0|upgrade done: 1 moved, 0 left (exit 0)" \
+  "${rc}|$(grep -cx 'skipped (closed): review-b1' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(grep -c '^b1: left on' "${H}/out")|$(tail -1 "${H}/out")"
 # A review agent busy through the one round that reads idle at the end, from Claude Code's 8th read
 # on (the closed check reads its list once, then the round 6 times: 3 for the conductor, then b1,
 # b1's hold and review-b1),

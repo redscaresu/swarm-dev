@@ -4632,8 +4632,8 @@ UPGRADE_SHELL=""   # the pid of the shell the run's traps belong to (upgrade_min
 # one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or already on this
 # version, then one `skipped (closed):` line naming the agents it skipped as closed (upgrade_closed),
 # and last a tally (upgrade_tally), so a log that stops before it was cut off. A TERM or HUP
-# names the agents it had not moved and tells each conductor it paused to carry on first
-# (upgrade_stopped). A run that never read herdr's list fails, saying no agent was moved. Worktrees are never touched. Fails when any agent was left on its old version.
+# names the agents it had not moved and tells each conductor it paused, but one skipped as closed, to
+# carry on first (upgrade_stopped). A run that never read herdr's list fails, saying no agent was moved. Worktrees are never touched. Fails when any agent was left on its old version.
 upgrade_agents() {
   local epic="" fg="" a new log end name pane role cur f rc=0
   [[ "${SWARM_UPGRADE_WORKER:-}" != 1 ]] || fg=1
@@ -4704,9 +4704,10 @@ upgrade_tally() {
 # upgrade_stopped <exit> — on a TERM (143): each agent in the run still on its old version and not
 # paused is left, with its resume hint when its restart was cut off (a hint- file names it even when
 # herdr no longer lists it); then each
-# conductor this run asked for a handover and has not moved is told which of its builders were
-# restarted and to carry on as before, and its pause marker removed, so none stays paused with
-# nobody to wake it. Then the summary and the tally, and it exits <exit>. A KILL or a reboot leaves
+# conductor this run asked for a handover and has neither moved nor been skipped as closed is told
+# which of its builders were restarted and to carry on as before, and its pause marker removed, so
+# none stays paused with nobody to wake it. One skipped as closed (upgrade_closed) is told nothing,
+# and stays skipped. Then the summary and the tally, and it exits <exit>. A KILL or a reboot leaves
 # them paused: the marker stops holding back tell's wake prompt once it is an hour old.
 upgrade_stopped() {
   local f n name pane role cur about
@@ -4721,12 +4722,12 @@ upgrade_stopped() {
   done <<< "$(upgrade_list "${UPGRADE_WANT}" "${UPGRADE_NEW}" </dev/null | upgrade_open)"
   for f in "${UPGRADE_DIR}"/hint-*; do
     n="${f##*/hint-}"
-    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" && ! -e "${UPGRADE_DIR}/hand-${n}" ]] || continue
+    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" && ! -e "${UPGRADE_DIR}/closed-${n}" && ! -e "${UPGRADE_DIR}/hand-${n}" ]] || continue
     upgrade_left "${n}" "the upgrade was stopped$(upgrade_hint "${n}")"
   done
   for f in "${UPGRADE_DIR}"/hand-*; do
     n="${f##*/hand-}"
-    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" ]] || continue
+    [[ -e "${f}" && ! -e "${UPGRADE_DIR}/done-${n}" && ! -e "${UPGRADE_DIR}/left-${n}" && ! -e "${UPGRADE_DIR}/kept-${n}" && ! -e "${UPGRADE_DIR}/closed-${n}" ]] || continue
     pane="$(agent_field "${n}" pane_id </dev/null)"
     about="$(upgrade_about "$(upgrade_epic "${n}" conduct)" "${UPGRADE_NEW}")"
     upgrade_say "${n}" "${pane}" "swarm.sh upgrade was stopped before it moved you. ${about} Ignore its request, and carry on as before, on the version you run." </dev/null \
@@ -4889,7 +4890,7 @@ upgrade_round() {
 upgrade_reread() {
   local prev name pane role cur d="${UPGRADE_DIR}"
   if ! upgrade_read_herdr; then
-    [[ -e "${d}/checked" ]] || { : > "${d}/checked"; echo "herdr's agent list could not be read before the first round, so no agent was skipped as closed" >> "${d}/summary"; }
+    [[ -e "${d}/checked" ]] || { : > "${d}/checked"; echo "herdr's agent list could not be read before the first round, so the closed check did not run" >> "${d}/summary"; }
     return 1
   fi
   prev=""; [[ ! -f "${d}/list" ]] || prev="$(upgrade_open < "${d}/list")"
@@ -4989,35 +4990,38 @@ upgrade_open() {
 # list (UPGRADE_HERDR, the run's list) and of Claude Code's (one claude_agents call, UPGRADE_CLAUDE,
 # no read per agent): each agent in the list whose Claude session reads gone (upgrade_session), and
 # each Claude agent in <want> (empty: any) that a tab record in .swarm/state puts in a pane while
-# herdr lists it in none of this project's (upgrade_missing), is skipped as closed (upgrade_closed).
-# A Claude Code list that cannot be read skips no session as gone, and says so.
+# herdr lists it in none of this project's (upgrade_missing), is skipped as closed (upgrade_closed),
+# its epic kept (upgrade_epic) so its conductor hears of it (upgrade_about). A Claude Code list that
+# cannot be read skips no session as gone, and says so.
 upgrade_skip_closed() {
   local name pane role cur
   if [[ -s "${UPGRADE_DIR}/list" ]]; then
     if UPGRADE_CLAUDE="$(claude_agents </dev/null)" && [[ "$(json 'isinstance(d, list)' <<< "${UPGRADE_CLAUDE}" 2>/dev/null)" == True ]]; then
       while IFS=$'\t' read -r name pane role cur; do
         [[ -n "${name}" && "$(upgrade_session "${name}" "$(upgrade_sid "${pane}")" </dev/null)" == gone ]] || continue
-        upgrade_closed "${name}"
+        upgrade_epic "${name}" "${role}" >/dev/null; upgrade_closed "${name}"
       done < "${UPGRADE_DIR}/list"
-    else echo "Claude Code's list of its sessions could not be read before the first round, so no agent was skipped for a gone session" >> "${UPGRADE_DIR}/summary"; fi
+    else echo "Claude Code's list of its sessions could not be read before the first round, so the closed check skipped no agent for a gone session" >> "${UPGRADE_DIR}/summary"; fi
     UPGRADE_CLAUDE=""
   fi
-  while IFS= read -r name; do [[ -z "${name}" ]] || upgrade_closed "${name}"; done <<< "$(upgrade_missing "$1")"
+  while IFS=$'\t' read -r name role; do [[ -z "${name}" ]] || { upgrade_epic "${name}" "${role}" >/dev/null; upgrade_closed "${name}"; }; done <<< "$(upgrade_missing "$1")"
 }
 
 # upgrade_missing <want> — the Claude agents (newest agents.tsv line) in <want> (empty: any) that a
 # tab record in .swarm/state puts in a pane, but the run's list (upgrade_list, over a herdr list read
 # successfully) does not hold: their pane was closed outside swarm.sh, which drops a pane's record
-# when it closes one. The lead's own pane is never one; in record order, each name once.
+# when it closes one. The lead's own pane is never one; in record order, each name once, with its
+# role, tab-separated.
 upgrade_missing() {
-  local f pane name
+  local f pane name rec
   for f in "${STATE_DIR}"/*; do
     if [[ -f "${f}" ]]; then cat "${f}" 2>/dev/null || true; fi
   done | awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ && !seen[$2]++ { print $1, $2 }' |
   while read -r pane name; do
     [[ ( -z "$1" || "$1" == *" ${name} "* ) && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
-    [[ "$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { k = $4 } END { print k }' "${AGENTS_LOG}" 2>/dev/null)" == claude ]] || continue
-    awk -F'\t' -v n="${name}" '$1 == n { f = 1 } END { exit !f }' "${UPGRADE_DIR}/list" || echo "${name}"
+    rec="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { k = $4 "\t" $2 } END { print k }' "${AGENTS_LOG}" 2>/dev/null)" || rec=""
+    [[ "${rec%%$'\t'*}" == claude ]] || continue
+    awk -F'\t' -v n="${name}" '$1 == n { f = 1 } END { exit !f }' "${UPGRADE_DIR}/list" || printf '%s\t%s\n' "${name}" "${rec#*$'\t'}"
   done
 }
 
@@ -5095,10 +5099,11 @@ upgrade_reviewer() {
 # upgrade_review_busy <reviewer> — succeed while <reviewer> is in the run's last read of its agents
 # (list, a Claude agent) on its old version, not moved since, and neither idle nor gone (upgrade_state).
 # One left on its old version still holds: it is still reviewing its builder's PR. A codex review agent
-# is in no list, so it holds nothing.
+# is in no list, so it holds nothing; one skipped as closed (upgrade_closed) holds nothing either, and
+# its state is not read.
 upgrade_review_busy() {
   local name pane role cur
-  [[ -n "$1" && -f "${UPGRADE_DIR}/list" && ! -e "${UPGRADE_DIR}/done-$1" && ! -e "${UPGRADE_DIR}/kept-$1" ]] || return 1
+  [[ -n "$1" && -f "${UPGRADE_DIR}/list" && ! -e "${UPGRADE_DIR}/done-$1" && ! -e "${UPGRADE_DIR}/kept-$1" && ! -e "${UPGRADE_DIR}/closed-$1" ]] || return 1
   while IFS=$'\t' read -r name pane role cur; do
     [[ "${name}" == "$1" && "${cur}" == old ]] || continue
     case "$(upgrade_state "${name}" "${pane}" </dev/null)" in idle|gone) return 1 ;; *) return 0 ;; esac
@@ -5166,7 +5171,8 @@ upgrade_restart() {
 }
 
 # upgrade_conductor <conductor> <pane> <old|new> <version> <end-ms> — move a conductor whose handover
-# is in, told its handover and which of its builders were restarted and which left: restarted
+# is in, told its handover and which of its builders were restarted, left or skipped as closed
+# (upgrade_about): restarted
 # (upgrade_restart), or, already on <version>, only told to carry on. One whose restart failed while
 # its claude still runs (it ended its turn for upgrade) is told to carry on where it is; one whose
 # claude exited got its resume hint from upgrade_one. Exits 2, still paused, when it was busy by
@@ -5191,17 +5197,18 @@ upgrade_conductor() {
 }
 
 # upgrade_about <epic> <version> — the line that tells <epic>'s conductor which of its builders this
-# run restarted and which it left.
+# run restarted, which it left and, when it skipped any as closed (upgrade_closed), which.
 upgrade_about() {
-  local f n c moved="" left=""
+  local f n c moved="" left="" closed=""
   c="$(conductor_name "$1")"
   for f in "${UPGRADE_DIR}"/epic-*; do
     n="${f##*/epic-}"
     [[ -e "${f}" && "${n}" != "${c}" && "$(cat "${f}")" == "$1" ]] || continue
     [[ ! -e "${UPGRADE_DIR}/done-${n}" ]] || moved+=" ${n}"
     [[ ! -e "${UPGRADE_DIR}/left-${n}" ]] || left+=" ${n}"
+    [[ ! -e "${UPGRADE_DIR}/closed-${n}" ]] || closed+=" ${n}"
   done
-  echo "Builders restarted on swarm-dev $2:${moved:- none}. Left on their old version:${left:- none}."
+  echo "Builders restarted on swarm-dev $2:${moved:- none}. Left on their old version:${left:- none}.${closed:+ Skipped as closed:${closed}.}"
 }
 
 # upgrade_want <epic>|backlog — the agent names upgrade moves, space-separated with a space each side:

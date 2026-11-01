@@ -778,17 +778,20 @@ of sessions once and uses it with the round's first read of herdr's list. An age
 session is gone is skipped as closed. So is a Claude agent of the run whose pane a tab record in
 `.swarm/state` names while herdr lists it in none of the project's panes (a pane closed by hand;
 `swarm.sh` drops the record of a pane it closes). A session that goes later, up to the restart's own
-idle check, is skipped the same way, except a conductor already asked for its handover: it is named
-as left, as below. A skipped agent is never waited on, sent a key or restarted, and counts as neither
-moved nor left, so it does not fail the run. All of them are named once, on one `skipped (closed):
-<names>` line. When that first read of herdr's list fails, upgrade says so and skips nobody as
-closed; when Claude Code's list cannot be read, it says so and skips no agent for a gone session.
+idle check, is skipped the same way, a conductor's too once its handover is in. A conductor whose
+session goes while upgrade waits for its handover is named as left, as below. A skipped agent is
+never waited on, sent a key or restarted, and counts as neither moved nor left, so it does not fail
+the run; its conductor hears it was skipped. All of them are named once, on one `skipped (closed):
+<names>` line. When that first read of herdr's list fails, upgrade says the closed check did not
+run; when Claude Code's list cannot be read, it says the check skipped no agent for a gone session.
+Either way a session found gone later in the run is still skipped.
 A builder also waits while its story's review agent (`review-<slug>`), which reviews its PR, is a
 Claude agent on the old version that is not idle. The review agent is restarted once it is idle, as
 any agent is. One left on the old version (its restart failed) still holds its builder while it is
 busy. One still busy at the end of the wait is named as left, and so is its builder, with the reason
 `its review agent review-<slug> stayed busy`; so is a builder its review agent held in the last
-round, though that agent reads idle by the end. A codex review agent holds nothing.
+round, though that agent reads idle by the end. A codex review agent holds nothing, and neither does
+a review agent skipped as closed.
 A restart sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
@@ -800,7 +803,7 @@ restart keeps its guards. If process-info cannot be read, the agent is left as i
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
 since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
-restarted and which were left: restarted and told to carry on, or, if it was already on the new
+restarted, which were left and which were skipped as closed: restarted and told to carry on, or, if it was already on the new
 version or its restart failed before its claude exited, only told to carry on.
 upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. When it is done
 it prints one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or
@@ -814,7 +817,8 @@ fails from the first ctrl+c on, upgrade leaves the pane open, and the agent's li
 could not be told to carry on gets a line saying to tell it by hand. A TERM to the run (a HUP does
 not reach it: the worker runs under `nohup`) names
 each agent it had not moved as left (one cut off mid-restart with its `claude --resume` line), tells
-each conductor it paused which of its builders were restarted and to carry on as before, and ends
+each conductor it paused which of its builders were restarted and to carry on as before (one skipped
+as closed is told nothing, and stays skipped), and ends
 the log on `upgrade stopped: <n> moved, <m> left (exit 143)`. A KILL or a reboot
 cannot, and leaves that conductor waiting for a prompt. An agent that leaves herdr's agent list
 before it is moved is named as left, never forgotten; when it is a paused conductor, its builders no
