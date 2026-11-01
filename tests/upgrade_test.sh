@@ -731,12 +731,13 @@ WAIT_MS=300 upgrade e
 check "a gone builder is skipped as closed, not held by its busy review agent" "1|1|0|" \
   "${rc}|$(grep -cE '^skipped \(closed\):( [a-z0-9-]+)* b1( |$)' "${H}/out")|$(grep -c '^b1: ' "${H}/out")|$(calls 'agent start')"
 # A review agent skipped as closed (its session gone at the check) holds its builder no more, and its
-# state is not read at the hold: a bad read there (the 6th, right after b1's own 5th) cannot hold b1.
+# state is not read at the hold: a bad read there (the 6th, right after b1's own 5th) cannot hold b1. b4's
+# session is gone here too, so the skipped line names it as well.
 review_b1 idle; sed -i.bak 's/,{"sessionId":"sr","status":"idle"}//' "${H}/claude.json"
 echo '5 s/^\[/X[/' > "${H}/flip"; echo '6 s/^X\[/[/' > "${H}/flip2"
 WAIT_MS=300 upgrade e
 check "a review agent skipped as closed holds its builder no more, whatever Claude Code's list reads at the hold" "0|1|1|0|upgrade done: 1 moved, 0 left (exit 0)" \
-  "${rc}|$(grep -cx 'skipped (closed): review-b1' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(grep -c '^b1: left on' "${H}/out")|$(tail -1 "${H}/out")"
+  "${rc}|$(grep -cE '^skipped \(closed\):( [a-z0-9-]+)* review-b1( |$)' "${H}/out")|$(calls 'agent start b1' | grep -c .)|$(grep -c '^b1: left on' "${H}/out")|$(tail -1 "${H}/out")"
 # A review agent busy through the one round that reads idle at the end, from Claude Code's 8th read
 # on (the closed check reads its list once, then the round 6 times: 3 for the conductor, then b1,
 # b1's hold and review-b1),
