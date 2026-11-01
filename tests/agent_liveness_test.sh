@@ -328,18 +328,20 @@ ran "${bg}" '  341   340     10:00 make test'
 no_info() { HUNG_PI=none hung_wait; }; no_ps() { PS_FAIL=1 hung_wait; }
 check "with herdr's process info printing nothing, a builder with a test run stalls" stalls no_info
 check "with ps failing, a builder with a test run stalls" stalls no_ps
-# A test run older than 3 x stall_minutes (90 min) may be hung, so it is no longer work: the builder
-# stalls, and with no own work on record the hung sleep under it is named. One just under the cap is work.
+# A test run is work however long it has run: a builder's own full suite can take hours. One that
+# started 95 minutes ago, past 3 x stall_minutes (90 min), keeps the builder from stalling.
 old=("  300   200   1:35:03 ${snap} 'make test GH_TOKEN=SEKRIT'" '  310   300   1:35:02 make test GH_TOKEN=SEKRIT'
   '  320   310   1:35:01 bash scripts/test.sh' '  400   320   1:35:00 sleep 5700')
 printf '%s\n' "${tree[@]:0:7}" "${old[@]}" "${cond[@]}" > "${PS_TREE}"; log "${idle[@]}"
+check "a builder whose make test started past 3 x stall_minutes ago is not stalled" works hung_wait
+# The same tree with make lint in place of the test run is no test run: the builder stalls, and with no
+# own work on record the hung sleep under it is named, by program name and never by argument.
+printf '%s\n' "${tree[@]:0:7}" "${old[@]//test/lint}" "${cond[@]}" > "${PS_TREE}"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
-check "a builder whose make test started past 3 x stall_minutes ago is stalled, exit 3" test "${rc}:$(head -1 <<< "${out}" | cut -d' ' -f1-2)" = "3:stalled: working"
-check "and its stalled line names the hung leaf under the test run" \
+check "a builder whose 95-minute make lint is its only long process is stalled, exit 3" test "${rc}:$(head -1 <<< "${out}" | cut -d' ' -f1-2)" = "3:stalled: working"
+check "and its stalled line names the hung leaf under make lint" \
   grep -qE '; longest-running: pid 400, 95 min: sleep \(under pid 310, 95 min: make > pid 320, 95 min: bash\)$' <<< "${out}"
-check "no argument (a token) of the old test run reaches the stalled line" lacks 'SEKRIT|5700' "${out}"
-printf '%s\n' "${tree[@]:0:7}" "${old[@]//1:35:0/1:29:5}" "${cond[@]}" > "${PS_TREE}"
-check "a builder whose make test started just under 3 x stall_minutes ago is not stalled" works hung_wait
+check "no argument (a token) of the old make lint reaches the stalled line" lacks 'SEKRIT|5700' "${out}"
 log "$(tool 46)" "${idle[@]}"
 # A background task the builder's session waits on is work too: past stall_minutes, with no commit,
 # edit or test run, wait --stall (settle, its session busy) finds no stall while the transcript shows
@@ -377,7 +379,7 @@ check "a builder with make test in its pane tree is not stuck" works swait s-hun
 ran '  830   820     10:00 make test'
 check "a conductor with make test under its pane shell is not stuck" works swait conduct-e1 3000
 ran "${bg}" '  341   340   1:31:00 make test'
-check "a builder whose make test started past 3 x stall_minutes ago is stuck: no output" quiet s-hung w:7
+check "a builder whose make test started past 3 x stall_minutes ago is not stuck" works swait s-hung 3000
 printf '%s\n' "${tree[@]}" > "${PS_TREE}"
 # Its pane changed a minute ago (the record's checksum is not the pane's now), so it is not stuck either.
 log "$(tool 40)" "${idle[@]}" "$(tool 5)"
