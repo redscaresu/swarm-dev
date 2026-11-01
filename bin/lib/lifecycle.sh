@@ -3712,7 +3712,8 @@ for f in sys.argv[1:]:
 }
 
 # lead_agents — read `herdr agent list` once into LEAD_AGENTS, for everything in this poll that asks
-# which agents are live (no_agent_lines). LEAD_AGENTS_OK is set when herdr answered within
+# which agents are live (no_agent_lines). line_holds reads it once more, on a poll that is about to
+# print a line that says an agent is missing. LEAD_AGENTS_OK is set when herdr answered within
 # SWARM_LEAD_LIST_WAIT seconds (default HERDR_LIST_WAIT); a hung herdr counts as a failed list, so the
 # poll's other lines still wake the lead. Outside herdr (HERDR_ENV unset) it asks nothing.
 LEAD_AGENTS=""; LEAD_AGENTS_OK=""; LEAD_AGENTS_READ=""
@@ -4557,15 +4558,21 @@ lead_line_slug() { LEAD_LINE_SLUG="${1#*: }"; LEAD_LINE_SLUG="${LEAD_LINE_SLUG%%
 # one). Each producer reads the poll's first list (lead_agents), and an agent can start after it.
 # lead_wake asks only about a line it is about to print, so herdr is read again only on a poll with such
 # a line, and once per poll: the read lands in LEAD_RECHECK_READ, LEAD_RECHECK_OK and LEAD_RECHECK_LIVE,
-# which lead_wake makes local. True for any other line, and when the read fails, takes longer than
-# lead_agents allows, gives JSON that does not parse, or is not made (outside herdr): the line stands.
+# which lead_wake makes local. True for any other line; for a `no-review:` line whose note says
+# `(started `, since this poll started that review agent (no_review_line's restart) and its line is the
+# lead's word of it; and when no second read is made, because the poll's first read failed or timed out
+# (LEAD_AGENTS_OK empty: a hung herdr would cost the poll a second wait) or the poll runs outside herdr,
+# or when the read fails, takes longer than lead_agents allows, or gives JSON that does not parse: the
+# line stands.
 LEAD_RECHECK_READ=""; LEAD_RECHECK_OK=""; LEAD_RECHECK_LIVE=""
 line_holds() {
   local list name rname
   case "$1" in
+    "no-review: "*" (started "*", exit: "*) return 0 ;;
     "no-agent: "* | "no-review: "* | "idle: "*" is ready with no build, "*) ;;
     *) return 0 ;;
   esac
+  [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
   if [[ -z "${LEAD_RECHECK_READ}" ]]; then
     LEAD_RECHECK_READ=1
     if [[ "${HERDR_ENV:-}" == 1 ]] && list="$(within "${SWARM_LEAD_LIST_WAIT:-${HERDR_LIST_WAIT}}" herdr agent list </dev/null 2>/dev/null)" \
@@ -4583,7 +4590,7 @@ line_holds() {
   esac
 }
 
-# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list once for it (lead_agents)
+# lead_wake [quiet] — read the lead's queue once, taking herdr's agent list for it (lead_agents)
 # and running a heads pass first when this run has none yet, LEAD_HEADS_EVERY seconds have passed
 # since its last, or events.tsv gained a merge line since the last poll (lead_events) (lead_heads,
 # open_story_prs, lead_bases), start a fix-main story's writer for each red base

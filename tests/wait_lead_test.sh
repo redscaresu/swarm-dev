@@ -1311,6 +1311,21 @@ for kind in review agent idle; do
   check "${kind}: herdr's list was asked twice there" test "$(lists)" == 2
   recheck_end
 done
+# A no-review: line for a review agent this poll started again (no_review_line's restart) stays, though the
+# second list shows the agent it started: wl-rs, ready, its builder listed, its review's try 1 ran nothing,
+# its brief naming its PR. It has no **Done when**, so the review-agent the poll starts stops before any
+# herdr call; restarted waits for that command to end.
+fresh; mkdir -p "${P}/.swarm/briefs"
+item wl-rs "kind: code" "status: ready" "touches: [wl-rs.sh]"
+printf 'Review %s, the PR of story wl-rs, at its head x, in this worktree.\n' "$(rurl wl-rs)" > "${P}/.swarm/briefs/review-wl-rs.md"
+printf '2026-10-29T00:00:00Z\tstory\twl-rs\t-\tok\n' >> "${P}/.swarm/events.tsv"
+printf '2026-10-29T00:01:00Z\t%s\twl-rs\t-\t%s\n' review-agent:try "$(began 1)" review-agent "$(ran wl-rs 1)" >> "${P}/.swarm/events.tsv"
+live wl-rs; cp "${FX}/agents" "${FX}/agents.first"; live wl-rs review-wl-rs; mv "${FX}/agents" "${FX}/agents.then"; mv "${FX}/agents.first" "${FX}/agents"
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+lead 0; restarted wl-rs > /dev/null || true
+check "restart: a second list that shows the review agent the poll started keeps its (started 2 of 3) line" \
+  test "$(out)|$(rc)" == "$(again_at wl-rs 2)|0"
+recheck_end
 firstlist
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.

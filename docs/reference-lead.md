@@ -104,7 +104,9 @@ Before it prints a new line that says an agent is missing (`no-agent:`, `no-revi
 is ready with no build`), it reads herdr's agent list once more, at most once a poll. When that read
 shows the agent in one of the project's panes (the builder or `review-<slug>` for `no-agent:`,
 `review-<slug>` for `no-review:`, the builder for `idle:`), it drops the line and does not save it as
-seen, so a later poll prints it if it still holds. A read that fails keeps the line.
+seen, so a later poll prints it if it still holds. A read that fails keeps the line, and so does a poll
+whose first read failed, which makes no second one. A `no-review: ... (started N of 3)` line is never
+dropped: that poll started the review agent itself, and the line is how the lead hears of it.
 A review item's line is `merge: <slug> <PR URL>...`. The PRs of an item that `swarm.sh merge` held
 because they change a protected path go on a line of their own, without the item's other PRs, with
 their paths and the exit: `merge: <slug> <PR URL>... (held: changes <path>[, <path>]...; exit: the user
