@@ -28,7 +28,8 @@ has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi
 
 # herdr: logs every call; panes are w:<n>. agent start records "<name> <pane> <session>" in agents;
 # agent list shows each working, or idle once done/<name> exists. agent wait <pane> blocks until its
-# agent is done, or fails with a timeout error after --timeout ms.
+# agent is done, or fails with a timeout error after --timeout ms. With the file envmiss, pane wait-output
+# fails: the pane's shell never shows that it took the agent's environment.
 cat > "${STUB_BIN}/herdr" <<EOF
 #!/bin/sh
 H="${ROOT}"
@@ -72,6 +73,7 @@ case "$1 $2" in
                   done
                   echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent get")    [ -e "$H/getidle" ] && echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "pane wait-output") if [ -e "$H/envmiss" ]; then echo '{"error":{"code":"timeout"}}' >&2; exit 1; fi ;;   # the pane's shell never takes the environment
   "pane close")   awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.new" && mv "$H/agents.new" "$H/agents" ;;
   "agent list")   [ -e "$H/listfail" ] && { echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1; }
                   if [ -e "$H/sentprompt" ] && [ ! -e "$H/latelogged" ]; then
@@ -253,6 +255,11 @@ check "a stop tells the story's conductor in a note, the lead takes it when that
 # the PR sits with nobody on it, and this goes red.
 check "the handoff sends the conductor the stop note after a base-merged nudge and on a merge hold" "yes|yes" \
   "$(has "Then send the conductor the stop note, as for any other refusal below, naming that line, and stop:" "${flat}")|$(has "When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the conductor the stop note, as for any other refusal below, naming that line, so it closes the builder." "${flat}")"
+# GitHub's request to merge the base in failed with no conflict known: merge brings the base in on its
+# next run, so the agent runs it once more and nudges nobody. If the handoff sent the builder to merge
+# the base in instead, each such blip would cost a merge-in and a CI run, and this goes red.
+check "the handoff runs merge once more, nudging nobody, on a refusal that says merge brings the base in itself" "yes" \
+  "$(has "When it refuses with a line that ends \`merge brings <base> in itself, with no merge-in from the builder: run merge --head <sha> <PR URL> again\`, GitHub did not merge the base in and nothing is known to conflict: nudge nobody, and run \`${sw} merge --head <sha> ${PR}\`, with the <sha> it names, once more, in the background as before. A second such refusal is one of the other refusals below." "${flat}")"
 check "the handoff sends the conductor the stop note on any other refusal or failure, keeping the pass file" "yes|yes" \
   "$(has "On any other refusal or failure (a merge \`dequeued\` or \`unconfirmed\`, CI on the base red or timed out after the merge, a story held until its parents merge, a story with a PR you did not review), first send the conductor the stop note, leaving ${p}/.swarm/reviews/s1.md as it is" "${flat}")|$(has "\`review-s1 stopped on <the PR's head>: <the line that command printed>\`, and run \`${sw} tell conduct-e note ${p}/.swarm/reviews/s1.stop.md\`. Then reply the same way." "${flat}")"
 check "the handoff nudges the builder on a red or conflicting base-merged head and a moved base, and names the conductor's restart on the new head" "yes|yes|yes|yes|no" \
@@ -421,6 +428,14 @@ echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s6.md"; touch "${ROOT}/startfail"
 check "when herdr cannot start review-s6, review-agent fails and s6's last findings file is put back" "1|head: OLD-REVIEW|no" \
   "$(set +e; run review-agent s6 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s6.md")|$([[ -e "${p}/.swarm/reviews/s6.md.prev" ]] && echo yes || echo no)"
 rm "${ROOT}/startfail"
+# --- A pane whose shell never takes the agent's environment: review-agent's own 3 starts, one pane each.
+# start_agent's fresh-pane retry stays off inside them (OUTER_START_RETRY), so 3 panes, not 6.
+sed "s/s4/cold1/g" "${b}/stories/s4.md" > "${b}/stories/cold1.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/cold1 "${ROOT}/svc-wt/cold1" origin/main
+echo mark >> "${ROOT}/herdr.log"; touch "${ROOT}/envmiss"
+check "when review-cold1's pane never takes the environment, review-agent fails after 3 panes and no fresh-pane retry inside a start" "1|3|no" \
+  "$(set +e; o="$(run review-agent cold1 "${PR}")"; echo "$?|$(started)|$(grep -q 'tried once more' <<< "${o}" && echo yes || echo no)")"
+rm "${ROOT}/envmiss"
 # --- A start that fails once review-<slug>'s pane exists. herdr surely sent nothing: the pane is
 # closed, the last review put back, and a new start is not refused as still reviewing.
 for s in s8 s10 s11; do
@@ -859,9 +874,11 @@ check "both briefs' first line is still the one review_brief_url reads, and neit
   "$(has "Review ${PRA}, the PR of story h1, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h1.md")")|$(has "Review ${PRB}, the PR of story h2, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h2.md")")|$(grep -ci 'never merge' <<< "${abrief}" || true)|$(grep -ci 'never merge' <<< "${hbrief}" || true)"
 a_review="$(cmd_in "${abrief}" "swarm.sh review h1 --head ")"; a_merge="$(cmd_in "${abrief}" "swarm.sh merge --head ")"
 h_review="$(cmd_in "${hbrief}" "swarm.sh review h2 --head ")"; h_grants="$(cmd_in "${hbrief}" "swarm.sh grants ")"; h_merge="$(cmd_in "${hbrief}" "swarm.sh merge --head ${HEAD_SHA} ")"
+# Besides the head it reviews, the merge = agent brief names merge --head only with a placeholder: the
+# <new head> it never merges itself, and the <sha> a run-merge-again refusal names.
 check "the merge = agent brief has one review --head and one merge --head command on the head it reviews; the merge = human one adds a grants command and none to merge outside it" \
   "SWARM_PROJECT=${p} ${SWARM} review h1 --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} merge --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} review h2 --head ${HEAD_SHA} ${PRB}|SWARM_PROJECT=${p} ${SWARM} grants ${PRB}|0" \
-  "${a_review}|$(grep -v '<new head>' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
+  "${a_review}|$(grep -v -e '<new head>' -e 'merge --head <sha> ' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
 check "a grants lookup that fails twice hands the PR to the user, saying so" "yes" \
   "$(has "When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed." "${hbrief}")"
 # A head pushed since the review is not reviewed in this session: it ends the agent with head moved:
