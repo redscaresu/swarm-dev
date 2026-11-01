@@ -843,9 +843,17 @@ runs were going, the exit status, and the run's PID. The filter is `all` when th
 `tests/*_test.sh`, else `TESTS`, else how many files (`1 files`), with ` shard i/N` after it for a
 `SHARD` run, which is no full run. Each line reads the load, CPUs and other runs at its own moment,
 and the start line leaves end, seconds and status empty, so a run that was killed still leaves its
-start. A run counts as going while its mark, a file named by its PID in `.swarm/test-runs.d/`, is
-there: test.sh writes it at the start and removes it at the end, and a mark whose PID has gone is
-removed when the next run counts. A write that fails is skipped and never changes the run's exit
+start. A run that ends on INT, HUP, TERM or PIPE writes its end line with status 130, 129, 143 or
+141. A run counts as going while its mark is there. The mark is a file in `.swarm/test-runs.d/`,
+named by the run's PID and holding its start line. test.sh writes it at the start and removes it at
+the end. A run killed with KILL writes no end line and leaves its mark behind. The next run that
+counts the runs going finds the mark's PID gone and writes the killed run's end line for it. That
+line has status 137, the killed run's start time, PID, `JOBS`, filter and branch, and `-` for the
+end time, seconds, load, CPUs and other runs, which nobody measured. The run renames the mark before
+it writes, so when two runs find the same mark only one writes the line. A mark that holds no start
+line is removed and gets no line. A run makes its mark empty before it builds its start line, so
+other runs starting at the same moment count it, and a run killed before it wrote its start line
+leaves an empty mark. An older test.sh leaves its marks empty too. A write that fails is skipped and never changes the run's exit
 status. A `TEST_RUNS_LOG` that is set names the file instead (empty logs nothing); test.sh sets it
 empty for its jobs, so a run a test starts itself logs nothing and is never counted as going.
 The section reads the full runs (`all`) whose start falls in the window, by local day, less those

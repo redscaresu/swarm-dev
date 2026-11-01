@@ -256,6 +256,11 @@ check "a stop tells the story's conductor in a note, the lead takes it when that
 # the PR sits with nobody on it, and this goes red.
 check "the handoff sends the conductor the stop note after a base-merged nudge and on a merge hold" "yes|yes" \
   "$(has "Then send the conductor the stop note, as for any other refusal below, naming that line, and stop:" "${flat}")|$(has "When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the conductor the stop note, as for any other refusal below, naming that line, so it closes the builder." "${flat}")"
+# GitHub's request to merge the base in failed with no conflict known: merge brings the base in on its
+# next run, so the agent runs it once more and nudges nobody. If the handoff sent the builder to merge
+# the base in instead, each such blip would cost a merge-in and a CI run, and this goes red.
+check "the handoff runs merge once more, nudging nobody, on a refusal that says merge brings the base in itself" "yes" \
+  "$(has "When it refuses with a line that ends \`merge brings <base> in itself, with no merge-in from the builder: run merge --head <sha> <PR URL> again\`, GitHub did not merge the base in and nothing is known to conflict: nudge nobody, and run \`${sw} merge --head <sha> ${PR}\`, with the <sha> it names, once more, in the background as before. A second such refusal is one of the other refusals below." "${flat}")"
 check "the handoff sends the conductor the stop note on any other refusal or failure, keeping the pass file" "yes|yes" \
   "$(has "On any other refusal or failure (a merge \`dequeued\` or \`unconfirmed\`, CI on the base red or timed out after the merge, a story held until its parents merge, a story with a PR you did not review), first send the conductor the stop note, leaving ${p}/.swarm/reviews/s1.md as it is" "${flat}")|$(has "\`review-s1 stopped on <the PR's head>: <the line that command printed>\`, and run \`${sw} tell conduct-e note ${p}/.swarm/reviews/s1.stop.md\`. Then reply the same way." "${flat}")"
 check "the handoff nudges the builder on a red or conflicting base-merged head and a moved base, and names the conductor's restart on the new head" "yes|yes|yes|yes|no" \
@@ -900,9 +905,11 @@ check "both briefs' first line is still the one review_brief_url reads, and neit
   "$(has "Review ${PRA}, the PR of story h1, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h1.md")")|$(has "Review ${PRB}, the PR of story h2, at its head ${HEAD_SHA}, in this worktree." "$(head -1 "${p}/.swarm/briefs/review-h2.md")")|$(grep -ci 'never merge' <<< "${abrief}" || true)|$(grep -ci 'never merge' <<< "${hbrief}" || true)"
 a_review="$(cmd_in "${abrief}" "swarm.sh review h1 --head ")"; a_merge="$(cmd_in "${abrief}" "swarm.sh merge --head ")"
 h_review="$(cmd_in "${hbrief}" "swarm.sh review h2 --head ")"; h_grants="$(cmd_in "${hbrief}" "swarm.sh grants ")"; h_merge="$(cmd_in "${hbrief}" "swarm.sh merge --head ${HEAD_SHA} ")"
+# Besides the head it reviews, the merge = agent brief names merge --head only with a placeholder: the
+# <new head> it never merges itself, and the <sha> a run-merge-again refusal names.
 check "the merge = agent brief has one review --head and one merge --head command on the head it reviews; the merge = human one adds a grants command and none to merge outside it" \
   "SWARM_PROJECT=${p} ${SWARM} review h1 --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} merge --head ${HEAD_SHA} ${PRA}|SWARM_PROJECT=${p} ${SWARM} review h2 --head ${HEAD_SHA} ${PRB}|SWARM_PROJECT=${p} ${SWARM} grants ${PRB}|0" \
-  "${a_review}|$(grep -v '<new head>' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
+  "${a_review}|$(grep -v -e '<new head>' -e 'merge --head <sha> ' <<< "${a_merge}")|${h_review}|${h_grants}|$(grep -c "grants ${PRA}" <<< "${abrief}" || true)"
 check "a grants lookup that fails twice hands the PR to the user, saying so" "yes" \
   "$(has "When it exits 0 with no \`merge\` line, the review is the handoff: the PR waits on the user's merge, so merge nothing. When it fails, run it once more; a second failure hands the PR to the user too, and your reply says grants failed." "${hbrief}")"
 # A head pushed since the review is not reviewed in this session: it ends the agent with head moved:
