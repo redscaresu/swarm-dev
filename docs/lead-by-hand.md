@@ -38,13 +38,6 @@ checks in place.
 copy of HEAD.
 **Issue.** [#695](https://github.com/redscaresu/swarm-dev/issues/695).
 
-## A new epic with no conductor
-
-**Symptom.** A plan PR merged with `swarm.sh merge --board` set an epic active, and no conductor
-started for it.
-**Step.** `swarm.sh conduct <epic>`.
-**Issue.** [#697](https://github.com/redscaresu/swarm-dev/issues/697).
-
 ## A flaky test
 
 **Symptom.** `tests/watch_opened_test.sh` passes every case, then fails with

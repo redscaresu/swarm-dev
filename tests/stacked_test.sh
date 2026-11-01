@@ -3,7 +3,8 @@
 # story starts it on their branches (or refuses and blocks it again), story --strict leaves its own
 # parents out of the overlap check, review holds it while a parent is on the board (and merge then
 # refuses it), and the conductor briefs say so. The repo is a local bare remote; herdr, gh and claude
-# are stubs on PATH. gh pr list answers from ${ROOT}/open/<branch>, one URL, or fails with ${ROOT}/ghfail.
+# are stubs on PATH. gh pr list answers from ${ROOT}/open/<branch>, one URL, reads a merged PR from
+# ${ROOT}/merged/<branch>, or fails with ${ROOT}/ghfail. Parents that conflict leave one out.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -73,6 +74,7 @@ case "$1 $2" in
              f="$H/open/$(echo "$h" | tr / -)"
              if [ -n "$jq" ]; then [ ! -e "$f" ] || cat "$f"
              elif [ -e "$f" ]; then echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"$(cat "$f")\",\"autoMergeRequest\":null}]"
+             elif [ -e "$H/merged/${f##*/}" ]; then echo '[{"number":2,"state":"MERGED"}]'
              else echo '[]'; fi ;;
   "pr view") echo '{"state":"OPEN","headRefOid":"1111111111111111111111111111111111111111","baseRefName":"main","changedFiles":1}' ;;
   "repo view") echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' ;;
@@ -169,16 +171,64 @@ GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=gpg.format GIT_CONFIG_VALUE_0=ssh GIT_CONFIG
 check "a stacked start merges its second parent with -S only with sign_commits = true" "merge|signed|merge|unsigned" \
   "$(git -C "${ROOT}/svc-wt/two-signed" rev-parse -q --verify HEAD^2 >/dev/null && echo merge || echo "no merge")|$(merge_signed two-signed)|$(
   git -C "${ROOT}/svc-wt/two" rev-parse -q --verify HEAD^2 >/dev/null && echo merge || echo "no merge")|$(merge_signed two)"
-# Three parents, the last conflicting with the second (not the first, which the worktree starts on).
+# --- Conflicting parents: a parent whose branch conflicts with one merged in is left out, and the
+# worktree stays on the parents merged so far. r1 and r2 both write f.txt.
 for s in r3 r1 r2; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "repo: svc"; done
+item "${b}" stories/pair.md "status: blocked" "kind: code" "repo: svc" "depends_on: [r1, r2]"
 item "${b}" stories/clash.md "status: blocked" "kind: code" "repo: svc" "depends_on: [r3, r1, r2]"
 parent r3 r3.txt three open; parent r1 f.txt one open; parent r2 f.txt two open
 run unblock >/dev/null || true
+stacked_of() { awk -F'\t' -v c="$1" '$2 == "stacked" && $3 == c { print $5 }' "${p}/.swarm/events.tsv" | no_version; }
+in_wt() { git -C "${ROOT}/svc-wt/$1" merge-base --is-ancestor "$(head_of "$2")" HEAD && echo yes || echo no; }
+# clean_wt <child> — the left-out merge was aborted: no MERGE_HEAD, and status (unmerged entries included) is empty.
+clean_wt() {
+  if git -C "${ROOT}/svc-wt/$1" rev-parse -q --verify MERGE_HEAD >/dev/null; then echo "MERGE_HEAD"; return; fi
+  echo "status '$(git -C "${ROOT}/svc-wt/$1" status --porcelain 2>&1)'"
+}
+# shellcheck disable=SC2016 # the backticks are the brief's
+LEFT_R2='r2 is left out, as its branch conflicts with r1 in f.txt: its code is not in yours. It reaches your branch through `main` once its PR merges, when `swarm.sh status` says to merge `origin/main` in.'
+rc=0; out="$(run story pair)" || rc=$?
+brief="$(cat "${p}/.swarm/briefs/pair.md" 2>&1 || true)"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "two parents that conflict in f.txt: story exits 0, the worktree sits on the first parent's branch, clean with no merge in progress, and the stacked event and the brief name the one left out" \
+  "0|$(head_of r1)|status ''|ok (on r1; left r2: conflicts with r1 in f.txt)|yes|yes|yes" \
+  "${rc}|$(git -C "${ROOT}/svc-wt/pair" rev-parse HEAD 2>&1)|$(clean_wt pair)|$(stacked_of pair)|$(has "${LEFT_R2}" "${brief}")|$(
+  has 'your branch starts on the branches of r1, whose PRs are still open.' "${brief}")|$(
+  has 'with `Merge after '"${URL}/r1 ${URL}/r2"'` in its body.' "${brief}")"
 rc=0; out="$(run story clash)" || rc=$?
-check "parents whose branches conflict fail story naming the two that conflict and the file, with no worktree and no story/clash branch" \
-  "fail|yes|no|no|no" \
-  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "origin/story/r2 and origin/story/r1 conflict in f.txt" "${out}")|$(
-  hasnt "origin/story/r3" "${out}")|$(exists "${ROOT}/svc-wt/clash")|$(branch clash)"
+check "three parents, only the third conflicting: the second is merged in and the third left out, the worktree clean with no merge in progress" \
+  "0|yes|yes|no|status ''|ok (on r3 r1; left r2: conflicts with r1 in f.txt)|yes" \
+  "${rc}|$(in_wt clash r3)|$(in_wt clash r1)|$(in_wt clash r2)|$(clean_wt clash)|$(stacked_of clash)|$(has "${LEFT_R2}" "$(cat "${p}/.swarm/briefs/clash.md" 2>&1 || true)")"
+# parents_of <child> [on|left] — merge.sh's stacked_parents over this project's events.tsv, with the
+# bin/lib files it needs sourced in swarm.sh's order (events_tail_merge_test.sh's lib does the same).
+# shellcheck disable=SC2034 # the sourced files read these
+parents_of() {
+  ( PROJECT_DIR="${p}"; SWARM_HOME="${SWARM%/bin/swarm.sh}"; BOARD="${b}"; STATE_DIR="${p}/.swarm/state"
+    for l in agents build board merge; do
+      # shellcheck source=/dev/null
+      . "${SWARM_HOME}/bin/lib/${l}.sh"
+    done
+    stacked_parents "$@" ) 2>/dev/null
+}
+check "stacked_parents reads the stacked event with a left-out parent: every parent (a handover's Merge after), those merged in, and those left out" \
+  "r1 r2|r1|r2|r3 r1 r2|r3 r1|r2" \
+  "$(parents_of pair)|$(parents_of pair on)|$(parents_of pair left)|$(parents_of clash)|$(parents_of clash on)|$(parents_of clash left)"
+# status's Stacked lines for pair and clash (stacked_status_test.sh reads the section the same way).
+# A long report deadline: on a loaded machine a gh read past the 30-second default reads as could not check.
+stacked_for() { (export SWARM_REPORT_SECONDS=300; run status || true) | awk '/^Stacked$/ { s = 1; next } s && /^  / { sub(/^  /, ""); print; next } { s = 0 }' \
+  | grep -E '^(pair|clash): ' | sed 's/ (no builder)$//' || true; }
+check "while the left-out r2's PR is open, status prints no Stacked line to merge it" "" "$(stacked_for)"
+git -C "${ROOT}/svc" checkout -q story/r1; echo r1b > "${ROOT}/svc/r1b.txt"; git -C "${ROOT}/svc" add r1b.txt
+git -C "${ROOT}/svc" commit -q -m r1b; git -C "${ROOT}/svc" push -q origin story/r1; git -C "${ROOT}/svc" checkout -q main
+check "stacked_parents reads the stacked event with a left-out parent: r1 moved, so status says to merge it, and nothing for r2" \
+  "pair: merge origin/story/r1"$'\n'"clash: merge origin/story/r1" "$(stacked_for | sort -r)"
+# r2's PR squash-merges: the stub reads it MERGED, and main gains its change.
+rm "${ROOT}/open/story-r2"; mkdir -p "${ROOT}/merged"; : > "${ROOT}/merged/story-r2"
+echo two > "${ROOT}/svc/f.txt"; git -C "${ROOT}/svc" commit -q -am "r2 (#2)"; git -C "${ROOT}/svc" push -q origin main
+check "once r2 merges, status says to merge origin/main in for it" \
+  "pair: merge origin/story/r1"$'\n'"pair: merge origin/main (r2 merged)"$'\n'"clash: merge origin/story/r1"$'\n'"clash: merge origin/main (r2 merged)" \
+  "$(stacked_for | sort -r)"
+rm -r "${ROOT}/merged"
 # A parent whose history is unrelated: the merge fails with no conflicted file.
 git -C "${ROOT}/svc" checkout -q --orphan story/ux && git -C "${ROOT}/svc" rm -q -rf . && echo ux > "${ROOT}/svc/ux.txt"
 git -C "${ROOT}/svc" add ux.txt && git -C "${ROOT}/svc" commit -q -m ux && git -C "${ROOT}/svc" push -q origin story/ux && git -C "${ROOT}/svc" checkout -q -f main

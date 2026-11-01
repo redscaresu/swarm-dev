@@ -2586,7 +2586,7 @@ review_heads() {
     [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
       || die "review: gh could not read the head of ${url} within ${secs}s, so whether it is still ${want:0:7} is unknown; ${slug} is unchanged: run swarm.sh review again"
     [[ "${head}" == "${want}" ]] \
-      || die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url} once this round sent the builder findings; after a pass, a new swarm.sh review-agent ${slug} ${url})"
+      || die "review: the head of ${url} is ${head:0:7}, not ${want:0:7}, the head that passed review; ${slug} is unchanged: the new head needs a review of its own (from review-${slug}'s pane, swarm.sh review-agent --next ${slug} ${url}, after a pass as after findings; with review-${slug} gone, a new swarm.sh review-agent ${slug} ${url})"
   done
 }
 

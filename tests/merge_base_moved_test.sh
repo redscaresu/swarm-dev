@@ -81,16 +81,17 @@ merged_in "a PR in another repo: its stories/ file is code" "base merged: ${OTHE
 check "a PR in another repo: compares in that repo" compared o/other "${H1}"
 check "a PR in another repo: merges main in in that repo" updated o/other
 # The board's repo cannot be read: the failed read is named, with gh's own line, not called code on the
-# base, and the refusal says to merge the base in, which clears it.
+# base, and the refusal says to merge the base in, and why: merge cannot go ahead without it.
+NEED="merge cannot go ahead until the head has main in it, and then nothing is left to check"
 NOREPO="GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
 fresh; gained 1 docs/stories/t.md; echo "${NOREPO}" > "${FX}/origin.fail"; merge "${URL}"
 refused "board files only, gh cannot read the board's repo" \
-  "cannot tell whether main moved past 1111111's CI: its 1 commits change only board paths, and gh repo view failed (${NOREPO}): merge origin/main in, push, and merge the new head"
+  "cannot tell whether main moved past 1111111's CI: its 1 commits change only board paths, and gh repo view failed (${NOREPO}): ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; gained 1 docs/stories/t.md; echo 'not json' > "${FX}/origin"; merge "${URL}"
-refused "board files only, gh names no repo" "and gh repo view named no GitHub repo: merge origin/main in, push, and merge the new head"
+refused "board files only, gh names no repo" "and gh repo view named no GitHub repo: ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; gained 1 docs/stories/t.md; git -C "${P}" remote remove origin; merge "${URL}"; git -C "${P}" remote add origin "${ROOT}/origin.git"
 refused "board files only, the board's repo has no origin" \
-  "its 1 commits change only board paths, and ${P}, the board's repo, has no origin: merge origin/main in, push, and merge the new head"
+  "its 1 commits change only board paths, and ${P}, the board's repo, has no origin: ${NEED}: merge origin/main in, push, and merge the new head"
 
 # --- A head up to date with the base merges.
 fresh; merge "${URL}"
@@ -116,16 +117,16 @@ is "a 404 on the compare: read once" 1 "$(reads)"
 fresh; touch "${FX}/behind.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
 refused "a compare that hangs" "cannot tell whether main moved past 1111111's CI: the compare took over 2s"
 fresh; gained 1 docs/stories/t.md; touch "${FX}/origin.hang"; merge SWARM_BASE_MOVED_WAIT=2 "${URL}"
-refused "board files only, a board repo read that hangs" "and gh did not say within 2s which GitHub repo the board's origin is: merge origin/main in, push, and merge the new head"
+refused "board files only, a board repo read that hangs" "and gh did not say within 2s which GitHub repo the board's origin is: ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; echo '{"status":"ahead"}' > "${FX}/behind"; merge "${URL}"
 refused "a compare with no ahead_by" "cannot tell whether main moved past 1111111's CI: unreadable compare"
 # many <n> <prefix> — <n> paths, <prefix>1.md to <prefix><n>.md.
 many() { local i; for ((i = 1; i <= $1; i++)); do echo "$2${i}.md"; done; }
 # 300 board files: GitHub may have cut the list short, so a file off the board may be missing from it.
 fresh; read -ra fs <<< "$(many 300 docs/stories/f | paste -sd' ' -)"; gained 1 "${fs[@]}"; merge "${URL}"
-refused "a compare listing 300 board files" "lists 300 files, so it may be cut short: merge origin/main in, push, and merge the new head"
+refused "a compare listing 300 board files" "lists 300 files, so it may be cut short: ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; gained 1; merge "${URL}"
-refused "a compare listing no file for its commits" "the compare of 1111111 with main lists no file for 1 commit(s): merge origin/main in, push, and merge the new head"
+refused "a compare listing no file for its commits" "the compare of 1111111 with main lists no file for 1 commit(s): ${NEED}: merge origin/main in, push, and merge the new head"
 fresh; read -ra fs <<< "$(many 299 docs/stories/f | paste -sd' ' -)"; gained 1 "${fs[@]}"; merge "${URL}"
 is "a compare listing 299 board files: exits 0" 0 "${rc}"
 

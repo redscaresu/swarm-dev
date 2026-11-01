@@ -177,7 +177,8 @@ case "$1 $2" in
                    else echo '{"status":"ahead","behind_by":0}'; fi ;;
       # PUT pulls/<n>/update-branch, merge's request to merge the base in: ${FX}/update as serve reads it,
       # and ${FX}/update.422 (or update.422.<expected_head_sha>, for that request alone) a 422 with its
-      # message; with ${FX}/update.hang it first sleeps a minute.
+      # message; with ${FX}/update.hang it first sleeps a minute, and with ${FX}/update.unread every pr
+      # view after a 422 fails.
       # Whatever it answers, the PR's head becomes ${FX}/update-head.<expected_head_sha>, else
       # ${FX}/update-head, when there is one, after
       # ${FX}/update-lag more pr views (none by default): with update.422, another merge's request went first.
@@ -186,7 +187,8 @@ case "$1 $2" in
                        u="${FX}/update-head"; [ ! -e "${u}.${e}" ] || u="${u}.${e}"
                        [ ! -e "${u}" ] || { cp "${u}" "${FX}/pending-head"; get l "${FX}/update-lag" 0; echo "${l}" > "${FX}/pending-left"; }
                        k="${FX}/update.422"; [ ! -e "${k}.${e}" ] || k="${k}.${e}"
-                       if [ -e "${k}" ]; then get m "${k}"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
+                       if [ -e "${k}" ]; then [ ! -e "${FX}/update.unread" ] || echo 99 > "${FX}/readback-left"
+                         get m "${k}"; echo "gh: ${m} (HTTP 422)" >&2; exit 1; fi
                        serve update ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one. With
@@ -280,11 +282,12 @@ fresh() {
 # merge [VAR=value]... <args> — swarm.sh merge outside herdr unless VARs say otherwise; sets rc,
 # output in ${ROOT}/out. Its CI waits get ${MERGE_CI} seconds (5 unless the file sets it: a merge that
 # merges the base in also reads the new head's workflows, which on a loaded machine can take longer).
+# A caller's MERGE_RUN array, when set, is a command swarm.sh runs under (merge_rules_test.sh's on_tty).
 merge() {
   local envs=()
   while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   rc=0
-  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
+  (cd "${P}" && ${MERGE_RUN[@]+"${MERGE_RUN[@]}"} env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
     SWARM_MERGE_CI_SECONDS="${MERGE_CI:-5}" SWARM_RELEASE_WAIT=0 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
 # events — each events.tsv line's command, target and outcome(), the outcome without its key=value tail
