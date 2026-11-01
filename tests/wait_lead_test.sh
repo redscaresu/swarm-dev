@@ -1225,6 +1225,81 @@ check "nor name the lead's check" bash -c "! grep -q '^main-red: .*, exit: read 
 stop
 git -C "${P}" remote remove origin; rm -f "${FX}"/base.* "${FX}/default" "${FX}"/*.status
 
+# --- a merge reads at once (#755). A merge line new in events.tsv runs the heads pass on the next poll, however
+# long until the next one is due, and a story whose every PR merged since its build last started names no line,
+# whatever the line, while its file waits for reconcile. ev <command> <target> [outcome] appends an events.tsv
+# line now; prs_calls counts the heads pass's reads of the open PRs; unseen <slug> is true when the queue the
+# last poll saved names no line for <slug>.
+ev() { printf '%s\t%s\t%s\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3:-ok}" >> "${P}/.swarm/events.tsv"; }
+prs_calls() { grep -c '^pr list ' "${ROOT}/gh.log" 2>/dev/null || true; }
+unseen() { ! awk -v s="$1" '{ sub(/^[^:]*: /, ""); sub(/[, ].*/, "") } $0 == s { f = 1 } END { exit !f }' "${P}/.swarm/lead/seen"; }
+fresh "merge = agent"
+git -C "${P}" remote add origin https://github.com/o/r.git
+item wlm-c "kind: code" "status: review" "prs: ${URL}"
+CLINE="conflict: wlm-c ${URL}, exit: tell its builder to merge the base in"
+printf '[{"url":"%s","headRefName":"story/wlm-c","headRefOid":"%s","mergeable":"CONFLICTING","createdAt":"2026-10-01T00:00:00Z","statusCheckRollup":[]}]\n' \
+  "${URL}" "${H}" > "${FX}/prs.json"
+lead 0
+check "a story PR that conflicts with its base prints its conflict: line" test "$(out)|$(rc)" == "${CLINE}|0"
+again; start SWARM_LEAD_HEADS_EVERY=300 900000   # long: stop ends it, and a loaded runner polls slowly
+n=$(prs_calls); g=$(grep -c '' "${ROOT}/gh.log")
+s="$(seen_id)"; must "a poll ended" first_read "${s}"; s="$(seen_id)"; must "a poll ended" first_read "${s}"
+check "with no merge event, the polls after the heads pass make no gh call" test "$(grep -c '' "${ROOT}/gh.log")" == "${g}"
+# GitHub lists the PR no more: it merged.
+echo '[]' > "${FX}/prs.json"; ev merge "${URL}"
+s="$(seen_id)"; must "a poll ended" first_read "${s}"; s="$(seen_id)"; must "a poll ended" first_read "${s}"
+check "a merge <PR URL> ok event runs one heads pass on the next poll, not 300 s later" test "$(prs_calls)" == "$((n + 1))"
+check "and the queue drops the PR's conflict: line" unseen wlm-c
+check "a line that goes wakes no one" test ! -e "${ROOT}/rc"
+stop
+git -C "${P}" remote remove origin; rm -f "${FX}/prs.json"
+
+# The #755 case: a story in review under merge = agent, its review passed, its builder and review panes gone.
+U2=https://github.com/wlm-owner/wlm-repo/pull/51; U3=https://github.com/wlm-owner/wlm-repo/pull/52
+fresh "merge = agent"
+item wlm-r "kind: code" "status: review" "prs: ${U2}"
+mkdir -p "${ROOT}/proj-wt/wlm-r" "${P}/.swarm/reviews"
+printf '2026-10-01\tcode\twlm-r\tclaude\tsonnet\thigh\ts-wlm-r\n' > "${P}/.swarm/agents.tsv"
+printf 'head: %s\n\n## Findings\n\nNone.\n' "${H}" > "${P}/.swarm/reviews/wlm-r.md"
+ev story wlm-r; ev review-agent wlm-r; ev close review-wlm-r
+RLINE="no-agent: wlm-r, exit: swarm.sh merge --head ${H} ${U2}"
+lead 0
+check "with no merge event, a merged story's no-agent: line still prints" test "$(out)|$(rc)" == "${RLINE}|0"
+# Exact slug match: a merge of another slug that starts or contains this one is not this story's.
+ev merge wlm; ev merge wlm-r-2; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "a merge of a slug that only shares a prefix hides nothing" test "$(out)|$(rc)" == "${RLINE}|0"
+ev merge wlm-r; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "with a merge <slug> ok event, it prints no no-agent: line" test "$(out)|$(rc)" == "|1"
+check "and the queue it saves names no line for the story" unseen wlm-r
+ev story wlm-r; ev close wlm-r; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "a build started after the merge brings the line back" test "$(out)|$(rc)" == "${RLINE}|0"
+ev merge wlm-r "merged elsewhere"; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "a merge <slug> merged elsewhere event drops it as ok does" test "$(out)|$(rc)" == "|1"
+
+# Two PRs: one merged, one still open. The open one keeps the story's line, until it merges too. swarm.sh merge
+# logs a story PR's merge under the slug, which does not say which PR merged; a URL names the PR.
+item wlm-p "kind: code" "status: review" "prs: [${U2},${U3}]"; rm -f "${B}/wlm-r.md"
+mkdir -p "${ROOT}/proj-wt/wlm-p"; printf '2026-10-01\tcode\twlm-p\tclaude\tsonnet\thigh\ts-wlm-p\n' >> "${P}/.swarm/agents.tsv"
+ev story wlm-p; ev review-agent wlm-p; ev close review-wlm-p; ev merge wlm-p
+PLINE="no-agent: wlm-p, exit: swarm.sh review-agent wlm-p ${U2}, then swarm.sh review-agent wlm-p ${U3}"
+rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "one PR of two merged, logged under the slug: the story keeps its line for the open one" test "$(out)|$(rc)" == "${PLINE}|0"
+ev merge "${U2}"; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "one PR of two merged, logged under its URL: the story keeps its line too" test "$(out)|$(rc)" == "${PLINE}|0"
+ev merge "${U3}" "merged elsewhere"; rm -f "${P}/.swarm/lead/seen"; again; lead 0
+check "the other merged elsewhere, under its URL: the story names no line" test "$(out)|$(rc)" == "|1"
+rm -rf "${ROOT}/proj-wt" "${P}/.swarm/reviews" "${P}/.swarm/agents.tsv"
+
+# A merge the user made on GitHub, with no event: the heads pass reads the PR as MERGED.
+fresh "merge = human"; item wlm-h "kind: code" "status: review" "prs: ${URL}"
+mkdir -p "${P}/.swarm/lead"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"
+lead 0
+check "a story in review with a green head prints its merge: line" test "$(out)|$(rc)" == "merge: wlm-h ${URL}|0"
+echo "${H} MERGED" > "${FX}/head.7"; echo "held: h (paused)" > "${P}/.swarm/lead/seen"; again; lead 0
+check "a PR the heads pass reads as MERGED, with no merge event, drops it" test "$(out)|$(rc)" == "|1"
+check "and the queue it saves names no line for the story" unseen wlm-h
+rm -f "${FX}/head.7"
+
 
 # --- /swarm's wait arm starts wait --lead and handles a held: or escalated: line at once.
 arm="$(awk '/^   - `wait <agent>`/ { s = 1; print; next } s && /^   - `/ { exit } s' "$(dirname "${SWARM}")/../commands/swarm.md")"
