@@ -4605,14 +4605,18 @@ UPGRADE_GRACE_MS="${SWARM_UPGRADE_GRACE_MS:-300000}"
 # (moved, or a conductor already on the version told to carry on), left- (left on its old version),
 # kept- (already on the version, with a problem), busy- (busy when its restart came), rheld- (the
 # review-agent hold that kept a builder back in its last round, upgrade_hold's), hint- (how to
-# resume it, while a restart is under way); summary, the lines it prints at the end; and why, a failed
-# restart's. UPGRADE_SAID: how upgrade_say sent its last text, prompt or note. UPGRADE_HERDR: herdr's
-# agent list, read once per round (upgrade_herdr). UPGRADE_WANT and UPGRADE_NEW: the run's agents
-# (upgrade_want) and version.
+# resume it, while a restart is under way), closed- (skipped as closed, upgrade_closed), closing- (its
+# session gone by upgrade_one's idle check, for upgrade_restart to skip it); summary, the
+# lines it prints at the end; closed, the names skipped as closed; checked, made once the closed check
+# ran (upgrade_reread); and why, a failed restart's. UPGRADE_SAID: how upgrade_say sent its last text,
+# prompt or note. UPGRADE_HERDR: herdr's agent list, read once per round (upgrade_herdr).
+# UPGRADE_CLAUDE: Claude Code's list of its sessions, read once for the closed check (upgrade_claude).
+# UPGRADE_WANT and UPGRADE_NEW: the run's agents (upgrade_want) and version.
 UPGRADE_PID="${PROJECT_DIR}/.swarm/upgrade.pid"
 UPGRADE_DIR=""
 UPGRADE_SAID=""
 UPGRADE_HERDR=""
+UPGRADE_CLAUDE=""
 UPGRADE_WANT=""
 UPGRADE_NEW=""
 UPGRADE_SHELL=""   # the pid of the shell the run's traps belong to (upgrade_mine)
@@ -4626,7 +4630,8 @@ UPGRADE_SHELL=""   # the pid of the shell the run's traps belong to (upgrade_min
 # and names that one, failing when that one's scope does not cover this one's. It works in rounds
 # (upgrade_round) until no agent waits, or until UPGRADE_WAIT_MS has passed (upgrade_end), then prints
 # one line per agent: `<name>: <old> -> <new>`, `<name>: left on <old>: <why>`, or already on this
-# version, and last a tally (upgrade_tally), so a log that stops before it was cut off. A TERM or HUP
+# version, then one `skipped (closed):` line naming the agents it skipped as closed (upgrade_closed),
+# and last a tally (upgrade_tally), so a log that stops before it was cut off. A TERM or HUP
 # names the agents it had not moved and tells each conductor it paused to carry on first
 # (upgrade_stopped). A run that never read herdr's list fails, saying no agent was moved. Worktrees are never touched. Fails when any agent was left on its old version.
 upgrade_agents() {
@@ -4671,7 +4676,7 @@ upgrade_agents() {
   trap - TERM
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && "${cur}" == new ]] || continue
-    [[ -e "${UPGRADE_DIR}/done-${name}" || -e "${UPGRADE_DIR}/left-${name}" || -e "${UPGRADE_DIR}/kept-${name}" ]] || echo "${name}: already on ${new}"
+    [[ -e "${UPGRADE_DIR}/done-${name}" || -e "${UPGRADE_DIR}/left-${name}" || -e "${UPGRADE_DIR}/kept-${name}" || -e "${UPGRADE_DIR}/closed-${name}" ]] || echo "${name}: already on ${new}"
   done <<< "$(upgrade_list "${UPGRADE_WANT}" "${new}")"
   cat "${UPGRADE_DIR}/summary" 2>/dev/null || true
   for f in "${UPGRADE_DIR}"/left-*; do [[ ! -e "${f}" ]] || rc=1; break; done
@@ -4686,9 +4691,11 @@ upgrade_agents() {
 upgrade_mine() { [[ "$(exec sh -c 'echo "${PPID}"')" == "${UPGRADE_SHELL}" ]]; }
 
 # upgrade_tally <done|stopped> <exit> — the log's last line: how many agents this run moved to a new
-# version (their `<old> -> <new>` lines) and how many it left on an old one.
+# version (their `<old> -> <new>` lines) and how many it left on an old one. The agents it skipped as
+# closed (upgrade_closed) count as neither: they are named on one line just before it.
 upgrade_tally() {
   local f moved left=0
+  [[ ! -s "${UPGRADE_DIR}/closed" ]] || echo "skipped (closed):$(cat "${UPGRADE_DIR}/closed")"
   moved="$(grep -c ' -> ' "${UPGRADE_DIR}/summary" 2>/dev/null)" || moved=0
   for f in "${UPGRADE_DIR}"/left-*; do [[ ! -e "${f}" ]] || left=$((left + 1)); done
   echo "upgrade $1: ${moved} moved, ${left} left (exit $2)"
@@ -4815,9 +4822,9 @@ upgrade_status() {
 # again, so a builder it started before it paused, or after a watch woke it, counts. Then each idle
 # builder whose conductor is idle with its handover in, and whose Claude review agent is not busy
 # (upgrade_hold, read after the builder's own state, so a gone one is left at once), is restarted
-# (upgrade_restart, waiting one round at most, upgrade_round_end), one whose session is gone or
-# unknown is left, a busy one waits; last, each conductor whose builders are all moved or left is
-# moved (upgrade_conductor).
+# (upgrade_restart, waiting one round at most, upgrade_round_end), one whose session is gone is
+# skipped as closed (upgrade_closed), a busy or unknown one waits; last, each conductor whose builders
+# are all moved or left is moved (upgrade_conductor).
 # Fails while any agent waits, and when herdr's list cannot be read, so that round counts as waiting
 # rather than as one with nothing left to move. A conductor paused here that a good list no longer
 # holds is left.
@@ -4851,7 +4858,7 @@ upgrade_round() {
       wait) held+="${e} "; continue ;;
     esac
     st="$(upgrade_state "${name}" "${pane}")"
-    # Its review agent holds it only once its own session is known to be there: a gone one is left now.
+    # Its review agent holds it only once its own session is known to be there: a gone one is skipped now.
     if [[ "${st}" != gone ]]; then
       h="$(upgrade_hold "${e}" "${list}" "$(upgrade_reviewer "${name}" "${role}")")"
       if [[ "${h}" == "review "* ]]; then echo "${h}" > "${UPGRADE_DIR}/rheld-${name}"; held+="${e} "; continue; fi
@@ -4859,7 +4866,7 @@ upgrade_round() {
     case "${st}" in
       idle) rc=0; upgrade_restart "${name}" "${pane}" "${role}" "$2" "$(upgrade_round_end "$3")" || rc=$?
             [[ ${rc} -ne 2 ]] || held+="${e} " ;;
-      gone) upgrade_left "${name}" "its Claude session is gone, so it is not restarted" ;;
+      gone) upgrade_closed "${name}" ;;
       *) held+="${e} " ;;   # busy, or unknown: a bad read of Claude Code's list, read again next round
     esac
   done <<< "${list}"
@@ -4874,14 +4881,20 @@ upgrade_round() {
 
 # upgrade_reread <want> <version> — read herdr's list (upgrade_read_herdr, for the round) and save the
 # run's agents (list); fails when herdr's list cannot be read. Not in $(...): the round keeps the read.
+# The first time, before the first round acts on any agent, it runs the closed check over that read
+# (upgrade_skip_closed); when that first read fails, it says so, and the check never runs.
 # An agent the last read held that still waited (on its old version, or paused for its handover) and
 # this one does not is left, never forgotten; a paused conductor's pause marker goes, and its
 # builders no longer wait on it (gone-).
 upgrade_reread() {
   local prev name pane role cur d="${UPGRADE_DIR}"
-  upgrade_read_herdr || return 1
+  if ! upgrade_read_herdr; then
+    [[ -e "${d}/checked" ]] || { : > "${d}/checked"; echo "herdr's agent list could not be read before the first round, so no agent was skipped as closed" >> "${d}/summary"; }
+    return 1
+  fi
   prev=""; [[ ! -f "${d}/list" ]] || prev="$(upgrade_open < "${d}/list")"
   upgrade_list "$1" "$2" > "${d}/list"
+  [[ -e "${d}/checked" ]] || { : > "${d}/checked"; upgrade_skip_closed "$1"; }
   while IFS=$'\t' read -r name pane role cur; do
     [[ -n "${name}" && ( "${cur}" == old || -e "${d}/hand-${name}" ) ]] || continue
     ! grep -q "^${name}"$'\t' "${d}/list" || continue   # loose-match: ok agent names are [a-z0-9_-], anchored by ^ and a tab
@@ -4962,13 +4975,58 @@ upgrade_end() {
   done <<< "${list}"
 }
 
-# upgrade_open — upgrade_list's lines on stdin, but those of the agents this run already moved or left.
+# upgrade_open — upgrade_list's lines on stdin, but those of the agents this run already moved, left
+# or skipped as closed.
 upgrade_open() {
   local l
   while IFS= read -r l; do
-    [[ -n "${l}" && ! -e "${UPGRADE_DIR}/done-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/left-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/kept-${l%%$'\t'*}" ]] || continue
+    [[ -n "${l}" && ! -e "${UPGRADE_DIR}/done-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/left-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/kept-${l%%$'\t'*}" && ! -e "${UPGRADE_DIR}/closed-${l%%$'\t'*}" ]] || continue
     printf '%s\n' "${l}"
   done
+}
+
+# upgrade_skip_closed <want> — the closed check, run once over the first round's reads of herdr's
+# list (UPGRADE_HERDR, the run's list) and of Claude Code's (one claude_agents call, UPGRADE_CLAUDE,
+# no read per agent): each agent in the list whose Claude session reads gone (upgrade_session), and
+# each Claude agent in <want> (empty: any) that a tab record in .swarm/state puts in a pane while
+# herdr lists it in none of this project's (upgrade_missing), is skipped as closed (upgrade_closed).
+# A Claude Code list that cannot be read skips no session as gone, and says so.
+upgrade_skip_closed() {
+  local name pane role cur
+  if [[ -s "${UPGRADE_DIR}/list" ]]; then
+    if UPGRADE_CLAUDE="$(claude_agents </dev/null)" && [[ "$(json 'isinstance(d, list)' <<< "${UPGRADE_CLAUDE}" 2>/dev/null)" == True ]]; then
+      while IFS=$'\t' read -r name pane role cur; do
+        [[ -n "${name}" && "$(upgrade_session "${name}" "$(upgrade_sid "${pane}")" </dev/null)" == gone ]] || continue
+        upgrade_closed "${name}"
+      done < "${UPGRADE_DIR}/list"
+    else echo "Claude Code's list of its sessions could not be read before the first round, so no agent was skipped for a gone session" >> "${UPGRADE_DIR}/summary"; fi
+    UPGRADE_CLAUDE=""
+  fi
+  while IFS= read -r name; do [[ -z "${name}" ]] || upgrade_closed "${name}"; done <<< "$(upgrade_missing "$1")"
+}
+
+# upgrade_missing <want> — the Claude agents (newest agents.tsv line) in <want> (empty: any) that a
+# tab record in .swarm/state puts in a pane, but the run's list (upgrade_list, over a herdr list read
+# successfully) does not hold: their pane was closed outside swarm.sh, which drops a pane's record
+# when it closes one. The lead's own pane is never one; in record order, each name once.
+upgrade_missing() {
+  local f pane name
+  for f in "${STATE_DIR}"/*; do
+    if [[ -f "${f}" ]]; then cat "${f}" 2>/dev/null || true; fi
+  done | awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ && !seen[$2]++ { print $1, $2 }' |
+  while read -r pane name; do
+    [[ ( -z "$1" || "$1" == *" ${name} "* ) && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
+    [[ "$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { k = $4 } END { print k }' "${AGENTS_LOG}" 2>/dev/null)" == claude ]] || continue
+    awk -F'\t' -v n="${name}" '$1 == n { f = 1 } END { exit !f }' "${UPGRADE_DIR}/list" || echo "${name}"
+  done
+}
+
+# upgrade_closed <name> — this run skips <name> as closed: its pane or its Claude session is gone, so
+# it is never waited on, sent a key or restarted, and counts as neither moved nor left; upgrade_tally
+# names it, once, on its `skipped (closed):` line.
+upgrade_closed() {
+  [[ ! -e "${UPGRADE_DIR}/closed-$1" ]] || return 0
+  : > "${UPGRADE_DIR}/closed-$1"; printf ' %s' "$1" >> "${UPGRADE_DIR}/closed"
 }
 
 # upgrade_moved <name> <line> / upgrade_left <name> <why> — this run is done with <name>: moved, or
@@ -5088,16 +5146,19 @@ upgrade_request() {
 # upgrade_restart <name> <pane> <role> <version> <end-ms> [then] — restart <name> (upgrade_one) and
 # tell it (upgrade_told) in a subshell, so a die stops that agent alone; its env: names first, before
 # anything is sent. A die's message is why it is left, with upgrade_one's resume hint once its claude
-# has exited (upgrade_hint). Exits 2, leaving nothing, when the agent was busy by <end-ms>.
+# has exited (upgrade_hint). Exits 2, leaving nothing, when the agent was busy by <end-ms>. One whose
+# session is gone by upgrade_one's own idle check (its closing- file) is skipped as closed
+# (upgrade_closed), not left, and it exits 0.
 upgrade_restart() {
   local why="${UPGRADE_DIR}/why" w
-  rm -f "${why}" "${UPGRADE_DIR}/hint-$1" "${UPGRADE_DIR}/busy-$1"
+  rm -f "${why}" "${UPGRADE_DIR}/hint-$1" "${UPGRADE_DIR}/busy-$1" "${UPGRADE_DIR}/closing-$1"
   # shellcheck disable=SC2034 # DIE_FILE and DIE_LEVEL are die's, this subshell's own
   if ( DIE_FILE="${why}"; DIE_LEVEL="${BASH_SUBSHELL}"
        names="$(upgrade_env "$1" "$3" "$(upgrade_epic "$1" "$3")")" || die "$1: ${names}, left on $(agent_version "$1")"
        upgrade_one "$1" "$2" "${names}" "$4" "$5"
        upgrade_told "$1" "$2" "$4" "${6:-}" ) </dev/null; then return 0; fi
   if [[ -e "${UPGRADE_DIR}/busy-$1" ]]; then rm -f "${UPGRADE_DIR}/busy-$1"; return 2; fi
+  if [[ -e "${UPGRADE_DIR}/closing-$1" ]]; then rm -f "${UPGRADE_DIR}/closing-$1"; upgrade_closed "$1"; return 0; fi
   w="$(cat "${why}" 2>/dev/null)" || w=""
   w="${w#"$1: "}"
   upgrade_left "$1" "$(sed -E 's/[,;] (left )?on [^ ]+$//' <<< "${w:-its restart failed}")$(upgrade_hint "$1")"
@@ -5247,7 +5308,10 @@ upgrade_one() {
   old="$(agent_version "${name}")"
   names="$(agent_env_names)"; names="${names}${names:+ }$3"   # as start_agent gives every agent
   upgrade_idle "${name}" "${pane}" "$5" && rc=0 || rc=$?
-  [[ ${rc} -ne 2 ]] || die "${name}: its Claude session is gone, so it is not restarted; left on ${old}"
+  if [[ ${rc} -eq 2 ]]; then
+    [[ -z "${UPGRADE_DIR}" ]] || : > "${UPGRADE_DIR}/closing-${name}"
+    die "${name}: its Claude session is gone, so it is not restarted; left on ${old}"
+  fi
   if [[ ${rc} -ne 0 ]]; then
     [[ -z "${UPGRADE_DIR}" ]] || : > "${UPGRADE_DIR}/busy-${name}"
     die "${name}: still busy at the end of the wait, left on ${old}"
@@ -5308,32 +5372,53 @@ upgrade_flags() {
 }
 
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
-# on its own: Claude Code's own state for the session herdr has in <pane> now (upgrade_herdr; the one
-# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else read_state's, over
-# agents.tsv's session (herdr 0.9.5 lists none); a turn stopped on
+# on its own: Claude Code's own state (upgrade_session) for the session herdr has in <pane> now
+# (upgrade_sid; the one upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else
+# for agents.tsv's session (herdr 0.9.5 lists none), else herdr's status (agent_status); a turn stopped on
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
 # turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
 # one waiting on a prompt, or on a tool call's result, is busy.
 upgrade_state() {
   local s sid
-  sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
-  if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"
-  else
-    s="$(claude_agents </dev/null | python3 -I -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except ValueError:
-    print("unknown"); sys.exit()
-e = next((x for x in d if isinstance(x, dict) and x.get("sessionId") == sys.argv[1]), None) if isinstance(d, list) else None
-print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("status") or "unknown")' "${sid}")" || s=unknown
-  fi
+  sid="$(upgrade_sid "$2")"
+  s="$(upgrade_session "$1" "${sid}" </dev/null)"
+  [[ "${s}" != herdr ]] || s="herdr:$(agent_status "$1" </dev/null)"
   case "${s}" in
     idle|herdr:idle|herdr:done) echo idle ;;
     gone|unknown|herdr:unknown) echo "${s#herdr:}" ;;
     busy|herdr:working) if api_stopped "$1" "$2" </dev/null || turn_over "${sid:-$(recorded_session "$1")}"; then echo idle; else echo busy; fi ;;
     *) echo busy ;;
   esac
+}
+
+# upgrade_sid <pane> — the session herdr has in <pane> now (upgrade_herdr), or nothing.
+upgrade_sid() {
+  upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
+}
+
+# upgrade_claude — Claude Code's list of its sessions: the closed check's copy (UPGRADE_CLAUDE) while
+# it runs, else read now (claude_agents).
+upgrade_claude() { if [[ -n "${UPGRADE_CLAUDE}" ]]; then printf '%s\n' "${UPGRADE_CLAUDE}"; else claude_agents </dev/null; fi; }
+
+# upgrade_session <name> <sid> — Claude Code's own state for session <sid> (upgrade_claude), unknown
+# when its list cannot be read (the read fails, or gives no list) and gone when the list has no such
+# session; with no <sid>, the state session_state gives for agents.tsv's session over that same list,
+# herdr when none is recorded.
+upgrade_session() {
+  local s
+  if [[ -z "$2" ]]; then
+    s="$(upgrade_claude)" || s=""   # a failed read is no list, whatever it printed: unknown, never gone
+    session_state "$1" "${s}"; return
+  fi
+  s="$(upgrade_claude | python3 -I -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    print("unknown"); sys.exit()
+e = next((x for x in d if isinstance(x, dict) and x.get("sessionId") == sys.argv[1]), None) if isinstance(d, list) else None
+print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("status") or "unknown")' "$2")" || s=unknown
+  echo "${s}"
 }
 
 # turn_over <session> — succeed when <session>'s log ends on an assistant message that ended its turn

@@ -57,10 +57,3 @@ its change.
 **Symptom.** A conductor reports that `swarm.sh merge` was refused by auto mode.
 **Step.** Run the same merge from the lead's pane.
 **Issue.** [#699](https://github.com/redscaresu/swarm-dev/issues/699).
-
-## After a release
-
-**Symptom.** `swarm.sh upgrade` (run by `merge --release`) moves no running agent, or lists agents
-that are closed.
-**Step.** Restart the lead session yourself. Agents already running finish on the old version.
-**Issue.** [#694](https://github.com/redscaresu/swarm-dev/issues/694).
