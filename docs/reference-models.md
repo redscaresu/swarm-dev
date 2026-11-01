@@ -118,7 +118,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   own (role `review`, started by `swarm.sh review-agent`). One per PR, started when it opens, so
   reviews run side by side and the conductor's own context holds none of them.
 - **The fallback reviewer runs on the model `fallback_reviewer` names, at `high`** (role
-  `review-fallback`). codex-review starts it only when codex hits its usage limit and the key is set.
+  `review-fallback`). codex-review starts it only when codex hits its usage or rate limit and the key is set.
 
 ## Settings
 
@@ -171,7 +171,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
 - `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero. Its events.tsv line says the same, and a `reap` line names the codex it stopped (see the audit log). It ships on (§ Scoping an epic)
-- `fallback_reviewer` (default empty): a model such as `sonnet`. When codex reports a usage limit, `codex-review` starts a review agent on it in codex's place (role `review-fallback`), waits for its findings and prints them in codex's form. Empty keeps `codex skipped: usage limit`. § Building has the details
+- `fallback_reviewer` (default empty): a model such as `sonnet`. When codex reports a usage or rate limit, `codex-review` starts a review agent on it in codex's place (role `review-fallback`), waits for its findings and prints them in codex's form. Empty keeps `codex skipped: usage limit` (or `rate limit`). § Building has the details
 - `lead` (default `off`): `session`: a lead session acts for you, so `dash` splits needs you in two.
   Needs you keeps only your steps: a story with a **You:** step, an expired login, and each merge only you may make.
   A `costs: money` merge is always yours, and so is a `(protected path)` merge row, the PR `swarm.sh merge` holds for a protected path, and a `(dropped base lines)` row, the PR it holds because its merge of the base dropped base lines.
