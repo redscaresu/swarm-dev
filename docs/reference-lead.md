@@ -499,7 +499,7 @@ line's exit comes first. In review it already names `swarm.sh review-agent`. For
 restart brings the builder back, and the next poll prints `no-review:`. The exit starts `review-<slug>`, so the next poll
 is quiet. When no review agent can start, the exit's `or the fallback reviewer` means the lead
 reviews the PR itself with `swarm.sh codex-review`, run from the story's worktree (codex-review
-reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex's usage limit the
+reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex's usage or rate limit the
 model `fallback_reviewer` names. The lead runs it only while the worktree is at the PR's head with
 nothing uncommitted, as `review-agent` checks; otherwise the builder is still at work. Its findings
 go to the builder with `swarm.sh tell <slug> findings <file>`, which is a round under way, so the
@@ -685,6 +685,20 @@ prints its step. A `step-up failed:` line is never the step: `wait --lead`
 hands that one to the lead. Working out the step makes no gh call, because `dash` reads it every
 frame. `status` and `dash` hand `next` the lines they have already read, so neither asks herdr and
 `ps` twice, and dash's Next row agrees with its No agent rows from outside a herdr pane too.
+
+**`next` names a PR of yours that no story lists.** `swarm.sh merge` refuses a PR that no story or
+epic lists on its `prs:` line, so a lead's own PR (a config change, a doc fix) used to wait unseen. After
+the step's lines, `next` prints one line per open PR in the project's origin that you opened
+(`gh pr list --author @me`), whose head is not a `story/*`, `board/*` or `release/v*` branch, and that
+no story or epic lists: `unlisted: <PR URL> (<head>): no story or epic lists it; list it under the kind:
+lead story that covers it with swarm.sh review <slug> <PR URL>, then swarm.sh merge <PR URL>; with none, it
+waits on the user`. It is one gh call, the last of `next`'s reads, under the same deadline. When that
+read fails, is cut at the deadline or gets no list of PRs back, `next` prints `unlisted: not checked
+(<why>): an open PR of yours that no story or epic lists would not show here` in its place. Only that
+line names a cut of this read; the `skipped` line keeps naming the reads the step was worked out
+without. A project with no origin has no PR to list, and `next` prints no unlisted line for it.
+`status`, `dash` and `hooks/lead-stop.sh` work out the step without this read, so they make no such
+call.
 
 `status` prints a `No agent` section before its agents, one line per story: `<slug>, exit: <exit>`,
 `<slug> (step-up failed), exit: swarm.sh step-up --resume <slug>` for a failed step-up, or the
