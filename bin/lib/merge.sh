@@ -2186,10 +2186,15 @@ within() {
 # whole seconds, which would put a cut up to a second late. The skipped names go in a file, as a read
 # is often run in a $( ) subshell: REPORT_SKIP_FILE, named for the shell and the deadline so each report
 # has its own, and made only by the first skip, so a report that skips nothing leaves none behind.
+# Then it reads the board's files once (board_snapshot), and fm and get_fm answer from that read for
+# the rest of the report, so an edit made to a board file during it shows on the next report; a
+# board-state write swarm.sh makes during it ends the snapshot (its mark is REPORT_SKIP_FILE.written).
+# A snapshot that fails leaves every read to the files, as before.
 report_start() {
   [[ -z "${REPORT_SKIP_FILE:-}" ]] || rm -f "${REPORT_SKIP_FILE}"
   REPORT_END="$(perl -MTime::HiRes=time -e 'printf "%.3f\n", time + shift' -- "${REPORT_SECONDS}")" || return 1
   REPORT_SKIP_FILE="${TMPDIR:-/tmp}/swarm-report.$$.${REPORT_END}"
+  board_snapshot "${REPORT_SKIP_FILE}.written" || true
 }
 
 # report_read <name> <command>... — a read that can block (a herdr list or read, a gh call, a git
