@@ -285,7 +285,10 @@ check "the replaced: line is no queue item: not in seen, not logged" no_exit_lin
 # watches, so the run says it failed, and the lead starts it again.
 fresh
 start 20000
-kill -TERM "$(cat "${P}/.swarm/lead/pid")"
+# A run that never took its lock has no pid file: that is one FAIL below, not an abort of the whole file.
+held_pid="$(cat "${P}/.swarm/lead/pid" 2>/dev/null)" || held_pid=""
+check "the run holds the pid file" test -n "${held_pid}"
+[[ -z "${held_pid}" ]] || kill -TERM "${held_pid}" 2>/dev/null || true
 check "a TERM from outside ends the run within 5 s" returned 50
 check "it prints one wait-failed: exit 143 line, no replaced: line, and exits 143" failed_with 143
 check "it prints no replaced: line" test "$(grep -c '^replaced: ' "${ROOT}/out")" == 0
