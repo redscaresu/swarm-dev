@@ -185,8 +185,10 @@ Development rules for anyone, agent or person, working in this repository:
   tear every load process and container down when the check ends.
 - Prove a mutation without git. Before the PR opens, copy the file aside, break the original, then
   copy it back. After the PR opens, prove it on a copy of the worktree without `.git`, never in
-  place: a broken file in the worktree leaves it dirty, and the review agent refuses to start. Use
-  the copy before the PR opens too when you have more than two proofs, or one on a SLOW test file.
+  place: a broken file in the worktree leaves it dirty, and the review agent refuses to start. Make
+  the copy in a new directory outside the worktree, as a copy inside it leaves the worktree dirty
+  too. Use the copy before the PR opens too when you have more than two proofs, or one on a SLOW
+  test file.
   In the copy, break the fix, run `make test TESTS=<file> JOBS=1 TEST_RUNS_LOG=`, keep the FAIL
   lines and delete the copy. Say in the PR that you used the worktree copy. Push what is ready, and
   put further points in the PR body rather than in more pushes. Never use `git checkout` or

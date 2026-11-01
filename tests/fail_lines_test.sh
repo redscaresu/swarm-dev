@@ -268,11 +268,11 @@ check "mutation_rule tells builders to paste each test's FAIL line into the PR b
   "$(has_text "paste each test's FAIL line" "${rule}")|$(has_text "into the PR body" "${rule}")"
 # #695: a proof in place after the PR opens left the worktree dirty and review-agent refused it.
 check "mutation_rule: in place with cp before the PR opens, on a copy without .git after it" "yes|yes|yes" \
-  "$(has_text "Before the PR opens, do it in place: back up the file you fixed with cp" "${rule}")|$(has_text "After the PR opens, prove it on a copy of the worktree without .git" "${rule}")|$(has_text "never in place: break the fix in the copy" "${rule}")"
+  "$(has_text "Before the PR opens, do it in place: back up the file you fixed with cp" "${rule}")|$(has_text "After the PR opens, prove it on a copy of the worktree without .git, never in place" "${rule}")|$(has_text "Make the copy in a new directory outside the worktree" "${rule}")"
 check "mutation_rule says to push what is ready and put further points in the PR body" "yes" \
   "$(has_text "Push what is ready, and put further points in the PR body" "${rule}")"
-check "AGENTS.md's mutation paragraph has the same before/after split and the push line" "yes|yes|yes" \
-  "$(has_text "Before the PR opens, copy the file aside" "${agents_para}")|$(has_text "After the PR opens, prove it on a copy of the worktree without \`.git\`, never in place" "${agents_para}")|$(has_text "Push what is ready, and put further points in the PR body" "${agents_para}")"
+check "AGENTS.md's mutation paragraph has the same before/after split and the push line" "yes|yes|yes|yes" \
+  "$(has_text "Before the PR opens, copy the file aside" "${agents_para}")|$(has_text "After the PR opens, prove it on a copy of the worktree without \`.git\`, never in place" "${agents_para}")|$(has_text "Make the copy in a new directory outside the worktree" "${agents_para}")|$(has_text "Push what is ready, and put further points in the PR body" "${agents_para}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
