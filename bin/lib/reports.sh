@@ -412,9 +412,10 @@ dataset_report() {
 #     deferred, `<n> of <deferred>` of them whose text an escaped row on the same PR repeats exactly (-
 #     with none deferred), and `<pct>% (<n> of <prs>)` of the PRs with four or more rounds (- with none).
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
-#     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
+#     declined decline_rate rework deferred): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
-#     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
+#     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks; deferred is
+#     the declined findings whose reason is deferred (a row with no reason counts 0). Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
 #     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
 #     rounds are not split by one. Once a row in the window has a round (log-finding --round), two
 #     more blocks: TSV round reviewer fixed declined nit out-of-scope wrong deferred share_fixed, per round
