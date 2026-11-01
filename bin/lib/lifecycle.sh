@@ -3533,12 +3533,13 @@ sign_seen() {
 # error (api-error) or manual mode (manual). A prompt with the manual-mode footer under it is manual
 # for a ready story's builder (manual_slug), whose restart clears both, and for any other agent a
 # prompt whose exit also turns manual mode off. Skipped: a retired agent (<name>-done), one whose agents.tsv role is in CO_WRITER_ROLES, and
-# one a swarm.sh command is delivering to (resend_busy, over one ps read). While an upgrade runs
+# one a swarm.sh command is delivering to (resend_busy, over the poll's one ps read, poll_ps: the list
+# resend_pass read this poll, or a read of its own when resend_pass read none). While an upgrade runs
 # (upgrade_holder) it reads nothing, as resend_pass. lead_wake runs it after resend_pass, inside that
 # pass's read budget (LEAD_READ_DEADLINE: no read starts past it; RESEND_HERDR_WAIT seconds a read),
 # and takes a pane resend_pass read this poll from LEAD_READS, never reading it twice; a pane
 # resend_pass failed to read is not read again. LEAD_STUCK keeps each agent's key (herdr's status and
-# the mtime of its Claude session log, - with none), what its pane showed and when it was last read.
+# the mtime of its Claude session log, found by report.py's session_log, - with none), what its pane showed and when it was last read.
 # A pane last found clear is read again only when its key changed or STUCK_RECHECK seconds have passed;
 # one last found stuck is read every poll, as a user can clear it with no turn. Agents are read in the
 # order of their last read, oldest first, so slow reads that use up the budget leave the rest first in
@@ -3597,8 +3598,9 @@ prompt_lines() {
   [[ -n "${LEAD_AGENTS_OK}" ]] || { prompt_seen; return 0; }
   if [[ -f "${UPGRADE_PID}" ]] && [[ -n "$(upgrade_holder)" ]]; then prompt_seen; return 0; fi
   # The candidates, oldest read first (LEAD_STUCK's time; never read, 0), then in herdr's order.
-  rows="$(SWARM_PANES="$(own_panes)" SWARM_ROLES="${CO_WRITER_ROLES}" python3 -I -c '
-import glob, json, os, re, sys
+  rows="$(SWARM_PANES="$(own_panes)" SWARM_ROLES="${CO_WRITER_ROLES}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import json, os, re, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from report import session_log
 own, skip = set(os.environ["SWARM_PANES"].split()), set(os.environ["SWARM_ROLES"].split())
 agents = {}
 try:
@@ -3631,8 +3633,8 @@ for a in json.loads(sys.stdin.read())["result"]["agents"]:
     role, sid = agents.get(n, ("", ""))
     if role in skip:
         continue
-    at = "-"
-    for path in glob.glob(os.path.join(glob.escape(sys.argv[2]), "*", glob.escape(sid) + ".jsonl")) if sid not in ("", "-") else []:
+    at, path = "-", session_log(sys.argv[2], sid)
+    if path:
         try:
             at = str(os.stat(path).st_mtime_ns)
         except OSError:
@@ -3643,7 +3645,7 @@ for _, n, p, k in sorted(rows, key=lambda r: r[0]):
     || { prompt_seen; return 0; }
   [[ -n "${rows}" ]] || { rm -f "${LEAD_STUCK}"; return 0; }
   # With no process list, a delivery or a wait under way cannot be ruled out.
-  NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || { prompt_seen; return 0; }
+  poll_ps || { prompt_seen; return 0; }
   dir="${LEAD_READS:-${LEAD_DIR}/reads}"
   mkdir -p "${dir}" 2>/dev/null || { prompt_seen; return 0; }
   backlog="$(conductor_name backlog)"; now="$(date +%s)"
@@ -4281,6 +4283,20 @@ RESEND_SLACK=$(( 7 * PROMPT_TIMEOUT_MS / 1000 ))
 RESEND_HERDR_WAIT=10   # seconds each herdr read or key press of resend_pass may take, as pane_text gives a read
 RESEND_PASS_WAIT=20    # seconds after which resend_pass starts no more pane reads, leaving them for the next poll
 
+# POLL_PS: the poll's process list (ps -A -ww -o command=), which poll_ps reads once for resend_pass
+# and prompt_lines; POLL_PS_OK is set while it holds this poll's read. resend_pass, the poll's first
+# reader, clears POLL_PS_OK as it starts, so a poll never takes the last one's list.
+POLL_PS=""; POLL_PS_OK=""
+# poll_ps [fresh] — set NO_AGENT_PS to this poll's process list, reading ps only when the poll has none
+# yet. fresh reads it again (resend_pass's re-check before an Enter) and keeps the new list for the
+# poll's later readers. Fails when ps fails, keeping no list, so the next reader reads ps itself.
+poll_ps() {
+  if [[ -z "${1:-}" && -n "${POLL_PS_OK}" ]]; then NO_AGENT_PS="${POLL_PS}"; return 0; fi
+  POLL_PS_OK=""
+  POLL_PS="$(ps -A -ww -o command= 2>/dev/null)" || return 1
+  POLL_PS_OK=1; NO_AGENT_PS="${POLL_PS}"
+}
+
 # resend_busy <name> [backlog] [wait] — true while a swarm.sh command that may deliver <name> a prompt runs:
 # one of NO_AGENT_ASKS or conduct, with an argument that is <name> once made an agent name
 # (agent_name's lower case, dashes and cut) as it is, as review-<arg> or as conduct-<arg>, or --backlog
@@ -4330,7 +4346,8 @@ resend_busy() {
 # not done, and with no pending line written there is no Enter: an unreadable pane, a paste with no
 # session log to say whether a turn ran (sent nothing), or an Enter herdr failed to send (logged as the
 # resend's outcome), is tried again next poll. An agent that a swarm.sh command is delivering to as the
-# poll runs (resend_busy over one ps read) is skipped, checked again with a fresh ps just before an
+# poll runs (resend_busy over one ps read, poll_ps, which prompt_lines then shares) is skipped, checked
+# again with a fresh ps just before an
 # Enter (which is also skipped, for the next poll, when events.tsv has grown since rows read it), and
 # while an upgrade runs (upgrade_holder) the pass reads nothing: its new line is not written yet, and
 # an Enter could submit the brief deliver_prompt is sending. Never a tell or deliver_prompt: a second
@@ -4344,6 +4361,8 @@ resend_busy() {
 # outside herdr, or with no list, it does nothing.
 resend_pass() {
   local rows pane name at cmd k stem role mode marked text since rc backlog line size deadline="${LEAD_READ_DEADLINE:-$((SECONDS + RESEND_PASS_WAIT))}"
+  # The poll's first ps reader: the last poll's process list is not this one's.
+  POLL_PS_OK=""
   [[ -n "${LEAD_AGENTS_OK}" ]] || return 0
   # No idle agent in the list and no .unsent marker, no work: return before any process starts, as most polls do.
   [[ "${LEAD_AGENTS}" == *idle* && -s "${EVENTS_LOG}" ]] || compgen -G "${PROJECT_DIR}/.swarm/briefs/*.unsent" >/dev/null || return 0
@@ -4435,7 +4454,7 @@ for n in sorted(set(idle) & (set(n for n, v in newest.items() if v) | set(marked
   # An upgrade restarts agents in its own process and logs them only at its end, as no_agent_lines skips them.
   [[ ! -f "${UPGRADE_PID}" ]] || [[ -z "$(upgrade_holder)" ]] || return 0
   # With no process list, a delivery under way cannot be ruled out, so nothing is read.
-  NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || return 0
+  poll_ps || return 0
   mkdir -p "${LEAD_DIR}" 2>/dev/null || return 0
   while IFS=$'\t' read -r pane name at cmd k stem role mode marked; do
     [[ -n "${pane}" ]] || continue
@@ -4464,7 +4483,7 @@ sys.exit(12 if t is None else 13 if t else 10)' \
     if [[ ${rc} -eq 10 && "${mode}" != - ]]; then
       # A delivery that began after the first ps read would take this Enter, or be read as the brief left
       # unsent: read ps again.
-      NO_AGENT_PS="$(ps -A -ww -o command= 2>/dev/null)" || continue
+      poll_ps fresh || continue
       ! resend_busy "${name}" "$([[ "${name}" != "${backlog}" ]] || echo 1)" || continue
       # A delivery that began and ended while the pane was read left a line rows has not seen.
       [[ $(( $(wc -c < "${EVENTS_LOG}" 2>/dev/null || echo 0) )) -eq ${size} ]] || continue

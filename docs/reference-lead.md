@@ -322,7 +322,8 @@ still in the box on the read after the Enter wakes the lead through an `.unsent`
 shows blocked, idle or done, and whose pane shows it stuck. A working agent's pane is never read. These
 are skipped: a retired agent (`<name>-done`), a co-writer that talks with you in its own pane (an
 `agents.tsv` role of `hld` or `epic`), and an agent a `swarm.sh` command is delivering a prompt to, as
-the resend skips it. While `swarm.sh upgrade` runs, no pane is read, as for the resend.
+the resend skips it, over the process list the resend read in that poll (the check reads its own only
+when the resend read none). While `swarm.sh upgrade` runs, no pane is read, as for the resend.
 
 The check runs after the resend and shares its budget: 10 seconds a read, and none started 20 seconds
 into the poll's reads. A pane the resend read in that poll is not read again, and one it failed to read
