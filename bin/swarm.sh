@@ -4,7 +4,7 @@
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same part (by its first word) of a file or both name the bare file, and with --strict refuse
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in the workspace <project> · <its parent: epic, else the epic>; --backlog: for the ready stories with no epic, in <project> · backlog
-#   swarm.sh wait [--stall] [--idle] <name> [timeout-ms]    block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls; --idle, on a builder's wait (not a conductor's or a review agent's): exit 5 when it ends on anything but idle or done (auth, waiting, gone, stepped up:, stepping up:)
+#   swarm.sh wait [--stall] [--idle] [--past <sha>] <name> [timeout-ms]  block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls; --idle, on a builder's wait (not a conductor's or a review agent's): exit 5 when it ends on anything but idle or done (auth, waiting, gone, stepped up:, stepping up:); --past <sha>, on a builder (<name> its story's slug): also exit 0 with "pushed <new sha>" on the first poll its story worktree is clean at another commit that is the PR's head (gh is asked only once the worktree has moved); a short <sha>, a conductor, a review agent, --until-report, --lead or a name with no story or worktree is refused
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held, escalated or kept story, a green PR in review that waits on the user (merge = human, or merge holds it), a started story with no live agent (no-agent: <slug>, exit: <exit>), a PR whose review agent never started or went (no-review: ...), a failed step-up (step-up failed: ...), a brief still unsent (unsent brief: ...), an agent stuck on a prompt, a dialog, an expired login, an API error or manual mode (prompt: <agent> (<kind>), exit: <exit>), a blocked story whose dependency shares no touches part with it (idle: <story> waits on <dep> ...), or a ready story with no build past queue_minutes (idle: <story> is ready with no build, exit: <exit>), as next prints them, a reviewed green story PR left unmerged past queue_minutes (unmerged: <slug> <PR URL>, ...), a story PR that conflicts with its base (conflict: <slug> <PR URL>, ...), or any other line § The lead in docs/reference-lead.md lists; print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
@@ -97,10 +97,11 @@ event_fields() {
 EV_FIELDS_FILE=""
 
 # wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
-# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP and its .expected memo) go either way.
+# config line) or a set -e stop, exits 2; its temp files (WAIT_PR_TMP, its .expected memo and its .age
+# note) go either way.
 WAIT_PR_RED=""; WAIT_PR_TMP=""
 if [[ "${1:-}" == wait-pr ]]; then
-  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+  trap 'rc=$?; rm -f "${WAIT_PR_TMP}" ${WAIT_PR_TMP:+"${WAIT_PR_TMP}.expected" "${WAIT_PR_TMP}.age"}; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 # dropped-lines' exit 1 means base lines were dropped (DROPPED_FOUND), so any other stop, a die or a set
 # -e stop, exits 2; the refs its fetch made (dropped_refs_drop) go either way. A stop before merge.sh is

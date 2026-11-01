@@ -449,6 +449,17 @@ A conductor is idle whenever it waits on its own builders, so `wait` on one hold
 exists, its session is waiting or gone, or its login expired. `wait --until-report`, which
 `/swarm-dev:swarm` runs, does that with no timeout: an epic that takes more than an hour is not cut
 short. It takes only a conductor's name and fails on any other.
+`wait [--stall] --past <sha> <slug>` waits on a story's builder whose PR was at `<sha>`, such as a
+builder the review agent sent findings to. It ends every way `wait` ends, and also prints
+`pushed <new sha>` and exits 0 on the first poll where three things hold. The story's worktree is at
+a commit other than `<sha>`. The worktree has no uncommitted changes (`git status --porcelain` prints
+nothing). The PR's head is that commit, so it was pushed, not only committed. `wait` reads the
+worktree with git on every poll, and asks for the PR's head (`gh pr view --json headRefOid`) only on
+a poll where the worktree has moved and is clean, so a quiet poll makes no GitHub call. A push made before the
+wait starts ends it on its first read. A builder `wait` follows through herdr (no recorded Claude
+session) gets the same check. `--past` refuses a `<sha>` that is not 40 hex characters, a conductor,
+a review agent, `--until-report`, `--lead`, and a name with no story file on the board or no
+worktree. A refused wait waits on nothing.
 A codex agent, or one with no recorded session, is waited on through herdr's status. `wait`
 listens on herdr's event stream (the socket at `HERDR_SOCKET_PATH`, which herdr sets in every pane)
 and returns the moment herdr says the agent is `idle`, `blocked` or `done`, or `gone` when its pane
@@ -834,8 +845,10 @@ removes its worktree. Then it hands the PR on itself. It runs `swarm.sh review <
 puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <PR URL>` lists
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
 handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure
-hands the PR over too. `review --head` and `merge --head` both refuse a head pushed since the review:
-the agent then writes `head moved:`, sends its conductor a stop note naming that line (below), and
+hands the PR over too. `review --head` refuses a head pushed since the review. So does `merge --head`,
+unless the push added only git's own clean merges of the base, which it merges with no new review
+([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines). On
+either refusal the agent writes `head moved:`, sends its conductor a stop note naming that line (below), and
 stops. The conductor starts a new review agent on the new head on that note (the lead does when no
 conductor runs). When it was `merge` that refused, the story
 is already in review on a head nobody reviewed, and the agent's reply says so first. `review --head`
@@ -1000,7 +1013,7 @@ rebutted in the PR with a reason and logged with `log-finding --declined <reason
 `deferred` for one the round cap holds back from round 3, and a point already declined with the
 reason it was first declined with. Before a story goes to review or
 merges, `review --head` and `merge --head` check that the PR's head is still the one the agent
-reviewed. A PR whose head has been green and mergeable for `queue_minutes` with no
+reviewed. `merge --head` also takes a head that adds only git's own clean merges of the base to it. A PR whose head has been green and mergeable for `queue_minutes` with no
 review agent on that head is `queued`: `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>`,
 and `next` prints the same line, naming the conductor, for the lead to send it (§ Settings, `queue_minutes`). `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. A tell

@@ -181,13 +181,13 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
   The other merge rows, an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, a story a close kept (`review kept story <slug>`, with `swarm.sh review` and `swarm.sh close <slug> --drop`), a staged draft epic (`staged epic <slug>: stage v<T>, after v<P>`, with no `agree draft epic` row), a draft epic the lead may set active (`set draft epic <slug> active: <why>`, with no `agree draft epic` row either), a started story no agent works on (`no agent on story <slug>`, with the exit of `wait --lead`'s `no-agent:` line), an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty.
   `next` and `status` are unchanged
 - `merge_admin` (default `off`): `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, so it merges in a repo whose ruleset requires an approving review, which no agent can give.
-  It does so only after the checks it always makes: the head is green, no `costs: money` hold applies, the `--board` or `--release` scope holds, and the head is the one `--head` names.
+  It does so only after the checks it always makes: the head is green, no `costs: money` hold applies, the `--board` or `--release` scope holds, and the head is the one `--head` names, or adds to it only git's own clean merges of the base ([reference-merging.md § Merging](reference-merging.md#merging), Held for dropped base lines).
   `--admin` skips every rule on the base, not only the review, so `swarm.sh merge` first reads the base's rulesets and branch protection itself.
   It refuses while a status check they require is absent from the head, while they require the branch up to date (strict) and the head is behind the base, and whenever they hold a rule besides the review, the status checks and rules about pushes (deletion, force pushes, creation): a merge queue, required workflows, signatures, linear history, conversation resolution, deployments, code scanning or push restrictions.
   That includes the review rule's own thread resolution, and merge methods that leave out the one `swarm.sh merge` picks from the repo's settings.
   A classic protection field outside the few known to be safe is refused whatever its name, and a 404 from branch protection counts as unprotected only when GitHub says `Branch not protected`, since a token that cannot read protection gets a 404 too.
   The refusal names the rule.
-  A red head, a held PR or a moved head is still refused before `gh pr merge` runs.
+  A red head, a held PR or a moved head with more than clean merges of the base is still refused before `gh pr merge` runs, and an accepted head goes through these reads like any other.
   Off, `swarm.sh merge` never passes `--admin` and reads none of these
 - `review_verify` (default `ci`): what a story's review agent may run besides codex and `/code-review`.
   `ci`: every round reads the diff and trusts CI for the tests, with no local test run and no mutation run.
