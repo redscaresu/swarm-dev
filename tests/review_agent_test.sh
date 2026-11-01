@@ -98,7 +98,8 @@ awk -v d="${ROOT}" 'BEGIN { printf "[" }
     printf "%s{\"sessionId\":\"%s\",\"status\":\"%s\"}", (k++ ? "," : ""), \$3, s }
   END { print "]" }' "${ROOT}/agents" > "${ROOT}/claude.json.new" && mv "${ROOT}/claude.json.new" "${ROOT}/claude.json"
 EOF
-# With ghhang its api reads hang for 300s, and with ghfail they fail.
+# With ghhang its api reads hang for 300s, and with ghfail they fail. A PR head in headonce is read once,
+# in place of head's, then gone.
 cat > "${STUB_BIN}/gh" <<EOF
 #!/bin/sh
 if [ "\$1" = api ]; then
@@ -108,7 +109,7 @@ fi
 case "\$1 \$3" in
   "api "*/check-runs*) cat "${ROOT}/checks" ;;
   "api "*/status*) echo '{"total_count":0,"statuses":[]}' ;;
-  *) cat "${ROOT}/head" ;;
+  *) if [ -e "${ROOT}/headonce" ]; then cat "${ROOT}/headonce"; rm -f "${ROOT}/headonce"; else cat "${ROOT}/head"; fi ;;
 esac
 EOF
 GREEN='{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
@@ -538,10 +539,33 @@ check "review-agent n1 starts review-n1 for round 1" "0" "$(set +e; run review-a
 NP="$(awk '$1 == "review-n1" { p = $2 } END { print p }' "${ROOT}/agents")"
 check "review-n1 has a pane on record" "yes" "$([[ -n "${NP}" ]] && echo yes || echo no)"
 echo "head: ${HEAD_SHA} ROUND-ONE" > "${p}/.swarm/reviews/n1.md"; done_agent review-n1
-echo STALE > "${p}/.swarm/reviews/n1.head"
 echo mark >> "${ROOT}/herdr.log"; was="$(reviews_now)"
+check "review-n1's start left the PR's head in n1.head, so the refusals below see an unmoved head" "${HEAD_SHA}" "$(cat "${p}/.swarm/reviews/n1.head")"
 check "--next before any findings tell refuses, as round 1 is a plain review-agent start, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "there is no next round" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# --- A push during round 1, with no findings tell since: --next follows the new head as round 1 again,
+# once the worktree is at it with nothing uncommitted (review_at_head's refusals, changing nothing, until then).
+NWT="${ROOT}/svc-wt/n1"; H2="$("${GIT[@]}" -C "${NWT}" commit-tree "HEAD^{tree}" -p HEAD -m h2)"; echo "${H2}" > "${ROOT}/head"
+check "a moved head with the worktree behind it is refused as review_at_head refuses it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "n1's worktree is at ${HEAD_SHA}, not the PR's head ${H2}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+"${GIT[@]}" -C "${NWT}" reset -q --hard "${H2}"; echo wip > "${NWT}/wip.txt"
+check "a moved head with uncommitted changes in the worktree is refused as review_at_head refuses it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "n1's worktree has uncommitted changes, so it is not the PR's head ${H2}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+rm "${NWT}/wip.txt"
+check "a moved head during round 1, with no findings tell since: --next exits 0 and prints round 1 again, naming both heads, the round-1 line and dropped-lines on the new head" "0|yes|yes|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "Review round 1 of story n1 again: ${PR}'s head moved from ${HEAD_SHA} to ${H2}" "${o}")|$(has "review ${PR} at its new head ${H2}" "${o}")|$(has "This is review round 1 of the story." "${o}")|$(has "dropped-lines o/svc 1 ${H2} main" "${o}")")"
+check "and it leaves the new head in n1.head and the old findings at n1.md.prev, and starts no agent" "${H2}|no|head: ${HEAD_SHA} ROUND-ONE|0" \
+  "$(cat "${p}/.swarm/reviews/n1.head")|$([[ -e "${p}/.swarm/reviews/n1.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/n1.md.prev")|$(started)"
+check "events.tsv logs the follow as review-agent:next n1 ok (round 1), with round=1" "review-agent:next	n1	ok (round 1) ~~ round=1" \
+  "$(awk -F'\t' '$3 == "n1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)"
+# Back to round 1's head and files for the checks below: the follow is a round-1 start, as the start was.
+"${GIT[@]}" -C "${NWT}" reset -q --hard "${HEAD_SHA}"; echo "${HEAD_SHA}" > "${ROOT}/head"
+echo "${HEAD_SHA}" > "${p}/.swarm/reviews/n1.head"; echo "head: ${HEAD_SHA} ROUND-ONE" > "${p}/.swarm/reviews/n1.md"
+rm -f "${p}/.swarm/reviews/n1.md.prev"; echo mark >> "${ROOT}/herdr.log"; was="$(reviews_now)"
+# A head that reads as moved once, then is back at n1.head's when review_at_head reads it: nothing to follow.
+echo "${H2}" > "${ROOT}/headonce"
+check "a head back at n1.head's by review_at_head's read is refused, naming it, and changes no file under .swarm/reviews" "1|yes|yes" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "${PR}'s head is back at ${HEAD_SHA}, the head round 1 of n1 started on" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T11:30:00Z tell:findings n1 - ok >> "${p}/.swarm/events.tsv"
 check "--next from another pane refuses, naming review-n1's pane, and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID=w:999 run review-agent --next n1 "${PR}")"; echo "$?|$(has "only review-n1, in its pane ${NP}" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
@@ -560,7 +584,7 @@ check "--next when herdr cannot list its agents says to run --next again, not to
 rm "${ROOT}/listfail"; echo wip > "${ROOT}/svc-wt/n1/wip.txt"
 check "--next with uncommitted work refuses and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "has uncommitted changes" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
-rm "${ROOT}/svc-wt/n1/wip.txt"
+rm "${ROOT}/svc-wt/n1/wip.txt"; echo STALE > "${p}/.swarm/reviews/n1.head"
 o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")" || echo "FAIL review-agent --next n1 exited non-zero: ${o}"
 check "after one ok findings tell, --next from review-n1's pane prints round 2 and the codex-alone instruction" "yes|yes" \
   "$(has "Review round 2 of story n1" "${o}")|$(has "This is review round 2 of the story: run codex alone, not \`/code-review\`" "${o}")"
@@ -574,6 +598,12 @@ check "with review-n1 live and no findings file, a plain review-agent n1 still r
 echo "head: ${HEAD_SHA} ROUND-TWO" > "${p}/.swarm/reviews/n1.md"; was="$(reviews_now)"
 check "a second --next with no findings tell since refuses and keeps round 2's review" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "round 2 of n1 has started already" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+# A push during round 2, with no findings tell since: round 2 again, not round 3, logged as round 2.
+"${GIT[@]}" -C "${NWT}" reset -q --hard "${H2}"; echo "${H2}" > "${ROOT}/head"
+check "a head that moves during round 2 gets round 2 again, not round 3, and the old findings go aside" "0|yes|no|${H2}|head: ${HEAD_SHA} ROUND-TWO" \
+  "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "Review round 2 of story n1 again: ${PR}'s head moved from ${HEAD_SHA} to ${H2}" "${o}")|$(grep -qF "round 3" <<< "${o}" && echo yes || echo no)")|$(cat "${p}/.swarm/reviews/n1.head")|$(cat "${p}/.swarm/reviews/n1.md.prev")"
+check "events.tsv's new review-agent:next line for it is ok (round 2), with round=2, the second such line" "review-agent:next	n1	ok (round 2) ~~ round=2|2" \
+  "$(awk -F'\t' '$3 == "n1" && $2 ~ /^review-agent/ { l = $2 "\t" $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv" | no_version)|$(awk -F'\t' '$2 == "review-agent:next" && $3 == "n1" && $5 ~ /^ok \(round 2\)/' "${p}/.swarm/events.tsv" | wc -l | tr -d ' ')"
 # A findings tell herdr sent but did not see taken up is a round, as the ladder counts it.
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T12:00:00Z tell:findings n1 - "review-n1: the brief was not taken up: herdr sent it the brief twice" >> "${p}/.swarm/events.tsv"
 check "after a findings tell logged 'herdr sent it the brief', --next prints round 3, not round 2 again" "yes" \
@@ -593,6 +623,7 @@ check "after a new build's story event, --next refuses, as round 1 is a plain re
 printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T14:10:00Z tell:findings n1 - ok >> "${p}/.swarm/events.tsv"
 check "after findings to a new build with no review-agent start in it, --next refuses the earlier build's review-n1 and changes no file under .swarm/reviews" "1|yes|yes" \
   "$(set +e; o="$(HERDR_PANE_ID="${NP}" run review-agent --next n1 "${PR}")"; echo "$?|$(has "review-n1 is from an earlier build" "${o}")")|$([[ "$(reviews_now)" == "${was}" ]] && echo yes || echo no)"
+echo "${HEAD_SHA}" > "${ROOT}/head"   # gh's head back to the one every later story's worktree starts at
 
 # --- A findings round run as the brief writes it: review-f1's wait, tell and --next commands, taken
 # from its brief and run from its pane, in f1's worktree. f1's builder, in pane w:900 of f1's tab, has
@@ -888,7 +919,7 @@ fm_of() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh";
 : > "${p}/.claude/swarm/config"
 echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb > "${FXH}/head"
 check "merge = human: the brief's review --head on a PR whose head moved exits non-zero, names review-agent --next, and leaves h2 ready" "1|yes|ready" \
-  "$(set +e; o="$(from_pane h2 "${h_review}")"; echo "$?|$(has "swarm.sh review-agent --next h2 ${PRB} once this round sent the builder findings; after a pass, a new swarm.sh review-agent h2 ${PRB}" "${o}")")|$(fm_of h2 status)"
+  "$(set +e; o="$(from_pane h2 "${h_review}")"; echo "$?|$(has "swarm.sh review-agent --next h2 ${PRB}, after a pass as after findings; with review-h2 gone, a new swarm.sh review-agent h2 ${PRB}" "${o}")")|$(fm_of h2 status)"
 echo "${HEAD_SHA}" > "${FXH}/head"
 # One review agent passes one PR, and prs: is empty until review: a second open PR from story/h2 would be
 # left behind when the first merged and the story finished.
