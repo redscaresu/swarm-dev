@@ -276,17 +276,13 @@ lead_agents_lookup() {
 # the project dir, or a story worktree of it (<project>-wt/<slug>).
 project_pane() { local d="${1%/}"; [[ "${d}" == "${PROJECT_DIR}" || "$(dirname "${d}")" == "${PROJECT_DIR}-wt" ]]; }
 
-# has_project_pane <workspace> — true when herdr lists a pane in <workspace> that project_pane takes;
-# false when it gives no pane list.
-has_project_pane() {
-  herdr pane list 2>/dev/null | python3 -I -c '
-import json, os, sys
-w, proj = sys.argv[1], sys.argv[2]
-for p in json.load(sys.stdin)["result"]["panes"]:
-    d = (p.get("cwd") or "").rstrip("/")
-    if (p.get("workspace_id") or p["pane_id"].split(":")[0]) == w and (d == proj or os.path.dirname(d) == proj + "-wt"):
-        sys.exit(0)
-sys.exit(1)' "$1" "${PROJECT_DIR}" 2>/dev/null
+# workspace_dir <workspace> — <workspace>'s directory as herdr_workspaces reads it: the cwd of its first
+# pane herdr_workspaces does not skip (another repo's story worktree, or no cwd), PROJECT_DIR for one in
+# this project's own story worktree, empty with no such pane. Fails when herdr gives no list.
+workspace_dir() {
+  local list
+  list="$(herdr_workspaces)" || return 1
+  W="$1" awk -F'\t' '$1 == ENVIRON["W"] { print $3; exit }' <<< "${list}"
 }
 
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed, in
@@ -296,28 +292,35 @@ sys.exit(1)' "$1" "${PROJECT_DIR}" 2>/dev/null
 # a stale record in a workspace an older swarm.sh shared between projects is never split. A new
 # lead-agents workspace's placeholder tab is closed once the pane is open, or once herdr has refused it,
 # unless the pane's <cwd> is outside the project (project_pane): the workspace's directory is its first
-# pane's (herdr_workspaces), and a pane outside the project ahead of every other would make it another
-# project's and hash this project's labels, so then a pane at PROJECT_DIR stays ahead of it, the
-# placeholder (relabelled lead-agents) or one made. Each herdr call that finds, makes or trims the
-# lead-agents workspace is bounded (LEAD_AGENTS_HERDR_WAIT), and when the lookup, or the pane that
-# must be made at PROJECT_DIR, fails, the pane opens in HERDR_WORKSPACE_ID as before, with the reason
-# on stderr: a hung or failing herdr stops no start, and never leaves the workspace's first pane outside
-# the project.
+# pane's (herdr_workspaces, workspace_dir), and a pane outside the project ahead of every other would make
+# it another project's and hash this project's labels, so then the workspace's first pane must be at the
+# project: the placeholder (relabelled lead-agents), one already first, or, in a workspace with no pane
+# herdr_workspaces reads, one made at PROJECT_DIR. A pane made now goes after the others, so in a
+# workspace whose first pane is outside the project (the kept pane closed, or a project pane made after
+# an outside one) none can be put first, and the agent opens in HERDR_WORKSPACE_ID. Each herdr call that
+# finds, makes, reads or trims the lead-agents workspace is bounded (LEAD_AGENTS_HERDR_WAIT), and when the
+# lookup, the read of its first pane or the pane that must be made at PROJECT_DIR fails, the pane opens in
+# HERDR_WORKSPACE_ID as before, with the reason on stderr: a hung or failing herdr stops no start, and
+# never leaves the workspace's first pane outside the project.
 next_pane() {
-  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane ws="${PANE_WORKSPACE:-${HERDR_WORKSPACE_ID:-}}" placeholder="" keep="" out
+  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane ws="${PANE_WORKSPACE:-${HERDR_WORKSPACE_ID:-}}" placeholder="" keep="" out dir
   if [[ -z "${PANE_WORKSPACE}" ]] && lead_starts_pane; then
-    # shellcheck disable=SC2329 # herdr is called inside lead_agents_workspace and has_project_pane
+    # shellcheck disable=SC2329 # herdr is called inside lead_agents_workspace and workspace_dir
     if out="$(herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; lead_agents_workspace)"; then
       IFS=$'\t' read -r ws _ placeholder <<< "${out}"
       if ! project_pane "${cwd}"; then
         keep=1
         if [[ -n "${placeholder}" ]]; then
           within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab rename "${placeholder}" "${LEAD_AGENTS_LABEL}" >/dev/null 2>&1 </dev/null || true
-        elif ! ( herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; has_project_pane "${ws}" ); then
-          if ! within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab create --workspace "${ws}" --cwd "${PROJECT_DIR}" --label "${LEAD_AGENTS_LABEL}" --no-focus >/dev/null 2>&1 </dev/null; then
-            echo "swarm: herdr would not open a pane at ${PROJECT_DIR} in the lead-agents workspace ahead of this one, outside the project; the agent opens in this workspace instead" >&2
-            ws="${HERDR_WORKSPACE_ID:-}"; keep=""
-          fi
+        elif ! dir="$(herdr() { within "${LEAD_AGENTS_HERDR_WAIT}" herdr "$@"; }; workspace_dir "${ws}")"; then
+          echo "swarm: herdr gave no workspace or pane list, so the lead-agents workspace's first pane could not be read ahead of this one, outside the project; the agent opens in this workspace instead" >&2
+          ws="${HERDR_WORKSPACE_ID:-}"; keep=""
+        elif [[ -n "${dir}" && "${dir}" != "${PROJECT_DIR}" ]]; then
+          echo "swarm: the lead-agents workspace's first pane is at ${dir}, outside the project, and a pane made at ${PROJECT_DIR} would go after it; the agent opens in this workspace instead" >&2
+          ws="${HERDR_WORKSPACE_ID:-}"; keep=""
+        elif [[ -z "${dir}" ]] && ! within "${LEAD_AGENTS_HERDR_WAIT}" herdr tab create --workspace "${ws}" --cwd "${PROJECT_DIR}" --label "${LEAD_AGENTS_LABEL}" --no-focus >/dev/null 2>&1 </dev/null; then
+          echo "swarm: herdr would not open a pane at ${PROJECT_DIR} in the lead-agents workspace ahead of this one, outside the project; the agent opens in this workspace instead" >&2
+          ws="${HERDR_WORKSPACE_ID:-}"; keep=""
         fi
       fi
     else

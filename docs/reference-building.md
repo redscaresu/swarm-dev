@@ -102,10 +102,14 @@ gives one carries the project's label, joined to the rest by ` · `:
   and label in `.swarm/lead/agents-workspace`, so the workspace is reused while herdr lists it under
   that label, even once its panes are all in other repos' worktrees, whose paths say nothing about
   whose they are; one relabelled is left alone, and a new one made. An agent started outside the
-  project, as from a board kept outside the repo, keeps a pane at the project directory ahead of its
-  own, so the workspace stays the project's while that pane is open. When herdr gives no list, no
-  workspace or no such pane within a few seconds, the agent opens in the lead's own workspace, and
-  swarm.sh says so. Two first agents started at once share one workspace: the record is made under a
+  project, as from a board kept outside the repo, opens there only behind a first pane at the
+  project directory, so the workspace stays the project's. In a new workspace that is the
+  placeholder's pane, kept open. In a workspace with no pane swarm.sh reads for its directory (see
+  below), swarm.sh makes one. A new pane goes after the others, so once the first pane is outside
+  the project none can be put first. That happens when the kept pane is closed while the outside
+  agent's stays open, or when a project pane opens after an outside one. Then the next agent started outside the
+  project opens in the lead's own workspace, and swarm.sh says so. It does the same when herdr
+  gives no list, no workspace or no such pane within a few seconds. Two first agents started at once share one workspace: the record is made under a
   lock, and the second waits for the first's. A conductor still opens in its epic's workspace, and
   `conduct` refuses an epic named `lead-agents`, or with that `parent:`, as it refuses one named
   `backlog`.
