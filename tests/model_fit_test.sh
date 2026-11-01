@@ -6,7 +6,11 @@
 # first attempt (s4 is still in flight, so it is left out), 6 builds over 5, 4 findings over 5 PRs, 420 minutes on average. Rework
 # is outcomes' column: 1 on s1's build and on s3's latest, so 2 stories; an escaped finding on #3 and one on
 # #5 count as escaped.
-# Cell sonnet/medium docs none root holds two stories, so it prints its count alone. Then the same
+# Cell sonnet/medium docs none root holds two stories, so it prints its count alone. The by_risk block
+# has a header of its own and a row per model, effort, kind and risk over every size and area: with the
+# s stories at risk: high and split over two sizes, each cell is a count alone and the by_risk row has
+# the five-story figures; with s5 left out, the row of 4 is a count alone; four neighbour groups, each
+# differing from it in one field (effort, risk, kind or model), get rows of their own. Then the same
 # through swarm.sh flow: a story deleted in a git commit keeps its class. The s stories' touches hold
 # a parenthesised note and functions after a file (`bin/y.sh:f, g, h, i`), which are no files; t1's
 # and t2's name a bare Makefile and LICENSE the project has, which are files at the root (root), and t2's docs file
@@ -57,22 +61,58 @@ section() { # the model_fit section alone, as flow runs it; PATH may be given
   PATH="${PATH_FOR:-${dir}/bin:${PATH}}" SWARM_FINDING_REVIEWERS="codex escaped" SWARM_ROWS="${ROWS}" SWARM_STORIES="${STORIES}" \
     "${PY}" "${REPO}/bin/lib/flow_report.py" "${SINCE:-2026-10-01}" "${UNTIL:-9999-12-30}" "" x x "${P}/.swarm/findings.tsv" x x x x "" x model_fit
 }
+table() { sed '/^$/,$d'; }               # the main table, up to the first blank line
+by_risk() { sed -n '/^by_risk\t/,/^$/p' | sed '/^$/d'; }   # the by_risk block, header included
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 out="$(section)"
 check "the five-story cell: every column, the escalation to fable under opus, rework from outcomes' column" \
-  "$(grep $'^opus\thigh\tcode' <<< "${out}")" $'opus\thigh\tcode\t-\t<=300\tbin/\t5\t2.25\t75%\t1.2\t0.8\t2\t2\t420'
+  "$(table <<< "${out}" | grep $'^opus\thigh\tcode')" $'opus\thigh\tcode\t-\t<=300\tbin/\t5\t2.25\t75%\t1.2\t0.8\t2\t2\t420'
 check "no cell for the fable build" "$(grep -c '^fable' <<< "${out}" || true)" 0
 check "the two-story cell prints its count and no verdict" \
-  "$(grep $'^sonnet\tmedium' <<< "${out}")" $'sonnet\tmedium\tdocs\t-\tnone\troot\t2\t-\t-\t-\t-\t-\t-\t-'
+  "$(table <<< "${out}" | grep $'^sonnet\tmedium')" $'sonnet\tmedium\tdocs\t-\tnone\troot\t2\t-\t-\t-\t-\t-\t-\t-'
 CLOSED="${ROWS//$'\tOPEN'/$'\tCLOSED'}"
 check "a story closed unmerged on its first build counts against the first-attempt rate: 3 of 5" \
-  "$(ROWS="${CLOSED}" section | grep $'^opus\thigh\tcode' | cut -f9)" 60%
+  "$(ROWS="${CLOSED}" section | table | grep $'^opus\thigh\tcode' | cut -f9)" 60%
 UNKNOWN="${ROWS//$'\ttrue\t'/$'\t\t'}"
 check "a cell whose merges gh could not read prints no first-attempt rate" \
-  "$(ROWS="${UNKNOWN//$'\tfalse\t'/$'\t\t'}" section | grep $'^opus\thigh\tcode' | cut -f9)" -
+  "$(ROWS="${UNKNOWN//$'\tfalse\t'/$'\t\t'}" section | table | grep $'^opus\thigh\tcode' | cut -f9)" -
+# by_risk: a row per model, effort, kind and risk over every size and area, through the same cell().
+check "the by_risk block: its own header, one row per model, effort, kind and risk, the two-story row a count alone" \
+  "$(by_risk <<< "${out}")" "$(printf '%s\n' \
+  $'by_risk\teffort\tkind\trisk\tstories\tcost_per_merged_usd\tfirst_attempt_merge_rate\tmean_attempts\tfindings_per_pr\trework\tescaped\tstart_to_merge_min' \
+  $'opus\thigh\tcode\t-\t5\t2.25\t75%\t1.2\t0.8\t2\t2\t420' $'sonnet\tmedium\tdocs\t-\t2\t-\t-\t-\t-\t-\t-\t-')"
+check "the by_risk header is not the main table's (the line after ## model_fit)" \
+  "$(by_risk <<< "${out}" | head -1 | cut -f1-4)/$(sed -n 2p <<< "${out}" | cut -f1-4)" $'by_risk\teffort\tkind\trisk/model\teffort\tkind\trisk'
+# The five s stories as risk: high (their first builds; s3's fable build keeps none), s1 and s2 at 50
+# lines, the rest at 150: two cells under 5, so each prints its count alone, and one by_risk row of 5.
+HIGH="${ROWS//$'\tcode\t\topus\t'/$'\tcode\thigh\topus\t'}"
+SPLIT="${STORIES//$'s1\t150'/$'s1\t50'}"; SPLIT="${SPLIT//$'s2\t150'/$'s2\t50'}"
+check "five risk: high stories over two sizes: each cell a count alone" \
+  "$(ROWS="${HIGH}" STORIES="${SPLIT}" section | table | grep $'^opus\thigh\tcode')" "$(printf '%s\n' \
+  $'opus\thigh\tcode\thigh\t<=100\tbin/\t2\t-\t-\t-\t-\t-\t-\t-' $'opus\thigh\tcode\thigh\t<=300\tbin/\t3\t-\t-\t-\t-\t-\t-\t-')"
+check "five risk: high stories over two sizes: one by_risk row of 5, \$9.00 over 4 merged and 3 of 4 on the first attempt" \
+  "$(ROWS="${HIGH}" STORIES="${SPLIT}" section | by_risk | grep $'^opus\thigh\tcode\thigh\t')" $'opus\thigh\tcode\thigh\t5\t2.25\t75%\t1.2\t0.8\t2\t2\t420'
+check "a by_risk row of 4 stories (s5 left out) prints its count alone" \
+  "$(ROWS="$(grep -v $'\ts5\t' <<< "${HIGH}")" STORIES="${SPLIT}" section | by_risk | grep $'^opus\thigh\tcode\thigh\t')" \
+  $'opus\thigh\tcode\thigh\t4\t-\t-\t-\t-\t-\t-\t-'
+# Four neighbours of the risk: high group, each differing in one field: opus xhigh (five stories at $1.00,
+# each merged on its one build in 60 minutes), risk medium, kind docs and model sonnet (one story each).
+rrow() { # <risk> then row's arguments: row with its risk set
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\te1\t%s\t%s\n' "$2" "$3" "$4" "$1" "${@:5}"
+}
+NEAR="${HIGH}
+$(for i in 1 2 3 4 5; do rrow high 2026-10-02 "x${i}" code opus xhigh 1.00 1 0 "${U}/2${i}" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0; done
+  rrow medium 2026-10-02 m1 code opus high 1.00 1 0 "${U}/31" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0
+  rrow high 2026-10-02 k1 docs opus high 1.00 1 0 "${U}/32" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0
+  rrow high 2026-10-02 n1 code sonnet high 1.00 1 0 "${U}/33" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0)"
+check "groups that differ only in effort, risk, kind or model each get their own by_risk row; opus high code high keeps its figures" \
+  "$(ROWS="${NEAR}" STORIES="${SPLIT}" section | by_risk | tail -n +2)" "$(printf '%s\n' \
+  $'opus\thigh\tcode\thigh\t5\t2.25\t75%\t1.2\t0.8\t2\t2\t420' $'opus\thigh\tcode\tmedium\t1\t-\t-\t-\t-\t-\t-\t-' \
+  $'opus\thigh\tdocs\thigh\t1\t-\t-\t-\t-\t-\t-\t-' $'opus\txhigh\tcode\thigh\t5\t1.00\t100%\t1.0\t0.0\t0\t0\t60' \
+  $'sonnet\thigh\tcode\thigh\t1\t-\t-\t-\t-\t-\t-\t-' $'sonnet\tmedium\tdocs\t-\t2\t-\t-\t-\t-\t-\t-\t-')"
 check "a subagent row for opus alone, as no other model's builds ran subagents: 0.50 of 2.50 is 20%" \
   "$(sed -n '/^subagents/,/^$/p' <<< "${out}")" $'subagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share\nopus\thigh\t0.50\t2.50\t20%'
 fixes() { # <later PR's key> <its text> [its files, JSON] — 1 when rework_of counts o/r#1 as fixed by it, else 0
@@ -107,7 +147,7 @@ print(rework_of({"o/r#1": ("garbage", "", None), "o/r#2": ("2026-10-02T00:00:00"
 ROWS="${ROWS//$'\t2026-10-10T10:00:00Z\ttrue'/$'\t\ttrue'}"
 ROWS="${ROWS//$'\thigh\t1.00\t1\t1\t'/$'\thigh\t\t1\t1\t'}"
 check "a merged story with no merged_at adds no wait; a build with no cost is named" \
-  "$(section | grep $'^opus\thigh\tcode' | cut -f7,8,14)" $'5\t2.00 (1 not in the logs)\t540'
+  "$(section | table | grep $'^opus\thigh\tcode' | cut -f7,8,14)" $'5\t2.00 (1 not in the logs)\t540'
 
 # Through swarm.sh flow: gone was planned at 400 lines in skills/ and templates/ (a tie, so skills/, the
 # first named: any folder is an area), then deleted by a commit.
