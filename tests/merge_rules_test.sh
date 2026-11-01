@@ -250,36 +250,91 @@ own_release() {
 upgraded() { paste -sd'|' - < "${ROOT}/upgrade.log" 2>/dev/null; }
 cp "${ROOT}/agents" "${ROOT}/agents.keep"
 printf 'conduct-e w:c %s\nt w:b %s/docs\nu w:u %s\nv w:v %s\nw w:w %s sess-3\n' "${P}" "${P}" "${ROOT}/proj2" "${ROOT}" "${ROOT}/story" > "${ROOT}/agents"
-own_release; merge --release "${OWN}"
+own_release; merge --release --upgrade "${OWN}"
 is "--release of the plugin's repo: exits 0" 0 "${rc}"
 is "--release of the plugin's repo: updates the marketplace, then the plugin" "plugin marketplace update swarm-dev|plugin update swarm-dev@swarm-dev" "$(paste -sd'|' - < "${ROOT}/claude.log")"
 is "--release of the plugin's repo: the new version's upgrade, once in each project with agents, an external board's too" "${P} upgrade|${ROOT}/proj2 upgrade|${ROOT}/proj3 upgrade" "$(upgraded)"
 check "--release of the plugin's repo: prints the upgrade's log" said "log ${P}/.swarm/upgrade-1.3.0.log"
 check "--release of the plugin's repo: asks for the lead's restart in each project" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 (/exit, then claude --continue)"
 check "--release of the plugin's repo: the upgrade runs without the old version's bin/ or gh-shim on PATH" bash -c "! grep -q 'old PATH' '${ROOT}/upgrade.log'"
-own_release; touch "${ROOT}/proj2/upgrade.busy"; merge --release "${OWN}"; rm "${ROOT}/proj2/upgrade.busy"
+own_release; touch "${ROOT}/proj2/upgrade.busy"; merge --release --upgrade "${OWN}"; rm "${ROOT}/proj2/upgrade.busy"
 check "--release where another upgrade runs: warns, naming the new version's upgrade" said "warning: another swarm.sh upgrade runs in ${ROOT}/proj2, so 1.3.0's started nothing: once it ends, run SWARM_PROJECT=${ROOT}/proj2 ${NEW} upgrade"
 check "--release where another upgrade runs: its lead is still asked to restart" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 ("
-own_release; touch "${ROOT}/proj2/upgrade.hang"; merge SWARM_UPGRADE_START_WAIT=1 --release "${OWN}"; rm "${ROOT}/proj2/upgrade.hang"
+own_release; touch "${ROOT}/proj2/upgrade.hang"; merge SWARM_UPGRADE_START_WAIT=1 --release --upgrade "${OWN}"; rm "${ROOT}/proj2/upgrade.hang"
 check "--release where an upgrade hangs: warns, naming the new version's upgrade" said "warning: swarm.sh upgrade in ${ROOT}/proj2 did not start within 1s: run SWARM_PROJECT=${ROOT}/proj2 ${NEW} upgrade"
 is "--release where an upgrade hangs: moves on to the next" "${P} upgrade|${ROOT}/proj2 upgrade|${ROOT}/proj3 upgrade" "$(upgraded)"
 check "--release where an upgrade hangs: still asks for the restart" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 ("
-own_release; merge PATH="${HOME_DIR}/bin/:${HOME_DIR}/bin:${HOME_DIR}/bin/gh-shim/:${ROOT}/bin:${PATH}" --release "${OWN}"
+own_release; merge PATH="${HOME_DIR}/bin/:${HOME_DIR}/bin:${HOME_DIR}/bin/gh-shim/:${ROOT}/bin:${PATH}" --release --upgrade "${OWN}"
 check "--release with the old bin/ and gh-shim on PATH twice, with a trailing slash: the upgrade's PATH has neither" bash -c "grep -q upgrade '${ROOT}/upgrade.log' && ! grep -q 'old PATH' '${ROOT}/upgrade.log'"
-own_release; touch "${P}/upgrade.fail"; merge --release "${OWN}"; rm "${P}/upgrade.fail"
+own_release; touch "${P}/upgrade.fail"; merge --release --upgrade "${OWN}"; rm "${P}/upgrade.fail"
 is "--release with a failed upgrade in one project: exits 0" 0 "${rc}"
 check "--release with a failed upgrade in one project: warns, naming the new version's upgrade" said "warning: swarm.sh upgrade in ${P} failed (exit 1): run SWARM_PROJECT=${P} ${NEW} upgrade"
 is "--release with a failed upgrade in one project: moves on to the next" "${P} upgrade|${ROOT}/proj2 upgrade|${ROOT}/proj3 upgrade" "$(upgraded)"
 check "--release with a failed upgrade in one project: still asks for the restart" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 ("
+# Without --upgrade, merge --release asks before it moves the agents: with no terminal it moves none,
+# saying what to run, and still updates the plugin and asks for the restarts.
+own_release; merge --release "${OWN}" < /dev/null
+is "--release without --upgrade, no terminal: exits 0" 0 "${rc}"
+check "--release without --upgrade, no terminal: runs no upgrade" test ! -e "${ROOT}/upgrade.log"
+check "--release without --upgrade, no terminal: says so, naming --upgrade and each project's upgrade" said "upgrade not run: no terminal to confirm it: pass --upgrade to swarm.sh merge --release next time, or run SWARM_PROJECT=${P} ${NEW} upgrade, SWARM_PROJECT=${ROOT}/proj2 ${NEW} upgrade, SWARM_PROJECT=${ROOT}/proj3 ${NEW} upgrade"
+is "--release without --upgrade, no terminal: still updates the marketplace, then the plugin" "plugin marketplace update swarm-dev|plugin update swarm-dev@swarm-dev" "$(paste -sd'|' - < "${ROOT}/claude.log" 2>/dev/null)"
+check "--release without --upgrade, no terminal: still asks for the lead's restart in each project" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 (/exit, then claude --continue)"
+# on_tty <answer> <merge args>... — merge with stdin a terminal (a pty), typing <answer> once its question shows.
+cat > "${ROOT}/on_tty.py" <<'TTY_PY'
+import os, pty, select, sys, time
+answer, out, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
+master, slave = pty.openpty()
+pid = os.fork()
+if pid == 0:
+    os.close(master); os.dup2(slave, 0); os.close(slave); os.execvp(cmd[0], cmd)
+os.close(slave)
+asked, end = False, time.time() + 120
+while True:
+    done, status = os.waitpid(pid, os.WNOHANG)
+    if done or time.time() > end:
+        break
+    if not asked and b"[y/N]" in open(out, "rb").read():
+        os.write(master, answer.encode() + b"\n"); asked = True
+    if select.select([master], [], [], 0.1)[0]:
+        try:
+            os.read(master, 4096)
+        except OSError:
+            pass
+if not done:
+    os.kill(pid, 9); os.waitpid(pid, 0); sys.exit(124)
+sys.exit(os.waitstatus_to_exitcode(status))
+TTY_PY
+# shellcheck disable=SC2034 # merge_fixture.sh's merge reads MERGE_RUN
+on_tty() { local MERGE_RUN=(python3 -I "${ROOT}/on_tty.py" "$1" "${ROOT}/out"); shift; merge "$@"; }
+own_release; on_tty n --release "${OWN}"
+is "--release without --upgrade on a terminal, answered n: exits 0" 0 "${rc}"
+check "--release without --upgrade on a terminal: asks" said "Move the running agents onto v1.3.0 now? [y/N]"
+check "--release without --upgrade on a terminal, answered n: runs no upgrade" test ! -e "${ROOT}/upgrade.log"
+check "--release without --upgrade on a terminal, answered n: says so" said "upgrade not run: the answer was 'n', not y: pass --upgrade"
+check "--release without --upgrade on a terminal, answered n: still asks for the restart" said "Restart the lead session in ${P}, ${ROOT}/proj2, ${ROOT}/proj3 ("
+own_release; on_tty y --release "${OWN}"
+is "--release without --upgrade on a terminal, answered y: exits 0" 0 "${rc}"
+is "--release without --upgrade on a terminal, answered y: the upgrade, once in each project" "${P} upgrade|${ROOT}/proj2 upgrade|${ROOT}/proj3 upgrade" "$(upgraded)"
+check "--release without --upgrade on a terminal, answered y: no upgrade not run line" bash -c "! grep -q 'upgrade not run' '${ROOT}/out'"
+# A project whose path has a space: the command it prints for that project runs as printed.
+mkdir -p "${ROOT}/proj 4/.claude/swarm"; : > "${ROOT}/proj 4/.claude/swarm/config"
+printf "env.update(SWARM_PROJECT='%s', SWARM_RESUME='x')\n" "${ROOT}/proj 4" > "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/sess-4.py"
+cp "${ROOT}/agents" "${ROOT}/agents.three"; echo "x w:x ${ROOT}/story sess-4" >> "${ROOT}/agents"
+own_release; merge --release "${OWN}" < /dev/null; mv "${ROOT}/agents.three" "${ROOT}/agents"
+printed="$(grep '^upgrade not run: ' "${ROOT}/out" || true)"; printed="${printed##*, }"
+(eval "${printed}") > /dev/null 2>&1 || true
+is "--release without --upgrade, a project path with a space: its printed upgrade command runs there" "${ROOT}/proj 4 upgrade" "$(upgraded)"
+own_release; merge --upgrade "${OWN}"; refused "--upgrade without --release" "usage: swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <pr-url>"
+own_release; merge --board --upgrade "${OWN}"; refused "--upgrade with --board" "usage: swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <pr-url>"
 cp "${ROOT}/agents.keep" "${ROOT}/agents"
-own_release; merge --release "${OWN}"
+own_release; merge --release --upgrade "${OWN}"
 is "--release of the plugin's repo, no agent's cwd known: upgrades this project" "${P} upgrade" "$(upgraded)"
 check "--release of the plugin's repo, no agent's cwd known: asks for this lead's restart" said "Restart the lead session in ${P} (/exit, then claude --continue)"
-check "--release of the plugin's repo, no agent's cwd known: says why only this project" said "warning: herdr lists no agent in a swarm project, so only ${P} is upgraded"
-own_release; touch "${ROOT}/agents.fail"; merge --release "${OWN}"; rm "${ROOT}/agents.fail"
-check "--release when herdr's list fails: says so, and upgrades this project" bash -c "grep -qF 'warning: herdr agent list failed or took over 30s, so only ${P} is upgraded' '${ROOT}/out' && [ \"\$(cat '${ROOT}/upgrade.log')\" = '${P} upgrade' ]"
-own_release; touch "${ROOT}/agents.garbage"; merge --release "${OWN}"; rm "${ROOT}/agents.garbage"
-check "--release when herdr's list is not JSON: says so" said "warning: herdr's agent list could not be read, so only ${P} is upgraded"
+check "--release of the plugin's repo, no agent's cwd known: says why only this project" said "warning: herdr lists no agent in a swarm project, so only ${P} counts as running agents"
+own_release; touch "${ROOT}/agents.fail"; merge --release --upgrade "${OWN}"; rm "${ROOT}/agents.fail"
+check "--release when herdr's list fails: says so, and upgrades this project" bash -c "grep -qF 'warning: herdr agent list failed or took over 30s, so only ${P} counts as running agents' '${ROOT}/out' && [ \"\$(cat '${ROOT}/upgrade.log')\" = '${P} upgrade' ]"
+own_release; touch "${ROOT}/agents.garbage"; merge --release --upgrade "${OWN}"; rm "${ROOT}/agents.garbage"
+check "--release when herdr's list is not JSON: says so" said "warning: herdr's agent list could not be read, so only ${P} counts as running agents"
 own_release; touch "${FX}/update.fail"; merge --release "${OWN}"
 is "--release with a failed plugin update: exits 0" 0 "${rc}"
 check "--release with a failed plugin update: warns, naming the new version's upgrade" said "warning: updating the plugin to 1.3.0 failed, so no agent was moved: run swarm.sh update, then ${NEW} upgrade"
