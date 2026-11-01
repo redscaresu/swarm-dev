@@ -5,7 +5,8 @@
 # lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default, a name of - for
 # none; agent list fails while ${ROOT}/agentfail exists) and the panes in ${ROOT}/panes ("<pane> <tab>"
 # lines; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does, tab
-# close while ${ROOT}/tabclosefail does and pane close while ${ROOT}/paneclosefail does); gh answers pr list from ${ROOT}/prs.json, with
+# close while ${ROOT}/tabclosefail does and pane close while ${ROOT}/paneclosefail does); gh fails while ${ROOT}/ghfail exists,
+# except for a Finish PR's list (board/finish-<epic>), and answers pr list from ${ROOT}/prs.json, with
 # --state open the heads of its open PRs that name one, as close_heads' --jq asks, and pr view <url>
 # from ${ROOT}/pr-states ("<url> <state>" lines).
 set -euo pipefail
@@ -45,7 +46,9 @@ esac
 STUB
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "$H/gh.log"
-[ -e "$H/ghfail" ] && exit 1
+# ghfail fails every call but a Finish PR's list (close's conductor guard, --head board/finish-<epic>),
+# which conductor_close_test.sh fails on its own: here a conductor's close must get past its guard.
+case "$*" in *"--head board/finish-"*) ;; *) [ -e "$H/ghfail" ] && exit 1 ;; esac
 case "$1 $2 $*" in
   "pr list "*"--state open"*) python3 -c 'import json, sys; [print(p["headRefName"]) for p in json.load(open(sys.argv[1])) if p["state"] == "OPEN" and p.get("headRefName")]' "$H/prs.json" ;;
   "pr list "*) cat "$H/prs.json" ;;
@@ -596,7 +599,11 @@ echo "${X} w:p99" >> "${ROOT}/agents"; echo "w:p99 w:t8" >> "${ROOT}/panes"; out
 is "an idle agent named ${X} (${#X} characters, no story's) keeps ce-2, its story not found, and is not recorded" "<w:t7>|1|0" \
   "$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept ${X} (its story could not be found) in tab ce-2" <<< "${out}")|$(count 'w:p99' "${P}/.swarm/state/ce-2")"
 # With herdr's agent list failing, the conductor's pane comes from its record line, and closes alone
-# while ce and ce-2 are kept; with no record naming it either, close says so and fails.
+# while ce and ce-2 are kept; with no record naming it either, close says so and fails. The conductor
+# has an idle Claude session here, so close's conductor guard reads it from Claude Code, not herdr,
+# whose failed list it would refuse (conductor_close_test.sh).
+built conduct-ce conduct; cp "${ROOT}/claude-agents.json" "${ROOT}/claude-agents.keep"
+python3 -c 'import json, sys; l = json.load(open(sys.argv[1])); l.append({"sessionId": "sess-conduct-ce", "status": "idle"}); json.dump(l, open(sys.argv[1], "w"))' "${ROOT}/claude-agents.json"
 conductor_fixture idle idle "w:p92 cb2"; touch "${ROOT}/agentfail"; rc=0; out="$(cs conduct-ce)" || rc=$?; rm "${ROOT}/agentfail"
 is "with herdr's agent list failing, close conduct-ce closes its recorded pane alone and keeps both tabs" "0|w:p90||2" \
   "${rc}|$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb[12] (herdr gave no agent list, so its state is unknown)' <<< "${out}")"
@@ -604,6 +611,8 @@ conductor_fixture idle idle "w:p92 cb2"; echo "w:p92 cb2" > "${P}/.swarm/state/c
 touch "${ROOT}/agentfail"; rc=0; out="$(cs conduct-ce)" || rc=$?; rm "${ROOT}/agentfail"
 is "with herdr's agent list failing and no record naming the conductor, close conduct-ce says its pane is still open and fails" "1|1|" \
   "${rc}|$(grep -c "no tab record names conduct-ce's pane, so it could not be found and is still open" <<< "${out}")|$(cat "${ROOT}/panes-closed")"
+grep -v $'\tsess-conduct-ce$' "${P}/.swarm/agents.tsv" > "${ROOT}/agents.tsv.tmp" && mv "${ROOT}/agents.tsv.tmp" "${P}/.swarm/agents.tsv"
+mv "${ROOT}/claude-agents.keep" "${ROOT}/claude-agents.json"
 # The conductor's pane is its record's conductor line, whatever herdr calls the agent in it: its
 # Claude exited to a shell (no agent named conduct-ce), or herdr lists it with no name, working.
 echo '[]' > "${ROOT}/prs.json"; conductor_fixture idle working "w:p92 cb2"

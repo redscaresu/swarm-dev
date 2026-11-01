@@ -28,8 +28,12 @@ here and on origin. A merged story's build always goes; if its builder is still 
 closes it first, which counts nothing while the story is in review. It closes the story's review
 agent, `review-<slug>`, too. When reconcile runs in that agent's own pane, as a `swarm.sh merge` run
 there does, it retires the agent instead, under a `-done` name (`review-<slug>-done` for a short
-slug), so the pane running the merge stays open; `swarm.sh tidy --yes` closes it later. Its session
-is archived to `.swarm/sessions` when it is retired, so that copy stops at the merge. A review
+slug), so the pane running the merge stays open. A detached waiter then closes that pane once the
+merge has exited and the agent's turn has ended, and logs `close-when-idle review-<slug> closed`. If
+the agent is still not idle 20 minutes after the merge exited, the waiter leaves the pane open and
+logs `close-when-idle review-<slug> left open: ...`, naming its state. Close it then with
+`swarm.sh tidy --yes`. Its session is archived to `.swarm/sessions` when it is retired, so that copy stops
+at the merge. A review
 agent that is working or waiting in another pane is left open, and reconcile says so: it may be
 running its own merge, whose reconcile then retires it. After a PR closed unmerged, the
 build goes only when no builder is open, and the story can then be built again. An open builder may
@@ -565,6 +569,12 @@ default). The conductor's pane is read from the note's one list of agents, so a 
 fails after it is the note's warning, never a conductor taken for gone. A herdr that cannot list its
 agents in that time, or gives a list that does not parse, or a note that fails, is a warning and
 never fails the merge.
+When a `--board` PR on `board/finish-<epic>` (an epic's Finish PR, from `swarm.sh finish <epic>`)
+merges and this project's herdr lists `conduct-<epic>`, merge starts a detached waiter, as reconcile
+does for a review agent (§ Merging). It closes the conductor once the merge has exited, the conductor
+is idle and the lead has tried collect's `swarm.sh close conduct-<epic>` since the conductor's report,
+and logs `close-when-idle conduct-<epic> closed`. If that has not happened 20 minutes after the merge
+exits, it leaves the conductor open and logs `close-when-idle conduct-<epic> left open: ...`.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
 has not started building, and has a file the board PR itself changes that wasn't buildable on the
@@ -868,7 +878,10 @@ first checks each tab's panes. It keeps a tab that holds an agent that is workin
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It also keeps the tab that holds the pane the command runs in, unless that pane is the one
 being closed, so a step-up or reconcile run from an idle review agent's pane leaves that pane open.
-It prints each of those agents as `kept`, and still closes the conductor's own pane.
+It prints each of those agents as `kept`, and still closes the conductor's own pane. It refuses,
+closing nothing, while the conductor is in any state but idle or done, and, with `merge = agent`,
+while its epic's Finish PR (`board/finish-<epic>`) is open or gh cannot list that PR, since the PR's
+`swarm.sh merge --board` may run in the conductor's pane ([reference-building.md](reference-building.md)).
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
 close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
 name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or

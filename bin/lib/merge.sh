@@ -1015,7 +1015,7 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
+  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed headref f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -1033,10 +1033,10 @@ merge_pr() {
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
   why="$(merge_caller "${url}" "${only}")" || why="cannot tell whose pane this is"
   [[ -z "${why}" ]] || merge_fail "${why}"
-  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles \
-    | json "'%s %s %s %d' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'])")" \
+  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles,headRefName \
+    | json "'%s %s %s %d %s' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'], d.get('headRefName') or '-')")" \
     || merge_fail "gh cannot read ${url}"
-  read -r state head base changed <<< "${info}"
+  read -r state head base changed headref <<< "${info}"
   [[ "${head}" =~ ^[0-9a-f]{40}$ && "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
     || merge_fail "gh gave no head SHA, base branch or file count for ${url}"
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
@@ -1232,6 +1232,15 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
+  # An epic's Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) has merged: its conductor, which
+  # may run this merge in its own pane, closes once this command has exited, it is idle and the lead has
+  # collected it (close_when_idle). A conductor this project's herdr does not list has nothing to close;
+  # outside herdr the waiter cannot run (require_herdr), so that is said and the conductor stays open.
+  if [[ "${only}" == --board && -n "${oid}" && "${headref}" == board/finish-* && "${headref}" != board/finish-backlog ]]; then
+    p="$(conductor_name "${headref#board/finish-}")"; k="$(agent_field "${p}" pane_id)"
+    if [[ -n "${k}" && "${HERDR_ENV:-}" == 1 ]]; then close_when_idle "${p}" "${k}"
+    elif [[ -n "${k}" ]]; then echo "${p} stays open: this merge ran outside herdr, so nothing waits to close it; close it with swarm.sh close ${p} once it is idle"; fi
+  fi
   # A release of this plugin moves the installed plugin onto it, and the running agents with --upgrade
   # or a yes on a terminal, unless it shipped commits no release check read, which any release reports;
   # neither ever fails the merge.
@@ -1370,13 +1379,15 @@ conduct_ready() {
   return "${rc}"
 }
 
-# report_collected <conductor> <report> — the lead collected <report>: events.tsv has an ok close of
-# <conductor> (swarm.sh close, collect's last step; ok without its key=value tail) at or after the
-# report's time.
+# report_collected <conductor> <report> [tried] — the lead collected <report>: events.tsv has, at or
+# after the report's time, an ok close of <conductor> (swarm.sh close, collect's last step; ok without
+# its key=value tail), or a close-when-idle line saying close_idle_wait closed it, which it does only
+# once that close was tried. With tried, any close of <conductor> counts, a refused one too: collect ran
+# its close, whatever the close said.
 report_collected() {
   local t
   t="$(date -u -r "$2" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
-  awk -F'\t' -v n="$1" -v t="${t}" "${EVENT_OUTCOME_AWK}"'$2 ~ /^close/ && $3 == n && outcome($5) == "ok" && $1 >= t { f = 1 } END { exit !f }' \
+  awk -F'\t' -v n="$1" -v t="${t}" -v any="${3:-}" "${EVENT_OUTCOME_AWK}"'$3 == n && $1 >= t && (($2 ~ /^close(:|$)/ && (any != "" || outcome($5) == "ok")) || ($2 == "close-when-idle" && outcome($5) ~ /^closed /)) { f = 1 } END { exit !f }' \
     "${EVENTS_LOG}" 2>/dev/null
 }
 

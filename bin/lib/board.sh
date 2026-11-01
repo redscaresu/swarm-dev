@@ -2708,8 +2708,10 @@ merged_build() {
 # merge, whose reconcile retires it, or reviewing still. A session Claude Code no longer lists (gone)
 # reads herdr's status, as live_agents does. When its pane is the one running this command (a merge
 # from the review pane, whose reconcile runs there), it is retired instead (retire_agent), whatever
-# its state, so the pane stays open under a -done name until tidy closes it. Its session is archived
-# then, while it still runs, so the copy stops at this merge; tidy archives nothing. Its ZDOTDIR
+# its state, so the pane running this command stays open under a -done name; close_when_idle then
+# closes it once this command has exited and the agent's turn has ended, or leaves it open for tidy,
+# with a line saying so, when that takes too long. Its session is archived when it is retired, while
+# it still runs, so the copy stops at this merge; the later close archives nothing. Its ZDOTDIR
 # stays: the agent is still running there. It never fails the caller: it runs in the background, so
 # set -e holds inside it, and a pane that could not be closed, or herdr with no agent list, is said.
 merged_review() {
@@ -2731,7 +2733,7 @@ merged_review() {
     esac
   fi
   ( set -e
-    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"
+    if [[ "${pane}" == "${HERDR_PANE_ID:-}" ]]; then retire_agent "review-$1"; archive_session "review-$1"; close_when_idle "${name}" "${pane}"
     else shut_agent "review-$1"; [[ -z "${CLOSE_PANE_KEPT}" ]]; fi ) </dev/null &
   wait $! || echo "review-$1 was left open (exit $?); close it with swarm.sh close review-$1"
 }
