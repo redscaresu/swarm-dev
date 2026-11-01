@@ -823,5 +823,90 @@ vrun review vh --head "${VH}" "${U}/10" >/dev/null || true
 check "review --head held for an open parent: its one line is the held: refusal with round=1 verdict=held, and no review-finished" \
   "review|held: vh waits for vp to merge ~~ round=1 verdict=held" "$(lines_of vh | sed 's/ to merge;.* ~~ / to merge ~~ /')"
 
+# --- The handover closes the review pane. Under merge = human with no HLD merge grant, `review a <url>`
+# run from review-a's own pane retires it, and its detached waiter closes the pane once the command
+# has exited and review-a reads idle. From the lead's pane, under merge = agent, or under an HLD merge
+# grant (the agent merges next, and the merge's reconcile closes it), nothing is retired or closed.
+# A stateful herdr of its own in HD: tabs ("<tab> <label>"), panes ("<pane> <tab>") and agents
+# ("<name> <pane> <status>"), every call logged to HD/calls; claude lists no session, so herdr's status
+# answers for review-a, whose agents.tsv line records none.
+HP="${ROOT}/handover"; HD="${HP}-herdr"; mkdir -p "${HP}/.claude/swarm" "${HD}/bin"
+printf '#!/bin/sh\nH="%s"\n' "${HD}" > "${HD}/bin/herdr"
+cat >> "${HD}/bin/herdr" <<'STUB'
+echo "$*" >> "$H/calls"
+case "$1 $2" in
+  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" } { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
+                     END { print "]}}" }' "$H/agents" ;;
+  "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
+  "pane close") awk -v p="$3" '$1 != p' "$H/panes" > "$H/panes.tmp" && mv "$H/panes.tmp" "$H/panes"
+                awk -v p="$3" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
+esac
+STUB
+chmod +x "${HD}/bin/herdr"
+# hlay <merge mode> [front-matter line] — a fresh project: story a in ready with that line, under
+# merge = <mode>; the lead idle in w:lead, and a's builder (w:b) and review-a (w:r, working) in tab t1,
+# whose record names both; review-a's agents.tsv line has role review and no session.
+hlay() {
+  rm -rf "${HP}/docs" "${HP}/.swarm"; mkdir -p "${HP}/.swarm/state"
+  echo "merge = $1" > "${HP}/.claude/swarm/config"
+  item "${HP}/docs" stories/a.md "status: ready" "kind: code" ${2:+"$2"}
+  printf 't0 lead\nt1 a\n' > "${HD}/tabs"; printf 'w:lead t0\nw:b t1\nw:r t1\n' > "${HD}/panes"
+  printf 'lead w:lead idle\na w:b idle\nreview-a w:r working\n' > "${HD}/agents"
+  printf 'w:b a\nw:r review-a\n' > "${HP}/.swarm/state/a"
+  printf '2026-11-01\treview\treview-a\tclaude\tsonnet\thigh\t-\n' > "${HP}/.swarm/agents.tsv"
+  : > "${HD}/calls"
+}
+# hrun <pane> <args> — swarm.sh in HP, inside herdr, run from <pane>, with HD's herdr.
+hrun() { local pane="$1"; shift; (cd "${HP}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_PANE_ID="${pane}" SWARM_CLOSE_IDLE_POLL=0.2 PATH="${HD}/bin:${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+# hcalls — HD's herdr calls that renamed or closed a pane, |-joined.
+hcalls() { grep -E '^(agent rename|pane close|tab close) ' "${HD}/calls" | paste -sd'|' - || true; }
+# hpolled — wait up to 30 s for two `agent list` calls since HD/calls was cleared: the waiter makes one a
+# poll, so with two its first poll since then has read review-a and decided. yes, or no.
+hpolled() {
+  local i
+  for ((i = 0; i < 300; i++)); do [[ "$(grep -cx 'agent list' "${HD}/calls" 2>/dev/null)" -lt 2 ]] || { echo yes; return 0; }; sleep 0.1; done
+  echo no
+}
+# hwaiter — wait up to 30 s for review-a's waiter to end (it removes its pid file): ended, or none when it
+# never started; still running then, it is killed by its pid, so it never outlives the test.
+hwaiter() {
+  local f="${HP}/.swarm/closing/review-a.pid" i pid
+  [[ -e "${f}" ]] || { echo none; return 0; }
+  for ((i = 0; i < 300; i++)); do [[ -e "${f}" ]] || { echo ended; return 0; }; sleep 0.1; done
+  pid="$(cat "${f}" 2>/dev/null)" || pid=""
+  [[ ! "${pid}" =~ ^[0-9]+$ ]] || kill "${pid}" 2>/dev/null || true
+  echo "stopped: still running after 30 s"
+}
+hlay human
+rc=0; out="$(hrun w:r review a "${U}/1")" || rc=$?
+shut="$(grep -E '^(pane|tab) close ' "${HD}/calls" || true)"; : > "${HD}/calls"; seen="$(hpolled)"
+check "review a from review-a's pane, merge = human: review-a is retired, and no pane closes while the command runs or review-a works" \
+  "0|review|yes|yes||" \
+  "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(has "retired review-a as review-a-done" "${out}")|${seen}|${shut}|$(hcalls)"
+sed -i.bak 's/^review-a-done w:r working$/review-a-done w:r idle/' "${HD}/agents" && rm -f "${HD}/agents.bak"
+check "once review a has exited and review-a reads idle, its waiter closes its pane, and logs it" \
+  "ended|pane close w:r|w:b a|close-when-idle review-a closed (pane w:r)" \
+  "$(hwaiter)|$(hcalls)|$(cat "${HP}/.swarm/state/a")|$(awk -F'\t' '$2 == "close-when-idle" { print $2, $3, $5 }' "${HP}/.swarm/events.tsv" | no_version)"
+# a's builder and review agent each started ok, and review-a's start named a head with no pass on record:
+# with review-a gone from herdr, only wait --lead's rule that a story handed to the user under merge =
+# human is the user's keeps a no-review: line (and a restart of review-a) away.
+printf '2026-11-01T00:00:00Z\tstory\ta\t-\tok\n2026-11-01T00:00:01Z\treview-agent\ta\t-\tok\n' >> "${HP}/.swarm/events.tsv"
+mkdir -p "${HP}/.swarm/reviews"; echo dddddddddddddddddddddddddddddddddddddddd > "${HP}/.swarm/reviews/a.head"
+out="$(hrun w:lead wait --lead 0)" || true
+check "after that close, wait --lead names no no-review: line for a" "no" "$(grep -q '^no-review: a' <<< "${out}" && echo yes || echo no)"
+
+hlay human; rc=0; out="$(hrun w:lead review a "${U}/1")" || rc=$?
+check "review a from the lead's pane: review a goes through, and nothing is retired, closed or waited on" "0|review||none|review-a w:r working" \
+  "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(hcalls)|$(hwaiter)|$(grep '^review-a ' "${HD}/agents")"
+hlay agent; rc=0; out="$(hrun w:r review a "${U}/1")" || rc=$?
+check "review a from review-a's pane, merge = agent: nothing is retired, closed or waited on" "0|review||none" \
+  "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(hcalls)|$(hwaiter)"
+hlay human "epic: g"
+item "${HP}/docs" epics/g.md "status: active" "hld: h"
+item "${HP}/docs" hld/h.md "status: agreed" "grants: [merge]"
+rc=0; out="$(hrun w:r review a "${U}/1")" || rc=$?
+check "review a from review-a's pane, merge = human under an HLD merge grant: nothing is retired, closed or waited on" "0|review||none" \
+  "${rc}|$(val "${HP}/docs/stories/a.md" status)|$(hcalls)|$(hwaiter)"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

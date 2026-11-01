@@ -33,7 +33,11 @@ merge has exited and the agent's turn has ended, and logs `close-when-idle revie
 the agent is still not idle 20 minutes after the merge exited, the waiter leaves the pane open and
 logs `close-when-idle review-<slug> left open: ...`, naming its state. Close it then with
 `swarm.sh tidy --yes`. Its session is archived to `.swarm/sessions` when it is retired, so that copy stops
-at the merge. A review
+at the merge. The review pane closes the same way after a handover. With `merge = human` and no HLD
+`merge` grant over the story, the review agent hands the PR to you with `swarm.sh review` and merges
+nothing. When that command runs in `review-<slug>`'s own pane, it retires the agent, and the waiter
+closes the pane once the command has exited and the agent's turn has ended. Run from any other pane
+(yours, a conductor's), or under `merge = agent` or a `merge` grant, it closes nothing. A review
 agent that is working or waiting in another pane is left open, and reconcile says so: it may be
 running its own merge, whose reconcile then retires it. After a PR closed unmerged, the
 build goes only when no builder is open, and the story can then be built again. An open builder may

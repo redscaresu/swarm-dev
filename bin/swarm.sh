@@ -687,7 +687,7 @@ dispatch() {
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     _tell-queue-check) tell_queue_check "${1:-}" "${2:-}" ;;      # tell_queue_later's check on a busy agent's queued tells
-    _close-when-idle) require_herdr; close_idle_wait "${1:-}" "${2:-}" "${3:-}" ;;   # merged_review's detached waiter that closes a retired review pane (close_when_idle)
+    _close-when-idle) require_herdr; close_idle_wait "${1:-}" "${2:-}" "${3:-}" ;;   # merged_review's and handed_review's detached waiter that closes a retired review pane (close_when_idle)
     _fix-main) main_red_run "${1:?repo}" "${2:?base}" "${3:?sha}" ;;   # wait --lead's detached fix-main writer for a red base head (main_red_fix)
     wait)   wait_command "$@" ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end

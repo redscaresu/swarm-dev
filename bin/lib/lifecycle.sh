@@ -1987,9 +1987,10 @@ CLOSE_CMD_SECONDS=1200
 CLOSE_IDLE_POLL="${SWARM_CLOSE_IDLE_POLL:-5}"
 CLOSING_DIR="${PROJECT_DIR}/.swarm/closing"
 
-# close_when_idle <name> <pane> — close <pane>, where merged_review just retired <name> (herdr's name
-# for review-<slug>) because the command running now (a swarm.sh merge in that pane, or its reconcile)
-# runs there, once that command has exited and the agent's turn has ended. Closing the pane now would
+# close_when_idle <name> <pane> — close <pane>, where merged_review or handed_review just retired <name>
+# (herdr's name for review-<slug>) because the command running now (a swarm.sh merge in that pane, or
+# its reconcile; or the swarm.sh review that hands the PR to the user) runs there, once that command
+# has exited and the agent's turn has ended. Closing the pane now would
 # kill the command. So it starts the waiter, swarm.sh _close-when-idle (close_idle_wait), detached as
 # review_restart starts its run: nohup, in a session of its own (setsid), so closing the pane does not
 # end it, pinned to this project, and given $$, the swarm.sh process running now. Its output goes to
