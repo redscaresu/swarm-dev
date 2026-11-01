@@ -19,3 +19,5 @@ Needs logs-commands-blocks, lead-commands-blocks, building-commands-blocks, merg
 - The word check on each rewrapped file differs only in words the PR body lists.
 - AGENTS.md states the rule; docs/reference.md:17 and docs/running.md:75 no longer call the Commands section a table.
 - scripts/select-tests.sh --run passes (it selects the docs tests: doc_check, epic_codex, skill, command_names and the rest). shellcheck is clean on tests/doc_check_test.sh.
+- Inserting a 151-word line into a scanned doc makes tests/doc_check_test.sh exit non-zero (shown in a copy).
+- Each scanned location, AGENTS.md included, has an overlong-line fixture whose file name and line number the check prints.

@@ -19,3 +19,4 @@ This is the shared cause (rules.md:3). fm and get_fm start sed|head or awk on ev
 - Same file: a state_set made in a $( ) subshell during a report is seen by the next fm in the parent shell, and a story file made after the snapshot is read from disk.
 - status_time_limit_test.sh, next_test.sh, next_time_limit_test.sh, dash_golden_test.sh, dash_check_test.sh, no_agent_test.sh and stacked_status_test.sh pass unchanged.
 - docs/reference-building.md's status and next rows, and docs/dash.md's frame paragraph, say each run (each dash frame) reads the board's files once at its start, so an edit made during the run shows on the next run.
+- Repeated snapshot-backed calls to fm and to get_fm_or_gone start no external process (counted by the PATH wrapper).

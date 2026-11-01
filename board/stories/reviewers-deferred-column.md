@@ -19,3 +19,4 @@ No depends_on. Today block 1 counts a deferred finding as declined with no split
 - tests/rework_test.sh passes unchanged.
 - The PR body pastes the FAIL line from review_yield_test.sh with the deferred count removed, run in a copy of the worktree.
 - docs/reference-logs.md's reviewers paragraph and reports.sh's reviewers comment name the column and say a row with no reason counts 0; the PR says humanizer ran over that prose.
+- With deferred findings in two epics, `flow --epic <e>` counts only that epic's deferred findings; a check each way.

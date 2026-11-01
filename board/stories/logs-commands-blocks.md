@@ -18,3 +18,4 @@ Needs model-fit-by-effort merged: its PR (#816) edits the flow row (reference-lo
 - `awk '/^## Commands/{c=1} /^## /&&!/^## Commands/{c=0} c && NF>150 {print FNR": "NF}' docs/reference-logs.md` prints nothing.
 - The word check on docs/reference-logs.md differs only in words the PR body lists.
 - scripts/select-tests.sh --run passes (it selects the docs tests: doc_check, epic_codex, skill, command_names and the rest).
+- No table-only `\|` escape is left; each command synopsis renders as before.

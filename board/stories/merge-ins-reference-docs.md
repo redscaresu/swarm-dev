@@ -19,3 +19,4 @@ No depends_on. The features row the epic asks for needs a count that no flow out
 - docs/features.tsv's new row sits right after `reference split`; the merge_ins paragraph names `reference_docs`, its 0 and its `-`.
 - scripts/select-tests.sh --run passes; shellcheck and `python3 -m py_compile bin/lib/flow_merge_ins.py` are clean.
 - bin/lib/reports.sh's merge_ins comment names the reference_docs column, and the features row says its baseline came from a merge-tree replay.
+- A fixture where one merge-in conflicts on two reference docs, and two matching merge-ins belong to one PR, counts one per merge-in.

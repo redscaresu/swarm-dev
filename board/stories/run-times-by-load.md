@@ -18,3 +18,4 @@ flow_run_times.py gives one median per command over every row, but status's time
 - flow_sections_test.sh passes unchanged.
 - docs/reference-logs.md's run_times paragraph, docs/running.md's run-times line and reports.sh's run_times comment name the by-load block.
 - docs/reference-logs.md's flow row in Commands names the by-load block.
+- Loads just below, at and just above each band boundary (10 and 20) land in the right band; a check each.
