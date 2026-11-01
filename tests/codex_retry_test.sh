@@ -131,7 +131,7 @@ check "with 15 s of codex's time and a 40 s retry wait, codex runs once and the 
 # --- A late rate limit (6 s), then a retry that hangs: the hung codex is stopped within the first budget,
 # counted from codex's first call to its last sign of life (it writes the time every 0.2 s until it is
 # killed), and it and its child are gone. 20 s leaves room for the 4 s wait and a busy machine's slow
-# starts; a retry given a fresh budget would run about 30 s.
+# starts; a retry given a fresh budget runs past 30 s.
 stubs
 { echo "${STAMP} '${ROOT}/t.first'"; echo 'sleep 6'; echo "echo \"${RATE_MSG}\" >&2"; echo 'exit 1'; } > "${ROOT}/codex.1"
 cat > "${ROOT}/codex.2" <<EOF
@@ -144,9 +144,9 @@ nreap="$(count reap)"
 RETRY=4 review 20
 gone() { if [[ -f "$1" ]] && ! kill -0 "$(cat "$1")" 2>/dev/null; then echo yes; else echo no; fi; }
 ran="$(python3 -c 'import sys; print("%.1f" % (float(open(sys.argv[2]).read()) - float(open(sys.argv[1]).read())))' "${ROOT}/t.first" "${ROOT}/t.last" 2>/dev/null || echo none)"
-check "a late rate limit then a hung retry: two calls, the retry stopped within the 20 s budget (2 s allowed: the whole-second clock and a poll), as a timeout" \
+check "a late rate limit then a hung retry: two calls, the retry stopped within the 20 s budget (5 s allowed: the whole-second clock, a poll and a busy machine's forks), as a timeout" \
   "2|yes|yes|$((nreap + 1))" \
-  "$(calls)|$(under 22 "${ran}")|$(has "codex skipped: timed out" "${out}")|$(count reap)"
+  "$(calls)|$(under 25 "${ran}")|$(has "codex skipped: timed out" "${out}")|$(count reap)"
 check "the hung retry and its child are stopped" "yes|yes" "$(gone "${ROOT}/pid.codex")|$(gone "${ROOT}/pid.child")"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi

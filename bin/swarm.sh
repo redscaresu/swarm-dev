@@ -894,9 +894,8 @@ codex_review() {
   files+=" $(printf %q "${dir}")"
   # shellcheck disable=SC2064
   trap "codex_cleanup - ${files}" EXIT
-  # Every way out below goes through the EXIT trap; the timeout bounds both runs together. SECONDS
-  # counts whole seconds, so the deadline is a second on: codex is never stopped before its time.
-  deadline=$((SECONDS + left + 1)); step="$(scaled 1)"
+  # Every way out below goes through the EXIT trap; the timeout bounds both runs together.
+  deadline=$((SECONDS + left)); step="$(scaled 1)"
   while :; do
     # Each run a fifo and log made new, so no child of the first run left holding its pipe writes into the second's.
     log="${dir}/log"
@@ -910,8 +909,9 @@ codex_review() {
     # shellcheck disable=SC2064 # this codex's pid, fixed now
     trap "stop_codex ${pid}; exit 143" TERM HUP
     # Against the deadline, not a count of polls (poll_while's), whose forks on a busy machine would
-    # stretch the wait past it.
-    while ((SECONDS < deadline)) && kill -0 "${pid}" 2>/dev/null; do sleep "${step}"; done
+    # stretch the wait past it. SECONDS counts whole seconds, so the poll runs through the deadline's
+    # second: codex is never stopped before its time, and left (below) never exceeds codex_minutes.
+    while ((SECONDS <= deadline)) && kill -0 "${pid}" 2>/dev/null; do sleep "${step}"; done
     # What codex used is gone: a retry or a fallback gets only the rest.
     left=$((deadline - SECONDS)); ((left > 0)) || left=0
     kill -0 "${pid}" 2>/dev/null && break
