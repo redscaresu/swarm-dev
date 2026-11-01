@@ -1146,8 +1146,9 @@ sys.exit(1)' "${CLAUDE_PROJECTS}" "$1" 2>/dev/null
 
 # restart_resume <slug> <tab> <wt> "<session> <resume>" <names> — reopen <slug>'s builder's Claude session
 # <resume> (restart_session of its agents.tsv <session>) in a new pane in <tab>, at <wt>, with the flags
-# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry, as
-# start_agent), report that command to herdr as start_agent does, and tell the builder why.
+# of its resume command (resume_file's .argv), as upgrade_one starts one again (one retry of herdr's
+# agent start, as start_agent, but none in a fresh pane: a shell that does not take the environment
+# dies), report that command to herdr as start_agent does, and tell the builder why.
 restart_resume() {
   local name argv a resume=() flags=() pane out seq msg try session id
   read -r session id <<< "$4"
