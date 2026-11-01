@@ -70,11 +70,14 @@ pane is gone (closed by hand, a herdr restart, a crash) and whose report nobody 
 of it in `events.tsv` since the report, as collect's `swarm.sh close` logs, and no `close-when-idle`
 line saying a merge closed it) gets `no conductor started:
 <conductor> is gone, and nobody collected <report>; read it, then delete it`.
-Collect's `swarm.sh close conduct-<epic>` refuses, closing nothing and saying why, while the
-conductor is working or its state cannot be read, while its epic's Finish PR (`swarm.sh finish <epic>`, on
-`board/finish-<epic>`) is open, or when gh cannot list that PR. Closing the conductor then could
-kill the `swarm.sh merge --board` running in its pane. Wait for it to go idle and the PR to merge,
-then close it again. An idle conductor with no Finish PR open closes as before. A `swarm.sh merge
+Collect's `swarm.sh close conduct-<epic>` refuses, closing nothing and naming the state, while the
+conductor is in any state but idle or done: working, waiting on a prompt, herdr's blocked, or a
+state that cannot be read (Claude Code's list or herdr's failed). With `merge = agent` it also
+refuses while its epic's Finish PR (`swarm.sh finish <epic>`, on `board/finish-<epic>`) is open, or
+when gh cannot list that PR. Closing the conductor then could kill the `swarm.sh merge --board`
+running in its pane. With `merge = human` no conductor's pane merges a board PR, so that PR waits on
+you and the close goes ahead. Wait for the conductor to go idle (and, with `merge = agent`, the PR to
+merge), then close it again. An idle conductor with no Finish PR open closes as before. A `swarm.sh merge
 --board` that lands an epic's Finish PR closes that epic's conductor itself once the merge has
 exited, the conductor is idle and a `close` of it has been tried since its report, refused or not.
 Until then the conductor still has a report to collect, and `next` finds it only by its pane. If that

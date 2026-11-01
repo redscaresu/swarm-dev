@@ -7,8 +7,8 @@
 # has tried collect's close (for a long epic, under its full name); with no such close tried, or with
 # herdr's agent list unparseable, it is left open, with a line saying why.
 # herdr, gh and claude are stubs on PATH: herdr lists the agents in <dir>/h/agents ("<name> <pane>
-# <status> [tab]" lines, tab t1 unless given: e's; t2 is the long epic's) and logs each call to
-# <dir>/h/calls, and a pane or tab close drops its agents; the first
+# <status> [tab]" lines, tab t1 unless given: e's; t2 is the long epic's; agent list fails while
+# <dir>/h/agentfail exists) and logs each call to <dir>/h/calls, and a pane or tab close drops its agents; the first
 # half's gh answers pr list from ${ROOT}/finish.json, and fails while ${ROOT}/ghfail exists. The second
 # half runs on merge_fixture.sh's project, whose gh answers pr list --head board/finish-e from
 # ${FX}/prlist.finish-e.
@@ -36,7 +36,8 @@ herdr_stub() {
 echo "$*" >> "$H/calls"
 case "$1 $2" in
   "--version ") echo "herdr 0.9.5" ;;
-  "agent list") [ ! -e "$H/garbage" ] || { echo '{"result":{}}'; exit 0; }
+  "agent list") [ ! -e "$H/agentfail" ] || exit 1
+                [ ! -e "$H/garbage" ] || { echo '{"result":{}}'; exit 0; }
                 awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
                      END { print "]}}" }' "$H/agents" ;;
@@ -66,6 +67,8 @@ has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo no; fi; }
 herdr_stub "${ROOT}"
 P="${ROOT}/proj"; mkdir -p "${P}/docs/stories" "${P}/docs/epics"
 git -C "${P}" init -q; git -C "${P}" remote add origin https://github.com/o/r.git
+# merge = agent, the one mode in which a conductor's pane merges its Finish PR (merge_caller).
+mkdir -p "${P}/.claude/swarm"; echo "merge = agent" > "${P}/.claude/swarm/config"
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "$H/gh.log"
@@ -109,7 +112,22 @@ is "conduct-e's session state unreadable: the close fails, closes nothing and sa
 echo '[]' > "${ROOT}/sessions.json"; export CLAUDE_STUB_AGENTS="${ROOT}/sessions.json"; lay "${ROOT}" "${P}" working; close
 is "conduct-e's session gone from Claude Code's list, herdr working: the close fails and says it is working" "1||yes" \
   "${rc}|$(closes "${ROOT}")|$(has "close: conduct-e is working" "${out}")"
+# Any state but a finished one refuses, naming it: a session waiting on a prompt, and, for a session
+# Claude Code no longer lists, a herdr that gives no agent list.
+printf '[{"sessionId":"sid-1","status":"waiting","waitingFor":"permission"}]' > "${ROOT}/sessions.json"; lay "${ROOT}" "${P}" idle; close
+is "conduct-e's session waiting on a prompt: the close fails, closes nothing and names the state" "1||yes" \
+  "${rc}|$(closes "${ROOT}")|$(has "close: conduct-e is waiting: permission, not idle, so nothing was closed" "${out}")"
+echo '[]' > "${ROOT}/sessions.json"; lay "${ROOT}" "${P}" idle; touch "${ROOT}/h/agentfail"; close; rm -f "${ROOT}/h/agentfail"
+is "conduct-e's session gone and herdr giving no agent list: the close fails, closes nothing and says its state could not be read" "1||yes" \
+  "${rc}|$(closes "${ROOT}")|$(has "close: conduct-e could not have its state read (herdr gave no agent list)" "${out}")"
 unset CLAUDE_STUB_AGENTS; rm -f "${P}/.swarm/agents.tsv" "${ROOT}/sessions.json"
+
+# With merge = human no conductor's pane merges its Finish PR, which waits on the user: an idle
+# conduct-e closes with that PR open, and gh is not asked.
+echo "merge = human" > "${P}/.claude/swarm/config"; finish OPEN; lay "${ROOT}" "${P}" idle; : > "${ROOT}/gh.log"; close
+is "with merge = human, an idle conduct-e whose Finish PR is open closes, and gh is not asked" "0|tab close t1|0" \
+  "${rc}|$(closes "${ROOT}")|$(grep -c 'board/finish-' "${ROOT}/gh.log" || true)"
+echo "merge = agent" > "${P}/.claude/swarm/config"
 
 # An epic slug long enough that herdr holds its conductor's name cut at 32 characters, closed by the
 # full name, as close takes it: still read as working.

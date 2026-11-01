@@ -843,9 +843,9 @@ whose story has an open PR, and it keeps one when it cannot read an agent's stat
 its PRs. It also keeps the tab that holds the pane the command runs in, unless that pane is the one
 being closed, so a step-up or reconcile run from an idle review agent's pane leaves that pane open.
 It prints each of those agents as `kept`, and still closes the conductor's own pane. It refuses,
-closing nothing, while the conductor is working or its state cannot be read, while its epic's Finish PR (`board/finish-<epic>`)
-is open, or when gh cannot list that PR, since the PR's `swarm.sh merge --board` may run in the
-conductor's pane ([reference-building.md](reference-building.md)).
+closing nothing, while the conductor is in any state but idle or done, and, with `merge = agent`,
+while its epic's Finish PR (`board/finish-<epic>`) is open or gh cannot list that PR, since the PR's
+`swarm.sh merge --board` may run in the conductor's pane ([reference-building.md](reference-building.md)).
 `swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
 close takes the full recorded name. It closes only what `.swarm/state` records under exactly the
 name you give it: its pane, its tabs, and for a conductor the tabs of its epic, which its brief or

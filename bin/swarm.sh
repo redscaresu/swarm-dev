@@ -687,7 +687,7 @@ dispatch() {
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     _tell-queue-check) tell_queue_check "${1:-}" "${2:-}" ;;      # tell_queue_later's check on a busy agent's queued tells
-    _close-when-idle) require_herdr; close_idle_wait "${1:-}" "${2:-}" "${3:-}" ;;   # merged_review's detached waiter that closes a retired review pane (close_when_idle)
+    _close-when-idle) require_herdr; close_idle_wait "${1:-}" "${2:-}" "${3:-}" ;;   # close_when_idle's detached waiter: closes a retired review pane after its own merge, or an epic's conductor after a merge --board of its Finish PR
     _fix-main) main_red_run "${1:?repo}" "${2:?base}" "${3:?sha}" ;;   # wait --lead's detached fix-main writer for a red base head (main_red_fix)
     wait)   wait_command "$@" ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
@@ -697,7 +697,7 @@ dispatch() {
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
 # _fix-main writes a fix-main story, and logs its own main-red line (fix_main), as merge does.
-# _close-when-idle closes a retired review pane, and logs its own close-when-idle line (close_idle_wait).
+# _close-when-idle closes a retired review pane or a reported conductor, and logs its own close-when-idle line (close_idle_wait).
 # The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends,
 # a conductor's watch's `pr-opened <slug>` when it says a story PR opened, and wait-pr's `first-green <slug>`, once per story PR.
 # outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.

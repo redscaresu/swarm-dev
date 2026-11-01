@@ -18,8 +18,8 @@ should get shorter.
 **Symptom.** `herdr agent list` shows many agents with status `done`: review agents, planning agents,
 conductors of finished epics.
 **Step.** `herdr pane close <pane>` for each. Close a conductor with `swarm.sh close
-conduct-<epic>`, never `herdr pane close`: it refuses while the conductor works or its Finish PR is
-open, where closing it would kill that PR's `swarm.sh merge --board`.
+conduct-<epic>`, never `herdr pane close`: it refuses while the conductor works, and with `merge =
+agent` while its Finish PR is open, where closing it would kill that PR's `swarm.sh merge --board`.
 **Issue.** [#690](https://github.com/redscaresu/swarm-dev/issues/690).
 
 ## A PR outside any story

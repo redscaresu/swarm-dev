@@ -557,15 +557,17 @@ back_to_ready() {
 }
 
 # conductor_busy <conductor> — succeed, with BUSY_WHY saying why, when closing <conductor> now could
-# cut its work short, else fail with BUSY_WHY empty. It is busy when it is working (session_state over
-# close_lists' Claude Code list, under herdr's name for it, which agent_name cuts at 32 characters:
-# busy, unless its turn stopped on an API error (api_stopped), whose exit is this close; or herdr's
-# status working where herdr answers for it, or for a session Claude Code no longer lists), when its
-# state could not be read (unknown: Claude Code's list failed; fail closed), or when its epic's
+# cut its work short, else fail with BUSY_WHY empty. Its state is session_state's over close_lists'
+# Claude Code list, under herdr's name for it (agent_name cuts it at 32 characters), or herdr's status
+# where herdr answers for it or Claude Code no longer lists its session. It is busy in any state but a
+# finished one (idle, herdr's idle or done, a busy turn stopped on an API error (api_stopped), whose
+# exit is this close, or no agent under the name in a list herdr gave), each refusal naming the state;
+# an unreadable state is refused too (fail closed). With merge = agent it is also busy while its epic's
 # Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) is open, whose swarm.sh merge --board may
 # be running in its pane, where a close would kill it. A list of that branch's PRs gh could not give
-# says so: whether such a merge runs is not known (fail closed). The backlog conductor finishes no
-# epic, and a board outside the project's repo, or a project with no origin, opens no Finish PR.
+# says so: whether such a merge runs is not known (fail closed). With merge = human no conductor's pane
+# merges a board PR (merge_caller), so gh is not asked. The backlog conductor finishes no epic, and a
+# board outside the project's repo, or a project with no origin, opens no Finish PR.
 BUSY_WHY=""
 conductor_busy() {
   local state pane epic origin prs open head n
@@ -578,8 +580,20 @@ conductor_busy() {
   n="$(agent_name "$1")"; state="$(session_state "${n}" "${CLOSE_CLAUDE}" </dev/null)"
   [[ "${state}" != herdr && "${state}" != gone ]] || state="herdr:$(awk -v n="${n}" '$3 == n { print $2; exit }' <<< "${CLOSE_AGENTS}")"
   if [[ "${state}" == busy ]]; then pane="$(agent_field "${n}" pane_id)"; ! api_stopped "${n}" "${pane}" || state=stopped; fi
-  if [[ "${state}" == busy || "${state}" == herdr:working ]]; then BUSY_WHY="is working"; return 0; fi
-  if [[ "${state}" == unknown ]]; then BUSY_WHY="could not have its state read (Claude Code's agent list failed), so whether it is working is not known"; return 0; fi
+  # Only a finished state lets the close go on, as live_agents keeps every other: idle, herdr's idle or
+  # done, a turn stopped on an API error, or no agent under the name in a list herdr gave.
+  case "${state}" in
+    idle|stopped|herdr:idle|herdr:done) ;;
+    herdr:) [[ -n "${CLOSE_AGENTS_OK}" ]] \
+              || { BUSY_WHY="could not have its state read (herdr gave no agent list), so whether it is working is not known"; return 0; } ;;
+    busy|herdr:working) BUSY_WHY="is working"; return 0 ;;
+    unknown) BUSY_WHY="could not have its state read (Claude Code's agent list failed), so whether it is working is not known"; return 0 ;;
+    *) BUSY_WHY="is ${state#herdr:}, not idle"; return 0 ;;
+  esac
+  # Only with merge = agent does a conductor's pane merge a board PR (merge_caller): with merge = human
+  # its Finish PR waits on the user, and no merge of it runs there.
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ "${CFG_merge}" == agent ]] || return 1
   epic="$(conduct_epic "$1")"
   [[ "${epic}" != backlog && ${BOARD_IN_REPO} == 1 ]] || return 1
   origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 1
