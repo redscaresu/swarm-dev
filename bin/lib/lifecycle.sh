@@ -1767,9 +1767,10 @@ own_pane() {
 # closes alone. Fails when no tab record has it. When herdr could not list that tab or close the pane,
 # the pane and its record are kept, that is said, CLOSE_PANE_KEPT is set for the caller to act on,
 # and it succeeds: under errexit a failure here would stop reconcile's loop over merged stories. A
-# pane it closes, by itself or with its tab, gets its pane-closed line in events.tsv (pane_closed).
+# pane it closes by itself gets its pane-closed line in events.tsv (pane_closed), with the name its tab
+# record held; one it closes with its tab gets it from close_tab.
 close_pane() {
-  local state="${3:-}" id
+  local state="${3:-}" id rec
   if [[ -z "${state}" ]]; then
     for state in "${STATE_DIR}"/*; do
       [[ -f "${state}" ]] && record_has "${state}" "$1" && break
@@ -1785,24 +1786,44 @@ close_pane() {
     # With no herdr tab of that label there is none to close: the pane closes by itself below.
     [[ -z "${id}" ]] || close_tab "${state}" "${id}" "$1"
   fi
-  # The record is gone only when close_tab closed its tab, and <pane> with it.
-  if [[ ! -f "${state}" ]]; then pane_closed "$1" "$2"; return 0; fi
+  [[ -f "${state}" ]] || return 0
+  rec="$(awk -v p="$1" 'NF == 2 && $1 == p { print $2; exit }' "${state}")"
   # Checked, not left to errexit: a caller's `|| true` turns that off here.
   if ! herdr pane close "$1" >/dev/null 2>&1; then
     echo "swarm: could not close pane $2 ($1): it is still open, and its tab record keeps it" >&2
     CLOSE_PANE_KEPT=1; return 0
   fi
   record_drop "${state}" "$1"
-  pane_closed "$1" "$2"
+  pane_closed "$1" "$2" "${rec}"
   echo "closed pane $2"
 }
 
-# pane_closed <pane> <name> — events.tsv's pane-closed line for a pane this script closed: its target
-# <name> (- for none), its tail pane=<pane> and agent_fields' slug= and role= for <name>.
+# pane_closed <pane> <name> [recorded] [slug] — events.tsv's pane-closed line for a pane this script
+# closed: its target <name> (- for none), its tail pane=<pane> and agent_fields' slug= and role=. Those
+# are read from [recorded], the name the pane's tab record held, which is whole: a retired one
+# (<name>-done) reads the name it held before, on RETIRED_LOG's exact pane and name, so a review
+# agent's name of AGENT_NAME_MAX or more keeps its slug. With no record, or a retired one
+# RETIRED_LOG lacks, from <name>, as agent_fields reads it. [slug], when the caller has it, is the slug.
 pane_closed() {
-  local kv=()
-  read -r -a kv <<< "$(agent_fields "$2")"
+  local who="${3:-}" whole="" old kv=()
+  [[ "${who}" != - ]] || who=""
+  if [[ "${who}" =~ -done[0-9]*$ ]]; then
+    old="$(awk -F'\t' -v p="$1" -v n="${who}" '$1 == p && $2 == n { o = $3 } END { print o }' "${RETIRED_LOG}" 2>/dev/null)" || old=""
+    if [[ -n "${old}" ]]; then who="${old}"; whole=1; fi
+  elif [[ -n "${who}" ]]; then whole=1
+  fi
+  [[ -n "${who}" ]] || who="$2"
+  read -r -a kv <<< "$(agent_fields "${who}" "${4:-}" "${whole}")"
   record_event pane-closed "${2:--}" ok "pane=$1" "${kv[@]+"${kv[@]}"}"
+}
+
+# tab_conductor <tab-label> — the conductor's name for a tab record's `conductor` line (start_conductor
+# records that word, not its name): conductor_name of the record's label, or, for a numbered overflow
+# (<label>-<n>) no epic is named for, of <label>.
+tab_conductor() {
+  local l="$1"
+  [[ ! "${l}" =~ -[0-9]+$ || -f "${BOARD}/epics/${l}.md" ]] || l="${l%-*}"
+  conductor_name "${l}"
 }
 
 # label_record <tab-record> <label> — succeed when the record is <label>'s own or its numbered
@@ -1971,7 +1992,7 @@ live_line() { LIVE+="$1"$'\t'"$2"$'\t'"$3"$'\t'"$4"$'\n'; }
 # touched, nor the pane this runs in. Run it when nothing is starting: a pane whose agent is still
 # starting has no agent yet, so it looks empty.
 tidy_panes() {
-  local yes="${1:-}" agents panes closable pane name reason file n=0
+  local yes="${1:-}" agents panes closable pane name reason file rec n=0
   [[ "${yes}" != --yes || -n "${HERDR_PANE_ID:-}" ]] || die "tidy --yes: HERDR_PANE_ID is not set, so this pane could not be kept open"
   agents=$(herdr agent list 2>/dev/null) || die "tidy: herdr gave no agent list"
   panes=$(herdr pane list 2>/dev/null) || die "tidy: herdr gave no pane list"
@@ -1981,10 +2002,11 @@ tidy_panes() {
   if [[ "${yes}" != --yes ]]; then echo "(swarm.sh tidy --yes closes them)"; return 0; fi
   while IFS=$'\t' read -r pane name reason file; do
     herdr pane close "${pane}" >/dev/null 2>&1 || { echo "could not close ${pane} (${name})"; continue; }
+    rec="$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' "${STATE_DIR}/${file}")"
     { awk -v p="${pane}" '$1 != p' "${STATE_DIR}/${file}" > "${STATE_DIR}/${file}.tmp" && mv "${STATE_DIR}/${file}.tmp" "${STATE_DIR}/${file}"; } \
       || die "tidy: closed ${pane} but could not update ${STATE_DIR}/${file}"
     [[ -s "${STATE_DIR}/${file}" ]] || rm -f "${STATE_DIR}/${file}"
-    pane_closed "${pane}" "${name}"
+    pane_closed "${pane}" "${name}" "${rec}"
     n=$((n + 1))
   done <<< "${closable}"
   echo "closed ${n}"
@@ -2339,9 +2361,11 @@ kept_unlisted() { echo "kept tab ${1##*/}: herdr could not list its workspace's 
 # each such agent is printed as kept and, when it is this project's, joins the tab's record
 # (record_kept), so a later close --all, and tidy, still find the tab once the panes recorded there
 # close; one that is not is said to stay unrecorded. With no tab of that label, nothing is closed and
-# the record goes. A tab herdr could not close keeps its record, and that is said.
+# the record goes. A tab herdr could not close keeps its record, and that is said. Once its tabs closed,
+# each pane the record holds gets its pane-closed line (pane_closed), a `conductor` line under its
+# conductor's name (tab_conductor).
 close_tab() {
-  local tab_label="${1##*/}" n p why a t
+  local tab_label="${1##*/}" n p why a t x
   if [[ -z "${CLOSE_ALL}" && -n "$2" ]]; then
     close_lists
     live_agents "$2" "$1" "${3:-}"
@@ -2362,6 +2386,12 @@ close_tab() {
       return 0
     fi
   done
+  if [[ -n "$2" && -f "$1" ]]; then
+    while read -r p n x; do
+      [[ -z "${x}" && "${p}" =~ ^[A-Za-z0-9]+:[A-Za-z0-9]+$ ]] || continue
+      if [[ "${n}" == conductor ]]; then pane_closed "${p}" "$(tab_conductor "${tab_label}")"; else pane_closed "${p}" "${n:--}" "${n}"; fi
+    done < "$1"
+  fi
   rm -f "$1"
   echo "closed ${tab_label}"
 }

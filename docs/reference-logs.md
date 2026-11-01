@@ -83,16 +83,19 @@ the agent running `codex-review`. `pull-failed` and `key-dropped` have target `-
 only when the line names one story file.
 A `pane-closed` line records a pane `swarm.sh` closed. It is not a command of its own. Its target is
 the agent name the pane was closed under, or `-` when its tab record names none, and its outcome is
-`ok`. Its tail is `pane=<pane id>`, then `slug=` and `role=` as on an incident line, so a retired
-`<name>-done` reads as the name before it. `close_pane` writes one for each pane it closes, by itself
-or with the tab it was the last pane of. That covers a pane that `close` finds under its agent's name
-in a tab record, the same close inside `merge`, `reconcile` and `step-up`, and the pane of a review
-agent's start that went wrong. `tidy --yes` writes one for each pane it closes. A pane herdr could not
-close gets no line. Nor does a pane in a tab that `close` sweeps whole by its label (a conductor's
-epic tab, or a tab whose record line names no agent), or a pane closed after a failed `restart` or a
-failed start of any agent but a review agent. The stall rule does not count a `pane-closed` line as
-a sign of life. `unblock --startable`, `hold` and a conductor's check for work left skip it when they read a
-story's last line for a reopen.
+`ok`. Its tail is `pane=<pane id>`, then `slug=` and `role=` as on an incident line. They are read
+from the name the pane's tab record held, which is never cut, so a name of 32 characters or more keeps
+its slug. A retired `<name>-done` reads the name it had before. `retire_agent` keeps that name in
+`.swarm/retired.tsv`, one line per retirement: the pane, the new name and the old one.
+`close_pane` writes one line for a pane it closes by itself, and `close_tab` writes one for each pane
+in the tab record of a tab it closes. That covers `close`, by an agent's name or by a tab's label (a
+conductor's epic tab, tabs that share a label), the same closes inside `merge`, `reconcile` and
+`step-up`, and the pane of a review agent's start that went wrong. A tab record's `conductor` line is
+logged under its conductor's name. `tidy --yes` writes one line for each pane it closes. A pane herdr
+could not close gets no line. Nor does a pane in a closed tab that no tab record holds, or a pane
+closed after a failed `restart` or a failed start of any agent but a review agent. The stall rule
+does not count a `pane-closed` line as a sign of life. `unblock --startable`, `hold` and a
+conductor's check for work left skip it when they read a story's last line for a reopen.
 A `reap` line records something swarm-dev killed for running too long. Its target is what was
 killed and its outcome says why. `codex-review` writes one when `codex_minutes` runs out, with target `codex-<story>` (`codex-<base>`
 with no `SWARM_STORY`) and the outcome `timed out after <N> min`. `make test` writes one when a test file runs past

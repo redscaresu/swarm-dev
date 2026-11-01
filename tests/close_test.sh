@@ -834,7 +834,33 @@ echo "w:p73 review-z" >> "${P}/.swarm/state/x"; echo "review-z w:p73" >> "${ROOT
 touch "${ROOT}/paneclosefail"; cs review-z >/dev/null || true; rm -f "${ROOT}/paneclosefail"
 is "a pane herdr could not close logs no pane-closed line, and its record keeps it" "|w:p73 review-z" \
   "$(pane_closed_lines review-z)|$(grep -x 'w:p73 review-z' "${P}/.swarm/state/x")"
+# A label sweep (close_tabs: no record line holds the name epic) closes tab epic (w:t5) and logs one
+# line for each pane its record holds.
+printf '%s\n' "w:p74 sweep-a" "w:p75 sweep-b" > "${P}/.swarm/state/epic"; printf '%s\n' "sweep-a w:p74" "sweep-b w:p75" >> "${ROOT}/agents"
+: > "${CLOSED}"; cs epic >/dev/null || true
+is "close epic sweeps its tab and logs one pane-closed line per recorded pane" "<w:t5>|ok ~~ pane=w:p74|ok ~~ pane=w:p75" \
+  "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines sweep-a)|$(pane_closed_lines sweep-b)"
+# A review agent's name of AGENT_NAME_MAX (32) or more: herdr and agents.tsv hold its cut, the tab
+# record its whole name, which close finds and the line reads its slug from.
+LS=pane-closed-slug-past-the-cut; LC="review-${LS}"; LC="${LC:0:32}"
+built "${LC}" review; echo "w:p77 review-${LS}" >> "${P}/.swarm/state/x"; echo "${LC} w:p77" >> "${ROOT}/agents"
+cs "review-${LS}" >/dev/null || true
+is "close review-<a slug past the cut> logs its whole slug" "ok ~~ pane=w:p77 slug=${LS} role=review" "$(pane_closed_lines "review-${LS}")"
 rm -f "${P}/.swarm/state/x" "${P}/.swarm/state/other"
+# reconcile from that agent's own pane, once its story merged, retires it (<its first 27>-done, in herdr
+# and its tab record); tidy --yes then closes the pane, and its line carries the whole slug that
+# retire_agent kept in .swarm/retired.tsv.
+LR=pane-closed-retired-past-cut; LC="review-${LR}"; LC="${LC:0:32}"
+item "${LR}" "status: review" "kind: code" "prs: ${U}/34"; started "${LR}"; echo "${U}/34 MERGED" > "${ROOT}/pr-states"
+built "${LC}" review; echo "w:p109 review-${LR}" > "${P}/.swarm/state/${LR}"
+echo "${LC} w:p109" > "${ROOT}/agents"; echo "w:p109 w:t15" > "${ROOT}/panes"; : > "${ROOT}/panes-closed"
+from_pane w:p109 reconcile >/dev/null || true
+is "reconcile from its own pane retires review-${LR} as ${LC:0:27}-done, its whole name in retired.tsv" \
+  "${LC:0:27}-done w:p109|w:p109 ${LC:0:27}-done review-${LR}" \
+  "$(cat "${ROOT}/agents")|$(tr '\t' ' ' < "${P}/.swarm/retired.tsv" 2>/dev/null)"
+from_pane w:me tidy --yes >/dev/null || true
+is "tidy --yes closes the retired pane and logs its whole slug" "w:p109|ok ~~ pane=w:p109 slug=${LR} role=review" \
+  "$(cat "${ROOT}/panes-closed")|$(pane_closed_lines "${LC:0:27}-done")"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

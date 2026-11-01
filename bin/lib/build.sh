@@ -1240,7 +1240,7 @@ review_start_failed() {
     # Through close_pane, alone (its tab may hold the builder), so events.tsv has the pane's
     # pane-closed line; a pane no tab record has closes here, logged the same way.
     if ! close_pane "${pane}" "${name}" "" alone >/dev/null 2>&1; then
-      if herdr pane close "${pane}" >/dev/null 2>&1; then pane_closed "${pane}" "${name}"; else CLOSE_PANE_KEPT=1; fi
+      if herdr pane close "${pane}" >/dev/null 2>&1; then pane_closed "${pane}" "${name}" "" "$1"; else CLOSE_PANE_KEPT=1; fi
     fi
     [[ -z "${CLOSE_PANE_KEPT}" ]] || { note=" (its pane ${pane} could not be closed: close it by hand)"; left=yes; }
   fi
