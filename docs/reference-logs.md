@@ -350,6 +350,16 @@ parsed is read from `gh` again and rewritten, and one that would not change is n
 answers over it, so it also shows a rerun the cache missed. Setting `SWARM_GH_CACHE` empty turns the
 cache off (the tests whose `gh` stub changes between runs do).
 
+`swarm.sh wait-pr` keeps its CI reads in `.swarm/poll-cache/` (`bin/lib/poll_cache.py`) for under one
+poll, so waits on one head share them. Each file is one read's output, named by a hash of the gh
+command and holding that command and when the read started, so a different command never reads it
+and a slow read is kept as old as it is. A read is kept only once
+it parsed whole, written to a temp file and renamed. While one wait makes a read, a `.lock` file
+holding its pid makes another wait for the result instead of reading too. A lock whose pid has
+exited, or one older than the waiting reader's max age (its reader stopped, hung, or killed before it
+wrote its pid), no longer holds the others, and neither does any lock once a reader has waited its max age. Any file in the directory older
+than 10 minutes is deleted whenever a read is kept.
+
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
 the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR
 elsewhere, such as GitHub Enterprise, is left out. Each PR costs three or more `gh` calls, so without
@@ -873,7 +883,7 @@ place of the first two blocks. `--epic` does not narrow it.
 
 Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
-(`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage limit), `code-review`, `ci` (a
+(`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage or rate limit), `code-review`, `ci` (a
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR, and `split-critic` for the check on a large epic's split (commands/plan-epic.md step 0). A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. A finding declined as `deferred` that a later round or fix finds real, and fixes, is logged the same way, against the PR it was deferred on, with its line copied exactly from the deferred row's text, so the two rows match. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit`, `wrong` or `deferred` (a finding the round cap held back from round 3, logged with no `--because`, since holding it back is the review agent's own call), and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. `--round <n>` records the
