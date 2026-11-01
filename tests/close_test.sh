@@ -4,7 +4,7 @@
 # ready story counts a failed build, and close takes a cause. herdr and gh are stubs on PATH: herdr records each tab close and
 # lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default, a name of - for
 # none; agent list fails while ${ROOT}/agentfail exists) and the panes in ${ROOT}/panes ("<pane> <tab>"
-# lines; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does, tab
+# lines, and tab list adds ${ROOT}/tabs-extra's ,{...} entries; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does, tab
 # close while ${ROOT}/tabclosefail does and pane close while ${ROOT}/paneclosefail does); gh answers pr list from ${ROOT}/prs.json, with
 # --state open the heads of its open PRs that name one, as close_heads' --jq asks, and pr view <url>
 # from ${ROOT}/pr-states ("<url> <state>" lines).
@@ -27,7 +27,7 @@ printf '#!/bin/sh\nA="%s"; CLOSED="%s"; H="%s"\n' "${ROOT}/agents" "${CLOSED}" "
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "tab list") [ -e "$H/tablistfail" ] && exit 1
-              echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"},{"tab_id":"w:t10","label":"ce-foo"},{"tab_id":"w:t12","label":"sp"},{"tab_id":"w:t13","label":"rb"}]}}' ;;
+              echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"},{"tab_id":"w:t10","label":"ce-foo"},{"tab_id":"w:t12","label":"sp"},{"tab_id":"w:t13","label":"rb"}'"$(cat "$H/tabs-extra" 2>/dev/null)"']}}' ;;
   "tab close") [ -e "$H/tabclosefail" ] && exit 1
                printf '<%s>\n' "$3" >> "${CLOSED}" ;;
   "agent list") [ -e "$H/agentfail" ] && exit 1
@@ -861,6 +861,23 @@ is "reconcile from its own pane retires review-${LR} as ${LC:0:27}-done, its who
 from_pane w:me tidy --yes >/dev/null || true
 is "tidy --yes closes the retired pane and logs its whole slug" "w:p109|ok ~~ pane=w:p109 slug=${LR} role=review" \
   "$(cat "${ROOT}/panes-closed")|$(pane_closed_lines "${LC:0:27}-done")"
+# close conduct-ce while ce is kept for cbw, working: the conductor's pane closes alone (own_pane), and
+# its record line, the word conductor, is no name: the line reads conduct-ce's.
+rm -f "${P}/.swarm/state/ce" "${P}/.swarm/state/ce-2"; printf '%s\n' "w:p90 conductor" "w:p96 cbw" > "${P}/.swarm/state/ce"
+printf '%s\n' "conduct-ce w:p90" "cbw w:p96 working" > "${ROOT}/agents"; printf '%s\n' "w:p90 w:t7" "w:p96 w:t7" > "${ROOT}/panes"
+built conduct-ce conduct; : > "${CLOSED}"; : > "${ROOT}/panes-closed"; from="$(wc -l < "${P}/.swarm/events.tsv")"
+cs conduct-ce >/dev/null || true
+is "close conduct-ce, ce kept for a working cbw: its pane closes alone and logs slug=ce role=conduct" \
+  "|w:p90|conduct-ce|ok ~~ pane=w:p90 slug=ce role=conduct" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(tail -n +"$((from + 1))" "${P}/.swarm/events.tsv" | awk -F'\t' '$2 == "pane-closed" { print $3 "|" $5 }' | no_version)"
+rm -f "${P}/.swarm/state/ce"
+# The backlog conductor's tab is labelled with its name: closing it logs the conductor under that name.
+BN="$(cd "${P}" && HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" _conductor backlog)"
+echo "w:p98 conductor" > "${P}/.swarm/state/${BN}"; echo "${BN} w:p98" > "${ROOT}/agents"; echo "w:p98 w:t16" > "${ROOT}/panes"
+printf ',{"tab_id":"w:t16","label":"%s"}' "${BN}" > "${ROOT}/tabs-extra"; built "${BN}" conduct; : > "${CLOSED}"
+cs "${BN}" >/dev/null || true; rm -f "${ROOT}/tabs-extra"
+is "closing the backlog conductor's tab logs its pane under conductor_name backlog" "<w:t16>|ok ~~ pane=w:p98 role=conduct" \
+  "$(tr -d '\n' < "${CLOSED}")|$(pane_closed_lines "${BN}")"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

@@ -1803,10 +1803,11 @@ close_pane() {
 # are read from [recorded], the name the pane's tab record held, which is whole: a retired one
 # (<name>-done) reads the name it held before, on RETIRED_LOG's exact pane and name, so a review
 # agent's name of AGENT_NAME_MAX or more keeps its slug. With no record, or a retired one
-# RETIRED_LOG lacks, from <name>, as agent_fields reads it. [slug], when the caller has it, is the slug.
+# RETIRED_LOG lacks, from <name>, as agent_fields reads it; so too with a recorded `conductor`, the
+# word start_conductor records in place of the name. [slug], when the caller has it, is the slug.
 pane_closed() {
   local who="${3:-}" whole="" old kv=()
-  [[ "${who}" != - ]] || who=""
+  [[ "${who}" != - && "${who}" != conductor ]] || who=""
   if [[ "${who}" =~ -done[0-9]*$ ]]; then
     old="$(awk -F'\t' -v p="$1" -v n="${who}" '$1 == p && $2 == n { o = $3 } END { print o }' "${RETIRED_LOG}" 2>/dev/null)" || old=""
     if [[ -n "${old}" ]]; then who="${old}"; whole=1; fi
@@ -1818,10 +1819,14 @@ pane_closed() {
 }
 
 # tab_conductor <tab-label> — the conductor's name for a tab record's `conductor` line (start_conductor
-# records that word, not its name): conductor_name of the record's label, or, for a numbered overflow
-# (<label>-<n>) no epic is named for, of <label>.
+# records that word, not its name). The backlog conductor's tab is labelled with its name
+# (conductor_name backlog), so that label, or its numbered overflow, is the name. Otherwise
+# conductor_name of the record's label, or, for a numbered overflow (<label>-<n>) no epic is named
+# for, of <label>.
 tab_conductor() {
-  local l="$1"
+  local l="$1" b
+  b="$(conductor_name backlog)"
+  if [[ "${l}" == "${b}" || ( "${l}" =~ -[0-9]+$ && "${l%-*}" == "${b}" ) ]]; then echo "${b}"; return 0; fi
   [[ ! "${l}" =~ -[0-9]+$ || -f "${BOARD}/epics/${l}.md" ]] || l="${l%-*}"
   conductor_name "${l}"
 }
