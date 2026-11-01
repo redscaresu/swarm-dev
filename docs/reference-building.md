@@ -449,6 +449,17 @@ A conductor is idle whenever it waits on its own builders, so `wait` on one hold
 exists, its session is waiting or gone, or its login expired. `wait --until-report`, which
 `/swarm-dev:swarm` runs, does that with no timeout: an epic that takes more than an hour is not cut
 short. It takes only a conductor's name and fails on any other.
+`wait [--stall] --past <sha> <slug>` waits on a story's builder whose PR was at `<sha>`, such as a
+builder the review agent sent findings to. It ends every way `wait` ends, and also prints
+`pushed <new sha>` and exits 0 on the first poll where three things hold. The story's worktree is at
+a commit other than `<sha>`. The worktree has no uncommitted changes (`git status --porcelain` prints
+nothing). The PR's head is that commit, so it was pushed, not only committed. `wait` reads the
+worktree with git on every poll, and asks for the PR's head (`gh pr view --json headRefOid`) only on
+a poll where the worktree has moved and is clean, so a quiet poll makes no GitHub call. A push made before the
+wait starts ends it on its first read. A builder `wait` follows through herdr (no recorded Claude
+session) gets the same check. `--past` refuses a `<sha>` that is not 40 hex characters, a conductor,
+a review agent, `--until-report`, `--lead`, and a name with no story file on the board or no
+worktree. A refused wait waits on nothing.
 A codex agent, or one with no recorded session, is waited on through herdr's status. `wait`
 listens on herdr's event stream (the socket at `HERDR_SOCKET_PATH`, which herdr sets in every pane)
 and returns the moment herdr says the agent is `idle`, `blocked` or `done`, or `gone` when its pane
