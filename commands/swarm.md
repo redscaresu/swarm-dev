@@ -657,15 +657,18 @@ Repeat until a step below says stop:
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
      green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared, they never finished, or the PR's head is not the
      one you named: tell the user
-     what it printed and stop. Run
-     `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it,
+     what it printed and stop. For swarm-dev's own repo, first ask the user whether to move the running agents onto
+     v<new> once it merges; merge runs in the background with no terminal, so it cannot ask
+     itself, and without `--upgrade` it moves none. Then run
+     `swarm.sh merge --release [--upgrade] --head <its head SHA> <PR URL>`, with `--upgrade` only
+     on the user's yes, in the background and wait for it,
      under `merge = human` too: there it merges only when HLDs granting `release` cover the release.
      Then go by whether merge printed `merged:`, not by its exit code:
      - It printed `merged:`, even if it then exited non-zero (red CI on the base also printed `fix-main:`
        and wrote a story; a CI timeout wrote none): tell the user what it printed. For swarm-dev's own
        repo, merge has confirmed the tag and the GitHub release, updated the
-       plugin and started the agents' upgrade: tell the user its restart line (`/exit`, then
-       `claude --continue`) and any warning it printed. If CI on the base was not green, merge
+       plugin and, with `--upgrade`, started the agents' upgrade: tell the user its restart line
+       (`/exit`, then `claude --continue`), its `upgrade not run:` line and any warning it printed. If CI on the base was not green, merge
        updated nothing and printed a warning naming what to run once the release is published:
        tell the user that warning. If it printed `warning: ... ships <commits> unchecked` (or that gh
        cannot read the merge commit's parent), a PR landed between the release check and the merge,

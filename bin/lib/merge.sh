@@ -966,7 +966,7 @@ short_shas() {
   echo "${out:-none}"
 }
 
-# merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
+# merge [--board|--release [--upgrade]] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; and on this route, once the head's CI check has
@@ -1015,17 +1015,19 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
+  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
       --head) want="$2"; shift 2 ;;
+      --upgrade) upgrade=yes; shift ;;
       *) break ;;
     esac
   done
   url="${1:-}"; MERGE_TARGET="${url:--}"
   [[ -z "${clash}" ]] || merge_fail "--board and --release do not go together"
-  [[ $# -eq 1 ]] || merge_fail "usage: swarm.sh merge [--board|--release] [--head <sha>] <pr-url>"
+  [[ $# -eq 1 && ( -z "${upgrade}" || "${only}" == --release ) ]] \
+    || merge_fail "usage: swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <pr-url>"
   [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
@@ -1230,11 +1232,12 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
-  # A release of this plugin moves the installed plugin and the running agents onto it, unless it shipped
-  # commits no release check read, which any release reports; neither ever fails the merge.
+  # A release of this plugin moves the installed plugin onto it, and the running agents with --upgrade
+  # or a yes on a terminal, unless it shipped commits no release check read, which any release reports;
+  # neither ever fails the merge.
   if [[ "${only}" == --release && -n "${oid}" ]]; then
     p=checked; release_parent "${repo}" "${oid}" "${base}" || p=""
-    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}"
+    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}" "${upgrade}"
   fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
@@ -2333,18 +2336,20 @@ wait_pr() {
   done
 }
 
-# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> — after merge
-# --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set (the
-# merge commit is on the base release_check read: release_parent): once release_confirmed, update the
-# marketplace and the plugin, then start the new version's swarm.sh upgrade (detached; bounded by
-# UPGRADE_START_WAIT; with release_path's PATH, so the agents it restarts find the new swarm.sh) in
-# each of agent_projects, and ask the user to restart the lead session in this project and each of
-# those: the update is global, and Claude Code loads a plugin's hooks only at startup. A step that
-# fails warns, naming what to run by hand; an upgrade that fails, times out or finds another upgrade
-# running there (it starts nothing then and still exits 0) warns and moves on to the next project.
-# The release is done either way. Each claude, gh and herdr call is bounded (within).
+# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> <upgrade> — after
+# merge --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set
+# (the merge commit is on the base release_check read: release_parent): once release_confirmed, update
+# the marketplace and the plugin. Then, once release_move says yes (<upgrade> set by --upgrade, or a y
+# on a terminal), start the new version's swarm.sh upgrade (detached; bounded by UPGRADE_START_WAIT;
+# with release_path's PATH, so the agents it restarts find the new swarm.sh) in each of
+# agent_projects; else start none and print `upgrade not run: <why>` with the command for each. Last,
+# ask the user to restart the lead session in this project and each of those: the update is global,
+# and Claude Code loads a plugin's hooks only at startup. A step that fails warns, naming what to run
+# by hand; an upgrade that fails, times out or finds another upgrade running there (it starts nothing
+# then and still exits 0) warns and moves on to the next project. The release is done either way.
+# Each claude, gh and herdr call is bounded (within).
 release_upgrade() {
-  local own new d hint out restart="${PROJECT_DIR}" rc path
+  local own new d hint out restart="${PROJECT_DIR}" rc path dirs why cmds=""
   own="$(plugin_repo)" || { echo "the plugin's plugin.json names no GitHub repository, so it is not updated"; return 0; }
   [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]] || { echo "$1 is not this plugin's repo (${own}), so the plugin is not updated"; return 0; }
   new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
@@ -2359,8 +2364,17 @@ release_upgrade() {
   fi
   [[ -f "${new}" ]] || { echo "warning: the plugin update left no ${new}, so no agent was moved: ${hint}"; return 0; }
   path="$(release_path "${new%/swarm.sh}")"
+  dirs="$(agent_projects)"
   while IFS= read -r d; do
     [[ "${d}" == "${PROJECT_DIR}" ]] || restart+=", ${d}"
+    cmds+="${cmds:+, }$(printf 'SWARM_PROJECT=%q %q upgrade' "${d}" "${new}")"   # shell-quoted, ready to paste
+  done <<< "${dirs}"
+  if ! why="$(release_move "$3" "$7")"; then
+    echo "upgrade not run: ${why}: pass --upgrade to swarm.sh merge --release next time, or run ${cmds}"
+    dirs=""
+  fi
+  while IFS= read -r d; do
+    [[ -n "${d}" ]] || continue
     rc=0; out="$(within "${SWARM_UPGRADE_START_WAIT:-${UPGRADE_START_WAIT}}" env SWARM_PROJECT="${d}" PATH="${path}" bash "${new}" upgrade </dev/null 2>&1)" || rc=$?
     [[ -z "${out}" ]] || printf '%s\n' "${out}"
     if [[ ${rc} -eq 142 ]]; then
@@ -2370,8 +2384,21 @@ release_upgrade() {
     elif [[ "${out}" == *"already runs here"* ]]; then
       echo "warning: another swarm.sh upgrade runs in ${d}, so $3's started nothing: once it ends, run SWARM_PROJECT=${d} ${new} upgrade"
     fi
-  done <<< "$(agent_projects)"
+  done <<< "${dirs}"
   echo "Restart the lead session in ${restart} (/exit, then claude --continue): Claude Code loads $3's hooks only at startup"
+}
+
+# release_move <version> <upgrade> — whether merge --release moves the running agents onto <version>:
+# yes with <upgrade> set (--upgrade); else, with stdin a terminal, only when the user answers y to
+# the question it prints; else no. On no it prints why: no terminal to confirm it, or the answer.
+release_move() {
+  local ans=""
+  [[ -z "$2" ]] || return 0
+  [[ -t 0 ]] || { echo "no terminal to confirm it"; return 1; }
+  printf 'Move the running agents onto v%s now? [y/N] ' "$1" >&2
+  read -r ans || ans=""
+  [[ -t 2 ]] || echo >&2
+  [[ "${ans}" == [yY] || "${ans}" == [yY][eE][sS] ]] || { echo "the answer was '${ans:-no answer}', not y"; return 1; }
 }
 
 # release_path <new bin> — PATH for the new version's upgrade: upgrade_path's, with <new bin> first
@@ -2468,7 +2495,7 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     [[ -f "${d}/.claude/swarm/config" && $'\n'"${out}" != *$'\n'"${d}"$'\n'* ]] || continue   # loose-match: ok newline-padded, so a whole line
     out+="${d}"$'\n'
   done <<< "${rows}"
-  [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} is upgraded" >&2
+  [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} counts as running agents" >&2
   [[ -n "${out}" ]] || out="${PROJECT_DIR}"$'\n'
   printf '%s' "${out}"
 }
@@ -3075,19 +3102,27 @@ fetch_branch() {
   return 1
 }
 
-# stacked_parents <child> — the parents the child's current build stacked on: the `stacked <child>`
-# event just before its last ok `story <child>` (main logs story once the build is done), or one
-# with no story after it yet (a build still starting). A later ok build with no stacked event
-# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset
-# follows belongs to no build: a failed or abandoned start. Outcomes are read without their key=value
-# tail (EVENT_OUTCOME_AWK).
+# stacked_parents <child> [on|left] — the parents the child's current build stacked on: the `stacked
+# <child>` event just before its last ok `story <child>` (main logs story once the build is done), or
+# one with no story after it yet (a build still starting). A later ok build with no stacked event
+# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset follows
+# belongs to no build: a failed or abandoned start. The event is stack_start's `ok (on <merged>)`,
+# with a `; left <p>: conflicts with <q> in <files>` part per parent it left out. With no mode, every
+# parent, merged in then left out (a handover's Merge after names them all); with on, those merged
+# in, whose branches the child holds; with left, those left out, whose code reaches the child only
+# through the base. Outcomes are read without their key=value tail (EVENT_OUTCOME_AWK).
 stacked_parents() {
-  awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
+  awk -F'\t' -v s="$1" -v want="${2:-}" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
     { oc = outcome($5) }
-    $2 == "stacked" && index(oc, "ok (on ") == 1 { pend = substr(oc, 8, length(oc) - 8) }
-    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; next }
-    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = "" }
-    END { print (pend != "" ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
+    # has: a stacked event waits for its story line, even one whose left list is empty.
+    $2 == "stacked" && index(oc, "ok (on ") == 1 {
+      n = split(substr(oc, 8, length(oc) - 8), part, "; left "); has = 1; lft = ""
+      for (i = 2; i <= n; i++) lft = lft (i > 2 ? " " : "") substr(part[i], 1, index(part[i] ":", ":") - 1)
+      pend = (want == "on" ? part[1] : want == "left" ? lft : part[1] (lft != "" ? " " lft : ""))
+    }
+    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; has = 0; next }
+    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = ""; has = 0 }
+    END { print (has ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # stacked_parent <repo-dir> <child-ref> <p> — what the child must do about parent p: `merge
@@ -3113,13 +3148,16 @@ stacked_parent() {
 
 # stacked_child <story> — stacked_lines' lines for one story. The child's branch is origin's (fetched),
 # so a merge not yet pushed still shows; its local branch only while origin has none. Parents that
-# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC).
+# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC). A parent
+# stack_start left out (stacked_parents left) gives no `merge origin/story/<p>` line while its PR is
+# open, as that merge conflicts; once it merges, it is in the base line.
 stacked_child() {
-  local child src parents p line have builder="" done_ps="" rc=0
+  local child src parents left p line have builder="" done_ps="" rc=0
   child="$(basename "$1" .md)"
   src="$(repo_dir "$(fm "$1" repo)")" || return 0
   [[ -d "$(worktree_for "${src}" "${child}")" ]] || return 0
-  parents="$(stacked_parents "${child}")"; [[ -n "${parents}" ]] || return 0
+  parents="$(stacked_parents "${child}" on)"; [[ -n "${parents}" ]] || return 0
+  left=" $(stacked_parents "${child}" left) "
   # Outside herdr the agents cannot be read, so no line claims the builder is gone.
   [[ "${HERDR_ENV:-}" != 1 || "$(builder_state "${child}")" != none ]] || builder=" (no builder)"
   fetch_branch "${src}" "story/${child}" || rc=$?
@@ -3128,9 +3166,11 @@ stacked_child() {
     2) have="story/${child}" ;;
     *) echo "${child}: could not check story/${child} on origin${builder}"; return 0 ;;
   esac
-  for p in ${parents//,/ }; do
+  for p in ${parents//,/ } ${left}; do
     if [[ ! "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then echo "${child}: could not check ${p}${builder}"; continue; fi
     line="$(stacked_parent "${src}" "${have}" "${p}")" || line="could not check ${p}"
+    # A left-out parent's branch conflicts with the child's: it arrives through the base line below.
+    [[ "${left}" != *" ${p} "* || "${line}" != "merge origin/story/${p}" ]] || continue
     case "${line}" in merged) done_ps+="${done_ps:+, }${p}" ;; ?*) echo "${child}: ${line}${builder}" ;; esac
   done
   [[ -n "${done_ps}" ]] || return 0
