@@ -50,7 +50,7 @@
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when, and with SWARM_PR=<its PR URL> also shown the findings declined on that PR before
 #   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, an agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once; it never edits the code, and on a pass it runs review --head on the head it reviewed, then merges the PR (merge = agent, or an HLD that grants merge) or leaves it for the user
-#   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
+#   swarm.sh review-agent --next <slug> <pr-url>            from review-<slug>'s own pane, its next round in the same session, or the same round again when the PR's head moved with no findings sent since that round started: once the worktree is at the PR's head, move the last findings aside, record the head, and print the round and what it runs; starts no agent
 #   swarm.sh review-agent --recheck <slug> <pr-url> <old head> <file:line>...   from review-<slug>'s own pane, after a wording fix: pass when the PR's new head is green and its diff from <old head> rewrites each named line (as at <old head>) and nothing else, the lines the old head's .round.md names, writing the new head's findings file, a pass, and .head; else refuse, writing nothing, and name --next, which that refusal counts the round for, when the old head, its findings, the diff or a red head rule the recheck out
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
@@ -238,6 +238,7 @@ CFG_merge=human         # human: a PR that is ready waits on the board for you, 
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?; a busy one whose pane has not changed, stuck
 CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next); a ready story with no build this long gets next's idle: line; a reviewed story PR left unmerged this long gets wait --lead's unmerged: line
 CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
+CFG_risky_effort=xhigh  # the effort a risk: high code story is built at (code-risky): xhigh, or high to trial it
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_escalate_ladder=""  # empty: off; else models low to high, such as sonnet,opus,fable: step-up hands a build to the next one
 CFG_step_up_findings=3  # with escalate_ladder set, the findings round of a build that steps it up instead of being sent
@@ -253,7 +254,7 @@ CFG_review_verify=ci    # full: a review agent's round 1 may run the selected te
 CFG_lead_epics=off      # on: the lead may set an epic active on its own; off: an epic goes active only through the user or a grant
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
 CFG_agent_env=""        # empty: none; else variable names every agent gets with the session's values, such as a provider's key
-CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify lead_epics commit_trailers agent_env"
+CONFIG_KEYS="board_dir repos_dir base_branches sign_commits merge stall_minutes queue_minutes sonnet_share risky_effort escalate_after escalate_ladder step_up_findings top_rung_rounds builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin review_verify lead_epics commit_trailers agent_env"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 # Keys an older swarm-dev read: a config that sets one still loads, with a warning, whatever its value.
 REMOVED_KEYS="pr_per finished review_bot keep_panes"
@@ -296,6 +297,8 @@ load_config() {
           || die "${where}: top_rung_rounds must be a whole number of 2 or more, not '${value}': at 1, every findings round after the lead lifts a top-rung hold would hold it again" ;;
       sonnet_share|escalate_after)
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
+      risky_effort)
+        [[ "${value}" == xhigh || "${value}" == high ]] || die "${where}: risky_effort must be xhigh or high, not '${value}'" ;;
       escalate_ladder)
         # Its models are checked once LADDER_MODELS is defined (model_rank).
         [[ "${value}" =~ ^([a-z0-9.-]+(,[a-z0-9.-]+)*)?$ ]] || die "${where}: escalate_ladder must be models separated by commas, such as sonnet,opus,fable, not '${value}'" ;;
@@ -432,7 +435,7 @@ policy() {
     critic)     echo "claude opus high" ;;
     codex)      echo "codex default high" ;;   # a different model family, read-only
     code)       echo "claude opus high" ;;
-    code-risky) echo "claude opus xhigh" ;;    # Layer 3, teardown, safety or hygiene paths
+    code-risky) echo "claude opus ${CFG_risky_effort}" ;;  # Layer 3, teardown, safety or hygiene paths; risky_effort, xhigh by default
     code-sonnet) echo "claude sonnet high" ;;  # the sonnet_share sample of code stories, measured against code
     docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
@@ -558,7 +561,7 @@ done
 INTERVENE_KINDS="lead-hand user-caught"
 
 # INTERVENE_CAUSES: why a person stepped in, intervene's cause= field; other is for a cause not listed.
-INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost other"
+INTERVENE_CAUSES="review-rounds false-stall start-failed gpg-locked panes-open story-gone pr-no-story dropped-lines pr-churn load-or-logs no-conductor flaky-test classifier upgrade stuck-builder red-main reported-early missing-review tell-lost review-stopped other"
 
 # intervene <kind> <cause> <line...> — log one time a person had to step in: an incident line, target
 # -, outcome `<kind>: <line>`, which flow's incidents section counts per day and kind, with the field

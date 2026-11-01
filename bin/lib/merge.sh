@@ -491,8 +491,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1" "${@:2}"; [[ -z "${flis
 # commits run no tests, as CI's board-only gate has it. Conservative on purpose: GitHub ran the PR's CI on a merge ref that may hold
 # some of them, and the price is one more CI run. A compare it cannot read refuses too, and so does a
 # board-only gain when the board's repo cannot be read, naming the read. That refusal, and a compare that
-# cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, which clears them: the
-# head is then up to date, so no repo read is needed. With <merged> set, <head> is GitHub's merge of the
+# cannot list what the base gained (BEHIND_UNLISTED), say to merge the base in, and why: merge cannot go
+# ahead without it, and the head is then up to date, so nothing is left to read. With <merged> set, <head> is GitHub's merge of the
 # base, which the builder's worktree lacks, so each refusal says to pull the branch first. Each read stops after
 # BASE_MOVED_WAIT. Within one project, merge_pr holds merge_lock from this compare through the merge and
 # its read back, so two direct merges into one base cannot both pass it; merges from two projects, or by
@@ -501,6 +501,7 @@ base_moved() {
   local out n p own why rc=0 limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$3 in, push, and merge the new head" tail=""
   why="cannot tell whether $3 moved past ${2:0:7}'s CI"
   [[ -z "${5:-}" ]] || { fix="pull the branch first (it holds GitHub's merge ${2:0:7}), then ${fix}"; tail="; $(pull_first)"; }
+  fix="merge cannot go ahead until the head has $3 in it, and then nothing is left to check: ${fix}"
   out="$(within "${limit}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" behind "$1" "$2" "$3" "$(board_paths)" \
     "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}" </dev/null)" || rc=$?
   case ${rc} in
@@ -541,30 +542,34 @@ base_moved() {
 # `base-merged <new head> from <head>`, print a `base merged:` line and set BASE_NEW to the new head, for
 # base_rounds to wait on and merge. A 422 while the head is still <head> is a conflict; a 422 once it has moved (a push since
 # merge read it, or GitHub's merge for another merge of this PR) sends that head through the same
-# checks. A conflict, another failed request, a request with no answer in time and a head that never
-# moves refuse with base_moved's line, ending as it does in merging the base in; with <merged> set,
-# <head> is GitHub's earlier merge, which the builder's worktree lacks, so each of those says to pull
-# the branch first. Any other head, or a
+# checks. A conflict refuses ending in the builder's merge of the base, the one failure here that needs
+# it; with <merged> set, <head> is GitHub's earlier merge, which the builder's worktree lacks, so it says
+# to pull the branch first. Another failed request, a request with no answer in time, a 422 whose head
+# gh cannot read again and a head that never moves need no merge-in: each says merge brings the base in
+# itself and to run `merge --head <head> <PR URL>` again. Any other head, or a
 # read of it that fails, refuses as `base merge unchecked:`, for a review of the new head. Each read
 # stops after BASE_MOVED_WAIT, as base_moved's do. It returns only with BASE_NEW set, and never merges.
 merge_base_update() {
   local repo="$1" n="$2" head="$3" base="$4" url="https://github.com/$1/pull/$2" wait out i new="" seen="" ps who sig p1 p2 more tip st why rc=0
-  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head" first=""
+  local limit="${SWARM_BASE_MOVED_WAIT:-${BASE_MOVED_WAIT}}" fix="merge origin/$4 in, push, and merge the new head" again
   wait="${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
   why="the base ${base} moved past ${head:0:7}'s CI ($5 commits it lacks)"
-  [[ -z "${6:-}" ]] || first="pull the branch first (it holds GitHub's merge ${head:0:7}), then "
+  [[ -z "${6:-}" ]] || fix="pull the branch first (it holds GitHub's merge ${head:0:7}), then ${fix}"
+  # Only a conflict needs the builder's merge-in. Every other failure here is GitHub's request, which
+  # merge makes again on its next run.
+  again="merge brings ${base} in itself, with no merge-in from the builder: run merge --head ${head} ${url} again"
   out="$(within "${limit}" gh api -X PUT -f "expected_head_sha=${head}" "repos/${repo}/pulls/${n}/update-branch" 2>&1 > /dev/null < /dev/null)" || rc=$?
   if [[ ${rc} -eq 142 ]]; then
-    merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s: ${first:-pull the branch first (GitHub may yet push its merge), then }${fix}"
+    merge_fail "${why}, and GitHub did not answer the request to merge it in within ${limit}s (it may yet push its merge, a head to review): ${again}"
   elif [[ ${rc} -ne 0 ]]; then
     out="${out##*$'\n'}"; out="${out#gh: }"
-    [[ "${out}" == *"(HTTP 422)"* ]] || merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${first}${fix}"
+    [[ "${out}" == *"(HTTP 422)"* ]] || merge_fail "${why}, and asking GitHub to merge it in failed (${out:-no error given}): ${again}"
     # A 422 is a conflict while the head is still <head>. GitHub gives one too once the head has moved:
     # a push since merge read it, or GitHub's merge for another merge of this PR. That head is checked below.
     out="${out% (HTTP 422)}"
     new="$(within "${limit}" gh pr view "${n}" --repo "${repo}" --json headRefOid < /dev/null | json "d['headRefOid']")" && [[ -n "${new}" ]] \
-      || merge_fail "${why}, and GitHub would not merge it in (HTTP 422: ${out}), and gh cannot read the head again to tell a conflict from a branch that moved: ${first:-pull the branch first, then }${fix}"
-    [[ "${new}" != "${head}" ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out}): ${first}${fix}"
+      || merge_fail "${why}, and GitHub would not merge it in (HTTP 422: ${out}), and gh cannot read the head again to tell a conflict from a branch that moved: ${again}"
+    [[ "${new}" != "${head}" ]] || merge_fail "${why}, and GitHub cannot merge it in, a conflict (HTTP 422: ${out}), which only the builder can resolve: ${fix}"
   fi
   # GitHub merges in the background: the head moves a moment after it says yes.
   if [[ -z "${new}" ]]; then
@@ -577,7 +582,7 @@ merge_base_update() {
   fi
   if [[ -z "${new}" ]]; then
     out="its head was still ${head:0:7}"; [[ -n "${seen}" ]] || out="gh could not read its head"
-    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart: ${first:-pull the branch first (GitHub may yet push its merge), then }${fix}"
+    merge_fail "${why}; GitHub took the request to merge it in, but ${out} after ${MERGE_UPDATE_READS} reads ${wait} s apart (it may yet push its merge, a head to review): ${again}"
   fi
   why="base merge unchecked: ${url}'s head moved from ${head:0:7} to ${new:0:7}"
   [[ "${new}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "${why}, not a commit SHA: review the new head as for any new head"
@@ -1290,15 +1295,26 @@ group_of() { if [[ "$1" == - ]]; then echo "with no epic"; else echo "of epic $1
 # fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
+# With --say <groups> (ready_tell's call; next's has none, so its lines stay as they are), it also
+# says why it starts none where it would otherwise be silent: when no story is ready to build (or only
+# fix-main ones, which next names), and for
+# each of <groups> (board_ready's epic column, one a line) whose conductor runs already.
 # Under a report's deadline (next runs it with next_reads on), its reads are cut there too, and it
 # fails closed: once a read made since it began is cut (report_cuts), no conductor starts, and each it
 # would have started is named with a line telling the lead to run next again. A cut read could hide a
 # conductor stopped on an expired login or an API error. The start itself runs without next_reads'
 # forms, so it is never cut.
 conduct_ready() {
-  local e name arg ready log c why todo report stop said="" rc=0 cuts
-  ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
-  [[ -n "${ready}" ]] || return 0
+  local e name arg ready all log c why todo report stop said="" rc=0 cuts say="" groups=""
+  [[ "${1:-}" != --say ]] || { say=1; groups="${2:-}"; }
+  all="$(board_ready --started)"
+  ready="$(awk '$1 !~ /^fix-main-/' <<< "${all}")"
+  if [[ -z "${ready}" ]]; then
+    if [[ -z "${say}" ]]; then :
+    elif [[ -n "${all}" ]]; then echo "no conductor started: only fix-main stories are ready, and swarm.sh next names them first"
+    else echo "no conductor started: no story is ready to build"; fi
+    return 0
+  fi
   cuts="$(report_cuts)"
   if ! herdr agent list >/dev/null 2>&1; then
     echo "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"; return 0
@@ -1315,7 +1331,8 @@ conduct_ready() {
     [[ -n "${e}" ]] || continue
     name="$(group_conductor "${e}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
     if [[ -n "$(agent_field "${name}" pane_id)" ]]; then
-      if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"; fi
+      if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"
+      elif [[ -n "${say}" ]] && grep -qxF -- "${e}" <<< "${groups}"; then echo "no conductor started: ${name} runs already"; fi
       continue
     fi
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || { echo "no conductor started: another project's agent holds the name ${name}"; continue; }
@@ -1549,16 +1566,24 @@ story_note() {
 # not at <prev>, the board <url> merged onto, but at <oid>, its own merge commit (not a queue batch's tip): not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now (conductor_note); with none running,
-# say so. Then conduct_ready starts the conductors ready work lacks. With no upstream nothing is
-# pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one) is a
+# say so. With no new story, say that <url> made none ready. An epic <url> made active that has no
+# stories gets no conductor, whose stop rule (stop_rule) would have it report at once with the epic
+# unplanned: a line says to plan it, and whether next offers plan-epic for it yet (plannable_epics),
+# or, for a built one (epic_built), which next never plans again, that none started.
+# Then conduct_ready --say starts the conductors ready work lacks, and says why it starts none for a
+# group of new stories whose conductor runs, or when nothing is ready. With no upstream nothing is
+# pulled, so nothing is new and nothing starts, and a line says so. A failed reconcile (logged as merge logs one) is a
 # warning, and each running conductor still gets a note that <url> merged, naming the failure, its
 # herdr calls bounded (bound_herdr). That, a
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e c slugs note list p was="" d
+  local url="$1" oid="$2" new rc why dief e c slugs note list p was="" d k
   d="$(board_rel)"
-  has_upstream || return 0
+  if ! has_upstream; then
+    echo "no conductor started for ${url}: the board's checkout has no upstream to pull it from; pull the board, then run swarm.sh next"
+    return 0
+  fi
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
   # shellcheck disable=SC2034 # read in another file
@@ -1613,7 +1638,25 @@ ready_tell() {
     conductor_note "${e}" "${note}" "${slugs}"
     rm -f "${note}"
   done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
-  conduct_ready || true   # a failed start has printed its warning
+  # Said of <url> alone: conduct_ready may still start a conductor for ready work an older PR made.
+  [[ -n "${new}" ]] || echo "${url} made no story ready"
+  # An epic <url> made active with no stories waits for its plan, not a conductor.
+  while IFS=$'\t' read -r p k; do
+    [[ "${k}" == 0 && "${p}" == "${d}epics/"*.md ]] || continue   # loose-match: ok an epic file under the board, which has no subdirectories
+    e="$(basename "${p}" .md)"
+    # Still active on the pulled board: a later PR pulled with it may have changed or deleted it.
+    [[ "$(fm "${BOARD}/epics/${e}.md" status 2>/dev/null)" == active ]] || continue
+    ! epic_has_stories "${e}" || continue
+    # A built epic (its stories merged and gone) is never planned again: next's conduct step has it.
+    if epic_built "${e}"; then
+      echo "epic ${e} is active with its stories all built: no conductor started for it"
+    elif grep -qxF -- "${e}" <<< "$(plannable_epics)"; then
+      echo "epic ${e} is active with no stories: plan it (next offers plan-epic ${e})"
+    else
+      echo "epic ${e} is active with no stories: plan it once next offers plan-epic ${e}"
+    fi
+  done <<< "${was}"
+  conduct_ready --say "$(awk '{ print $2 }' <<< "${new}" | sort -u)" || true   # a failed start has printed its warning
 }
 
 # run_fail_lines <owner/repo> <run id> <end> [attempt] — the FAIL lines of a run's failed jobs (of
@@ -3050,19 +3093,27 @@ fetch_branch() {
   return 1
 }
 
-# stacked_parents <child> — the parents the child's current build stacked on: the `stacked <child>`
-# event just before its last ok `story <child>` (main logs story once the build is done), or one
-# with no story after it yet (a build still starting). A later ok build with no stacked event
-# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset
-# follows belongs to no build: a failed or abandoned start. Outcomes are read without their key=value
-# tail (EVENT_OUTCOME_AWK).
+# stacked_parents <child> [on|left] — the parents the child's current build stacked on: the `stacked
+# <child>` event just before its last ok `story <child>` (main logs story once the build is done), or
+# one with no story after it yet (a build still starting). A later ok build with no stacked event
+# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset follows
+# belongs to no build: a failed or abandoned start. The event is stack_start's `ok (on <merged>)`,
+# with a `; left <p>: conflicts with <q> in <files>` part per parent it left out. With no mode, every
+# parent, merged in then left out (a handover's Merge after names them all); with on, those merged
+# in, whose branches the child holds; with left, those left out, whose code reaches the child only
+# through the base. Outcomes are read without their key=value tail (EVENT_OUTCOME_AWK).
 stacked_parents() {
-  awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
+  awk -F'\t' -v s="$1" -v want="${2:-}" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
     { oc = outcome($5) }
-    $2 == "stacked" && index(oc, "ok (on ") == 1 { pend = substr(oc, 8, length(oc) - 8) }
-    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; next }
-    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = "" }
-    END { print (pend != "" ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
+    # has: a stacked event waits for its story line, even one whose left list is empty.
+    $2 == "stacked" && index(oc, "ok (on ") == 1 {
+      n = split(substr(oc, 8, length(oc) - 8), part, "; left "); has = 1; lft = ""
+      for (i = 2; i <= n; i++) lft = lft (i > 2 ? " " : "") substr(part[i], 1, index(part[i] ":", ":") - 1)
+      pend = (want == "on" ? part[1] : want == "left" ? lft : part[1] (lft != "" ? " " lft : ""))
+    }
+    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; has = 0; next }
+    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = ""; has = 0 }
+    END { print (has ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # stacked_parent <repo-dir> <child-ref> <p> — what the child must do about parent p: `merge
@@ -3088,13 +3139,16 @@ stacked_parent() {
 
 # stacked_child <story> — stacked_lines' lines for one story. The child's branch is origin's (fetched),
 # so a merge not yet pushed still shows; its local branch only while origin has none. Parents that
-# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC).
+# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC). A parent
+# stack_start left out (stacked_parents left) gives no `merge origin/story/<p>` line while its PR is
+# open, as that merge conflicts; once it merges, it is in the base line.
 stacked_child() {
-  local child src parents p line have builder="" done_ps="" rc=0
+  local child src parents left p line have builder="" done_ps="" rc=0
   child="$(basename "$1" .md)"
   src="$(repo_dir "$(fm "$1" repo)")" || return 0
   [[ -d "$(worktree_for "${src}" "${child}")" ]] || return 0
-  parents="$(stacked_parents "${child}")"; [[ -n "${parents}" ]] || return 0
+  parents="$(stacked_parents "${child}" on)"; [[ -n "${parents}" ]] || return 0
+  left=" $(stacked_parents "${child}" left) "
   # Outside herdr the agents cannot be read, so no line claims the builder is gone.
   [[ "${HERDR_ENV:-}" != 1 || "$(builder_state "${child}")" != none ]] || builder=" (no builder)"
   fetch_branch "${src}" "story/${child}" || rc=$?
@@ -3103,9 +3157,11 @@ stacked_child() {
     2) have="story/${child}" ;;
     *) echo "${child}: could not check story/${child} on origin${builder}"; return 0 ;;
   esac
-  for p in ${parents//,/ }; do
+  for p in ${parents//,/ } ${left}; do
     if [[ ! "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then echo "${child}: could not check ${p}${builder}"; continue; fi
     line="$(stacked_parent "${src}" "${have}" "${p}")" || line="could not check ${p}"
+    # A left-out parent's branch conflicts with the child's: it arrives through the base line below.
+    [[ "${left}" != *" ${p} "* || "${line}" != "merge origin/story/${p}" ]] || continue
     case "${line}" in merged) done_ps+="${done_ps:+, }${p}" ;; ?*) echo "${child}: ${line}${builder}" ;; esac
   done
   [[ -n "${done_ps}" ]] || return 0
