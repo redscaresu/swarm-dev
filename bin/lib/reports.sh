@@ -5,7 +5,7 @@
 FINDINGS_LOG_NAME="findings.tsv"
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
 # code-scanning alerts (swarm.sh findings). fallback is the agent codex-review starts in codex's place
-# on a usage limit (fallback_reviewer). skeptic and critic are the plan reviewers, and split-critic
+# on a usage or rate limit (fallback_reviewer). skeptic and critic are the plan reviewers, and split-critic
 # the check on a large epic's split into child epics, all logging on a board PR; escaped is a defect
 # a later fix found in merged work, logged against the original PR. A row logged without --reviewer
 # says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.

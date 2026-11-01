@@ -1040,7 +1040,7 @@ that PR before: each `.swarm/findings.tsv` declined row whose PR is the same PR 
 never one whose number only starts the same), with its round, its reason and its `--because`. A line
 over them says each reason is the builder's claim, not a fact, and that codex ignores none of them.
 With no such row, or with no `SWARM_PR` (a builder's own run, which never passes it, before or after its PR opens), the prompt is
-unchanged. On a usage limit the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
+unchanged. On a usage or rate limit the fallback reviewer's brief carries the same prompt. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, or `SWARM_PR` is set and is not a PR URL, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
@@ -1050,28 +1050,37 @@ miss a child that codex forks while the KILL is sent, so a harness that must lea
 group first. Every brief says to run it in the
 background (Bash `run_in_background`) and wait for it: Claude Code stops a foreground Bash call at 2
 minutes by default and 10 at most, before the limit could apply. Whoever runs it waits for it to
-exit and acts on what it prints last, since a usage limit printed early may be followed by a
-fallback's review. When it ends on codex's usage limit or on `codex skipped: ...`, no one runs it again: a
+exit and acts on what it prints last, since a usage or rate limit printed early may be followed by a
+fallback's review. When it ends on codex's usage or rate limit or on `codex skipped: ...`, no one runs it again: a
 builder carries on, a story's review agent or the lead reviews the diff itself, and the PR says `codex
-skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
+skipped: usage limit`, `codex skipped: rate limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
 its reply and on its review file's second line, and in a round with no `/code-review` it reads the
 diff itself in codex's place. codex-review sends codex's
 output, stderr merged into stdout, to the screen and to a log in a temp directory of its own (mode
 700, so no other user can make or read it first), removed when it exits. Once codex exits,
 it waits a few seconds for the output to finish, and on any way out (the timeout and an interrupt
-too) it stops the copy, so a child of codex left holding the output cannot hang the caller. If codex fails and its last lines hold its own limit message (`You’ve hit your usage limit`, with
-`ERROR:` or `■` before it; a review that only quotes the words does not count), codex-review logs a
-`codex-limit` incident in events.tsv, with `codex-<story>` as its target (not the slug, which is the
-builder's own agent name). With `fallback_reviewer` empty it then exits as codex did. With
+too) it stops the copy, so a child of codex left holding the output cannot hang the caller. When codex
+fails, codex-review keeps its last 20 lines in `.swarm/codex/<story>.tail` (`<base>.tail` with no
+`SWARM_STORY`), under a line with the time and codex's exit, replacing that story's last one. A limit
+message no pattern below matches can still be read there. If codex fails and its last 5 lines hold its
+own limit message, codex-review logs a `codex-limit` incident in events.tsv, with `codex-<story>` as its
+target (not the slug, which is the builder's own agent name). The outcome names the limit. `codex-limit:
+usage limit` is codex's usage limit (`You’ve hit your usage limit`). `codex-limit: rate limit` is a rate
+limit codex gave up on: `rate limit exceeded: <the provider's message>` or `exceeded retry limit, last
+status: 429 Too Many Requests`. Either has `ERROR:` or `■` before it, and a review that only quotes the
+words does not count. On Azure Foundry the rate limit reads `ERROR: rate limit exceeded: Your requests to
+<model> for <model> in <region> have exceeded token rate limit.` That limit is the Foundry deployment's
+capacity, its tokens per minute. You raise it in Azure, on the deployment or the quota behind it. The
+swarm never changes it. With `fallback_reviewer` empty, codex-review then exits as codex did. With
 it set, it starts `fallback-<story>` in the worktree on that model, with codex's prompt. The agent
 runs with no Edit, Write or NotebookEdit tool and cannot commit or push. It still has Bash, so
 unlike codex's read-only sandbox its brief is what keeps it from changing the worktree. It gets what is left of `codex_minutes`, its start included, so the whole run stays within it, to write its
 findings to `.swarm/reviews/fallback/<story>.md`, in a tab of its own (`fallback-<story>`). codex-review prints `reviewed by fallback <model>:
-codex usage limit` and then the findings, and closes the agent, findings or not; an interrupt closes
+codex usage limit` (`codex rate limit` on a rate limit) and then the findings, and closes the agent, findings or not; an interrupt closes
 it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
 body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
 start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
-nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. It
+nothing in time, codex-review prints `codex skipped: usage limit (<why>)` (`rate limit` on a rate limit) and exits as codex did. It
 waits for the file, not for the agent to go idle: an agent idle while a subagent or a background
 call of its own runs has not finished. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit

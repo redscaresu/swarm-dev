@@ -131,7 +131,7 @@ once for the brief (`.claude/swarm/brief.md`) and writes only what you say; an e
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference-models.md § Settings) |
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference-building.md § Building) |
 | `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference-building.md § Building) |
-| `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage limit. Empty skips the review (reference-building.md § Building) |
+| `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage or rate limit. Empty skips the review (reference-building.md § Building) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference-models.md § Settings) |
 | `merge_admin` | `off` | `on`: `swarm.sh merge` passes `--admin` to `gh pr merge`, for a repo whose ruleset requires an approving review, but only once its own checks pass and the base has no other rule `--admin` would skip (reference-models.md § Settings) |
 | `review_verify` | `ci` | `full`: a review agent's first round may run the project's tests for the changed files and check the builder's mutation proofs; later rounds trust CI. `ci`: every round reads the diff and trusts CI (reference-models.md § Settings) |
