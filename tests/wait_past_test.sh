@@ -118,7 +118,7 @@ fresh; commit s1 > /dev/null
 got="$(waitrc --stall --past "${OLD}" s1 2250)"
 check "a commit not yet pushed: the wait times out busy" "busy|exit 1" "${got}"
 
-# A gh that hangs on a moved worktree is cut at the wait's time left (a second at least), not
+# A gh that hangs on a moved worktree is cut at the wait's time left (PAST_GH_MIN, 5 s, at least), not
 # PAST_GH_WAIT: its two reads (the first, and the one after the first slice, by then past the deadline)
 # take PAST_GH_MIN (5 s) each, not 30 s.
 fresh; commit s1 > /dev/null; touch "${ROOT}/ghhang"; t0=${SECONDS}
