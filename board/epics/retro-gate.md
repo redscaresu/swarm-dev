@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 hld: 2026-10-25-swarm-dev-0-28
 stage: v0.31.0
 depends_on: [rules-file, ladder-cost]
