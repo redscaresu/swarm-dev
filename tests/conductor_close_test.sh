@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # conductor_close_test.sh — swarm.sh close conduct-<epic> refuses, closing nothing and saying why, while
-# the conductor is working, while its epic's Finish PR (board/finish-<epic>) is open, or when gh cannot
-# list that PR; an idle conductor with no Finish PR open closes as before. A swarm.sh merge --board of
+# the conductor is working (under a name herdr holds cut too) or its state cannot be read, while its
+# epic's Finish PR (board/finish-<epic>) is open, or when gh cannot list that PR; an idle conductor with
+# no Finish PR open closes as before. A swarm.sh merge --board of
 # that Finish PR closes the conductor once the merge has exited, the conductor reads idle and the lead
-# has tried collect's close; with no such close tried it is left open, with a line saying why.
+# has tried collect's close (for a long epic, under its full name); with no such close tried, or with
+# herdr's agent list unparseable, it is left open, with a line saying why.
 # herdr, gh and claude are stubs on PATH: herdr lists the agents in <dir>/h/agents ("<name> <pane>
 # <status> [tab]" lines, tab t1 unless given: e's; t2 is the long epic's) and logs each call to
 # <dir>/h/calls, and a pane or tab close drops its agents; the first
@@ -34,7 +36,8 @@ herdr_stub() {
 echo "$*" >> "$H/calls"
 case "$1 $2" in
   "--version ") echo "herdr 0.9.5" ;;
-  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent list") [ ! -e "$H/garbage" ] || { echo '{"result":{}}'; exit 0; }
+                awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2, $3 }
                      END { print "]}}" }' "$H/agents" ;;
   "pane list") awk 'BEGIN { printf "{\"result\":{\"panes\":[" }
@@ -96,6 +99,17 @@ is "once that Finish PR has merged, the close closes conduct-e's tab" "0|tab clo
 finish OPEN; touch "${ROOT}/ghfail"; lay "${ROOT}" "${P}" idle; close; rm -f "${ROOT}/ghfail"
 is "with gh failing to list the Finish PR, the close fails, closes nothing and says the PR could not be read" "1||yes" \
   "${rc}|$(closes "${ROOT}")|$(has "close: conduct-e could not have its Finish PR read" "${out}")"
+
+# conduct-e with a Claude session recorded: a list Claude Code fails to give leaves its state unknown,
+# and the close fails closed; a list that no longer has the session reads herdr's status, here working.
+mkdir -p "${P}/.swarm"; printf '2026-11-01T00:00:00Z\tconduct\tconduct-e\tclaude\tm\te\tsid-1\n' > "${P}/.swarm/agents.tsv"
+finish none; lay "${ROOT}" "${P}" idle; export CLAUDE_STUB_AGENTS="${ROOT}/no-such-list"; close
+is "conduct-e's session state unreadable: the close fails, closes nothing and says its state could not be read" "1||yes" \
+  "${rc}|$(closes "${ROOT}")|$(has "close: conduct-e could not have its state read" "${out}")"
+echo '[]' > "${ROOT}/sessions.json"; export CLAUDE_STUB_AGENTS="${ROOT}/sessions.json"; lay "${ROOT}" "${P}" working; close
+is "conduct-e's session gone from Claude Code's list, herdr working: the close fails and says it is working" "1||yes" \
+  "${rc}|$(closes "${ROOT}")|$(has "close: conduct-e is working" "${out}")"
+unset CLAUDE_STUB_AGENTS; rm -f "${P}/.swarm/agents.tsv" "${ROOT}/sessions.json"
 
 # An epic slug long enough that herdr holds its conductor's name cut at 32 characters, closed by the
 # full name, as close takes it: still read as working.
@@ -162,6 +176,16 @@ merge_fails=0
   is "with no collect close tried, conduct-e idle is left open past the waiter's limit, and a line says its report was not collected" \
     "0|ended||conduct-e w:c idle|close-when-idle conduct-e left open: its report was still not collected 1s after the merge that landed its Finish PR exited; collect it, and its close closes it" \
     "${rc}|$(waiter)|$(closes "${ROOT}")|$(cat "${ROOT}/h/agents")|$(events | grep '^close-when-idle ' || true)"
+
+  # herdr's agent list answers but does not parse as one, from just after the merge (which needs the list
+  # to find conduct-e's pane): conduct-e, collected and in truth idle, reads as unknown, never as gone,
+  # so it is left open, with a line naming its state.
+  board_finish; working idle; collect; working working; : > "${ROOT}/h/calls"
+  merge HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_CLOSE_IDLE_SECONDS=5 --board "${URL}"; touch "${ROOT}/h/garbage"; working idle
+  is "with herdr's agent list unparseable, the waiter closes nothing and says conduct-e's state is unknown" \
+    "0|ended||close-when-idle conduct-e left open: it was still unknown 5s after the merge that landed its Finish PR exited; close it with swarm.sh close conduct-e once it is done" \
+    "${rc}|$(waiter)|$(closes "${ROOT}")|$(events | grep '^close-when-idle ' || true)"
+  rm -f "${ROOT}/h/garbage"
 
   # A long epic: herdr holds its conductor cut at 32 characters, and the lead's collect close names it
   # in full, as close takes it. Its Finish PR's merge still closes it once it is idle.

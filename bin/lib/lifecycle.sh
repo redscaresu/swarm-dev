@@ -559,7 +559,8 @@ back_to_ready() {
 # conductor_busy <conductor> — why closing <conductor> now could cut its work short, or nothing (and
 # it fails): it is working (read_state, under herdr's name for it, which agent_name cuts at 32
 # characters: busy, unless its turn stopped on an API error (api_stopped), whose exit is this close; or
-# herdr's status working where herdr answers for it), or its epic's
+# herdr's status working where herdr answers for it, or for a session Claude Code no longer lists), its
+# state could not be read (unknown: Claude Code's list failed; fail closed), or its epic's
 # Finish PR (swarm.sh finish <epic>, on board/finish-<epic>) is open, whose swarm.sh merge --board may
 # be running in its pane, where a close would kill it. A list of that branch's PRs gh could not give
 # says so: whether such a merge runs is not known (fail closed). The backlog conductor finishes no
@@ -567,8 +568,11 @@ back_to_ready() {
 conductor_busy() {
   local state pane epic origin prs open head n
   n="$(agent_name "$1")"; state="$(read_state "${n}")"
+  # A session Claude Code no longer lists reads herdr's status, as close_idle_wait reads it.
+  [[ "${state}" != gone ]] || state="herdr:$(agent_status "${n}")"
   if [[ "${state}" == busy ]]; then pane="$(agent_field "${n}" pane_id)"; ! api_stopped "${n}" "${pane}" || state=stopped; fi
   if [[ "${state}" == busy || "${state}" == herdr:working ]]; then echo "is working"; return 0; fi
+  if [[ "${state}" == unknown ]]; then echo "could not have its state read (Claude Code's agent list failed), so whether it is working is not known"; return 0; fi
   epic="$(conduct_epic "$1")"
   [[ "${epic}" != backlog && ${BOARD_IN_REPO} == 1 ]] || return 1
   origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 1
@@ -2049,8 +2053,8 @@ close_when_idle() {
 # tidy, a close or a deleted project took the pane first). Then it reads the agent's state:
 # session_state's word for <name>'s session, or, where herdr answers for it (no session, or one Claude
 # Code no longer lists), herdr's status for this project's agent under the recorded -done name, or
-# <name> for a conductor (list_field over one herdr agent list; a list herdr fails to give reads as
-# unknown, never as no agent). Idle, done, or no agent under that name any more: a review agent's pane
+# <name> for a conductor (list_field over one herdr agent list; a list herdr fails to give, or one that
+# does not parse, reads as unknown, never as no agent). Idle, done, or no agent under that name any more: a review agent's pane
 # closes (close_pane, which closes its tab too when the pane was the record's last). A conductor closes
 # as collect's close closes it (shut_agent: its epic's tabs, its own pane, its session archived), but
 # only once its report is there and the lead has collected it (report_collected tried: a swarm.sh close
@@ -2089,7 +2093,8 @@ close_idle_wait() {
       agent="${who}"; [[ -z "${conductor}" ]] || agent="${name}"
       state="$(session_state "${name}")"
       if [[ "${state}" == herdr || "${state}" == gone ]]; then
-        if agents="$(herdr agent list 2>/dev/null)"; then
+        # A list that does not parse is unknown too: list_field would read it as no agent.
+        if agents="$(herdr agent list 2>/dev/null)" && json "d['result']['agents'] and ''" <<< "${agents}" >/dev/null 2>&1; then
           state="herdr:$(list_field "${agent}" agent_status <<< "${agents}")"
         else state="herdr:unknown"; fi
       fi

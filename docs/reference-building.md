@@ -71,7 +71,7 @@ of it in `events.tsv` since the report, as collect's `swarm.sh close` logs, and 
 line saying a merge closed it) gets `no conductor started:
 <conductor> is gone, and nobody collected <report>; read it, then delete it`.
 Collect's `swarm.sh close conduct-<epic>` refuses, closing nothing and saying why, while the
-conductor is working, while its epic's Finish PR (`swarm.sh finish <epic>`, on
+conductor is working or its state cannot be read, while its epic's Finish PR (`swarm.sh finish <epic>`, on
 `board/finish-<epic>`) is open, or when gh cannot list that PR. Closing the conductor then could
 kill the `swarm.sh merge --board` running in its pane. Wait for it to go idle and the PR to merge,
 then close it again. An idle conductor with no Finish PR open closes as before. A `swarm.sh merge
