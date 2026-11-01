@@ -431,7 +431,9 @@ dataset_report() {
 #     lines in events.tsv whose outcome no_review_events reads as a failed start (`did not start`, `start
 #     was unclear`, `took its brief`) and how many an ok review-agent line of the same slug followed within 10 minutes;
 #     then TSV slug failed_at for each one not restarted, or a line when there is none in the window.
-#     --epic does not narrow it.
+#     Then, after a blank line, TSV day retried saved: per local day in the window, start_agent's
+#     start-retry lines (a start retried once in a fresh pane) and how many of them are ok (the fresh
+#     pane saved the start), or a line when there is none. --epic does not narrow it.
 #   tell_refusals: TSV pane state tells refused, over the tell and tell:<kind> lines in events.tsv whose
 #     local day is in the window. A refusal's outcome is neither ok nor queued: or replaced:, nor, on a
 #     tell or tell:findings line, holds `herdr sent it the brief` (delivered, as findings_told counts

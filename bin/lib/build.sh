@@ -137,17 +137,26 @@ line, as \`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <fi
 (the clash rule above says how that form sends). Once that tell has gone, start the review agent
 again when the next \`swarm.sh wait <slug>\` on the builder returns. A note whose why is the merge's
 comes after the review passed: for a \`dequeued\` merge, nudge the builder with a file naming the
-failing checks, telling it to merge origin/<base> in and push, in the same form,
+failing checks, telling it to merge origin/<base> in, fix them and push, since the queue ran them on the
+PR with the base merged in and the PR's own CI did not, in the same form,
 \`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>\` in the background, and its
 new head gets a new review agent as above; for \`base merged, red:\`, \`base merged, conflict:\` or a
-moved base, the review agent has nudged the builder already, so wait on it and start the review agent
-again on the head it pushes; for a \`held:\` line of \`swarm.sh merge\` (\`costs money\`, or one that
+moved base that ends \`merge origin/<base> in, push, and merge the new head\`, the review agent has
+nudged the builder already, so wait on it and start the review agent again on the head it pushes; one
+that ends \`run merge --head <sha> <PR URL> again\` the review agent has run twice, so it goes in your
+report for the lead; for a \`held:\` line of \`swarm.sh merge\` (\`costs money\`, or one that
 ends \`the user merges it\`), the user merges the PR, maybe days later, so close its builder with a
 bare \`swarm.sh close <slug>\`, which counts nothing for a story in review, and list the PR under
 Waits on the user; an \`unconfirmed\` merge or a base red or timed out after it goes in your report
 for the lead. A second stop of the story for the same reason, a story held for the lead, a refused
 tell or a failed step-up goes in your report for the lead.
 EOF
+}
+
+# base_merge_rule <base> — when a builder merges the base in: only on a conflict or a swarm.sh line,
+# since swarm.sh merge brings the base in itself (base_rounds) and every merge-in reruns CI.
+base_merge_rule() {
+  printf '%s' "Merge origin/$1 into your branch only when the PR is CONFLICTING or a swarm.sh line tells you to (a Stacked line, a merge refusal, a nudge); never because the base moved: \`swarm.sh merge\` brings the base in at merge time, and each merge-in reruns CI."
 }
 
 # codex_review_cmd <base> [slug] [pr-url] — how a brief runs codex: through codex-review, which stops it after
@@ -550,7 +559,7 @@ or skill line that names it, and fix each one that no longer matches. Run \`$(co
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
-the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
+the tests and push: a conflicted PR runs no checks and waits forever. $(base_merge_rule "${base}") $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
 in the PR body. $(load_rule "${slug}") $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
@@ -675,11 +684,12 @@ build_story() {
   # tried again in this process, with the same worktree and brief, after a 3-second nap and once the
   # failed try's pane is closed, up to STARTS_PER_REVIEW starts in all. Each retried failure is a story
   # event ending (try N of STARTS_PER_REVIEW); the last try's is the command's own, from the die here.
+  # OUTER_START_RETRY keeps start_agent's own fresh-pane retry off, so the two never nest.
   # Not `if start_agent`: there set -e is ignored inside start_agent too (tell_deliver). Its die is the
   # subshell's, so it writes no outcome, and the die below gives the command its line.
   for (( try = 1; ; try++ )); do
     since="$(date +%s)"   # before the brief: send_goal counts a turn that ran since as having taken it
-    set +e; { err="$( set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+    set +e; { err="$( set -e; OUTER_START_RETRY=1 start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
     if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; break; fi
     if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; exit "${rc}"; fi
     why="${err##*swarm: }"; [[ -z "${err%swarm: *}" ]] || printf '%s' "${err%swarm: *}" >&2
@@ -719,7 +729,8 @@ build_story() {
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
 # a reader of it sees only this head's. A start that ran nothing (start_retryable) is tried again, after
-# a 3-second nap, up to STARTS_PER_REVIEW starts in all; each retried failure is a review-agent event
+# a 3-second nap, up to STARTS_PER_REVIEW starts in all (with start_agent's own fresh-pane retry off:
+# OUTER_START_RETRY); each retried failure is a review-agent event
 # ending (try N of STARTS_PER_REVIEW), and so is the last try's die. Each try is logged as it begins,
 # before its files go aside and start_agent sends the brief, as `review-agent:try <slug> (try N of STARTS_PER_REVIEW) started`,
 # so a try cut off with no outcome reads as one that may have sent it (review_restart_try). The first
@@ -780,7 +791,7 @@ review_agent() {
     moved=""
     if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
     if [[ -f "${stop}" ]]; then mv "${stop}" "${stop}.prev"; fi
-    if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
+    if { OUTER_START_RETRY=1 start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
         | { tee "${errf}" >&2 || cat >/dev/null; }; } 3>&1; then
       rm -f "${out}.prev" "${stop}.prev"; break
     fi
@@ -1409,7 +1420,11 @@ check or the base to merge in, re-run the tests and push, and telling it to pull
 (\`git pull --ff-only origin story/$1\`): the PR's head may be GitHub's merge commit, which its
 worktree does not have. Then send the conductor the stop note, as for any other refusal below,
 naming that line, and stop: the head the builder pushes gets a new review agent from the conductor
-once watch reports its checks finished. A \`base merged, head moved:\` refusal is a moved
+once watch reports its checks finished. When it refuses with a line that ends \`merge brings <base>
+in itself, with no merge-in from the builder: run merge --head <sha> <PR URL> again\`, GitHub did not
+merge the base in and nothing is known to conflict: nudge nobody, and run \`$5 merge --head <sha> $2\`,
+with the <sha> it names, once more, in the background as before. A second such refusal is one of the
+other refusals below. A \`base merged, head moved:\` refusal is a moved
 head, as above. Any other \`base merged, <cause>:\` refusal is one of the other refusals below.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the
 conductor the stop note, as for any other refusal below, naming that line, so it closes the builder.

@@ -274,7 +274,17 @@ and a reserved name: one from the list above or starting `LC_`, `SWARM_`, `XDG_`
 own Claude Code session's (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_PID`); and one that loads code
 into what the agent runs (`BASH_ENV`, `ENV`, `DYLD_*`, `LD_*`). No value goes through a command line:
 swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's shell runs and which
-deletes itself, so the pane's scrollback shows the launch line with no value in it.
+deletes itself, so the pane's scrollback shows the launch line with no value in it. swarm.sh then
+waits up to 60 seconds for that shell to print that it has the agent's environment, and never starts
+the agent in a pane where it did not. If the shell misses that wait, or herdr refuses twice to type
+the line, a start that nothing else retries (`swarm.sh agent`, `conduct`, a step-up, a restart that
+starts a fresh builder, the fallback reviewer) gets one more try: swarm.sh closes the pane, prints a
+line on stderr saying the start is tried once more in a fresh pane, and runs the same steps there. A
+second miss stops the start, as before. A restart that resumes the builder's session gets no retry
+and stops at the first miss. Each retried start logs one `start-retry` line in events.tsv, `ok` when the fresh
+pane saved it, and `flow`'s `start_failures` section counts these lines. A pane that cannot be closed
+may still be open, so in that case the start stops at once and opens no second pane. `story` and
+`review-agent` starts skip this retry, since they already start again on their own, up to 3 starts.
 
 `agent_env = NAME ...` in `.claude/swarm/config` adds names for every agent of every role: the HLD
 and epic co-authors, planners, conductors, builders and review agents. A restart keeps the names.
@@ -348,7 +358,9 @@ checked, since its builder reads the board's own copy.
 the bare file. A bare file does not clash with a part of it. A part's first word skips a leading `§`, `#`, "the", "a" or "an". Otherwise both build at once, even in the same file: git merges edits to
 different parts of one file, and a story names the functions it changes. A builder whose PR
 conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict
-never sends a story back to `ready`. The conductor sends that as a `nudge` tell, which is not a
+never sends a story back to `ready`. A builder merges the base in only on a conflict or when a
+swarm.sh line says to (a Stacked line, a merge refusal, a nudge), never just because the base moved:
+`swarm.sh merge` brings the base in itself at merge time, and each merge-in reruns CI. The conductor sends that as a `nudge` tell, which is not a
 review round, and starts a builder in the story's worktree when the one it had was closed after
 `swarm.sh review`. The conductor sends every nudge its brief names as
 `swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>`, run in the background,
