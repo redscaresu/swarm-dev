@@ -2,8 +2,9 @@
 # merge_base_accept_test.sh — swarm.sh merge --head <reviewed> on a PR whose head is past the reviewed
 # one. It merges a head that adds only git's own clean merges of the base (base_merges_only), printing
 # an accepted: line, and refuses any other head for a new review at its head check, before
-# dropped_hold runs: a merge that resolved a conflict or dropped a base line, a commit of the PR's
-# own, a merge of a branch off the base, and a head that lost the reviewed commit. Neither way leaves
+# dropped_hold runs: a merge that resolved a conflict, dropped a base line or set a submodule pointer
+# by hand, a commit of the PR's own, a merge of a branch off the base, and a head that lost the
+# reviewed commit. Neither way leaves
 # a fetched ref. On merge_fixture.sh, with a real origin: o/r's clone ${ROOT}/r beside the project
 # (repos_dir is the project's parent), whose origin is the bare ${ROOT}/o/r.git, where W, a work
 # repo, pushes main and each case's refs/pull/7/head.
@@ -120,6 +121,16 @@ branch side; SIDE="$(wput side.txt s1)"; branch s main; REV_S="$(wput s.txt s1)"
 wg -C "${W}" merge -q --no-ff --no-edit side; SM="$(wg -C "${W}" rev-parse HEAD)"
 fresh; pr_head "${SM}"; merge --head "${REV_S}" "${URL}"
 head_refused "a clean merge of a branch off the base" "${REV_S}" "${SM}" "merge ${SM:0:7}'s second parent ${SIDE:0:7} is not on main"
+
+# A merge of main that also sets a submodule pointer by hand, with diff.ignoreSubmodules=all in the
+# clone, which would hide that pointer from the remerge-diff were it not overridden.
+branch gl; REV_G="$(wput gl.txt g1)"; land g g5
+wg -C "${W}" checkout -q gl; wg -C "${W}" merge -q --no-ff --no-commit main > /dev/null 2>&1 || true
+wg -C "${W}" update-index --add --cacheinfo "160000,${REV_G},sub"; wg -C "${W}" commit -q --no-edit; GL="$(wg -C "${W}" rev-parse HEAD)"
+git -C "${ROOT}/r" config diff.ignoreSubmodules all
+fresh; pr_head "${GL}"; merge --head "${REV_G}" "${URL}"
+git -C "${ROOT}/r" config --unset diff.ignoreSubmodules
+head_refused "a merge that also sets a submodule pointer, diff.ignoreSubmodules=all in the clone" "${REV_G}" "${GL}" "merge ${GL:0:7} ${NOT_OWN}"
 
 # git below 2.36, which has no git show --remerge-diff: refused as before.
 mkdir -p "${ROOT}/oldgit"

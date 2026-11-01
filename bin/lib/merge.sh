@@ -853,7 +853,9 @@ remerge_git() {
 # must be on that walk, not only somewhere in <head>'s history. Every commit on the walk must have two
 # parents, the second on the fetched <base>, and an empty git show --remerge-diff: its tree is the one
 # git's own merge of its parents makes, so it holds no resolved conflict, no dropped base line and no
-# edit; --no-show-signature keeps a signed merge's gpg lines (log.showSignature) out of that diff. It prints those merges, oldest first, and succeeds; otherwise it prints why on one line (or a
+# edit; --no-show-signature keeps a signed merge's gpg lines (log.showSignature) out of that diff, and
+# --ignore-submodules=none keeps a submodule pointer set by hand in it whatever diff.ignoreSubmodules
+# or a .gitmodules ignore = all says. It prints those merges, oldest first, and succeeds; otherwise it prints why on one line (or a
 # die's line on stderr) and fails. Its body is a subshell whose EXIT trap drops the refs pr_fetch made
 # (dropped_refs_drop), as dropped_hold's is: merge_pr's own EXIT trap is base_wait's to replace.
 base_merges_only() (
@@ -878,7 +880,7 @@ base_merges_only() (
   done <<< "${chain}"
   for c in ${merges}; do
     out="$(git -C "${DROPPED_DIR}" -c merge.conflictStyle=merge show --remerge-diff --format= --no-color --no-ext-diff \
-      --no-textconv --no-show-signature "${c}" -- 2>&1)" || { echo "git cannot remerge ${c:0:7}: ${out##*$'\n'}"; exit 1; }
+      --no-textconv --no-show-signature --ignore-submodules=none "${c}" -- 2>&1)" || { echo "git cannot remerge ${c:0:7}: ${out##*$'\n'}"; exit 1; }
     [[ -z "${out}" ]] \
       || { echo "merge ${c:0:7} is not git's own merge of its parents: its remerge-diff is not empty (a resolved conflict, a dropped line or an edit)"; exit 1; }
   done
