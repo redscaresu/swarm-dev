@@ -345,18 +345,42 @@ check "the new builder is restarted with the rest" "0|yes|yes" \
   "${rc}|$(has 'agent start b4 --kind claude --pane w:b4' "$(calls 'agent start b4')")|$(has "b4: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
 rm -f "${H}/onhandover"
 
-# --- herdr lists no session for b1 (herdr 0.9.5 lists none): it resumes the one agents.tsv recorded
-# (s0, from before its /clear) with its launch flags, and the output says where the id came from.
+# --- herdr lists no session for b1 (herdr 0.9.5 lists none). agents.tsv recorded s0, the session before
+# b1's /clear; hooks/agent-state.sh moved s0.argv's --resume to s7, the session it is in now. Claude Code
+# lists s0 as idle but s7 as busy: b1 is waited for, never sent a key. Once s7 is idle b1 resumes s7 with
+# its launch flags, the output says where the id came from, and the files keep agents.tsv's name, s0.
+RD="${CLAUDE_CONFIG_DIR}/swarm-dev/resume"; mkdir -p "${RD}"
+with_session() { sed -i.bak "s/]\$/,{\"sessionId\":\"$1\",\"status\":\"$2\"}]/" "${H}/claude.json"; }   # <id> <status>
+printf '%s\n' python3 -I "${RD}/s0.py" claude --resume s7 --model sonnet > "${RD}/s0.argv"
 for n in conduct-e b2 b4; do echo "${NEW}" > "${P}/.swarm/versions/${n}"; done
-echo 0.21.0 > "${P}/.swarm/versions/b1"; claude_list idle idle idle
+echo 0.21.0 > "${P}/.swarm/versions/b1"; claude_list idle idle idle; with_session s7 busy
 sed -i.bak 's/^b1 w:b1 s1$/b1 w:b1 -/' "${H}/agents"
+WAIT_MS=200 upgrade e
+check "agents.tsv's s0 reads idle but s7, where b1 is now, is busy: b1 is sent no key and is named as busy" "1|yes|" \
+  "${rc}|$(has 'b1: left on 0.21.0: still busy at the end of the wait' "$(cat "${H}/out")")|$(calls 'pane send-keys w:b1')"
+claude_list idle idle idle; with_session s7 idle
 upgrade e
-check "with no session from herdr, b1 restarts with --resume of agents.tsv's id and its launch flags" "0|yes" \
-  "${rc}|$(has 'agent start b1 --kind claude --pane w:b1 --timeout 60000 -- --resume s0 --model sonnet --effort high --permission-mode auto' "$(calls 'agent start b1')")"
-check "it says the session came from agents.tsv, and b1 moved" "yes|yes" \
-  "$(has 'b1: herdr lists no session for it; resuming s0, the one agents.tsv recorded' "$(cat "${H}/out")")|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
-check "the resume command and the report to herdr carry that id" "yes|yes" \
-  "$(has $'claude\n--resume\ns0\n--model' "$(cat "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s0.argv")")|$(has '--agent-session-id s0 -- python3 -I' "$(calls 'pane report-agent w:b1')")"
+check "with no session from herdr, b1 restarts with --resume of the session a /clear moved agents.tsv's id to, and its launch flags" "0|yes" \
+  "${rc}|$(has 'agent start b1 --kind claude --pane w:b1 --timeout 60000 -- --resume s7 --model sonnet --effort high --permission-mode auto' "$(calls 'agent start b1')")"
+check "it says where the session came from, and b1 moved" "yes|yes" \
+  "$(has 'b1: herdr lists no session for it; resuming s7, which a /clear moved agents.tsv'"'"'s s0 to' "$(cat "${H}/out")")|$(has "b1: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
+check "the report to herdr carries s7 under s0's wrapper, s0.argv (the file the hooks move) says s7, and no s7.argv is made" "yes|yes|no" \
+  "$(has "--agent-session-id s7 -- python3 -I ${RD}/s0.py claude --resume s7 --model sonnet" "$(calls 'pane report-agent w:b1')")|$(has $'claude\n--resume\ns7\n--model' "$(cat "${RD}/s0.argv")")|$([[ -e "${RD}/s7.argv" ]] && echo yes || echo no)"
+check "SWARM_RESUME names s0.argv, the file a later /clear moves" "yes" \
+  "$(has "export SWARM_RESUME=$(printf %q "${RD}/s0.argv")" "$(cat "${H}/launch-w:b1")")"
+
+# --- A second /clear moves s0.argv on to s8 (the hook's rewrite); the next upgrade resumes s8.
+sed -i.bak 's/^s7$/s8/' "${RD}/s0.argv"; claude_list idle idle idle; with_session s8 idle; echo 0.21.0 > "${P}/.swarm/versions/b1"
+upgrade e
+check "after a second /clear, b1 resumes s8, the session s0.argv names now" "0|yes" \
+  "${rc}|$(has 'agent start b1 --kind claude --pane w:b1 --timeout 60000 -- --resume s8 --model sonnet' "$(calls 'agent start b1')")"
+
+# --- With no resume command for agents.tsv's id, b1 resumes that id as it stands.
+rm -f "${RD}/s0.argv" "${RD}/s7.argv"; claude_list idle idle idle; echo 0.21.0 > "${P}/.swarm/versions/b1"
+upgrade e
+check "with no resume command for it, b1 restarts with --resume of agents.tsv's id itself, and says so" "0|yes|yes" \
+  "${rc}|$(has 'agent start b1 --kind claude --pane w:b1 --timeout 60000 -- --resume s0 --model sonnet' "$(calls 'agent start b1')")|$(has 'b1: herdr lists no session for it; resuming s0, the one agents.tsv recorded' "$(cat "${H}/out")")"
+rm -f "${RD}/s0.argv"
 sed -i.bak 's/^b1 w:b1 -$/b1 w:b1 s1/' "${H}/agents"
 
 # --- A conductor whose restart fails before its claude exits (neither herdr nor agents.tsv gives a

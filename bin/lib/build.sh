@@ -137,17 +137,26 @@ line, as \`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <fi
 (the clash rule above says how that form sends). Once that tell has gone, start the review agent
 again when the next \`swarm.sh wait <slug>\` on the builder returns. A note whose why is the merge's
 comes after the review passed: for a \`dequeued\` merge, nudge the builder with a file naming the
-failing checks, telling it to merge origin/<base> in and push, in the same form,
+failing checks, telling it to merge origin/<base> in, fix them and push, since the queue ran them on the
+PR with the base merged in and the PR's own CI did not, in the same form,
 \`swarm.sh wait --stall --idle <slug> && swarm.sh tell <slug> nudge <file>\` in the background, and its
 new head gets a new review agent as above; for \`base merged, red:\`, \`base merged, conflict:\` or a
-moved base, the review agent has nudged the builder already, so wait on it and start the review agent
-again on the head it pushes; for a \`held:\` line of \`swarm.sh merge\` (\`costs money\`, or one that
+moved base that ends \`merge origin/<base> in, push, and merge the new head\`, the review agent has
+nudged the builder already, so wait on it and start the review agent again on the head it pushes; one
+that ends \`run merge --head <sha> <PR URL> again\` the review agent has run twice, so it goes in your
+report for the lead; for a \`held:\` line of \`swarm.sh merge\` (\`costs money\`, or one that
 ends \`the user merges it\`), the user merges the PR, maybe days later, so close its builder with a
 bare \`swarm.sh close <slug>\`, which counts nothing for a story in review, and list the PR under
 Waits on the user; an \`unconfirmed\` merge or a base red or timed out after it goes in your report
 for the lead. A second stop of the story for the same reason, a story held for the lead, a refused
 tell or a failed step-up goes in your report for the lead.
 EOF
+}
+
+# base_merge_rule <base> — when a builder merges the base in: only on a conflict or a swarm.sh line,
+# since swarm.sh merge brings the base in itself (base_rounds) and every merge-in reruns CI.
+base_merge_rule() {
+  printf '%s' "Merge origin/$1 into your branch only when the PR is CONFLICTING or a swarm.sh line tells you to (a Stacked line, a merge refusal, a nudge); never because the base moved: \`swarm.sh merge\` brings the base in at merge time, and each merge-in reruns CI."
 }
 
 # codex_review_cmd <base> [slug] [pr-url] — how a brief runs codex: through codex-review, which stops it after
@@ -359,13 +368,14 @@ EOF
 
 # stacked_start_rule — what unblock's (stacked on <parents>) means, for both merge modes.
 stacked_start_rule() {
-  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
+  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A parent whose branch conflicts with one merged in is left out: its code reaches the story through the base once its PR merges, when the story's Stacked line says to merge the base in. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
 }
 
 # A test that passes with its fix removed proves nothing; a builder shows each one can fail, and
-# findings names each new test whose FAIL line the PR body lacks.
+# findings names each new test whose FAIL line the PR body lacks. Once the PR is open, a proof in
+# place leaves the worktree dirty and review-agent refuses it (#695), so it runs on a copy.
 mutation_rule() {
-  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
+  printf '%s' "For a code change, prove each new or changed test can fail. Before the PR opens, do it in place: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work). After the PR opens, prove it on a copy of the worktree without .git, never in place. Make the copy in a new directory outside the worktree (\`rsync -a --exclude .git <worktree>/ <copy>/\`), as a copy inside it leaves the worktree dirty too; break the fix in the copy, run the test there and delete the copy, so the worktree stays clean for its review. Either way, paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body. Push what is ready, and put further points in the PR body rather than in more pushes."
 }
 
 # load_rule <slug> — a builder's cap on load it starts on purpose: 4 CPUs, gone when the check ends.
@@ -550,7 +560,7 @@ or skill line that names it, and fix each one that no longer matches. Run \`$(co
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) $(review_tests_rule "${tree}") If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
-the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
+the tests and push: a conflicted PR runs no checks and waits forever. $(base_merge_rule "${base}") $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above. When it exits 2 with \`the PR's head is <X>, not <sha>\`, the PR's branch is past your checkout (a merge GitHub made, or a push that did not land): pull it (\`git pull --ff-only origin story/${slug}\`), merge origin/${base} in if it asks, push, and wait again on the new HEAD." "say so in your reply" "\"\$(git rev-parse HEAD)\"") $(mutation_rule) Record it
 in the PR body. $(load_rule "${slug}") $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
@@ -667,7 +677,7 @@ build_story() {
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
   story_brief "${slug}" "${src}" "${base}" > "${prompt}"
-  [[ -z "${parents}" ]] || printf '%s\n' "This story is stacked: your branch starts on the branches of ${parents}, whose PRs are still open. Open your PR against \`${base}\` all the same, with \`Merge after ${STACK_PRS}\` in its body." >> "${prompt}"
+  [[ -z "${parents}" ]] || stack_brief "${base}" >> "${prompt}"
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   epic="$(fm "${story}" epic)"
@@ -675,11 +685,12 @@ build_story() {
   # tried again in this process, with the same worktree and brief, after a 3-second nap and once the
   # failed try's pane is closed, up to STARTS_PER_REVIEW starts in all. Each retried failure is a story
   # event ending (try N of STARTS_PER_REVIEW); the last try's is the command's own, from the die here.
+  # OUTER_START_RETRY keeps start_agent's own fresh-pane retry off, so the two never nest.
   # Not `if start_agent`: there set -e is ignored inside start_agent too (tell_deliver). Its die is the
   # subshell's, so it writes no outcome, and the die below gives the command its line.
   for (( try = 1; ; try++ )); do
     since="$(date +%s)"   # before the brief: send_goal counts a turn that ran since as having taken it
-    set +e; { err="$( set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
+    set +e; { err="$( set -e; OUTER_START_RETRY=1 start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" 2>&1 1>&3 )"; } 3>&1; rc=$?; set -e
     if [[ ${rc} -eq 0 ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; break; fi
     if [[ "${err}" != *"swarm: "* ]]; then [[ -z "${err}" ]] || printf '%s\n' "${err}" >&2; exit "${rc}"; fi
     why="${err##*swarm: }"; [[ -z "${err%swarm: *}" ]] || printf '%s' "${err%swarm: *}" >&2
@@ -697,7 +708,7 @@ build_story() {
     echo "swarm: ${why}" >&2; record_event story "${slug}" "${why}"
     # That failed story line ends stack_start's stacked event for stacked_parents, so the next try's
     # build needs its own, as the same worktree still sits on its parents.
-    [[ -z "${parents}" ]] || record_event stacked "${slug}" "ok (on ${parents})"
+    [[ -z "${parents}" ]] || record_event stacked "${slug}" "${STACK_ON}"
     nap 3
   done
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
@@ -719,7 +730,8 @@ build_story() {
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then, and left aside when the start is unclear: review_start_failed), so
 # a reader of it sees only this head's. A start that ran nothing (start_retryable) is tried again, after
-# a 3-second nap, up to STARTS_PER_REVIEW starts in all; each retried failure is a review-agent event
+# a 3-second nap, up to STARTS_PER_REVIEW starts in all (with start_agent's own fresh-pane retry off:
+# OUTER_START_RETRY); each retried failure is a review-agent event
 # ending (try N of STARTS_PER_REVIEW), and so is the last try's die. Each try is logged as it begins,
 # before its files go aside and start_agent sends the brief, as `review-agent:try <slug> (try N of STARTS_PER_REVIEW) started`,
 # so a try cut off with no outcome reads as one that may have sent it (review_restart_try). The first
@@ -780,7 +792,7 @@ review_agent() {
     moved=""
     if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; moved=yes; fi
     if [[ -f "${stop}" ]]; then mv "${stop}" "${stop}.prev"; fi
-    if { start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
+    if { OUTER_START_RETRY=1 start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}" 2>&1 1>&3 \
         | { tee "${errf}" >&2 || cat >/dev/null; }; } 3>&1; then
       rm -f "${out}.prev" "${stop}.prev"; break
     fi
@@ -947,6 +959,19 @@ review_own_pane() {
     || die "${REVIEW_CMD}: only review-$1, in its pane ${pane}, runs its wording recheck, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; ${REVIEW_UNDONE}"
 }
 
+# review_moved <slug> <PR URL> — for review_next: REVIEW_FROM is the head .swarm/reviews/<slug>.head
+# records when gh reads the PR's head as another one, else empty (the same head, or no head on record).
+# Dies, as review-agent --next, when gh cannot read the PR's head. Not for $(...): main logs its die's message.
+review_moved() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.head" was head
+  REVIEW_FROM=""
+  { IFS= read -r was < "${f}"; } 2>/dev/null && [[ -n "${was}" ]] || return 0
+  head="$(gh pr view "$2" --json headRefOid --jq .headRefOid 2>/dev/null)" || head=""
+  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
+    || die "review-agent --next: could not read $2's head (gh pr view --json headRefOid), so whether it moved since this round started is unknown; no round was started: run swarm.sh review-agent --next $1 <PR URL> again"
+  [[ "${head}" == "${was}" ]] || REVIEW_FROM="${was}"
+}
+
 # review_next <slug> <PR URL> — review-agent --next: the next review round of review-<slug>, run from its
 # own pane, in the same session; it starts no agent. Once the worktree is at the PR's head with nothing
 # uncommitted (review_at_head), the last findings file goes aside to <slug>.md.prev (so the conductor's
@@ -957,10 +982,15 @@ review_own_pane() {
 # review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
 # round since the build started: a findings tell or step-up, or a --recheck refused with a full round due),
 # when this build has no ok review-agent start (review-<slug> is an earlier build's), or while that round
-# has started already (review_rounds): no findings round since, so its review would be lost.
-# review_agent's refusal while review-<slug> is live stays for every other caller.
+# has started already (review_rounds): no findings round since, so its review would be lost. Two of those
+# refusals, the round-1 one and the started-already one, give way in one case: once this build has an ok
+# start and no findings round came since it (round == started), a PR head that moved from the one in <slug>.head (review_moved) is followed. The same round
+# is printed again, naming both heads, with the same checks, files and lines as a next round, so the
+# round count stays: main's review-agent:next line logs the same round, which review_rounds reads as
+# the round already started. A follow whose head is back at the recorded one by review_at_head's read is
+# refused, touching nothing. review_agent's refusal while review-<slug> is live stays for every other caller.
 review_next() {
-  local slug="$1" pr="$2" out pane round rounds base
+  local slug="$1" pr="$2" out pane round rounds started base lead
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent --next: bad slug '${slug}' (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent --next: '${pr}' is not a PR URL (swarm.sh review-agent --next <slug> <PR URL>)"
   [[ -f "${BOARD}/stories/${slug}.md" ]] || die "no story ${BOARD}/stories/${slug}.md"
@@ -975,24 +1005,35 @@ review_next() {
   fi
   [[ "${HERDR_PANE_ID:-}" == "${pane}" ]] \
     || die "review-agent --next: only review-${slug}, in its pane ${pane}, runs its next round, not pane ${HERDR_PANE_ID:-(none: HERDR_PANE_ID is not set)}; no round was started"
-  rounds="$(review_rounds "${slug}")"; round="${rounds% *}"
-  # Round 1 is always a plain review-agent start: with no findings sent since the build started (a new
-  # build's story event resets the count), there is no next round.
-  [[ "${round}" -gt 1 ]] \
-    || die "review-agent --next: no findings went to ${slug}'s builder since its build started, so there is no next round (round 1 is a plain review-agent start); no round was started"
-  # A review-<slug> left from an earlier build has no start in this one: its next round is not this build's.
-  [[ "${rounds#* }" -gt 0 ]] \
-    || die "review-agent --next: no review-agent start of ${slug} is on record since its build started, so review-${slug} is from an earlier build; no round was started: close it, then start one with swarm.sh review-agent ${slug} <PR URL>"
-  [[ "${rounds#* }" -lt "${round}" ]] \
-    || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: send this round's findings with swarm.sh tell ${slug} findings <file> first, then run it again"
+  rounds="$(review_rounds "${slug}")"; round="${rounds% *}"; started="${rounds#* }"
+  # A head pushed since this build's round started, with no findings sent since, is that round's to follow.
+  REVIEW_FROM=""
+  if [[ "${started}" -gt 0 && "${round}" -eq "${started}" ]]; then review_moved "${slug}" "${pr}"; fi
+  if [[ -z "${REVIEW_FROM}" ]]; then
+    # Round 1 is always a plain review-agent start: with no findings sent since the build started (a new
+    # build's story event resets the count), there is no next round.
+    [[ "${round}" -gt 1 ]] \
+      || die "review-agent --next: no findings went to ${slug}'s builder since its build started, so there is no next round (round 1 is a plain review-agent start); no round was started"
+    # A review-<slug> left from an earlier build has no start in this one: its next round is not this build's.
+    [[ "${started}" -gt 0 ]] \
+      || die "review-agent --next: no review-agent start of ${slug} is on record since its build started, so review-${slug} is from an earlier build; no round was started: close it, then start one with swarm.sh review-agent ${slug} <PR URL>"
+    [[ "${started}" -lt "${round}" ]] \
+      || die "review-agent --next: round ${round} of ${slug} has started already, and no findings went to its builder since; no round was started: send this round's findings with swarm.sh tell ${slug} findings <file> first, then run it again"
+  fi
   review_at_head "${slug}" "${pr}" next
+  # review_moved read the head once; a push back to the recorded head since leaves nothing to follow.
+  [[ -z "${REVIEW_FROM}" || "${REVIEW_HEAD}" != "${REVIEW_FROM}" ]] \
+    || die "review-agent --next: ${pr}'s head is back at ${REVIEW_FROM}, the head round ${round} of ${slug} started on, since --next first read it; no round was started: run swarm.sh review-agent --next ${slug} <PR URL> again"
   base="$(base_for "${REVIEW_SRC}")" \
     || die "review-agent --next: could not tell ${slug}'s base branch, which its dropped-lines check needs; no round was started: run swarm.sh review-agent --next ${slug} <PR URL> again"
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
   if [[ -f "${out}" ]]; then mv "${out}" "${out}.prev"; fi
   echo "${REVIEW_HEAD}" > "${out%.md}.head"
   # The brief pins the head of the round it started: this round's head replaces it there.
-  echo "Review round ${round} of story ${slug}: review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
+  lead="Review round ${round} of story ${slug}:"
+  [[ -z "${REVIEW_FROM}" ]] \
+    || lead="Review round ${round} of story ${slug} again: ${pr}'s head moved from ${REVIEW_FROM} to ${REVIEW_HEAD} with no findings sent since this round started, so the round stays ${round};"
+  echo "${lead} review ${pr} at its new head ${REVIEW_HEAD}, as your brief says, but with ${REVIEW_HEAD} in place of every head the brief names: when the review is done, check that \`git rev-parse HEAD\` still prints ${REVIEW_HEAD}; write this round's findings to fix to ${out%.md}.round.md, and ${out} only on a pass or a stop, each afresh with \`head: ${REVIEW_HEAD}\` as its first line (or, if the worktree moved, \`head moved: <what changed>\` under it)."
   review_round_line "${round}" "${pr}"
   echo "Before you read this round's diff, run \`$(dropped_lines_cmd "${pr}" "${REVIEW_HEAD}" "${base}")\` in the background and act on its exit as your brief's dropped-lines check says."
 }
@@ -1277,11 +1318,12 @@ review_on_head() {
   [[ "$(cat "${f%.md}.head" 2>/dev/null)" == "$2" && -n "$(agent_field "$(agent_name "review-$1")" pane_id)" ]]
 }
 
-# review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents), that their
-# commits are in its diff against <base> but are not its own; nothing for any other story.
+# review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents on: those merged
+# in, not one stack_start left out), that their commits are in its diff against <base> but are not its
+# own; nothing for any other story.
 review_stack_note() {
   local parents b="" p
-  parents="$(stacked_parents "$1")"; [[ -n "${parents}" ]] || return 0
+  parents="$(stacked_parents "$1" on)"; [[ -n "${parents}" ]] || return 0
   for p in ${parents//,/ }; do b+="${b:+, }origin/story/${p}"; done
   printf '\n%s\n' "This story is stacked on ${parents}: their branches (${b}) are in its diff against origin/$2, but their code is not this story's. Leave it out of everything you write: it is neither a finding nor out of scope."
 }
@@ -1404,7 +1446,11 @@ check or the base to merge in, re-run the tests and push, and telling it to pull
 (\`git pull --ff-only origin story/$1\`): the PR's head may be GitHub's merge commit, which its
 worktree does not have. Then send the conductor the stop note, as for any other refusal below,
 naming that line, and stop: the head the builder pushes gets a new review agent from the conductor
-once watch reports its checks finished. A \`base merged, head moved:\` refusal is a moved
+once watch reports its checks finished. When it refuses with a line that ends \`merge brings <base>
+in itself, with no merge-in from the builder: run merge --head <sha> <PR URL> again\`, GitHub did not
+merge the base in and nothing is known to conflict: nudge nobody, and run \`$5 merge --head <sha> $2\`,
+with the <sha> it names, once more, in the background as before. A second such refusal is one of the
+other refusals below. A \`base merged, head moved:\` refusal is a moved
 head, as above. Any other \`base merged, <cause>:\` refusal is one of the other refusals below.
 When merge refuses with \`held:\`, the user merges the PR: the review is the handoff. Send the
 conductor the stop note, as for any other refusal below, naming that line, so it closes the builder.
@@ -1660,14 +1706,19 @@ EOF
 # stack_start <story> <repo-dir> <worktree> <parents> — a stacked story's worktree, on story/<slug> at
 # origin/story/<first parent>, with each other parent's branch merged in. Each parent's branch is
 # fetched first and its PR must still be open; when one is not, the story goes back to blocked (in
-# BOARD_STATE_DIR, as unblock's) and nothing is made. A merge that fails leaves no worktree or
-# branch, and names the two branches that conflict and their files (merge_clash). Sets STACK_PRS to the
-# parents' PR URLs, for the brief.
+# BOARD_STATE_DIR, as unblock's) and nothing is made. A parent whose merge conflicts is left out: the
+# merge is aborted and the worktree stays on the parents merged so far; its code reaches the child
+# through the base once its PR merges. Any other failed merge leaves no worktree or branch, and says
+# what the parent was merged into and why (merge_clash). For the brief it sets STACK_PRS to every
+# parent's PR URL, STACK_MERGED to the parents merged in (the first among them) and STACK_LEFT to a
+# line per left-out parent (`<p>: conflicts with <q> in <files>`). STACK_ON is the stacked event's
+# outcome, which it records: `ok (on <merged>)`, with `; left <p>: conflicts with <q> in <files>` per
+# left-out parent before the `)` (stacked_parents reads both parts).
 stack_start() {
-  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why merged sign=()
+  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why merged on files sign=()
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_sign_commits}" != true ]] || sign=(-S)
-  slug="$(basename "${story}" .md)"; STACK_PRS=""
+  slug="$(basename "${story}" .md)"; STACK_PRS=""; STACK_LEFT=""
   for p in $4; do
     if ! git -C "${src}" fetch -q origin "+refs/heads/story/${p}:refs/remotes/origin/story/${p}" 2>/dev/null \
        || ! pr="$(open_pr "${src}" "${p}")"; then
@@ -1678,14 +1729,38 @@ stack_start() {
   done
   # No upstream: a plain push must never reach the parent's branch.
   git -C "${src}" worktree add -q --no-track -b "story/${slug}" "${wt}" "origin/story/${first}"
-  merged="origin/story/${first}"
+  merged="origin/story/${first}"; on="${first}"
   for p in ${4#"${first}"}; do
-    if why="$(git -C "${wt}" merge -q --no-edit ${sign[@]+"${sign[@]}"} "origin/story/${p}" 2>&1)"; then merged+=" origin/story/${p}"; continue; fi
+    if why="$(git -C "${wt}" merge -q --no-edit ${sign[@]+"${sign[@]}"} "origin/story/${p}" 2>&1)"; then
+      merged+=" origin/story/${p}"; on+=" ${p}"; continue
+    fi
     why="$(merge_clash "${wt}" "origin/story/${p}" "${merged}" "${why##*$'\n'}")"
+    # A conflict (files git left unmerged, as merge_clash read them, and a merge to abort): leave p out
+    # and go on. merge_clash's line is then `origin/story/<p> and origin/story/<q> conflict in <files>`.
+    files="$(git -C "${wt}" diff --name-only --diff-filter=U)"
+    if [[ -n "${files}" ]] && git -C "${wt}" merge --abort 2>/dev/null; then
+      why="${why#"origin/story/${p} and origin/story/"}"
+      STACK_LEFT+="${STACK_LEFT:+$'\n'}${p}: conflicts with ${why%% conflict in *} in ${files//$'\n'/, }"
+      continue
+    fi
     git -C "${src}" worktree remove --force "${wt}"; git -C "${src}" branch -q -D "story/${slug}"
     die "${slug}: ${why}; no worktree or branch was made"
   done
-  record_event stacked "${slug}" "ok (on $4)"
+  STACK_MERGED="${on}"; STACK_ON="ok (on ${on}${STACK_LEFT:+; left ${STACK_LEFT//$'\n'/; left }})"
+  record_event stacked "${slug}" "${STACK_ON}"
+}
+
+# stack_brief <base> — build_story's stacked lines for the brief, from stack_start's STACK_MERGED,
+# STACK_LEFT and STACK_PRS: the branches it starts on, a line per left-out parent saying its code
+# arrives through <base> once its PR merges, and to open the PR against <base> with Merge after every
+# parent's PR.
+stack_brief() {
+  local l
+  printf '%s\n' "This story is stacked: your branch starts on the branches of ${STACK_MERGED}, whose PRs are still open."
+  while IFS= read -r l; do
+    [[ -z "${l}" ]] || printf '%s\n' "${l%%:*} is left out, as its branch${l#*:}: its code is not in yours. It reaches your branch through \`$1\` once its PR merges, when \`swarm.sh status\` says to merge \`origin/$1\` in."
+  done <<< "${STACK_LEFT}"
+  printf '%s\n' "Open your PR against \`$1\` all the same, with \`Merge after ${STACK_PRS}\` in its body."
 }
 
 # merge_clash <worktree> <ref> <merged refs> <git's last line> — why merging <ref> failed in

@@ -100,7 +100,7 @@ is "a second move: events.tsv has both base-merged lines, each with the head it 
 fresh; moves "${H1}" "${H3}" "${B}" bin/x.sh; echo '{"ahead_by":1,"files":[{"filename":"bin/y.sh","status":"modified"}]}' > "${FX}/behind.${H3}"
 echo "merge conflict between base and head" > "${FX}/update.422.${H3}"; merge "${URL}"
 refused_after "a conflict on the second round" "the base main moved past 3333333's CI (1 commits it lacks), and GitHub cannot merge it in, a conflict (HTTP 422" \
-  "the base main moved past 3333333's CI (1 commits it lacks), and GitHub cannot merge it in, a conflict (HTTP 422: merge conflict between base and head): pull the branch first (it holds GitHub's merge 3333333), then merge origin/main in, push, and merge the new head"
+  "the base main moved past 3333333's CI (1 commits it lacks), and GitHub cannot merge it in, a conflict (HTTP 422: merge conflict between base and head), which only the builder can resolve: pull the branch first (it holds GitHub's merge 3333333), then merge origin/main in, push, and merge the new head"
 
 # A head an earlier merge run made (events.tsv's base-merged line) is GitHub's merge too: a later run's
 # refusals say to pull first. So does a base check that fails after this run merged the base in.
@@ -109,7 +109,7 @@ printf '2026-10-28T00:00:00Z\tmerge\ts\t-\tbase-merged %s from %s\n' "${H3}" "${
 echo '{"ahead_by":1,"files":[{"filename":"bin/y.sh","status":"modified"}]}' > "${FX}/behind.${H3}"
 echo "merge conflict between base and head" > "${FX}/update.422.${H3}"; merge "${URL}"
 is "a head an earlier merge run made, and GitHub cannot merge main in again: says to pull the branch first, and merges nothing" "1|yes|no" \
-  "${rc}|$(said "a conflict (HTTP 422: merge conflict between base and head): pull the branch first (it holds GitHub's merge 3333333), then merge origin/main in, push, and merge the new head" && echo yes)|$(merged && echo yes || echo no)"
+  "${rc}|$(said "a conflict (HTTP 422: merge conflict between base and head), which only the builder can resolve: pull the branch first (it holds GitHub's merge 3333333), then merge origin/main in, push, and merge the new head" && echo yes)|$(merged && echo yes || echo no)"
 # A head an earlier merge run made gets the same wait as one this run makes: a run of merge on it
 # waits on the workflows a pull_request runs, which merge's plain check on the head does not read.
 fresh; echo "${H3}" > "${FX}/head"; checks "${FX}/${H3}.checks" "$(run test completed success)"; statuses "${FX}/${H3}.status"
