@@ -3075,19 +3075,27 @@ fetch_branch() {
   return 1
 }
 
-# stacked_parents <child> — the parents the child's current build stacked on: the `stacked <child>`
-# event just before its last ok `story <child>` (main logs story once the build is done), or one
-# with no story after it yet (a build still starting). A later ok build with no stacked event
-# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset
-# follows belongs to no build: a failed or abandoned start. Outcomes are read without their key=value
-# tail (EVENT_OUTCOME_AWK).
+# stacked_parents <child> [on|left] — the parents the child's current build stacked on: the `stacked
+# <child>` event just before its last ok `story <child>` (main logs story once the build is done), or
+# one with no story after it yet (a build still starting). A later ok build with no stacked event
+# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset follows
+# belongs to no build: a failed or abandoned start. The event is stack_start's `ok (on <merged>)`,
+# with a `; left <p>: conflicts with <q> in <files>` part per parent it left out. With no mode, every
+# parent, merged in then left out (a handover's Merge after names them all); with on, those merged
+# in, whose branches the child holds; with left, those left out, whose code reaches the child only
+# through the base. Outcomes are read without their key=value tail (EVENT_OUTCOME_AWK).
 stacked_parents() {
-  awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
+  awk -F'\t' -v s="$1" -v want="${2:-}" "${EVENT_OUTCOME_AWK}"'$3 != s { next }
     { oc = outcome($5) }
-    $2 == "stacked" && index(oc, "ok (on ") == 1 { pend = substr(oc, 8, length(oc) - 8) }
-    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; next }
-    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = "" }
-    END { print (pend != "" ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
+    # has: a stacked event waits for its story line, even one whose left list is empty.
+    $2 == "stacked" && index(oc, "ok (on ") == 1 {
+      n = split(substr(oc, 8, length(oc) - 8), part, "; left "); has = 1; lft = ""
+      for (i = 2; i <= n; i++) lft = lft (i > 2 ? " " : "") substr(part[i], 1, index(part[i] ":", ":") - 1)
+      pend = (want == "on" ? part[1] : want == "left" ? lft : part[1] (lft != "" ? " " lft : ""))
+    }
+    $2 == "story" && index(oc, "ok") == 1 { cur = pend; pend = ""; has = 0; next }
+    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = ""; has = 0 }
+    END { print (has ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # stacked_parent <repo-dir> <child-ref> <p> — what the child must do about parent p: `merge
@@ -3113,13 +3121,16 @@ stacked_parent() {
 
 # stacked_child <story> — stacked_lines' lines for one story. The child's branch is origin's (fetched),
 # so a merge not yet pushed still shows; its local branch only while origin has none. Parents that
-# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC).
+# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC). A parent
+# stack_start left out (stacked_parents left) gives no `merge origin/story/<p>` line while its PR is
+# open, as that merge conflicts; once it merges, it is in the base line.
 stacked_child() {
-  local child src parents p line have builder="" done_ps="" rc=0
+  local child src parents left p line have builder="" done_ps="" rc=0
   child="$(basename "$1" .md)"
   src="$(repo_dir "$(fm "$1" repo)")" || return 0
   [[ -d "$(worktree_for "${src}" "${child}")" ]] || return 0
-  parents="$(stacked_parents "${child}")"; [[ -n "${parents}" ]] || return 0
+  parents="$(stacked_parents "${child}" on)"; [[ -n "${parents}" ]] || return 0
+  left=" $(stacked_parents "${child}" left) "
   # Outside herdr the agents cannot be read, so no line claims the builder is gone.
   [[ "${HERDR_ENV:-}" != 1 || "$(builder_state "${child}")" != none ]] || builder=" (no builder)"
   fetch_branch "${src}" "story/${child}" || rc=$?
@@ -3128,9 +3139,11 @@ stacked_child() {
     2) have="story/${child}" ;;
     *) echo "${child}: could not check story/${child} on origin${builder}"; return 0 ;;
   esac
-  for p in ${parents//,/ }; do
+  for p in ${parents//,/ } ${left}; do
     if [[ ! "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then echo "${child}: could not check ${p}${builder}"; continue; fi
     line="$(stacked_parent "${src}" "${have}" "${p}")" || line="could not check ${p}"
+    # A left-out parent's branch conflicts with the child's: it arrives through the base line below.
+    [[ "${left}" != *" ${p} "* || "${line}" != "merge origin/story/${p}" ]] || continue
     case "${line}" in merged) done_ps+="${done_ps:+, }${p}" ;; ?*) echo "${child}: ${line}${builder}" ;; esac
   done
   [[ -n "${done_ps}" ]] || return 0
