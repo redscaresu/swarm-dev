@@ -250,12 +250,13 @@ the board's own repo. Commits that change only those run no tests there, so they
 `README.md` there counts as code, since a test may check it: swarm-dev's own CI gate tests the board
 READMEs. When the base gained only board paths and the board's repo cannot be read (no origin, or gh
 cannot tell which GitHub repo it is), `merge` refuses naming that read, with gh's own error line.
-That refusal also ends `merge origin/<base> in, push, and merge the new head`: once the head has the
-base, there is nothing to read. A compare it cannot read
+That refusal also ends `merge cannot go ahead until the head has <base> in it, and then nothing is
+left to check: merge origin/<base> in, push, and merge the new head`: once the head has the base,
+there is nothing to read. A compare it cannot read
 refuses too, and so does one listing 300 files or more, since GitHub lists no more, or one that lists
 no file for the commits (a commit and its revert give no file). The 300-file and no-file refusals end
-`merge origin/<base> in, push, and merge the new head` as well, since merging the base in clears them, and the conductor
-handles them as it does the moved-base refusal. A transient gh error (a 5xx, a rate limit, a timeout)
+the same way, since merging the base in clears them, and the conductor handles them as it does the
+moved-base refusal. A transient gh error (a 5xx, a rate limit, a timeout)
 is read again, three reads in all; any other read error refuses at once. Each read, the compare's
 retries included, stops after 60 seconds and refuses naming the wait. The check is cautious on purpose. GitHub ran the PR's CI
 on a merge ref, which may already hold some of those commits, and the price is one more CI run.
@@ -287,33 +288,39 @@ for the base's version. A list of 300 files or more refuses too, since GitHub li
 in events.tsv, so later steps can tell this head from a builder's push, and prints `base merged:
 <PR URL> is now <new> (<old> with <base> merged in); waiting up to <seconds>s for its CI`. Each of its
 reads stops after 60 seconds (`BASE_MOVED_WAIT`), as the compare's does. Before it has a new head it
-refuses, naming the cause, in five cases. The first four end in `merge origin/<base> in, push, and
-merge the new head`, as the moved-base refusals do:
+refuses, naming the cause. Only a conflict asks the builder to merge the base in, since only the
+builder can resolve one. A request that fails another way, a request with no answer in time, a 422
+whose head gh cannot read again and a head that never moves are failures of GitHub's request, which
+`merge` makes again on its next run. Those refusals ask for no merge-in and end `merge brings <base>
+in itself, with no merge-in from the builder: run merge --head <head> <PR URL> again`. A new head that
+GitHub did not make, or that `merge` cannot check, is a new head to review:
 
 - GitHub answers 422 and the head has not moved, a conflict: `the base <base> moved past <sha>'s CI
-  (<n> commits it lacks), and GitHub cannot merge it in, a conflict (HTTP 422: <GitHub's message>):
-  merge origin/<base> in, push, and merge the new head`. GitHub also answers 422 when the head has
-  moved since `merge` read it, so `merge` reads the head again. When it has moved, that head goes
-  through the checks above: a builder's push is a new head to review, and GitHub's own merge of the
-  base is accepted. When gh cannot read it again, `merge` refuses naming the 422 and says to pull the
-  branch first.
-- The request fails another way: `..., and asking GitHub to merge it in failed (<error>): ...`.
+  (<n> commits it lacks), and GitHub cannot merge it in, a conflict (HTTP 422: <GitHub's message>),
+  which only the builder can resolve: merge origin/<base> in, push, and merge the new head`. GitHub
+  also answers 422 when the head has moved since `merge` read it, so `merge` reads the head again.
+  When it has moved, that head goes through the checks above: a builder's push is a new head to
+  review, and GitHub's own merge of the base is accepted. When gh cannot read it again, `merge`
+  refuses naming the 422 and says to run merge again, whose next run tells a conflict from a push.
+- The request fails another way: `..., and asking GitHub to merge it in failed (<error>): merge
+  brings <base> in itself, ...`.
 - GitHub does not answer the request within 60 seconds: `..., and GitHub did not answer the
-  request to merge it in within 60s: pull the branch first (GitHub may yet push its merge), then
-  ...`.
+  request to merge it in within 60s (it may yet push its merge, a head to review): merge brings
+  <base> in itself, ...`. When GitHub's merge lands before the next run, that run refuses it as a
+  new head, for a review.
 - The head has not moved by the last read: `...; GitHub took the request to merge it in, but its head
-  was still <sha> after 20 reads 3 s apart: pull the branch first (GitHub may yet push its merge), then
-  ...`.
+  was still <sha> after 20 reads 3 s apart (it may yet push its merge, a head to review): merge brings
+  <base> in itself, ...`.
 - GitHub did not make the new head, it has other parents (a builder pushed at the same moment, say),
   a file it changes is one the PR changed too or is not the base's version, or gh cannot read its
   parents, the base's head or the compares: `base merge unchecked: <PR URL>'s head moved from <old> to <new>, <why>: review the new
   head as for any new head`.
 
 From the second round on, and for a head an earlier `merge` run made (its `base-merged` line in
-events.tsv), the PR's branch holds GitHub's merge, which the builder's worktree lacks. So the first four
-say `pull the branch first (it holds GitHub's merge <head>), then merge origin/<base> in, push, and
-merge the new head`, and the base check's own refusals, with a compare that fails, say the builder
-pulls its branch first too.
+events.tsv), the PR's branch holds GitHub's merge, which the builder's worktree lacks. So the
+conflict says `pull the branch first (it holds GitHub's merge <head>), then merge origin/<base> in,
+push, and merge the new head`, the run-merge-again refusals name that head in `merge --head`, and
+the base check's own refusals, with a compare that fails, say the builder pulls its branch first too.
 
 **Waiting for the new head.** Once it has a new head, `merge` waits for that head's CI itself, with
 `swarm.sh wait-pr`'s own loop: every 20 seconds (`MERGE_POLL`), for up to 30 minutes
@@ -399,7 +406,9 @@ tracks nothing. It sends its conductor the same stop note as for any other refus
 conductor starts a new review agent on the head the builder pushes once `watch` reports its checks
 finished, so that head is reviewed before it merges. A `base merged, head moved:`
 refusal is a moved head: the review agent stops with `head moved:`, and the new head is reviewed the
-same way. Any other refusal, another `base merged, <cause>:` or a merge lock it could not take again
+same way. On a refusal that ends `run merge --head <head> <PR URL> again`, GitHub did not merge the
+base in and no conflict is known: the review agent nudges nobody and runs that merge once more. A
+second such refusal is one of the others below, which its conductor reports for the lead. Any other refusal, another `base merged, <cause>:` or a merge lock it could not take again
 included, ends the review agent with the line in its reply and in a stop note to its conductor, which
 acts on a dequeue and reports the rest for the lead; with no conductor running, the lead acts on it. On `base merge unchecked:`, the new head is reviewed as any new head, the same way. That
 head may be a builder's push, a merge made by hand, or GitHub's own merge of the base that touches a
@@ -481,7 +490,8 @@ the merge group's commit. That commit is the one seen while the PR was queued, o
 joined and left between two reads, the one its `merge_group` run names; the reason is GitHub's only
 for a removal after this enqueue. The review agent that ran `merge` sends its conductor a stop note
 naming the dequeue (`review-<slug> stopped on <sha>: ...`), and the conductor handles it like a red
-check: it nudges the builder with the failing checks, the builder merges the base in and pushes, and
+check: it nudges the builder with the failing checks, the builder merges the base in (the queue ran
+those checks with the base merged in, which the PR's own CI did not), fixes them and pushes, and
 the new head gets a review agent of its own, which merges it once it passes. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
 while `merge` enqueues or waits each turn auto-merge off and take the PR out of the queue. Each is logged as
 unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not undo for you to do by
