@@ -180,20 +180,25 @@ parent r3 r3.txt three open; parent r1 f.txt one open; parent r2 f.txt two open
 run unblock >/dev/null || true
 stacked_of() { awk -F'\t' -v c="$1" '$2 == "stacked" && $3 == c { print $5 }' "${p}/.swarm/events.tsv" | no_version; }
 in_wt() { git -C "${ROOT}/svc-wt/$1" merge-base --is-ancestor "$(head_of "$2")" HEAD && echo yes || echo no; }
+# clean_wt <child> — the left-out merge was aborted: no MERGE_HEAD, and status (unmerged entries included) is empty.
+clean_wt() {
+  if git -C "${ROOT}/svc-wt/$1" rev-parse -q --verify MERGE_HEAD >/dev/null; then echo "MERGE_HEAD"; return; fi
+  echo "status '$(git -C "${ROOT}/svc-wt/$1" status --porcelain 2>&1)'"
+}
 # shellcheck disable=SC2016 # the backticks are the brief's
 LEFT_R2='r2 is left out, as its branch conflicts with r1 in f.txt: its code is not in yours. It reaches your branch through `main` once its PR merges, when `swarm.sh status` says to merge `origin/main` in.'
 rc=0; out="$(run story pair)" || rc=$?
 brief="$(cat "${p}/.swarm/briefs/pair.md" 2>&1 || true)"
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "two parents that conflict in f.txt: story exits 0, the worktree sits on the first parent's branch, and the stacked event and the brief name the one left out" \
-  "0|$(head_of r1)|ok (on r1; left r2: conflicts with r1 in f.txt)|yes|yes|yes" \
-  "${rc}|$(git -C "${ROOT}/svc-wt/pair" rev-parse HEAD 2>&1)|$(stacked_of pair)|$(has "${LEFT_R2}" "${brief}")|$(
+check "two parents that conflict in f.txt: story exits 0, the worktree sits on the first parent's branch, clean with no merge in progress, and the stacked event and the brief name the one left out" \
+  "0|$(head_of r1)|status ''|ok (on r1; left r2: conflicts with r1 in f.txt)|yes|yes|yes" \
+  "${rc}|$(git -C "${ROOT}/svc-wt/pair" rev-parse HEAD 2>&1)|$(clean_wt pair)|$(stacked_of pair)|$(has "${LEFT_R2}" "${brief}")|$(
   has 'your branch starts on the branches of r1, whose PRs are still open.' "${brief}")|$(
   has 'with `Merge after '"${URL}/r1 ${URL}/r2"'` in its body.' "${brief}")"
 rc=0; out="$(run story clash)" || rc=$?
-check "three parents, only the third conflicting: the second is merged in and the third left out" \
-  "0|yes|yes|no|ok (on r3 r1; left r2: conflicts with r1 in f.txt)|yes" \
-  "${rc}|$(in_wt clash r3)|$(in_wt clash r1)|$(in_wt clash r2)|$(stacked_of clash)|$(has "${LEFT_R2}" "$(cat "${p}/.swarm/briefs/clash.md" 2>&1 || true)")"
+check "three parents, only the third conflicting: the second is merged in and the third left out, the worktree clean with no merge in progress" \
+  "0|yes|yes|no|status ''|ok (on r3 r1; left r2: conflicts with r1 in f.txt)|yes" \
+  "${rc}|$(in_wt clash r3)|$(in_wt clash r1)|$(in_wt clash r2)|$(clean_wt clash)|$(stacked_of clash)|$(has "${LEFT_R2}" "$(cat "${p}/.swarm/briefs/clash.md" 2>&1 || true)")"
 # parents_of <child> [on|left] — merge.sh's stacked_parents over this project's events.tsv, with the
 # bin/lib files it needs sourced in swarm.sh's order (events_tail_merge_test.sh's lib does the same).
 # shellcheck disable=SC2034 # the sourced files read these

@@ -700,7 +700,9 @@ open PR has commits the child lacks, `<child>: merge origin/<base> (<p> merged)`
 merged and the child lacks the base's head (one line for all the merged parents; after a squash
 merge, the child takes the base), and `<child>: lost story/<p>` when the parent's PR closed unmerged
 (as a dropped parent's has), or its branch is gone while its PR is open or, still on the board, it
-has no PR. A gh or git call that fails, or a git that cannot tell, gives a `could not check` line.
+has no PR. A parent `story` left out because its branch conflicts (§ Stacked builds) gets no
+`merge origin/story/<p>` line while its PR is open; once it merges, it is in the `merge origin/<base>`
+line. A gh or git call that fails, or a git that cannot tell, gives a `could not check` line.
 Inside herdr, a line ends `(no builder)` when the child has no builder open. After each wait, watch
 and new PR, the conductor runs `unblock --startable`, starts each story it prints as `startable:`
 (§ Merging), and runs `status`, acting only on its own stories: its epic's, or for the backlog conductor those with no epic. It tells each child

@@ -368,7 +368,7 @@ EOF
 
 # stacked_start_rule — what unblock's (stacked on <parents>) means, for both merge modes.
 stacked_start_rule() {
-  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
+  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A parent whose branch conflicts with one merged in is left out: its code reaches the story through the base once its PR merges, when the story's Stacked line says to merge the base in. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
 }
 
 # A test that passes with its fix removed proves nothing; a builder shows each one can fail, and
