@@ -70,7 +70,7 @@ check "with the plan board PR's worktree there, no planned: line" test -z "$(pol
 fresh; older "${S}/e/critic.json"
 check "with an output older than the epic file (an earlier plan's), no planned: line" test -z "$(poll | grep '^planned: ')"
 
-fresh; echo '{"findings":[' > "${S}/e/critic.json"
+fresh; echo '{"findings":[' > "${S}/e/critic.json"   # vacuous-test: ok, malformed on purpose
 check "with a malformed output, no planned: line" test -z "$(poll | grep '^planned: ')"
 
 fresh; rm -f "${S}/e/critic.json"; echo '{"findings":[]}' > "${S}/e/critic.json.partial"
