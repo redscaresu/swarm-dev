@@ -1636,7 +1636,7 @@ ready_tell() {
   [[ -n "${new}" ]] || echo "no conductor started for ${url}: it made no story ready"
   # An epic <url> made active with no stories waits for its plan, not a conductor.
   while IFS=$'\t' read -r p k; do
-    [[ "${k}" == 0 && "${p}" == "${d}epics/"*.md ]] || continue
+    [[ "${k}" == 0 && "${p}" == "${d}epics/"*.md ]] || continue   # loose-match: ok an epic file under the board, which has no subdirectories
     e="$(basename "${p}" .md)"
     # Still active on the pulled board: a later PR pulled with it may have changed or deleted it.
     [[ "$(fm "${BOARD}/epics/${e}.md" status 2>/dev/null)" == active ]] || continue
