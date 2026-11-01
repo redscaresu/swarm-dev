@@ -5383,18 +5383,49 @@ upgrade_path() {
   echo "${out}"
 }
 
-# wait_command [--stall] [--idle] | --until-report <name> [timeout-ms] | --lead [timeout-ms] — the wait
-# command: a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's
-# (wait_lead). --idle, on an agent that is not a conductor or review agent, exits WAIT_NOT_IDLE when the
+# past_target <slug> <sha> <name> — wait --past's refusals, each naming the form, then PAST_SHA,
+# PAST_WT, PAST_BRANCH and PAST_ORIGIN for past_pushed. Dies, waiting on nothing, on a <sha> that is not
+# 40 hex characters, on a conductor or a review agent (<name>, as wait_command reads them), and on a
+# <slug> with no story file on the board or no worktree (worktree_for).
+past_target() {
+  local f src form="wait [--stall] --past <sha> <slug>"
+  [[ "$2" =~ ^[0-9a-f]{40}$ ]] || die "${form}: <sha> is a full 40-character commit sha, not '$2'"
+  [[ "$3" != conduct-* || "$3" =~ -done[0-9]*$ ]] || die "${form} waits on a builder, not the conductor $3"
+  [[ ! "$1" =~ ^review-[a-z0-9-]+$ || "$(awk -F'\t' -v n="$3" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" != review ]] \
+    || die "${form} waits on a builder, not the review agent $3"
+  f="${BOARD}/stories/$1.md"
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && -f "${f}" ]] || die "${form} waits on a story's builder: no story file ${f}"
+  src="$(repo_dir "$(fm "${f}" repo)")" || die "${form}: $1: ${src}"
+  PAST_WT="$(worktree_for "${src}" "$1")"
+  [[ -d "${PAST_WT}" ]] || die "${form} waits on a story's builder: $1 has no worktree at ${PAST_WT}"
+  # shellcheck disable=SC2034 # read in another file (past_pushed)
+  PAST_ORIGIN="$(git -C "${src}" remote get-url origin 2>/dev/null)" || die "${form}: $1: ${src} has no origin to read the PR's head from"
+  # shellcheck disable=SC2034 # read in another file (past_pushed)
+  PAST_BRANCH="story/$1" PAST_SHA="$2"
+}
+
+# wait_command [--stall] [--idle] [--past <sha>] | --until-report <name> [timeout-ms] | --lead [timeout-ms]
+# — the wait command: a conductor's wait, with no timeout under --until-report, any other agent's, or the
+# lead's (wait_lead). --idle, on an agent that is not a conductor or review agent, exits WAIT_NOT_IDLE when the
 # wait ends 0 on anything but idle or done (auth, waiting, gone, stepped up: or stepping up:), so
-# `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over.
+# `wait --idle <slug> && tell <slug> nudge <file>` tells only an agent whose turn is over. --past <sha>,
+# on a builder only (past_target refuses the rest, with --until-report and --lead), also ends the wait
+# with `pushed <new sha>` and 0 once the builder pushed past <sha> (past_pushed).
 wait_command() {
-  local stall until idle n out rc
+  local stall until idle n out rc a past="" sha="" other=""
+  for a in "$@"; do case "${a}" in --past) past=1 ;; --lead|--until-report) other="${a}" ;; esac; done
+  [[ -z "${past}" || -z "${other}" ]] || die "wait [--stall] --past <sha> <slug> waits on a builder; it takes no ${other}"
   [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
   require_herdr; stall=""; until=""; idle=""
   case "${1:-}" in --until-report) until=1; shift ;; esac
-  while :; do case "${1:-}" in --stall) stall=--stall; shift ;; --idle) idle=1; shift ;; *) break ;; esac; done
+  while :; do case "${1:-}" in
+    --stall) stall=--stall; shift ;;
+    --idle) idle=1; shift ;;
+    --past) sha="${2:-}"; shift; [[ $# -eq 0 ]] || shift ;;
+    *) break ;;
+  esac; done
   n="$(agent_name "${1:?name}")"
+  [[ -z "${past}" ]] || past_target "$1" "${sha}" "${n}"
   if [[ -n "${until}" ]]; then
     [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]] || die "wait --until-report waits only on a conductor (conduct-<epic>), not ${n}"
     wait_conductor "${n}" 0
