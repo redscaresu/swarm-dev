@@ -2294,7 +2294,9 @@ unblock_startable() {
 
 # last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated, the
 # outcome without its key=value tail (EVENT_OUTCOME_AWK), so `reconcile<tab>ok (reopened)` compares whole.
-last_event() { awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 == s { last = $2 "\t" outcome($5) } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
+# A pane-closed line is skipped: it says a pane closed, not what became of the story, and a tidy
+# after a reopen would otherwise hide the reopen.
+last_event() { awk -F'\t' -v s="$1" "${EVENT_OUTCOME_AWK}"'$3 == s && $2 != "pane-closed" { last = $2 "\t" outcome($5) } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
 
 # delete_item <file> — delete a story, epic or HLD file where it is, and its state file (state_drop), so
 # a later item with the slug starts with none: reconcile's, on a board outside the repo.

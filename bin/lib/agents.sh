@@ -967,9 +967,11 @@ append_event() {
 # is the slug only when the board holds a story of that name and none without the s, the slug without
 # the s for the reverse, and gives none when the board does not say. Otherwise review-<slug> gives <slug> and conduct-<epic> <epic>, when the role is review or
 # conduct or unknown; the backlog's conductor (conductor_name backlog, exactly) gives none, and so does
-# any other agent. <name> - or empty is no agent: only [slug] is given.
+# any other agent. <name> - or empty is no agent: only [slug] is given. With [whole] non-empty, <name> is
+# known whole (a tab record's, which next_pane writes as given, never cut): its slug comes from it at
+# any length.
 agent_fields() {
-  local n="${1:-}" s="${2:-}" role="" r b k st="${BOARD}/stories"
+  local n="${1:-}" s="${2:-}" whole="${3:-}" role="" r b k st="${BOARD}/stories"
   [[ "${n}" != - ]] || n=""
   if [[ -n "${n}" ]]; then
     # As cut_record: a name already in agent_name's form, the usual one, skips its forks.
@@ -982,7 +984,7 @@ agent_fields() {
       r="$(awk -F'\t' -v n="${n%-done*}" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)" || r=""
       [[ -z "${r}" ]] || { role="${r}"; n="${n%-done*}"; }
     fi
-    if [[ -z "${s}" && ${#n} -lt ${AGENT_NAME_MAX} ]]; then
+    if [[ -z "${s}" && ( ${#n} -lt ${AGENT_NAME_MAX} || -n "${whole}" ) ]]; then
       if [[ "${n}" =~ ^s[^a-z] && ( ( -n "${role}" && " ${BUILDER_ROLES} " == *" ${role} "* ) || -z "${role}" ) ]]; then
         if [[ -f "${st}/${n}.md" && ! -f "${st}/${n#s}.md" ]]; then s="${n}"
         elif [[ -f "${st}/${n#s}.md" && ! -f "${st}/${n}.md" ]]; then s="${n#s}"; fi
@@ -2887,11 +2889,17 @@ ws, tab = pane_where(pane, (live, a), labels, record)
 print("%s\t%s\t%s" % (pane, ws, tab))' "$2"
 }
 
+# RETIRED_LOG: one line per retirement, "<pane><tab><new name><tab><old name>": the name the pane's
+# tab record held before retire_agent cut it to <new name> (<name> as given when no record held it, or
+# held `conductor`), so pane_closed reads the whole name back on an exact pane and name.
+RETIRED_LOG="${PROJECT_DIR}/.swarm/retired.tsv"
+
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
 # retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
-# its slot in the tab's state under that name, so no later agent is split into it.
+# its slot in the tab's state under that name, so no later agent is split into it. The name the
+# tab record held goes to RETIRED_LOG.
 retire_agent() {
-  local name state new i pane
+  local name state new i pane old=""
   name="$(agent_name "$1")"
   # A name reused more than once already has a <name>-done; take the first free suffix (free in any
   # project: names are unique across workspaces).
@@ -2907,9 +2915,12 @@ retire_agent() {
     || die "$1: herdr could not rename it to ${new}, so its name is not free; close its pane (herdr agent list)"
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
+    [[ -n "${old}" ]] || old="$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' "${state}")"
     # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
     awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
+  [[ -n "${old}" && "${old}" != conductor ]] || old="$1"
+  { mkdir -p "${RETIRED_LOG%/*}" && printf '%s\t%s\t%s\n' "${pane}" "${new}" "${old}" >> "${RETIRED_LOG}"; } 2>/dev/null || true
   # Its pane record (pane_check) goes with it, its logged stop with it.
   mv -f "${PANE_DIR}/${name}" "${PANE_DIR}/${new}" 2>/dev/null || true
   echo "retired $1 as ${new}"
