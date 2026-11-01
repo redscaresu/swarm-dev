@@ -4075,7 +4075,7 @@ no_agent_theirs() {
 # restart would refuse it as no_agent_lines lets it through: held_by:, no worktree (a branch left), or no
 # builder in agents.tsv (a first start that failed before it was recorded). A story in review with one PR whose findings file is a pass on its
 # 40-hex head: line (review_pass): `swarm.sh merge --head <sha> <pr>` (merge refuses a head that moved
-# since). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
+# since, unless the move added only git's own clean merges of the base, base_merges_only). With several PRs, which one head cannot pin, or no passing review, `swarm.sh review-agent
 # <slug> <pr>` for each. A story in review with no PR URL: find it by hand in the story's repo (gh pr
 # list -R <its origin> --head story/<slug>, as open_pr asks), then the review-agent exit; hold takes
 # only a ready story, so it is never that.
