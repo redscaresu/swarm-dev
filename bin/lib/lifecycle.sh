@@ -1978,6 +1978,90 @@ tidy_panes() {
   echo "closed ${n}"
 }
 
+# CLOSE_IDLE_SECONDS: how long close_when_idle's waiter waits for a retired review agent's turn to end
+# once the command that retired it has exited, before it leaves the pane open (under 30 minutes, so a
+# stuck agent is not waited on for long). CLOSE_CMD_SECONDS: how long it waits for that command to exit
+# first; a merge's own waits end well inside it. CLOSE_IDLE_POLL: how often it looks, in seconds.
+# CLOSING_DIR holds each waiter's <name>.pid while it runs, and its output, <name>.log.
+CLOSE_IDLE_SECONDS="${SWARM_CLOSE_IDLE_SECONDS:-1200}"
+CLOSE_CMD_SECONDS=1200
+CLOSE_IDLE_POLL="${SWARM_CLOSE_IDLE_POLL:-5}"
+CLOSING_DIR="${PROJECT_DIR}/.swarm/closing"
+
+# close_when_idle <name> <pane> — close <pane>, where merged_review just retired <name> (herdr's name
+# for review-<slug>) because the command running now (a swarm.sh merge in that pane, or its reconcile)
+# runs there, once that command has exited and the agent's turn has ended. Closing the pane now would
+# kill the command. So it starts the waiter, swarm.sh _close-when-idle (close_idle_wait), detached as
+# review_restart starts its run: nohup, in a session of its own (setsid), so closing the pane does not
+# end it, pinned to this project, and given $$, the swarm.sh process running now. Its output goes to
+# CLOSING_DIR/<name>.log, never to this command's, so the agent's Bash call does not wait on it; its
+# pid goes to CLOSING_DIR/<name>.pid. What it will do is said; a CLOSING_DIR it cannot make is said,
+# and the pane stays open.
+close_when_idle() {
+  mkdir -p "${CLOSING_DIR}" 2>/dev/null \
+    || { echo "$1 stays open in pane $2: ${CLOSING_DIR} could not be made, so nothing waits to close it; close it with swarm.sh tidy --yes once it is done"; return 0; }
+  SWARM_PROJECT="${PROJECT_DIR}" nohup python3 -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+    "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _close-when-idle "$1" "$2" "$$" </dev/null > "${CLOSING_DIR}/$1.log" 2>&1 &
+  echo "$!" > "${CLOSING_DIR}/$1.pid"
+  echo "$1 closes once this command has exited and its turn has ended; if its turn has not ended ${CLOSE_IDLE_SECONDS}s after this command exits, it is left open, with a close-when-idle line in .swarm/events.tsv"
+}
+
+# close_idle_wait <name> <pane> <pid> — swarm.sh _close-when-idle, close_when_idle's waiter. Every
+# CLOSE_IDLE_POLL seconds, once <pid> has exited, it reads the tab record's name for <pane>: the -done
+# name retire_agent gave <name>, or it stops with nothing closed (a tidy, a close or a deleted project
+# took the pane first). Then it reads the agent's state: session_state's word for <name>'s session, or, where
+# herdr answers for it (no session, or one Claude Code no longer lists), herdr's status for this
+# project's agent under the -done name (list_field over one herdr agent list; a list herdr fails
+# to give reads as unknown, never as no agent), and prints `read <state>` to its log. Idle, done, or no
+# agent under that name any more: it closes the pane
+# (close_pane, which closes its tab too when the pane was the record's last) and logs
+# `close-when-idle <name> closed (pane <pane>)`. A pane herdr could not close is logged as
+# `close-when-idle <name> left open: ...`. So is one whose agent is still not idle CLOSE_IDLE_SECONDS
+# after <pid> exited, naming its state, or whose <pid> still runs CLOSE_CMD_SECONDS after the waiter
+# started: that pane stays open for tidy --yes. On its way out it removes CLOSING_DIR/<name>.pid while
+# that holds its own pid.
+close_idle_wait() {
+  local name="$1" pane="$2" pid="$3" who state agents end="" cap
+  [[ -n "${name}" && -n "${pane}" && "${pid}" =~ ^[0-9]+$ ]] || die "usage: swarm.sh _close-when-idle <name> <pane> <pid>"
+  cap=$((SECONDS + CLOSE_CMD_SECONDS))
+  while :; do
+    # Nothing is read while <pid> runs: close_when_idle writes the pid file before <pid> can exit.
+    if kill -0 "${pid}" 2>/dev/null; then
+      if (( SECONDS >= cap )); then
+        record_event close-when-idle "${name}" "left open: the command that retired it (pid ${pid}) was still running ${CLOSE_CMD_SECONDS}s later; close its pane ${pane} with swarm.sh tidy --yes once it is done"
+        break
+      fi
+    else
+      [[ -n "${end}" ]] || end=$((SECONDS + CLOSE_IDLE_SECONDS))
+      who="$(awk -v p="${pane}" 'NF == 2 && $1 == p { print $2 }' "${STATE_DIR}"/* 2>/dev/null | sort -u)" || who=""
+      if [[ "${who}" != "${name:0:27}-done" && "${who}" != "${name:0:26}-done"[2-9] ]]; then
+        echo "pane ${pane} is no longer recorded as retired ${name} (its record says '${who}'), so nothing was closed"; break
+      fi
+      state="$(session_state "${name}")"
+      if [[ "${state}" == herdr || "${state}" == gone ]]; then
+        if agents="$(herdr agent list 2>/dev/null)"; then
+          state="herdr:$(list_field "${who}" agent_status <<< "${agents}")"
+        else state="herdr:unknown"; fi
+      fi
+      echo "read ${state}"
+      case "${state}" in
+        idle|herdr:idle|herdr:done|herdr:)
+          CLOSE_PANE_KEPT=""
+          close_pane "${pane}" "${who}" || { echo "pane ${pane} left its tab record while it was closed, so nothing was closed"; break; }
+          if [[ -z "${CLOSE_PANE_KEPT}" ]]; then record_event close-when-idle "${name}" "closed (pane ${pane})"
+          else record_event close-when-idle "${name}" "left open: herdr could not close its pane ${pane}; close it with swarm.sh tidy --yes"; fi
+          break ;;
+      esac
+      if (( SECONDS >= end )); then
+        record_event close-when-idle "${name}" "left open: it was still ${state#herdr:} ${CLOSE_IDLE_SECONDS}s after the command that retired it exited; close its pane ${pane} with swarm.sh tidy --yes once it is done"
+        break
+      fi
+    fi
+    sleep "${CLOSE_IDLE_POLL}"
+  done
+  [[ "$(cat "${CLOSING_DIR}/${name}.pid" 2>/dev/null)" != "$$" ]] || rm -f "${CLOSING_DIR}/${name}.pid"
+}
+
 # init_check — refuse init anywhere but the project's git root. main runs it before logging, since a
 # project found from a subdirectory is that subdirectory, and a refused run must write nothing there.
 init_check() {

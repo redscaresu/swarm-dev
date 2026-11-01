@@ -819,7 +819,7 @@ the builder declined with a reason the agent accepts as declined, with the build
 with a reason it rejects is not logged and comes up again next round. Then it writes the review. A round with nothing
 to fix is a pass, and the agent writes its review file, `.swarm/reviews/<slug>.md`, first: a
 `wait review-<slug>` (the lead's, for a kept story) ends on that file, and once the PR merges, the merge's reconcile retires the agent and
-removes its worktree. Then it hands the PR on itself. It runs `swarm.sh review <slug> --head <SHA> <PR URL>` with the head it reviewed, which
+removes its worktree; its pane closes once the agent's turn ends (§ Merging). Then it hands the PR on itself. It runs `swarm.sh review <slug> --head <SHA> <PR URL>` with the head it reviewed, which
 puts the story in review. Then, under `merge = agent` or when `swarm.sh grants <PR URL>` lists
 `merge`, it runs `swarm.sh merge --head <SHA> <PR URL>` on that head. Otherwise the review is the
 handoff, and the PR waits on your merge. A `grants` that fails is run once more, and a second failure

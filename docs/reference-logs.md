@@ -130,7 +130,10 @@ queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `
 --auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
 unconfirmed (<why>)` for a timeout (`timeout (<what it waited on>)`), an error, a PR never read as
 queued, or a merge with no merge commit. A merge at a head other than the checked one is `merge
-merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
+merged at head <sha>, not <sha>, ...` and then reconcile's lines. When that reconcile retires the
+story's review agent in its own pane, the waiter that later closes the pane writes one
+`close-when-idle review-<slug>` line. Its outcome is `closed (pane <pane>)`, or `left open: <why>`
+when the agent was still not idle, or the merge still running, after the waiter's limit. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 A swarm agent's call (`SWARM_AGENT` set) adds the fields `slug=` and `role=`. The role comes from

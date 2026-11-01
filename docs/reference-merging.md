@@ -28,8 +28,12 @@ here and on origin. A merged story's build always goes; if its builder is still 
 closes it first, which counts nothing while the story is in review. It closes the story's review
 agent, `review-<slug>`, too. When reconcile runs in that agent's own pane, as a `swarm.sh merge` run
 there does, it retires the agent instead, under a `-done` name (`review-<slug>-done` for a short
-slug), so the pane running the merge stays open; `swarm.sh tidy --yes` closes it later. Its session
-is archived to `.swarm/sessions` when it is retired, so that copy stops at the merge. A review
+slug), so the pane running the merge stays open. A detached waiter then closes that pane once the
+merge has exited and the agent's turn has ended, and logs `close-when-idle review-<slug> closed`. If
+the agent is still not idle 20 minutes after the merge exited, the waiter leaves the pane open and
+logs `close-when-idle review-<slug> left open: ...`, naming its state. Close it then with
+`swarm.sh tidy --yes`. Its session is archived to `.swarm/sessions` when it is retired, so that copy stops
+at the merge. A review
 agent that is working or waiting in another pane is left open, and reconcile says so: it may be
 running its own merge, whose reconcile then retires it. After a PR closed unmerged, the
 build goes only when no builder is open, and the story can then be built again. An open builder may
