@@ -285,7 +285,7 @@ Repeat until a step below says stop:
      uncommitted, as review-agent checks. codex-review reviews the directory it runs in, so run it
      from the story's worktree (`<repo>-wt/<slug>`, beside its repo), in the background:
      `cd <repo>-wt/<slug> || exit 1 && SWARM_STORY=<slug> SWARM_PROJECT=<this project> swarm.sh codex-review <base>`
-     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage limit the model
+     (`swarm.sh base <repo>` prints the base). It runs codex, or at codex's usage or rate limit the model
      `fallback_reviewer` names. Write its findings to a file and send them with
      `swarm.sh tell <slug> findings <file>`: that tell is a round under way, and the line goes quiet.
      If it finds nothing, the PR has passed, and no conductor acts on that: hand it on yourself, as a
