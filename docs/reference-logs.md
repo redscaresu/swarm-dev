@@ -174,9 +174,17 @@ The outcome field can end in a tail of `key=value` fields, for example
 `EVENT_SEP` in `bin/lib/agents.sh`. Every line `append_event` writes has a tail that ends in
 `version=`, the installed plugin's version from its `.claude-plugin/plugin.json`, read once per
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
-Callers can pass fields of their own, which come before `version=`: the incident and reap lines above pass `slug=` and `role=`, `pane-closed` passes `pane=`, `slug=` and `role=`, `merge` passes `hold=` on its held lines, `intervene` passes `cause=`, `pr-opened` passes
-`url=`, `first-green` passes `sha=`, and `decline-only` and `review-finished` pass `round=` and
-`verdict=`. For a command `main` logs, the fields come from two places, in
+Callers can pass fields of their own, which come before `version=`:
+
+- `decline-only` and `review-finished` pass `round=` and `verdict=`.
+- `first-green` passes `sha=`.
+- The incident and reap lines above pass `slug=` and `role=`.
+- `intervene` passes `cause=`.
+- `merge` passes `hold=` on its held lines.
+- `pane-closed` passes `pane=`, `slug=` and `role=`.
+- `pr-opened` passes `url=`.
+
+For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
 command keeps with `event_fields <key=value>...` while it runs. `event_fields` is in `bin/swarm.sh`,
 beside `die`. Like a die's line, it keeps nothing from a nested `$(...)`. It turns whitespace in a
