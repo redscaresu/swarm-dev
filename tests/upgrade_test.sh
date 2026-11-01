@@ -45,6 +45,12 @@
 # stub's call numbered in ${H}/arm has made ${H}/armed (each claude call logs "claude <n>"); a prompt
 # telling an agent it was restarted fails while ${H}/promptfail exists, and one telling it upgrade could not
 # restart it while ${H}/sayfail does. Every call is logged.
+# Only the case's own run meets agent list's failures and ${H}/onlist, and only its claude calls are
+# counted: upgrade() numbers each run (UPGRADE_TEST_RUN, kept in ${H}/run while it runs, else 0;
+# a swarm.sh call outside upgrade() carries none, so it meets neither). A note to a busy conductor
+# leaves a wake check behind (note_wake_later) that reads both stubs a minute later, in a later case;
+# it gets the plain list and JSON, uncounted, so it cannot use up a failure or a count set for that
+# case's run (a stray read once took listfail1, and the conductor it should leave was moved).
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -101,15 +107,16 @@ cat >> "${H}/bin/herdr" <<'STUB'
 [ "$1" = --version ] && { echo "herdr 0.9.5"; exit 0; }
 { for a in "$@"; do printf '%s ' "$a"; done; echo; } >> "$H/herdr.log"
 case "$1 $2" in
-  "agent list") [ ! -e "$H/listdown" ] || exit 1
-                [ ! -e "$H/listfail1" ] || { rm -f "$H/listfail1"; exit 1; }
-                if [ -e "$H/listfail" ]; then   # fails three times, then is gone
+  "agent list") if [ "${UPGRADE_TEST_RUN:-}" = "$(cat "$H/run" 2>/dev/null)" ]; then mine=1; else mine=""; fi   # the case's own run
+                [ -z "$mine" ] || [ ! -e "$H/listdown" ] || exit 1
+                [ -z "$mine" ] || [ ! -e "$H/listfail1" ] || { rm -f "$H/listfail1"; exit 1; }
+                if [ -n "$mine" ] && [ -e "$H/listfail" ]; then   # fails three times, then is gone
                   n=$(($(cat "$H/listfail.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/listfail.count"
                   [ "$n" -lt 3 ] || rm -f "$H/listfail" "$H/listfail.count"; exit 1; fi
                 awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"idle\"%s}", (NR > 1 ? "," : ""), $1, $2, ($3 == "-" ? "" : ",\"agent_session\":{\"value\":\"" $3 "\"}") }
                      END { print "]}}" }' "$H/agents"
-                [ ! -e "$H/armed" ] || [ ! -x "$H/onlist" ] || { rm -f "$H/armed"; "$H/onlist"; } ;;   # after the list it printed
+                [ -z "$mine" ] || [ ! -e "$H/armed" ] || [ ! -x "$H/onlist" ] || { rm -f "$H/armed"; "$H/onlist"; } ;;   # after the list it printed
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "pane process-info") p="$4"; [ -e "$H/pifail" ] && exit 1
                 if [ -e "$H/exited-$p" ]; then echo '{"result":{"process_info":{"foreground_processes":[{"argv":["zsh"]}]}}}'
@@ -134,6 +141,7 @@ chmod +x "${H}/bin/herdr"
 printf '#!/bin/sh\nH="%s"\n' "${H}" > "${H}/bin/claude"
 cat >> "${H}/bin/claude" <<'STUB'
 [ "$*" = "agents --json" ] || { echo "claude stub: unexpected call: $*" >&2; exit 1; }
+[ "${UPGRADE_TEST_RUN:-}" = "$(cat "$H/run" 2>/dev/null)" ] || { cat "$H/claude.json"; exit 0; }   # not the case's own run: uncounted
 n=$(($(cat "$H/claude.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/claude.count"
 echo "claude $n" >> "$H/herdr.log"
 [ "$n" != "$(cat "$H/arm" 2>/dev/null)" ] || touch "$H/armed"
@@ -148,10 +156,13 @@ claude_list idle idle idle
 
 mkdir -p "${H}/tmp"
 ENVV=(TMPDIR="${H}/tmp" SWARM_PROJECT="${P}" PROVIDER_KEY=provider-key HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_SLEEP_SCALE=0.01 PATH="${H}/bin:${H}/old/0.21.0/bin:${H}/shared:${PATH}")
+RUN=0; echo 0 > "${H}/run"   # 0 between runs: no call is the case's own
 upgrade() { # [epic] — run upgrade --foreground from the project, its output in ${H}/out and exit code in rc
   : > "${LOG}"; rc=0; rm -f "${H}/claude.count" "${P}/.swarm/inbox/conduct-e.md"
-  (cd "${P}" && env "${ENVV[@]}" SWARM_UPGRADE_GRACE_MS="${GRACE_MS:-200}" SWARM_UPGRADE_WAIT_MS="${WAIT_MS:-60000}" \
+  RUN=$((RUN + 1)); echo "${RUN}" > "${H}/run"
+  (cd "${P}" && env "${ENVV[@]}" UPGRADE_TEST_RUN="${RUN}" SWARM_UPGRADE_GRACE_MS="${GRACE_MS:-200}" SWARM_UPGRADE_WAIT_MS="${WAIT_MS:-60000}" \
     bash "${SWARM}" upgrade "$@" --foreground > "${H}/out" 2>&1) || rc=$?
+  echo 0 > "${H}/run"
 }
 
 fails=0
