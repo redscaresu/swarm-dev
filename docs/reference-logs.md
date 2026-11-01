@@ -845,7 +845,9 @@ counts the runs going finds the mark's PID gone and writes the killed run's end 
 line has status 137, the killed run's start time, PID, `JOBS`, filter and branch, and `-` for the
 end time, seconds, load, CPUs and other runs, which nobody measured. The run renames the mark before
 it writes, so when two runs find the same mark only one writes the line. A mark that holds no start
-line (an older test.sh left it empty) is removed and gets no line. A write that fails is skipped and never changes the run's exit
+line is removed and gets no line. A run makes its mark empty before it builds its start line, so
+other runs starting at the same moment count it, and a run killed before it wrote its start line
+leaves an empty mark. An older test.sh leaves its marks empty too. A write that fails is skipped and never changes the run's exit
 status. A `TEST_RUNS_LOG` that is set names the file instead (empty logs nothing); test.sh sets it
 empty for its jobs, so a run a test starts itself logs nothing and is never counted as going.
 The section reads the full runs (`all`) whose start falls in the window, by local day, less those

@@ -361,8 +361,8 @@ others() {
 # end_dead <mark> <pid> — a gone run's mark, or a gone run's claim on one: claim it by renaming it to
 # .dead.<pid>.<this PID>, which fails for every run but the first, then append that run's end line
 # when the mark holds its start line (11 fields, end and status empty, its PID last) and the log has
-# no end line for that start and PID yet, and remove the claim. An empty mark, as a run before marks
-# held their start line left, ends with no line.
+# no end line for that start and PID yet, and remove the claim. An empty mark (a run KILLed before its
+# start line, or one from a test.sh before marks held it) ends with no line.
 end_dead() {
   local claim="${marks}/.dead.$2.$$" line=""
   mv "$1" "${claim}" 2>/dev/null || return 0
@@ -373,12 +373,13 @@ end_dead() {
   [[ -z "${line}" ]] || printf '%s\n' "${line}" >> "${runs_log}"
   rm -f "${claim}"
 }
-# log_run <end> <seconds> <status> — append this run's line, as of now, or nothing when it cannot. The
-# start line (status empty) goes first into this run's mark, which says the run is going.
+# log_run <end> <seconds> <status> — append this run's line, as of now, or nothing when it cannot. For
+# the start line (status empty) it first makes this run's mark, empty, so a run that counts the runs
+# going while this one builds its line counts it; then it puts the line in the mark, then in the log.
 log_run() {
   local line
   [[ -n "${runs_log}" ]] || return 0
-  { mkdir -p "${marks}" && line="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "${t_iso}" "$1" "$2" "${JOBS:-4}" "${filter}" "${branch}" \
+  { mkdir -p "${marks}" && { [[ -n "$3" ]] || : > "${marks}/$$"; } && line="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "${t_iso}" "$1" "$2" "${JOBS:-4}" "${filter}" "${branch}" \
     "$(LC_ALL=C uptime | sed -nE 's/.*load averages?: *([0-9.]+).*/\1/p')" "$(getconf _NPROCESSORS_ONLN)" "$(others)" "$3" "$$")" &&
     { [[ -n "$3" ]] || printf '%s\n' "${line}" > "${marks}/$$"; } && printf '%s\n' "${line}" >> "${runs_log}"; } 2>/dev/null || true
 }

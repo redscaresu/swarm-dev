@@ -7,7 +7,9 @@
 # gone, so a third run adds no second one. The run is held between its start line and its first job
 # by a mktemp on PATH that waits, when HOLD is set, on the run's `mktemp -d` (its run dir). A gone
 # run's mark beside its end line gets no second one, and a claim on a mark whose claiming run died
-# before it wrote the line is ended by the next run.
+# before it wrote the line is ended by the next run. A run held as it builds its start line (an uptime
+# on PATH that waits, when HOLD_UPTIME is set) already has its mark, so a run that starts then counts
+# it. Two runs released together from there against 30 stale marks end each one once between them.
 set -euo pipefail
 # shellcheck source=tests/test_helpers.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
@@ -15,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${ROOT}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-trap 'touch "${ROOT}/go" 2>/dev/null; wait; rm -rf "${ROOT}"' EXIT
+trap 'touch "${ROOT}/go" "${ROOT}/u1/go" "${ROOT}/u2/go" 2>/dev/null; wait; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 export HOME="${ROOT}/home"   # its runs are top-level: a cap in the real ~/.swarm/test-cap would gate them
 mkdir -p "${ROOT}/log" "${ROOT}/bin" "${ROOT}/cwd"
@@ -32,6 +34,19 @@ real_mktemp="$(command -v mktemp)"
 printf '#!/usr/bin/env bash\nif [ "$#" = 1 ] && [ "$1" = -d ] && [ -n "${HOLD:-}" ]; then\n  : > "${HOLD}/held"\n  for _ in $(seq 200); do [ -e "${HOLD}/go" ] && break; sleep 0.05; done\nfi\nexec "%s" "$@"\n' \
   "${real_mktemp}" > "${ROOT}/bin/mktemp"
 chmod +x "${ROOT}/bin/mktemp"
+# The uptime stub: with HOLD_UPTIME set and no HOLD_UPTIME/go, it touches HOLD_UPTIME/held.<its PID> and
+# waits for go (10 s at most); then it runs the real uptime. test.sh calls it as it builds a line.
+real_uptime="$(command -v uptime)"
+# shellcheck disable=SC2016 # the stub's own shell expands it
+printf '#!/usr/bin/env bash
+if [ -n "${HOLD_UPTIME:-}" ] && [ ! -e "${HOLD_UPTIME}/go" ]; then
+  : > "${HOLD_UPTIME}/held.$$"
+  for _ in $(seq 200); do [ -e "${HOLD_UPTIME}/go" ] && break; sleep 0.05; done
+fi
+exec "%s" "$@"
+' \
+  "${real_uptime}" > "${ROOT}/bin/uptime"
+chmod +x "${ROOT}/bin/uptime"
 printf '#!/usr/bin/env bash\nexit 0\n' > "${ROOT}/pass_test.sh"
 
 # held_run — start a run of pass_test.sh in the background, INT and PIPE at their default (a background
@@ -97,6 +112,53 @@ check "a gone run's mark beside its end line adds no second end line, and the ma
   "$(ended "${ended_pid}") $(find "${ROOT}/log/test-runs.d" -mindepth 1 -name "*${ended_pid}*" | wc -l | tr -d ' ')" "starts=1 ends=0 0"
 check "a claim whose claiming run died is ended by the next run, and goes" \
   "$(ended "${claimed}") $(find "${ROOT}/log/test-runs.d" -mindepth 1 | wc -l | tr -d ' ')" "starts=1 ends=137 0"
+# uptime_run <dir> — start a run of pass_test.sh in the background, held at its start line's load by
+# the uptime stub until <dir>/go; prints nothing, adds its PID to held_pids.
+held_pids=()
+uptime_run() {
+  (cd "${ROOT}/cwd" && exec env HOLD_UPTIME="$1" PATH="${ROOT}/bin:${PATH}" TEST_RUNS_LOG="${LOG}" \
+    bash "${REPO}/scripts/test.sh" "${ROOT}/pass_test.sh" > /dev/null 2>&1) &
+  held_pids+=($!)
+}
+# until_held <dir> <n> — wait for n runs held there, 10 s at most.
+until_held() {
+  local n
+  for _ in $(seq 200); do
+    n="$(find "$1" -name 'held.*' | wc -l | tr -d ' ')"
+    [[ "${n}" -lt "$2" ]] || return 0
+    sleep 0.05
+  done
+  echo "FAIL only ${n} of $2 runs reached their start line's load"; exit 1
+}
+# B is held as it builds its start line; A starts and ends meanwhile.
+mkdir "${ROOT}/u1"
+uptime_run "${ROOT}/u1"
+until_held "${ROOT}/u1" 1
+(cd "${ROOT}/cwd" && exec env TEST_RUNS_LOG="${LOG}" bash "${REPO}/scripts/test.sh" "${ROOT}/pass_test.sh" > /dev/null 2>&1) &
+a=$!
+wait "${a}"
+touch "${ROOT}/u1/go"
+wait "${held_pids[0]}"
+check "a run that starts while another builds its start line counts it as going, at its start and its end" \
+  "$(awk -F'\t' -v p="${a}" '$11 == p { printf "%s%s", sep, $9; sep = " " }' "${LOG}")" "1 1"
+
+# Two runs released together against 30 stale marks, each holding a gone run's start line.
+stale=()
+for _ in $(seq 30); do
+  p="$(dead_pid)"
+  stale+=("${p}")
+  start_line "${p}" > "${ROOT}/log/test-runs.d/${p}"
+  start_line "${p}" >> "${LOG}"
+done
+mkdir "${ROOT}/u2"
+held_pids=()
+uptime_run "${ROOT}/u2"
+uptime_run "${ROOT}/u2"
+until_held "${ROOT}/u2" 2
+touch "${ROOT}/u2/go"
+wait "${held_pids[@]}"
+check "two runs started together write one end line, status 137, for each of 30 stale marks between them" \
+  "$(for p in "${stale[@]}"; do ended "${p}"; done | sort | uniq -c | awk '{ $1 = $1; print }')" "30 starts=1 ends=137"
 check "each other run has one start and one end line" \
   "$(awk -F'\t' -v k="${killed}" '$11 != k { n[$11 ($10 == "" ? " start" : " end")]++ } END { for (x in n) if (n[x] != 1) print x, n[x] }' "${LOG}")" ""
 [[ ${fails} -eq 0 ]] || { echo "lines in the log:"; awk -F'\t' '{ print $11 }' "${LOG}" | sort -u | while read -r p; do lines "${p}"; done; }
