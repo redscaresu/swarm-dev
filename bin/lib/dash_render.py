@@ -158,8 +158,9 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     if t > escalated_at.get(f[2], (0,))[0]:
         escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {o[len('ok (attempt '):-1]}")
 recs, stalled = [], []
-# The panes of agents past stall_minutes that run a test suite or wait on a background task (dash.sh's
-# test_running and bg_running over dash_age's stalled_panes): working, not stalled.
+# The panes of agents past stall_minutes that run a test suite, at any age, or wait on a background task
+# launched less than 3 times stall_minutes ago (dash.sh's test_running and bg_running over dash_age's
+# stalled_panes): working, not stalled.
 TESTING = set(E.get("DASH_TESTING", "").split())
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
