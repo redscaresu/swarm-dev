@@ -250,6 +250,8 @@ check "board at the root, a refusal lists the board's paths" said "(stories/, ep
 fresh; rm "${S}"; echo '[{"filename":"stories/x.md","previous_filename":"bin/swarm.sh","status":"renamed"}]' > "${FX}/files"
 merge --board "${URL}"; refused "board at the root, a file renamed onto stories/" "changes bin/swarm.sh, outside the board's paths"
 
+# The user's settings allow swarm.sh merge, so a conductor may start in the ready_tell cases below under merge = agent (merge_rule_stop).
+mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # --- ready_tell with the board at the root: a --board merge that readies r1 notes epic e's running
 # conductor (conduct-e, the herdr stub's). origin's main is P's HEAD; put and land commit board files
 # to it from another clone, as a board PR's merge does.
@@ -268,18 +270,18 @@ echo '[{"filename":"stories/r1.md","status":"added"}]' > "${FX}/files"; echo 1 >
 checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
 wfruns "${FX}/${OID}.runs" "$(run ci completed success "${OID}")"
 INBOX="${P}/.swarm/inbox/conduct-e.md"
+# no_conduct_line — events.tsv has no conduct line: no conductor start was even tried (a refused one logs it too).
+no_conduct_line() { ! events | grep -q '^conduct '; }
 merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
 is "board at the root, a merge that readies r1: exits 0" 0 "${rc}"
 check "board at the root, a merge that readies r1: notes conduct-e of r1 alone" \
   grep -qF "The board PR ${URL} just merged, and these stories of epic e are ready now: r1. Start them now" "${INBOX}"
 check "board at the root, a merge that readies r1: says it noted conduct-e" said "noted conduct-e"
 check "board at the root, a merge that readies r1 of running conduct-e: says it runs already" said "no conductor started: conduct-e runs already"
-check "board at the root, a merge that readies r1 of running conduct-e: starts none" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
+check "board at the root, a merge that readies r1 of running conduct-e: logs no conduct line" no_conduct_line
 
 # --- Why merge --board started no conductor: a line for each case, never silence.
 pulled() { git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'; }
-# The user's settings allow swarm.sh merge, so a conductor may start under merge = agent (merge_rule_stop).
-mkdir -p "${CLAUDE_CONFIG_DIR}"; echo '{"permissions":{"allow":["Bash(swarm.sh merge *)"]}}' > "${CLAUDE_CONFIG_DIR}/settings.json"
 # landed — fresh, no story s, the PR the last land's commit (each board file it changes; the stage gate
 # reads each epic at the head from gh), merged green at origin's tip (OID). The herdr stub's agents stay
 # as they are: a conductor a case started still runs in the next. With lead_epics = on: these PRs set
@@ -297,24 +299,21 @@ landed() {
 }
 lmerge() { landed; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; }
 started() { grep -q "^agent start $1 " "${ROOT}/agents.log"; }
-none_started() { ! grep -q '^agent start' "${ROOT}/agents.log"; }
-no_conduct_line() { ! events | grep -q '^conduct '; }
 
 # A PR that blocks r0 and r1, the last ready stories, makes no story ready and leaves none ready to
 # build (board_ready --started is empty): it says both, and starts nothing.
 put stories/r0.md "status: blocked" "kind: code" "epic: e"; put stories/r1.md "status: blocked" "kind: code" "epic: e"; land; lmerge
 is "a board merge that readies nothing: exits 0" 0 "${rc}"
-check "a board merge that readies nothing: says it made no story ready" said "no conductor started for ${URL}: it made no story ready"
+check "a board merge that readies nothing: says it made no story ready" said "${URL} made no story ready"
 check "a board merge that readies nothing: logs no conduct line" no_conduct_line
 check "a board merge that leaves nothing ready: says no story is ready to build" said "no conductor started: no story is ready to build"
-check "a board merge that leaves nothing ready: starts none" none_started
 # With only a fix-main story ready, which conduct_ready leaves to next: it says so, not that nothing is ready.
 put stories/r0.md "status: blocked" "kind: code" "epic: e" "estimate_lines: 3"; land; landed
 item fix-main-0000000 "status: ready" "kind: code" "touches: [.]"
 merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; rm -f "${P}/stories/fix-main-0000000.md"
 check "a board merge with only a fix-main story ready: says next names it" \
   said "no conductor started: only fix-main stories are ready, and swarm.sh next names them first"
-check "a board merge with only a fix-main story ready: starts none" none_started
+check "a board merge with only a fix-main story ready: logs no conduct line" no_conduct_line
 # Ready r2 under active epic e2, whose conductor is not running: its conductor starts.
 put epics/e2.md "status: active"; land; pulled
 put stories/r2.md "status: ready" "kind: code" "epic: e2"; land; lmerge
@@ -344,7 +343,7 @@ put stories/r3.md "status: ready" "kind: code" "epic: e2"; land
 git -C "${P}" branch -q --unset-upstream; lmerge; git -C "${P}" branch -q -u origin/main
 check "a board merge with no upstream: says why no conductor started" \
   said "no conductor started for ${URL}: the board's checkout has no upstream to pull it from; pull the board, then run swarm.sh next"
-check "a board merge with no upstream: starts none" none_started
+check "a board merge with no upstream: logs no conduct line" no_conduct_line
 
 echo
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

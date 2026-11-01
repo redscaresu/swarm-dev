@@ -567,9 +567,10 @@ stories, it sends the epic's running conductor one note naming them (`swarm.sh t
 note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its
 builder limits. A conductor that has written its report has finished and counts as not running.
 When no conductor runs, it prints a `ready now:` line, then starts one (§ The backlog conductor says
-when). When it starts none, one line says why:
+when). When the PR readied no story, it prints `<url> made no story ready`; a conductor may still
+start for ready work an earlier PR made. Each group it starts no conductor for, or a board with nothing
+to start, gets a line saying why:
 
-- `no conductor started for <url>: it made no story ready`, when the PR readied no story.
 - `no conductor started: no story is ready to build`, when no story on the board is ready.
 - `no conductor started: only fix-main stories are ready, and swarm.sh next names them first`, when
   the only ready stories are `fix-main` ones.

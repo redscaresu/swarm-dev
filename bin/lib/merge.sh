@@ -1633,7 +1633,8 @@ ready_tell() {
     conductor_note "${e}" "${note}" "${slugs}"
     rm -f "${note}"
   done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
-  [[ -n "${new}" ]] || echo "no conductor started for ${url}: it made no story ready"
+  # Said of <url> alone: conduct_ready may still start a conductor for ready work an older PR made.
+  [[ -n "${new}" ]] || echo "${url} made no story ready"
   # An epic <url> made active with no stories waits for its plan, not a conductor.
   while IFS=$'\t' read -r p k; do
     [[ "${k}" == 0 && "${p}" == "${d}epics/"*.md ]] || continue   # loose-match: ok an epic file under the board, which has no subdirectories
