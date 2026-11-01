@@ -966,7 +966,7 @@ short_shas() {
   echo "${out:-none}"
 }
 
-# merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
+# merge [--board|--release [--upgrade]] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
 # story or stacked parent costs money is the user's; and on this route, once the head's CI check has
@@ -1015,17 +1015,19 @@ short_shas() {
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
+  local only="" clash="" whose want="" upgrade="" url repo n info state head base changed f="" any="" p rel own method oid why note="" rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k grp="" rwhy="" caveat="" flist="" lock="" before=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
       --head) want="$2"; shift 2 ;;
+      --upgrade) upgrade=yes; shift ;;
       *) break ;;
     esac
   done
   url="${1:-}"; MERGE_TARGET="${url:--}"
   [[ -z "${clash}" ]] || merge_fail "--board and --release do not go together"
-  [[ $# -eq 1 ]] || merge_fail "usage: swarm.sh merge [--board|--release] [--head <sha>] <pr-url>"
+  [[ $# -eq 1 && ( -z "${upgrade}" || "${only}" == --release ) ]] \
+    || merge_fail "usage: swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <pr-url>"
   [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
@@ -1230,11 +1232,12 @@ merge_pr() {
     ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
-  # A release of this plugin moves the installed plugin and the running agents onto it, unless it shipped
-  # commits no release check read, which any release reports; neither ever fails the merge.
+  # A release of this plugin moves the installed plugin onto it, and the running agents with --upgrade
+  # or a yes on a terminal, unless it shipped commits no release check read, which any release reports;
+  # neither ever fails the merge.
   if [[ "${only}" == --release && -n "${oid}" ]]; then
     p=checked; release_parent "${repo}" "${oid}" "${base}" || p=""
-    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}"
+    release_upgrade "${repo}" "${oid}" "${RELEASE_VERSION}" "${rc}" "${base}" "${p}" "${upgrade}"
   fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
@@ -2351,18 +2354,20 @@ wait_pr() {
   done
 }
 
-# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> — after merge
-# --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set (the
-# merge commit is on the base release_check read: release_parent): once release_confirmed, update the
-# marketplace and the plugin, then start the new version's swarm.sh upgrade (detached; bounded by
-# UPGRADE_START_WAIT; with release_path's PATH, so the agents it restarts find the new swarm.sh) in
-# each of agent_projects, and ask the user to restart the lead session in this project and each of
-# those: the update is global, and Claude Code loads a plugin's hooks only at startup. A step that
-# fails warns, naming what to run by hand; an upgrade that fails, times out or finds another upgrade
-# running there (it starts nothing then and still exits 0) warns and moves on to the next project.
-# The release is done either way. Each claude, gh and herdr call is bounded (within).
+# release_upgrade <owner/repo> <merge commit> <version> <main-ci exit> <base> <checked> <upgrade> — after
+# merge --release of this plugin's own repo (plugin_repo), with CI on the base green and <checked> set
+# (the merge commit is on the base release_check read: release_parent): once release_confirmed, update
+# the marketplace and the plugin. Then, once release_move says yes (<upgrade> set by --upgrade, or a y
+# on a terminal), start the new version's swarm.sh upgrade (detached; bounded by UPGRADE_START_WAIT;
+# with release_path's PATH, so the agents it restarts find the new swarm.sh) in each of
+# agent_projects; else start none and print `upgrade not run: <why>` with the command for each. Last,
+# ask the user to restart the lead session in this project and each of those: the update is global,
+# and Claude Code loads a plugin's hooks only at startup. A step that fails warns, naming what to run
+# by hand; an upgrade that fails, times out or finds another upgrade running there (it starts nothing
+# then and still exits 0) warns and moves on to the next project. The release is done either way.
+# Each claude, gh and herdr call is bounded (within).
 release_upgrade() {
-  local own new d hint out restart="${PROJECT_DIR}" rc path
+  local own new d hint out restart="${PROJECT_DIR}" rc path dirs why cmds=""
   own="$(plugin_repo)" || { echo "the plugin's plugin.json names no GitHub repository, so it is not updated"; return 0; }
   [[ "$(tr '[:upper:]' '[:lower:]' <<< "$1")" == "${own}" ]] || { echo "$1 is not this plugin's repo (${own}), so the plugin is not updated"; return 0; }
   new="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/cache/${MARKETPLACE}/${PLUGIN%@*}/$3/bin/swarm.sh"
@@ -2377,8 +2382,17 @@ release_upgrade() {
   fi
   [[ -f "${new}" ]] || { echo "warning: the plugin update left no ${new}, so no agent was moved: ${hint}"; return 0; }
   path="$(release_path "${new%/swarm.sh}")"
+  dirs="$(agent_projects)"
   while IFS= read -r d; do
     [[ "${d}" == "${PROJECT_DIR}" ]] || restart+=", ${d}"
+    cmds+="${cmds:+, }$(printf 'SWARM_PROJECT=%q %q upgrade' "${d}" "${new}")"   # shell-quoted, ready to paste
+  done <<< "${dirs}"
+  if ! why="$(release_move "$3" "$7")"; then
+    echo "upgrade not run: ${why}: pass --upgrade to swarm.sh merge --release next time, or run ${cmds}"
+    dirs=""
+  fi
+  while IFS= read -r d; do
+    [[ -n "${d}" ]] || continue
     rc=0; out="$(within "${SWARM_UPGRADE_START_WAIT:-${UPGRADE_START_WAIT}}" env SWARM_PROJECT="${d}" PATH="${path}" bash "${new}" upgrade </dev/null 2>&1)" || rc=$?
     [[ -z "${out}" ]] || printf '%s\n' "${out}"
     if [[ ${rc} -eq 142 ]]; then
@@ -2388,8 +2402,21 @@ release_upgrade() {
     elif [[ "${out}" == *"already runs here"* ]]; then
       echo "warning: another swarm.sh upgrade runs in ${d}, so $3's started nothing: once it ends, run SWARM_PROJECT=${d} ${new} upgrade"
     fi
-  done <<< "$(agent_projects)"
+  done <<< "${dirs}"
   echo "Restart the lead session in ${restart} (/exit, then claude --continue): Claude Code loads $3's hooks only at startup"
+}
+
+# release_move <version> <upgrade> — whether merge --release moves the running agents onto <version>:
+# yes with <upgrade> set (--upgrade); else, with stdin a terminal, only when the user answers y to
+# the question it prints; else no. On no it prints why: no terminal to confirm it, or the answer.
+release_move() {
+  local ans=""
+  [[ -z "$2" ]] || return 0
+  [[ -t 0 ]] || { echo "no terminal to confirm it"; return 1; }
+  printf 'Move the running agents onto v%s now? [y/N] ' "$1" >&2
+  read -r ans || ans=""
+  [[ -t 2 ]] || echo >&2
+  [[ "${ans}" == [yY] || "${ans}" == [yY][eE][sS] ]] || { echo "the answer was '${ans:-no answer}', not y"; return 1; }
 }
 
 # release_path <new bin> — PATH for the new version's upgrade: upgrade_path's, with <new bin> first
@@ -2486,7 +2513,7 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     [[ -f "${d}/.claude/swarm/config" && $'\n'"${out}" != *$'\n'"${d}"$'\n'* ]] || continue   # loose-match: ok newline-padded, so a whole line
     out+="${d}"$'\n'
   done <<< "${rows}"
-  [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} is upgraded" >&2
+  [[ -n "${out}" ]] || echo "warning: ${why:-herdr lists no agent in a swarm project}, so only ${PROJECT_DIR} counts as running agents" >&2
   [[ -n "${out}" ]] || out="${PROJECT_DIR}"$'\n'
   printf '%s' "${out}"
 }

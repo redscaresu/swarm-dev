@@ -163,7 +163,7 @@ that grants release)`, naming the
 first story it found uncovered. A board outside the project's repo never covers a release. A
 covered release still goes through the docs check below.
 
-`swarm.sh merge [--board|--release] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
+`swarm.sh merge [--board|--release [--upgrade]] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
 unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
@@ -956,20 +956,26 @@ on the base says. When gh can't read the parent, it warns the same way.
 
 When the release is swarm-dev's own (its repo is the GitHub repo named by `repository` in the
 plugin's `plugin.json`; otherwise merge prints a line saying it skipped this step), `merge
---release` also updates the plugin and moves the agents onto it, once CI on the base is green. After
+--release` also updates the plugin, once CI on the base is green, and asks before it moves the
+agents onto it. After
 that warning it updates nothing, and prints `refused: the release ships commits no release check
 read, so the plugin was not updated`, followed by what to run once they are checked. Otherwise it
 waits up to 10 minutes (`SWARM_RELEASE_WAIT`) for the tag `v<new>` on the merge commit, or on a
 later commit of the base, and a published GitHub release. Then it runs `claude plugin marketplace
 update swarm-dev` and `claude plugin update swarm-dev@swarm-dev`, 5 minutes at most each. Once the
-new version's `swarm.sh` is in the plugin cache, it runs that version's `swarm.sh upgrade`
+new version's `swarm.sh` is in the plugin cache, it moves the agents only with `--upgrade`. Without
+it, on a terminal it asks `Move the running agents onto v<new> now? [y/N]` and moves them only on
+`y`. With no terminal (the lead runs merge in the background), or any other answer, it moves none
+and prints `upgrade not run: <why>`, naming `--upgrade` for next time and the `swarm.sh upgrade`
+to run in each project. The release arm of `/swarm-dev:swarm` asks you before the merge and passes
+`--upgrade` when you say yes. To move them, it runs that version's `swarm.sh upgrade`
 (detached) in every swarm project where herdr runs an agent, and prints each upgrade's log path;
 each one gets 2 minutes to start its worker. The old version's `bin/` is taken off that upgrade's
 PATH, so each agent it restarts finds the new `swarm.sh`. An agent's project is the `SWARM_PROJECT`
 its restore wrapper sets, so a builder of an external board counts; with no wrapper, it is the
 project its folder is in, and with no agent in herdr's list, or a list it can't read, this project,
-with a warning saying why. Last, it asks you to restart the lead session (`/exit`, then `claude
---continue`) in this project and in every project it found. The update is global, Claude Code loads
+with a warning saying why. Last, moved or not, it asks you to restart the lead session (`/exit`,
+then `claude --continue`) in this project and in every project it found. The update is global, Claude Code loads
 a plugin's hooks only at startup, and until a lead restarts, the `swarm.sh` on its PATH is the old
 one. When CI on the base is not green, the release can't be confirmed or the update fails, it prints
 a warning naming the new version's `swarm.sh upgrade` to run once the plugin is updated, and
@@ -1006,7 +1012,8 @@ A second run changes nothing.
 **`swarm.sh merge <PR URL>`**
 Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board.
 With `merge = human` the lead runs it only for a PR whose agreed HLD grants `merge`, and you merge the rest.
-`swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`, and refuses it while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line.
+`swarm.sh merge --release [--upgrade] <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`; for swarm-dev's own release it updates the plugin, then asks before it moves the running agents onto it (`--upgrade` moves them unasked, and with no terminal it moves none and prints `upgrade not run:`).
+It refuses the bump while the code changed since the last tag and the docs did not, unless its body has a `Docs: none — <reason>` line.
 With `merge = human` it merges only when at least one story merged since the last tag and every one of them is under an agreed HLD that grants `release`.
 It refuses a story PR, or a board PR under `--board`, that sets an epic `active` with no ticket (the epic guard, [§ Merging](reference-merging.md#merging)) or before the base allows its stage ([§ Writing an epic](reference-planning.md#writing-an-epic)).
 Where the base has a merge queue, `merge` enqueues the PR.
