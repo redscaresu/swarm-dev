@@ -972,9 +972,9 @@ review_moved() {
 # review-<slug> this project started (or cannot list its agents), when the round would be 1 (no findings
 # round since the build started: a findings tell or step-up, or a --recheck refused with a full round due),
 # when this build has no ok review-agent start (review-<slug> is an earlier build's), or while that round
-# has started already (review_rounds): no findings round since, so its review would be lost. One case of
-# those last two runs: once this build has an ok start and no findings round came since it (round ==
-# started), a PR head that moved from the one in <slug>.head (review_moved) is followed. The same round
+# has started already (review_rounds): no findings round since, so its review would be lost. Two of those
+# refusals, the round-1 one and the started-already one, give way in one case: once this build has an ok
+# start and no findings round came since it (round == started), a PR head that moved from the one in <slug>.head (review_moved) is followed. The same round
 # is printed again, naming both heads, with the same checks, files and lines as a next round, so the
 # round count stays: main's review-agent:next line logs the same round, which review_rounds reads as
 # the round already started. A follow whose head is back at the recorded one by review_at_head's read is
