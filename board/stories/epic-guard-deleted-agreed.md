@@ -20,3 +20,4 @@ risk: high
 - docs/reference-merging.md's epic guard paragraph names the deleted-epic case; scripts/select-tests.sh --run passes
 - tests/merge_rules_test.sh: a 502 on the deleted epic's base read refuses with 'gh cannot read docs/epics/<old>.md at main', and goes red with the fail-closed read removed (worktree copy).
 - The refusal names the deleted epic whose agreed: was reused, and docs/reference-lead.md gives the way out.
+- Both tests also refuse a PR that deletes an active epic and adds an unpaired one carrying its agreed: date.

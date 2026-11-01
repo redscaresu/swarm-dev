@@ -15,5 +15,6 @@ easy: false
 **Done when:**
 - tests/tell_queue_test.sh has a case where a step-up or top-rung hold takes queued findings, and it goes red when that path drops the queue (shown on a worktree copy)
 - A case holds tell_requeue's lock and checks the tell is put back, not lost or doubled; it goes red with the lock check removed (worktree copy)
-- A case checks a queued delivery goes to the pane the queue checked, not a new pane holding the name; it goes red with TELL_PANE unset in deliver_prompt (worktree copy)
+- A case checks a queued delivery goes to the pane the queue checked, not a new pane holding the name; it goes red with the pin removed before tell_deliver passes the pane as its third argument (agents.sh:2761) (worktree copy)
 - The header comment lists the three new cases; scripts/select-tests.sh --run passes
+- The requeue lock cases also check the lock is taken on an uncontended requeue and that another caller's held lock is left as it was; each goes red under its own mutation.
