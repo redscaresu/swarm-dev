@@ -176,13 +176,15 @@ The outcome field can end in a tail of `key=value` fields, for example
 process. When that file cannot be read, the line has no `version=` and the command still succeeds.
 Callers can pass fields of their own, which come before `version=`:
 
-- `decline-only` and `review-finished` pass `round=` and `verdict=`.
+- `decline-only` passes `round=` and `verdict=`.
 - `first-green` passes `sha=`.
-- The incident and reap lines above pass `slug=` and `role=`.
+- The incident lines above pass `slug=` and `role=`.
 - `intervene` passes `cause=`.
 - `merge` passes `hold=` on its held lines.
 - `pane-closed` passes `pane=`, `slug=` and `role=`.
 - `pr-opened` passes `url=`.
+- The reap lines above pass `slug=` and `role=`.
+- `review-finished` passes `round=` and `verdict=`.
 
 For a command `main` logs, the fields come from two places, in
 this order: the `EV_FIELDS` that the command's arm in `main` sets before it runs, then the ones the
