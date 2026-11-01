@@ -845,7 +845,8 @@ for f in (r.split("\t") + [""] * 9 for r in rows):
 # keeps its last CODEX_TAIL_LINES lines in .swarm/codex/<story or base>.tail (codex_keep_tail), so a limit message
 # no pattern matches can still be read. One whose last lines hold its own limit message (codex_limit: CODEX_LIMIT_RE
 # or CODEX_RATE_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a codex-limit incident,
-# `codex-limit: usage limit` or `codex-limit: rate limit`, with the same tail, and with fallback_reviewer set,
+# `codex-limit: usage limit` or `codex-limit: rate limit`, with the reap line's slug= and role= fields (the
+# incident line holds none of codex's lines), and with fallback_reviewer set,
 # codex_fallback reviews in its place, in what is left of codex_minutes.
 codex_review() {
   local pid tpid left t0 rc=0 m i args story prompt="" dir log files fields=() kv=() f
@@ -961,14 +962,16 @@ codex_limit() {
 
 # codex_keep_tail <base> <log> <codex's exit> — keep a failed codex's last CODEX_TAIL_LINES lines in
 # .swarm/codex/<SWARM_STORY, or base>.tail, under a line with the time and the exit, replacing the
-# story's last one. A file it cannot write gets a warning, never a failed review.
+# story's last one. Each run writes a temp file of its own (<file>.<pid>.tmp) and moves it into place,
+# so two runs that fail together on one story each replace the file whole, and the last to finish
+# wins. A file it cannot write gets a warning, never a failed review.
 codex_keep_tail() {
-  local unsafe='[^A-Za-z0-9.-]' f
-  f="${PROJECT_DIR}/.swarm/codex/${SWARM_STORY:-${1//${unsafe}/-}}.tail"
+  local unsafe='[^A-Za-z0-9.-]' f t
+  f="${PROJECT_DIR}/.swarm/codex/${SWARM_STORY:-${1//${unsafe}/-}}.tail"; t="${f}.$$.tmp"
   { mkdir -p "${f%/*}" \
     && { printf '# %s codex exited %s; its last %s lines:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$3" "${CODEX_TAIL_LINES}"
-         tail -n "${CODEX_TAIL_LINES}" "$2"; } > "${f}.tmp" \
-    && mv "${f}.tmp" "${f}"; } 2>/dev/null || echo "swarm: could not keep codex's last lines in ${f}" >&2
+         tail -n "${CODEX_TAIL_LINES}" "$2"; } > "${t}" \
+    && mv "${t}" "${f}"; } 2>/dev/null || { rm -f "${t}"; echo "swarm: could not keep codex's last lines in ${f}" >&2; }
 }
 
 # FALLBACK_MIN_SECONDS: the least of codex_minutes that must be left for a fallback reviewer to be

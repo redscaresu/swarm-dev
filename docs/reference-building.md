@@ -1061,13 +1061,14 @@ output, stderr merged into stdout, to the screen and to a log in a temp director
 it waits a few seconds for the output to finish, and on any way out (the timeout and an interrupt
 too) it stops the copy, so a child of codex left holding the output cannot hang the caller. When codex
 fails, codex-review keeps its last 20 lines in `.swarm/codex/<story>.tail` (`<base>.tail` with no
-`SWARM_STORY`), under a line with the time and codex's exit, replacing that story's last one. A limit
+`SWARM_STORY`), under a line with the time and codex's exit, replacing that story's last one. Two runs
+that fail together on one story each replace the file whole, and the last to finish wins. A limit
 message no pattern below matches can still be read there. If codex fails and its last 5 lines hold its
 own limit message, codex-review logs a `codex-limit` incident in events.tsv, with `codex-<story>` as its
 target (not the slug, which is the builder's own agent name). The outcome names the limit. `codex-limit:
 usage limit` is codex's usage limit (`You’ve hit your usage limit`). `codex-limit: rate limit` is a rate
 limit codex gave up on: `rate limit exceeded: <the provider's message>` or `exceeded retry limit, last
-status: 429 Too Many Requests`. Either has `ERROR:` or `■` before it, and a review that only quotes the
+status: 429 Too Many Requests`. The line starts with the message, with `ERROR:`, `■` or nothing before it, and a review that only quotes the
 words does not count. On Azure Foundry the rate limit reads `ERROR: rate limit exceeded: Your requests to
 <model> for <model> in <region> have exceeded token rate limit.` That limit is the Foundry deployment's
 capacity, its tokens per minute. You raise it in Azure, on the deployment or the quota behind it. The
@@ -1084,7 +1085,7 @@ nothing in time, codex-review prints `codex skipped: usage limit (<why>)` (`rate
 waits for the file, not for the agent to go idle: an agent idle while a subagent or a background
 call of its own runs has not finished. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
-(no time left for a fallback)`. The planning `codex` panes of
+(no time left for a fallback)` (`rate limit` on a rate limit). The planning `codex` panes of
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 A codex review reads the diff. In this repository, swarm-dev's own, its `scripts/test.sh` refuses to
