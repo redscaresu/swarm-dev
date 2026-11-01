@@ -111,6 +111,13 @@ comes on any other non-zero exit that printed nothing, and keeps that exit code:
 lock it could not take, a failed read of the queue, or a TERM from anything else, such as a tool's
 timeout (exit 143). Its stderr says why. A failed read leaves `.swarm/lead/seen` as the last good read
 left it.
+Before it prints a new line that says an agent is missing (`no-agent:`, `no-review:`, or `idle: <story>
+is ready with no build`), it reads herdr's agent list once more, at most once a poll. When that read
+shows the agent in one of the project's panes (the builder or `review-<slug>` for `no-agent:`,
+`review-<slug>` for `no-review:`, the builder for `idle:`), it drops the line and does not save it as
+seen, so a later poll prints it if it still holds. A read that fails keeps the line, and so does a poll
+whose first read failed, which makes no second one. A `no-review: ... (started N of 3)` line is never
+dropped: that poll started the review agent itself, and the line is how the lead hears of it.
 A review item's line is `merge: <slug> <PR URL>...`. The PRs of an item that `swarm.sh merge` held
 because they change a protected path go on a line of their own, without the item's other PRs, with
 their paths and the exit: `merge: <slug> <PR URL>... (held: changes <path>[, <path>]...; exit: the user
@@ -132,7 +139,7 @@ It also prints `next`'s `idle:` lines: for blocked stories (`idle: <story> waits
 no touches part with it and needs nothing from it`) and for ready stories with no build (`idle: <story>
 is ready with no build, exit: <exit>`), and the epic lines (`idle: epic <epic> can start, ...` and
 `idle: epic <epic> has no plan running, ...`). Each poll works them out again from the board, its
-state and events.tsv, with no gh or herdr call. A line wakes the lead once and goes once its dependency is in
+state and events.tsv. It calls no gh, and reads herdr only for the check above. A line wakes the lead once and goes once its dependency is in
 review or done, once the story's build starts, or once the epic is active with stories or its plan runs. It wakes the lead again only if it comes back. A
 ready story's line names its exit, so when the story's conductor starts or stops, the line changes,
 and `wait --lead` takes the changed line as new and wakes the lead again. On a run that starts with no
@@ -171,7 +178,8 @@ whether a builder is at work or not. For each one it prints:
 - `unmerged: <slug> <PR URL>, exit: swarm.sh merge --head <sha> <PR URL>` when GitHub reads the PR as
   mergeable, its checks are green, `.swarm/reviews/<slug>.md` is a pass on its head (as `review_pass` reads
   it), and the PR was opened and that file last written `queue_minutes` or more ago. `<sha>` is that
-  reviewed head, so a push after the line leaves merge refusing the PR. When the file lists findings, the
+  reviewed head, so a push after the line leaves merge refusing the PR, unless it added only git's own
+  clean merges of the base. When the file lists findings, the
   exit is `triage .swarm/reviews/<slug>.md, then swarm.sh merge --head <sha> <PR URL> once every finding is
   declined`: a pass means only that a review finished on the head. Green here is narrower than
   `ci_gate`'s rule: every check run and status in the rollup GitHub returns passed (success, skipped or
@@ -405,12 +413,15 @@ builder was recorded). A hold answers the alert but starts nothing, so if no age
 back by the next poll, that poll writes a new `no-agent` line and the alert comes back. For a story in
 review the exit is never an unpinned merge. With one PR and a findings file
 `.swarm/reviews/<slug>.md` that passes on its 40-hex `head:` line, it is
-`swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since. With several PRs, or
+`swarm.sh merge --head <sha> <PR URL>`, which refuses a head that moved since, unless the move added
+only git's own clean merges of the base ([reference-merging.md § Merging](reference-merging.md#merging),
+Held for dropped base lines). With several PRs, or
 no passing review, it is `swarm.sh review-agent <slug> <PR URL>` for
 each. The lead runs `swarm.sh wait-pr <PR URL>` first and acts on its exit, once per head. On 0 it
 compares the head wait-pr printed with the exit's `<sha>`: the same, it merges; different, the PR was
-pushed after its review, so it runs `swarm.sh review-agent <slug> <PR URL>` instead, since merge
-refuses the old pin and the line, already seen, would not come back. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
+pushed after its review, so it runs `swarm.sh review-agent <slug> <PR URL>` instead: merge refuses
+the old pin unless the push added only clean merges of the base, and the line, already seen, would
+not come back. On 1 (red) it starts a builder in the story's worktree with a brief naming the failing
 checks, or lists the story in its report with the reason, since `swarm.sh hold` takes only a ready
 story. On 2 it reads why: on a conflict with the base, a builder in the story's worktree merges the
 base in and pushes; on a gh error or the timeout, it runs wait-pr once more, and if it ends the same
@@ -510,7 +521,7 @@ line's exit comes first. In review it already names `swarm.sh review-agent`. For
 restart brings the builder back, and the next poll prints `no-review:`. The exit starts `review-<slug>`, so the next poll
 is quiet. When no review agent can start, the exit's `or the fallback reviewer` means the lead
 reviews the PR itself with `swarm.sh codex-review`, run from the story's worktree (codex-review
-reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex's usage limit the
+reviews the directory it runs in) with `SWARM_STORY=<slug>`: codex, or at codex's usage or rate limit the
 model `fallback_reviewer` names. The lead runs it only while the worktree is at the PR's head with
 nothing uncommitted, as `review-agent` checks; otherwise the builder is still at work. Its findings
 go to the builder with `swarm.sh tell <slug> findings <file>`, which is a round under way, so the
@@ -715,6 +726,20 @@ prints its step. A `step-up failed:` line is never the step: `wait --lead`
 hands that one to the lead. Working out the step makes no gh call, because `dash` reads it every
 frame. `status` and `dash` hand `next` the lines they have already read, so neither asks herdr and
 `ps` twice, and dash's Next row agrees with its No agent rows from outside a herdr pane too.
+
+**`next` names a PR of yours that no story lists.** `swarm.sh merge` refuses a PR that no story or
+epic lists on its `prs:` line, so a lead's own PR (a config change, a doc fix) used to wait unseen. After
+the step's lines, `next` prints one line per open PR in the project's origin that you opened
+(`gh pr list --author @me`), whose head is not a `story/*`, `board/*` or `release/v*` branch, and that
+no story or epic lists: `unlisted: <PR URL> (<head>): no story or epic lists it; list it under the kind:
+lead story that covers it with swarm.sh review <slug> <PR URL>, then swarm.sh merge <PR URL>; with none, it
+waits on the user`. It is one gh call, the last of `next`'s reads, under the same deadline. When that
+read fails, is cut at the deadline or gets no list of PRs back, `next` prints `unlisted: not checked
+(<why>): an open PR of yours that no story or epic lists would not show here` in its place. Only that
+line names a cut of this read; the `skipped` line keeps naming the reads the step was worked out
+without. A project with no origin has no PR to list, and `next` prints no unlisted line for it.
+`status`, `dash` and `hooks/lead-stop.sh` work out the step without this read, so they make no such
+call.
 
 `status` prints a `No agent` section before its agents, one line per story: `<slug>, exit: <exit>`,
 `<slug> (step-up failed), exit: swarm.sh step-up --resume <slug>` for a failed step-up, or the
