@@ -492,11 +492,16 @@ never joins the queue, where a PR queued behind it could share its push and so i
 that requires a queue takes no direct merge but `--admin`'s, which `merge_admin = off` rules out. So
 `merge --release` refuses there, naming the queue, and the release is yours to merge once the queue
 is empty. With no
-queue the path is the one above. ci.yml and zizmor.yml run on
+queue the path is the one above.
+
+To turn a queue on for a base, in GitHub, either add a ruleset on the base branch with the
+`merge_queue` rule, or turn on the merge queue in the base's branch protection. Every workflow the
+base requires must also run on `merge_group`, or the queue never sees its check and the group waits
+forever. Add `merge_group:` to that workflow's `on:` triggers. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
 merges with `--admin`, which would skip a queue. `ci_gate admin` refuses a base with a
-`merge_queue` rule for that reason.
+`merge_queue` rule for that reason. So a base with a queue cannot also use `merge_admin = on`: leave `merge_admin` off there.
 
 It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
 merge GitHub made. A PR that does not read as merged is read again a few times, then logged as
