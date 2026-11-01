@@ -403,15 +403,21 @@ a gh failure. A story that only an old build keeps from starting stays blocked t
 `not stacked: <slug>` for the lead. `story` fetches each parent's branch and checks that its PR is still open. If one is not,
 the story goes back to `blocked` and nothing is made. Otherwise the worktree starts at
 `origin/story/<first parent>` with each other parent's branch merged in, events.tsv gets a
-`stacked <slug>` line, and the brief says to open the PR against the base with
-`Merge after <parent PR URLs>` in its body. A merge conflict fails, naming the two branches that
-conflict and their files, and leaves no worktree or branch. The overlap check skips a story's own
+`stacked <slug>` line (`ok (on <parents merged in>)`), and the brief says to open the PR against
+the base with `Merge after <parent PR URLs>` in its body. A parent whose branch conflicts with one
+already merged in is left out: `story` aborts that merge and goes on, so the worktree stays on the
+parents merged so far. The stacked line then reads `ok (on <merged>; left <p>: conflicts with <q> in
+<files>)`, and the brief names `<p>` too. `<p>`'s code reaches the child through the base once its PR
+merges. Until then the child's Stacked line never says to merge `<p>`'s branch, since that merge
+conflicts; once it merges, the line to merge `origin/<base>` covers it. Any other failed merge
+(unrelated histories, say) fails, naming what the parent was merged into and git's reason, and
+leaves no worktree or branch. The overlap check skips a story's own
 parents and its own children, so neither holds the other back under `--strict`. While a parent is
 still on the board, `swarm.sh review` holds the child: it sets it `blocked` with `held_by: <parents>`,
 keeps its `prs:` line, builder, worktree and branch, puts nothing in review, and exits with
 `held: <slug> waits for <p> to merge`, pointing at the child's Stacked line for what comes next. A held child still counts as open in the overlap check, since
 its PR is. The child's review agent, which ran that review, stops there, and the child's builder
-stays open. When a parent's branch moves, the conductor tells the child to merge it in. A held child
+stays open. When a parent's branch moves, the conductor tells the child to merge it in, unless `story` left that parent out. A held child
 is readied again only once every parent has finished, as `ready: <slug> (held: merge origin/<base>,
 review again)` while its worktree is still there. With the worktree gone it is readied plainly,
 without `held_by:` or the `prs:` line, and `story` builds it fresh. A parent squash-merges, so its
@@ -478,8 +484,8 @@ herdr's working for one herdr answers for) has not changed its pane for `stall_m
 transcript shows no background task still running (a shell, an async subagent or a monitor it
 started, with no `<task-notification>` carrying a `<status>` for it since). A test suite running in
 its pane (`make test`, `make check` or `scripts/test.sh`, as under `stall_minutes`) also keeps it
-from being stuck, for a conductor as for a builder, but only until the run is 3 times
-`stall_minutes` old: a hung one gives `stuck` after that. It sends nothing then: read the pane. `stuck` is
+from being stuck, for a conductor as for a builder, for as long as the run is alive, with no limit on
+its age. It sends nothing when it says `stuck`: read the pane. `stuck` is
 not a stall, and no close follows from it. When an agent's pane shows Claude Code's usage-limit dialog
 ("Stop and wait for limit to reset" / "Wait here, then continue automatically"), `wait` picks
 "Wait here, then continue automatically" (the user's standing choice) once per dialog (a keypress
@@ -492,8 +498,9 @@ it sits; at its timeout `wait` prints `usage-limit` and exits 1. Until the pane 
 and `dash` show `usage-limit` for the agent in place of working or idle. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, own work in the session log or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
-worktree, its own work in its session log, a PR update, a swarm action on its story, a test suite
-running in its pane or a background task its session waits on, each up to 3 times `stall_minutes` old) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
+worktree, its own work in its session log, a PR update, a swarm action on its story, a background
+task its session waits on, up to 3 times `stall_minutes` old, or a test suite running in its pane, at
+any age) for `stall_minutes` since that wait began; the line names the longest-running command the builder runs, as under `stall_minutes`.
 Before it calls a builder stalled, once its PRs show no update either, it asks the signer probe
 (`sign_blocked`, over the builder's worktree) whether git can sign the uncommitted work there without a
 prompt. The probe says `blocked` when `commit.gpgsign` is on, the tree has changes, and gpg-agent holds no
@@ -694,7 +701,9 @@ open PR has commits the child lacks, `<child>: merge origin/<base> (<p> merged)`
 merged and the child lacks the base's head (one line for all the merged parents; after a squash
 merge, the child takes the base), and `<child>: lost story/<p>` when the parent's PR closed unmerged
 (as a dropped parent's has), or its branch is gone while its PR is open or, still on the board, it
-has no PR. A gh or git call that fails, or a git that cannot tell, gives a `could not check` line.
+has no PR. A parent `story` left out because its branch conflicts (§ Stacked builds) gets no
+`merge origin/story/<p>` line while its PR is open; once it merges, it is in the `merge origin/<base>`
+line. A gh or git call that fails, or a git that cannot tell, gives a `could not check` line.
 Inside herdr, a line ends `(no builder)` when the child has no builder open. After each wait, watch
 and new PR, the conductor runs `unblock --startable`, starts each story it prints as `startable:`
 (§ Merging), and runs `status`, acting only on its own stories: its epic's, or for the backlog conductor those with no epic. It tells each child
@@ -1037,7 +1046,10 @@ because the epic's conductor is still running leaves them alone. The conductor c
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. Each builder
-also proves its tests can fail: it breaks its fix, watches a test fail, and restores the fix.
+also proves its tests can fail: it breaks its fix and watches a test fail. Before its PR opens it
+breaks the fix in place and restores it with cp; after the PR opens it breaks the fix in a copy of
+the worktree without `.git`, made outside the worktree, and deletes the copy, so the worktree stays
+clean for the review agent.
 
 Every codex review a builder, a conductor or the lead runs goes through `swarm.sh codex-review
 <base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still

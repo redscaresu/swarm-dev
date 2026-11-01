@@ -1096,6 +1096,17 @@ restart_session() {
   echo "${a[5]}"
 }
 
+# recorded_current <name> — the session <name> is in now by agents.tsv's record: its recorded session
+# followed through its resume command (restart_session) to where a /clear moved it, or the recorded one
+# itself when that file is missing or not resume_file's shape; nothing when none is recorded.
+recorded_current() {
+  local rec cur
+  rec="$(recorded_session "$1")"
+  [[ -n "${rec}" ]] || return 0
+  cur="$(restart_session "${rec}" 2>/dev/null)" || cur="${rec}"
+  echo "${cur}"
+}
+
 # restart_took <session> — succeed when Claude session <session>'s main log (report.py's session_log)
 # holds a user prompt (panes.py's is_prompt, not a Task subagent's entry): its brief, or a later one,
 # landed. Fails with no log.
@@ -3230,17 +3241,16 @@ stuck_seen() {
   done < <(awk -v s="$1" -v u="${2:-}" '$1 == "stuck:" && $2 == s && (u == "" || $3 == u)' "${LEAD_SEEN}" 2>/dev/null || true)
 }
 
-# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell (panes.py's test_running, as
-# agents.sh's test_running reads it), with herdr's process info read within STUCK_READ_WAIT seconds: a read that
-# fails or hangs sees no run.
+# stuck_test_run <pane> — succeed when a test suite runs under <pane>'s shell, however long ago it started
+# (panes.py's test_running, as agents.sh's test_running reads it), with herdr's process info read within
+# STUCK_READ_WAIT seconds: a read that fails or hangs sees no run.
 stuck_test_run() {
   local info
   info="$(within "${STUCK_READ_WAIT}" herdr pane process-info --pane "$1" </dev/null 2>/dev/null)" || info=""
-  # shellcheck disable=SC2154 # assigned in another file
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import test_running
-sys.exit(0 if test_running(*sys.argv[1:3]) else 1)' "${info}" "${CFG_stall_minutes}"
+sys.exit(0 if test_running(sys.argv[1]) else 1)' "${info}"
 }
 
 # main_red_lines — `main-red: <short sha> <owner/repo> <base> (<red checks>), exit: <exit>`, one line per red base:
@@ -5337,12 +5347,15 @@ UPGRADE_HINT=""
 # <end-ms>), write this version's resume command (resume_file), send ctrl+c twice at once (claude
 # exits only on a second within a moment) until claude has left its pane, then start it there again,
 # through clean_env with this version's bin first on PATH and <env-names> and agent_env's names
-# (agent_env_names): --resume of herdr's session for the pane,
-# with the flags its claude ran with (herdr pane process-info). Any failure once claude has exited
-# keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
+# (agent_env_names): --resume of herdr's session for the pane, or when herdr lists the pane with none
+# the one agents.tsv recorded, followed through its resume command to where a /clear moved it
+# (recorded_current; it says so; a list herdr cannot answer resumes nothing), with the flags its
+# claude ran with (herdr pane process-info). The resume files stay named for agents.tsv's id, which
+# a later /clear and swarm.sh restart read. Any failure once claude
+# has exited keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
 # stops only this agent.
 upgrade_one() {
-  local name="$1" pane="$2" old session a out cwd why rc flags=() resume=() try names
+  local name="$1" pane="$2" old session key a out cwd why rc flags=() resume=() try names
   old="$(agent_version "${name}")"
   names="$(agent_env_names)"; names="${names}${names:+ }$3"   # as start_agent gives every agent
   upgrade_idle "${name}" "${pane}" "$5" && rc=0 || rc=$?
@@ -5351,17 +5364,29 @@ upgrade_one() {
     [[ -z "${UPGRADE_DIR}" ]] || : > "${UPGRADE_DIR}/busy-${name}"
     die "${name}: still busy at the end of the wait, left on ${old}"
   fi
-  session="$(session_for_pane "${pane}")"
-  [[ -n "${session}" ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
+  session="$(session_for_pane "${pane}")"; key="${session}"   # key: the name of the session's resume files
+  if [[ -z "${session}" ]]; then
+    # Only when herdr answers and lists the pane with no session: a list that cannot be read says nothing.
+    out="$(herdr agent list 2>/dev/null </dev/null | json "sum(1 for a in d['result']['agents'] if a.get('pane_id')=='${pane}')" 2>/dev/null)" || out=""
+    [[ "${out}" == 1 ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
+    key="$(recorded_session "${name}")"
+    [[ -n "${key}" ]] || die "${name}: neither herdr nor agents.tsv gives a session for it, so it cannot be resumed; left on ${old}"
+    # agents.tsv holds the agent's first session. A /clear moves it in <key>.argv (hooks/agent-state.sh), so
+    # resume the session the agent is in now, as swarm.sh restart does (the raw id when that file is not
+    # resume_file's); the files stay keyed by agents.tsv's id, which the next /clear and restart read.
+    session="$(recorded_current "${name}")"
+    if [[ "${session}" == "${key}" ]]; then echo "swarm: ${name}: herdr lists no session for it; resuming ${session}, the one agents.tsv recorded" >&2
+    else echo "swarm: ${name}: herdr lists no session for it; resuming ${session}, which a /clear moved agents.tsv's ${key} to" >&2; fi
+  fi
   out="$(upgrade_flags "${pane}")" && rc=0 || rc=$?
   [[ ${rc} -ne 3 ]] || die "${name}: a flag of its claude holds a control character, which herdr refuses in a resume command; left on ${old}"
   [[ ${rc} -ne 4 ]] || die "${name}: herdr pane process-info could not be read, so it is left as it is, on ${old}"
   [[ ${rc} -eq 0 ]] || die "${name}: no claude in pane ${pane} (herdr pane process-info), left on ${old}"
   cwd="${out%%$'\n'*}"; out="${out#"${cwd}"}"; out="${out#$'\n'}"
   if [[ -n "${out}" ]]; then while IFS= read -r a; do flags+=("${a}"); done <<< "${out}"; fi
-  resume=(python3 -I "${RESUME_DIR}/${session}.py" claude --resume "${session}" ${flags[@]+"${flags[@]}"})
+  resume=(python3 -I "${RESUME_DIR}/${key}.py" claude --resume "${session}" ${flags[@]+"${flags[@]}"})
   why="$(resume_refusal "${resume[@]}")" && die "${name}: herdr would refuse its resume command (${why}), left on ${old}"
-  resume_file "${name}" "${session}" "${names}" "${resume[@]}"
+  resume_file "${name}" "${key}" "${names}" "${resume[@]}"
   a="$(upgrade_path)"
   # Before the first ctrl+c, so a claude that exits late, or a read that fails, still says how to resume it.
   UPGRADE_HINT="${name}: not started again; if pane ${pane} shows a shell, claude --resume ${session}, run in ${cwd}, brings the session back"
@@ -5376,7 +5401,7 @@ upgrade_one() {
     [[ ${rc} -ne 4 ]] || die "${name}: herdr pane process-info could not be read after the ctrl+c, so whether claude exited is not known"
     [[ ${try} -lt 3 ]] || die "${name}: claude did not exit on ctrl+c, left on ${old}"
   done
-  local -x SWARM_RESUME="${RESUME_DIR}/${session}.argv"
+  local -x SWARM_RESUME="${RESUME_DIR}/${key}.argv"
   PATH="${a}" clean_env "${pane}" "${name}" "${names}" keep   # the agent's PATH; herdr below still runs from the lead's
   out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${session}" ${flags[@]+"${flags[@]}"} 2>&1)" \
     || die "${name}: herdr could not start it again (${out})"
@@ -5400,14 +5425,19 @@ upgrade_flags() {
 
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
 # on its own: Claude Code's own state for the session herdr has in <pane> now (upgrade_herdr; the one
-# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else read_state's, over
-# agents.tsv's session (herdr 0.9.5 lists none); a turn stopped on
+# upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else, with herdr listing
+# none (herdr 0.9.5) and a /clear having moved agents.tsv's session, the one it moved to
+# (recorded_current), as upgrade_one resumes it, else read_state's, over agents.tsv's session; a turn stopped on
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
 # turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
 # one waiting on a prompt, or on a tool call's result, is busy.
 upgrade_state() {
-  local s sid
+  local s sid cur
   sid="$(upgrade_herdr </dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$2'),'')" 2>/dev/null)" || sid=""
+  if [[ -z "${sid}" ]]; then   # herdr lists none (0.9.5): agents.tsv's, followed to where a /clear moved it, as upgrade_one resumes
+    cur="$(recorded_current "$1")"
+    [[ "${cur}" == "$(recorded_session "$1")" ]] || sid="${cur}"
+  fi
   if [[ -z "${sid}" ]]; then s="$(read_state "$1" </dev/null)"
   else
     s="$(claude_agents </dev/null | python3 -I -c '

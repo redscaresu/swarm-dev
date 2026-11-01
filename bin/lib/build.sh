@@ -368,13 +368,14 @@ EOF
 
 # stacked_start_rule — what unblock's (stacked on <parents>) means, for both merge modes.
 stacked_start_rule() {
-  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
+  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A parent whose branch conflicts with one merged in is left out: its code reaches the story through the base once its PR merges, when the story's Stacked line says to merge the base in. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
 }
 
 # A test that passes with its fix removed proves nothing; a builder shows each one can fail, and
-# findings names each new test whose FAIL line the PR body lacks.
+# findings names each new test whose FAIL line the PR body lacks. Once the PR is open, a proof in
+# place leaves the worktree dirty and review-agent refuses it (#695), so it runs on a copy.
 mutation_rule() {
-  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
+  printf '%s' "For a code change, prove each new or changed test can fail. Before the PR opens, do it in place: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work). After the PR opens, prove it on a copy of the worktree without .git, never in place. Make the copy in a new directory outside the worktree (\`rsync -a --exclude .git <worktree>/ <copy>/\`), as a copy inside it leaves the worktree dirty too; break the fix in the copy, run the test there and delete the copy, so the worktree stays clean for its review. Either way, paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body. Push what is ready, and put further points in the PR body rather than in more pushes."
 }
 
 # load_rule <slug> — a builder's cap on load it starts on purpose: 4 CPUs, gone when the check ends.
@@ -676,7 +677,7 @@ build_story() {
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
   story_brief "${slug}" "${src}" "${base}" > "${prompt}"
-  [[ -z "${parents}" ]] || printf '%s\n' "This story is stacked: your branch starts on the branches of ${parents}, whose PRs are still open. Open your PR against \`${base}\` all the same, with \`Merge after ${STACK_PRS}\` in its body." >> "${prompt}"
+  [[ -z "${parents}" ]] || stack_brief "${base}" >> "${prompt}"
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   epic="$(fm "${story}" epic)"
@@ -707,7 +708,7 @@ build_story() {
     echo "swarm: ${why}" >&2; record_event story "${slug}" "${why}"
     # That failed story line ends stack_start's stacked event for stacked_parents, so the next try's
     # build needs its own, as the same worktree still sits on its parents.
-    [[ -z "${parents}" ]] || record_event stacked "${slug}" "ok (on ${parents})"
+    [[ -z "${parents}" ]] || record_event stacked "${slug}" "${STACK_ON}"
     nap 3
   done
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
@@ -1317,11 +1318,12 @@ review_on_head() {
   [[ "$(cat "${f%.md}.head" 2>/dev/null)" == "$2" && -n "$(agent_field "$(agent_name "review-$1")" pane_id)" ]]
 }
 
-# review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents), that their
-# commits are in its diff against <base> but are not its own; nothing for any other story.
+# review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents on: those merged
+# in, not one stack_start left out), that their commits are in its diff against <base> but are not its
+# own; nothing for any other story.
 review_stack_note() {
   local parents b="" p
-  parents="$(stacked_parents "$1")"; [[ -n "${parents}" ]] || return 0
+  parents="$(stacked_parents "$1" on)"; [[ -n "${parents}" ]] || return 0
   for p in ${parents//,/ }; do b+="${b:+, }origin/story/${p}"; done
   printf '\n%s\n' "This story is stacked on ${parents}: their branches (${b}) are in its diff against origin/$2, but their code is not this story's. Leave it out of everything you write: it is neither a finding nor out of scope."
 }
@@ -1704,14 +1706,19 @@ EOF
 # stack_start <story> <repo-dir> <worktree> <parents> — a stacked story's worktree, on story/<slug> at
 # origin/story/<first parent>, with each other parent's branch merged in. Each parent's branch is
 # fetched first and its PR must still be open; when one is not, the story goes back to blocked (in
-# BOARD_STATE_DIR, as unblock's) and nothing is made. A merge that fails leaves no worktree or
-# branch, and names the two branches that conflict and their files (merge_clash). Sets STACK_PRS to the
-# parents' PR URLs, for the brief.
+# BOARD_STATE_DIR, as unblock's) and nothing is made. A parent whose merge conflicts is left out: the
+# merge is aborted and the worktree stays on the parents merged so far; its code reaches the child
+# through the base once its PR merges. Any other failed merge leaves no worktree or branch, and says
+# what the parent was merged into and why (merge_clash). For the brief it sets STACK_PRS to every
+# parent's PR URL, STACK_MERGED to the parents merged in (the first among them) and STACK_LEFT to a
+# line per left-out parent (`<p>: conflicts with <q> in <files>`). STACK_ON is the stacked event's
+# outcome, which it records: `ok (on <merged>)`, with `; left <p>: conflicts with <q> in <files>` per
+# left-out parent before the `)` (stacked_parents reads both parts).
 stack_start() {
-  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why merged sign=()
+  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why merged on files sign=()
   # shellcheck disable=SC2154 # assigned in another file
   [[ "${CFG_sign_commits}" != true ]] || sign=(-S)
-  slug="$(basename "${story}" .md)"; STACK_PRS=""
+  slug="$(basename "${story}" .md)"; STACK_PRS=""; STACK_LEFT=""
   for p in $4; do
     if ! git -C "${src}" fetch -q origin "+refs/heads/story/${p}:refs/remotes/origin/story/${p}" 2>/dev/null \
        || ! pr="$(open_pr "${src}" "${p}")"; then
@@ -1722,14 +1729,38 @@ stack_start() {
   done
   # No upstream: a plain push must never reach the parent's branch.
   git -C "${src}" worktree add -q --no-track -b "story/${slug}" "${wt}" "origin/story/${first}"
-  merged="origin/story/${first}"
+  merged="origin/story/${first}"; on="${first}"
   for p in ${4#"${first}"}; do
-    if why="$(git -C "${wt}" merge -q --no-edit ${sign[@]+"${sign[@]}"} "origin/story/${p}" 2>&1)"; then merged+=" origin/story/${p}"; continue; fi
+    if why="$(git -C "${wt}" merge -q --no-edit ${sign[@]+"${sign[@]}"} "origin/story/${p}" 2>&1)"; then
+      merged+=" origin/story/${p}"; on+=" ${p}"; continue
+    fi
     why="$(merge_clash "${wt}" "origin/story/${p}" "${merged}" "${why##*$'\n'}")"
+    # A conflict (files git left unmerged, as merge_clash read them, and a merge to abort): leave p out
+    # and go on. merge_clash's line is then `origin/story/<p> and origin/story/<q> conflict in <files>`.
+    files="$(git -C "${wt}" diff --name-only --diff-filter=U)"
+    if [[ -n "${files}" ]] && git -C "${wt}" merge --abort 2>/dev/null; then
+      why="${why#"origin/story/${p} and origin/story/"}"
+      STACK_LEFT+="${STACK_LEFT:+$'\n'}${p}: conflicts with ${why%% conflict in *} in ${files//$'\n'/, }"
+      continue
+    fi
     git -C "${src}" worktree remove --force "${wt}"; git -C "${src}" branch -q -D "story/${slug}"
     die "${slug}: ${why}; no worktree or branch was made"
   done
-  record_event stacked "${slug}" "ok (on $4)"
+  STACK_MERGED="${on}"; STACK_ON="ok (on ${on}${STACK_LEFT:+; left ${STACK_LEFT//$'\n'/; left }})"
+  record_event stacked "${slug}" "${STACK_ON}"
+}
+
+# stack_brief <base> — build_story's stacked lines for the brief, from stack_start's STACK_MERGED,
+# STACK_LEFT and STACK_PRS: the branches it starts on, a line per left-out parent saying its code
+# arrives through <base> once its PR merges, and to open the PR against <base> with Merge after every
+# parent's PR.
+stack_brief() {
+  local l
+  printf '%s\n' "This story is stacked: your branch starts on the branches of ${STACK_MERGED}, whose PRs are still open."
+  while IFS= read -r l; do
+    [[ -z "${l}" ]] || printf '%s\n' "${l%%:*} is left out, as its branch${l#*:}: its code is not in yours. It reaches your branch through \`$1\` once its PR merges, when \`swarm.sh status\` says to merge \`origin/$1\` in."
+  done <<< "${STACK_LEFT}"
+  printf '%s\n' "Open your PR against \`$1\` all the same, with \`Merge after ${STACK_PRS}\` in its body."
 }
 
 # merge_clash <worktree> <ref> <merged refs> <git's last line> — why merging <ref> failed in

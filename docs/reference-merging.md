@@ -577,8 +577,29 @@ stories, it sends the epic's running conductor one note naming them (`swarm.sh t
 note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its
 builder limits. A conductor that has written its report has finished and counts as not running.
 When no conductor runs, it prints a `ready now:` line, then starts one (§ The backlog conductor says
-when). It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged
-as a `reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
+when). When the PR readied no story, it prints `<url> made no story ready`; a conductor may still
+start for ready work an earlier PR made. Each group it starts no conductor for, or a board with nothing
+to start, gets a line saying why:
+
+- `no conductor started: no story is ready to build`, when no story on the board is ready.
+- `no conductor started: only fix-main stories are ready, and swarm.sh next names them first`, when
+  the only ready stories are `fix-main` ones.
+- `no conductor started: conduct-<epic> runs already`, for an epic with newly ready stories whose
+  conductor runs and gets the note (`conduct-backlog-<dir>-<hash>` for stories with no epic).
+- `no conductor started for <url>: the board's checkout has no upstream to pull it from; pull the
+  board, then run swarm.sh next`, when the main checkout has no upstream.
+- The lines of [reference-building.md § Building](reference-building.md#building), where a
+  conductor has reported, is gone, or cannot start yet.
+
+An epic the PR set active that has no stories gets no conductor: its stop rule would have it write
+its report at once, with the epic unplanned. Merge prints `epic <epic> is active with no stories:
+plan it (next offers plan-epic <epic>)`, or `plan it once next offers plan-epic <epic>` while `next`
+does not offer it yet (something it depends on is still open, say). For a built epic, one whose
+stories have all merged and left the board, it prints `epic <epic> is active with its stories all
+built: no conductor started for it`, since next never plans it again.
+
+It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged as a
+`reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
 cannot list its agents, or when a note or a start fails. After the first two it starts no conductor
 either, since the board was not pulled. After a failed reconcile, each running conductor still gets
 a note that the board PR merged, naming the failure, since which stories it made ready is not known.
@@ -792,9 +813,14 @@ round, though that agent reads idle by the end. A codex review agent holds nothi
 A restart sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
-<session>` with the flags its claude ran with (`herdr pane process-info`; the session from `herdr
-agent list`), and gives herdr that command, as a first start does, so a herdr restart keeps its
-guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
+<session>` with the flags its claude ran with (`herdr pane process-info`). The session is the one
+`herdr agent list` shows for the pane. When herdr lists the pane with none (herdr 0.9.5 lists none),
+it is the one `agents.tsv` recorded, followed through its resume command (the `.argv` file in
+`swarm-dev/resume` under Claude's config folder, which a `/clear` updates) to the session the agent
+is in now; the log says which. The idle check reads that same session, and the restore files keep
+agents.tsv's id as their name, so a later `/clear` and `swarm.sh restart` find them. With neither, the agent is left on its old version and its line names both sources. A list
+herdr cannot answer resumes nothing: the agent is left as it is. Once claude is back, upgrade gives herdr the resume command, as a first start does, so a herdr
+restart keeps its guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
 since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
