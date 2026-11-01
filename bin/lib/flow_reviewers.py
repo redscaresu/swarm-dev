@@ -1,6 +1,6 @@
 # Reviewers, a flow section (flow_report.py gives its globals): findings raised, fixed and declined per
-# reviewer and kind, and the reworked PRs among those it raised them on, then the split critic's yield
-# per split, review rounds per PR, the yield of each review round (log-finding --round) and the round
+# reviewer and kind, the reworked PRs among those it raised them on and the declined findings whose reason
+# is deferred (a row with no reason counts 0), then the split critic's yield per split, review rounds per PR, the yield of each review round (log-finding --round) and the round
 # each story's review stopped in, and with --epic the PRs counted.
 import collections, glob, os, re, subprocess
 from report import *
@@ -8,11 +8,13 @@ rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
 urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
 # None is the all of a reviewer or kind, apart from a finding whose kind is the word all.
 c, counted, on = collections.defaultdict(collections.Counter), set(), collections.defaultdict(set)
-for day, kind, pr, _, outcome, reviewer in finding_rows(findings):
+# A declined row whose reason (field 7) is deferred is counted apart; a row with no reason field counts none.
+for day, kind, pr, _, outcome, reviewer, reason in finding_rows(findings, width=7):
     if since <= day <= until and (not epic or pr_key(pr) in urls):
         counted.add(pr_key(pr))
         for key in ((reviewer, kind), (reviewer, None), (None, kind), (None, None)):
             c[key][outcome] += 1
+            c[key]["deferred"] += outcome == "declined" and reason == "deferred"
             on[key].add(pr_key(pr))
 # outcomes' rework: a PR a later fix reworked. on[] already keeps the window's findings.
 reworked = {pr_key(r["pr"]) for r in rows if r.get("rework") == "1"}
@@ -22,12 +24,12 @@ def line(who, kind):
     raised = fixed + declined
     rate = f"{int(100 * declined / raised + 0.5)}%" if raised else "-"
     return "\t".join(["all" if x is None else x for x in (who, kind)]
-                     + [str(raised), str(fixed), str(declined), rate, str(len(on[(who, kind)] & reworked))])
+                     + [str(raised), str(fixed), str(declined), rate, str(len(on[(who, kind)] & reworked)), str(c[(who, kind)]["deferred"])])
 
 def kinds(who):
     return sorted((k for w, k in list(c) if w == who and k is not None), key=lambda k: (-c[(who, k)]["declined"], k))
 
-print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate\trework")
+print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate\trework\tdeferred")
 for who in sorted({w for w, _ in c if w is not None}):
     print("\n".join(line(who, k) for k in [None] + kinds(who)))
 print("\n".join(line(None, k) for k in kinds(None) + [None]))
