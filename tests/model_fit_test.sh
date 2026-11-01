@@ -9,7 +9,8 @@
 # Cell sonnet/medium docs none root holds two stories, so it prints its count alone. The by_risk block
 # has a header of its own and a row per model, effort, kind and risk over every size and area: with the
 # s stories at risk: high and split over two sizes, each cell is a count alone and the by_risk row has
-# the five-story figures; with s5 left out, the row of 4 is a count alone. Then the same
+# the five-story figures; with s5 left out, the row of 4 is a count alone; four neighbour groups, each
+# differing from it in one field (effort, risk, kind or model), get rows of their own. Then the same
 # through swarm.sh flow: a story deleted in a git commit keeps its class. The s stories' touches hold
 # a parenthesised note and functions after a file (`bin/y.sh:f, g, h, i`), which are no files; t1's
 # and t2's name a bare Makefile and LICENSE the project has, which are files at the root (root), and t2's docs file
@@ -97,6 +98,21 @@ check "five risk: high stories over two sizes: one by_risk row of 5, \$9.00 over
 check "a by_risk row of 4 stories (s5 left out) prints its count alone" \
   "$(ROWS="$(grep -v $'\ts5\t' <<< "${HIGH}")" STORIES="${SPLIT}" section | by_risk | grep $'^opus\thigh\tcode\thigh\t')" \
   $'opus\thigh\tcode\thigh\t4\t-\t-\t-\t-\t-\t-\t-'
+# Four neighbours of the risk: high group, each differing in one field: opus xhigh (five stories at $1.00,
+# each merged on its one build in 60 minutes), risk medium, kind docs and model sonnet (one story each).
+rrow() { # <risk> then row's arguments: row with its risk set
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\te1\t%s\t%s\n' "$2" "$3" "$4" "$1" "${@:5}"
+}
+NEAR="${HIGH}
+$(for i in 1 2 3 4 5; do rrow high 2026-10-02 "x${i}" code opus xhigh 1.00 1 0 "${U}/2${i}" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0; done
+  rrow medium 2026-10-02 m1 code opus high 1.00 1 0 "${U}/31" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0
+  rrow high 2026-10-02 k1 docs opus high 1.00 1 0 "${U}/32" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0
+  rrow high 2026-10-02 n1 code sonnet high 1.00 1 0 "${U}/33" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z 0.00 MERGED 0)"
+check "groups that differ only in effort, risk, kind or model each get their own by_risk row; opus high code high keeps its figures" \
+  "$(ROWS="${NEAR}" STORIES="${SPLIT}" section | by_risk | tail -n +2)" "$(printf '%s\n' \
+  $'opus\thigh\tcode\thigh\t5\t2.25\t75%\t1.2\t0.8\t2\t2\t420' $'opus\thigh\tcode\tmedium\t1\t-\t-\t-\t-\t-\t-\t-' \
+  $'opus\thigh\tdocs\thigh\t1\t-\t-\t-\t-\t-\t-\t-' $'opus\txhigh\tcode\thigh\t5\t1.00\t100%\t1.0\t0.0\t0\t0\t60' \
+  $'sonnet\thigh\tcode\thigh\t1\t-\t-\t-\t-\t-\t-\t-' $'sonnet\tmedium\tdocs\t-\t2\t-\t-\t-\t-\t-\t-\t-')"
 check "a subagent row for opus alone, as no other model's builds ran subagents: 0.50 of 2.50 is 20%" \
   "$(sed -n '/^subagents/,/^$/p' <<< "${out}")" $'subagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share\nopus\thigh\t0.50\t2.50\t20%'
 fixes() { # <later PR's key> <its text> [its files, JSON] — 1 when rework_of counts o/r#1 as fixed by it, else 0
