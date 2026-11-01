@@ -506,8 +506,8 @@ queue the path is the one above.
 
 To turn a queue on for a base, in GitHub, either add a ruleset on the base branch with the
 `merge_queue` rule, or turn on the merge queue in the base's branch protection. Every workflow the
-base requires must also run on `merge_group`, or the queue never sees its check and the group waits
-forever. Add `merge_group:` to that workflow's `on:` triggers. ci.yml and zizmor.yml run on
+base requires must also run on `merge_group`, or its check never reports on the group, and the queue drops the
+PR once its check timeout passes. Add `merge_group:` to that workflow's `on:` triggers. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
 merges with `--admin`, which would skip a queue. `ci_gate admin` refuses a base with a
