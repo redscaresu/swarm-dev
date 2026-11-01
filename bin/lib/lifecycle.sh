@@ -3079,6 +3079,66 @@ stop_lines() {
   done
 }
 
+# plan_lines — `planned: <epic> (<names> done), exit: /swarm-dev:plan-epic <epic>` for each plan swarm whose
+# agents have all written their output: a tab record scope-<epic> (has_records' overflow scope-<epic>-<n>
+# too) of an epic on the board, or plan-<hld> of an HLD on it, with `/swarm-dev:plan-hld <hld>` as the exit,
+# that lists at least one `<pane> <name>` and has no plan board PR worktree (plan_pr_open; _board-plan-<hld>
+# for an HLD). Each <name>, less a trailing -<epic>, writes .swarm/<epic>/<name>.json, which counts only
+# when it is newer than its planner's resume reference and parses as JSON. The reference is the epic file;
+# for split-critic the scope worktree, which is gone here, so a listed split critic never counts; for an
+# HLD .swarm/<hld>/base-rev, or the HLD file on a board outside the repo. A missing reference counts
+# nothing. Board and .swarm files, one python3 for the JSON of a swarm whose outputs are all fresh; no gh or herdr.
+plan_lines() {
+  local f label kind slug item groups="" names name n ref out exit done_list files
+  for f in "${STATE_DIR}"/scope-?* "${STATE_DIR}"/plan-?*; do
+    [[ -f "${f}" ]] || continue
+    label="${f##*/}"
+    [[ "${label}" != *.* ]] || continue   # a codex brief copy or a temporary file, as cut_names skips
+    kind="${label%%-*}"; slug="${label#*-}"
+    item="${BOARD}/epics"; [[ "${kind}" == scope ]] || item="${BOARD}/hld"
+    if [[ ! -f "${item}/${slug}.md" && "${slug}" =~ ^(.+)-[0-9]+$ && -f "${item}/${BASH_REMATCH[1]}.md" ]]; then
+      slug="${BASH_REMATCH[1]}"   # an overflow tab of the same swarm
+    fi
+    [[ -f "${item}/${slug}.md" ]] || continue
+    groups+="${kind} ${slug}"$'\n'
+  done
+  while read -r kind slug; do
+    [[ -n "${slug}" ]] || continue
+    if [[ "${kind}" == scope ]]; then
+      ! plan_pr_open "${slug}" || continue
+      exit="/swarm-dev:plan-epic ${slug}"
+    else
+      [[ ! -e "$(worktree_for "${PROJECT_DIR}" "_board-plan-${slug}")" ]] || continue
+      exit="/swarm-dev:plan-hld ${slug}"
+    fi
+    names=""
+    for f in "${STATE_DIR}/${kind}-${slug}" "${STATE_DIR}/${kind}-${slug}"-*; do
+      { [[ -f "${f}" ]] && label_record "${f}" "${kind}-${slug}"; } || continue
+      names+="$(awk 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ { print $2 }' "${f}")"$'\n'
+    done
+    done_list=""; files=()
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      n="${name%-"${slug}"}"
+      [[ " ${done_list//,/} " != *" ${n} "* ]] || continue
+      out="${PROJECT_DIR}/.swarm/${slug}/${n}.json"
+      if [[ "${kind}" == plan ]]; then
+        ref="${PROJECT_DIR}/.swarm/${slug}/base-rev"; [[ "${BOARD_IN_REPO}" == 1 ]] || ref="${BOARD}/hld/${slug}.md"
+      elif [[ "${n}" == split-critic ]]; then ref="$(worktree_for "${PROJECT_DIR}" "_board-scope-${slug}")"
+      else ref="${BOARD}/epics/${slug}.md"; fi
+      # -nt alone is true against a missing reference.
+      [[ -f "${out}" && -e "${ref}" && "${out}" -nt "${ref}" ]] || { files=(); break; }
+      files+=("${out}"); done_list+=", ${n}"
+    done < <(awk '!seen[$0]++' <<< "${names}")
+    [[ ${#files[@]} -gt 0 ]] || continue
+    python3 -I -c 'import json, sys
+for p in sys.argv[1:]:
+    with open(p, encoding="utf-8") as fh:
+        json.load(fh)' "${files[@]}" 2>/dev/null || continue
+    echo "planned: ${slug} (${done_list#, } done), exit: ${exit}"
+  done < <(awk '!seen[$0]++' <<< "${groups}")
+}
+
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, a `kept:` line
 # (lead_review_items), `merge: <slug> <PR URL>...` for a review item whose verdict in LEAD_HEADS, the last
@@ -3092,7 +3152,8 @@ stop_lines() {
 # on, and `no-review: <slug> <pr>, exit: ...` for one whose review agent never started or went. Those read the poll's herdr list (lead_agents) and one ps, and write a `no-agent <slug>`
 # events.tsv line for a story whose missing agent no event explains yet, and start again a review agent
 # whose start was cut short with tries left (no_review_line's restart). Then stop_lines' `stopped: <slug>
-# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list. wait --lead adds `unsent brief:
+# (<note>), exit: ...` for a review agent's stop note no running conductor has, off the same list, and plan_lines'
+# `planned: <epic> (<names> done), exit: ...` for a plan swarm whose agents have all written their output. wait --lead adds `unsent brief:
 # <stem>, exit: <exit>` lines (unsent_lines) after its resend pass, which writes their .unsent markers,
 # then `prompt: <agent> (<kind>), exit: <exit>` lines (prompt_lines). Before those, after no_agent_lines',
 # come pr_lines' `conflict:` and `unmerged:` lines, from the file the last heads pass wrote (open_story_prs),
@@ -3135,6 +3196,7 @@ lead_queue() {
   # A list it could not check (2) wakes no one; the other lines above still do.
   no_agent_lines record || true
   stop_lines
+  plan_lines
   stuck_lines
   pr_lines
   main_red_lines
@@ -4628,7 +4690,9 @@ lead_wake() {
   fi
   # A fix-main story writer for each red base head none covers, started detached here, never in lead_queue's $(...).
   main_red_fix
-  now="$(lead_queue)"
+  # A queue read that failed (a die inside it) is no empty queue: lead_poll ends the run with its status,
+  # and LEAD_SEEN keeps what the last good read saw.
+  now="$(lead_queue)" || { LEAD_QUEUE_RC=$?; return 1; }
   # One read budget and one read per pane for resend_pass and prompt_lines. The reads sit in
   # .swarm/lead/reads, emptied at each poll's start and end, never in TMPDIR. lead_lock stops an earlier
   # run's bash, but not a $(prompt_lines) it had started: that subshell runs to its end (up to the read
@@ -4673,6 +4737,7 @@ lead_wake() {
   now="${kept%$'\n'}"
   printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
   [[ -n "${new}" ]] || return 1
+  LEAD_ENDED=1   # lines are printed: a failure after them adds no wait-failed: line (lead_exit)
   while IFS= read -r line; do
     echo "${line}"; lead_line_slug "${line}"
     record_event lead-woken "${LEAD_LINE_SLUG}" "ok (${line%%: *})"
@@ -4710,20 +4775,73 @@ pid_lock() {
   rm -f "${tmp}"
 }
 
+# LEAD_ENDED: set once this wait --lead run has said why it ends (a queue line, the timeout: line or
+# the replaced: line) or ends silent by design (wait --lead 0), so lead_exit adds no wait-failed: line.
+# LEAD_SLEEP: the pid of the poll's sleep while it runs (lead_sleep). LEAD_QUEUE_RC: the status of the
+# last poll's lead_queue when it failed, else 0 (lead_wake, lead_poll).
+LEAD_ENDED=""
+LEAD_SLEEP=""
+LEAD_QUEUE_RC=0
+
+# lead_exit <status> — wait --lead's EXIT trap: kill the poll's sleep, remove the pid file while it
+# still names this run, and, for a non-zero <status> with nothing said (LEAD_ENDED), print
+# `wait-failed: exit <status>, exit: swarm.sh wait --lead` on stdout. The run's exit code stays <status>.
+lead_exit() {
+  trap '' USR1 TERM   # a signal now would add a second line
+  [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
+  [[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"
+  (( $1 == 0 )) || [[ -n "${LEAD_ENDED}" ]] || echo "wait-failed: exit $1, exit: swarm.sh wait --lead"
+}
+
+# lead_signal [replaced] — wait --lead's USR1 and TERM traps, set before its argument checks. USR1 comes
+# only from a newer run's lead_lock: print `replaced: a newer wait --lead watches now`. A TERM is anyone
+# else's (a tool's timeout, a kill by hand): print nothing here, so lead_exit's wait-failed: line says it.
+# Either kills the poll's sleep and exits 143, as a TERM did before. A run that has already said why it
+# ends (LEAD_ENDED) ignores both: one more line would follow its own.
+lead_signal() {
+  [[ -z "${LEAD_ENDED}" ]] || return 0
+  [[ -z "${LEAD_SLEEP}" ]] || kill "${LEAD_SLEEP}" 2>/dev/null || true
+  LEAD_SLEEP=""
+  [[ -z "${1:-}" ]] || { LEAD_ENDED=1; echo "replaced: a newer wait --lead watches now"; }
+  exit 143
+}
+
+# lead_sleep <seconds> — sleep in the background and wait for it, so a signal runs lead_signal at once:
+# bash runs a trap only once the foreground command it cut into ends.
+lead_sleep() { sleep "$1" & LEAD_SLEEP=$!; wait "${LEAD_SLEEP}"; LEAD_SLEEP=""; }
+
+# lead_gone — true once LEAD_PID names no live wait --lead, within 5 s.
+lead_gone() {
+  local i
+  for ((i = 0; i < 50; i++)); do [[ -n "$(lead_holder)" ]] || return 0; sleep 0.1; done
+  [[ -z "$(lead_holder)" ]]
+}
+
 # lead_lock — make this run the one wait --lead (pid_lock): stop any live holder of LEAD_PID (an
-# earlier run, whose output may go unread) and take it. The pid file goes on exit, only while it
-# still names this run.
+# earlier run, whose output may go unread) and take it. The holder gets a USR1, which its lead_signal
+# answers at once while it sleeps (a run from before USR1 had a trap simply ends on it); one still there
+# 5 s later is in a slow read that holds its trap back, and gets a KILL, which ends it with nothing
+# printed. The pid file goes on exit (lead_exit, wait_lead's EXIT trap), only while it still names this run.
 lead_lock() {
-  local pid i
+  local pid
   until pid_lock "${LEAD_PID}" "$$" lead_holder; do
     pid="$(lead_holder)"
     [[ -n "${pid}" ]] || continue
     echo "swarm: wait --lead: stopping the earlier run (pid ${pid}); this one watches now" >&2
-    kill "${pid}" 2>/dev/null || true
-    for ((i = 0; i < 50; i++)); do [[ -n "$(lead_holder)" ]] || break; sleep 0.1; done
-    [[ -z "$(lead_holder)" ]] || die "wait --lead: the earlier run (pid ${pid}) did not stop"
+    kill -USR1 "${pid}" 2>/dev/null || true
+    lead_gone && continue
+    [[ "$(lead_holder)" != "${pid}" ]] || kill -KILL "${pid}" 2>/dev/null || true
+    lead_gone || die "wait --lead: the earlier run (pid ${pid}) did not stop"
   done
-  trap '[[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"' EXIT
+}
+
+# lead_poll [quiet] — one read of the lead's queue (lead_wake): true when it printed a line. A read
+# whose lead_queue failed ends the run with lead_queue's status, which lead_exit reports.
+lead_poll() {
+  LEAD_QUEUE_RC=0
+  ! lead_wake "$@" || return 0
+  (( LEAD_QUEUE_RC == 0 )) || exit "${LEAD_QUEUE_RC}"
+  return 1
 }
 
 # wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
@@ -4733,24 +4851,37 @@ lead_lock() {
 # open_story_prs, lead_bases), on its first read, then at most once every LEAD_HEADS_EVERY seconds, and
 # on the poll after events.tsv gains a merge line (lead_events). The first read of a run reports what
 # landed since the last run; with no LEAD_SEEN yet it notes the queue and reports only the alerts,
-# every line whose kind is not in LEAD_QUIET. At the timeout (default an hour) it fails with nothing printed. It edits
+# every line whose kind is not in LEAD_QUIET. Every exit says why on stdout, in one line that is no queue
+# item (never in LEAD_SEEN, never logged as lead-woken), and keeps its exit code:
+#   timeout: nothing new in <N> min, exit: swarm.sh wait --lead   at the timeout (default an hour), N its
+#     minutes rounded up; exit 1. wait --lead 0, a single read, prints nothing here and exits 1.
+#   replaced: a newer wait --lead watches now   a newer run stopped this one (lead_lock's USR1, lead_signal);
+#     exit 143.
+#   wait-failed: exit <rc>, exit: swarm.sh wait --lead   any other non-zero exit with nothing printed (an
+#     invalid argument, a lock it cannot take, a failed queue read, a die, a TERM), from its EXIT trap
+#     (lead_exit); exit <rc>.
+# The EXIT, USR1 and TERM traps are set before the argument checks.
+# It edits
 # no board file but to retire a red base's unstarted fix-main stories once that base reads fixed (lead_bases,
 # clear_red_main) and, through a detached run, to write a red base head's fix-main story (main_red_fix), and
 # nudges no one but to submit an unsent brief (resend_pass).
 wait_lead() {
   local timeout="${1:-3600000}" start left
+  trap 'lead_exit $?' EXIT; trap 'lead_signal replaced' USR1; trap lead_signal TERM
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
   timeout=$((10#${timeout}))   # 090000 is not octal
   [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
   [[ "${LEAD_HEADS_EVERY}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1, not '${LEAD_HEADS_EVERY}'"
   lead_lock
   start=${SECONDS}
-  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else ! lead_wake quiet || return 0; fi
+  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_poll || return 0; else ! lead_poll quiet || return 0; fi
   while (( (SECONDS - start) * 1000 < timeout )); do
     left=$(( (timeout + 999) / 1000 - (SECONDS - start) ))
-    sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))
-    ! lead_wake || return 0
+    lead_sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))
+    ! lead_poll || return 0
   done
+  LEAD_ENDED=1
+  (( timeout == 0 )) || echo "timeout: nothing new in $(( (timeout + 59999) / 60000 )) min, exit: swarm.sh wait --lead"
   return 1
 }
 

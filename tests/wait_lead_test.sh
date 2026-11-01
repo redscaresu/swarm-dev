@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # wait_lead_test.sh — swarm.sh wait --lead: it returns once the lead's queue gains a held or escalated
 # story, or with merge = human a review item whose PR head is green, printing one line per new item and
-# logging one lead-woken line each; at its timeout it fails with nothing printed. What it last saw is kept
-# across runs, and a new run takes over from an earlier one. gh is a stub on PATH answering the PR's
+# logging one lead-woken line each; at its timeout it prints one timeout: line and exits 1 (wait --lead 0, a
+# single read, prints nothing), and any other failure prints one wait-failed: line. None of those is a queue
+# item. What it last saw is kept across runs, and a new run takes over from an earlier one, which prints one
+# replaced: line. gh is a stub on PATH answering the PR's
 # head and its check runs from ${FX}; herdr is a stub listing a running conductor, or the agents in
 # ${FX}/agents, read once per poll for its agent list (no-agent: lines, no_agent_test.sh), and once more
 # before a poll prints a line that says an agent is missing. Both log each call. A review agent whose
@@ -229,6 +231,19 @@ events() { awk -F'\t' '{ print $2 " " $3 }' "${P}/.swarm/events.tsv" 2>/dev/null
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
 nothing_yet() { [[ ! -e "${ROOT}/rc" && -z "$(out)" && -z "$(events)" ]]; }
+# timed_out <minutes> — the line a run with no change prints at its timeout.
+timed_out() { echo "timeout: nothing new in $1 min, exit: swarm.sh wait --lead"; }
+# failed_with <rc> — the run printed exactly one wait-failed: line, for <rc>, no timeout: line, and exited <rc>.
+failed_with() {
+  [[ "$(grep -c '^wait-failed: ' "${ROOT}/out")|$(grep -c '^timeout: ' "${ROOT}/out")|$(rc)" == "1|0|$1" ]] \
+    && grep -qxF "wait-failed: exit $1, exit: swarm.sh wait --lead" "${ROOT}/out"
+}
+# no_exit_lines — no timeout:, replaced: or wait-failed: line is in .swarm/lead/seen or logged as lead-woken.
+no_exit_lines() {
+  ! grep -qE '^(timeout|replaced|wait-failed): ' "${P}/.swarm/lead/seen" 2>/dev/null \
+    && ! awk -F'\t' '$2 == "lead-woken" && $5 ~ /^ok \((timeout|replaced|wait-failed)\)/ { f = 1 } END { exit !f }' \
+      "${P}/.swarm/events.tsv" 2>/dev/null
+}
 
 # --- held and escalated stories.
 # The run takes its lock 2.5 s late, so its first read is later than a fixed wait after start would be.
@@ -257,9 +272,10 @@ lead 20000 &
 lpid=$!
 saw() { local i; for ((i = 0; i < 600; i++)); do grep -q "$1" "${ROOT}/out" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 must "the new run took over" saw 'stopping the earlier run'
-for ((i = 0; i < 30; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
-check "a new wait --lead stops the earlier one" test -e "${ROOT}/rc.a"
-check "the earlier one ends with nothing printed" test ! -s "${ROOT}/out.a"
+for ((i = 0; i < 50; i++)); do [[ ! -e "${ROOT}/rc.a" ]] || break; sleep 0.1; done
+check "a new wait --lead stops the earlier one within 5 s" test -e "${ROOT}/rc.a"
+check "the earlier one prints one replaced: line and exits 143, as a TERM would" \
+  test "$(cat "${ROOT}/out.a")|$(cat "${ROOT}/rc.a")" == "replaced: a newer wait --lead watches now|143"
 wait "${apid}" 2>/dev/null || true
 must "the new run read the board once" first_read "$(seen_id)"
 check "the new one says it took over" grep -q 'stopping the earlier run' "${ROOT}/out"
@@ -269,12 +285,22 @@ held z paused
 check "the new one watches" returned 25
 check "the new one prints what landed" test "$(grep -v '^swarm:' "${ROOT}/out")" == "held: z (paused)"
 check "its pid file is gone once it returns" test ! -e "${P}/.swarm/lead/pid"
+check "the replaced: line is no queue item: not in seen, not logged" no_exit_lines
+# A TERM from anything but a newer run (a tool's timeout, a kill by hand) is no replacement: nothing else
+# watches, so the run says it failed, and the lead starts it again.
+fresh
+start 20000
+kill -TERM "$(cat "${P}/.swarm/lead/pid")"
+check "a TERM from outside ends the run within 5 s" returned 50
+check "it prints one wait-failed: exit 143 line, no replaced: line, and exits 143" failed_with 143
+check "it prints no replaced: line" test "$(grep -c '^replaced: ' "${ROOT}/out")" == 0
 
 fresh; touch "${FX}/ln.fail"
 lead 20000 &
 lpid=$!
 check "when the pid file cannot be made, it stops instead of spinning" returned 30
 check "it says it cannot write the pid file" grep -q 'cannot write .*/lead/pid' "${ROOT}/out"
+check "a lock it cannot take prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 stop; rm -f "${FX}/ln.fail"
 
 # --- a run's first read with no .swarm/lead/seen: a LEAD_QUIET kind is saved unprinted, any other line prints.
@@ -300,15 +326,23 @@ check "a no-agent: line prints on a run's first read, alone" test "$(out)|$(rc)"
 rm -rf "${P}/.swarm/events.tsv" "${P}/.swarm/agents.tsv" "${ROOT}/proj-wt"
 
 fresh; lead 0900
-check "a timeout with a leading zero is decimal, not octal" test "$(out)|$(rc)" == "|1"
+check "a timeout with a leading zero is decimal, not octal; 900 ms rounds up to 1 min" test "$(out)|$(rc)" == "$(timed_out 1)|1"
+fresh; lead 0; again; lead 0
+check "wait --lead 0 with no change prints nothing and exits 1" test "$(out)|$(rc)" == "|1"
 
 # --- SWARM_LEAD_POLL and the timeout.
 fresh; lead SWARM_LEAD_POLL=0 1000
 check "SWARM_LEAD_POLL=0 is refused" grep -q 'SWARM_LEAD_POLL is whole seconds, at least 1' "${ROOT}/out"
+check "SWARM_LEAD_POLL=0 prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
+fresh; lead 12s
+check "a timeout that is no number is refused" grep -q "the timeout is in milliseconds, not '12s'" "${ROOT}/out"
+check "it prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 fresh; lead SWARM_LEAD_HEADS_EVERY=0 1000
 check "SWARM_LEAD_HEADS_EVERY=0 is refused" grep -q 'SWARM_LEAD_HEADS_EVERY is whole seconds, at least 1' "${ROOT}/out"
+check "SWARM_LEAD_HEADS_EVERY=0 prints one wait-failed: line, exit 1, and no timeout: line" failed_with 1
 fresh; t0=${SECONDS}; lead SWARM_LEAD_POLL=30 2000
 check "the last sleep stops at the timeout, not a full poll later" test $((SECONDS - t0)) -le 4 -a "$(rc)" == 1
+check "it prints the timeout: line" test "$(out)" == "$(timed_out 1)"
 
 fresh; item c "kind: code" "status: ready"
 start 20000
@@ -412,7 +446,7 @@ fresh "merge = agent"
 start 4000
 item r "kind: code" "status: review" "prs: ${URL}"
 check "with merge = agent, a green review story does not wake it, and it times out" returned 60
-check "with merge = agent it times out non-zero with nothing printed" test "$(out)|$(rc)" == "|1"
+check "with merge = agent it times out non-zero with one timeout: line" test "$(out)|$(rc)" == "$(timed_out 1)|1"
 check "with merge = agent nothing is logged" test -z "$(events)"
 
 fresh "merge = agent"
@@ -710,8 +744,24 @@ rm -rf "${P}/.swarm/briefs" "${P}/.swarm/reviews" "${P}/.swarm/agents.tsv" "${P}
 fresh
 start 3000
 check "with no change it returns at its timeout" returned 50
-check "at its timeout it exits non-zero and prints nothing" test "$(out)|$(rc)" == "|1"
+check "at its timeout it exits 1 and prints exactly one timeout: line" test "$(out)|$(rc)" == "$(timed_out 1)|1"
 check "events.tsv gains no line while it waits" test -z "$(events)"
+check "the timeout: line is no queue item: not in seen, not logged" no_exit_lines
+
+# --- a failed queue read: a copy of the plugin whose lead_queue prints a line, then fails with 7. The run
+# ends on that poll with lead_queue's own status and one wait-failed: line on stdout, never as a timeout,
+# and seen keeps the last good read, not the failed read's line.
+QF="${ROOT}/plugin-qf"; mkdir -p "${QF}"
+cp -R "${SWARM%/bin/swarm.sh}/bin" "${SWARM%/bin/swarm.sh}/.claude-plugin" "${QF}/"
+printf '\nlead_queue() { echo "held: qf (a partial read)"; return 7; }\n' >> "${QF}/bin/lib/lifecycle.sh"
+fresh; lead 0; cp "${P}/.swarm/lead/seen" "${ROOT}/seen.before"; again
+t0=${SECONDS}
+(cd "${P}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LEAD_POLL=1 SWARM_LEAD_HEADS_EVERY=1 \
+  bash "${QF}/bin/swarm.sh" wait --lead 20000 > "${ROOT}/out" 2> "${ROOT}/err") && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
+check "a poll whose lead_queue fails ends the run on that poll, with lead_queue's status" test "$(rc)" == 7 -a $((SECONDS - t0)) -le 10
+check "it prints one wait-failed: line on stdout, and nothing else there" test "$(out)" == "wait-failed: exit 7, exit: swarm.sh wait --lead"
+check "seen keeps the last good read, without the failed read's line" cmp -s "${ROOT}/seen.before" "${P}/.swarm/lead/seen"
+check "the wait-failed: line is no queue item: not in seen, not logged" no_exit_lines
 
 # --- a running conductor does not hide a new held story, and a poll asks herdr only for its agent list.
 fresh

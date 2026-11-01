@@ -13,7 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helpers.sh"
 
 HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${HOME_DIR}/bin/swarm.sh"
-KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt|unmerged|conflict"
+KINDS="held|escalated|merge|kept|no-agent|no-review|step-up failed|unsent brief|idle|prompt|unmerged|conflict|planned"
 GAPS=""   # none now: every kind has its arm
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -61,7 +61,8 @@ pr_json() {
 # board <kind> — a board on which lead_queue prints a line of <kind>, and nothing else.
 board() {
   rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/.swarm/lead" "${P}/.swarm/briefs" "${ROOT}/proj-wt" \
-    "${ROOT}/agents" "${ROOT}/pane.txt" "${P}/.swarm/state/tab" "${ROOT}/prs.json" "${P}/.swarm/reviews"
+    "${ROOT}/agents" "${ROOT}/pane.txt" "${P}/.swarm/state/tab" "${ROOT}/prs.json" "${P}/.swarm/reviews" \
+    "${P}/.swarm/state/scope-s" "${P}/.swarm/s" "${P}/docs/epics"
   mkdir -p "${P}/.swarm/lead"; : > "${P}/.swarm/lead/seen"
   echo "merge = human" > "${P}/.claude/swarm/config"
   case "$1" in
@@ -96,6 +97,10 @@ board() {
               perl -e 'my $t = time - 7200; utime $t, $t, shift' "${P}/.swarm/reviews/s.md"
               pr_json MERGEABLE ;;
     conflict) story s "kind: code" "status: ready"; pr_json CONFLICTING ;;
+    # A plan swarm for epic s whose one agent, survey, wrote its output after the epic file.
+    planned) mkdir -p "${P}/docs/epics" "${P}/.swarm/s"; printf -- '---\nstatus: active\n---\n\n# s\n' > "${P}/docs/epics/s.md"
+             perl -e 'my $t = time - 3600; utime $t, $t, shift' "${P}/docs/epics/s.md"
+             echo "w:p1 survey-s" > "${P}/.swarm/state/scope-s"; echo '{"summary":"s","facts":[]}' > "${P}/.swarm/s/survey.json" ;;
     *) echo "FAIL no board for kind ${1}: add one"; fails=$((fails + 1)) ;;
   esac
 }
@@ -131,7 +136,8 @@ check "the plan-hld arm reads grants from origin's copy, after /plan-hld makes i
 # epic guard refuses a later epic set active with no ticket (epic_unticketed).
 gate="$(awk '/^   - `gate`: / { s = 1 } s && /^   - `done`: / { exit } s' "${HOME_DIR}/commands/swarm.md" | tr '\n' ' ' | tr -s ' ')"
 check "the gate handler is found in commands/swarm.md" test -n "${gate}"
-rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv"; mkdir -p "${P}/docs/epics"
+# Less the planned board's epic s and its plan, which next would name before the gate.
+rm -rf "${B:?}"/*.md "${P}/.swarm/events.tsv" "${P}/docs/epics" "${P}/.swarm/state/scope-s" "${P}/.swarm/s"; mkdir -p "${P}/docs/epics"
 printf -- '---\nstatus: later\n---\n\n# e\n' > "${P}/docs/epics/e.md"
 # Agreed and parked today: its agreed: date is at the base already, so it is no ticket.
 printf -- '---\nstatus: later\nagreed: %s\n---\n\n# p\n' "$(date +%F)" > "${P}/docs/epics/p.md"
