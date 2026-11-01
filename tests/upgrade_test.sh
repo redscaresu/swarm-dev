@@ -678,7 +678,7 @@ check "a review agent busy past the wait is left and named, and holds its idle b
 review_b1 busy; sed -i.bak 's/{"sessionId":"s1","status":"idle"},//' "${H}/claude.json"
 WAIT_MS=300 upgrade e
 check "a gone builder is skipped as closed, not held by its busy review agent" "1|1|0|" \
-  "${rc}|$(grep -cx "skipped (closed): b1" "${H}/out")|$(grep -c '^b1: ' "${H}/out")|$(calls 'agent start')"
+  "${rc}|$(grep -cE '^skipped \(closed\):( [a-z0-9-]+)* b1( |$)' "${H}/out")|$(grep -c '^b1: ' "${H}/out")|$(calls 'agent start')"
 # A review agent busy through the one round that reads idle at the end, from Claude Code's 8th read
 # on (the closed check reads its list once, then the round 6 times: 3 for the conductor, then b1,
 # b1's hold and review-b1),

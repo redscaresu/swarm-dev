@@ -5374,7 +5374,7 @@ upgrade_flags() {
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
 # on its own: Claude Code's own state (upgrade_session) for the session herdr has in <pane> now
 # (upgrade_sid; the one upgrade_one resumes; a /clear moves it from the one agents.tsv recorded), else
-# for agents.tsv's session (herdr 0.9.5 lists none), else herdr's status (agent_status); a turn stopped on
+# for agents.tsv's session (herdr 0.9.5 lists none), else read_state's (herdr's status); a turn stopped on
 # an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
 # turn though background shells keep Claude Code saying busy (turn_over, on that same session's log);
 # one waiting on a prompt, or on a tool call's result, is busy.
@@ -5382,7 +5382,7 @@ upgrade_state() {
   local s sid
   sid="$(upgrade_sid "$2")"
   s="$(upgrade_session "$1" "${sid}" </dev/null)"
-  [[ "${s}" != herdr ]] || s="herdr:$(agent_status "$1" </dev/null)"
+  [[ "${s}" != herdr ]] || s="$(read_state "$1" </dev/null)"   # no session anywhere: herdr's status
   case "${s}" in
     idle|herdr:idle|herdr:done) echo idle ;;
     gone|unknown|herdr:unknown) echo "${s#herdr:}" ;;
