@@ -159,8 +159,10 @@ touch "${ROOT}/u2/go"
 wait "${held_pids[@]}"
 check "two runs started together write one end line, status 137, for each of 30 stale marks between them" \
   "$(for p in "${stale[@]}"; do ended "${p}"; done | sort | uniq -c | awk '{ $1 = $1; print }')" "30 starts=1 ends=137"
+# Each PID but the KILLed one, with its count of start lines and of end lines when either is not 1.
 check "each other run has one start and one end line" \
-  "$(awk -F'\t' -v k="${killed}" '$11 != k { n[$11 ($10 == "" ? " start" : " end")]++ } END { for (x in n) if (n[x] != 1) print x, n[x] }' "${LOG}")" ""
+  "$(awk -F'\t' -v k="${killed}" '$11 != k { seen[$11] = 1; if ($10 == "") s[$11]++; else e[$11]++ }
+    END { for (p in seen) if (s[p] != 1 || e[p] != 1) print p, "starts=" s[p] + 0, "ends=" e[p] + 0 }' "${LOG}")" ""
 [[ ${fails} -eq 0 ]] || { echo "lines in the log:"; awk -F'\t' '{ print $11 }' "${LOG}" | sort -u | while read -r p; do lines "${p}"; done; }
 
 if [[ ${fails} -gt 0 ]]; then echo "FAILED: ${fails}"; exit 1; fi
