@@ -1071,7 +1071,15 @@ status: 429 Too Many Requests`. Either has `ERROR:` or `■` before it, and a re
 words does not count. On Azure Foundry the rate limit reads `ERROR: rate limit exceeded: Your requests to
 <model> for <model> in <region> have exceeded token rate limit.` That limit is the Foundry deployment's
 capacity, its tokens per minute. You raise it in Azure, on the deployment or the quota behind it. The
-swarm never changes it. With `fallback_reviewer` empty, codex-review then exits as codex did. With
+swarm never changes it. On a rate limit, codex-review runs codex once more before anything else. It
+prints `codex rate limit: retrying in 60 s`, logs a `codex-retry` line in events.tsv (target
+`codex-<story>`, with the incident's `slug=` and `role=`), waits 60 seconds, and runs codex again with
+the same prompt. The first run, the wait and the retry share the one `codex_minutes`: the retry gets
+only what is left, and the timeout stops it as it would the first run. It retries only when at least
+the wait plus two minutes are left. A rate limit on the retry logs no second incident, so one limit
+counts once. A usage limit is never retried, since it resets in hours. When the retry hits the rate
+limit too, or there was no time to retry, codex-review goes on as follows. With `fallback_reviewer`
+empty, it exits as codex did. With
 it set, it starts `fallback-<story>` in the worktree on that model, with codex's prompt. The agent
 runs with no Edit, Write or NotebookEdit tool and cannot commit or push. It still has Bash, so
 unlike codex's read-only sandbox its brief is what keeps it from changing the worktree. It gets what is left of `codex_minutes`, its start included, so the whole run stays within it, to write its
