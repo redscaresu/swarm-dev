@@ -1139,6 +1139,7 @@ Without `claude agents` or `herdr agent read` it can show a conductor stopped on
 Once a read that decides a start is cut, next starts no conductor, and names each one it would have started: `no conductor started: <conductor>: a read it needs was cut at the report's deadline; run swarm.sh next again`.
 So run `next` again whenever it prints a skipped line.
 Writes, and a start once begun, are never cut, so a slow start runs to its end.
+After the step it prints an `unlisted: <PR URL> (<head>): ...` line for each open PR you opened whose head is not a `story/*`, `board/*` or `release/v*` branch and that no story or epic lists, or `unlisted: not checked (<why>): ...` when that one gh read fails or is cut ([§ The lead](reference-lead.md#the-lead)).
 
 **`swarm.sh plan-unasked [--declined] <epic>`**
 Record, in board state, that a `later` epic `next` offered (its dependencies done) has had its unasked plan.
