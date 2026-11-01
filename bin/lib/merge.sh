@@ -324,12 +324,13 @@ unticketed_why() {
 # epic_guard — merge's refusal of a board or story PR that sets an epic active with no ticket
 # (merge_pr's locals files, only, url and base): epic_unticketed on one changed path under the board's
 # epics/ at a time (board_epics), so a read error or a bad grants: names the epic it was checking too,
-# with every changed path for its parent: check. Then stage_gate's refusal of one set active above the
+# with every changed path for its parent: check and its deleted-epic check (a refusal for an agreed:
+# that a deleted epic had names that epic). Then stage_gate's refusal of one set active above the
 # stage the base allows, whatever lead_epics says, on every changed epic at once, so the base is fetched
 # once. A failure that printed no reason refuses all the same. The line starts --board: on that route
 # only.
 epic_guard() {
-  local p s why list pre="${only:+${only}: }"
+  local p s why clause list pre="${only:+${only}: }"
   list="$(board_epics <<< "${files}")"
   [[ -n "${list}" ]] || return 0
   while IFS= read -r p; do
@@ -337,7 +338,10 @@ epic_guard() {
     # Outside the $(...), where a merge_fail would not stop this.
     why="$(epic_unticketed merge_read "${p}" "${files}")" \
       || merge_fail "${pre}$(unticketed_why "${why:-cannot check ${p}}"), so whether ${url} sets ${s} active with no ticket is unknown; commit it as status: draft first, then run /swarm-dev:epic ${s}"
-    [[ -z "${why}" ]] || merge_fail "${pre}${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on); commit it as status: draft first, then run /swarm-dev:epic ${s}"
+    [[ -n "${why}" ]] || continue
+    # After a tab, the clause naming the deleted epic whose agreed: it carries.
+    clause=""; [[ "${why}" != *$'\t'* ]] || clause="${why#*$'\t'}"
+    merge_fail "${pre}${url} sets ${s} active with no ticket (agreed: within the last ${AGREED_MAX_AGE} days, parent:, hld: of an agreed HLD granting epics, or lead_epics = on)${clause}; commit it as status: draft first, then run /swarm-dev:epic ${s}"
   done <<< "${list}"
   why="$(stage_gate merge_read "${list}" "${files}")" \
     || merge_fail "${pre}$(unticketed_why "${why:-cannot check the stages}"), so whether ${url} sets an epic active above the stage ${base} allows is unknown"
